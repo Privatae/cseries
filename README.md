@@ -1,10 +1,72 @@
 # Privatae C-Series
 
-C-Series is the consumer series of Privatae Hosts. A Host is one AI that runs
-on your own machine, with its own memory, database and apps, and you use it in
-your browser. It runs sandboxed in a small Linux virtual machine on your
-machine, as two containers: the Host and its PostgreSQL database. The Privatae
-bastion runs beside it on the machine itself.
+C-Series is an open-source AI agent that runs on your own machine. We call
+each running instance a Host: one AI with its own memory, its own PostgreSQL
+database, its own apps and its own rules, used from a browser. It runs
+sandboxed in a small Linux virtual machine as two containers (the Host and its
+database), and a separate program, the bastion, runs on the machine itself
+and decides what the Host may touch there.
+
+The person brings the models: a key from OpenRouter, Anthropic, OpenAI or
+another provider, or a local model server. C-Series does not sell or proxy
+model usage.
+
+## Status
+
+Pre-release. The code in this repository builds and runs from source (see
+[Building from source](#building-from-source)). The one-command installer
+(`npx cseries`) is written and tested for Windows but not yet published, and
+the macOS and Linux driver is in progress. Work under way before the first
+release:
+
+- a local runtime, so apps that run in their own container (the Telegram,
+  Discord and Slack connectors, the browser, the coding agents, the creative
+  engines) start on the person's machine instead of asking a hosted platform;
+- backups a standalone Host can write and restore by itself;
+- memory and context defaults for long-running use;
+- memory and CPU limits for the virtual machine.
+
+This repository is published as a single snapshot commit. Development history
+lives in a private forge.
+
+## For reviewers: where to look
+
+| Area | Where | What it shows |
+|---|---|---|
+| The turn | `brain/mastercode/runtime/session.py`, `turn_types.py`, `root_turn.py` | How one message becomes model calls, tool calls and a reply, and which turn types exist |
+| Tools and the capability gate | `brain/mastercode/runtime/tools.py`, `brain/mastercode/ceigas_capabilities.py`, `runtime/turn_type_approval.py` | What the model may call, and which calls need the person's approval first |
+| The Host's own data | `brain/mastercode/world_db.py` | The `data` tool: the Host designs and queries its own tables in a schema of its own, under a restricted database role |
+| Safety floor | `brain/mastercode/runtime/crisis.py` | The crisis floor: a deterministic phrase check plus an embedding-based check on the incoming message |
+| HTTP API | `server/` (FastAPI), `server/route_table.py` | The dashboard API; the route table is read through FastAPI's public route API so contract checks survive framework upgrades |
+| Apps | `system-apps/` (47 apps, each with an `app.yaml` manifest) | Chat (Circles), Workbench, Orchestrator, Keys, Settings, connectors, creative engines |
+| Coding agents | `sidecars/harness-*` | Container images that run Claude Code, Codex, Cursor and other coding agents under the Host's control |
+| Sandboxing | `seccomp-*.json`, `sidecars/app-egress/`, `server/connectors/_picture_child.py` | Seccomp profiles, the egress gate every app's traffic goes through, and a renderer child process locked down with seccomp and Landlock |
+| Installer | `packages/cseries/` (Node, tests in `packages/cseries/test`) | `npx cseries`: preflight, the WSL virtual machine, the bastion as a Windows service installed with one admin prompt, pairing and approvals |
+| Release pipeline | `.github/workflows/release.yml` | Multi-arch images, vulnerability scan gate, npm publish with provenance |
+| Personal-data and term gates | `scripts/test_public_source_clean.py`, `scripts/release_term_check.py` | Checks that keep real people's data and private names out of public source |
+
+Scale: about 620,000 lines of Python, about 110,000 lines of TypeScript and
+JavaScript (including the web apps), 232 database migrations, and 626 test
+and gate scripts under `scripts/` plus the suites under `tests/` and
+`packages/cseries/test`.
+
+The bastion is a separate Go program with its own repository, licensed
+GPL-3.0-or-later.
+
+## Running the tests
+
+```sh
+# Installer unit tests
+cd packages/cseries && npm test
+
+# A single gate or test script (most run without a database)
+python3 scripts/test_public_source_clean.py
+
+# The full smoke run against a built image
+docker build -f Dockerfile.postgres -t cseries-postgres:dev .
+docker build -f Dockerfile.linux -t cseries:dev .
+IMAGE=cseries:dev PG_IMAGE=cseries-postgres:dev bash scripts/smoke_test.sh
+```
 
 ## What you need
 
@@ -15,13 +77,13 @@ bastion runs beside it on the machine itself.
 - A browser that sends `*.localhost` names to your own machine: Chrome, Edge
   or Firefox.
 
-## Install
+## Install (once published)
 
 ```
 npx cseries
 ```
 
-It checks the machine, installs the bastion for your user, sets up a Linux
+It checks the machine, installs the bastion as this machine's system service (one administrator prompt), sets up a Linux
 virtual machine named `cseries` in WSL, pulls the published Host images into
 it, starts the Host, pairs the bastion with it, and opens the setup page with
 a one-time setup code. If WSL is not installed yet it asks for administrator

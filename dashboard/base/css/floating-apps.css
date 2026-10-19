@@ -1,0 +1,174 @@
+/* Floating-app dock — bubbles anchored bottom-right of the desktop. */
+
+#floating-dock {
+    position: fixed;
+    bottom: 96px;
+    right: 24px;
+    z-index: 200;
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 14px;
+    pointer-events: none;
+}
+
+#floating-dock > * { pointer-events: auto; }
+
+.floating-bubble {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    border: 1px solid rgba(156, 163, 175, 0.22);
+    background:
+        radial-gradient(120% 120% at 30% 20%, rgba(156, 163, 175, 0.10), transparent 60%),
+        linear-gradient(150deg, rgba(40, 45, 60, 0.96), rgba(15, 18, 26, 0.96));
+    box-shadow:
+        0 8px 28px rgba(0, 0, 0, 0.55),
+        inset 0 1px 0 rgba(255, 255, 255, 0.05),
+        inset 0 -1px 0 rgba(0, 0, 0, 0.4);
+    color: #9CA3AF;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    padding: 0;
+    position: relative;
+    transition: transform 220ms cubic-bezier(.2,.7,.2,1.2),
+                box-shadow 220ms ease,
+                border-color 220ms ease;
+}
+
+.floating-bubble:hover {
+    transform: translateY(-3px);
+    border-color: rgba(79, 127, 106, 0.5);
+    box-shadow:
+        0 14px 36px rgba(0, 0, 0, 0.65),
+        0 0 0 4px rgba(79, 127, 106, 0.08),
+        inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+
+.floating-bubble:active { transform: translateY(-1px) scale(0.98); }
+
+.floating-bubble svg { display: block; }
+
+.floating-bubble-badge {
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 6px;
+    border-radius: 10px;
+    background: #4F7F6A;
+    color: #050709;
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 20px;
+    text-align: center;
+    border: 2px solid #050709;
+    box-shadow: 0 2px 6px rgba(79, 127, 106, 0.4);
+}
+
+.floating-bubble-tip {
+    position: absolute;
+    right: 78px;
+    top: 50%;
+    transform: translateY(-50%) translateX(8px);
+    padding: 6px 10px;
+    background: rgba(15, 18, 26, 0.96);
+    border: 1px solid rgba(156, 163, 175, 0.18);
+    border-radius: 6px;
+    color: #9CA3AF;
+    font-size: 12px;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.floating-bubble:hover .floating-bubble-tip {
+    opacity: 1;
+    transform: translateY(-50%) translateX(0);
+}
+
+/* When the app is currently open, the bubble shows an ember outline */
+.floating-bubble.active {
+    border-color: rgba(79, 127, 106, 0.65);
+    box-shadow:
+        0 8px 28px rgba(0, 0, 0, 0.55),
+        0 0 0 3px rgba(79, 127, 106, 0.18),
+        inset 0 1px 0 rgba(255, 255, 255, 0.06);
+}
+
+/* ——— The bubble's chooser (a bubble registered with a `menu`) ————————
+   Same material as the dock menu (dock-menu.css): --cseries-night over
+   --cseries-mist hairlines, at --radius-lg. Tokens only, no raw hex.
+
+   The dock is anchored bottom-right, so the menu opens up and to the left;
+   that is the only direction with room. */
+.floating-bubble-menu {
+    position: absolute;
+    bottom: calc(100% + 10px);
+    right: 0;
+    min-width: 180px;
+    padding: var(--space-1);
+    background: var(--cseries-night);
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--cseries-shadow-dropdown);
+    z-index: var(--z-elevated);
+}
+
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+    .floating-bubble-menu {
+        background: var(--cseries-glass);
+        backdrop-filter: blur(var(--cseries-glass-blur)) saturate(1.15);
+        -webkit-backdrop-filter: blur(var(--cseries-glass-blur)) saturate(1.15);
+    }
+}
+
+/* The tooltip must not show while the menu is open — the bubble is still
+   hovered, and a tip floating over the chooser reads as a rendering bug.
+   Driven by a class the JS sets, not :has(): the menu is a SIBLING of the
+   bubble now (it moved out of the <button> to stop nesting a menuitem inside
+   one), so there is no ancestor selector that could reach it. */
+.floating-bubble.menu-open .floating-bubble-tip {
+    opacity: 0;
+    visibility: hidden;
+}
+
+.floating-bubble-menu-item {
+    display: block;
+    width: 100%;
+    padding: var(--space-2) var(--space-3);
+    border: 0;
+    border-radius: var(--radius-md);
+    background: transparent;
+    color: var(--cseries-paper);
+    font-family: var(--font-body);
+    font-size: var(--text-base);
+    text-align: left;
+    cursor: pointer;
+}
+
+.floating-bubble-menu-item:hover,
+.floating-bubble-menu-item:focus-visible {
+    background: var(--cseries-ember-soft);
+    color: var(--cseries-bright);
+    outline: none;
+}
+
+/* Phone mode (same breakpoint as viewport.js): windows are full-screen, so
+   the desktop anchor lands exactly on app bottom bars / composers. Tuck the
+   bubbles smaller and higher — floating over scrollable content beats
+   covering controls. */
+@media (max-width: 768px), (pointer: coarse) and (max-width: 1024px) {
+    #floating-dock {
+        bottom: 224px;
+        right: 10px;
+        gap: 10px;
+    }
+    .floating-bubble {
+        width: 48px;
+        height: 48px;
+    }
+}

@@ -1,0 +1,2 @@
+# 2026-10-04 (messaging connectors, DESIGN 4.9): the Network app's Ingress lane on the real app.js under node — a pairing shows its code from the person-only code route with a countdown (a refused code shows why), a matched pairing asks the person to let the reported account in (escaped) in the kernel's words behind the authenticator code while "Don't pair" is free, a live connector shows a free Revoke, a revoked one is not drawn, waiting connectors open the lane and count as pending, and the buttons post to the connector routes. No pod, no DB.
+test_network_connectors.py

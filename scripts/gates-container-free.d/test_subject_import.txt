@@ -1,0 +1,25 @@
+
+# The far end of the lane the app data-subject contract declares. The
+# contract says which tables an app's rows live in; this holds
+# the code that WRITES them into this Host. By the time it runs the controller
+# has already decided WHO, so what is still open is SCOPE: a payload arriving
+# over the network must not touch a table or a column the app installed HERE
+# does not declare, must not disagree with it about which column owns a row,
+# and must land every row under the ENVELOPE's subject rather than the one the
+# row claims. Two further properties are read off the statement the module
+# builds: every interpolated identifier is quoted and every value is bound, and
+# the conflict clause updates only a row already owned by this subject — site
+# row ids and Host row ids are independent sequences, so an incoming id CAN
+# collide with somebody else's row and a bare DO UPDATE would overwrite it.
+# Every refusal is paired with the nearest accepting payload, so an importer
+# that started refusing everything fails here rather than silently delivering
+# nothing.
+# Verified red by mutation, four separately: removing the
+# undeclared-table refusal (1 check), dropping the same-subject WHERE from the
+# conflict clause (1), interpolating values instead of binding them (1), and
+# not quoting identifiers (4).
+# The writing half — the forced owner column, the missing-relation and
+# missing-primary-key refusals, the transaction boundary — needs a connection
+# and is left to the platform invariant's must_work leg, which runs a real move.
+# Pure + in-memory; no container, no DB, no network.
+test_subject_import.py

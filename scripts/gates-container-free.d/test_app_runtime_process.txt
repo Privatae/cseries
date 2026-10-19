@@ -1,0 +1,2 @@
+# 2026-10-05 (connector batch review): a runtime pod's memory LIMIT is baseline_memory_mi and its REQUEST is the operator's (manifest.APP_POD_REQUEST_MI: helper 64, process 128); Kubernetes refuses a pod whose request is above its limit, so a manifest under it is refused at load (Slack and Discord had declared 80), and every first-party app's manifest loads.
+test_app_runtime_process.py

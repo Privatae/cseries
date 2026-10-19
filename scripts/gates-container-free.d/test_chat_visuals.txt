@@ -1,0 +1,8 @@
+# Visuals and artifact cards in the BUILT Circles and Workbench apps, driven in headless
+# Chromium over a loopback mock kernel (fastapi + uvicorn) and a loopback probe,
+# both on free ports: the own Host's visual runs sealed at an opaque origin,
+# the mutant-policy control, fail closed, peers shown as code, the streaming
+# placeholder, Save/Download, and both apps boot (check B names any boot read
+# the mock answers with {}). No pod, no DB, no network. Measured:
+# 34 s; six copies at once beside six of test_sandbox_csp.py all passed.
+test_chat_visuals.py

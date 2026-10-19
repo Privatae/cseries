@@ -1,0 +1,148 @@
+id: oracle
+name: Memory
+provenance: native
+description: The bitemporal record of what your synaptive remembers about you — when each entry started, and what it replaced.
+icon: icon.png
+icon_small: icon-64.png
+entrypoint: index.html
+system: true
+# 4.0.0 (2026-05-31): complete redesign ("The Ledger") for today's bitemporal
+# memory system — records-first view over the live /api/brain/memories +
+# /context + /embed endpoints (the old 3.x app used retired /context/embed +
+# /episodes shapes). Three-column shell (rail lenses / facets / ledger /
+# inspector), as-of time-travel + correction-lineage. Designed via the
+# redesign-memory-app workflow, Playwright-verified.
+# 4.1.0 (2026-06-15): Threads lens — source-driven threading. New rail lens
+# lists memory grouped by source_context {kind,ref} (app / project / peer host)
+# over /api/brain/threads; drilling in shows the thread's turns via
+# /api/brain/chat?sctx_kind=&sctx_ref=. Each surface keeps its own memory.
+# 5.0.0 (2026-07-15): final pre-production polish + phone layout.
+#   - Vocabulary: "entry", never "belief" (the 2026-06-15 locked decision the
+#     4.x app predated).
+#   - Now + Ledger merged into ONE Ledger lens — they differed only by
+#     include_superseded, which the Canonical/As-of/All picker already owns.
+#     Ledger now excludes raw 'turn' rows by default (they're ~40% of the
+#     store and belong to Threads); pick the turn type pill to see them.
+#   - Threads: the list stays in the sidebar while the selected thread's
+#     turns fill the main pane (was: detail replaced the list, and a grid
+#     auto-placement bug squished it into the 300px track — fixed with
+#     explicit grid placement + a .no-sidebar column collapse).
+#   - Corrections lens actually works: server-side lineage_only filter,
+#     status=all (status=active filtered out every corrected row), chains
+#     walked over the REAL resolution_pointer/corrected_by columns the list
+#     endpoint now returns. Inspector gains Correct (append-a-version via
+#     /manage/memories/{id}/edit) and Mark resolved (goal/unresolved via
+#     /manage/memories/{id}/resolve) — both endpoints existed, no UI did.
+#   - Context lens REMOVED: the Context app (context-manager 2.x) owns
+#     intake end-to-end (upload incl. binary lane, promote, dismiss, search,
+#     coverage). Scopes trimmed accordingly (read:memory dropped;
+#     write:memory stays for /api/memory/consolidate; the codebooks/
+#     personality/tasks scopes were 3.x leftovers no call used).
+#   - Health takes the full pane in a responsive card grid; model badges
+#     moved off inline hex onto cseries-pill tokens.
+#   - Totals are server-counted (stats.superseded / stats.open_goals) —
+#     the old "corrections this week" was a client-side count over the
+#     loaded window and always read 0. Dead Episodes facet removed
+#     (0 rows carry episode_id; the client-side filter could only empty
+#     the ledger).
+#   - Phone: window.mobile: responsive — bottom tab bar, master-detail
+#     threads with Back, facets in a slide-over sheet, inspector as a
+#     bottom sheet, swipeable totals, 44px touch targets, safe-area insets.
+# 5.1.0 (2026-07-15): conversations within threads (a chat that goes
+#   dormant starts a new conversation). A thread now splits into conversation episodes
+#   by a 30-min dormancy gap — derived server-side at READ time
+#   (/api/brain/threads/episodes, LAG window over created_at; nothing is
+#   stamped on rows, so the threshold can move without a backfill and
+#   source-driven threading + recall scoping stay untouched). Live-data
+#   check: a 342-turn circles monolith → 45 conversations; 30 vs 60
+#   min thresholds differ by only 9 boundaries, so the band is stable.
+#   Thread → conversation cards (date, first-message preview, turn count) →
+#   that conversation's turns via /brain/chat since/until; single-
+#   conversation threads skip the extra layer. Inspector provenance
+#   relabeled "request:" — source_session is a per-request trace uuid in
+#   the sessionless architecture, not a conversation id.
+# 5.2.0 (2026-07-19): Health embed actions go ADD-ONLY (fill button only for
+#   rows a fill can reach; same-dim-rival gaps say "needs a host re-embed" —
+#   never-migrate-vectors doctrine) via the new POST /api/brain/embed/jobs.
+#   Timeline rework (blocks were in incoherent order): Threads
+#   conversations and turns render as day-grouped timelines with exact
+#   clock times and a local filter box at every level; Corrections chains
+#   are sorted by most recent revision and carry the three real moments —
+#   Decided (created_at), Superseded (t_valid_until), Corrected (the
+#   replacement's created_at) — each with date AND time, plus a filter.
+#   Consolidate card renamed "Teach the Host an entry" with plain-language
+#   mechanics and the real consolidate_new result contract (action,
+#   memory_id, superseded_id, rationale, candidates) rendered.
+# 5.3.0 (2026-07-23): search subtitle carries retrieval-arms honesty from
+# /memory/semantic's arms field (meaning+words / WORDS-ONLY-degraded /
+# keyword fallback) — memory production polish P4.
+# 5.3.1 (2026-08-25): prompt_behavior never mentioned the app's headline
+# capability — the Canonical/As-of/All temporal picker (index.html:50-55,
+# app.js:135, 474-485, 706-707 -> the as_of query on
+# server/routes/brain.py:801-805), which shows memory as it stood on a chosen
+# date. Manifest-only change.
+# 5.4.0 (2026-08-28): the Health lens answers "is memory still FORMING?", not
+# just "what is in the store". Every other card here describes CONTENTS, and
+# contents stay plausible while the pipeline is dead — on 2026-08-04 fact
+# derivation died and nothing on this lens changed for 16 days. New card at the
+# top reads `formation` from /api/brain/memories/stats: last successful
+# consolidation pass, what is queued, and — when a pass has failed — the reason
+# in its own words. Staleness is computed SERVER-side from the newest successful
+# pass rather than self-reported, because a worker that died cannot report that
+# it died. A backend with no pass ledger renders "can't tell yet", deliberately
+# never a reassuring green.
+# 5.5.0 (2026-09-30): memory forms in the Host's own turn (close_turn); the
+# formation card says so while the background pass is off. The "Teach the
+# Host an entry" card is gone (every memory op is a tool call in the
+# Host's turn, no second model deciding), and with it write:memory, which
+# only that card's POST /api/memory/consolidate used.
+# 5.5.1 (2026-10-01): a memory's consolidation pointer (its metadata, which
+# the Host writes) is escaped where it is shown; it went into data-id="…"
+# raw. App-only change.
+# 5.6.0 (2026-10-18): the Data lens — what the Host keeps in its own database:
+#   every table, view and function with its purpose, a table's rows read-only,
+#   and the snapshots with Restore. Reads through /api/world on the Host's own
+#   database role; adds use:world.
+# 5.6.1 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
+version: "5.6.1"
+# Environment-catalog facts (host-facing, code-true). Source for the L1
+# topology block + describe_app — NOT a surface_role body (this is a control
+# panel, not a conversational surface): what_it_is/user_path only.
+prompt_behavior:
+  what_it_is: |
+    Memory is the user's window into what their host remembers about them —
+    the ledger of entries, the correction history (what was revised and what
+    replaced it), memory grouped by where it happened, and the health of the
+    memory index. The user can correct, resolve, archive, or delete entries
+    here; intake and promotion live in the Context app.
+
+    It can also go back in time. The Temporal state picker at the top of the
+    rail has three settings: Canonical shows what the host believes now, All
+    shows every version including the superseded ones, and As-of takes a
+    date and shows memory exactly as it stood on that day — what the host
+    believed then, before any later correction. So "what did you think about
+    this back in June" is a real question with a real answer here, and a
+    superseded entry is never deleted, only replaced.
+  user_path: "the Memory app, in the dock"
+
+
+window:
+  title: Memory
+  width: 1280
+  height: 840
+  resizable: true
+  min_width: 1000
+  min_height: 640
+  # Phone mode: render native full-width and reflow (rail -> bottom tabs,
+  # threads -> master-detail, inspector -> bottom sheet) instead of the
+  # shell's scale shim.
+  mobile: responsive
+
+permissions:
+  - read:brain_memory
+  - write:brain_memory
+  # The Data lens: /api/world describe, rows, history and restore.
+  - use:world
+  # Embedding-model readiness panel: POST /api/embedding/switch switches the
+  # active embedding model + queues a re-embed — a model-routing write.
+  - write:inference_routing

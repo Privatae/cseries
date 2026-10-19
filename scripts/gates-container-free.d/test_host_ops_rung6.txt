@@ -1,0 +1,6 @@
+# 2026-09-24 (host-authored ops, rung 6 — the pod half of bastion 0.35.0): an op the
+# Host wrote runs on a machine only under terms this Host signed, after a dry run in
+# the machine's sandbox, with the person's approval bound to the change list it showed
+# (nac_ops); the op module target; the door in mgmt_run. Stub pool + stub relay + a
+# fixed signing key, the real code; no DB, no pod.
+test_host_ops_rung6.py

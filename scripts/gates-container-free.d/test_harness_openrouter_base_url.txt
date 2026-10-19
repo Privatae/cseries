@@ -1,0 +1,2 @@
+# A provider_json harness's bare-key OpenRouter default (system-apps/_harness_runtime/harness_core.py HarnessSpec.bare_key_base_url) follows OPENROUTER_BASE_URL with the kernel's default, never a hardcoded https://openrouter.ai/api/v1; kimi keeps its own vendor base. Real _read_creds on a temp creds file, one fresh interpreter per setting; no DB, no pod, no network.
+test_harness_openrouter_base_url.py

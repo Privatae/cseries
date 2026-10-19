@@ -1,0 +1,19 @@
+-- v119 (2026-08-29): the bastion's ENFORCING report (NAC agent).
+--
+-- Until now the bastion heartbeat self-reported device_health as the literal
+-- string "healthy" (the gateway's agents.go), so the host's NAC posture engine
+-- had nothing real to decide on. From bastion 0.13.5 every heartbeat carries
+-- what the box is enforcing right now:
+--   {"grants": [{"store_id", "signature", "freeagent", "serving"}, ...],
+--    "tunnel_allowed_ips": [...], "mgmt_ops": [...], "binary_sha256": "...",
+--    "reconcile": {"stale": [...], "missing": [...]}}
+-- The host compares it to what it GRANTED (nac_dcn.grant_drift); any
+-- difference is posture 'degraded' with the reason in nac_endpoints.last_decision,
+-- and the existing PDP quarantines on it. This column keeps the last report so
+-- the Network app can show expected-vs-enforced without a probe.
+--
+-- NULL = a bastion that predates the report (posture falls back to the
+-- self-report, exactly as before). The runtime ensures the column defensively
+-- (topology.ensure_table ALTER … ADD COLUMN IF NOT EXISTS); this is the
+-- authoritative record.
+ALTER TABLE network_bastion_heartbeat ADD COLUMN IF NOT EXISTS enforcing JSONB;

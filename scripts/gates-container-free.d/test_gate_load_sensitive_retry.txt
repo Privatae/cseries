@@ -1,0 +1,2 @@
+# 2026-10-07: a gate on pre_merge_gates.sh's LOAD_SENSITIVE list that fails in the parallel pool runs once more alone after the pool, and both its line and the PASSED banner say so; a listed gate that fails alone too still fails the run, and an unlisted gate is never retried. Drives the real script on a fake repo of tiny gates. No containers.
+test_gate_load_sensitive_retry.py

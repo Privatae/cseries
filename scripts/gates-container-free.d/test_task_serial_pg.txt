@@ -1,0 +1,4 @@
+# A task's serial run against a
+# real kernel schema: v209, run/stop/report, the loop's briefs, progress by the
+# record's mark, the stall stop, the finish, skipped turns, resume after restart.
+test_task_serial_pg.py

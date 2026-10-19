@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#11181F"/>
+      <stop offset="1" stop-color="#0A0E13"/>
+    </linearGradient>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#619E81"/>
+      <stop offset="1" stop-color="#4F7F6A"/>
+    </linearGradient>
+    <linearGradient id="plateBright" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#A9EDCD"/>
+      <stop offset="1" stop-color="#86D9B2"/>
+    </linearGradient>
+    <filter id="glow" x="-40%" y="-120%" width="180%" height="340%">
+      <feGaussianBlur stdDeviation="18"/>
+    </filter>
+  </defs>
+  <rect width="512" height="512" rx="116" fill="url(#tile)"/>
+  <rect x="1.5" y="1.5" width="509" height="509" rx="114.5" fill="none" stroke="#9BE3C2" stroke-opacity="0.10" stroke-width="3"/>
+  <rect x="106" y="218" width="300" height="76" rx="38" fill="#9BE3C2" opacity="0.35" filter="url(#glow)"/>
+  <rect x="106" y="86" width="300" height="76" rx="38" fill="url(#plate)"/>
+  <rect x="106" y="218" width="300" height="76" rx="38" fill="url(#plateBright)"/>
+  <rect x="106" y="350" width="300" height="76" rx="38" fill="url(#plate)"/>
+</svg>

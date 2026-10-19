@@ -1,0 +1,32 @@
+
+# The Host kernel must not create or alter its own schema
+# at RUNTIME. 163 PostgreSQL statements across 26 files today — 144 in server/,
+# 19 in brain/ — each one a reason the kernel's database role has to keep DDL
+# rights forever, which is precisely what blocks the role split, and a reason
+# eight hosts disagree about the shape of nac_agent_activity. It scans server/
+# AND brain/: brain/mastercode/context_backends.py and dcn.py are both reached
+# from server/routes/context_manager.py, so that DDL runs on a REQUEST path, and
+# a gate scoped to server/ could let the allowlist reach empty and report the
+# work done while a Context Manager request still issues CREATE TABLE as the
+# entity role. ROOTS defends itself: DDL in any OTHER top-level directory fails
+# the gate unless that directory is named in NON_RUNTIME_DIRS with a reason, so
+# the roots list cannot go stale the way it already did once. Two NAMED skips,
+# re-validated every run so neither can rot into a blanket exemption: a SQLite
+# module (a pod-local file has no database role to downgrade) must have EVERY
+# DDL literal reach a sqlite execute AND reach nothing else execute-shaped —
+# necessary-only would bless the ordinary dual-write migration, where the SQLite
+# path is kept and a Postgres mirror added beside it — with receivers resolved
+# as names and attributes (self.db, self.pool). A test fixture's DDL must still
+# be executed by nothing at all. The gate comes
+# BEFORE the migrations because the set grows while they wait:
+# network_machine_offers was added the day after the list was drawn up.
+# AST walk; docstring nodes excluded and SQL comments stripped out of
+# the literal first (applications/registry.py:70 is a `--` comment INSIDE real
+# SQL, which a docstring filter does not catch), and f-strings flattened so an
+# interpolated object name is caught — `ALTER TABLE {t}` is the natural dynamic
+# shape and memory_engine.py:137 is the live instance. The
+# not-yet-migrated files live in scripts/runtime-ddl-allowlist.txt, which only
+# shrinks — and the gate fails on an entry that no longer has DDL, so it cannot
+# rot open once a band is done. Reads files, runs nothing. No DB, no container,
+# no network.
+test_no_runtime_ddl.py

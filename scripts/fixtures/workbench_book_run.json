@@ -1,0 +1,524 @@
+{
+  "about": "A recorded compare for scripts/test_workbench_book.py (slice 4, the bench in the book). Frame shapes are the harness runtime's (system-apps/_harness_runtime/events.py, {ts, seq, kind, payload}): Claude Code's are taken from a real build's feed (status/thinking with 'thinking block (text not returned by the model)' and 'extended thinking — N heartbeats', Bash tool_call with command + description, a tool_result with tool '' and 'Exit code 1' on failure, file_edit {path, tool: Write} followed by its result, prose as text, the terminal status with ok/exit_code/elapsed_seconds/model); Codex's are events.py's codex mapping (thread.started, a kernel waiting frame while queued for memory, shell tool_call/tool_result with id and exit_code, apply_patch and file_edit with change, a turn.completed usage frame). Times are seconds after the brief was sent; the test stamps ts on its own server clock. The content is made up.",
+  "session": {
+    "session_id": "cmp-7f3a91c2",
+    "prompt": "Make checkout usable sooner on phones.\nEvery checkout test still passes.\nLeave prices and the payment provider alone.",
+    "harnesses": [
+      "claude-code",
+      "codex"
+    ]
+  },
+  "engines": {
+    "claude-code": {
+      "model": "claude-opus-5-5",
+      "frames": [
+        [
+          1.4,
+          "status",
+          {
+            "state": "thinking",
+            "detail": "thinking block (text not returned by the model)"
+          }
+        ],
+        [
+          2.6,
+          "tool_call",
+          {
+            "tool": "Bash",
+            "args": {
+              "command": "ls -la && find . -maxdepth 2 -name '*.js' | head -50",
+              "description": "List project files"
+            }
+          }
+        ],
+        [
+          3.1,
+          "tool_result",
+          {
+            "tool": "",
+            "status": "ok",
+            "result": "total 48\n-rw-r--r-- 1 harness harness 2213 checkout.js\n-rw-r--r-- 1 harness harness  918 pay.css"
+          }
+        ],
+        [
+          4.0,
+          "status",
+          {
+            "state": "thinking",
+            "detail": "extended thinking — 1 heartbeats"
+          }
+        ],
+        [
+          28.9,
+          "status",
+          {
+            "state": "thinking",
+            "detail": "extended thinking — 21 heartbeats"
+          }
+        ],
+        [
+          41.2,
+          "status",
+          {
+            "state": "thinking",
+            "detail": "thinking block (text not returned by the model)"
+          }
+        ],
+        [
+          42.0,
+          "tool_call",
+          {
+            "tool": "Read",
+            "args": {
+              "file_path": "/var/lib/cseries/projects/storefront/checkout.js"
+            }
+          }
+        ],
+        [
+          42.3,
+          "tool_result",
+          {
+            "tool": "",
+            "status": "ok",
+            "result": "1\timport { mountPayment } from './pay.js';\n2\tmountPayment(document.querySelector('#pay'));"
+          }
+        ],
+        [
+          55.0,
+          "tool_call",
+          {
+            "tool": "Bash",
+            "args": {
+              "command": "node scripts/measure.js --profile mid-range-phone",
+              "description": "Measure checkout on a mid-range phone"
+            }
+          }
+        ],
+        [
+          71.5,
+          "tool_result",
+          {
+            "tool": "",
+            "status": "ok",
+            "result": "usable after 3.8 s (payment form 2.9 s)"
+          }
+        ],
+        [
+          73.0,
+          "text",
+          {
+            "text": "Measured first. The payment form loads before anything else:\n\n| Profile | Usable | Payment form |\n|---|---:|---:|\n| mid-range phone | 3.8 s | 2.9 s |\n| laptop | 1.2 s | 0.7 s |\n\nI will load it when the person reaches it."
+          }
+        ],
+        [
+          74.2,
+          "status",
+          {
+            "state": "thinking",
+            "detail": "thinking block (text not returned by the model)"
+          }
+        ],
+        [
+          120.4,
+          "file_edit",
+          {
+            "path": "checkout.js",
+            "tool": "Write"
+          }
+        ],
+        [
+          120.5,
+          "tool_result",
+          {
+            "tool": "",
+            "status": "ok",
+            "result": "File created successfully at: checkout.js"
+          }
+        ],
+        [
+          140.8,
+          "file_edit",
+          {
+            "path": "pay-later.js",
+            "tool": "Write"
+          }
+        ],
+        [
+          140.9,
+          "tool_result",
+          {
+            "tool": "",
+            "status": "ok",
+            "result": "File created successfully at: pay-later.js"
+          }
+        ],
+        [
+          160.0,
+          "tool_call",
+          {
+            "tool": "Bash",
+            "args": {
+              "command": "npm test -- checkout",
+              "description": "Run the checkout tests"
+            }
+          }
+        ],
+        [
+          181.4,
+          "tool_result",
+          {
+            "tool": "",
+            "status": "error",
+            "result": "Exit code 1\n1 failing: pays with a saved card"
+          }
+        ],
+        [
+          183.0,
+          "status",
+          {
+            "state": "thinking",
+            "detail": "extended thinking — 1 heartbeats"
+          }
+        ],
+        [
+          206.6,
+          "status",
+          {
+            "state": "thinking",
+            "detail": "thinking block (text not returned by the model)"
+          }
+        ],
+        [
+          230.2,
+          "file_edit",
+          {
+            "path": "checkout.js",
+            "tool": "Write"
+          }
+        ],
+        [
+          230.3,
+          "tool_result",
+          {
+            "tool": "",
+            "status": "ok",
+            "result": "The file checkout.js has been updated successfully."
+          }
+        ],
+        [
+          250.0,
+          "tool_call",
+          {
+            "tool": "Bash",
+            "args": {
+              "command": "npm test -- checkout",
+              "description": "Run the checkout tests again"
+            }
+          }
+        ],
+        [
+          268.7,
+          "tool_result",
+          {
+            "tool": "",
+            "status": "ok",
+            "result": "20 passing"
+          }
+        ],
+        [
+          300.0,
+          "tool_call",
+          {
+            "tool": "Bash",
+            "args": {
+              "command": "node scripts/measure.js --profile mid-range-phone",
+              "description": "Measure again"
+            }
+          }
+        ],
+        [
+          318.2,
+          "tool_result",
+          {
+            "tool": "",
+            "status": "ok",
+            "result": "usable after 1.1 s"
+          }
+        ],
+        [
+          330.0,
+          "text",
+          {
+            "text": "Checkout is usable after **1.1 s** on a mid-range phone, down from 3.8 s. The payment form now loads when the person reaches it; every checkout test passes."
+          }
+        ],
+        [
+          372.0,
+          "status",
+          {
+            "state": "complete",
+            "ok": true,
+            "exit_code": 0,
+            "elapsed_seconds": 370.6,
+            "model": "claude-opus-5-5",
+            "stderr": ""
+          }
+        ]
+      ],
+      "patch": "diff --git a/checkout.js b/checkout.js\nindex 3f1c2aa..8b2d0e1 100644\n--- a/checkout.js\n+++ b/checkout.js\n@@ -1,2 +1,9 @@\n-import { mountPayment } from './pay.js';\n-mountPayment(document.querySelector('#pay'));\n+const slot = document.querySelector('#pay');\n+const load = () => import('./pay-later.js').then((m) => m.mount(slot));\n+new IntersectionObserver((seen, io) => {\n+  if (seen.some((e) => e.isIntersecting)) {\n+    io.disconnect();\n+    load();\n+  }\n+}).observe(slot);\ndiff --git a/checkout.test.js b/checkout.test.js\nnew file mode 100644\nindex 0000000..5a1e7c0\n--- /dev/null\n+++ b/checkout.test.js\n@@ -0,0 +1,52 @@\n+import { open } from './harness.js';\n+\n+test('pays with a saved card', async () => {\n+  const page = await open('/checkout', { profile: 'mid-range-phone' });\n+  expect(await page.usableAfter()).toBeLessThan(1.5);\n+});\n+\n+test('pays with a new card', async () => {\n+  const page = await open('/checkout', { profile: 'mid-range-phone' });\n+  expect(await page.usableAfter()).toBeLessThan(1.5);\n+});\n+\n+test('shows the form when reached', async () => {\n+  const page = await open('/checkout', { profile: 'mid-range-phone' });\n+  expect(await page.usableAfter()).toBeLessThan(1.5);\n+});\n+\n+test('keeps the price', async () => {\n+  const page = await open('/checkout', { profile: 'laptop' });\n+  expect(await page.usableAfter()).toBeLessThan(1.0);\n+});\n+\n+test('keeps the provider', async () => {\n+  const page = await open('/checkout', { profile: 'laptop' });\n+  expect(await page.usableAfter()).toBeLessThan(1.0);\n+});\n+\n+test('works without scripts first', async () => {\n+  const page = await open('/checkout', { profile: 'mid-range-phone' });\n+  expect(await page.usableAfter()).toBeLessThan(2.0);\n+});\n+\n+test('loads once', async () => {\n+  const page = await open('/checkout', { profile: 'laptop' });\n+  expect(await page.usableAfter()).toBeLessThan(1.0);\n+});\n+\n+test('survives a slow network', async () => {\n+  const page = await open('/checkout', { profile: 'slow-3g' });\n+  expect(await page.usableAfter()).toBeLessThan(4.0);\n+});\n+\n+test('announces the form to screen readers', async () => {\n+  const page = await open('/checkout', { profile: 'laptop' });\n+  expect(await page.usableAfter()).toBeLessThan(1.0);\n+});\n+\n+test('keeps the tab order', async () => {\n+  const page = await open('/checkout', { profile: 'laptop' });\n+  expect(await page.usableAfter()).toBeLessThan(1.0);\n+});\n+\ndiff --git a/pay-later.js b/pay-later.js\nnew file mode 100644\nindex 0000000..41c9d2e\n--- /dev/null\n+++ b/pay-later.js\n@@ -0,0 +1,4 @@\n+import { mountPayment } from './pay.js';\n+export function mount(slot) {\n+  mountPayment(slot);\n+}\ndiff --git a/pay.css b/pay.css\nindex 77aa0c1..90bb4d2 100644\n--- a/pay.css\n+++ b/pay.css\n@@ -3,3 +3,3 @@\n-#pay { min-height: 0; }\n+#pay { min-height: 320px; }\n"
+    },
+    "codex": {
+      "model": "gpt-5.3-codex",
+      "frames": [
+        [
+          0.2,
+          "status",
+          {
+            "state": "waiting",
+            "detail": "Waiting for memory: codex needs 512Mi and this plan has 96Mi free until Claude Code's first steps finish."
+          }
+        ],
+        [
+          38.0,
+          "status",
+          {
+            "state": "thread.started",
+            "detail": "th_0193"
+          }
+        ],
+        [
+          38.1,
+          "status",
+          {
+            "state": "turn.started",
+            "detail": ""
+          }
+        ],
+        [
+          44.5,
+          "thinking",
+          {
+            "text": "Find where the payment form mounts first."
+          }
+        ],
+        [
+          52.0,
+          "tool_call",
+          {
+            "tool": "shell",
+            "args": {
+              "command": "rg -n mountPayment"
+            },
+            "id": "item_3"
+          }
+        ],
+        [
+          52.6,
+          "tool_result",
+          {
+            "tool": "shell",
+            "status": "ok",
+            "result": "checkout.js:1:import { mountPayment } from './pay.js';",
+            "exit_code": 0,
+            "id": "item_3"
+          }
+        ],
+        [
+          61.0,
+          "tool_call",
+          {
+            "tool": "shell",
+            "args": {
+              "command": "sed -n '1,80p' checkout.js"
+            },
+            "id": "item_4"
+          }
+        ],
+        [
+          61.3,
+          "tool_result",
+          {
+            "tool": "shell",
+            "status": "ok",
+            "result": "import { mountPayment } from './pay.js';",
+            "exit_code": 0,
+            "id": "item_4"
+          }
+        ],
+        [
+          64.0,
+          "tool_call",
+          {
+            "tool": "shell",
+            "args": {
+              "command": "node scripts/measure.js --profile mid-range-phone"
+            },
+            "id": "item_5"
+          }
+        ],
+        [
+          80.9,
+          "tool_result",
+          {
+            "tool": "shell",
+            "status": "ok",
+            "result": "usable after 3.8 s",
+            "exit_code": 0,
+            "id": "item_5"
+          }
+        ],
+        [
+          96.0,
+          "text",
+          {
+            "text": "The form blocks first paint. I will defer it behind a placeholder of the same height."
+          }
+        ],
+        [
+          150.0,
+          "tool_call",
+          {
+            "tool": "apply_patch",
+            "args": {
+              "description": "checkout.js, pay.css",
+              "paths": [
+                "checkout.js",
+                "pay.css"
+              ]
+            },
+            "id": "item_7"
+          }
+        ],
+        [
+          150.4,
+          "file_edit",
+          {
+            "path": "checkout.js",
+            "change": "update",
+            "id": "item_7"
+          }
+        ],
+        [
+          150.4,
+          "file_edit",
+          {
+            "path": "pay.css",
+            "change": "update",
+            "id": "item_7"
+          }
+        ],
+        [
+          210.0,
+          "tool_call",
+          {
+            "tool": "shell",
+            "args": {
+              "command": "npm test -- checkout"
+            },
+            "id": "item_9"
+          }
+        ],
+        [
+          236.2,
+          "tool_result",
+          {
+            "tool": "shell",
+            "status": "ok",
+            "result": "20 passing",
+            "exit_code": 0,
+            "id": "item_9"
+          }
+        ],
+        [
+          302.0,
+          "tool_call",
+          {
+            "tool": "shell",
+            "args": {
+              "command": "node scripts/measure.js --profile mid-range-phone"
+            },
+            "id": "item_10"
+          }
+        ],
+        [
+          319.0,
+          "tool_result",
+          {
+            "tool": "shell",
+            "status": "ok",
+            "result": "usable after 1.6 s",
+            "exit_code": 0,
+            "id": "item_10"
+          }
+        ],
+        [
+          340.0,
+          "status",
+          {
+            "state": "thinking",
+            "detail": ""
+          }
+        ],
+        [
+          372.5,
+          "tool_call",
+          {
+            "tool": "shell",
+            "args": {
+              "command": "npm test"
+            },
+            "id": "item_12"
+          }
+        ],
+        [
+          398.0,
+          "tool_result",
+          {
+            "tool": "shell",
+            "status": "ok",
+            "result": "48 passing",
+            "exit_code": 0,
+            "id": "item_12"
+          }
+        ],
+        [
+          404.0,
+          "text",
+          {
+            "text": "Usable after 1.6 s on the same phone profile; all 48 tests pass."
+          }
+        ],
+        [
+          405.0,
+          "status",
+          {
+            "state": "turn.completed",
+            "detail": ""
+          }
+        ],
+        [
+          405.0,
+          "usage",
+          {
+            "input_tokens": 182340,
+            "cached_input_tokens": 141200,
+            "output_tokens": 9120
+          }
+        ],
+        [
+          409.0,
+          "status",
+          {
+            "state": "complete",
+            "ok": true,
+            "exit_code": 0,
+            "elapsed_seconds": 370.8,
+            "model": "gpt-5.3-codex",
+            "stderr": ""
+          }
+        ]
+      ],
+      "patch": "diff --git a/checkout.js b/checkout.js\nindex 3f1c2aa..c4410fe 100644\n--- a/checkout.js\n+++ b/checkout.js\n@@ -1,2 +1,4 @@\n-import { mountPayment } from './pay.js';\n-mountPayment(document.querySelector('#pay'));\n+requestIdleCallback(async () => {\n+  const { mountPayment } = await import('./pay.js');\n+  mountPayment(document.querySelector('#pay'));\n+});\ndiff --git a/pay.css b/pay.css\nindex 77aa0c1..5e1d0a3 100644\n--- a/pay.css\n+++ b/pay.css\n@@ -3,3 +3,3 @@\n-#pay { min-height: 0; }\n+#pay { min-height: 300px; }\n"
+    }
+  }
+}

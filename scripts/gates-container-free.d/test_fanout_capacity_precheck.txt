@@ -1,0 +1,4 @@
+# 2026-09-06: a fan-out learns how many harnesses fit the plan BEFORE any wake
+# (kimi + grok 402'd at wake, one at a time). Fakes the
+# operator's answer for all / some / none; no bridge, no pod, no DB.
+test_fanout_capacity_precheck.py

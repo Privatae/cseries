@@ -1,0 +1,25 @@
+
+# Store audience `circle`, the HOST half. The
+# platform holds nothing for a group circle, so the store's replica of who may
+# fetch a circle app is only ever as good as what the creator's Host sends, and
+# every check here is about that sentence. THE SNAPSHOT CARRIES CURRENT MEMBERS
+# ONLY — roster() and roster(include_removed=True) differ by one keyword, a
+# tally legitimately needs the other one, and picking it here would put a
+# removed member back in the store's replica and hand them the bundle they were
+# removed to stop fetching. posted_epoch IS WHAT THE PLATFORM ACKNOWLEDGED, not
+# what we sent: recording the send would make the next pass see "already
+# posted" and the removal it carried would never arrive. THE EPOCH IS THE
+# TRIGGER, so a change made while the bridge was down is still pending
+# afterwards and an unchanged roster is never re-sent. Plus: only entity ids
+# leave the pod (asserted on the signed terms' exact field set — no names, no
+# verify keys, no roles); the terms bind app AND group, so a signature lifted
+# from one app cannot apply to another; signing through the production path
+# with every field mutated; a publisher may only gate an app on a roster it
+# OWNS; and the publish_app schema and its executor agreeing on the three
+# audience values, because a schema the executor rejects is a tool the model
+# can call and the code always refuses.
+# Verified red by mutation: switching the snapshot to
+# include_removed=True fails 2 checks; recording our own epoch instead of the
+# platform's fails the rejected-snapshot check.
+# Recording fake pool, real functions; no DB, no container, no network.
+test_appstore_circle_audience.py

@@ -1,0 +1,75 @@
+key: gmail
+display_name: Gmail
+categories: [email, google]
+
+# These populate portal_access signal metadata so the rule engine can
+# classify activity deterministically (reading_gmail, etc.).
+connection_kind: email
+connection_provider: gmail
+
+auth:
+  mode: oauth2
+  family: google                 # which OAuth client family this uses
+  authorize_endpoint: https://accounts.google.com/o/oauth2/v2/auth
+  token_endpoint: https://oauth2.googleapis.com/token
+  revoke_endpoint: https://oauth2.googleapis.com/revoke
+  scopes:
+    # gmail.modify, not gmail.readonly: read plus send, drafts, labels and
+    # trash — everything a mail client does except permanent delete, which
+    # this deliberately does NOT request (there is no undo for it). readonly
+    # could sync an inbox and nothing else, so an app wanting to answer mail
+    # had to go around this framework entirely.
+    #
+    # Both are RESTRICTED scopes in Google's tiering, so either way a client
+    # used beyond its own developer needs verification and a CASA assessment,
+    # renewed annually. Widening readonly -> modify does not cross a new line;
+    # it asks for the writes the read tier already implied a client would want.
+    - https://www.googleapis.com/auth/gmail.modify
+    - https://www.googleapis.com/auth/userinfo.email
+  # Google-specific: offline gets us a refresh_token; consent forces
+  # a fresh grant so we reliably get one even on repeat installs.
+  extra_authorize:
+    access_type: offline
+    prompt: consent
+    include_granted_scopes: "true"
+
+proxy:
+  base_url: https://gmail.googleapis.com/gmail/v1
+  rate_limit:
+    requests_per_minute: 240    # Google quota is generous; stay well under
+    concurrent: 4
+
+resources:
+  - name: message
+    canonical_model: Email
+    sync:
+      strategy: cursor          # Gmail historyId-based incremental sync
+      cursor_field: historyId
+      initial: history.list
+      endpoint: users.messages
+      page_size: 50
+      poll_seconds: 45
+    signal:
+      operation_read: read
+      source_display: Gmail
+      content_template: "read {{record_count}} new Gmail {{pluralize 'message' record_count}}"
+
+  - name: thread
+    canonical_model: EmailThread
+    sync:
+      strategy: cursor
+      cursor_field: historyId
+      endpoint: users.threads
+
+webhooks:
+  # Gmail Push via Pub/Sub — not wired in MVP. Polling history API is fine
+  # until we have the CEIGAS-FW public edge terminating /api/integrations/
+  # webhooks. When enabled, a single watch() call per user covers all
+  # resources.
+  push:
+    transport: google_pubsub
+    enabled: false
+
+reauth_triggers:
+  - invalid_grant
+  - unauthorized_client

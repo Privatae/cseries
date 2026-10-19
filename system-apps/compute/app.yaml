@@ -1,0 +1,88 @@
+id: compute
+name: Compute
+description: Full cost-and-usage analytics for your Host — what each project cost, every Privatae billable with its meter and rate, harness and model economics (cost per accepted run), per-run drill-down, and your estimated inference spend with cache efficiency. Read-only.
+icon: icon.png
+icon_small: icon-64.png
+entrypoint: index.html
+# 0.2.5 (2026-10-18): prompt_behavior is one paragraph saying what the app is
+#   and what lives in it; do_when_active is gone from the manifest contract,
+#   and its how-to lines live in skills and tool descriptions the Host reads on
+#   demand. Manifest-only; bundle repacked.
+version: "0.2.5"
+# 0.2.4 (2026-10-07): the vendor estimate says how many runs it covers. It sums
+# only the runs that reported a vendor cost, so with fewer than all of them it
+# is a floor. The project and harness cells show "N/M" with a tooltip, and the
+# headline card says "on N of M runs" (server: vendor_est_runs). The daily
+# vendor + inference chart says how many runs its vendor share covers.
+# 0.2.3 (2026-09-15): the ESTIMATE lane becomes cache-aware, and says so. Two
+# things changed under this app and only one of them is visible here. In the
+# platform: cached input tokens are now priced at the provider's own published
+# cache rate instead of the full input rate (server/routes/inference.py
+# estimate_call_cost_detail; cache reads are commonly a tenth of input, and hit
+# rates run ~84%), so every "est. cost" for a cache-hitting model DROPS while
+# no token count moves. In this app: the by-module and by-model tables gain
+# "from cache" and "cache writes" columns, read from inference_cost_log's own
+# cache_read_tokens / cache_write_tokens (migrations/v148) — the same
+# SUBSET-of-tokens-in rule as 0.2.2 below, applied to the estimate lane, so a
+# reader can see why a big-context module is cheap instead of inferring it from
+# the chat lane. BOTH are shown because they move the bill in OPPOSITE
+# directions: a cache read costs a fraction of input, a cache WRITE costs more
+# than input (typically 1.25x). A lane that keeps re-writing a cache it never
+# reads is a real cost and was otherwise invisible. The two lanes remain
+# separate sources and are still never summed.
+# 0.2.2 (2026-09-04): chat-lane cache accounting corrected. `tokens_in` from
+# the context ledger is the TRUE TOTAL context and `tokens_cached` is a SUBSET
+# of it (session.py:3567 fills it from the lane-normalized input_total_tokens),
+# so summing the two double-counted every "context in" total and halved every
+# cache hit rate. Measured on one Host (77 turns / 235 calls): 45.6%
+# reported against a true 83.9%. Four sites: the Projects table total, the
+# Inference "chat turns by model" total, the headline hit rate, and the daily
+# cached-vs-uncached chart (whose "uncached" band was plotting the total, so
+# the stack was double height). Both chat panes already had this right.
+# 0.2.0 (2026-08-22): full analytics rebuild — the two-tab viewer (Spend +
+# Harnesses) becomes a five-view cost-and-usage surface: Projects (what has
+# this project cost — billed fee, vendor estimate, tokens, compute, chat
+# context + cache hit rate), Billables (every Privatae billable and meter,
+# charged vs visibility-only vs honestly not-metered, incl. the unbilled-run
+# defect count), Harnesses (per harness and per harness+model: ok/accepted,
+# p50/p95 wall-clock, cost per accepted run, token/cost-method provenance),
+# Runs (project → harness → run drill-down with transcript tail + billing
+# ref), Inference (ESTIMATE lane — by module, by model, chat turns with
+# cache hit rate). Three money lanes labeled and kept separate everywhere:
+# billed (real, from the accepted platform charge) / estimate (vendor bill is
+# never visible; never billed) / usage (metered, not money). New windowed
+# endpoints in server/routes/compute.py (/projects /billables /harnesses
+# /runs /runs/{id} /inference /timeseries); legacy /summary /trends /sessions
+# /ranking unchanged. Fixes the budget.js data.spend-totals crash (totals
+# never rendered) by replacing the whole frontend; every panel now has real
+# loading/error/empty states (401 vs 403 vs 503 rendered distinctly, never a
+# permanent "Loading…"). No localStorage; per-window token via the App SDK.
+# 0.1.0 (2026-07-04): merged Budget (inference spend) + ComputeView
+# (harness comparison) into one Compute app with two tabs.
+
+window:
+  title: Compute
+  width: 1180
+  height: 820
+  resizable: true
+  min_width: 760
+  min_height: 540
+
+permissions:
+  - read:inference_log
+
+prompt_behavior:
+  what_it_is: >-
+    The Compute app is the user's cost-and-usage analytics surface: what a project
+    cost (Privatae billables, resource usage, estimated vendor spend), what each
+    Privatae billable meters and charges, which harness and model earns its cost
+    (cost per accepted run; acceptance is the user's own ship decision), what
+    happened in a single run, and where inference tokens go, cache hit rate
+    included. Three money lanes are kept separate and labelled: BILLED is what the
+    platform charged; ESTIMATE is vendor and inference spend the platform never sees
+    a bill for; USAGE is metered resources, some charged, some visibility-only. An
+    'unbilled' marker is a run that metered compute whose charge never reached the
+    platform ledger, which is a defect. Storage and egress rows can read 'not
+    metered yet'. Read-only: routing is in the Orchestrator, harness selection in
+    the Workbench.
+  user_path: "the Compute app, in the dock"

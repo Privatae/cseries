@@ -1,0 +1,2 @@
+# 2026-10-13 (harness placement plan, slice 1): the harness's final status frame and /run body carry peak_mem_bytes (cgroup v2 memory.peak), peak_anon_bytes (highest memory.stat anon + shmem, sampled through the run, so page cache is left out), cpu_s (cpu.stat usage_usec delta), wall_s and measure_scope; an unreadable value is null, never 0; no other frame and no pre-flight refusal carries them. Driven through the shared runtime and the claude-code harness against a fake cgroup directory. No pod, no network, no vendor login.
+test_harness_run_measure.py

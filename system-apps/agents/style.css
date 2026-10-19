@@ -1,0 +1,181 @@
+/* Bench — terminal grammar, product polish. Dark by default: this is a
+   transcript surface and long reading wants low luminance. */
+:root{
+  --bg:#0c0e12; --panel:#12151b; --panel-2:#161a22; --line:#232936;
+  --fg:#dde3ee; --muted:#8b94a7; --dim:#5d6678;
+  --accent:#6aa3ff; --ok:#49c17a; --warn:#e0b341; --bad:#e3564d;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--fg);
+  font:13px/1.5 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;
+  display:flex;flex-direction:column;overflow:hidden}
+
+#top{display:flex;align-items:center;gap:14px;padding:10px 14px;
+  border-bottom:1px solid var(--line);background:var(--panel);flex:0 0 auto}
+.brand{font-weight:650;letter-spacing:.2px;display:flex;align-items:center;gap:8px}
+.glyph{color:var(--accent)}
+.summary{color:var(--muted);font-variant-numeric:tabular-nums}
+.actions{margin-left:auto;display:flex;gap:8px}
+button.ghost{background:var(--panel-2);color:var(--fg);border:1px solid var(--line);
+  border-radius:7px;padding:5px 11px;cursor:pointer;font-size:12px}
+button.ghost:hover{border-color:var(--accent);color:#fff}
+
+.banner{display:none;padding:8px 14px;background:#3a1f1e;color:#ffd9d6;
+  border-bottom:1px solid #5c2c29;font-size:12px}
+.banner.on{display:block}
+
+.sessions{display:flex;gap:6px;overflow-x:auto;padding:8px 12px;
+  border-bottom:1px solid var(--line);flex:0 0 auto;scrollbar-width:thin}
+.sess{display:flex;align-items:center;gap:7px;background:transparent;color:var(--muted);
+  border:1px solid transparent;border-radius:7px;padding:5px 10px;cursor:pointer;
+  white-space:nowrap;font-size:12px}
+.sess:hover{background:var(--panel-2);color:var(--fg)}
+.sess.on{background:var(--panel-2);color:var(--fg);border-color:var(--line)}
+
+.tabs{display:flex;gap:4px;overflow-x:auto;padding:6px 12px;flex:0 0 auto;
+  border-bottom:1px solid var(--line);scrollbar-width:thin}
+.tab{display:flex;align-items:center;gap:7px;background:transparent;color:var(--muted);
+  border:1px solid transparent;border-bottom:2px solid transparent;border-radius:6px 6px 0 0;
+  padding:5px 11px;cursor:pointer;white-space:nowrap;font-size:12px}
+.tab:hover{color:var(--fg)}
+.tab.on{color:var(--fg);border-bottom-color:var(--accent);background:var(--panel-2)}
+.tab .nm{font-family:var(--mono)}
+.badge{background:var(--accent);color:#08101f;border-radius:9px;padding:0 6px;
+  font-size:10px;font-weight:700;font-variant-numeric:tabular-nums}
+
+.dot{width:8px;height:8px;border-radius:50%;background:var(--dim);flex:0 0 auto}
+.dot.running{background:var(--accent);box-shadow:0 0 0 3px rgba(106,163,255,.15);
+  animation:pulse 1.6s ease-in-out infinite}
+.dot.done,.dot.complete{background:var(--ok)}
+.dot.failed,.dot.timeout{background:var(--bad)}
+.dot.queued{background:var(--dim)}
+@keyframes pulse{50%{opacity:.45}}
+
+.board{flex:1 1 auto;overflow:auto;padding:12px;display:grid;gap:12px;min-height:0}
+.board.grid{grid-template-columns:repeat(auto-fit,minmax(420px,1fr));
+  grid-auto-rows:minmax(240px,1fr)}
+.board.single{grid-template-columns:1fr}
+.empty{color:var(--dim);padding:40px;text-align:center;grid-column:1/-1}
+
+.pane{display:flex;flex-direction:column;background:var(--panel);
+  border:1px solid var(--line);border-radius:10px;overflow:hidden;min-height:0}
+.phead{display:flex;align-items:center;gap:9px;padding:8px 11px;
+  background:var(--panel-2);border-bottom:1px solid var(--line);flex:0 0 auto}
+.phead.clickable{cursor:pointer}
+.phead.clickable:hover{background:#1b202a}
+.pname{font-family:var(--mono);font-size:12.5px}
+.meta{color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
+.pright{margin-left:auto;display:flex;gap:10px}
+
+.ptrans{flex:1 1 auto;overflow:auto;padding:10px 12px;font-family:var(--mono);
+  font-size:12px;line-height:1.55;min-height:0;scrollbar-width:thin}
+.fr{margin:0 0 6px}
+pre.fr,.fr pre{margin:0;white-space:pre-wrap;word-break:break-word;font:inherit}
+.fr.text{color:var(--fg)}
+.fr.thinking{color:var(--dim)}
+.fr.thinking summary{cursor:pointer;color:var(--dim);list-style:none}
+.fr.thinking summary::-webkit-details-marker{display:none}
+.fr.thinking pre{margin-top:4px;padding-left:10px;border-left:2px solid var(--line)}
+.fr.tool,.fr.result,.fr.edit{border:1px solid var(--line);border-radius:7px;
+  padding:6px 9px;background:#0f1218;display:flex;gap:9px;align-items:flex-start}
+.fr.tool{border-left:3px solid var(--accent)}
+.fr.result.good{border-left:3px solid var(--ok)}
+.fr.result.bad{border-left:3px solid var(--bad)}
+.fr.edit{border-left:3px solid var(--warn);display:block}
+.fr .tk{color:var(--accent);font-weight:650;flex:0 0 auto}
+.fr.result.good .tk{color:var(--ok)} .fr.result.bad .tk{color:var(--bad)}
+.fr.edit .tk{color:var(--warn)}
+.fr code{color:var(--muted);word-break:break-all}
+.fr.err{color:#ffb3ae;background:#2a1614;border-left:3px solid var(--bad);
+  padding:6px 9px;border-radius:7px}
+.fr.status{color:var(--dim);font-style:italic}
+.fr.usage{color:var(--dim);font-size:11px}
+
+.pfoot{display:flex;align-items:center;gap:10px;padding:6px 11px;
+  border-top:1px solid var(--line);background:var(--panel-2);flex:0 0 auto}
+.lock{color:var(--dim);font-size:11px}
+.jump{display:none;margin-left:auto;background:var(--accent);color:#08101f;
+  border:0;border-radius:99px;padding:3px 11px;cursor:pointer;font-size:11px;font-weight:650}
+.jump.on{display:block}
+.muted{color:var(--dim)}
+
+/* ── Agents: master/detail ─────────────────────────────────────────── */
+.split{flex:1 1 auto;display:grid;grid-template-columns:minmax(260px,340px) 1fr;
+  min-height:0;overflow:hidden}
+.list{overflow:auto;border-right:1px solid var(--line);background:var(--panel);
+  padding:8px;scrollbar-width:thin}
+.row{display:block;width:100%;text-align:left;background:transparent;color:var(--fg);
+  border:1px solid transparent;border-radius:8px;padding:8px 10px;margin-bottom:4px;
+  cursor:pointer}
+.row:hover{background:var(--panel-2)}
+.row.on{background:var(--panel-2);border-color:var(--accent)}
+.rtop{display:flex;align-items:center;gap:8px}
+.rtop .title{font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rsub{display:flex;gap:10px;margin-top:3px;padding-left:16px;
+  color:var(--muted);font-size:11px;font-variant-numeric:tabular-nums}
+.rsub .lane{color:var(--accent)}
+.rsub .model{font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rerr{margin-top:4px;padding-left:16px;color:#ffb3ae;font-size:11px}
+
+.detail{display:flex;flex-direction:column;min-height:0;min-width:0}
+.dhead{display:flex;align-items:center;gap:9px;padding:9px 13px;
+  border-bottom:1px solid var(--line);background:var(--panel-2);flex:0 0 auto}
+.dmeta{margin-left:auto;display:flex;gap:6px}
+.chip{background:#0f1218;border:1px solid var(--line);border-radius:99px;
+  padding:1px 9px;font-size:11px;color:var(--muted);font-family:var(--mono)}
+.chip.lane{color:var(--accent);border-color:#25406b}
+.dscope{padding:5px 13px;color:var(--dim);font-size:11px;font-family:var(--mono);
+  border-bottom:1px solid var(--line);flex:0 0 auto;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.transcript{flex:1 1 auto;overflow:auto;padding:12px 14px;font-family:var(--mono);
+  font-size:12px;line-height:1.55;min-height:0;scrollbar-width:thin}
+.dfoot{display:flex;align-items:center;gap:10px;padding:6px 13px;
+  border-top:1px solid var(--line);background:var(--panel-2);flex:0 0 auto}
+
+.unrouted{border:1px solid #5c4a1e;background:#241d0d;border-radius:9px;
+  padding:10px 12px;margin-bottom:8px}
+.unrouted .ut{color:var(--warn);font-weight:650;margin-bottom:3px}
+.unrouted .ub{color:#e8d9a8;font-size:11.5px;line-height:1.45}
+
+/* ── The contrast strip (2026-08-30) ────────────────────────────────────────
+   Two panes, side by side, above everything. The point of the app in one
+   glance: how much recurring work ran with no model against how much needed
+   one. Counts RUNS, not tasks — a daily op that has fired 40 times is 40
+   pieces of work a model never touched.
+
+   The op side carries NO dollar figure on purpose. est_cost_usd is NOT NULL
+   DEFAULT 0.0, so "$0" already means "we don't know" as often as it means
+   free (v113 cost_method). "no model" is the stronger and honest claim. */
+.contrast{display:flex;gap:1px;background:var(--line);flex:0 0 auto;
+  border-bottom:1px solid var(--line)}
+.contrast[hidden]{display:none}
+.cpane{flex:1;background:var(--panel);padding:10px 14px}
+.cpane.free{border-left:2px solid var(--ok)}
+.cpane.paid{border-left:2px solid var(--warn)}
+.cnum{font-size:22px;font-weight:650;font-variant-numeric:tabular-nums;
+  line-height:1.1}
+.cpane.free .cnum{color:var(--ok)}
+.cpane.paid .cnum{color:var(--warn)}
+.clab{font-size:12px;color:var(--fg);margin-top:1px}
+.csub{font-size:11px;color:var(--dim);margin-top:2px}
+
+/* Group headings in the list — scheduled work above dispatched work. */
+.ghead{padding:10px 12px 4px;font-size:11px;letter-spacing:.6px;
+  text-transform:uppercase;color:var(--dim)}
+
+/* A scheduled row is a div, not a button (it carries its own Stop button), so
+   it needs the row affordances restated rather than inherited. */
+.row.sched{position:relative;cursor:default}
+.row.sched:hover{background:var(--panel-2)}
+.row.sched.op{border-left:2px solid var(--ok)}
+.rsub .lane.free{color:var(--ok)}
+
+/* The off switch. Always visible, never behind a hover or a menu: a standing
+   op is created without asking the user, so stopping one must be at least as
+   easy as it was to start. */
+.stop{position:absolute;top:8px;right:8px;background:transparent;
+  color:var(--muted);border:1px solid var(--line);border-radius:6px;
+  padding:3px 9px;font-size:11px;cursor:pointer}
+.stop:hover{border-color:var(--bad);color:var(--bad)}

@@ -1,0 +1,38 @@
+
+# 2026-09-17 (group JOIN REQUESTS — a host that is not yet a contact asking to
+# be let into a circle whose roster this host owns). Two properties carry this
+# gate. The first is an ENUMERATION ORACLE: the receiver's gate answers "no
+# such group" and "that group is not ours" with ONE sentence, byte for byte,
+# because the difference between them is precisely what a stranger would walk a
+# list of group ids to learn — so the sameness is asserted rather than left to
+# phrasing. The second is ORDER: an accept makes the CONTACT first and the
+# roster row second, because the group grant rides a message slip only a
+# contact relationship produces, and that order is read off the recorded call
+# SEQUENCE rather than off the answer, which cannot show it. With them: the
+# gate on the knock case by case (a malformed id, a group this host does not
+# own, a closed group, a peer already on the roster, and a cold pool that fails
+# CLOSED and says the refusal is retryable), the knock slot narrowing to one
+# GROUP — asserted on the SQL the function issues and the argument it binds,
+# because one slot per peer would make a second, legitimate ask for a different
+# circle read back as a duplicate — a deny that writes nothing but the archive,
+# checked over every statement it issued and not over its return value, a group
+# grant enqueued only for a NEWLY added member, an invite left `queued`
+# reported as queued so the Circles card can read it as "invited, waiting for
+# their host" instead of an error, and 'refused' kept distinct from
+# 'unreachable', which is the user's only way to tell "they said no" from "they
+# were asleep". Plus the v155 / init-db.sql parity on the three new
+# message_kind values (same shape as test_error_lane.py's v098 check): a kind
+# the CHECK constraint refuses cannot be stored at all, and a fresh host built
+# from init-db.sql alone never runs the migration.
+# Verified red by mutation (2026-09-17), each in a scratch copy of the tree:
+# dropping the up-front role validation from join.accept fails 4 (the review
+# finding: accept_request_service ARCHIVES the card before it returns, so a
+# refusal raised after it leaves the contact made, the card gone and no roster
+# row, and the user cannot accept again — the stub in the ordering check models
+# the contact seam but not the archive, which is why only a stub that archives
+# can see it); answering 'that group is closed' as its own sentence fails 1;
+# splitting the two refusal sentences fails 2 checks; swapping the contact and
+# roster calls fails the ordering check; dropping the payload->>'group_id'
+# predicate fails 2; removing 'group_join' from init-db.sql fails 1.
+# Recording fake pool, real functions; no DB, no container, no network.
+test_group_join_requests.py

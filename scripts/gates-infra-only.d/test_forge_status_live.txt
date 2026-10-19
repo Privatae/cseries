@@ -1,0 +1,1 @@
+test_forge_status_live.py      # docker: a real Gitea (the platform forge's version) with commit statuses posted the way the platform CI posts them — the gitea-actions check provider reads the newest status per context, passes pending→success, fails at once on a failure, and calls silence "CI did not answer". Exits FAIL without docker

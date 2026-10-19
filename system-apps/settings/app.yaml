@@ -1,0 +1,184 @@
+id: settings
+name: Settings
+provenance: native
+description: About your cseries desktop, software updates, and version history.
+icon: icon.png
+icon_small: icon-64.png
+entrypoint: index.html
+system: true
+# 3.3.0 (2026-07-21): Time zone setting (Appearance tab). IANA zone picker
+# (browser zones, device zone flagged), stored per entity; the host renders
+# "Current time" and speaks ALL times in this zone — raw UTC made "an hour
+# ago" read as "last night" after the UTC date rollover.
+# 3.4.0 (2026-08-16): Backup tab. The user sets their own backup
+# frequency, time (in THEIR timezone) and an optional user-designated
+# target (s3/nfs/smb, credential referenced from the Keys app, never
+# stored here). The schedule is read back and honoured by the fleet
+# backup job — see server/routes/backup.py. The target
+# is stored and validated only: shipping to a user destination is not
+# built yet, and the tab says so.
+# 3.5.0 (2026-08-18): Memory mirror on the Backup tab.
+# A third copy, and the only one the user holds themselves: a live PostgreSQL
+# replica of this host's database on a machine they own, fed over the bastion
+# lane. Shows its state, and is THE place it is switched on or off — pick the
+# machine, confirm with an authenticator code (GET/PUT/DELETE
+# /api/backup/mirror; the step-up is enforced in server/network/mirror.py).
+# The Host is deliberately walled off the write methods
+# (kernel_ops._WALLED_OPS): it can read the state and answer questions about it,
+# and it cannot hand a machine a copy of the memory or quietly take one away.
+# Uses read/write:backup_settings, both already held below — no new permission,
+# and the candidate machines ride along in the GET so no roster scope is needed.
+# 3.5.0 (2026-08-18): the Backup tab gains YOUR KEY. Make an
+# X25519 keypair on the host, sealed with your own passphrase and a one-time
+# recovery code and never stored openable — or paste a public key you made on
+# your own machine. Plus the custody control: platform recovery on (the
+# default) or off, stated with the consequence that off also ends
+# platform-side backup, because writing a snapshot needs the same key. The
+# key state distinguishes "registered here" from "the platform reported it is
+# sealed to you" — see server/routes/backup.py.
+# Also in 3.5.0: "In force now" is derived from the platform's reported
+# recipient set, never from the saved wish; once escrow has actually left that
+# set the "keep it on" option is removed rather than offered-then-refused,
+# because the platform would have to open the envelope to add itself back and
+# it cannot; turning it off requires an explicit acknowledgement that names the
+# loss (passphrase AND recovery code AND key file all gone = nobody restores);
+# registering a self-made key now takes the same TOTP step-up as making one;
+# and both key buttons disable for the round trip so a second click cannot burn
+# the one-time code or supersede the key the first click just made.
+# 3.6.0 (2026-08-18): the second copy actually ships. "Where" is now storage the user rents (any
+# S3-compatible endpoint, the key named from the Keys app and read in-pod) or
+# their own machine — nfs/smb are gone, because there was no client for either
+# in the image and no routed path to a user's LAN to use one over. The machine
+# kind PULLS: the host hands its bastion a short-lived signed URL and a digest
+# and the bastion fetches over the user's own connection, so nothing large
+# passes through the host. The tab shows what was last sent, where and when,
+# and on a failure the CLASS of failure as a sentence plus the far end's own
+# words — never a silent green. See server/backup_ship.py.
+# 3.7.0 (2026-08-18): 3.5.0 (memory mirror) and 3.6.0 (your key + the
+# second copy that actually ships) landed on the same tab from two
+# branches. Neither shipped on its own — 3.4.0 is what is live — so this
+# is one version carrying both.
+# 3.7.1 (2026-08-19): Updates → History tells the truth after a roll. The
+# apply path's success row could never be written (the roll kills the pod
+# mid-dispatch), so a successful update left update-request.json at
+# "applying" and History showing only earlier failures — rendered as
+# "Updated -- → vX" with no status. Server reconciles the request on the
+# first History/manifest read after boot (to_version == running tag →
+# completed row, request cleared); the renderer labels failure rows
+# "Update failed" with the reason and reads each row's own timestamp.
+# 3.7.2 (2026-09-02): Appearance → a "Host design" swatch once the host has
+# set an HTML desktop (wallpaper key 'html', an artifact the shell renders
+# as the surface). Any other swatch puts the
+# ordinary wallpaper back; this one brings the design back.
+# 3.7.3 (2026-09-02): prompt_behavior tells the host about the HTML desktop
+# and the "Host design" swatch, so "change my desktop" routes to a desktop
+# artifact (`artifact` op='set_desktop') and a plain swatch to Appearance.
+# Manifest-only change.
+# 3.8.0 (2026-09-27): the host backs itself up (server/host_backup.py:
+# straight to S3, nothing on the management box). The Backup tab shows the
+# host's own recent backups with a "Back up now" button, and says who can open
+# them from the host's own record of the sealed copies it sent. Turning
+# platform recovery off no longer stops backups (the host keeps its own
+# password) and can be turned back on; the copy says both.
+# 3.9.0 (2026-09-28): THE RULE — the platform holds a backup OR a key, never
+# both. Backups are encrypted on the host to the Host recovery key (made in the
+# owner's browser on the account page, pinned here on first use) and to any
+# bastion keys. The Backup tab shows the recovery key (and any different one
+# the account page offers, adopted only with the second factor), adds and
+# retires bastion keys, says a host with no recovery key takes no backup,
+# offers platform storage as a choice, and restores by resealing a backup's
+# key IN THE BROWSER with the recovery key (restore.js, age's own JS library
+# vendored under vendor/) or through a bastion. Platform recovery is gone.
+# 3.9.1 (2026-09-29): after a restore this host could not confirm it made
+# (a replacement host's always is), the Backup tab says which links in the
+# backup were left out because they led outside the restored files.
+# 3.9.2 (2026-09-29): the Backup tab says a recovery key, the first one
+# included, is used with a code from the second factor, and with none enrolled
+# says how to enrol one (the Network app's "Second factor: Enroll").
+# 3.9.3 (2026-09-29): every backup status line is shown on one line. A name
+# from a backup could hold a line break, and the run list is shown with
+# white-space: pre-line, so a crafted backup could add lines of its own.
+# 3.9.4 (2026-09-29): the bidi marks (U+200E, U+200F, U+061C) are replaced
+# too, like the other characters that reorder text (host_backup.unshowable).
+# 3.9.5 (2026-10-01): the HTML escape helper escapes both quotes as well, so a
+# value from the Host, a machine or a provider stays inside the attribute it
+# is written into. "See what's new" is a link only when the release's
+# changelog address is http(s). App-only change.
+# 3.9.6 (2026-10-01): choosing "Host design" is a WEAR — the kernel loads the
+# design's current version in a real browser first (server/applications/
+# desktop_pin.py wear_current). The swatch says "Checking your Host design…",
+# follows a 202 job when the check outlasts the router's 30 s, and when the
+# newest edit does not render it says so: the desktop shows the last version
+# that did. App-only change; no scope or route of its own.
+# 3.10.0 (2026-10-10): a
+# Response Shaping tab, its own section beside Synaptive and not part of it
+# (personality moves to Settings; Synaptive is deprecated). How much
+# the Host explains (three positions, saved on click), the ten personality
+# sliders and the envelope, each slider change confirmed before it is sent,
+# through GET /api/brain/personality and PUT .../explanation, .../weights and
+# .../envelope (server/routes/brain.py). Three scopes added below for them.
+# A port of Circles' Response Shaping pane, which stays until the Circles
+# cards replace its rail. On a phone the tab bar scrolls to show the tab
+# just selected, for every tab.
+# 3.12.0 (2026-10-18): the envelope is gone from Response Shaping: its sliders,
+#   its Save/Discard and the PUT .../envelope call, because the server no
+#   longer has the envelope route or the envelope_bounds it read. The ten
+#   sliders are the person's and never move on their own. write:brain_codebooks
+#   is dropped from the permissions: the envelope route was its only use here.
+#   what_it_is is one paragraph under the 900-character cap, saying what the
+#   app is and what lives in it; the how-to it carried lives in skills and tool
+#   descriptions. Bundle repacked.
+# 3.12.1 (2026-10-18): the storage endpoint placeholder is a neutral example; comments rewritten as plain rationale; no behaviour change.
+version: "3.12.1"
+# Environment-catalog facts (host-facing, code-true). Source for the L1
+# topology block + describe_app — NOT a surface_role body (this is a control
+# panel, not a conversational surface): what_it_is/user_path only.
+prompt_behavior:
+  what_it_is: >-
+    Settings is system and desktop configuration: the Host's version and software
+    updates, connection tokens for external chat clients, Appearance (wallpaper
+    swatches, a custom image, the time zone, and a 'Host design' swatch once you
+    have built an HTML desktop), the desktop layout (dock pins, desktop icons),
+    Response Shaping, Backup and Network. Response Shaping holds how much you
+    explain and the ten personality sliders; both are the user's. Backup holds the
+    Host's own encrypted backups with a Back up now button, the backup keys, a
+    second copy sent to storage they rent or a machine of theirs, a bastion's local
+    copy and the memory mirror; the key controls, restores, the second copy and the
+    mirror switch are the user's alone. Network is where the owner joins the network
+    with the one-time code from their account page, sees this Host's membership, and
+    leaves; both are the owner's alone.
+  user_path: "the Settings app, in the dock"
+
+
+window:
+  title: Settings
+  width: 820
+  height: 580
+  resizable: true
+  min_width: 560
+  min_height: 400
+
+permissions:
+  - read:session
+  - read:system_status
+  - read:update_state
+  - read:version
+  - write:appearance
+  - write:session
+  - write:update_request
+  - read:backup_settings
+  - write:backup_settings
+  # read-only view of the bastion's local-master backup (GET /api/backup/local),
+  # which is a DIFFERENT copy from the platform one the schedule above governs.
+  - read:backup_list
+  # 3.10.0: the Response Shaping tab. GET /api/brain/personality takes
+  # read:brain_personality; PUT .../explanation and .../weights take
+  # write:brain_personality (server/routes/brain.py). App tokens are minted
+  # from this list.
+  - read:brain_personality
+  - write:brain_personality
+  # 3.11.0: the Network tab. GET /api/network/status takes
+  # read:network_membership; POST /api/network/join and /leave take
+  # write:network_membership and the owner's session.
+  - read:network_membership
+  - write:network_membership

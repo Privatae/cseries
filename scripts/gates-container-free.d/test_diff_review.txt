@@ -1,0 +1,4 @@
+
+# 2026-09-19: the scoped diff reviewer (brain/mastercode/runtime/diff_review.py)
+# and its wiring after a build lands. Scripted model_fn, tmp session dir; no DB.
+test_diff_review.py

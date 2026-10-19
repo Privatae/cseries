@@ -1,0 +1,43 @@
+# PhotoCraft Engine: the open-source PhotoCraft
+# image editor (github.com/storytold/photocraft, MIT or Apache-2.0), run
+# headless for the Host. The program itself is in the creative toolchain image,
+# pinned by sha256 (sidecars/app-runtime-creative); this app is a recipe: the
+# command starts the image's own MCP bridge (creative_mcp.py), and `mcp` makes
+# that server one of the Host's connections when the app is installed
+# (manifest.McpSpec). Memory: a 12-megapixel edit and PSD save peaked at 457 MB
+# in the image (measured); 1 GB leaves room for larger documents.
+# vcpus 2: filters on large documents run on more than one core; a window is
+# billed at its ceiling.
+id: photocraft-engine
+name: PhotoCraft Engine
+description: Your Host edits images with PhotoCraft, an open-source image editor with layers, masks, filters and PSD files. It opens your images, composites, retouches and exports them, and everything it makes appears in this window.
+icon: icon.png
+icon_small: icon-64.png
+# 1.0.2 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
+version: "1.0.2"
+provenance: standard
+entrypoint: index.html
+permissions: []
+network: []
+resources:
+  baseline_memory_mi: 1024
+  vcpus: 2
+runtime:
+  kind: process
+  image: creative
+  command: ["python3", "/opt/app-runtime/creative_mcp.py", "photocraft"]
+  ready_path: /health
+  ready_timeout_seconds: 120
+mcp:
+  path: /mcp
+window:
+  title: PhotoCraft Engine
+  width: 900
+  height: 640
+  resizable: true
+prompt_behavior:
+  what_it_is: |
+    PhotoCraft Engine is the person's own image editor that you operate: an
+    MCP server named photocraft-engine (skill 'photocraft-engine' says how).
+    Its window shows the files you made there.
+  user_path: "the PhotoCraft Engine app (install it from the App Store)"

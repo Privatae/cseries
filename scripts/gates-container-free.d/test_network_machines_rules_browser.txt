@@ -1,0 +1,15 @@
+# The Network app's
+# machines' Hosts and per-peer rules in headless Chromium over a mock kernel,
+# framed in a stand-in desktop, at 1440 x 900 and 390 x 844. Every mocked route
+# is guarded by the scope its real route takes (read from the real routers) and
+# the window token carries the Network manifest's permissions: each Host on a
+# machine with its status or its one button, its card from its name; Request
+# connection sends one request and the row reads "Request sent", in a new window
+# too, opened in a new browser context so only the Host's card can say it (a
+# "sent" flag planted in the first window's storage must not); refusals in words, including a window without write:address_book; Message
+# posts cseries:open-app for Circles with view card:entity:<id>; the rules listed,
+# Delete asks first and deletes that rule, a rule gone already said in words,
+# Add rule; the manifest covers every route; the phone layout. Needs Playwright,
+# Chromium, fastapi and uvicorn on a loopback port; no database.
+# Measured: 101 checks, 16 s wall.
+test_network_machines_rules_browser.py

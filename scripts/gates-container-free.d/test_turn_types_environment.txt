@@ -1,0 +1,2 @@
+# 2026-09-26 (turn types, step 2 — design §4.4): a typed turn takes its skill, its recall context (projects / documents / memory scope) and its model from the type; every helper is an identity for an untyped turn, asserted first. Stubs for the recall arms and the route; no pod, no DB, no model.
+test_turn_types_environment.py

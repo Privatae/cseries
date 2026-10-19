@@ -1,0 +1,43 @@
+key: contacts
+display_name: Google Contacts
+categories: [contacts, google]
+
+connection_kind: contacts
+connection_provider: contacts
+
+auth:
+  mode: oauth2
+  family: google
+  authorize_endpoint: https://accounts.google.com/o/oauth2/v2/auth
+  token_endpoint: https://oauth2.googleapis.com/token
+  revoke_endpoint: https://oauth2.googleapis.com/revoke
+  scopes:
+    - https://www.googleapis.com/auth/contacts.readonly
+    - https://www.googleapis.com/auth/userinfo.email
+  extra_authorize:
+    access_type: offline
+    prompt: consent
+    include_granted_scopes: "true"
+
+proxy:
+  base_url: https://people.googleapis.com/v1
+  rate_limit:
+    requests_per_minute: 90
+    concurrent: 4
+
+resources:
+  - name: person
+    canonical_model: Contact
+    sync:
+      strategy: cursor                # syncToken via people.connections.list
+      cursor_field: syncToken
+      endpoint: people.connections.list
+      page_size: 200
+      poll_seconds: 600               # contacts rarely change
+    signal:
+      operation_read: read
+      source_display: Google Contacts
+
+reauth_triggers:
+  - invalid_grant
+  - unauthorized_client

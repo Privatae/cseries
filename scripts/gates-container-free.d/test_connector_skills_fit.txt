@@ -1,0 +1,2 @@
+# 2026-10-05 (messaging connectors): every default-skills/connectors*.md body, as skill_loader reads it, rides a turn whole with a tenth of prefire_tools.SKILL_INJECT_CHARS to spare; connectors.md names connectors-telegram, connectors-slack and connectors-discord and how to load one (context read of default-skills/<name>), each has its own name and a description, and context_ops._skill_file resolves each path in the skills folder. No DB, no network.
+test_connector_skills_fit.py

@@ -1,0 +1,4 @@
+# A granted gitea repo reaches the host's code index through
+# embed_jobs target='gitea_repo', only after the user says yes; dot-segment names
+# never resolve. Static + import checks against a temp tree; no container, no infra.
+test_gitea_repo_embed.py

@@ -1,0 +1,5 @@
+# 2026-09-06: the `gitea` read tool — the consumer of the Gitea app's Permissions
+# grant (a Host held read on a repo and no tool could use it). Registration
+# at all four points, whole-tool read lane, refusals before any request, and the
+# tree/read/grep behaviour over a stubbed gitea_request. No network, no pod.
+test_gitea_tool.py

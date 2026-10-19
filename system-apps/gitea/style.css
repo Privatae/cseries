@@ -1,0 +1,351 @@
+/* ================================================================
+ * Gitea — per-app layout styles only.
+ *
+ * All primitives (colors, type, buttons, pills, cards, nav, seam)
+ * come from /css/cseries-components.css + /css/tokens.css.
+ * Do NOT add colors, type scales, or motion here — layout only.
+ * ================================================================ */
+
+/* ── Lens toggle (You / Host workshop) ───────────────────── */
+.gitea-lens {
+    margin-bottom: var(--space-4);
+}
+
+.gitea-lens-panel {
+    display: block;
+}
+
+/* The user lens: SSO card + (later) the user's own repo list. */
+.gitea-user-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-bottom: var(--space-4);
+}
+
+.gitea-user-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+}
+
+#gitea-open {
+    flex: none;
+}
+
+/* Caption above the host clean-room list. */
+.gitea-lens-caption {
+    display: block;
+    margin-bottom: var(--space-3);
+}
+
+/* The host's gitea name the user adds as a collaborator to grant access. */
+.gitea-hostid {
+    display: block;
+    margin-top: var(--space-2);
+}
+
+.gitea-hostname {
+    font-family: var(--font-mono, ui-monospace, monospace);
+    font-weight: 600;
+}
+
+/* ── Permissions rows (grant/revoke host access) ─────────── */
+.gitea-perm-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    flex-wrap: wrap;
+}
+
+.gitea-perm-current {
+    margin-left: var(--space-2);
+    white-space: nowrap;
+}
+
+.gitea-perm-actions {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex: none;
+}
+
+/* ── Repository list ─────────────────────────────────────── */
+.gitea-repos-grid {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+
+/* Repo cards are buttons (open the detail view) — reset button chrome,
+ * keep the .cseries-card look. Colors/type inherit; no literals. */
+.gitea-repo {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    width: 100%;
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+    color: inherit;
+    appearance: none;
+    -webkit-appearance: none;
+}
+
+.gitea-repo-main {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-width: 0;
+}
+
+.gitea-repo-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.gitea-repo-meta {
+    flex: none;
+}
+
+/* ── Repo detail ─────────────────────────────────────────── */
+.gitea-detail-head {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-bottom: var(--space-3);
+}
+
+.gitea-detail-title {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+}
+
+#repo-back {
+    align-self: flex-start;
+}
+
+.gitea-subnav {
+    margin-bottom: var(--space-3);
+}
+
+/* ── Files browser ───────────────────────────────────────── */
+.gitea-breadcrumb {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-1);
+    margin-bottom: var(--space-2);
+}
+
+.gitea-entries {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+}
+
+.gitea-entry {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    width: 100%;
+    text-align: left;
+    font: inherit;
+    color: inherit;
+    appearance: none;
+    -webkit-appearance: none;
+}
+
+button.gitea-entry {
+    cursor: pointer;
+}
+
+.gitea-entry-icon {
+    flex: none;
+    width: var(--space-4);
+}
+
+.gitea-entry-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.gitea-file-head {
+    margin-bottom: var(--space-2);
+}
+
+.gitea-filecontent {
+    overflow: auto;
+    max-height: 60vh;
+    white-space: pre;
+}
+
+/* ── Commits ─────────────────────────────────────────────── */
+.gitea-commits {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.gitea-commit {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+}
+
+.gitea-commit-msg {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* ── Mirrors panel ─────────────────────────────────────────── */
+.gitea-gh-row {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+}
+
+.gitea-gh-id {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+/* Connected indicator — same visual language as the taskbar presence dot. */
+.gitea-gh-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--cseries-moss);
+    flex: none;
+}
+
+.gitea-gh-actions {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    flex: none;
+}
+
+/* Device-flow code display */
+.gitea-device {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+}
+
+.gitea-device-row {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+
+.gitea-devicecode {
+    font-family: var(--font-mono);
+    font-size: var(--text-xl);
+    font-weight: 600;
+    letter-spacing: 0.18em;
+    padding: var(--space-1) var(--space-3);
+    border: 1px solid var(--cseries-mist-strong);
+    border-radius: var(--radius-md);
+    user-select: all;
+}
+
+/* Mirror rows: name is a real button (opens the in-app browser) */
+.gitea-mirror-open {
+    appearance: none;
+    -webkit-appearance: none;
+    background: none;
+    border: 0;
+    padding: 0;
+    font: inherit;
+    color: inherit;
+    cursor: pointer;
+    min-width: 0;
+    text-align: left;
+}
+
+.gitea-mirror-open:hover .gitea-repo-name,
+.gitea-mirror-open:focus-visible .gitea-repo-name {
+    text-decoration: underline;
+    text-underline-offset: 3px;
+}
+
+.gitea-mirror-meta {
+    flex: 1 1 100%;
+    order: 3;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* Picker */
+.gitea-picker-head {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+    margin-bottom: var(--space-2);
+}
+
+.gitea-picker-search {
+    flex: 1 1 180px;
+    min-width: 160px;
+}
+
+.gitea-pick-row {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    cursor: pointer;
+}
+
+.gitea-pick-row input[type=checkbox] { flex: none; }
+
+.gitea-pick-main {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    flex: 1;
+    min-width: 0;
+}
+
+.gitea-pick-title {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    min-width: 0;
+}
+
+.gitea-pick-desc {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.gitea-pick-state { flex: none; }
+
+/* Retry / CTA buttons inside empty states sit below the copy. */
+.cseries-empty .gitea-retry {
+    margin-top: var(--space-3);
+}
+
+/* Semantic result text — design-system tokens, no literals. */
+.is-ok  { color: var(--cseries-moss); }
+.is-err { color: var(--cseries-clay); }

@@ -1,0 +1,4 @@
+# The tool search finds every tool by
+# its own name first, never returns what the caller may not see, and is
+# deterministic.
+test_tool_search.py

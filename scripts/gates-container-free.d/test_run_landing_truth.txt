@@ -1,0 +1,5 @@
+# 2026-09-22 (found mapping Workbench Phase 2): a compare's <harness>-sN runs
+# reach preview/pick/adopt; the land step never follows a link; changed_files
+# is the run's diff, not every seeded file; learned preferences sit between
+# the contracts and the task. Fails 9 checks on the tree before the fix.
+test_run_landing_truth.py

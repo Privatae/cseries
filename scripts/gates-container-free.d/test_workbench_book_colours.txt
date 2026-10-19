@@ -1,0 +1,9 @@
+# The "colours" group of test_workbench_book.py (the book
+# takes the desktop's tokens on a dark and a light design, on a phone, with a
+# token the browser cannot draw, and a mermaid fence; "This page" opens the
+# latest build without a scroll, live and on a phone), split out because the
+# book's scenarios in one process spent over the pool's 180 s CPU budget.
+# Same needs as test_workbench_book.txt. Measured
+# under hang_watch beside the other two book gates: 54 checks, 29.5 s of CPU,
+# 43 s wall.
+test_workbench_book_colours.py

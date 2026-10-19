@@ -1,0 +1,2 @@
+# 2026-09-26 (turn types, step 6 — design §4.6): every turn opens on a platform-written timeline (running, just finished, next) from the registry and the database; across types only platform facts cross — an item's own words show only for the reading turn's own type; the type is recorded where work is recorded (v186). Stub pool; no pod, no DB, no model.
+test_turn_types_timeline.py

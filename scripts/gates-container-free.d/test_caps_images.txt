@@ -1,0 +1,2 @@
+# The image engine sends n as asked (the provider's refusal is the limit), adds validated size/quality, waits the provider-client default (600 s), reports a vision answer cut at the model's own limit (finish_reason=length), and pages the gallery (offset, true total, next_offset). A captured aiohttp session and a fake pool; no network, no DB.
+test_caps_images.py

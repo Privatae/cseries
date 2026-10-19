@@ -1,0 +1,58 @@
+# Accepted CVE findings — every entry is dated, path-scoped, and says why the
+# vulnerable code is NOT present, or is present but referenced by nothing. Never
+# add a blanket id: the point of scoping to `paths` is that the same id in a
+# REAL dependency still fails the gate.
+#
+# Referenced by the harness and image release checks ("Accepted/
+# vendor-wontfix findings go in a committed .trivyignore with a dated comment —
+# never silence with flags").
+#
+# HOW IT IS PICKED UP: trivy's default ignore file is `.trivyignore`, and it
+# does NOT auto-discover this `.yaml` name — running the gate from the repo
+# root is NOT enough on its own (measured 2026-08-21: exit 1, all 3 findings).
+# The sibling `trivy.yaml`, which trivy DOES auto-load from the working
+# directory, carries `ignorefile: .trivyignore.yaml`. So: run the gate from the
+# repo root, and keep trivy.yaml beside this file. The plain `.trivyignore`
+# format is not an option here — it takes bare ids with no `paths`, so it
+# cannot scope an acceptance to one file.
+
+vulnerabilities:
+  # 2026-10-07 — cseries-harness-cursor (vendor cursor-agent 2026.10.01-e373342,
+  # archive sha256 a79726c6e644520e…, the CURSOR_SHA256 the Dockerfile verifies).
+  #
+  # The vendor's package carries piscina 4.9.3 at
+  # dist-package/node_modules/piscina. CVE-2026-102992 is a prototype-pollution
+  # gadget in ThreadPool.options (code execution through execArgv /
+  # loadBalancer). Using it needs piscina loaded AND a separate
+  # prototype-pollution bug in the same process.
+  #
+  # Checked in that archive by text search: none of the 80 bundle files outside
+  # node_modules, and no other package under node_modules, names piscina. The
+  # same search finds tree-sitter, a sibling package in that node_modules, in 7
+  # bundle files, so it does see a real reference. So the code is on disk and
+  # nothing in the archive refers to it by name. That is a search, not a load
+  # trace: a require() of a name built at runtime would not show up in it.
+  #
+  # Accepted 2026-10-07: v0.2.10 removes the 3 fixable CRITICAL perl
+  # CVEs (CVE-2026-13221, -42496, -8376) in the cursor image that was live then
+  # (v0.2.9). Remove this entry once cursor ships a fixed piscina (4.9.4, 5.3.2
+  # or 6.0.0-rc.5 per the advisory; 5.0.0 to 5.3.1 are still vulnerable), or at
+  # once if a cursor release starts referencing piscina.
+  #
+  # `purls` pins the entry to the accepted version. trivy ANDs it with `paths`,
+  # so any other piscina version at this path fails the gate again and has to
+  # be checked afresh (measured with trivy 0.73: 5.0.0 here exits 1).
+  - id: CVE-2026-102992
+    paths:
+      - "var/lib/cseries/apps/cursor/bin/dist-package/node_modules/piscina/package.json"
+    purls:
+      - "pkg:npm/piscina@4.9.3"
+    statement: "Vendor-bundled piscina 4.9.3 is on disk but nothing in cursor-agent refers to it (no bundle file or other package names it; text search of the 2026.10.01-e373342 archive 2026-10-07). Accepted 2026-10-07 to remove 3 fixable perl CRITICALs; remove when cursor ships a fixed piscina (4.9.4, 5.3.2 or 6.0.0-rc.5)."
+
+secrets:
+  # A placeholder, not a key: the recovery key in this security repro is
+  # "AGE-SECRET-KEY-1" followed by Q and 0 only, the shape the page under test
+  # expects. It decrypts nothing.
+  - id: age-secret-key
+    paths:
+      - "scripts/security_repro_782_app_origin_read.py"

@@ -1,0 +1,2 @@
+# 2026-09-27 (claims audit, /trust): the claude-code app's POST /sessions and /sessions/continue — a Claude Agent SDK session with shell/write/edit tools inside the Host's container — answer 410; list and both close routes still work; the app imports without spawning anything; server/ceigas/ceigas_mcp.py stays gone. Real handlers through the sidecar's route table; no pod, no DB, no network.
+test_claude_code_sessions_retired.py

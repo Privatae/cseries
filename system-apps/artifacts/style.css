@@ -1,0 +1,187 @@
+/* ================================================================
+ * Artifacts — per-app layout styles only.
+ * Primitives (colors, type, buttons, cards, nav, seam) come from
+ * /css/cseries-components.css + /css/tokens.css. Layout only here.
+ * ================================================================ */
+
+.app-brand-text {
+    min-width: 0;
+}
+
+/* Gallery: search + filters, then a grid of live preview cards. The shared
+   .app-view base is an 860px column; the gallery uses the whole window. */
+.gallery-view {
+    max-width: none;
+}
+
+.gallery-controls {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-3) 0;
+    flex-wrap: wrap;
+}
+
+.gallery-controls .cseries-input {
+    flex: 1;
+    min-width: 200px;
+}
+
+.gallery-filters {
+    display: flex;
+    gap: var(--space-1);
+}
+
+.filter-btn.active {
+    background: var(--cseries-ember-soft);
+    color: var(--cseries-paper);
+}
+
+.artifact-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: var(--space-3);
+    padding: var(--space-3);
+    align-content: start;
+}
+
+/* The live preview: the artifact laid out at 1280x800 and scaled to the card
+   (app.js sizeThumbs). It takes no pointer events — the card opens it. */
+.artifact-card .thumb {
+    position: relative;
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 10;
+    overflow: hidden;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--cseries-mist);
+    background: var(--cseries-ink);
+    margin-bottom: var(--space-1);
+}
+
+.artifact-card .thumb iframe {
+    position: absolute;
+    left: 0;
+    top: 0;
+    border: 0;
+    transform-origin: 0 0;
+    pointer-events: none;
+    background: var(--cseries-ink);
+}
+
+.artifact-card .badge {
+    margin-left: var(--space-1);
+    color: var(--cseries-dusk);
+}
+
+.artifact-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    text-align: left;
+    cursor: pointer;
+    min-width: 0;
+}
+
+.artifact-card .card-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.artifact-card .card-desc {
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+}
+
+/* Viewer: toolbar row + frame filling the rest */
+#view-viewer {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+}
+
+.viewer-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    flex-shrink: 0;
+}
+
+.viewer-name {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.artifact-frame {
+    flex: 1;
+    width: 100%;
+    min-height: 0;
+    border: none;
+    display: block;
+}
+
+/* Variant tabs + tune toggle active state — layout only,
+ * active styling comes from the shared .active handling in components. */
+.variant-bar {
+    flex-wrap: wrap;
+    padding-top: 0;
+}
+
+#btn-tune.active,
+.variant-tab.active {
+    opacity: 1;
+    font-weight: 600;
+}
+
+/* The desktop floor's report —
+ * shown when "Use as desktop" is refused or set with notes. Click to dismiss.
+ * Layout + tokens only; the text is the kernel's. */
+.desktop-report {
+    margin: 0 var(--space-3) var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    max-height: 30vh;
+    overflow: auto;
+    white-space: pre-wrap;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    line-height: 1.5;
+    color: var(--cseries-paper);
+    background: var(--cseries-twilight);
+    border: 1px solid var(--cseries-clay);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+/* Several pages, none at the root (the render's 300): the list the person
+ * picks from, and the switcher in the viewer bar once one is open. */
+.viewer-pages {
+    padding: var(--space-4);
+}
+
+.viewer-pages-list {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--space-1);
+    margin-top: var(--space-2);
+}
+
+.page-switch {
+    max-width: 40%;
+    font: inherit;
+    font-size: 12px;
+    background: var(--cseries-night);
+    color: var(--cseries-paper);
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-sm);
+    padding: 2px 6px;
+}

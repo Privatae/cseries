@@ -1,0 +1,127 @@
+id: artifacts
+name: Artifacts
+description: Live HTML artifacts your host designs in conversation — watch them take shape, tune them by pointing, pick variants, convert the keepers into apps.
+icon: icon.png
+icon_small: icon-64.png
+entrypoint: index.html
+system: true
+# 0.3.1 (2026-08-25): prompt_behavior had no user_path at all (describe_app's
+# where_to_find_it came back empty) and never mentioned the History strip —
+# every write is a revision, listed and restorable from the viewer bar
+# (index.html:51, app.js:221-235), matching the `artifact` tool's own
+# history/revert ops. Manifest-only change.
+# 0.3.2 (2026-09-02): "Use as desktop" in the viewer bar — sends the pick as
+# the user's own message (the variant-pick lane); the host answers with
+# `artifact` op='set_desktop' and the shell renders the artifact as the
+# desktop surface itself.
+# 0.3.3 (2026-09-02): prompt_behavior names the HTML desktop — what "Use as
+# desktop" does, what arrives when the user clicks it, and that a desktop is
+# an artifact like any other (default-skills/desktop.md is the recipe).
+# Manifest-only change.
+# 0.4.0 (2026-09-03): PICKS ARE OPERATIONS, NOT MESSAGES. "Use this one" now
+# calls POST /api/artifacts/{id}/promote directly — the kernel copies the
+# variant over index.html as one revision, sub-second, no host turn (one
+# agent run spent 5m14s re-typing a 37 KB file to do the same copy).
+# "Use as desktop" calls PUT /api/appearance/desktop directly (new permission
+# write:appearance) and shows the kernel's floor report inline when a
+# document is refused — the user sees WHY, the host is told through the
+# same lane. Both buttons used to compose a chat message the host had to
+# act on; the desktop never changed because the host copied the file and
+# never mounted it.
+# 0.4.1 (2026-09-10): the desktop floor's refusal no longer paints itself into
+# the viewer. 0.4.0 rendered the kernel's full report as a panel whenever the
+# eligibility check came back not-ok — which is every artifact that was never
+# meant to be a desktop, i.e. nearly all of them, and it pushed the frame down
+# with a REFUSED warning that took over the whole frame. Nobody asked for a desktop, so nothing is being
+# refused. The reason stays in the disabled button's tooltip, and the full
+# report still appears when the user actually clicks "Use as desktop" and the
+# PUT answers 422. App-only change; the floor and both endpoints are untouched.
+# 0.5.5 (2026-10-18): prompt_behavior is one paragraph saying what the app is
+#   and what lives in it; do_when_active is gone from the manifest contract,
+#   and its how-to lines live in skills and tool descriptions the Host reads on
+#   demand. Manifest-only; bundle repacked.
+# 0.5.6 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
+version: "0.5.6"
+# 0.5.4 (2026-10-02): nothing in the window stops at a number.
+# The gallery loads every artifact page by page (the list answers total +
+# next_offset; it stopped at 200 with nothing said), and a tune-mode edit is
+# sent whole: the frame and the window cut it at 2,048 characters, so a long
+# paragraph was refused or cut. The kernel now bounds one edit by the page's
+# own length and says so; the history keeps every revision and every file.
+# 0.5.3 (2026-10-02): "Use as desktop" waits on the browser render check
+# (server/applications/desktop_render.py). A check that outlasts the
+# router's 30 s answers 202 with a job; the window follows it to the same
+# answer and shows a refusal — the error and its line — in its own report
+# box. A write to the WORN desktop (Use this one, Restore, a tune edit) that
+# did not reach it because it does not render is reported there too.
+# App-only change; no scope or route of its own.
+# 0.5.2 (2026-09-30): an artifact with
+# several pages and none at its root (a/index.html, b/index.html) used to
+# read "render failed": the kernel's render now answers that case with 300
+# and the pages (server/applications/entry_pages, the rule every preview lane
+# uses), and the viewer shows the list, opens the page picked (?entry=) and
+# switches pages from its bar — the way the Workbench's open-version window
+# does. The list and the switcher are built node by node, like the tabs
+# below: a page name is a file name the Host wrote. Gate:
+# scripts/e2e_artifacts_page_list.py.
+# 0.5.1 (2026-10-01): the variant tabs and the history strip are built node by
+# node. A file name is the Host's choice, and it went into data-entry="…"
+# (and a revision's note into title="…") through an escape that left
+# quotes alone, so a name could add attributes, handlers included, to a
+# button in this window. The escape helper now escapes both quotes too.
+# 0.5.0 (2026-09-28): the gallery shows every artifact as a LIVE preview
+# (the old gallery was unorganized blocks of text). Each card is the artifact itself, rendered in the same
+# sandbox as the viewer and scaled down, loaded only while on screen and
+# re-rendered only when it changed; a desktop design gets the inert stand-in
+# bridge (/js/desktop-preview.js) so it draws. Search by name/description and
+# All / Artifacts / Desktops (GET /api/artifacts now says `desktop`); newest
+# change first. The poll redraws the grid only when the list changed.
+# 0.1.0 (2026-07-12): the artifact window: gallery + sandboxed srcdoc
+# live viewer (updated_at poll), open_app deep-link view.
+# 0.2.0 (2026-07-12): the artifact bridge.
+# TUNE-MODE BRIDGE — the frame's ONE door: select (click →
+# pill in the Circles composer, rides the user's next message), edit
+# (double-click text → before-matched diff applied via POST /bridge; pill
+# documents it), act (data-cseries-action clicks → send AS the user; ids must
+# exist in STATIC markup). All enforcement invisible (schema/size/rate caps,
+# declared-set, before-match, re-derived select text); one click, zero
+# confirmations, everything attributable. VARIANTS — root *.html files render
+# as tabs; "Use this one" sends the pick as the user's message (decision →
+# Ladder). write:projects added FOR the bridge edit lane only.
+# 0.3.0 (2026-07-12): CHANGE HISTORY (the note that closed the project —
+# supersedes the post-publishing live-html-editor idea). Every create /
+# write / tune-edit is a server-side revision (.history in the workspace
+# jail, pruned to 20); the History strip lists them, clicking one renders
+# that PAST state read-only (no tune instrumentation) in the same sandboxed
+# frame, Restore reverts exactly — and the revert is itself a revision, so
+# nothing is ever lost. Host mirror: artifact op='history'/'revert'.
+
+window:
+  title: Artifacts
+  width: 980
+  height: 700
+  resizable: true
+  min_width: 560
+  min_height: 400
+
+permissions:
+  - read:projects
+  - write:projects
+  # "Use as desktop" points the desktop at the open artifact itself (PUT
+  # /api/appearance/desktop) — a click, not a message the host must act on.
+  - write:appearance
+
+prompt_behavior:
+  what_it_is: >-
+    The Artifacts window is where the user sees the live HTML artifacts you build;
+    it refreshes on every write. Tune mode lets the user point at the design: their
+    clicks arrive in chat as [artifact N · path · "text"] pills and their
+    double-click text edits as "changed X → Y" pills. Variants written as
+    variant-*.html show as tabs, and "Use this one" copies the pick over index.html
+    on the server, with no message. Every change is a revision: the History button
+    lists them all and Restore brings one back as a new revision, so nothing is
+    lost. The desktop is an artifact too, and through its design tokens it styles
+    the whole shell; "Use as desktop" in the viewer bar points the desktop at the
+    open artifact, and a document missing the desktop floor is refused with a report
+    in the window. Plain wallpaper swatches are in Settings, under Appearance.
+  user_path: "the Artifacts app, in the dock — or just say 'show me' and it opens on their screen"

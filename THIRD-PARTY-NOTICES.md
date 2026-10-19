@@ -1,0 +1,734 @@
+# Third-party notices
+
+Every third-party component that ships with C-Series, grouped by how it
+reaches you. Licence texts are in `third_party/licenses/`; NOTICE texts that
+Apache-2.0 components require us to carry are in `NOTICE`.
+
+Not included because nothing from them reaches a user: devDependencies of
+the *-web projects, the gate toolchain (scripts/toolchain,
+scripts/requirements-gates.txt), and the sidecar images, which are
+published as Dockerfiles only.
+
+### 1. Files vendored in the repo (24)
+
+- qrcode-generator (Kazuhiko Arase) 1.4.4: MIT
+- age-encryption (typage) 0.3.1: BSD-3-Clause
+- @noble/ciphers 2.4.0: MIT
+- @noble/curves 2.4.0 and 2.0.1 (nested under @noble/post-quantum): MIT
+- @noble/hashes 2.4.0 and 2.0.1 (nested): MIT
+- @noble/post-quantum 0.5.4: MIT
+- @scure/base 2.4.0: MIT
+- xterm.js (@xterm/xterm) 5.5.0: MIT
+- @xterm/addon-fit 0.10.0: MIT
+- Inter font (Google Fonts subset via fontsource) Google Fonts v20 / font revision 4.001 (fc-scan fontversion 262210): OFL-1.1
+- JetBrains Mono font (Google Fonts subset via fontsource) Google Fonts v24 / font revision 2.211 (fontversion 144900): OFL-1.1
+- Newsreader font (Google Fonts subset via fontsource) Google Fonts v26 / font revision 1.003 (fontversion 65733): OFL-1.1
+- Lucide icons (path data) 0.500.0 (30 of 51 icon path strings in icons.js match lucide-react 0.500.0 exactly): ISC (portions MIT, Feather); texts: lucide-0.500.0.LICENSE, feather-4.29.2.LICENSE
+- circles-web build output (React app bundle) circles-web 0.4.0 (circles-web/package.json:4): MIXED (see raw/bundle-npm-prod.csv: 375 prod packages; MIT 312, ISC 36, Apache-2.0 15, BSD-3-Clause 6, BSD-2-C…
+- workbench-web build output (React app bundle) workbench-web 0.1.0 (workbench-web/package.json:4): MIXED (same 375-package closure and licence mix as circles-web; workbench-web/package-lock.json)
+- community-web build output (React app bundle) community-web 0.1.0: MIXED (233 prod packages: MIT 185, ISC 35, BSD-3-Clause 6, Apache-2.0 3, BSD-2-Clause 1, Unlicense 1, (MPL-2.0…
+- sites-web build output (React app bundle) sites-web 0.1.0: MIXED (81 prod packages: MIT 78, Apache-2.0 1, ISC 1, 0BSD 1)
+- Oniguruma (regex engine, compiled to WebAssembly via vscode-oniguruma 1.7.0) 6.9.8: BSD-2-Clause (Oniguruma) and MIT (vscode-oniguruma glue); texts: oniguruma-6.9.8.LICENSE, vscode-oniguruma-1.7.0.LICENSE, vscode-oniguruma-1.7.0.NOTICE
+- dompurify 3.4.11: (MPL-2.0 OR Apache-2.0)
+- khroma 2.1.0: MIT
+- shadcn/ui components (copied source) registry at shadcn@4.21.5: MIT; text: shadcn-ui-4.21.5.LICENSE
+- AI Elements components (copied source, Vercel) 1.9.1: Apache-2.0; each copied file is marked as based on AI Elements and modified; text: ai-elements-1.9.1.LICENSE, Apache-2.0.txt
+- Third-party vendor logos (harness icons) n/a: none found (trademarks)
+- Telegram-style app icon n/a: none found
+
+### 2. npm packages compiled into the built bundles in system-apps/*/assets (1064 rows, 430 distinct)
+
+Counts by licence: MIT 365, ISC 37, Apache-2.0 17, BSD-3-Clause 6, (MPL-2.0 OR Apache-2.0) 1, BSD-2-Clause 1, (AFL-2.1 OR BSD-3-Clause) 1, Unlicense 1, 0BSD 1
+
+- @ai-sdk/gateway 3.0.133: Apache-2.0 (circles-web, workbench-web)
+- @ai-sdk/provider 3.0.10: Apache-2.0 (circles-web, workbench-web)
+- @ai-sdk/provider-utils 4.0.30: Apache-2.0 (circles-web, workbench-web)
+- @ai-sdk/react 3.0.210: Apache-2.0 (circles-web, workbench-web)
+- @antfu/install-pkg 1.1.0: MIT (circles-web, community-web, workbench-web)
+- @braintree/sanitize-url 7.1.2: MIT (circles-web, community-web, workbench-web)
+- @chevrotain/types 11.1.2: Apache-2.0 (circles-web, community-web, workbench-web)
+- @floating-ui/core 1.7.5: MIT (circles-web, sites-web, workbench-web)
+- @floating-ui/dom 1.7.6: MIT (circles-web, sites-web, workbench-web)
+- @floating-ui/react-dom 2.1.8: MIT (circles-web, sites-web, workbench-web)
+- @floating-ui/utils 0.2.11: MIT (circles-web, sites-web, workbench-web)
+- @iconify/types 2.0.0: MIT (circles-web, community-web, workbench-web)
+- @iconify/utils 3.1.3: MIT (circles-web, workbench-web)
+- @iconify/utils 3.1.4: MIT (community-web)
+- @mermaid-js/parser 1.1.1: MIT (circles-web, workbench-web)
+- @mermaid-js/parser 1.2.0: MIT (community-web)
+- @opentelemetry/api 1.9.1: Apache-2.0 (circles-web, workbench-web)
+- @radix-ui/number 1.1.2: MIT (circles-web, sites-web, workbench-web)
+- @radix-ui/primitive 1.1.4: MIT (circles-web, workbench-web)
+- @radix-ui/primitive 1.1.5: MIT (sites-web)
+- @radix-ui/react-accessible-icon 1.1.10: MIT (circles-web, workbench-web)
+- @radix-ui/react-accessible-icon 1.1.11: MIT (sites-web)
+- @radix-ui/react-accordion 1.2.14: MIT (circles-web, workbench-web)
+- @radix-ui/react-accordion 1.2.16: MIT (sites-web)
+- @radix-ui/react-alert-dialog 1.1.17: MIT (circles-web, workbench-web)
+- @radix-ui/react-alert-dialog 1.1.19: MIT (sites-web)
+- @radix-ui/react-arrow 1.1.10: MIT (circles-web, workbench-web)
+- @radix-ui/react-arrow 1.1.11: MIT (sites-web)
+- @radix-ui/react-aspect-ratio 1.1.10: MIT (circles-web, workbench-web)
+- @radix-ui/react-aspect-ratio 1.1.11: MIT (sites-web)
+- @radix-ui/react-avatar 1.2.0: MIT (circles-web, workbench-web)
+- @radix-ui/react-avatar 1.2.2: MIT (sites-web)
+- @radix-ui/react-checkbox 1.3.5: MIT (circles-web, workbench-web)
+- @radix-ui/react-checkbox 1.3.7: MIT (sites-web)
+- @radix-ui/react-collapsible 1.1.14: MIT (circles-web, workbench-web)
+- @radix-ui/react-collapsible 1.1.16: MIT (sites-web)
+- @radix-ui/react-collection 1.1.10: MIT (circles-web, workbench-web)
+- @radix-ui/react-collection 1.1.12: MIT (sites-web)
+- @radix-ui/react-compose-refs 1.1.3: MIT (circles-web, sites-web, workbench-web)
+- @radix-ui/react-context 1.1.4: MIT (circles-web, workbench-web)
+- @radix-ui/react-context 1.2.0: MIT (sites-web)
+- @radix-ui/react-context-menu 2.3.1: MIT (circles-web, workbench-web)
+- @radix-ui/react-context-menu 2.3.3: MIT (sites-web)
+- @radix-ui/react-dialog 1.1.17: MIT (circles-web, workbench-web)
+- @radix-ui/react-dialog 1.1.19: MIT (sites-web)
+- @radix-ui/react-direction 1.1.2: MIT (circles-web, sites-web, workbench-web)
+- @radix-ui/react-dismissable-layer 1.1.13: MIT (circles-web, workbench-web)
+- @radix-ui/react-dismissable-layer 1.1.15: MIT (sites-web)
+- @radix-ui/react-dropdown-menu 2.1.18: MIT (circles-web, workbench-web)
+- @radix-ui/react-dropdown-menu 2.1.20: MIT (sites-web)
+- @radix-ui/react-focus-guards 1.1.4: MIT (circles-web, sites-web, workbench-web)
+- @radix-ui/react-focus-scope 1.1.10: MIT (circles-web, workbench-web)
+- @radix-ui/react-focus-scope 1.1.12: MIT (sites-web)
+- @radix-ui/react-form 0.1.10: MIT (circles-web, workbench-web)
+- @radix-ui/react-form 0.1.12: MIT (sites-web)
+- @radix-ui/react-hover-card 1.1.17: MIT (circles-web, workbench-web)
+- @radix-ui/react-hover-card 1.1.19: MIT (sites-web)
+- @radix-ui/react-id 1.1.2: MIT (circles-web, sites-web, workbench-web)
+- @radix-ui/react-label 2.1.10: MIT (circles-web, workbench-web)
+- @radix-ui/react-label 2.1.11: MIT (sites-web)
+- @radix-ui/react-menu 2.1.18: MIT (circles-web, workbench-web)
+- @radix-ui/react-menu 2.1.20: MIT (sites-web)
+- @radix-ui/react-menubar 1.1.18: MIT (circles-web, workbench-web)
+- @radix-ui/react-menubar 1.1.20: MIT (sites-web)
+- @radix-ui/react-navigation-menu 1.2.16: MIT (circles-web, workbench-web)
+- @radix-ui/react-navigation-menu 1.2.18: MIT (sites-web)
+- @radix-ui/react-one-time-password-field 0.1.10: MIT (circles-web, workbench-web)
+- @radix-ui/react-one-time-password-field 0.1.12: MIT (sites-web)
+- @radix-ui/react-password-toggle-field 0.1.5: MIT (circles-web, workbench-web)
+- @radix-ui/react-password-toggle-field 0.1.7: MIT (sites-web)
+- @radix-ui/react-popover 1.1.17: MIT (circles-web, workbench-web)
+- @radix-ui/react-popover 1.1.19: MIT (sites-web)
+- @radix-ui/react-popper 1.3.1: MIT (circles-web, workbench-web)
+- @radix-ui/react-popper 1.3.3: MIT (sites-web)
+- @radix-ui/react-portal 1.1.12: MIT (circles-web, workbench-web)
+- @radix-ui/react-portal 1.1.13: MIT (sites-web)
+- @radix-ui/react-presence 1.1.6: MIT (circles-web, workbench-web)
+- @radix-ui/react-presence 1.1.7: MIT (sites-web)
+- @radix-ui/react-primitive 2.1.6: MIT (circles-web, workbench-web)
+- @radix-ui/react-primitive 2.1.7: MIT (sites-web)
+- @radix-ui/react-progress 1.1.10: MIT (circles-web, workbench-web)
+- @radix-ui/react-progress 1.1.12: MIT (sites-web)
+- @radix-ui/react-radio-group 1.4.1: MIT (circles-web, workbench-web)
+- @radix-ui/react-radio-group 1.4.3: MIT (sites-web)
+- @radix-ui/react-roving-focus 1.1.13: MIT (circles-web, workbench-web)
+- @radix-ui/react-roving-focus 1.1.15: MIT (sites-web)
+- @radix-ui/react-scroll-area 1.2.12: MIT (circles-web, workbench-web)
+- @radix-ui/react-scroll-area 1.2.14: MIT (sites-web)
+- @radix-ui/react-select 2.3.1: MIT (circles-web, workbench-web)
+- @radix-ui/react-select 2.3.3: MIT (sites-web)
+- @radix-ui/react-separator 1.1.10: MIT (circles-web, workbench-web)
+- @radix-ui/react-separator 1.1.11: MIT (sites-web)
+- @radix-ui/react-slider 1.4.1: MIT (circles-web, workbench-web)
+- @radix-ui/react-slider 1.4.3: MIT (sites-web)
+- @radix-ui/react-slot 1.3.0: MIT (circles-web, sites-web, workbench-web)
+- @radix-ui/react-switch 1.3.1: MIT (circles-web, workbench-web)
+- @radix-ui/react-switch 1.3.3: MIT (sites-web)
+- @radix-ui/react-tabs 1.1.15: MIT (circles-web, workbench-web)
+- @radix-ui/react-tabs 1.1.17: MIT (sites-web)
+- @radix-ui/react-toast 1.2.17: MIT (circles-web, workbench-web)
+- @radix-ui/react-toast 1.2.19: MIT (sites-web)
+- @radix-ui/react-toggle 1.1.12: MIT (circles-web, workbench-web)
+- @radix-ui/react-toggle 1.1.14: MIT (sites-web)
+- @radix-ui/react-toggle-group 1.1.13: MIT (circles-web, workbench-web)
+- @radix-ui/react-toggle-group 1.1.15: MIT (sites-web)
+- @radix-ui/react-toolbar 1.1.13: MIT (circles-web, workbench-web)
+- @radix-ui/react-toolbar 1.1.15: MIT (sites-web)
+- @radix-ui/react-tooltip 1.2.10: MIT (circles-web, workbench-web)
+- @radix-ui/react-tooltip 1.2.12: MIT (sites-web)
+- @radix-ui/react-use-callback-ref 1.1.2: MIT (circles-web, sites-web, workbench-web)
+- @radix-ui/react-use-controllable-state 1.2.3: MIT (circles-web, sites-web, workbench-web)
+- @radix-ui/react-use-effect-event 0.0.3: MIT (circles-web, sites-web, workbench-web)
+- @radix-ui/react-use-escape-keydown 1.1.2: MIT (circles-web, workbench-web)
+- @radix-ui/react-use-escape-keydown 1.1.3: MIT (sites-web)
+- @radix-ui/react-use-is-hydrated 0.1.1: MIT (circles-web, sites-web, workbench-web)
+- @radix-ui/react-use-layout-effect 1.1.2: MIT (circles-web, sites-web, workbench-web)
+- @radix-ui/react-use-previous 1.1.2: MIT (circles-web, sites-web, workbench-web)
+- @radix-ui/react-use-rect 1.1.2: MIT (circles-web, sites-web, workbench-web)
+- @radix-ui/react-use-size 1.1.2: MIT (circles-web, sites-web, workbench-web)
+- @radix-ui/react-visually-hidden 1.2.6: MIT (circles-web, workbench-web)
+- @radix-ui/react-visually-hidden 1.2.7: MIT (sites-web)
+- @radix-ui/rect 1.1.2: MIT (circles-web, sites-web, workbench-web)
+- @shikijs/core 4.2.0: MIT (circles-web, workbench-web)
+- @shikijs/core 3.23.0: MIT (circles-web, workbench-web)
+- @shikijs/engine-javascript 4.2.0: MIT (circles-web, workbench-web)
+- @shikijs/engine-javascript 3.23.0: MIT (circles-web, workbench-web)
+- @shikijs/engine-oniguruma 4.2.0: MIT (circles-web, workbench-web)
+- @shikijs/engine-oniguruma 3.23.0: MIT (circles-web, workbench-web)
+- @shikijs/langs 4.2.0: MIT (circles-web, workbench-web)
+- @shikijs/langs 3.23.0: MIT (circles-web, workbench-web)
+- @shikijs/primitive 4.2.0: MIT (circles-web, workbench-web)
+- @shikijs/themes 4.2.0: MIT (circles-web, workbench-web)
+- @shikijs/themes 3.23.0: MIT (circles-web, workbench-web)
+- @shikijs/types 4.2.0: MIT (circles-web, workbench-web)
+- @shikijs/types 3.23.0: MIT (circles-web, workbench-web)
+- @shikijs/vscode-textmate 10.0.2: MIT (circles-web, workbench-web)
+- @standard-schema/spec 1.1.0: MIT (circles-web, workbench-web)
+- @streamdown/cjk 1.0.3: Apache-2.0 (circles-web, workbench-web)
+- @streamdown/code 1.1.1: Apache-2.0 (circles-web, workbench-web)
+- @streamdown/math 1.0.2: Apache-2.0 (circles-web, workbench-web)
+- @streamdown/mermaid 1.0.2: Apache-2.0 (circles-web, workbench-web)
+- @types/d3 7.4.3: MIT (circles-web, community-web, workbench-web)
+- @types/d3-array 3.2.2: MIT (circles-web, community-web, workbench-web)
+- @types/d3-axis 3.0.6: MIT (circles-web, community-web, workbench-web)
+- @types/d3-brush 3.0.6: MIT (circles-web, community-web, workbench-web)
+- @types/d3-chord 3.0.6: MIT (circles-web, community-web, workbench-web)
+- @types/d3-color 3.1.3: MIT (circles-web, community-web, workbench-web)
+- @types/d3-contour 3.0.6: MIT (circles-web, community-web, workbench-web)
+- @types/d3-delaunay 6.0.4: MIT (circles-web, community-web, workbench-web)
+- @types/d3-dispatch 3.0.7: MIT (circles-web, community-web, workbench-web)
+- @types/d3-drag 3.0.7: MIT (circles-web, community-web, workbench-web)
+- @types/d3-dsv 3.0.7: MIT (circles-web, community-web, workbench-web)
+- @types/d3-ease 3.0.2: MIT (circles-web, community-web, workbench-web)
+- @types/d3-fetch 3.0.7: MIT (circles-web, community-web, workbench-web)
+- @types/d3-force 3.0.10: MIT (circles-web, community-web, workbench-web)
+- @types/d3-format 3.0.4: MIT (circles-web, community-web, workbench-web)
+- @types/d3-geo 3.1.0: MIT (circles-web, community-web, workbench-web)
+- @types/d3-hierarchy 3.1.7: MIT (circles-web, community-web, workbench-web)
+- @types/d3-interpolate 3.0.4: MIT (circles-web, community-web, workbench-web)
+- @types/d3-path 3.1.1: MIT (circles-web, community-web, workbench-web)
+- @types/d3-polygon 3.0.2: MIT (circles-web, community-web, workbench-web)
+- @types/d3-quadtree 3.0.6: MIT (circles-web, community-web, workbench-web)
+- @types/d3-random 3.0.3: MIT (circles-web, workbench-web)
+- @types/d3-random 3.0.4: MIT (community-web)
+- @types/d3-scale 4.0.9: MIT (circles-web, community-web, workbench-web)
+- @types/d3-scale-chromatic 3.1.0: MIT (circles-web, community-web, workbench-web)
+- @types/d3-selection 3.0.11: MIT (circles-web, community-web, workbench-web)
+- @types/d3-shape 3.1.8: MIT (circles-web, community-web, workbench-web)
+- @types/d3-time 3.0.4: MIT (circles-web, community-web, workbench-web)
+- @types/d3-time-format 4.0.3: MIT (circles-web, community-web, workbench-web)
+- @types/d3-timer 3.0.2: MIT (circles-web, community-web, workbench-web)
+- @types/d3-transition 3.0.9: MIT (circles-web, community-web, workbench-web)
+- @types/d3-zoom 3.0.8: MIT (circles-web, community-web, workbench-web)
+- @types/debug 4.1.13: MIT (circles-web, community-web, workbench-web)
+- @types/estree 1.0.9: MIT (circles-web, community-web, workbench-web)
+- @types/estree-jsx 1.0.5: MIT (circles-web, community-web, workbench-web)
+- @types/geojson 7946.0.16: MIT (circles-web, community-web, workbench-web)
+- @types/hast 3.0.4: MIT (circles-web, community-web, workbench-web)
+- @types/katex 0.16.8: MIT (circles-web, workbench-web)
+- @types/mdast 4.0.4: MIT (circles-web, community-web, workbench-web)
+- @types/ms 2.1.0: MIT (circles-web, community-web, workbench-web)
+- @types/trusted-types 2.0.7: MIT (circles-web, community-web, workbench-web)
+- @types/unist 3.0.3: MIT (circles-web, community-web, workbench-web)
+- @types/unist 2.0.11: MIT (circles-web, community-web, workbench-web)
+- @ungap/structured-clone 1.3.1: ISC (circles-web, workbench-web)
+- @ungap/structured-clone 1.3.2: ISC (community-web)
+- @upsetjs/venn.js 2.0.0: MIT (circles-web, community-web, workbench-web)
+- @vercel/oidc 3.2.0: Apache-2.0 (circles-web, workbench-web)
+- ai 6.0.208: Apache-2.0 (circles-web, workbench-web)
+- aria-hidden 1.2.6: MIT (circles-web, sites-web, workbench-web)
+- bail 2.0.2: MIT (circles-web, community-web, workbench-web)
+- ccount 2.0.1: MIT (circles-web, community-web, workbench-web)
+- character-entities 2.0.2: MIT (circles-web, community-web, workbench-web)
+- character-entities-html4 2.1.0: MIT (circles-web, community-web, workbench-web)
+- character-entities-legacy 3.0.0: MIT (circles-web, community-web, workbench-web)
+- character-reference-invalid 2.0.1: MIT (circles-web, community-web, workbench-web)
+- class-variance-authority 0.7.1: Apache-2.0 (circles-web, sites-web, workbench-web)
+- clsx 2.1.1: MIT (circles-web, community-web, sites-web, workbench-web)
+- cmdk 1.1.1: MIT (circles-web, workbench-web)
+- comma-separated-tokens 2.0.3: MIT (circles-web, community-web, workbench-web)
+- commander 8.3.0: MIT (circles-web, community-web, workbench-web)
+- commander 7.2.0: MIT (circles-web, community-web, workbench-web)
+- cose-base 1.0.3: MIT (circles-web, community-web, workbench-web)
+- cose-base 2.2.0: MIT (circles-web, community-web, workbench-web)
+- cytoscape 3.34.0: MIT (circles-web, community-web, workbench-web)
+- cytoscape-cose-bilkent 4.1.0: MIT (circles-web, community-web, workbench-web)
+- cytoscape-fcose 2.2.0: MIT (circles-web, community-web, workbench-web)
+- d3 7.9.0: ISC (circles-web, community-web, workbench-web)
+- d3-array 3.2.4: ISC (circles-web, community-web, workbench-web)
+- d3-array 2.12.1: BSD-3-Clause (circles-web, community-web, workbench-web)
+- d3-axis 3.0.0: ISC (circles-web, community-web, workbench-web)
+- d3-brush 3.0.0: ISC (circles-web, community-web, workbench-web)
+- d3-chord 3.0.1: ISC (circles-web, community-web, workbench-web)
+- d3-color 3.1.0: ISC (circles-web, community-web, workbench-web)
+- d3-contour 4.0.2: ISC (circles-web, community-web, workbench-web)
+- d3-delaunay 6.0.4: ISC (circles-web, community-web, workbench-web)
+- d3-dispatch 3.0.1: ISC (circles-web, community-web, workbench-web)
+- d3-drag 3.0.0: ISC (circles-web, community-web, workbench-web)
+- d3-dsv 3.0.1: ISC (circles-web, community-web, workbench-web)
+- d3-ease 3.0.1: BSD-3-Clause (circles-web, community-web, workbench-web)
+- d3-fetch 3.0.1: ISC (circles-web, community-web, workbench-web)
+- d3-force 3.0.0: ISC (circles-web, community-web, workbench-web)
+- d3-format 3.1.2: ISC (circles-web, community-web, workbench-web)
+- d3-geo 3.1.1: ISC (circles-web, community-web, workbench-web)
+- d3-hierarchy 3.1.2: ISC (circles-web, community-web, workbench-web)
+- d3-interpolate 3.0.1: ISC (circles-web, community-web, workbench-web)
+- d3-path 3.1.0: ISC (circles-web, community-web, workbench-web)
+- d3-path 1.0.9: BSD-3-Clause (circles-web, community-web, workbench-web)
+- d3-polygon 3.0.1: ISC (circles-web, community-web, workbench-web)
+- d3-quadtree 3.0.1: ISC (circles-web, community-web, workbench-web)
+- d3-random 3.0.1: ISC (circles-web, community-web, workbench-web)
+- d3-sankey 0.12.3: BSD-3-Clause (circles-web, community-web, workbench-web)
+- d3-scale 4.0.2: ISC (circles-web, community-web, workbench-web)
+- d3-scale-chromatic 3.1.0: ISC (circles-web, community-web, workbench-web)
+- d3-selection 3.0.0: ISC (circles-web, community-web, workbench-web)
+- d3-shape 1.3.7: BSD-3-Clause (circles-web, community-web, workbench-web)
+- d3-shape 3.2.0: ISC (circles-web, community-web, workbench-web)
+- d3-time 3.1.0: ISC (circles-web, community-web, workbench-web)
+- d3-time-format 4.1.0: ISC (circles-web, community-web, workbench-web)
+- d3-timer 3.0.1: ISC (circles-web, community-web, workbench-web)
+- d3-transition 3.0.1: ISC (circles-web, community-web, workbench-web)
+- d3-zoom 3.0.0: ISC (circles-web, community-web, workbench-web)
+- dagre-d3-es 7.0.14: MIT (circles-web, community-web, workbench-web)
+- dayjs 1.11.21: MIT (circles-web, community-web, workbench-web)
+- debug 4.4.3: MIT (circles-web, community-web, workbench-web)
+- decode-named-character-reference 1.3.0: MIT (circles-web, community-web, workbench-web)
+- delaunator 5.1.0: ISC (circles-web, community-web, workbench-web)
+- dequal 2.0.3: MIT (circles-web, community-web, workbench-web)
+- detect-node-es 1.1.0: MIT (circles-web, sites-web, workbench-web)
+- devlop 1.1.0: MIT (circles-web, community-web, workbench-web)
+- dompurify 3.4.11: (MPL-2.0 OR Apache-2.0) (circles-web, community-web, workbench-web)
+- entities 6.0.1: BSD-2-Clause (circles-web, community-web, workbench-web)
+- es-toolkit 1.48.1: MIT (circles-web, workbench-web)
+- es-toolkit 1.49.0: MIT (community-web)
+- escape-string-regexp 5.0.0: MIT (circles-web, community-web, workbench-web)
+- estree-util-is-identifier-name 3.0.0: MIT (circles-web, community-web, workbench-web)
+- eventsource-parser 3.1.0: MIT (circles-web, workbench-web)
+- extend 3.0.2: MIT (circles-web, community-web, workbench-web)
+- framer-motion 12.40.0: MIT (circles-web, workbench-web)
+- get-east-asian-width 1.6.0: MIT (circles-web, workbench-web)
+- get-nonce 1.0.1: MIT (circles-web, sites-web, workbench-web)
+- hachure-fill 0.5.2: MIT (circles-web, community-web, workbench-web)
+- hast-util-from-dom 5.0.1: ISC (circles-web, workbench-web)
+- hast-util-from-html 2.0.3: MIT (circles-web, workbench-web)
+- hast-util-from-html-isomorphic 2.0.0: MIT (circles-web, workbench-web)
+- hast-util-from-parse5 8.0.3: MIT (circles-web, community-web, workbench-web)
+- hast-util-is-element 3.0.0: MIT (circles-web, workbench-web)
+- hast-util-parse-selector 4.0.0: MIT (circles-web, community-web, workbench-web)
+- hast-util-raw 9.1.0: MIT (circles-web, community-web, workbench-web)
+- hast-util-sanitize 5.0.2: MIT (circles-web, community-web, workbench-web)
+- hast-util-to-html 9.0.5: MIT (circles-web, workbench-web)
+- hast-util-to-jsx-runtime 2.3.6: MIT (circles-web, community-web, workbench-web)
+- hast-util-to-parse5 8.0.1: MIT (circles-web, community-web, workbench-web)
+- hast-util-to-text 4.0.2: MIT (circles-web, workbench-web)
+- hast-util-whitespace 3.0.0: MIT (circles-web, community-web, workbench-web)
+- hastscript 9.0.1: MIT (circles-web, community-web, workbench-web)
+- html-url-attributes 3.0.1: MIT (circles-web, community-web, workbench-web)
+- html-void-elements 3.0.0: MIT (circles-web, community-web, workbench-web)
+- iconv-lite 0.6.3: MIT (circles-web, community-web, workbench-web)
+- import-meta-resolve 4.2.0: MIT (circles-web, community-web, workbench-web)
+- inline-style-parser 0.2.7: MIT (circles-web, community-web, workbench-web)
+- internmap 1.0.1: ISC (circles-web, community-web, workbench-web)
+- internmap 2.0.3: ISC (circles-web, community-web, workbench-web)
+- is-alphabetical 2.0.1: MIT (circles-web, community-web, workbench-web)
+- is-alphanumerical 2.0.1: MIT (circles-web, community-web, workbench-web)
+- is-decimal 2.0.1: MIT (circles-web, community-web, workbench-web)
+- is-hexadecimal 2.0.1: MIT (circles-web, community-web, workbench-web)
+- is-plain-obj 4.1.0: MIT (circles-web, community-web, workbench-web)
+- json-schema 0.4.0: (AFL-2.1 OR BSD-3-Clause) (circles-web, workbench-web)
+- katex 0.16.47: MIT (circles-web, community-web, workbench-web)
+- khroma 2.1.0: MIT (circles-web, community-web, workbench-web)
+- layout-base 2.0.1: MIT (circles-web, community-web, workbench-web)
+- layout-base 1.0.2: MIT (circles-web, community-web, workbench-web)
+- lodash-es 4.18.1: MIT (circles-web, community-web, workbench-web)
+- longest-streak 3.1.0: MIT (circles-web, community-web, workbench-web)
+- lucide-react 0.500.0: ISC (circles-web, community-web, sites-web, workbench-web)
+- markdown-table 3.0.4: MIT (circles-web, community-web, workbench-web)
+- marked 16.4.2: MIT (circles-web, community-web, workbench-web)
+- marked 17.0.6: MIT (circles-web, community-web, workbench-web)
+- mdast-util-find-and-replace 3.0.2: MIT (circles-web, community-web, workbench-web)
+- mdast-util-from-markdown 2.0.3: MIT (circles-web, community-web, workbench-web)
+- mdast-util-gfm 3.1.0: MIT (circles-web, community-web, workbench-web)
+- mdast-util-gfm-autolink-literal 2.0.1: MIT (circles-web, community-web, workbench-web)
+- mdast-util-gfm-footnote 2.1.0: MIT (circles-web, community-web, workbench-web)
+- mdast-util-gfm-strikethrough 2.0.0: MIT (circles-web, community-web, workbench-web)
+- mdast-util-gfm-table 2.0.0: MIT (circles-web, community-web, workbench-web)
+- mdast-util-gfm-task-list-item 2.0.0: MIT (circles-web, community-web, workbench-web)
+- mdast-util-math 3.0.0: MIT (circles-web, workbench-web)
+- mdast-util-mdx-expression 2.0.1: MIT (circles-web, community-web, workbench-web)
+- mdast-util-mdx-jsx 3.2.0: MIT (circles-web, community-web, workbench-web)
+- mdast-util-mdxjs-esm 2.0.1: MIT (circles-web, community-web, workbench-web)
+- mdast-util-phrasing 4.1.0: MIT (circles-web, community-web, workbench-web)
+- mdast-util-to-hast 13.2.1: MIT (circles-web, community-web, workbench-web)
+- mdast-util-to-markdown 2.1.2: MIT (circles-web, community-web, workbench-web)
+- mdast-util-to-markdown-cjk-friendly 1.0.0: MIT (circles-web, workbench-web)
+- mdast-util-to-markdown-cjk-friendly-gfm-strikethrough 1.0.0: MIT (circles-web, workbench-web)
+- mdast-util-to-string 4.0.0: MIT (circles-web, community-web, workbench-web)
+- mermaid 11.15.0: MIT (circles-web, workbench-web)
+- mermaid 11.16.0: MIT (community-web)
+- micromark 4.0.2: MIT (circles-web, community-web, workbench-web)
+- micromark-core-commonmark 2.0.3: MIT (circles-web, community-web, workbench-web)
+- micromark-extension-cjk-friendly 2.0.1: MIT (circles-web, workbench-web)
+- micromark-extension-cjk-friendly-gfm-strikethrough 2.0.1: MIT (circles-web, workbench-web)
+- micromark-extension-cjk-friendly-util 3.0.1: MIT (circles-web, workbench-web)
+- micromark-extension-gfm 3.0.0: MIT (circles-web, community-web, workbench-web)
+- micromark-extension-gfm-autolink-literal 2.1.0: MIT (circles-web, community-web, workbench-web)
+- micromark-extension-gfm-footnote 2.1.0: MIT (circles-web, community-web, workbench-web)
+- micromark-extension-gfm-strikethrough 2.1.0: MIT (circles-web, community-web, workbench-web)
+- micromark-extension-gfm-table 2.1.1: MIT (circles-web, community-web, workbench-web)
+- micromark-extension-gfm-tagfilter 2.0.0: MIT (circles-web, community-web, workbench-web)
+- micromark-extension-gfm-task-list-item 2.1.0: MIT (circles-web, community-web, workbench-web)
+- micromark-extension-math 3.1.0: MIT (circles-web, workbench-web)
+- micromark-factory-destination 2.0.1: MIT (circles-web, community-web, workbench-web)
+- micromark-factory-label 2.0.1: MIT (circles-web, community-web, workbench-web)
+- micromark-factory-space 2.0.1: MIT (circles-web, community-web, workbench-web)
+- micromark-factory-title 2.0.1: MIT (circles-web, community-web, workbench-web)
+- micromark-factory-whitespace 2.0.1: MIT (circles-web, community-web, workbench-web)
+- micromark-util-character 2.1.1: MIT (circles-web, community-web, workbench-web)
+- micromark-util-chunked 2.0.1: MIT (circles-web, community-web, workbench-web)
+- micromark-util-classify-character 2.0.1: MIT (circles-web, community-web, workbench-web)
+- micromark-util-combine-extensions 2.0.1: MIT (circles-web, community-web, workbench-web)
+- micromark-util-decode-numeric-character-reference 2.0.2: MIT (circles-web, community-web, workbench-web)
+- micromark-util-decode-string 2.0.1: MIT (circles-web, community-web, workbench-web)
+- micromark-util-encode 2.0.1: MIT (circles-web, community-web, workbench-web)
+- micromark-util-html-tag-name 2.0.1: MIT (circles-web, community-web, workbench-web)
+- micromark-util-normalize-identifier 2.0.1: MIT (circles-web, community-web, workbench-web)
+- micromark-util-resolve-all 2.0.1: MIT (circles-web, community-web, workbench-web)
+- micromark-util-sanitize-uri 2.0.1: MIT (circles-web, community-web, workbench-web)
+- micromark-util-subtokenize 2.1.0: MIT (circles-web, community-web, workbench-web)
+- micromark-util-symbol 2.0.1: MIT (circles-web, community-web, workbench-web)
+- micromark-util-types 2.0.2: MIT (circles-web, community-web, workbench-web)
+- motion 12.40.0: MIT (circles-web, workbench-web)
+- motion-dom 12.40.0: MIT (circles-web, workbench-web)
+- motion-utils 12.39.0: MIT (circles-web, workbench-web)
+- ms 2.1.3: MIT (circles-web, community-web, workbench-web)
+- nanoid 5.1.15: MIT (circles-web, workbench-web)
+- oniguruma-parser 0.12.2: MIT (circles-web, workbench-web)
+- oniguruma-to-es 4.3.6: MIT (circles-web, workbench-web)
+- package-manager-detector 1.6.0: MIT (circles-web, workbench-web)
+- package-manager-detector 1.7.0: MIT (community-web)
+- parse-entities 4.0.2: MIT (circles-web, community-web, workbench-web)
+- parse5 7.3.0: MIT (circles-web, community-web, workbench-web)
+- path-data-parser 0.1.0: MIT (circles-web, community-web, workbench-web)
+- points-on-curve 0.2.0: MIT (circles-web, community-web, workbench-web)
+- points-on-path 0.2.1: MIT (circles-web, community-web, workbench-web)
+- property-information 7.2.0: MIT (circles-web, community-web, workbench-web)
+- radix-ui 1.6.0: MIT (circles-web, workbench-web)
+- radix-ui 1.6.2: MIT (sites-web)
+- react 19.2.7: MIT (circles-web, community-web, sites-web, workbench-web)
+- react-dom 19.2.7: MIT (circles-web, community-web, sites-web, workbench-web)
+- react-remove-scroll 2.7.2: MIT (circles-web, sites-web, workbench-web)
+- react-remove-scroll-bar 2.3.8: MIT (circles-web, sites-web, workbench-web); the package ships no licence file, upstream text: react-remove-scroll-bar-2.3.8.LICENSE
+- react-style-singleton 2.2.3: MIT (circles-web, sites-web, workbench-web)
+- regex 6.1.0: MIT (circles-web, workbench-web)
+- regex-recursion 6.0.2: MIT (circles-web, workbench-web)
+- regex-utilities 2.3.0: MIT (circles-web, workbench-web)
+- rehype-harden 1.1.8: MIT (circles-web, community-web, workbench-web)
+- rehype-katex 7.0.1: MIT (circles-web, workbench-web); the package ships no licence file, upstream text: rehype-katex-7.0.1.LICENSE
+- rehype-raw 7.0.0: MIT (circles-web, community-web, workbench-web)
+- rehype-sanitize 6.0.0: MIT (circles-web, community-web, workbench-web)
+- remark-cjk-friendly 2.3.1: MIT (circles-web, workbench-web)
+- remark-cjk-friendly-gfm-strikethrough 2.3.1: MIT (circles-web, workbench-web)
+- remark-gfm 4.0.1: MIT (circles-web, community-web, workbench-web)
+- remark-math 6.0.0: MIT (circles-web, workbench-web); the package ships no licence file, upstream text: remark-math-6.0.0.LICENSE
+- remark-parse 11.0.0: MIT (circles-web, community-web, workbench-web)
+- remark-rehype 11.1.2: MIT (circles-web, community-web, workbench-web)
+- remark-stringify 11.0.0: MIT (circles-web, community-web, workbench-web)
+- remend 1.3.1: Apache-2.0 (circles-web, workbench-web)
+- remend 1.3.0: Apache-2.0 (community-web)
+- robust-predicates 3.0.3: Unlicense (circles-web, community-web, workbench-web)
+- roughjs 4.6.6: MIT (circles-web, community-web, workbench-web)
+- rw 1.3.3: BSD-3-Clause (circles-web, community-web, workbench-web)
+- safer-buffer 2.1.2: MIT (circles-web, community-web, workbench-web)
+- scheduler 0.27.0: MIT (circles-web, community-web, sites-web, workbench-web)
+- shiki 3.23.0: MIT (circles-web, workbench-web)
+- shiki 4.2.0: MIT (circles-web, workbench-web)
+- space-separated-tokens 2.0.2: MIT (circles-web, community-web, workbench-web)
+- streamdown 2.6.0: Apache-2.0 (circles-web, workbench-web)
+- streamdown 2.5.0: Apache-2.0 (community-web)
+- stringify-entities 4.0.4: MIT (circles-web, community-web, workbench-web)
+- style-to-js 1.1.21: MIT (circles-web, community-web, workbench-web)
+- style-to-object 1.0.14: MIT (circles-web, community-web, workbench-web)
+- stylis 4.4.0: MIT (circles-web, community-web, workbench-web)
+- swr 2.4.1: MIT (circles-web, workbench-web)
+- tailwind-merge 3.6.0: MIT (circles-web, community-web, sites-web, workbench-web)
+- throttleit 2.1.0: MIT (circles-web, workbench-web)
+- tinyexec 1.2.4: MIT (circles-web, community-web, workbench-web)
+- trim-lines 3.0.1: MIT (circles-web, community-web, workbench-web)
+- trough 2.2.0: MIT (circles-web, community-web, workbench-web)
+- ts-dedent 2.3.0: MIT (circles-web, community-web, workbench-web)
+- tslib 2.8.1: 0BSD (circles-web, sites-web, workbench-web)
+- unified 11.0.5: MIT (circles-web, community-web, workbench-web)
+- unist-util-find-after 5.0.0: MIT (circles-web, workbench-web)
+- unist-util-is 6.0.1: MIT (circles-web, community-web, workbench-web)
+- unist-util-position 5.0.0: MIT (circles-web, community-web, workbench-web)
+- unist-util-remove-position 5.0.0: MIT (circles-web, workbench-web)
+- unist-util-stringify-position 4.0.0: MIT (circles-web, community-web, workbench-web)
+- unist-util-visit 5.1.0: MIT (circles-web, community-web, workbench-web)
+- unist-util-visit-parents 6.0.2: MIT (circles-web, community-web, workbench-web)
+- use-callback-ref 1.3.3: MIT (circles-web, sites-web, workbench-web)
+- use-sidecar 1.1.3: MIT (circles-web, sites-web, workbench-web)
+- use-stick-to-bottom 1.1.6: MIT (circles-web, workbench-web)
+- use-sync-external-store 1.6.0: MIT (circles-web, workbench-web)
+- uuid 14.0.1: MIT (circles-web, community-web, workbench-web)
+- vfile 6.0.3: MIT (circles-web, community-web, workbench-web)
+- vfile-location 5.0.3: MIT (circles-web, community-web, workbench-web)
+- vfile-message 4.0.3: MIT (circles-web, community-web, workbench-web)
+- web-namespaces 2.0.1: MIT (circles-web, community-web, workbench-web)
+- zod 4.4.3: MIT (circles-web, workbench-web)
+- zwitch 2.0.4: MIT (circles-web, community-web, workbench-web)
+
+### 3. Kernel image: Python and other software (94)
+
+- age (FiloSottile/age) binary 1.3.2, built with Go 1.27.0: BSD-3-Clause (age and the Go toolchain and modules compiled in); texts: age-1.3.2.LICENSE, age-1.3.2-go-deps/
+- aiohappyeyeballs 2.7.1: PSF-2.0
+- aiohttp 3.14.3: Apache-2.0 AND MIT
+- aiosignal 1.4.0: Apache-2.0
+- annotated-doc 0.0.5: MIT
+- annotated-types 0.8.0: MIT
+- anyio 4.15.1: MIT
+- asyncpg 0.31.0: Apache-2.0
+- attrs 25.4.0: MIT
+- babel 2.18.0: BSD-3-Clause
+- boto3 1.40.72: Apache-2.0
+- botocore 1.40.76: Apache-2.0
+- certifi 2026.7.22: MPL-2.0
+- cffi 2.1.1: MIT-0
+- charset-normalizer 3.5.2: MIT
+- click 8.5.0: BSD-3-Clause
+- courlan 1.4.0: Apache-2.0
+- CPython 3.14.8: PSF-2.0 (plus the historical/bundled licences in the same file)
+- cryptography 50.0.2: Apache-2.0 OR BSD-3-Clause
+- curl_cffi 0.16.1: MIT (wrapper); statically links curl-impersonate 2.1.1 (MIT), libcurl 8.21.0 (curl), BoringSSL (Apache-2.0), brotli 1.2.0 (MIT), nghttp2 1.63.0, ngtcp2 1.20.0, nghttp3 1.15.0 (MIT), zlib 1.3.1 (Zlib), zstd 1.5.7 (BSD-3-Clause), libidn2 2.3.7 (LGPL-3.0-or-later; see NOTICE); texts in third_party/licenses
+- dateparser 1.4.3: BSD-3-Clause
+- distro 1.9.0: Apache-2.0
+- fastapi 0.133.0: MIT
+- fastuuid 0.14.0: BSD-3-Clause
+- filelock 4.2.0: MIT
+- frozenlist 1.8.0: Apache-2.0
+- fsspec 2026.9.0: BSD-3-Clause
+- h11 0.16.0: MIT
+- hf-xet 1.7.0: Apache-2.0
+- htmldate 1.11.0: Apache-2.0
+- httpcore 1.0.9: BSD-3-Clause
+- httpcore2 2.13.1: BSD-3-Clause
+- httptools 0.9.0: MIT
+- httpx 0.28.1: BSD-3-Clause
+- httpx2 2.13.1: BSD-3-Clause
+- huggingface_hub 2.2.0: Apache-2.0
+- idna 3.20: BSD-3-Clause
+- importlib_metadata 8.9.0: Apache-2.0
+- Inter font (InterVariable.ttf from the official release, the picture renderer's font) 4.1 / font revision 4.001: OFL-1.1; text: inter-4.1.LICENSE.txt
+- Jinja2 3.1.6: BSD-3-Clause
+- jiter 0.17.0: MIT
+- jmespath 1.1.0: MIT
+- jsonschema 4.26.0: MIT
+- jsonschema-specifications 2025.9.1: MIT
+- jusText 3.0.2: BSD-2-Clause
+- litellm 1.97.0: MIT (enterprise/ carve-out not present in wheel)
+- lxml 6.1.3: BSD-3-Clause
+- lxml_html_clean 0.4.5: BSD-3-Clause
+- MarkupSafe 3.0.4: BSD-3-Clause
+- mss 10.0.0: MIT
+- multidict 6.9.1: Apache-2.0
+- openai 2.54.0: Apache-2.0
+- packaging 26.3: Apache-2.0 OR BSD-2-Clause
+- pillow 12.3.0: MIT-CMU; bundled libs incl. FreeType (FTL), libjpeg (IJG), libpng, xz, libtiff, libwebp, etc.
+- pip 26.2.1: MIT
+- propcache 0.5.4: Apache-2.0
+- pycparser 3.11: BSD-3-Clause
+- pydantic 2.14.1: MIT
+- pydantic-settings 2.16.0: MIT
+- pydantic_core 2.50.1: MIT
+- PyNaCl 1.5.0: Apache-2.0
+- pytakumi 0.1.5: MIT OR Apache-2.0 (an unofficial Python binding of Takumi). Its native module compiles in Takumi 2.14.0 (MIT OR Apache-2.0) and the 165 crates.io crates its own SBOM lists (pytakumi-0.1.5.dist-info/sboms/), all permissive except cssparser 0.37.0, cssparser-macros 0.7.0, dtoa-short 0.3.5 and selectors 0.40.0 (MPL-2.0; where their source is: NOTICE), and it embeds the Geist font 1.500 (Latin subset, OFL-1.1); texts: pytakumi-0.1.5.LICENSE-MIT, pytakumi-0.1.5.LICENSE-APACHE, takumi-2.14.0.LICENSE-MIT, takumi-2.14.0.LICENSE-APACHE, pytakumi-0.1.5-crates.txt, geist-1.5.0.OFL.txt
+- python-dateutil 2.9.0.post0: Apache-2.0 AND BSD-3-Clause
+- python-dotenv 1.2.4: BSD-3-Clause
+- python-multipart 0.0.32: Apache-2.0
+- pytz 2026.5: MIT
+- PyYAML 6.0.2: MIT
+- referencing 0.37.0: MIT
+- regex 2026.9.29: Apache-2.0 AND CNRI-Python
+- requests 2.34.2: Apache-2.0
+- rpds-py 2026.9.1: MIT
+- s3transfer 0.14.0: Apache-2.0
+- six 1.17.0: MIT
+- sniffio 1.3.1: MIT OR Apache-2.0
+- starlette 1.3.1: BSD-3-Clause
+- tiktoken 0.14.0: MIT
+- tld 0.13.2: MPL-1.1 OR GPL-2.0-only OR LGPL-2.1-or-later
+- tokenizers 0.23.3: Apache-2.0; the wheel statically links 127 Rust crates, all permissive, listed in the wheel's own SBOM (tokenizers-0.23.3.dist-info/sboms/); the 19 whose own notice applies are in third_party/licenses/tokenizers-0.23.3-crates/
+- tqdm 4.70.1: MPL-2.0 AND MIT
+- trafilatura 2.2.0: Apache-2.0
+- tree-sitter 0.26.0: MIT
+- tree-sitter grammars (go, javascript, python, rust, sql, tsx, typescript) from tree-sitter-language-pack 1.22.1: MIT; texts: third_party/licenses/tree-sitter-grammars/
+- tree-sitter-language-pack 1.22.1: MIT
+- truststore 0.10.5: MIT
+- typing-inspection 0.4.4: MIT
+- typing_extensions 4.16.0: PSF-2.0
+- tzlocal 5.4.4: MIT
+- urllib3 2.8.0: MIT
+- uvicorn 0.34.0: BSD-3-Clause
+- uvloop 0.23.0: MIT OR Apache-2.0
+- watchfiles 1.3.0: MIT
+- websockets 16.0: BSD-3-Clause
+- yarl 1.25.1: Apache-2.0
+- zipp 4.1.1: MIT
+
+### 4. Kernel and database images: Debian packages (160)
+
+These licence lists come from each package's Debian copyright file in /usr/share/doc, which both images keep. For copyright files that are not machine-readable, the entry lists only the licence names that appear in the file.
+
+- adduser [cseries-postgres:dev, cseries:dev]: GPL-2+
+- apt [cseries-postgres:dev, cseries:dev]: BSD-3-clause; Expat; GPL-2; GPL-2+
+- base-files [cseries-postgres:dev, cseries:dev]: (non-DEP5; keywords: GNU General Public, Artistic, ISC)
+- base-passwd [cseries-postgres:dev, cseries:dev]: GPL-2; public-domain
+- bash [cseries-postgres:dev, cseries:dev]: BSD-4-clause-UC; BSD-4-clause-UC and MIT-like; GFDL-NIV-1.3; GPL-2+; GPL-3+; GPL-3+ with Bison exception; Latex2e; MIT-like; permissive
+- bsdutils [cseries-postgres:dev, cseries:dev]: BSD-3-clause; BSD-4-clause; BSLA; GPL-2; GPL-2+; GPL-3+; LGPL; LGPL-2+; LGPL-2.1+; LGPL-3+; MIT; public-domain
+- ca-certificates [cseries-postgres:dev, cseries:dev]: GPL-2+; MPL-2.0
+- coreutils [cseries-postgres:dev, cseries:dev]: BSD-4-clause-UC; FSFULLR; GFDL-NIV-1.3; GPL-3+; GPL-3+ and BSD-4-clause-UC; GPL-3+ and ISC; ISC
+- curl [cseries:dev]: BSD-3-Clause; BSD-3-clause; BSD-4-Clause-UC; FSFULLR; GPL-2+ with Autoconf-data exception; GPL-2+ with Libtool exception; GPL-3+ with Autoco…
+- dash [cseries-postgres:dev, cseries:dev]: BSD-3-Clause; BSD-3-clause; GPL-2+; public-domain
+- debconf [cseries-postgres:dev, cseries:dev]: BSD-2-clause
+- debian-archive-keyring [cseries-postgres:dev, cseries:dev]: (non-DEP5; keywords: GNU General Public)
+- debianutils [cseries-postgres:dev, cseries:dev]: GPL-2+; SMAIL-GPL; public-domain
+- diffutils [cseries-postgres:dev, cseries:dev]: FSFAP; FSFULLR; GFDL-NIV-1.3; GPL-2+; GPL-3+; GPL-3+ and FSFULLR; GPL-3+ with autoconf exception; GPL-3+ with texinfo exception; LGPL-2.0+; …
+- dirmngr [cseries:dev]: BSD-3-clause; CC0-1.0; Expat; GPL-2+; GPL-3+; GPL-3+ or BSD-3-clause; LGPL-2.1+; LGPL-3+; LGPL-3+ or GPL-2+; RFC-Reference; TinySCHEME; perm…
+- dpkg [cseries-postgres:dev, cseries:dev]: BSD-2-clause; GPL-2; GPL-2+; public-domain-s-s-d
+- e2fsprogs [cseries-postgres:dev, cseries:dev]: Apache-2; BSD-3-Clause; GPL or MIT-US-export; GPL-2; GPL-2+ with Texinfo exception; ISC; Kazlib; LGPL-2; Latex2e
+- findutils [cseries-postgres:dev, cseries:dev]: BSD-3-clause; BSD-3-clause and/or GPL-3+; FSFAP; FSFULLR; GFDL-NIV-1.3+; GPL with automake exception; GPL-2+; GPL-2+ with Autoconf-data exce…
+- gcc-12-base [cseries-postgres:dev, cseries:dev]: (non-DEP5; keywords: GPL-2, GPL-3, LGPL, GNU General Public, GNU Lesser, BSD, MIT, Artistic, public domain, zlib, ISC)
+- git [cseries:dev]: Apache-2.0; BSD-3-clause; Boost; EDL-1.0; Expat; GPL-1+ or Artistic-1; GPL-2; GPL-2+; ISC; LGPL-2+; LGPL-2.1+; Zlib; dlmalloc; mingw-runtime
+- git-man [cseries:dev]: Apache-2.0; BSD-3-clause; Boost; EDL-1.0; Expat; GPL-1+ or Artistic-1; GPL-2; GPL-2+; ISC; LGPL-2+; LGPL-2.1+; Zlib; dlmalloc; mingw-runtime
+- gnupg [cseries:dev]: BSD-3-clause; CC0-1.0; Expat; GPL-2+; GPL-3+; GPL-3+ or BSD-3-clause; LGPL-2.1+; LGPL-3+; LGPL-3+ or GPL-2+; RFC-Reference; TinySCHEME; perm…
+- gnupg-l10n [cseries:dev]: BSD-3-clause; CC0-1.0; Expat; GPL-2+; GPL-3+; GPL-3+ or BSD-3-clause; LGPL-2.1+; LGPL-3+; LGPL-3+ or GPL-2+; RFC-Reference; TinySCHEME; perm…
+- gnupg-utils [cseries:dev]: BSD-3-clause; CC0-1.0; Expat; GPL-3+; GPL-3+ or BSD-3-clause; LGPL-2.1+; LGPL-3+; RFC-Reference; TinySCHEME; permissive
+- gpg [cseries:dev]: BSD-3-clause; CC0-1.0; Expat; GPL-2+; GPL-3+; GPL-3+ or BSD-3-clause; LGPL-2.1+; LGPL-3+; LGPL-3+ or GPL-2+; RFC-Reference; TinySCHEME; perm…
+- gpg-agent [cseries:dev]: BSD-3-clause; CC0-1.0; Expat; GPL-2+; GPL-3+; GPL-3+ or BSD-3-clause; LGPL-2.1+; LGPL-3+; LGPL-3+ or GPL-2+; RFC-Reference; TinySCHEME; perm…
+- gpg-wks-client [cseries:dev]: BSD-3-clause; CC0-1.0; Expat; GPL-3+; GPL-3+ or BSD-3-clause; LGPL-2.1+; LGPL-3+; RFC-Reference; TinySCHEME; permissive
+- gpg-wks-server [cseries:dev]: BSD-3-clause; CC0-1.0; Expat; GPL-3+; GPL-3+ or BSD-3-clause; LGPL-2.1+; LGPL-3+; RFC-Reference; TinySCHEME; permissive
+- gpgconf [cseries:dev]: BSD-3-clause; CC0-1.0; Expat; GPL-2+; GPL-3+; GPL-3+ or BSD-3-clause; LGPL-2.1+; LGPL-3+; LGPL-3+ or GPL-2+; RFC-Reference; TinySCHEME; perm…
+- gpgsm [cseries:dev]: BSD-3-clause; CC0-1.0; Expat; GPL-2+; GPL-3+; GPL-3+ or BSD-3-clause; LGPL-2.1+; LGPL-3+; LGPL-3+ or GPL-2+; RFC-Reference; TinySCHEME; perm…
+- gpgv [cseries-postgres:dev, cseries:dev]: BSD-3-clause; CC0-1.0; Expat; GPL-3+; GPL-3+ or BSD-3-clause; LGPL-2.1+; LGPL-3+; RFC-Reference; TinySCHEME; permissive
+- grep [cseries-postgres:dev, cseries:dev]: GPL-3+
+- gzip [cseries-postgres:dev, cseries:dev]: FSF-manpages; GFDL-1.3+-no-invariant; GPL-3+
+- hostname [cseries-postgres:dev, cseries:dev]: GPL-2
+- init-system-helpers [cseries-postgres:dev, cseries:dev]: BSD-3-clause; GPL-2+
+- libacl1 [cseries-postgres:dev, cseries:dev]: GPL-2+; LGPL-2+
+- libapt-pkg6.0 [cseries-postgres:dev, cseries:dev]: BSD-3-clause; Expat; GPL-2; GPL-2+
+- libassuan0 [cseries:dev]: GAP; GAP~FSF; GPL-2+; GPL-2+ with libtool exception; GPL-3+; LGPL-2.1+; LGPL-3+
+- libattr1 [cseries-postgres:dev, cseries:dev]: GPL-2+; LGPL-2+
+- libaudit-common [cseries-postgres:dev, cseries:dev]: GPL-2; LGPL-2.1
+- libaudit1 [cseries-postgres:dev, cseries:dev]: GPL-2; LGPL-2.1
+- libblkid1 [cseries-postgres:dev, cseries:dev]: BSD-3-clause; BSD-4-clause; BSLA; GPL-2; GPL-2+; GPL-3+; LGPL; LGPL-2+; LGPL-2.1+; LGPL-3+; MIT; public-domain
+- libbrotli1 [cseries:dev]: MIT
+- libbsd0 [cseries-postgres:dev, cseries:dev]: BSD-2-clause; BSD-2-clause-NetBSD; BSD-2-clause-author; BSD-2-clause-verbatim; BSD-3-clause; BSD-3-clause-John-Birrell; BSD-3-clause-Regents…
+- libbz2-1.0 [cseries-postgres:dev, cseries:dev]: BSD-variant; GPL-2
+- libc-bin [cseries-postgres:dev, cseries:dev]: (non-DEP5; keywords: GPL-2, LGPL, GNU General Public, GNU Lesser, BSD, MIT, ISC)
+- libc-l10n [cseries-postgres:dev]: BSD-2-clause; BSD-2-clause or GPL-2; BSD-3-clause-Berkeley; BSD-3-clause-Berkeley and BSD-3-clause-WIDE; BSD-3-clause-Berkeley and DEC; BSD-…
+- libc6 [cseries-postgres:dev, cseries:dev]: (non-DEP5; keywords: GPL-2, LGPL, GNU General Public, GNU Lesser, BSD, MIT, ISC)
+- libcap-ng0 [cseries-postgres:dev, cseries:dev]: GPL-2+; GPL-3; LGPL-2.1+
+- libcap2 [cseries-postgres:dev, cseries:dev]: BSD-3-clause; BSD-3-clause or GPL-2; BSD-3-clause or GPL-2+; GPL-2; GPL-2+
+- libcbor0.8 [cseries:dev]: Expat
+- libcom-err2 [cseries-postgres:dev, cseries:dev]: Apache-2; BSD-3-Clause; GPL or MIT-US-export; GPL-2; GPL-2+ with Texinfo exception; ISC; Kazlib; LGPL-2; Latex2e
+- libcrypt1 [cseries-postgres:dev, cseries:dev]: (non-DEP5; keywords: LGPL, GNU Lesser, BSD, public domain)
+- libcurl3-gnutls [cseries:dev]: BSD-3-Clause; BSD-3-clause; BSD-4-Clause-UC; FSFULLR; GPL-2+ with Autoconf-data exception; GPL-2+ with Libtool exception; GPL-3+ with Autoco…
+- libcurl4 [cseries:dev]: BSD-3-Clause; BSD-3-clause; BSD-4-Clause-UC; FSFULLR; GPL-2+ with Autoconf-data exception; GPL-2+ with Libtool exception; GPL-3+ with Autoco…
+- libdb5.3 [cseries-postgres:dev, cseries:dev]: Artistic or BSD-3-clause; BSD-3-clause; BSD-3-clause-fjord; GPL; GPL or Artistic; GPL-3; MIT-old; Ms-PL; Sleepycat; Sleepycat and BSD-3-clau…
+- libdebconfclient0 [cseries-postgres:dev, cseries:dev]: BSD-2-Clause; BSD-2-clause; GPL-2+
+- libedit2 [cseries-postgres:dev, cseries:dev]: BSD-3-clause
+- liberror-perl [cseries:dev]: Artistic; Artistic or GPL-1+; GPL-1+; MIT/X11
+- libexpat1 [cseries:dev]: MIT
+- libext2fs2 [cseries-postgres:dev, cseries:dev]: Apache-2; BSD-3-Clause; GPL or MIT-US-export; GPL-2; GPL-2+ with Texinfo exception; ISC; Kazlib; LGPL-2; Latex2e
+- libffi8 [cseries-postgres:dev, cseries:dev]: Expat; GPL; GPL-2+; GPL-3+; MPL-1.1 or GPL-2+ or LGPL-2.1+; X11; public-domain
+- libfido2-1 [cseries:dev]: BSD-2-clause; ISC; ISC and BSD-2-clause; public-domain
+- libgcc-s1 [cseries-postgres:dev, cseries:dev]: (non-DEP5; keywords: GPL-2, GPL-3, LGPL, GNU General Public, GNU Lesser, BSD, MIT, Artistic, public domain, zlib, ISC)
+- libgcrypt20 [cseries-postgres:dev, cseries:dev]: Most of the package is licensed under the GNU Lesser General Public
+- libgdbm-compat4 [cseries-postgres:dev, cseries:dev]: GFDL-NIV-1.3+; GPL-2+; GPL-3+
+- libgdbm6 [cseries-postgres:dev, cseries:dev]: GFDL-NIV-1.3+; GPL-2+; GPL-3+
+- libgmp10 [cseries-postgres:dev, cseries:dev]: GPL-2+; GPL-2+ or LGPL-3+; GPL-3+; GPL-3+ with Bison exception; LGPL-3+
+- libgnutls30 [cseries-postgres:dev, cseries:dev]: * Redistribution and use in source and binary forms, with or without; Apache-2.0; BSD-3-Clause; CC0 license; Expat; GPLv3+; LGPLv2.1+; LGPLv…
+- libgpg-error0 [cseries-postgres:dev, cseries:dev]: BSD-3-clause; GPL-3+; LGPL-2.1+; LGPL-2.1+ or BSD-3-clause; g10-permissive
+- libgssapi-krb5-2 [cseries-postgres:dev, cseries:dev]: (non-DEP5; keywords: GPL-2, GNU General Public, BSD, MIT, ISC)
+- libhogweed6 [cseries-postgres:dev, cseries:dev]: Expat; GAP; GPL-2; GPL-2+; GPL-3+; GPL-3+ with Autoconf exception; LGPL-2+; LGPL-3+; LGPL-3+ or GPL-2+; public-domain
+- libicu72 [cseries-postgres:dev]: GPL-3; MIT
+- libidn2-0 [cseries-postgres:dev, cseries:dev]: GPL-2+; GPL-3+; LGPL-3+; LGPL-3+ or GPL-2+; Unicode
+- libjson-perl [cseries-postgres:dev]: Artistic; Artistic or GPL-1+; GPL-1+
+- libk5crypto3 [cseries-postgres:dev, cseries:dev]: (non-DEP5; keywords: GPL-2, GNU General Public, BSD, MIT, ISC)
+- libkeyutils1 [cseries-postgres:dev, cseries:dev]: GPL-2+; LGPL-2+
+- libkrb5-3 [cseries-postgres:dev, cseries:dev]: (non-DEP5; keywords: GPL-2, GNU General Public, BSD, MIT, ISC)
+- libkrb5support0 [cseries-postgres:dev, cseries:dev]: (non-DEP5; keywords: GPL-2, GNU General Public, BSD, MIT, ISC)
+- libksba8 [cseries:dev]: FSFUL; LGPL-2.1-or-later
+- libldap-2.5-0 [cseries-postgres:dev, cseries:dev]: BSD-3-clause; BSD-3-clause-California; BSD-3-clause-variant; BSD-4-clause-California; Beerware; Expat; Expat-ISC; Expat-UNM; F5; FSF-unlimit…
+- libllvm19 [cseries-postgres:dev]: APACHE-2-LLVM-EXCEPTIONS; BSD-3-Clause; BSD-3-clause; MIT; Python; solar-public-domain
+- liblz4-1 [cseries-postgres:dev, cseries:dev]: BSD-2-clause; GPL-2+; GPL-2+ or BSD-2-clause
+- liblzma5 [cseries-postgres:dev, cseries:dev]: Autoconf; Different licenses apply to different files in this package. Here; GPL-2; GPL-2+; LGPL-2.1+; PD; PD-debian; config-h; noderivs; no…
+- libmd0 [cseries-postgres:dev, cseries:dev]: BSD-2-clause; BSD-2-clause-NetBSD; BSD-3-clause; BSD-3-clause-Aaron-D-Gifford; Beerware; ISC; public-domain-md4; public-domain-md5; public-d…
+- libmount1 [cseries-postgres:dev, cseries:dev]: BSD-3-clause; BSD-4-clause; BSLA; GPL-2; GPL-2+; GPL-3+; LGPL; LGPL-2+; LGPL-2.1+; LGPL-3+; MIT; public-domain
+- libncursesw6 [cseries:dev]: BSD-3-clause; MIT/X11; X11
+- libnettle8 [cseries-postgres:dev, cseries:dev]: Expat; GAP; GPL-2; GPL-2+; GPL-3+; GPL-3+ with Autoconf exception; LGPL-2+; LGPL-3+; LGPL-3+ or GPL-2+; public-domain
+- libnghttp2-14 [cseries:dev]: BSD-2-clause; Expat; GPL-3+ with autoconf exception; MIT; all-permissive
+- libnpth0 [cseries:dev]: LGPL-2.1+
+- libp11-kit0 [cseries-postgres:dev, cseries:dev]: Apache-2.0; BSD-3-Clause; ISC; ISC+IBM; LGPL-2.1+; permissive-like-automake-output; same-as-rest-of-p11kit
+- libpam-modules [cseries-postgres:dev, cseries:dev]: BSD-3-clause or GPL; BSD-tcp_wrappers; Beerware; GPL-2; GPL-2+; GPL-3; GPL-3+ with Bison exception; LGPL-2+; public-domain
+- libpam-modules-bin [cseries-postgres:dev, cseries:dev]: BSD-3-clause or GPL; BSD-tcp_wrappers; Beerware; GPL-2; GPL-2+; GPL-3; GPL-3+ with Bison exception; LGPL-2+; public-domain
+- libpam-runtime [cseries-postgres:dev, cseries:dev]: BSD-3-clause or GPL; BSD-tcp_wrappers; Beerware; GPL-2; GPL-2+; GPL-3; GPL-3+ with Bison exception; LGPL-2+; public-domain
+- libpam0g [cseries-postgres:dev, cseries:dev]: BSD-3-clause or GPL; BSD-tcp_wrappers; Beerware; GPL-2; GPL-2+; GPL-3; GPL-3+ with Bison exception; LGPL-2+; public-domain
+- libpcre2-8-0 [cseries-postgres:dev, cseries:dev]: BSD-2-clause; BSD-3-clause; BSD-3-clause-Cambridge with BINARY LIBRARY-LIKE PACKAGES exception; X11; public-domain
+- libperl5.36 [cseries-postgres:dev, cseries:dev]: Artistic; Artistic or GPL-1+ or Artistic-dist; Artistic-2; Artistic-dist; BSD-3-clause; BSD-3-clause-GENERIC; BSD-3-clause-with-weird-number…
+- libpq5 [cseries-postgres:dev, cseries:dev]: BSD-2-clause; BSD-3-Clause; BSD-3-clause; Custom-Unicode; Custom-pg_dump; Custom-regex; PostgreSQL; PostgreSQL and Custom-regex and Tcl; Tcl…
+- libpsl5 [cseries:dev]: Chromium; MIT; gnulib
+- libreadline8 [cseries-postgres:dev, cseries:dev]: GFDL-NIV-1.3+; GPL-2+; GPL-3; GPL-3+; ISC-no-attribution
+- librtmp1 [cseries:dev]: (non-DEP5; keywords: GPL-2, LGPL, GNU General Public, GNU Lesser)
+- libsasl2-2 [cseries-postgres:dev, cseries:dev]: BSD-2-clause; BSD-2-clause and MIT-CMU; BSD-2.2-clause; BSD-3-clause; BSD-3-clause-JANET; BSD-3-clause-JANET and BSD-4-clause; BSD-3-clause-…
+- libsasl2-modules-db [cseries-postgres:dev, cseries:dev]: BSD-2-clause; BSD-2-clause and MIT-CMU; BSD-2.2-clause; BSD-3-clause; BSD-3-clause-JANET; BSD-3-clause-JANET and BSD-4-clause; BSD-3-clause-…
+- libseccomp2 [cseries-postgres:dev, cseries:dev]: LGPL-2.1
+- libselinux1 [cseries-postgres:dev, cseries:dev]: (non-DEP5; keywords: GPL-2, LGPL, GNU General Public, GNU Lesser, MIT, public domain, ISC)
+- libsemanage-common [cseries-postgres:dev, cseries:dev]: (non-DEP5; keywords: LGPL, GNU General Public, GNU Lesser)
+- libsemanage2 [cseries-postgres:dev, cseries:dev]: (non-DEP5; keywords: LGPL, GNU General Public, GNU Lesser)
+- libsepol2 [cseries-postgres:dev, cseries:dev]: GPL-2; GPL-2+; LGPL-2.1+; Zlib
+- libsmartcols1 [cseries-postgres:dev, cseries:dev]: BSD-3-clause; BSD-4-clause; BSLA; GPL-2; GPL-2+; GPL-3+; LGPL; LGPL-2+; LGPL-2.1+; LGPL-3+; MIT; public-domain
+- libsqlite3-0 [cseries:dev]: GPL-2+; public-domain
+- libss2 [cseries-postgres:dev, cseries:dev]: Apache-2; BSD-3-Clause; GPL or MIT-US-export; GPL-2; GPL-2+ with Texinfo exception; ISC; Kazlib; LGPL-2; Latex2e
+- libssh2-1 [cseries:dev]: BSD3
+- libssl3 [cseries-postgres:dev, cseries:dev]: Apache-2.0; Artistic; Artistic or GPL-1+; GPL-1+
+- libstdc++6 [cseries-postgres:dev, cseries:dev]: (non-DEP5; keywords: GPL-2, GPL-3, LGPL, GNU General Public, GNU Lesser, BSD, MIT, Artistic, public domain, zlib, ISC)
+- libsystemd0 [cseries-postgres:dev, cseries:dev]: CC0-1.0; Expat; GPL-2 with Linux-syscall-note exception; GPL-2+; LGPL-2.1+; public-domain
+- libtasn1-6 [cseries-postgres:dev, cseries:dev]: (non-DEP5; keywords: GPL-2, GPL-3, LGPL, GNU General Public, GNU Lesser)
+- libtinfo6 [cseries-postgres:dev, cseries:dev]: BSD-3-clause; MIT/X11; X11
+- libudev1 [cseries-postgres:dev, cseries:dev]: CC0-1.0; Expat; GPL-2 with Linux-syscall-note exception; GPL-2+; LGPL-2.1+; public-domain
+- libunistring2 [cseries-postgres:dev, cseries:dev]: FreeSoftware; GFDL-1.2+; GPL-2+; GPL-2+ with distribution exception; GPL-3+; GPL-3+ or GFDL-1.2+; LGPL-3+; LGPL-3+ or GPL-2+; MIT
+- libuuid1 [cseries-postgres:dev, cseries:dev]: BSD-3-clause; BSD-4-clause; BSLA; GPL-2; GPL-2+; GPL-3+; LGPL; LGPL-2+; LGPL-2.1+; LGPL-3+; MIT; public-domain
+- libxml2 [cseries-postgres:dev]: ISC; MIT-1
+- libxslt1.1 [cseries-postgres:dev]: (non-DEP5; keywords: MIT)
+- libxxhash0 [cseries-postgres:dev, cseries:dev]: BSD-2-clause; GPL-2
+- libz3-4 [cseries-postgres:dev]: Expat; GPL-2+
+- libzstd1 [cseries-postgres:dev, cseries:dev]: BSD-3-clause; BSD-3-clause or GPL-2; Expat; GPL-2; zlib
+- locales [cseries-postgres:dev]: BSD-2-clause; BSD-2-clause or GPL-2; BSD-3-clause-Berkeley; BSD-3-clause-Berkeley and BSD-3-clause-WIDE; BSD-3-clause-Berkeley and DEC; BSD-…
+- login [cseries-postgres:dev, cseries:dev]: BSD-3-clause; GPL-1; GPL-2+; public-domain
+- logsave [cseries-postgres:dev, cseries:dev]: Apache-2; BSD-3-Clause; GPL or MIT-US-export; GPL-2; GPL-2+ with Texinfo exception; ISC; Kazlib; LGPL-2; Latex2e
+- mawk [cseries-postgres:dev, cseries:dev]: CC-BY-3.0; GPL-2; X11
+- mount [cseries-postgres:dev, cseries:dev]: BSD-3-clause; BSD-4-clause; BSLA; GPL-2; GPL-2+; GPL-3+; LGPL; LGPL-2+; LGPL-2.1+; LGPL-3+; MIT; public-domain
+- ncurses-base [cseries-postgres:dev, cseries:dev]: BSD-3-clause; MIT/X11; X11
+- ncurses-bin [cseries-postgres:dev, cseries:dev]: BSD-3-clause; MIT/X11; X11
+- netbase [cseries-postgres:dev, cseries:dev]: GPL-2
+- openssh-client [cseries:dev]: BSD-2-clause; BSD-3-clause; Expat-with-advertising-restriction; Mazieres-BSD-style; OpenSSH; Powell-BSD-style; public-domain
+- openssl [cseries-postgres:dev, cseries:dev]: Apache-2.0; Artistic; Artistic or GPL-1+; GPL-1+
+- passwd [cseries-postgres:dev, cseries:dev]: BSD-3-clause; GPL-1; GPL-2+; public-domain
+- perl [cseries-postgres:dev, cseries:dev]: Artistic; Artistic or GPL-1+ or Artistic-dist; Artistic-2; Artistic-dist; BSD-3-clause; BSD-3-clause-GENERIC; BSD-3-clause-with-weird-number…
+- perl-base [cseries-postgres:dev, cseries:dev]: Artistic; Artistic or GPL-1+ or Artistic-dist; Artistic-2; Artistic-dist; BSD-3-clause; BSD-3-clause-GENERIC; BSD-3-clause-with-weird-number…
+- perl-modules-5.36 [cseries-postgres:dev, cseries:dev]: Artistic; Artistic or GPL-1+ or Artistic-dist; Artistic-2; Artistic-dist; BSD-3-clause; BSD-3-clause-GENERIC; BSD-3-clause-with-weird-number…
+- pinentry-curses [cseries:dev]: GPL-2; GPL-2+; LGPL-3+; LGPL-3+ or GPL-2+; X11
+- postgresql-17 [cseries-postgres:dev]: BSD-2-clause; BSD-3-Clause; BSD-3-clause; Custom-Unicode; Custom-pg_dump; Custom-regex; PostgreSQL; PostgreSQL and Custom-regex and Tcl; Tcl…
+- postgresql-17-age [cseries-postgres:dev]: Apache-2.0; Apache-2.0 and PostgreSQL; PostgreSQL (the Debian file also lists LGPL-2.1 for libcsv.c, which is not in this version; see third_party/licenses/SOURCES.md §7); NOTICE carried in NOTICE
+- postgresql-17-pgvector [cseries-postgres:dev]: PostgreSQL
+- postgresql-client-17 [cseries-postgres:dev, cseries:dev]: BSD-2-clause; BSD-3-Clause; BSD-3-clause; Custom-Unicode; Custom-pg_dump; Custom-regex; PostgreSQL; PostgreSQL and Custom-regex and Tcl; Tcl…
+- postgresql-client-common [cseries-postgres:dev, cseries:dev]: GPL-2+
+- postgresql-common [cseries-postgres:dev]: GPL-2+
+- readline-common [cseries-postgres:dev, cseries:dev]: GFDL-NIV-1.3+; GPL-2+; GPL-3; GPL-3+; ISC-no-attribution
+- ripgrep [cseries:dev]: BSD-3-clause; MIT; Unlicense; Unlicense or MIT
+- sed [cseries-postgres:dev, cseries:dev]: BSD-4-clause-UC; BSL-1; GFDL-NIV-1.3+; GPL-3+; GPL-3+ and ISC; ISC; X11; pcre
+- sensible-utils [cseries-postgres:dev, cseries:dev]: All-permissive; GPL-2+; configure; installsh
+- ssl-cert [cseries-postgres:dev]: BSD-3-clause
+- sysvinit-utils [cseries-postgres:dev, cseries:dev]: GPL-2.0; GPL-2.0+; GPL-3.0
+- tar [cseries-postgres:dev, cseries:dev]: GPL-2+; GPL-3+; GPL-3+ with Bison exception; LGPL-3+
+- tini [cseries-postgres:dev, cseries:dev]: Expat
+- tzdata [cseries-postgres:dev, cseries:dev]: public-domain
+- ucf [cseries-postgres:dev]: GPL-2
+- usr-is-merged [cseries-postgres:dev, cseries:dev]: GPL-2+
+- util-linux [cseries-postgres:dev, cseries:dev]: BSD-3-clause; BSD-4-clause; BSLA; GPL-2; GPL-2+; GPL-3+; LGPL; LGPL-2+; LGPL-2.1+; LGPL-3+; MIT; public-domain
+- util-linux-extra [cseries-postgres:dev, cseries:dev]: BSD-3-clause; BSD-4-clause; BSLA; GPL-2; GPL-2+; GPL-3+; LGPL; LGPL-2+; LGPL-2.1+; LGPL-3+; MIT; public-domain
+- zlib1g [cseries-postgres:dev, cseries:dev]: Zlib

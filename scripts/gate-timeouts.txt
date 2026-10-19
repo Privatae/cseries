@@ -1,0 +1,88 @@
+# gate-timeouts.txt — container-free gates (and pre_merge_gates.sh's tests/
+# lane) that get longer than the 180 s every other gate gets. Read by BOTH
+# scripts/pre_merge_gates.sh and scripts/smoke_test.sh, so the two runners
+# cannot disagree.
+#
+# One line per gate: "<gate file> <seconds>". Add one only with a measurement,
+# written above it; never to quiet a hang.
+
+# 127-142 s in pre_merge_gates.sh's pool on the build machine, the
+# longest gate there, and past 180 s once the box was loaded. Now
+# its timed checks read CPU clocks and are measured once, not re-measured when
+# the box is slow, and its section-17 children run side by side: 65 s alone
+# on the build machine, 105 s of CPU. 420 s is three times its old pooled run.
+test_sidecar_workspace_routes_harness_only.py 420
+
+# tests/ is the pytest lane at the end of pre_merge_gates.sh, which reads this
+# line as pytest_supervisor.py's --backstop-s (smoke_test.sh does not run
+# tests/). It is a hang BACKSTOP, not a speed budget: the supervisor already
+# fails any one test still running after 300 s, with its stack. One run of the
+# lane, exactly as the script runs it, measured 164.5 s for 819 tests on
+# the build machine, unloaded (load average 0.32 at its start, 8 cores), and
+# 179 s for 747 tests at load average ~50. 900 s is five times the loaded
+# run.
+tests/ 900
+
+# An app this branch changes is installed with `npm ci` and then
+# typechecked. Measured in a fresh clone on the build machine: one app 6 s; a change to
+# app-web-kit/ (all four apps installed and checked) 35 s. Each install has
+# its own 120 s limit inside the gate, so four slow installs plus tsc fit.
+check_web_typecheck.py 600
+
+# The grok command matrix runs 16
+# rows x 3 variants, each row in its own process with busy children (about a
+# third of a core each, so the activity floors are crossed). Its own work is
+# CPU, so it is over the 180 s default by construction, not by load. The limit
+# pre_merge_gates.sh applies is hang_watch's --cpu-budget: CPU seconds of the
+# gate's whole process tree, not wall time. Measured on the build machine under
+# hang_watch --log: 197 s of CPU, 269 s wall; 214 s of CPU,
+# 269 s wall (load average about 2 on 8 cores). 600 s is 2.8 times the
+# higher reading.
+test_harness_grok_command_matrix.py 600
+
+# Part M runs the Telegram connector in real containers
+# under a 128 MiB limit (three full-size pictures at once, and a pod killed and
+# resumed), so the gate is almost all waiting on Docker, not CPU. Measured
+# alone on the build machine, load average about 4 on 8 cores: 537 s wall,
+# 21 s CPU (16.5 user + 4.7 sys). Inside pre_merge_gates.sh's pool it took
+# about 550 s wall. pre_merge_gates.sh reads this line as a CPU budget, which
+# the gate never approaches; smoke_test.sh reads it as wall seconds, where the
+# 180 s default stopped a smoke run. 1200 s is 2.2 times the pooled run.
+test_connector_telegram_example.py 1200
+
+# The Slack store app's gate, the Telegram gate's shape (its part
+# M runs the connector in real containers: idle for 30 s, then the largest
+# pictures), so it is mostly waiting on Docker and on held turns. Measured on
+# the build machine: 321 s wall and 14 s CPU (10.6 user + 3.1 sys) alone;
+# 323 s and 324 s wall with two runs side by side; 385 s wall for
+# an earlier version that waited 60 s more in part J. pre_merge_gates.sh
+# reads this line as a CPU budget, smoke_test.sh as wall seconds. 900 s is
+# 2.3 times the slowest run.
+test_connector_slack_example.py 900
+
+# The Discord store app's gate, the Slack gate's shape (its part M
+# runs the connector in real containers: idle for 30 s, then the largest
+# pictures), with the gateway WebSocket held by the kernel. Measured on
+# the build machine with the Discord app: 137 s wall and 14 s CPU (10.9
+# user + 3.3 sys) alone. pre_merge_gates.sh reads this line as a CPU budget,
+# smoke_test.sh as wall seconds. 600 s is 4.4 times the measured run, the
+# margin the Slack gate's slower runs (321-385 s) needed beside other gates.
+test_connector_discord_example.py 600
+
+# Browser and database gates measured in one CI run, pre_merge_gates.sh's 10-wide
+# pool on the build machine:
+# test_workbench_book.py 283 s, test_circles_cards.py 258 s,
+# test_project_list_speed_pg.py 215 s, test_workbench_index_pg.py 182 s. The
+# pool lets them run on hang_watch's CPU budget, but smoke_test.sh cuts any gate
+# not listed here at 180 s of wall clock, and a smoke run failed
+# test_circles_cards.py exactly that way ("timed out after 180s") on a loaded
+# box. Each limit is about twice its pooled run.
+# Re-measured later: test_circles_cards.py
+# took 676 s in the 12-wide pool and 648 s alone on an idle build machine (about 600
+# checks, steady, no stall), after later Circles commits added
+# scenarios. A smoke run cut it at the old 540 s. test_workbench_book.py
+# measured 388 s in the same pool and keeps 600.
+test_workbench_book.py 600
+test_circles_cards.py 1350
+test_project_list_speed_pg.py 420
+test_workbench_index_pg.py 420

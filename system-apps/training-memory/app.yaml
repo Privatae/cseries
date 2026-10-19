@@ -1,0 +1,84 @@
+id: training-memory
+name: Training Memory
+description: Turn your past Claude Code sessions into rules your host follows — it reads the corrections you already gave, you approve the ones worth keeping.
+icon: icon.png
+icon_small: icon-64.png
+entrypoint: index.html
+system: false
+# 0.2.4 (2026-08-25): prompt_behavior said only "upload sessions". Two shipped
+# choices were invisible to the host: the zero-upload path that reads the
+# user's recent Claude Code sessions directly (index.html:37-39, 52-54) and
+# the billing fork between the user's own Anthropic key and Privatae
+# passthrough (index.html:70-81). Manifest-only change; store-lane app, so the
+# bump is what carries it.
+# 0.2.5 (2026-09-23): the "Privatae passthrough, billed to your Privatae
+# balance" option is gone — there is no stored balance (the
+# wallet was removed 2026-09-23), and the platform-billed classify lane was already retired
+# in the worker (brain/training_memory/worker.py). The user's own Anthropic key
+# is the one way to pay for the reading; the store-listing pricing notes say
+# the same.
+# 0.2.6 (2026-10-01): the HTML escape helper escapes both quotes as well, so a
+# value from the Host, a machine or a provider stays inside the attribute it
+# is written into. App-only change.
+# 0.2.7 (2026-10-03): the review screen says how many pairs the batch could
+# not classify (errored, expired), and a feedback pair with no type or an
+# unknown one shows under "unclassified" instead of being counted as pending
+# and never shown. The confidence filter goes down to 0, so a pair whose
+# confidence was unreadable can be reached too. A bulk action ("approve all
+# visible" and the rest) sends the pairs on screen and acts on those alone,
+# so a pair hidden by the search or the show-no toggle is never touched.
+# 0.2.8 (2026-10-18): the product is renamed C-Series (names, paths, env vars).
+version: "0.2.8"
+# Environment-catalog facts (host-facing, code-true). Source for the L1
+# topology block + describe_app — NOT a surface_role body (this is a control
+# panel, not a conversational surface): what_it_is/user_path only.
+prompt_behavior:
+  what_it_is: |
+    Training Memory turns the user's past Claude Code sessions into rules
+    the host follows. It reads the corrections they already gave a coding
+    engine, proposes each one as a rule, and the user approves or rejects
+    them one by one; the approved ones go into how the host behaves from
+    then on.
+
+    Three choices before it runs. First, where the sessions come from:
+    either the user's own recent Claude Code sessions, read directly with
+    nothing to upload, or a folder or zip of session files they choose
+    themselves. Second, a name for the role being trained — coding,
+    research, writing, whatever the sessions were about. Third, the key
+    that pays for the reading: the user's own Anthropic key, billed on their
+    own Anthropic account with no markup added (left blank, it falls back to
+    an Anthropic key set in the Host's environment). It then estimates the cost and shows it before
+    anything runs.
+  user_path: "the Training Memory app, in the dock"
+
+provenance: standard
+price_usd: 1.99
+billing: one_time
+
+window:
+  title: Training Memory
+  width: 880
+  height: 620
+  resizable: true
+  min_width: 600
+  min_height: 440
+
+permissions:
+  - read:files
+  - read:brain_state
+  - read:brain_corrections
+  - write:brain_corrections
+  - execute:inference
+
+pricing:
+  type: one_time
+  amount_usd: 1.99
+  notes: |
+    One-time app purchase. The reading runs on the user's own Anthropic key
+    and is billed by Anthropic to that account, not by Privatae.
+
+# Platform-tool gate: only the platform's dev entity (the id listed below)
+# installs this. Production entities don't see training-memory in the
+# App Store and can't purchase or install it.
+target_entities:
+  - 3

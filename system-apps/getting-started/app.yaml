@@ -1,0 +1,83 @@
+id: getting-started
+name: Getting Started
+# provenance is `standard`, NOT `native`: manifest.py refuses `native` for
+# any id outside kernel.py::KERNEL_REQUIRED_APPS, and kernel-required is wrong for a
+# walkthrough anyway (a tour must be uninstallable, and boot must not depend
+# on it). Image-baked category 2 via scripts/rebuild_factory_bundles.sh —
+# same lane as artifacts/designs/sites.
+provenance: standard
+description: Short steps that get a new host working — add a key, pick your setup, ask your host something, start a build. Each step opens the real app and checks the result live. Opens on a fresh host until you finish it.
+icon: icon.png
+icon_small: icon-64.png
+entrypoint: index.html
+system: true
+# 0.1.x (2026-08-15 → 08-25): ten narrated stops with a canvas scene, a
+# check panel, a gallery and four buttons per screen. Too complex and badly laid out;
+# redone as an easy flow.
+# 0.2.0 (2026-08-27): six slides, one action each. Welcome → Keys
+# (a key stored) → Orchestrator (a role routed; opens on Simple mode)
+# → Circles (an answer in the self thread) → Workbench (a project exists) →
+# done. The slide's one button opens the app; the shell's window:closed
+# event (now carrying appId, desktop.js) or a return to this window runs the
+# check, and a pass advances. A step already done on the host passes
+# quietly on entry, so a reopened tour lands on the first thing left to do.
+# Gone: scenes.js, the gallery, Back, Re-check, the Compute / code-loop /
+# Artifacts / finish / beyond stops, write:projects (the tour no longer
+# creates anything). Same persistence lane and the same autolaunch.
+# 0.3.0 (2026-08-31): a NETWORK step, between Orchestrator and Circles —
+#   what a bastion is (a computer you own, joined to your private network)
+#   and why the first thing worth running on it is an embeddings model. It
+#   exists because the Orchestrator's Simple-mode Memory step offers "Run it
+#   free on your machine" and that button had nowhere to land: it deep-links
+#   here via AppRunner.launch('getting-started', {view:'network'}). The step
+#   is OPTIONAL by construction — its copy says to skip it if the user would
+#   rather use a provider, because the Orchestrator can do that instead.
+#   Check is /api/embedding/bastions (already covered by
+#   read:inference_catalog — no new scope), which returns only ONLINE,
+#   embed-capable machines (server/routes/embedding.py:327), so a bastion
+#   enrolled but serving nothing does not pass.
+#   Deep links now WIN over the saved position (app.js): the caller asked
+#   for a step, and resuming elsewhere would silently ignore that.
+# 0.3.1 (2026-10-01): the walkthrough saves its place with PUT
+#   /api/appearance/layout. That route now asks a caller that carries an app
+#   token for write:appearance (a token-less caller must be the desktop's own
+#   page), so this manifest declares it. Manifest-only change; bundle repacked.
+# 0.3.2 (2026-10-01): the HTML escape helper escapes both quotes as well, so a
+# value from the Host, a machine or a provider stays inside the attribute it
+# is written into. App-only change.
+# 0.3.3 (2026-10-18): prompt_behavior is one paragraph saying what the app is
+#   and what lives in it; do_when_active is gone from the manifest contract,
+#   and its how-to lines live in skills and tool descriptions the Host reads on
+#   demand. Manifest-only; bundle repacked.
+# 0.3.4 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
+version: "0.3.4"
+window:
+  title: Getting Started
+  width: 560
+  height: 440
+  resizable: true
+  min_width: 420
+  min_height: 360
+
+# Each scope backs one declared check (steps.js). Walkthrough progress
+# rides the shell-trusted /api/appearance/layout lane (no scope — the same
+# trust class as the shell's own dock writes).
+permissions:
+  - read:vault              # Keys — GET /api/vault/providers
+  - read:inference_catalog  # Orchestrator — GET /api/inference/routing
+  - read:circles            # Circles — GET /api/circles/thread/self/self
+  - read:projects           # Workbench — GET /api/projects
+  - write:appearance        # the walkthrough's place — PUT /api/appearance/layout
+
+prompt_behavior:
+  what_it_is: >-
+    The Getting Started app is the first-run walkthrough. Seven slides, one action
+    each: add a provider key (Keys), apply the recommended setup (Orchestrator,
+    Simple mode), optionally give the host a machine of its own to run embeddings on
+    (Network, which explains a bastion), send one message and get an answer
+    (Circles), and start a project (Workbench). Each slide opens the real app;
+    closing it runs a live check, and a pass moves on, while 'not yet' means the
+    check came back false. Every slide can be skipped. The app owns its progress and
+    auto-opens on boot until the user finishes or leaves the tour, so "the tour",
+    "the walkthrough" or a window that opened by itself means this app.
+  user_path: "the Getting Started app, from the dock"

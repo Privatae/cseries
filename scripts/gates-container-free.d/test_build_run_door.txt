@@ -1,0 +1,5 @@
+# build(action='run') needs no plan and
+# touches no phase; the phase lanes keep the plan gate; four models on one
+# harness are four worktrees, one pod, one release; checks run per variant;
+# review.compare shows and asks no model; review.fan_out is gone.
+test_build_run_door.py

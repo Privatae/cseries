@@ -1,0 +1,5 @@
+# The two token MINTS, including the walls: /launch and /shell-token refuse the isolated apps-
+# origin, and refuse a browser page on another origin addressing the shell host
+# (Fetch Metadata / Origin), while the shell's own fetch and scripted callers
+# pass. Real routes over the real token codec; no pod, no DB, no network.
+test_shell_token.py

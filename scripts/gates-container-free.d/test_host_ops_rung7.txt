@@ -1,0 +1,6 @@
+# 2026-09-25 (host-authored ops, rung 7 — the approval card): an op's apply puts a card
+# in front of the person (a decision ticket the pod files, the dry run's diff folded
+# under the platform's words, once / from now on / don't); the click files the ask on
+# their device; the Host's next call waits on the tap. Shared stubs (host_ops_stubs.py),
+# the real nac_ops + tickets code, the kit test under node; no DB, no pod.
+test_host_ops_rung7.py

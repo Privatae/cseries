@@ -1,0 +1,152 @@
+# Privatae Personal Computer — Python dependencies
+# All versions pinned. Run `pip install --require-hashes` in CI.
+
+# FastAPI + server
+# starlette 1.3.1 is the first release the release scan reports clean: 0.41.3
+# had three fixable HIGH findings (CVE-2025-62727, fixed in 0.49.1;
+# CVE-2026-48818, 1.1.0; CVE-2026-54283, 1.3.1). fastapi 0.133.0 is the first
+# release whose starlette range admits 1.x; every earlier one caps it below
+# 1.0. Pinned exactly so the pair cannot drift apart.
+#
+# fastapi 0.137.0 stopped copying an included router's routes onto app.routes,
+# so code that reads the route table goes through server/route_table.py and
+# not app.routes directly.
+fastapi==0.133.0
+starlette==1.3.1
+uvicorn[standard]==0.34.0
+
+# WebSocket (relay connection to tunnel proxy)
+websockets==16.0
+
+# Cryptography (mTLS, ECDSA signing). 50.0.0 is the first release the
+# release scan reports clean (CVE-2026-69247); 44.0.0 had three fixable HIGH
+# findings.
+cryptography==50.0.2
+
+# Screen capture
+mss==10.0.0
+# 12.3.0: first line with cp314 wheels. Renovate bumped the base
+# image to python:3.14-slim-bookworm while this stayed at 11.1.0, which
+# predates 3.14 — pip found no wheel, fell back to a source build, and the slim
+# image has no compilers, so `pip install` died and main was unshippable.
+Pillow==12.3.0
+
+# Database (CEIGAS domain controller)
+# 0.31.0: cp314 wheels — see the Pillow note above.
+asyncpg==0.31.0
+
+# HTTP client (Ollama embeddings, health checks)
+# 3.14.3: cp314 wheels — see the Pillow note above.
+aiohttp==3.14.3
+
+# (mcp removed: it was here for the claude-agent-sdk that the
+# Designs import-from-URL job loaded in the kernel process; that job is
+# retired and nothing in the kernel imports mcp. Its other user,
+# server/ceigas/ceigas_mcp.py, is gone.)
+
+# App manifests (system apps + entity-authored apps)
+PyYAML==6.0.2
+
+# Integration framework — credentials vault encryption (libsodium / NaCl)
+PyNaCl==1.5.0
+
+# Benchmark engine (tau-bench agent + LLM routing)
+litellm>=1.41.0
+pydantic>=2.0.0
+
+# File-upload handling (training-memory app POST /jobs UploadFile + Form)
+python-multipart>=0.0.9
+
+# Claude Agent SDK (factory codegen path — replaces the `claude` CLI subprocess
+# that ignored CLAUDE_AUTH_TOKEN in CLI 2.1.143+. SDK accepts the user's
+# long-lived OAuth token via CLAUDE_CODE_OAUTH_TOKEN env and bills against
+# their subscription's Agent SDK credit. Per Anthropic auth docs.)
+# claude-agent-sdk is not in the base image, and nothing in the Host uses it
+# (the claude-code sidecar stopped installing it with the Designs import job
+# retired). The coding harness bakes its own copy
+# (sidecars/harness-claude-code/Dockerfile).
+# claude-agent-sdk>=0.2.82
+
+# Per-user code search (brain/codesearch): the index lives in the Host's own
+# Postgres (code_chunks, migrations/v200); tree-sitter-language-pack drives the
+# AST chunker.
+tree-sitter-language-pack>=0.7.0
+
+# Context CONTENT-storage S3 backend: the pluggable context backend can
+# store an entity's context bytes as S3 objects (bucket + creds sealed in the
+# vault, usage metered through the bridge). boto3 is ALWAYS lazy-imported inside
+# the S3 backend handler (brain/mastercode/context_backends.py), never at module
+# load — so a missing/broken wheel can NEVER brick boot,
+# and the default 'pg' backend never touches it. (Already present in the base
+# image at 1.40.x; pinned here so the dep is explicit.)
+boto3==1.40.72
+
+# read_url — the URL reader. Both are ALWAYS lazy-imported inside
+# runtime/url_reader.py (never at module load), exactly like boto3
+# above, so a missing or broken wheel can NEVER brick boot; the tool degrades to
+# a `status: error` and web_search still works.
+#
+# curl_cffi is THE fetcher (not a fallback for hard sites — measured across 7
+# sites it returned more article text than aiohttp on every one, so aiohttp is
+# now only the degraded path for a pod whose curl_cffi wheel is broken; the
+# table is in url_reader.py). It is also the only reason this lane works
+# without a browser: on a Cloudflare/Akamai-fronted site the 403 lands at
+# the TLS HANDSHAKE, so a browser User-Agent on python's TLS stack changes
+# nothing — libcurl-impersonate presents a real Chrome TLS + HTTP/2 fingerprint.
+# It also reads http_proxy/https_proxy from the environment on its own
+# (verified against a dead port), which is what keeps every fetch on
+# the pod's governed egress squid.
+#
+# trafilatura does HTML→markdown with no browser. Its dependency tail (babel via
+# courlan, dateparser via htmldate) is heavier than it looks — see below — and
+# was paid deliberately: readability-lxml is ~40 MB cheaper but on the TLS
+# wikipedia article it silently returned a 30k-char FRAGMENT from section 26
+# where trafilatura returned all 267k from the lead. Silent truncation in text a
+# model then reasons over is worse than the megabytes.
+#
+# MEASURED on the pinned python:3.14-slim-bookworm base: these two
+# lines add 95 MB to the image (343 MB → 438 MB of site-packages) — curl_cffi
+# 38 MB of impersonation binaries, babel 33 MB of locale data, lxml 12 MB, the
+# rest small. Every transitive dep resolves to a cp314 wheel (installs clean
+# under --only-binary=:all:), so unlike the Pillow incident above there is no
+# source build and no compiler dependency.
+curl_cffi==0.16.1
+trafilatura==2.2.0
+
+# Pictures for the messaging connectors (server/connectors/picture.py):
+# pytakumi, the Python binding of Takumi (github.com/kane50613/takumi), draws a
+# small HTML+CSS card with no browser: Rust, with its own HTML reader (html5ever),
+# CSS engine (Servo's cssparser and selectors), layout (taffy), text (parley,
+# harfrust) and rasteriser (tiny-skia), all compiled into one extension module
+# with no system library beyond glibc and libgcc_s. Only the renderer's child process
+# (server/connectors/_picture_child.py) imports it, never the kernel process,
+# so a broken wheel costs pictures and nothing else.
+#
+# Pinned exactly: the renderer's CSS allowlist was measured against this
+# version, and the in-image gate (scripts/test_connector_picture_image.py)
+# measures it again on every build. pytakumi is an unofficial binding with a
+# single maintainer (upstream Takumi publishes Node, WASM and Rust bindings
+# only); 0.1.5 compiles in Takumi 2.14.0. It ships cp314 manylinux_2_28 wheels
+# for x86_64 and aarch64 and needs no other package.
+#
+# It replaced html2pic + pictex + skia-python (and numpy, beautifulsoup4,
+# tinycss2, stretchable, uharfbuzz, python-bidi under them) on 2026-10-19,
+# because of the licence: the skia-python wheel has Adobe's DNG SDK compiled
+# in, whose licence cannot ship with this AGPL-3.0-only tree. Takumi and its
+# crates are permissive except four under MPL-2.0 (THIRD-PARTY-NOTICES.md).
+#
+# Takumi draws more of CSS than html2pic did, and differs from a browser in
+# one default the renderer corrects (boxes are border-box; picture.py puts the
+# page's tags back to content-box). It has no warning channel: what it does not
+# understand it passes over silently, so the allowlist is what keeps a picture
+# to what was measured. The font is not a package: Dockerfile.linux installs
+# InterVariable.ttf from the Inter 4.1 release, pinned by its sha256. MEASURED
+# on the pinned base: pytakumi adds 11 MB of site-packages, where the stack it
+# replaced added about 115 MB.
+pytakumi==0.1.5
+
+# attrs is aiohttp's, jsonschema's and referencing's, none of which pins it
+# closely. It is held at the version the image had while stretchable (part of
+# the old picture stack) capped it below 26: with stretchable gone, pip took
+# attrs 26.1.0, and moving it is a change of its own, not the renderer's.
+attrs==25.4.0

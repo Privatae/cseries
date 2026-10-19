@@ -1,0 +1,6 @@
+# Folders are grouping above status and a
+# folder delete never deletes a project; the project index ranks lexically with
+# no extension and reports semantic:false when embeddings are not set up. Stub
+# pools by default; each also runs its gate on a real DB when
+# CSERIES_TEST_PG_HOST names a socket dir (not in these lanes).
+test_projects_search_route.py

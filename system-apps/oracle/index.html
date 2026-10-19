@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Memory</title>
+    <link rel="stylesheet" href="/css/tokens.css">
+    <link rel="stylesheet" href="/css/cseries-components.css">
+    <link rel="stylesheet" href="/css/motion.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="mem-app" class="cseries-scroll">
+
+    <!-- ─── Rail: lenses (desktop) ────────────────────────── -->
+    <nav id="rail" aria-label="Memory lenses">
+        <button class="rail-btn active" data-lens="ledger" title="Ledger — the living log of entries" aria-label="Ledger">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M4 10h16M4 15h10M4 20h7"/></svg>
+        </button>
+        <button class="rail-btn" data-lens="threads" title="Threads — memory grouped by where it happened" aria-label="Threads">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8.5" r="2.4"/><path d="M6 8.4v7.2M8.4 6.2h4.2a3 3 0 0 1 3 3v.4"/></svg>
+        </button>
+        <button class="rail-btn" data-lens="corrections" title="Corrections — the Host changing its mind" aria-label="Corrections">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17v-6h-6"/><path d="M20 8a8 8 0 0 0-14-3M4 16a8 8 0 0 0 14 3"/></svg>
+        </button>
+        <button class="rail-btn" data-lens="health" title="Health — coverage & maintenance" aria-label="Health">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2 6 4-14 2 8h6"/></svg>
+        </button>
+        <button class="rail-btn" data-lens="data" title="Data — what your Host keeps in its own database" aria-label="Data">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5.5" rx="7.5" ry="2.8"/><path d="M4.5 5.5v6.5c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8V5.5"/><path d="M4.5 12v6.5c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8V12"/></svg>
+        </button>
+        <span class="rail-spacer"></span>
+        <span id="sync-dot" class="cseries-presence-dot" title="Syncing with brain" aria-hidden="true"></span>
+    </nav>
+
+    <!-- ─── Sidebar: facets (ledger) / thread list (threads) ── -->
+    <aside id="sidebar" class="cseries-scroll">
+        <div class="sidebar-head">
+            <div class="sb-search-wrap">
+                <svg class="sb-search-icon" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4-4"/></svg>
+                <input id="search" class="cseries-input search" type="search" placeholder="Search entries…" autocomplete="off">
+            </div>
+        </div>
+
+        <div id="facets">
+            <!-- A. Temporal state toggle (the spine) -->
+            <section class="sb-section pinned-section" id="sec-state">
+                <div class="sb-section-head" data-toggle="sec-state">
+                    <span class="sb-section-chevron">▾</span>
+                    <span class="sb-section-label label-sys">Temporal state</span>
+                </div>
+                <div class="sb-section-body">
+                    <div class="mem-window-picker" id="state-picker" role="group" aria-label="Temporal state">
+                        <button type="button" data-state="canonical" class="active" aria-pressed="true">Canonical</button>
+                        <button type="button" data-state="asof" aria-pressed="false">As-of…</button>
+                        <button type="button" data-state="all" aria-pressed="false">All</button>
+                    </div>
+                    <input id="asof-date" class="cseries-input" type="date" hidden>
+                </div>
+            </section>
+
+            <!-- B. Types -->
+            <section class="sb-section" id="sec-types">
+                <div class="sb-section-head" data-toggle="sec-types">
+                    <span class="sb-section-chevron">▾</span>
+                    <span class="sb-section-label label-sys">Types</span>
+                    <span class="sb-section-count" id="types-count"></span>
+                </div>
+                <div class="sb-section-body" id="types-body">
+                    <div class="sb-pills" id="types-pills"></div>
+                </div>
+            </section>
+
+            <!-- C. Status -->
+            <section class="sb-section" id="sec-status">
+                <div class="sb-section-head" data-toggle="sec-status">
+                    <span class="sb-section-chevron">▾</span>
+                    <span class="sb-section-label label-sys">Status</span>
+                </div>
+                <div class="sb-section-body" id="status-body">
+                    <div class="sb-pills" id="status-pills"></div>
+                </div>
+            </section>
+        </div>
+
+        <!-- Thread list (threads lens, desktop) — the list stays put
+             while the selected thread expands in the main pane. -->
+        <div id="threads-panel" hidden>
+            <div class="sb-section-head"><span class="sb-section-label label-sys">Threads</span>
+                <span class="sb-section-count" id="threads-count"></span></div>
+            <div id="threads-list"></div>
+        </div>
+    </aside>
+
+    <!-- ─── Main: the Ledger ──────────────────────────────── -->
+    <main id="main" class="cseries-scroll">
+        <header id="main-head">
+            <div class="mh-titles">
+                <h1 class="mh-title" id="lens-title">Ledger</h1>
+                <p class="mh-sub" id="lens-sub">The living log of entries — what your Host holds true, and how it got there.</p>
+            </div>
+            <div class="mh-tools" id="main-tools"></div>
+        </header>
+        <div id="asof-caption" class="mh-asof" hidden></div>
+
+        <!-- Totals strip -->
+        <section class="cv-totals" id="totals" hidden></section>
+
+        <!-- The ledger / lens body -->
+        <section id="lens-body"></section>
+    </main>
+
+    <!-- ─── Inspector: the Record (desktop column / phone sheet) ── -->
+    <section id="inspector" aria-hidden="true"></section>
+
+    <!-- ─── Bottom tab bar (phone) ────────────────────────── -->
+    <nav id="tabbar" aria-label="Memory lenses">
+        <button class="tab-btn active" data-lens="ledger">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16M4 10h16M4 15h10M4 20h7"/></svg>
+            <span>Ledger</span>
+        </button>
+        <button class="tab-btn" data-lens="threads">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="8.5" r="2.4"/><path d="M6 8.4v7.2M8.4 6.2h4.2a3 3 0 0 1 3 3v.4"/></svg>
+            <span>Threads</span>
+        </button>
+        <button class="tab-btn" data-lens="corrections">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7v6h6"/><path d="M21 17v-6h-6"/><path d="M20 8a8 8 0 0 0-14-3M4 16a8 8 0 0 0 14 3"/></svg>
+            <span>Corrections</span>
+        </button>
+        <button class="tab-btn" data-lens="health">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l2 6 4-14 2 8h6"/></svg>
+            <span>Health</span>
+        </button>
+        <button class="tab-btn" data-lens="data">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5.5" rx="7.5" ry="2.8"/><path d="M4.5 5.5v6.5c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8V5.5"/><path d="M4.5 12v6.5c0 1.5 3.4 2.8 7.5 2.8s7.5-1.3 7.5-2.8V12"/></svg>
+            <span>Data</span>
+        </button>
+    </nav>
+
+    <!-- Scrim behind the phone filter sheet / inspector sheet -->
+    <div id="scrim" hidden></div>
+
+</div>
+
+<!-- Confirmation overlay mount -->
+<div id="confirm-mount"></div>
+
+<script src="app.js"></script>
+</body>
+</html>

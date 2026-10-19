@@ -1,0 +1,157 @@
+id: sites
+name: Sites
+provenance: standard
+description: Run your own public websites — publish from a project, put them on your own domain, decide who gets in, charge for access, and give them a database.
+icon: icon.svg
+icon_small: icon.svg
+entrypoint: index.html
+system: true
+# 0.6.0 (2026-07-10): rebuilt as `sites-web` (React/shadcn/green-black, source
+# at repo root ../sites-web/) — My Sites/Overview, the Visibility flip (drives
+# the shipped /sites/exposure backend), Domains, zip Publish, and the
+# byte-faithful live-edit relay carry-over. Replaces the vanilla app.js. Scopes
+# unchanged (read:sites + publish:sites).
+# 0.7.0 (2026-07-13): Access + Payments tabs (SDK station 3). Access = the
+# owner customer pool (2b: add/remove/suspend/import, spans Members-gated
+# sites); Payments = BYO-Stripe connect + webhook URL + subscriber list (3);
+# Visibility gains Members + Paywall tiers with inline signup/checkout config.
+# Drives new /sites/customers* + /sites/stripe* kernel routes -> bridge
+# webapp.customers.*/webapp.stripe.* -> controller.
+# 0.7.1 (2026-07-13): fix paywall setup dead-end — clicking Paywall
+# now opens the checkout composer (composing state) so a fresh site can set a
+# Checkout URL and go paywall from the UI; previously the URL field only
+# rendered once already paywall.
+# 0.9.0 (2026-07-16): Database tab credential fix — the DATABASE_URL
+# is never rendered in plaintext anymore. New kernel route
+# /sites/db/save-to-keys deposits it into the Keys vault SERVER-SIDE (reveal →
+# vault store in-process; the URL never reaches the browser; on-screen reveal
+# = the Keys app's TOTP path); the tab shows only the vault name + a masked
+# URL (server/applications/dburl.py, ratchet scripts/test_sites_db_mask.py).
+# "Copy URL" is clipboard-only — never in the DOM. Stale "connectivity rolling
+# out shortly" notice removed (the slice-3 pinhole shipped).
+# 0.9.1 (2026-07-16): mobile layout — window.mobile: responsive. Below md the
+# header tab nav scrolls horizontally (tabs don't fit 390px) and the "Sites"
+# title yields to the tabs; panels already reflow (flex-wrap forms, fluid
+# cards). Desktop unchanged. Rebased onto 0.9.0 — this build carries the
+# credential fix.
+# 0.10.0 (2026-07-22): Service catalog — Catalog tab (browse
+# the admitted one-click apps by category/search, deploy dialog with the
+# template's ${VAR:-default} settings form, LIVE deploy progress card that
+# polls to Live and links the app; born private) + Data tab (catalog apps'
+# volume backups: list/back-up-now/restore with destructive confirm, live
+# while jobs run). Drives new /sites/catalog/* + /sites/volumes* kernel
+# routes -> bridge webapp.catalog.* / webapp.volume.* -> controller. No
+# vendor logos by design (no fabricated brand marks): initial-letter tiles.
+# 0.11.0 (2026-07-22): zone handles (a domain-constraint call) — every
+# NEW site lands at <name>.<handle>.<zone> instead of the old
+# platform-global <name>.<zone> (squatting + collisions). The Catalog
+# deploy dialog asks once for your permanent builder name (claim step gates
+# the form; preview shows the real namespaced address). Existing sites are
+# grandfathered. Drives /sites/handle{,/claim} -> bridge webapp.handle.* ->
+# controller (migration 039).
+# 0.12.0 (2026-07-24): Stripe Connect onboarding is the recommended Payments
+# lane — "Connect with Stripe" opens Stripe's hosted OAuth onboarding in a new
+# tab; only the acct_… id is ever stored platform-side. The whsec_ paste form
+# is demoted to an "Advanced: manual webhook" disclosure (kept as the
+# sites-only fallback for owners who want no platform link to their Stripe).
+# The connected card shows the linked account + connect state. Drives new
+# kernel route /sites/stripe/onboard -> bridge webapp.stripe.onboard ->
+# controller connect-onboard; everything 409s cleanly until the platform
+# Connect keys are configured.
+# 0.13.1 (2026-08-19): changelog wording only (host-tooling vocabulary sweep).
+# 0.14.0 (2026-08-25): prompt_behavior rewritten to what the app actually is.
+# 0.15.0 (2026-09-09): zone handles RETIRED — 0.11.0 is reversed. Public
+# site addresses should not carry a Host's name, and the middle label (the
+# owner's claimed builder name) was often exactly that. New sites are flat
+# again: <name>.<zone>.
+# The Catalog deploy dialog no longer asks for a builder name and no longer
+# gates the form on claiming one; the address preview shows the flat form. The
+# controller returns the bare zone from GET /sites/handle, so nothing here has
+# to know a handle ever existed. Collisions are now global rather than
+# per-owner and are refused by the existing hostname check (409 "already
+# claimed") — the labels that flat namespacing exposes, `hooks` above all
+# (the Stripe webhook host), are reserved platform-side.
+# The old block said "upload a site" — the app itself renders "Publish from
+# Workbench … no uploads here" and the `publish_site` tool's own purpose line
+# ends "(no uploads, ever)". It also described three capabilities out of seven
+# tabs: the managed per-site Postgres, Stripe Connect + Members/Paywall, the
+# template catalog, DNS record editing and volume backups were all invisible to
+# the host even though every one is a live route in
+# server/routes/applications.py (1243-1750). Payload change is the manifest
+# only; store-lane upgrade is strictly-newer, hence the bump.
+# 0.15.4 (2026-10-01): a zip/folder upload question is answered with how it
+# works and the publish itself, never an offer. Bundle repacked.
+# 0.16.0 (2026-10-04): Search engines control on a Public site (Hidden /
+# Listed). Published sites are not indexed unless the owner lists them: the
+# zone sends X-Robots-Tag: noindex and a deny-all robots.txt otherwise
+# (exposure.indexable, enforced by the platform's public zone). Bundle repacked.
+# 0.16.3 (2026-10-18): what_it_is is one paragraph under the 900-character cap,
+#   saying what the app is and what lives in it; the how-to it carried lives in
+#   skills and tool descriptions. Manifest-only; bundle repacked.
+# 0.16.4 (2026-10-18): rebuilt from sources whose comments were rewritten as plain rationale; no behaviour change.
+version: "0.16.4"
+# 0.16.2 (2026-10-11): rebuilt on the shared kit (its Search pane left with
+# Circles' rail, so the
+# styles the kit's files name changed); no change in what this app does.
+# Bumped because the payload moved.
+# 0.16.1 (2026-10-11): sites moved from a dev. subzone to <name>.<zone>
+# directly, behind Cloudflare; old addresses redirect for
+# good. The Host's description of the Catalog address says the new form. The
+# app's own address preview reads the zone from GET /sites/handle and needed
+# no change. Bundle repacked.
+# 0.15.3 (2026-09-27): a site the Host publishes now goes live public (the
+#   preview is the artifact itself), so "Private preview" is just
+#   Private, limited to the owner, in prompt_behavior and in the Visibility
+#   control. A site still stored open to every logged-in account says so and
+#   points at Private.
+# 0.15.2 (2026-09-24): rebuilt on the shared kit (app-web-kit/ask.ts learned
+#   the pipeline proposal's ask — not used by this app); no change in what
+#   this app does. Bumped because the payload moved.
+# 0.15.1 (2026-09-24): rebuilt on the shared kit that gained the ask card
+#   (app-web-kit/ask.ts, ui/ask-overlay — not used by this app); no change
+#   in what this app does. Bumped because the payload moved.
+# 0.12.1 (2026-07-25): the catalog handle input no longer uses a real person
+# as its placeholder example.
+# 0.13.0 (2026-08-08): the connect/delegate picker is gone — Connect is the only
+# path. Nameserver delegation is retired: the sites zone moved to Cloudflare
+# and the platform's own PowerDNS is being decommissioned, so there is no
+# authoritative server left to delegate to. The backend answers 410 for
+# method='delegate'. Nothing is stranded — the delegation path had exactly one row ever
+# (a test domain, already removed). Users keep their own nameservers, which is
+# also the honest posture for a platform that never wanted to own their DNS.
+
+# Environment-catalog facts (host-facing, code-true). Source for the L1
+# topology block + describe_app — NOT a surface_role body (this is a control
+# panel, not a conversational surface): what_it_is/user_path only.
+prompt_behavior:
+  what_it_is: >-
+    Sites is the control panel for the user's own public websites; sites serve from
+    the public web zone, never from this container. There is no upload here: a site
+    is published from a Workbench project ("Publish as site") or from one of the
+    user's gitea repos. Seven tabs: My Sites (every site, its address, state,
+    traffic and visibility; stop, restart or suspend), Catalog (ready-made apps
+    deployed in one click; the chosen name becomes <name> under the sites zone and must be free
+    platform-wide), Domains (a domain the user owns and its DNS records), Access
+    (the people allowed into a site), Payments (the user's own Stripe account; money
+    settles there), Database (a site's own PostgreSQL with backup and restore; the
+    connection string goes to Keys) and Data (backups of catalog apps' disks).
+    Visibility is set per site, and a new site starts unlisted for search engines.
+  user_path: "the Sites app, in the dock"
+
+window:
+  title: Sites
+  width: 1040
+  height: 720
+  resizable: true
+  min_width: 760
+  min_height: 500
+  # Phone: render native full-width and reflow (tab nav scrolls; panels
+  # already flex-wrap) instead of the shell's scale shim.
+  mobile: responsive
+
+# Sites are served from the public webapp zone (never this pod). These
+# scopes gate the proxy routes the app calls: read = list + analytics,
+# publish = publish/unpublish/suspend/resume/restart.
+permissions:
+  - read:sites
+  - publish:sites

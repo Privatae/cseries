@@ -1,0 +1,225 @@
+Privatae C-Series
+Copyright 2026 Privatae LLC
+
+Licensed under the GNU Affero General Public License, version 3 only
+(AGPL-3.0-only; see LICENSE).
+
+This product includes third-party software that remains under its own
+licence. The full list of components, with each licence, is in
+THIRD-PARTY-NOTICES.md; the licence texts are in third_party/licenses/.
+Each built web app also ships a THIRD-PARTY-LICENSES.txt beside its bundle,
+and the container images keep every Debian package's copyright file under
+/usr/share/doc.
+
+Licence choices for components offered under more than one licence:
+  - dompurify: used under Apache-2.0.
+  - json-schema: used under BSD-3-Clause.
+  - tld: used under LGPL-2.1-or-later.
+  - libidn2 (statically linked in the curl_cffi wheel): used under
+    LGPL-3.0-or-later. Its build inputs are public: curl_cffi 0.16.1 and
+    curl-impersonate 2.1.1 publish the exact sources and build scripts.
+
+Trademarks: the logos of other companies and products shipped in this
+repository (for example under dashboard/base/assets/harness/ and
+system-apps/telegram/) are trademarks of their respective owners. They are
+included only to identify those products. They are not licensed under the
+GNU Affero General Public License, and no right to use them is granted.
+"QR Code" is a registered trademark of DENSO WAVE INCORPORATED.
+
+Container images: the coding-agent sidecars under sidecars/ are published
+as Dockerfiles only. Building one downloads third-party software under that
+vendor's own terms; no built sidecar image is distributed with this
+product.
+
+Source for GPL and LGPL components in the images: Debian packages from
+https://snapshot.debian.org and PostgreSQL packages from
+https://apt-archive.postgresql.org, at the versions recorded in each
+image's dpkg database.
+
+Source for the MPL-2.0 Rust crates compiled into pytakumi 0.1.5, the kernel
+image's picture renderer (cssparser 0.37.0, cssparser-macros 0.7.0,
+dtoa-short 0.3.5 and selectors 0.40.0, used under the Mozilla Public License
+2.0): each is at https://static.crates.io/crates/<name>/<name>-<version>.crate,
+and the licence text is in third_party/licenses/pytakumi-0.1.5-crates.txt.
+
+------------------------------------------------------------------------
+Required credits
+
+- qrcode-generator: Copyright (c) 2009 Kazuhiko Arase. Licensed under the MIT license. "The word 'QR Code' is registered trademark of DENSO WAVE INCORPORATED http://www.denso-wave.com/qrcode/faqpatent-e.html"
+- Portions of this software are copyright © The FreeType Project (www.freetype.org). All rights reserved. (Pillow)
+- This software is based in part on the work of the Independent JPEG Group. (Pillow)
+
+------------------------------------------------------------------------
+NOTICE texts carried forward from Apache-2.0 components
+
+=== Apache AGE 1.7.0-rc0 (postgresql-17-age, database image) ===
+Apache AGE
+Copyright 2023 The Apache Software Foundation.
+This product includes software developed at
+The Apache Software Foundation (http://www.apache.org/).
+
+Portions of Apache AGE were originally developed by Bitnine Co., Ltd. and were
+donated to the Apache Software Foundation. Copyright 2019-2020 Bitnine Co., Ltd.
+
+=== vscode-oniguruma 1.7.0 (WebAssembly in the circles and workbench apps) ===
+THIRD-PARTY SOFTWARE NOTICES AND INFORMATION
+Do Not Translate or Localize
+
+This project incorporates material from the project(s) listed below (collectively, “Third Party Code”).
+Microsoft is not the original author of the Third Party Code.  The original copyright notice and license
+under which Microsoft received such Third Party Code are set out below. This Third Party Code is licensed
+to you under their original license terms set forth below.  Microsoft reserves all other rights not
+expressly granted, whether by implication, estoppel or otherwise.
+
+The following files/folders contain third party software:
+
+=========================================================================================================
+deps/oniguruma/ --- oniguruma version 6.9.5_rev1 https://github.com/kkos/oniguruma/tree/v6.9.5_rev1
+---------------------------------------------------------------------------------------------------------
+
+Oniguruma LICENSE
+-----------------
+
+Copyright (c) 2002-2020  K.Kosako  <kkosako0@gmail.com>
+All rights reserved.
+
+Redistribution and use in source and binary forms, with or without
+modification, are permitted provided that the following conditions
+are met:
+1. Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+2. Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+THIS SOFTWARE IS PROVIDED BY THE AUTHOR AND CONTRIBUTORS ``AS IS'' AND
+ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ARE DISCLAIMED.  IN NO EVENT SHALL THE AUTHOR OR CONTRIBUTORS BE LIABLE
+FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS
+OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT
+LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY
+OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
+SUCH DAMAGE.
+
+Python packages in the kernel image whose wheels ship a NOTICE file (read from cseries:dev site-packages):
+
+=== boto3 1.40.72
+```
+boto3
+Copyright 2013-2017 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+```
+
+=== botocore 1.40.76
+```
+Botocore
+Copyright 2012-2022 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+
+----
+
+Botocore includes vendorized parts of the requests python library for backwards compatibility.
+
+Requests License
+================
+
+Copyright 2013 Kenneth Reitz
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+
+Botocore includes vendorized parts of the urllib3 library for backwards compatibility.
+
+Urllib3 License
+===============
+
+This is the MIT license: http://www.opensource.org/licenses/mit-license.php
+
+Copyright 2008-2011 Andrey Petrov and contributors (see CONTRIBUTORS.txt),
+Modifications copyright 2012 Kenneth Reitz.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this
+software and associated documentation files (the "Software"), to deal in the Software
+without restriction, including without limitation the rights to use, copy, modify, merge,
+publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons
+to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or
+substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
+FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+
+Bundle of CA Root Certificates
+==============================
+
+***** BEGIN LICENSE BLOCK *****
+This Source Code Form is subject to the terms of the
+Mozilla Public License, v. 2.0. If a copy of the MPL
+was not distributed with this file, You can obtain
+one at http://mozilla.org/MPL/2.0/.
+
+***** END LICENSE BLOCK *****
+```
+
+=== s3transfer 0.14.0
+```
+s3transfer
+Copyright 2016 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+```
+
+=== requests 2.34.2
+```
+Requests
+Copyright 2019 Kenneth Reitz
+```
+
+=== propcache 0.5.4
+```
+   Copyright 2016-2021, Andrew Svetlov and aio-libs team
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+```
+
+=== yarl 1.25.1
+```
+   Copyright 2016-2021, Andrew Svetlov and aio-libs team
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+   you may not use this file except in compliance with the License.
+   You may obtain a copy of the License at
+
+       http://www.apache.org/licenses/LICENSE-2.0
+
+   Unless required by applicable law or agreed to in writing, software
+   distributed under the License is distributed on an "AS IS" BASIS,
+   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+   See the License for the specific language governing permissions and
+   limitations under the License.
+```
+
+No NOTICE file was found for the Apache-2.0 npm packages in the web bundles (checked in an installed node_modules with the same workbench-web lockfile), for the other Apache-2.0 Python wheels in the kernel image, or for the Apache-2.0 Python wheels in the sidecar images. Apache AGE's NOTICE is still missing (item 10). The ArtCraft NOTICE texts are in the appendix.

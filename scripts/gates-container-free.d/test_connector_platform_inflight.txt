@@ -1,0 +1,2 @@
+# 2026-10-04 (messaging connectors, after the grants review): one connector app may have at most PLATFORM_INFLIGHT_MAX platform calls in flight; the call past it is a 429 refused before its body is read, a finished or failed call frees its place, and another app is not held back. Real handler, fake request, platform call replaced; no DB, no network.
+test_connector_platform_inflight.py

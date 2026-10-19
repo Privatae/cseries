@@ -1,0 +1,16 @@
+/* ================================================================
+ * App Template — per-app layout styles only.
+ *
+ * All primitives (colors, type, buttons, pills, cards, nav, seam)
+ * come from /css/cseries-components.css + /css/tokens.css.
+ * Do NOT add new colors, type scales, or motion here.
+ * ================================================================ */
+
+/* The app shell — html/body, .app, .app-header, .app-brand(-icon/-title/-sub),
+ * .app-body, .app-view, .app-footer(-right) — is owned by
+ * /css/cseries-components.css. Do NOT copy those blocks here; local copies drift
+ * from the shared design system. Add ONLY app-specific layout below. */
+
+.app-brand-text {
+    min-width: 0;
+}

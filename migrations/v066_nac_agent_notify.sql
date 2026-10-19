@@ -1,0 +1,14 @@
+-- v066 (2026-06-20): NAC agent governance P9.4 — alerting (the notification layer).
+--
+-- observe (P9.0/9.1) -> reconcile (P9.2) -> contain (P9.3) -> NOTIFY. The Agents lens makes
+-- unrequested activity visible if you look; this makes it FIND you. On each bastion heartbeat the
+-- host reconciles its observed agents and, for any UNREQUESTED one not yet alerted, pushes a
+-- self-notification into the pod-local inbox ("agent activity you didn't request on <server>").
+--
+-- notified_at marks an observed agent already alerted, so the push fires ONCE per agent (on first
+-- detection), never every 60s beat. A requested agent (carries a valid delegation) is never alerted;
+-- if its delegation is later revoked it becomes unrequested with notified_at still NULL, so revoking
+-- a sanction correctly re-surfaces it. Visibility serves the USER's own host on their own infra —
+-- the platform never sees it. The runtime ensures this column defensively
+-- (nac_agents.ensure_table); authoritative record here.
+ALTER TABLE nac_agent_activity ADD COLUMN IF NOT EXISTS notified_at TIMESTAMPTZ;

@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Keys</title>
+
+    <link rel="stylesheet" href="/css/tokens.css">
+    <link rel="stylesheet" href="/css/motion.css">
+    <link rel="stylesheet" href="/css/cseries-components.css">
+    <link rel="stylesheet" href="/system-apps/keys/style.css">
+</head>
+<body class="cseries-scroll">
+<div class="app keys-app">
+
+    <!-- ── Header ─────────────────────────────────────── -->
+    <header class="app-header">
+        <div class="app-brand">
+            <span class="keys-brandmark" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 20 3"/><path d="M17 6l3 3"/><path d="M15 8l2.5 2.5"/>
+                </svg>
+            </span>
+            <div class="app-brand-text">
+                <div class="app-brand-title">Keys</div>
+                <div class="app-brand-sub label-sys">Your sealed credentials</div>
+            </div>
+        </div>
+        <div class="keys-health" id="keys-health" aria-live="polite"></div>
+    </header>
+
+    <div class="cseries-seam"></div>
+
+    <!--
+      One menu on the left, one section on the right. Replaces the single
+      undifferentiated list of cards: credentials belong to different things
+      (providers that bill you, sites, Privatae itself) and those have
+      different lifecycles, so they get different sections rather than one
+      wall of bubbles.
+    -->
+    <div class="keys-body">
+        <nav class="keys-menu" id="keys-menu" aria-label="Sections"></nav>
+
+        <main class="keys-main cseries-scroll">
+            <div class="status-banner error" id="keys-alert" hidden></div>
+            <div id="keys-view"></div>
+        </main>
+    </div>
+
+    <!-- ── Centered popup modal over a dimmed scrim — add / reveal / enroll ── -->
+    <div class="keys-scrim" id="keys-scrim" hidden>
+        <div class="keys-modal" role="dialog" aria-modal="true" aria-labelledby="keys-modal-title">
+            <div class="keys-modal-head">
+                <span class="keys-modal-title" id="keys-modal-title">—</span>
+                <button class="cseries-btn ghost icon-only" id="keys-modal-close" aria-label="Cancel">✕</button>
+            </div>
+            <div class="keys-modal-body cseries-scroll" id="keys-modal-body"></div>
+            <div class="keys-modal-actions" id="keys-modal-actions"></div>
+        </div>
+    </div>
+
+    <footer class="app-footer">
+        <span class="label-sys" id="foot-left">Sealed in your container — the platform cannot read them</span>
+        <span class="label-sys app-footer-right" id="foot-right">—</span>
+    </footer>
+</div>
+
+<!-- vendored, dependency-free QR generator (Kazuhiko Arase, MIT) — TOTP-secret QR + enrollment QR -->
+<script src="/js/qrcode.js"></script>
+<script src="/system-apps/keys/app.js"></script>
+</body>
+</html>

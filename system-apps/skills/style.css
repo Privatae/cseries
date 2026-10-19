@@ -1,0 +1,205 @@
+html, body {
+    background: var(--cseries-night);
+    color: var(--cseries-paper);
+    font-family: var(--font-body);
+    font-size: var(--text-base);
+    line-height: var(--leading-normal);
+}
+
+.app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+.app-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-5);
+    padding: var(--space-4) var(--space-5) var(--space-3);
+    flex-shrink: 0;
+    background: var(--cseries-twilight);
+}
+
+.app-brand { display: flex; align-items: center; gap: var(--space-3); }
+.app-brand-icon { width: 32px; height: 32px; object-fit: contain; }
+.app-brand-title { font-family: var(--font-display); font-size: var(--text-lg); font-weight: 600; }
+.app-brand-sub { color: var(--cseries-ash); margin-top: 2px; }
+
+.app-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--space-5);
+    background: var(--cseries-night);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+    max-width: 900px;
+}
+
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: var(--space-3);
+    margin-bottom: var(--space-3);
+}
+
+.section-actions {
+    display: flex;
+    gap: var(--space-2);
+}
+
+.section-title {
+    font-family: var(--font-display);
+    font-size: var(--text-base);
+    color: var(--cseries-paper);
+}
+
+.detail-title {
+    display: flex;
+    align-items: baseline;
+    gap: var(--space-2);
+}
+
+.skills-list,
+.history-list {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.skill-row,
+.history-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    background: var(--cseries-twilight);
+    border: 1px solid var(--cseries-seam);
+    border-radius: 4px;
+    cursor: pointer;
+}
+
+.history-row {
+    padding: var(--space-2) var(--space-3);
+}
+
+.skill-row:hover,
+.history-row:hover {
+    border-color: var(--cseries-seam-active);
+}
+
+.skill-row-meta {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.skill-row-tags {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    flex-shrink: 0;
+}
+
+.skill-row-name {
+    font-family: var(--font-mono);
+    color: var(--cseries-paper);
+}
+
+.skill-row-desc {
+    color: var(--cseries-ash);
+    font-size: var(--text-xs);
+}
+
+.cseries-pill.is-active {
+    color: var(--cseries-moss);
+}
+
+.cseries-pill.is-retired {
+    color: var(--cseries-ash);
+}
+
+/* A version written in a turn that read untrusted content: the person reviews it. */
+.cseries-pill.is-untrusted {
+    color: var(--cseries-gold);
+}
+
+.skill-untrusted {
+    border: 1px solid var(--cseries-gold);
+    border-radius: 4px;
+    padding: var(--space-2);
+    color: var(--cseries-paper);
+    font-size: var(--text-xs);
+}
+
+.skill-detail {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.skill-body {
+    background: var(--cseries-twilight);
+    border: 1px solid var(--cseries-seam);
+    border-radius: 4px;
+    padding: var(--space-3);
+    color: var(--cseries-paper);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    white-space: pre-wrap;
+    max-height: 400px;
+    overflow-y: auto;
+}
+
+.skill-editor {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+
+.skill-editor-text {
+    min-height: 320px;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    width: 100%;
+}
+
+.editor-row {
+    display: flex;
+    gap: var(--space-2);
+}
+
+.editor-failures {
+    margin: 0;
+    padding-left: var(--space-4);
+    color: var(--cseries-ember);
+    font-size: var(--text-xs);
+}
+
+.editor-failures .rule {
+    font-family: var(--font-mono);
+}
+
+.skill-history,
+.version-view {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-top: var(--space-3);
+}
+
+.app-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-2) var(--space-5);
+    background: var(--cseries-night);
+    border-top: 1px solid var(--cseries-seam);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--cseries-ash);
+}

@@ -1,0 +1,5 @@
+# The Start dialog driven in a real browser over a loopback mock kernel, in
+# the book: the empty book's Start, the page it opens on, and the retired
+# General thread's one-time move — needs Playwright + Chromium and a local
+# port; no pod, no DB.
+test_workbench_start_flow.py              # playwright chromium + local port (loopback mock kernel)

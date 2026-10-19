@@ -1,0 +1,2 @@
+# Inside a private PID namespace standing in for the harness container, a tool started with setsid + env -i (no session, no marker) is stopped at run end when the pod serves one run; a bystander that was there before the run and another run's processes survive; with two runs nothing is claimed by appearance; each attempt carries its own marker. Real signals, only inside the namespace.
+test_harness_run_accounting_pod.py

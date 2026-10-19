@@ -1,0 +1,9 @@
+# 2026-10-07: the "vendor refused this CLI version" signal.
+# A fake grok CLI through the REAL watched runner and the REAL grok spec: xAI's
+# recorded refusal in the CLI's own error frame puts exactly {harness,
+# cli_version, min_version_named} on the terminal frame; the same words as model
+# text or on stderr, on a run that exited 0, or any other error, put nothing
+# there. The runner kills process trees, so the gate runs only inside a private
+# PID namespace (it re-executes itself under unshare, as
+# test_harness_run_accounting_pod.py does). No container, no DB, no network.
+test_harness_vendor_refusal_run.py

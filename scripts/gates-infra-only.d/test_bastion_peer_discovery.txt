@@ -1,0 +1,1 @@
+test_bastion_peer_discovery.py           # live DB (asyncpg via PEER_TEST_DSN) — the logic IS the SQL (upsert + `= ANY($2::text[])` + notified_at dedupe), so a stub pool would assert control flow against a fiction; runs against a throwaway cseries-postgres container, skips without a DSN, and a skip proves nothing

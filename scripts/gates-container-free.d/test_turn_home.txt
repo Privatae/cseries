@@ -1,0 +1,5 @@
+
+# 2026-09-17 (projects 228→229): a turn lives with the project its work
+# touched, a project thread never spawns a second project, and a split thread has
+# a fold-into repair. Fake pool, real functions — no DB, no container.
+test_turn_home.py

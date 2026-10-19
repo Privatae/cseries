@@ -1,0 +1,8 @@
+# A workspace_file read of a document attached to this conversation says where
+# its content is, as result fields (this turn's message, or the kept copy's
+# context_ingest read), and a name that is not an attachment answers as
+# before; a refusal whose only answer is "use this other tool" adds no "tell
+# the user what failed" line, the same redirect twice is still dead, any
+# other failure keeps the line. Real tool calls and two real Host turns. Temp
+# workspace, stub pool, scripted model; no DB, no pod, no network.
+test_attachment_read_and_redirect_refusal.py

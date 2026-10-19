@@ -1,0 +1,4 @@
+
+# A decision link opens its message: the inbox LIST names each decision row's
+# decision_id (it carries no payload). Real handler, recording pool.
+test_inbox_list_decision_id.py

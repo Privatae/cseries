@@ -1,0 +1,6 @@
+# Diff to PR, and review. A build at a mounted project's root is a repo_change (its own
+# contract, no entry or manifest check) unless the repository has an app.yaml at
+# its root, which keeps the app target and its checks; gitea propose takes edits, a patch or
+# from_project; gitea reads pull requests and comments on them; create_project
+# mounts or forks; import_repo offers the forge credential to the forge only.
+test_host_diff_to_pr_parity.py

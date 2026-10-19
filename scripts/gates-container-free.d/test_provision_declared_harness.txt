@@ -1,0 +1,2 @@
+# Install provisions the harness an app's manifest declares, never a hardcoded id. Passes container-free.
+test_provision_declared_harness.py

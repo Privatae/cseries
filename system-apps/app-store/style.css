@@ -1,0 +1,529 @@
+/* App Store — where the user finds apps, organized by where each app
+ * runs and what it costs (2.0.0 rebuild, 2026-08-26). */
+
+html, body {
+    background: var(--cseries-night);
+    color: var(--cseries-paper);
+    font-family: var(--font-body);
+    font-size: var(--text-base);
+    line-height: var(--leading-normal);
+}
+
+.app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+.app-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-5);
+    padding: var(--space-4) var(--space-5) var(--space-3);
+    background: var(--cseries-twilight);
+    flex-wrap: wrap;
+    row-gap: var(--space-2);
+    flex-shrink: 0;
+}
+
+.app-brand { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+.app-brand-icon { width: 34px; height: 34px; object-fit: contain; filter: grayscale(1) brightness(1.15) drop-shadow(0 2px 4px rgba(0,0,0,0.5)); flex-shrink: 0; }
+.app-brand-title {
+    font-family: var(--font-display);
+    font-size: var(--text-lg);
+    font-weight: 700;
+    color: var(--cseries-paper);
+    letter-spacing: 0.02em;
+    line-height: 1.2;
+}
+.app-brand-sub { color: var(--cseries-ash); margin-top: 2px; }
+
+.catalog-search {
+    flex-shrink: 0;
+    min-width: 180px;
+    padding: var(--space-2) var(--space-3);
+    background: var(--cseries-night);
+    color: var(--cseries-paper);
+    border: 1px solid rgba(55, 65, 81, 0.5);
+    border-radius: var(--radius-md);
+    font-family: var(--font-body);
+    font-size: var(--text-sm);
+}
+.catalog-search::placeholder { color: var(--cseries-ash); }
+.catalog-search:focus {
+    outline: none;
+    border-color: var(--cseries-linen);
+}
+
+.app-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--space-5);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-5);
+}
+/* The body is a fixed-height flex column that scrolls. Its sections must
+ * never SHRINK to make the overflow fit — flex-shrink is the default, and it
+ * silently collapsed the featured strip to 0px the moment the page held more
+ * content than one screen (its min-content height is 0 because the card is
+ * the only child). Found rendering the 2.0.0 rebuild headless. */
+.app-body > * { flex-shrink: 0; }
+
+/* ── Featured strip ───────────────────────────────────── */
+.featured-strip {
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+
+.featured-card {
+    display: flex;
+    align-items: center;
+    gap: var(--space-5);
+    padding: var(--space-5);
+    background:
+        radial-gradient(circle 900px at 20% 100%, rgba(127, 207, 174, 0.18), transparent 60%),
+        radial-gradient(circle 700px at 90% -10%, rgba(212, 165, 116, 0.12), transparent 60%),
+        var(--cseries-twilight);
+    border: 1px solid var(--cseries-ember-ring);
+    border-radius: var(--radius-lg);
+    cursor: pointer;
+    transition: transform var(--dur-hover) var(--ease-cseries);
+}
+.featured-card:hover { transform: translateY(-1px); }
+
+.featured-icon {
+    width: 96px;
+    height: 96px;
+    object-fit: contain;
+    flex-shrink: 0;
+    filter: drop-shadow(0 4px 12px rgba(0,0,0,0.5));
+}
+
+.featured-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: var(--space-1); }
+.featured-eyebrow {
+    color: var(--cseries-amber, var(--cseries-gold));
+    text-transform: uppercase;
+}
+.featured-name {
+    font-family: var(--font-display);
+    font-size: var(--text-xl);
+    font-weight: 700;
+    color: var(--cseries-paper);
+    letter-spacing: -0.01em;
+}
+.featured-summary {
+    font-size: var(--text-base);
+    color: var(--cseries-linen);
+    line-height: var(--leading-relaxed);
+    max-width: 600px;
+}
+.featured-action { flex-shrink: 0; }
+
+/* ── Catalog grid ─────────────────────────────────────── */
+.catalog-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: var(--space-4);
+}
+
+.app-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-4);
+    background: var(--cseries-twilight);
+    border: 1px solid rgba(55, 65, 81, 0.4);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: border-color var(--dur-hover) var(--ease-cseries),
+                transform var(--dur-hover) var(--ease-cseries);
+}
+.app-card:hover {
+    border-color: var(--cseries-linen);
+    transform: translateY(-2px);
+}
+
+.app-card-icon {
+    width: 56px;
+    height: 56px;
+    object-fit: contain;
+    filter: drop-shadow(0 2px 6px rgba(0,0,0,0.4));
+    align-self: flex-start;
+    margin-bottom: var(--space-1);
+}
+
+.app-card-name {
+    font-family: var(--font-display);
+    font-size: var(--text-base);
+    font-weight: 600;
+    color: var(--cseries-paper);
+}
+
+.app-card-summary {
+    font-size: var(--text-sm);
+    color: var(--cseries-linen);
+    line-height: var(--leading-relaxed);
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+    min-height: 3.4em;
+}
+
+.app-card-meta { margin-top: auto; }
+
+.app-card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+    /* Installed cards carry badge + Open + Uninstall; at the narrow end of
+     * the grid track they don't fit one row, and unwrapped flex just clipped
+     * the last button mid-word. */
+    flex-wrap: wrap;
+}
+
+/* ── Badges ───────────────────────────────────────────── */
+.badge {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    padding: 2px 8px;
+    border-radius: 999px;
+    border: 1px solid transparent;
+}
+.badge-ok {
+    color: var(--cseries-moss);
+    border-color: rgba(140, 180, 130, 0.4);
+    background: rgba(140, 180, 130, 0.08);
+}
+.badge-warn {
+    color: var(--cseries-ember);
+    border-color: var(--cseries-ember-ring);
+    background: rgba(212, 130, 80, 0.08);
+}
+.badge-muted {
+    color: var(--cseries-ash);
+    border-color: rgba(55, 65, 81, 0.5);
+    background: transparent;
+}
+.badge-price {
+    color: var(--cseries-gold);
+    border-color: rgba(212, 165, 116, 0.45);
+    background: rgba(212, 165, 116, 0.08);
+}
+
+.apps-installed-badge {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    letter-spacing: 0.06em;
+    color: var(--cseries-moss);
+    text-transform: uppercase;
+}
+
+/* ── Footer ──────────────────────────────────────────── */
+.app-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-2) var(--space-5);
+    background: var(--cseries-night);
+    border-top: 1px solid var(--cseries-seam);
+    font-family: var(--font-body);
+    font-size: var(--text-xs);
+    color: var(--cseries-ash);
+    flex-shrink: 0;
+}
+.app-footer-right { color: var(--cseries-linen); }
+
+/* ── Detail modal ────────────────────────────────────── */
+.appstore-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 999;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.appstore-modal-backdrop {
+    position: absolute;
+    inset: 0;
+    background: rgba(0,0,0,0.6);
+}
+.appstore-modal-card {
+    position: relative;
+    z-index: 1;
+    max-width: 640px;
+    width: calc(100% - 2 * var(--space-5));
+    max-height: 86vh;
+    overflow: auto;
+    padding: var(--space-5);
+}
+.appstore-modal-close {
+    position: absolute;
+    top: var(--space-3);
+    right: var(--space-3);
+    background: transparent;
+    border: 0;
+    color: var(--cseries-ash);
+    font-size: 24px;
+    line-height: 1;
+    cursor: pointer;
+    padding: 4px 10px;
+    border-radius: 4px;
+}
+.appstore-modal-close:hover { color: var(--cseries-paper); background: rgba(255,255,255,0.05); }
+
+.detail-hero {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    margin-bottom: var(--space-4);
+}
+.detail-icon {
+    width: 80px;
+    height: 80px;
+    object-fit: contain;
+    filter: drop-shadow(0 4px 8px rgba(0,0,0,0.4));
+}
+.detail-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; }
+.detail-name {
+    font-family: var(--font-display);
+    font-size: var(--text-lg);
+    font-weight: 700;
+    color: var(--cseries-paper);
+}
+.detail-meta { color: var(--cseries-ash); }
+.detail-summary {
+    color: var(--cseries-linen);
+    line-height: var(--leading-relaxed);
+    margin-bottom: var(--space-4);
+}
+.detail-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-2) 0;
+    border-top: 1px solid var(--cseries-seam);
+}
+.detail-row-label { color: var(--cseries-ash); }
+.detail-row-value code {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--cseries-paper);
+}
+
+/* One "bring my data from <site>" offer: a site name, its button, and the
+   plain-sentence status the move reports back. The status wraps onto its own
+   line because a refusal is a full sentence and the site name is a hostname —
+   both are already long, and putting them side by side would truncate the one
+   that explains what happened. */
+.detail-offer {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    margin-bottom: var(--space-2);
+}
+.detail-offer > .label-sys {
+    flex-basis: 100%;
+    text-align: right;
+}
+
+/* ── Section heads (the two lanes) ────────────────────── */
+.section-head { margin-bottom: var(--space-3); }
+.section-title {
+    font-family: var(--font-display);
+    font-size: var(--text-lg);
+    font-weight: 700;
+    color: var(--cseries-paper);
+    letter-spacing: 0.01em;
+    margin: 0 0 var(--space-1);
+}
+.section-sub {
+    font-size: var(--text-sm);
+    color: var(--cseries-ash);
+    line-height: var(--leading-relaxed);
+    margin: 0;
+    max-width: 640px;
+}
+
+/* ── The machine strip ────────────────────────────────── */
+/* What the plan gives this machine and what is using it — the denominator
+ * the cost lines on the cards are read against. */
+.machine-strip {
+    padding: var(--space-4) var(--space-5);
+    background: var(--cseries-twilight);
+    border: 1px solid rgba(55, 65, 81, 0.4);
+    border-radius: var(--radius-lg);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+.machine-strip-head {
+    color: var(--cseries-ash);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+.machine-total { display: flex; align-items: baseline; gap: var(--space-1); }
+.machine-total-num {
+    font-family: var(--font-display);
+    font-size: var(--text-xl);
+    font-weight: 700;
+    color: var(--cseries-paper);
+}
+.machine-total-of { font-size: var(--text-sm); color: var(--cseries-linen); }
+.machine-bar {
+    height: 6px;
+    border-radius: 999px;
+    background: rgba(55, 65, 81, 0.5);
+    overflow: hidden;
+}
+.machine-bar-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: var(--cseries-moss);
+    transition: width var(--dur-hover) var(--ease-cseries);
+}
+.machine-parts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2) var(--space-4);
+}
+.machine-part { font-size: var(--text-sm); color: var(--cseries-ash); }
+.machine-part b { color: var(--cseries-linen); font-weight: 600; }
+/* where this piece of the machine runs — the host pod, or its own pod */
+.machine-part-where {
+    font-style: normal;
+    font-size: var(--text-xs);
+    opacity: 0.75;
+}
+.machine-strip-note {
+    font-size: var(--text-xs);
+    color: var(--cseries-ash);
+    line-height: var(--leading-relaxed);
+}
+
+/* ── Card cost line ───────────────────────────────────── */
+.app-card-cost {
+    font-size: var(--text-xs);
+    color: var(--cseries-moss);
+    line-height: var(--leading-relaxed);
+}
+
+/* ── Zone cards (public-site apps — browse only) ─────── */
+.zone-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-4);
+    background: var(--cseries-twilight);
+    border: 1px solid rgba(55, 65, 81, 0.4);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: border-color var(--dur-hover) var(--ease-cseries),
+                transform var(--dur-hover) var(--ease-cseries);
+}
+.zone-card:hover {
+    border-color: var(--cseries-linen);
+    transform: translateY(-2px);
+}
+.zone-card-head { display: flex; align-items: center; gap: var(--space-3); }
+/* Initial-letter tile, not a vendor logo — same deliberate choice as the
+ * Sites catalog (no fabricated brand marks). */
+.zone-tile {
+    width: 44px;
+    height: 44px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-md);
+    background: rgba(140, 180, 130, 0.12);
+    border: 1px solid rgba(140, 180, 130, 0.3);
+    color: var(--cseries-moss);
+    font-family: var(--font-display);
+    font-size: var(--text-lg);
+    font-weight: 700;
+}
+.zone-card-name {
+    font-family: var(--font-display);
+    font-size: var(--text-base);
+    font-weight: 600;
+    color: var(--cseries-paper);
+}
+.zone-card-slogan {
+    font-size: var(--text-sm);
+    color: var(--cseries-linen);
+    line-height: var(--leading-relaxed);
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.zone-card-where {
+    font-size: var(--text-xs);
+    color: var(--cseries-ash);
+    margin-top: auto;
+    line-height: var(--leading-relaxed);
+}
+.zone-card-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+}
+.zone-card-explainer { cursor: default; grid-column: 1 / -1; }
+.zone-card-explainer:hover { transform: none; border-color: rgba(55, 65, 81, 0.4); }
+
+/* Prose values in the detail rows (where-it-runs / memory) read as
+ * sentences, so give them room instead of right-aligning like a stat. */
+.detail-row-prose {
+    text-align: right;
+    max-width: 70%;
+    color: var(--cseries-linen);
+    line-height: var(--leading-relaxed);
+}
+
+/* Deprecated app */
+.badge-deprecated {
+    background: rgba(224, 139, 139, 0.15);
+    color: #e08b8b;
+    border: 1px solid rgba(224, 139, 139, 0.35);
+}
+/* Private to a group. Its own colour rather than a shade of the deprecated or
+   the muted badge: "only your group can see this" is a fact about REACH, and
+   reusing the retirement red would read as a warning about the app itself. */
+.badge-circle {
+    background: rgba(212, 168, 106, 0.14);
+    color: #d4a86a;
+    border: 1px solid rgba(212, 168, 106, 0.35);
+}
+.app-card-deprecated {
+    opacity: 0.78;
+}
+.app-card-deprecated .app-card-name::after {
+    content: ' · deprecated';
+    font-size: 11px;
+    color: #e08b8b;
+    font-weight: 400;
+    letter-spacing: 0.02em;
+}
+
+/* The listing's developer / source links (2.1.0): a plain link in the
+   card's meta line and the detail rows — same colour family as the
+   status text, underlined on hover only. */
+.dev-link {
+    color: inherit;
+    text-decoration: none;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.25);
+}
+.dev-link:hover, .dev-link:focus {
+    border-bottom-color: currentColor;
+}

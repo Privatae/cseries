@@ -1,0 +1,4 @@
+# Cited facts, memory kind five,
+# against a real kernel schema: v210, promote and its refusals, the re-check by
+# code on a new version, the fenced text, and the per-turn recall and scope.
+test_cited_facts_pg.py

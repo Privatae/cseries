@@ -1,0 +1,8 @@
+<svg width="256" height="256" viewBox="0 0 256 256" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Terminal">
+  <rect width="256" height="256" rx="56" fill="#141A22"/>
+  <rect x="0.5" y="0.5" width="255" height="255" rx="55.5" stroke="#1f2937"/>
+  <rect x="40" y="60" width="176" height="136" rx="14" fill="#0B0F14" stroke="#374151" stroke-width="3"/>
+  <!-- the prompt: a chevron and a cursor block -->
+  <path d="M72 100 L104 128 L72 156" stroke="#7DD3FC" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  <rect x="120" y="144" width="56" height="14" rx="4" fill="#E5E7EB"/>
+</svg>

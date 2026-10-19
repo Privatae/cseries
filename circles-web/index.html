@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Circles</title>
+      <link rel="stylesheet" href="/css/tokens.css" />
+    <!-- The CSP every host-authored frame is mounted under (one definition,
+         dashboard/base/js/sandbox-csp.js), and the inert desktop stand-in a
+         desktop design needs outside the shell — the same two files the
+         Artifacts window and the Workbench load. Used by visuals and the
+         artifact thumbnails in chat (app-web-kit/visuals/sealed-frame.tsx);
+         without the first, those frames refuse to draw. -->
+    <script src="/js/sandbox-csp.js"></script>
+    <script src="/js/desktop-preview.js"></script>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

@@ -1,0 +1,6 @@
+# 2026-10-01: no gate or test reads /etc/privatae/keys — the keys every Host
+# trusts for app bundles and the App SDK. tests/test_sdk_pull.py and
+# scripts/test_sdk_floor_guard.py signed fleet-acceptable SDK versions with the
+# real key (and skipped as a pass without it); both make a throwaway key per run
+# now. On fa0dccbe this lists both.
+test_gates_use_no_signing_key.py

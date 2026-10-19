@@ -1,0 +1,2 @@
+# 2026-10-06 (search-paths audit): ran nowhere at merge time; container-free, seconds.
+test_host_subscriptions.py

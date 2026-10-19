@@ -1,0 +1,10 @@
+# The PERSON on a direct-lane delivery. Host↔host messaging
+# moved off the bridge relay — which keeps its connections in an in-process dict
+# per DaemonSet pod, so it could only ever deliver within a node — and onto the
+# direct peer lane. That moves the answer to "who says this human wrote it" from
+# the platform to the sending host, so the receiver checks
+# only the half it owns: the addressee, against its own operator allowlist. Two
+# of its checks guard defects this change could otherwise introduce — the refusal
+# has to fail CLOSED exactly where is_operator() fails OPEN, and the sender must
+# not be able to plant the from_user_name that circles.py renders as an author.
+test_peer_lane_person.py

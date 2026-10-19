@@ -1,0 +1,1 @@
+test_contacts_card_op.py      # the Host reads another Host's contact card via contacts_manage (2026-09-23)

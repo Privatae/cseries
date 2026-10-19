@@ -1,0 +1,1 @@
+test_workbench_version_view.py            # playwright chromium + local port (loopback mock kernel) — open version: desktop designs live, a list when a run made several pages

@@ -1,0 +1,2 @@
+# A long list of reference files never makes the brief too long to start a run: past 4 KiB the note carries the counts and the index file written into the worktree, which holds the whole list.
+test_reference_note_stays_small.py

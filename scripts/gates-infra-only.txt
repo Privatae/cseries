@@ -1,0 +1,27 @@
+# gates-infra-only.txt — gate scripts that CANNOT run in smoke or pre-merge
+# because they need live infrastructure: a running entity pod, a real DB, real
+# harness containers, or a reachable endpoint.
+#
+# These are not orphans and must not be "fixed" by wiring them into smoke.
+# test_research_paths.py is the cautionary case: during one release it was
+# wired into container smoke on the theory that a gate script belongs in the gate
+# runner. It drives a live entity over kubectl, so it red-failed a ship that was
+# otherwise clean. An infra gate wired into a lane that cannot run it does not
+# add coverage — it adds a false red.
+#
+# They run from an operator session against live state, when the thing they cover
+# is being touched. Declaring them here is what keeps scripts/test_gate_coverage.py
+# from flagging them, and keeps the never-invoked set honest: anything NOT in this
+# file and NOT wired into smoke is genuinely dead and fails the ratchet.
+#
+# The reason on each line is the dependency MEASURED in the file
+# (grep for kubectl/ssh, asyncpg/psycopg/create_pool, docker exec|run, and
+# requests/httpx/aiohttp/urlopen), not a guess from its docstring.
+#
+# Format: <filename>  # <what it needs>
+#
+# AS A DIRECTORY: this file lists NO gates. Each infra-only gate is
+# one file in scripts/gates-infra-only.d/, named after the gate, holding its
+# measured dependency, so two branches that each declare a gate never conflict
+# in one shared file. To declare a gate, add its file there; never a line here.
+# scripts/test_gate_coverage.py refuses a gate listed in this file.

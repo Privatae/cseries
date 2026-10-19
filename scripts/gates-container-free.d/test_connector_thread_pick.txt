@@ -1,0 +1,2 @@
+# Messaging connectors: the Host picks the thread a messaging-app message belongs to in ONE call on its own chat route with exactly one tool, pick_thread; a listed thread or a new one with the Host's title lands; a model error, no call, another tool, an unlisted thread, both or neither, a route with no model or a raising call all run no turn and never fall back to a thread of the platform's choosing. list_candidates is replaced; no DB, no network.
+test_connector_thread_pick.py

@@ -1,0 +1,14 @@
+
+# 2026-09-13: the grant-back. inbox.request made the KNOCK deliverable; the
+# ANSWER still went by bridge, which cannot route between its own DaemonSet
+# pods — so the card landed, the user accepted, and the requester was never
+# told. inbox.grant cannot be slip-gated (the slip it would need is the one it
+# carries), so it is gated on a precondition instead: an OPEN, RECENT connection
+# request with that peer. The schema defines `pending` as either direction
+# (v048:20), so the property is "the user acted" — they asked, or they accepted —
+# not "we spoke first"; a stranger has no row at all. Bounded to 30 days, because
+# the row that admits a slipless op must not outlive the conversation. Checked
+# INSIDE the per-peer lock, or two grants race past it. Fails CLOSED, unlike the
+# knock's cap, because a grant installs a credential. Real handler; no pod, no
+# network.
+test_peer_lane_grant.py

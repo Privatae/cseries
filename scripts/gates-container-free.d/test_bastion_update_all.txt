@@ -1,0 +1,5 @@
+# 2026-09-08: the fleet bastion update. One button, one confirmation that names
+# the machines, no second popup — and the quiet failure modes pinned: a machine
+# silently skipped, a foreign token_id accepted, [] read as "everything", or a
+# per-machine popup creeping back. Recording pool; no DB, no network.
+test_bastion_update_all.py

@@ -1,0 +1,45 @@
+# LightCraft Engine: the open-source LightCraft
+# photo library and raw developer (github.com/storytold/lightcraft, MIT or Apache-2.0), run headless for the
+# Host. The program is in the creative toolchain image, pinned by sha256
+# (sidecars/app-runtime-creative/crafts.txt); this app is a recipe: the command
+# starts the image's own MCP bridge (creative_mcp.py), and `mcp` makes that
+# server one of the Host's connections when the app is installed
+# (manifest.McpSpec). The whole ArtCraft set, so a person can
+# make everything they need. Memory: one 6 MP photo 0.32 GB; six 24 MP photos exported at full size
+# 1.05 GB on 1 or 2 CPUs (measured). vcpus 2: a full-size 24 MP
+# export took 2.1 s on 1 CPU, 1.25 s on 2.
+# A window is billed at its ceiling.
+id: lightcraft-engine
+name: LightCraft Engine
+description: Your Host develops photos with LightCraft, an open-source photo library and raw developer with presets, crops and non-destructive edits. It imports your photos, adjusts light and colour, and exports copies in the size and format you want, and everything it makes appears in this window.
+icon: icon.png
+icon_small: icon-64.png
+# 1.0.1 (2026-10-18): the product is renamed C-Series (names, paths, env vars).
+# 1.0.2 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
+version: "1.0.2"
+provenance: standard
+entrypoint: index.html
+permissions: []
+network: []
+resources:
+  baseline_memory_mi: 2048
+  vcpus: 2
+runtime:
+  kind: process
+  image: creative
+  command: ["python3", "/opt/app-runtime/creative_mcp.py", "lightcraft"]
+  ready_path: /health
+  ready_timeout_seconds: 120
+mcp:
+  path: /mcp
+window:
+  title: LightCraft Engine
+  width: 900
+  height: 640
+  resizable: true
+prompt_behavior:
+  what_it_is: |
+    LightCraft Engine is the person's own photo library and raw developer that you operate: an MCP
+    server named lightcraft-engine (skill 'lightcraft-engine' says how). Its window shows the files
+    you made there.
+  user_path: "the LightCraft Engine app (install it from the App Store)"

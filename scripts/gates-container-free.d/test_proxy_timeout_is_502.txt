@@ -1,0 +1,2 @@
+# 2026-09-05: the entity-9128 proxy timeout — pure exception-plumbing, no pod, no network.
+test_proxy_timeout_is_502.py

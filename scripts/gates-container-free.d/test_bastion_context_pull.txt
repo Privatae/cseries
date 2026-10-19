@@ -1,0 +1,7 @@
+# The PULL path: the route a bastion fetches a source
+# through. It takes no ctx_id at all — a one-shot, machine-bound ticket instead —
+# because a paired machine holds a valid bearer forever and an id parameter would
+# be a general read over the user's whole corpus. Driven over real HTTP on the
+# real router with a stub pool rather than grepped: a grep would pass with the
+# redeem call deleted. Verified red by deleting it. No bastion, no DB, no network.
+test_bastion_context_pull.py

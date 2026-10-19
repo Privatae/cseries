@@ -1,0 +1,2 @@
+# The hold's bounds and records against a REAL Postgres with the kernel's schema — a phase's automatic repairs count its landings that did not complete (review and failed; never a refused acceptance, a split conflict, another phase or project, a completed landing) and only a woken turn is refused; the held reply row is written once and rewritten in place, its created_at kept; the success-measure queries in docs/host-orchestrator-turn.md count what they say. SKIPS when SMOKE_PG_HOST is unset; one transaction, rolled back.
+test_hold_bounds_db.py

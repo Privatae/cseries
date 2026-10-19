@@ -1,0 +1,3 @@
+# Pipeline step 2 (gitea-actions): a phase build waits on the forge's CI — push first, hold the
+# build PR, decide after the answer. Drives tools._run_phase_build with fakes; no DB, no pod.
+test_forge_check_build.py

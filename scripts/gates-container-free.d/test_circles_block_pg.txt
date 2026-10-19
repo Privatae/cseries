@@ -1,0 +1,12 @@
+# Block a Host without silencing its people; blocking a person blocks their
+# Host too. Block in Circles against a real kernel schema,
+# on the direct lane (real signed slips through PeerServer), the relay
+# (handle_inbox_append as the bridge hands it over) and context.fulfill. A
+# blocked Host's own messages, knocks, slips, app traffic, machine token and
+# context reads are refused; its people still arrive; a blocked person is
+# refused from any Host and blocks their Host until unblocked. 28 of its 45
+# checks fail on main 104e742ac. B14a (a blocked Host's
+# app grant naming a group it is not in) and I1-I2 (the inbox_send tool cannot
+# name the Host's own person, so the model's words do not pass the Host's
+# block as that person's); all three fail on eb3c90b14.
+test_circles_block_pg.py

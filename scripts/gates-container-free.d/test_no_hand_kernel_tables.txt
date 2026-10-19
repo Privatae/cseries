@@ -1,0 +1,17 @@
+# 2026-10-01: no gate builds, patches or drops a KERNEL table by hand (one
+# init-db.sql or a migration owns) anywhere under scripts/ or tests/ — .py, .sh
+# and .sql. Gates get the kernel's schema from scripts/kernel_schema.py
+# (entrypoint.sh's procedure, cloned per gate). The SQL a gate builds is PARSED:
+# names built at run time (f-string, %, .format, +, $VAR, loop variables),
+# quoted identifiers, SELECT INTO, views, every ALTER TABLE action, DO bodies
+# and EXECUTE strings; search strings and prose are not statements. It also
+# reads DROP SCHEMA of a kernel schema, DROP OWNED BY the kernel's roles or
+# owner, DROP DATABASE of the kernel's, DROP EXTENSION of one it installs,
+# TRUNCATE, DELETE with no WHERE (each name checked against the list for where
+# it stands in the statement), GRANT/REVOKE, ALTER INDEX/SCHEMA, column types of any name,
+# SQL a string hands to psql or sh -c, and names built with .replace(), join or
+# psycopg's sql.Identifier. Hand tables that are a gate's point are ALLOWed with
+# why. On the tree before the kernel schema it lists sixteen DB gates; on
+# fa0dccbe (where the line-regex version passed) test_links.py and
+# test_media_fill_finds_frames.py.
+test_no_hand_kernel_tables.py

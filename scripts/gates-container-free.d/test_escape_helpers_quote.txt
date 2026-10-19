@@ -1,0 +1,2 @@
+# 2026-10-01 (attribute escaping): every esc / escapeHtml / attr helper in the hand-written system apps and dashboard/base/js escapes both quotes, and none escapes by reading .innerHTML back. The textContent→innerHTML trick left " and ' alone while its output went into attributes, so a Host-chosen file name gave an Artifacts tab a click handler; 127 such attribute sites were found across ten apps and the shell (91 in the model picker). Runs each helper in node; on origin/main 27 helpers leave a quote. No pod, no DB.
+test_escape_helpers_quote.py

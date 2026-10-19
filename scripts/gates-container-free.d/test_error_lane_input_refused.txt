@@ -1,0 +1,2 @@
+# Seen as errors on a live test run on both Hosts: a tool refusing the model's own input (workspace_file: a path that is not there, a missing path, a path outside the sandbox — direct or through operate) is filed fault='model' on the error lane, not 'platform'; a failure of the tool itself (file_access raising, an unmarked I/O error) stays 'platform'; the ledger reason is unchanged. That run's four calls through the real tool, then a real Host turn's error row. Temp workspace, stub pool, scripted model; no DB, no pod, no network.
+test_error_lane_input_refused.py

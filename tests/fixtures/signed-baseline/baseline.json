@@ -1,0 +1,35 @@
+{
+  "version": "privatae-baseline-v2",
+  "taken_at": "2026-09-19T10:00:00Z",
+  "coverage": "processes=all,schedulers=all",
+  "entries": [
+    {
+      "fp": "aaa",
+      "kind": "process",
+      "exe_digest": "sha256:aaa",
+      "exe": "/usr/sbin/sshd",
+      "user": "root",
+      "unit": "ssh.service",
+      "argv_shape": "sshd -D"
+    },
+    {
+      "fp": "bbb",
+      "kind": "process",
+      "exe_digest": "sha256:bbb",
+      "exe": "/opt/naïve \u003capp\u003e \u0026 \"co\"\\bin",
+      "user": "alice",
+      "argv_shape": "app --serve",
+      "llm_endpoints": [
+        "http://127.0.0.1:11434"
+      ]
+    }
+  ],
+  "unreadable": 3,
+  "digest": "59c18c0c2cd4ca3b4dc23402e69784f9ced06a7f4f30038a4e16e09d5951eef8",
+  "attestation": {
+    "alg": "ecdsa-p256-sha256",
+    "signed_by": "fixture.host.example.test",
+    "signer_cert": "-----BEGIN CERTIFICATE-----\nMIIBrDCCAVGgAwIBAgIBAzAKBggqhkjOPQQDAjAjMSEwHwYDVQQDExh0ZXN0IEVu\ndGl0eSBJbnRlcm1lZGlhdGUwHhcNMjYwMTAxMDAwMDAwWhcNMzUxMjMwMDAwMDAw\nWjATMREwDwYDVQQDEwhvcGVyYXRvcjBZMBMGByqGSM49AgEGCCqGSM49AwEHA0IA\nBExwYmTtmUDD1xSuAiizpWtJvdSz3OsJEvn4+2oDlFYNP6epqZTDltUwd0+f6kDQ\ndrzGeMu27EWo9KzSewDQy3ajgYUwgYIwDgYDVR0PAQH/BAQDAgeAMBMGA1UdJQQM\nMAoGCCsGAQUFBwMCMAwGA1UdEwEB/wQCMAAwHwYDVR0jBBgwFoAUEhzDpyFn5fbH\n5rGwVXTwtLax2jIwLAYDVR0RBCUwI4YhdXJuOnByaXZhdGFlOmh3ZnA6ZnAtZml4\ndHVyZS0wMDAxMAoGCCqGSM49BAMCA0kAMEYCIQCjFCSB65HguFYbY6gTOqZoqrdB\n5Zsfn+3+aEUhSgAbwwIhAPMLV1WnLowxWfMn5y5Mnr/Fabju0oxV/FwbjpZ8P6EA\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nMIIBjzCCATWgAwIBAgIBAjAKBggqhkjOPQQDAjAXMRUwEwYDVQQDEwx0ZXN0IFJv\nb3QgQ0EwHhcNMjYwMTAxMDAwMDAwWhcNMzUxMjMwMDAwMDAwWjAjMSEwHwYDVQQD\nExh0ZXN0IEVudGl0eSBJbnRlcm1lZGlhdGUwWTATBgcqhkjOPQIBBggqhkjOPQMB\nBwNCAATq+QIMOwvpTOlWBslwVnHPMHtmcSChXQz6c8VCbQlT/HmN+sadKBBz0+Xw\nSxwMseDI9vx13OtGPr6T8tLrowYno2YwZDAOBgNVHQ8BAf8EBAMCAgQwEgYDVR0T\nAQH/BAgwBgEB/wIBADAdBgNVHQ4EFgQUEhzDpyFn5fbH5rGwVXTwtLax2jIwHwYD\nVR0jBBgwFoAUqZwfBzFGndRIIda6fV61cC9XSXAwCgYIKoZIzj0EAwIDSAAwRQIh\nAIi3StYgX/2hWa2hZhxKZEVa0gIozfdw8sGinuKRx1G2AiAd8Uxh/DTlxQk56Sei\neo1OZTgEkmpm/8K2kY2vFUx0Qw==\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nMIIBjzCCATWgAwIBAgIBAjAKBggqhkjOPQQDAjAXMRUwEwYDVQQDEwx0ZXN0IFJv\nb3QgQ0EwHhcNMjYwMTAxMDAwMDAwWhcNMzUxMjMwMDAwMDAwWjAjMSEwHwYDVQQD\nExh0ZXN0IEVudGl0eSBJbnRlcm1lZGlhdGUwWTATBgcqhkjOPQIBBggqhkjOPQMB\nBwNCAATq+QIMOwvpTOlWBslwVnHPMHtmcSChXQz6c8VCbQlT/HmN+sadKBBz0+Xw\nSxwMseDI9vx13OtGPr6T8tLrowYno2YwZDAOBgNVHQ8BAf8EBAMCAgQwEgYDVR0T\nAQH/BAgwBgEB/wIBADAdBgNVHQ4EFgQUEhzDpyFn5fbH5rGwVXTwtLax2jIwHwYD\nVR0jBBgwFoAUqZwfBzFGndRIIda6fV61cC9XSXAwCgYIKoZIzj0EAwIDSAAwRQIh\nAIi3StYgX/2hWa2hZhxKZEVa0gIozfdw8sGinuKRx1G2AiAd8Uxh/DTlxQk56Sei\neo1OZTgEkmpm/8K2kY2vFUx0Qw==\n-----END CERTIFICATE-----\n",
+    "signature": "MEUCIBk7KM1EbuZVbu8PXhDQ/kvZemcecOl+9rzroZniarmpAiEArNHFV56E57NI5K/Mu5GRv7HCuYukmX9GcpvvqyT27rM="
+  }
+}

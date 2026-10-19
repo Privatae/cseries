@@ -1,0 +1,9 @@
+# 2026-09-23: a harness pod stops what it runs for us and nothing else. Target
+# set, freeze-before-kill, bounded rounds, the SECOND guard (a non-descendant is
+# signalled only if the container check holds again at signal time), and the
+# kernel route (never wakes, sends the pod capability). Its real-signal checks
+# run ONLY inside a private PID namespace (unshare --pid) with a signal fence,
+# and are skipped — never run on the host — where one cannot be made. Written
+# after a mutation sweep of this code, run with real signals on the host,
+# SIGKILLed every child of pid 1 on the build machine.
+test_harness_stop.py

@@ -1,0 +1,107 @@
+id: app-store
+name: App Store
+provenance: standard
+description: Find apps for your machine and your public sites — see where each one runs and what it costs before you choose it.
+icon: icon.png
+icon_small: icon-64.png
+entrypoint: index.html
+system: true
+# 2.2.3 (2026-10-01): the "Based on" link and the checkout open only http(s)
+# addresses, so the guard reaches Hosts already on 2.2.2. App-only change.
+# 2.2.2 (2026-10-01): the HTML escape helper escapes both quotes as well, so a
+# value from the Host, a machine or a provider stays inside the attribute it
+# is written into. The "Based on" upstream address (the publisher's catalog
+# metadata) is a link only when it is an http(s) address, and the checkout
+# opens only one: escaping cannot stop a `javascript:` URL. App-only change.
+# 2.2.4 (2026-10-18): the product is renamed C-Series (names, paths, env vars).
+# 2.2.5 (2026-10-18): what_it_is is one paragraph under the 900-character cap,
+#   saying what the app is and what lives in it; the how-to it carried lives in
+#   skills and tool descriptions. Manifest-only; bundle repacked.
+# 2.2.6 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
+version: "2.2.6"
+# 2.2.1 (2026-09-17): a "Group only" badge on any catalog card whose
+#   `distribution` is 'circle' — the store's source of truth (migration 045
+#   demoted `audience`/`public` to derived columns, so this reads the real
+#   field, not the shadow). The card only reaches this catalog at all if the
+#   caller is on the app's group roster, so the badge answers "why can I see
+#   this and my friend cannot" rather than gating anything itself.
+# 2.2.0 (2026-09-17): "Your data" on an installed app's detail — when the
+#   account already has rows on a public site running this same app, the
+#   modal offers to bring them over. One click asks the
+#   platform, which decides identity from its own records and refuses any
+#   move where this machine's owner is not that site member. The rows are
+#   COPIED: they stay on the site, so changing your mind costs nothing, and
+#   the copy says so. The row appears only when there IS an offer — no empty
+#   panel on the apps (nearly all of them) that have no public site. Reads
+#   the two new kernel routes /api/applications/sites/data/{offers,import};
+#   no new scope — execute:install, which this app already declares.
+# 2.1.1 (2026-09-05): the Licence row reads the signed manifest's licence
+#   from the consent preview (/store/preview → a._preview.license); the
+#   catalog list rows never carried it.
+# 2.1.0 (2026-09-05): the listing says who made an app and where it came
+#   from. Card: "by <login>" linking the
+#   developer's Gitea profile, and the install count. Detail: Developer,
+#   Source (the upstream repo and its licence; the platform repo only when
+#   the author allowed the link), Built by (host commits across numbered
+#   runs vs the developer's own commits, from the platform's build record),
+#   Licence (the author's terms in plain words), Installs. Every row renders
+#   only from fields the catalog actually carries — a NULL shows nothing,
+#   never a made-up developer. Reads appstore.list / .info as shipped by the
+#   controller (migration 047); no route, scope or schema change in the app.
+# 2.0.1 (2026-09-02): resident (always-on) apps get their switch here. A
+#   process app whose manifest says runtime.lifecycle: resident shows "Runs
+#   around the clock on this machine" with a Turn on / Turn off button — POST
+#   /api/applications/<id>/runtime {op: enable|disable}; the state rides the
+#   catalog rows as runtime_lifecycle + resident_enabled. A
+#   24x7 daemon lives in the pod, the user decides when it runs.
+# 2.0.0 (2026-08-26): the store now explains the APP TYPES: make it
+# obvious where an app runs and what it costs, in resources.
+#   - Two categories: "On your machine" (installable apps; runtime apps like
+#     Browser show the memory they draw from the plan while running, read from
+#     the manifest's resources.baseline_memory_mi — apps that declare nothing
+#     show no number, never a 0) and "For your public sites" (the admitted
+#     zone catalog — Ghost, Uptime Kuma etc. — browse-only cards; deployment
+#     belongs to the Sites app's Catalog tab, so the card opens Sites).
+#   - A "Your machine" strip reads /api/system/resources (the tray's shell-
+#     trusted self-read) so the user sees the memory their plan gives the
+#     machine, and what is using it, next to what an app would add. Absent
+#     data renders as absent with a plain reason — nothing is invented.
+#   - Image-baked STATIC apps are hidden from the grid (the image ships them
+#     to everyone at boot; no memory use, nothing to choose). Image-baked apps
+#     WITH a runtime (VS Code) stay listed via the kernel's catalog append,
+#     because their cost is exactly what the store now explains.
+#   - The dead "Harnesses" tab is gone: the central catalog stopped carrying
+#     harness rows (distribution='harness' is excluded from /appstore/list),
+#     so the tab could never match anything. Harness choice lives in the
+#     Orchestrator/Workbench.
+#   - Detail modal's consent surface gains "Where it runs" + cost, from the
+#     extended /store/preview (runtime_kind + baseline_memory_mi off the
+#     signed bundle manifest), beside the existing egress + permission rows.
+# Environment-catalog facts (host-facing, code-true). Source for the L1
+# topology block + describe_app — NOT a surface_role body (this is a control
+# panel, not a conversational surface): what_it_is/user_path only.
+prompt_behavior:
+  what_it_is: >-
+    The App Store is where the user finds apps, organized by where each runs and
+    what it costs. 'On your machine' apps install into the user's own machine: most
+    are plain windows with no background memory use, and apps with their own runtime
+    (Browser, VS Code) run in a separate container that starts when opened and
+    sleeps when closed. A card that shows a memory figure draws that much from the
+    plan's machine memory while it runs; when the plan has no room, opening it is
+    refused, naming the plan that fits, and the store shows current memory use. 'For
+    your public sites' apps (Ghost, Uptime Kuma and the rest of the zone catalog)
+    are browse-only cards that run in the user's public web zone and deploy from the
+    Sites app's Catalog tab. Free apps install at once; paid apps go through a
+    checkout. Apps every image already ships are not listed.
+  user_path: "the App Store, in the dock"
+
+window:
+  title: App Store
+  width: 1000
+  height: 700
+  resizable: true
+  min_width: 720
+  min_height: 480
+
+permissions:
+  - execute:install

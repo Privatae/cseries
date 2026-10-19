@@ -1,0 +1,156 @@
+# cseries-postgres — the entity's database container image.
+#
+# PostgreSQL 17 + pgvector + Apache AGE and nothing else. This is the DB half
+# of the entity pod. It runs alongside the kernel image in the same pod, sharing the run-pgsock
+# emptyDir; the kernel image keeps only the PG *client*.
+#
+# Why a separate image and not the kernel's: a PG CVE patch ships as a small
+# DB-image roll with no kernel ship, the DB gets its own memory limit and its
+# own crash boundary, and the kernel image becomes minimal-eligible.
+#
+# Posture: Debian-slim base, digest-pinned, no
+# compilers, no recon tools, non-root, SUID/SGID stripped. No secrets and no
+# credentials of any kind — the cluster is unix-socket-only with trust auth,
+# so there is nothing to embed (see entrypoint-postgres.sh).
+#
+# Digest-pinned to the EXPLICIT bookworm tag, same rule as Dockerfile.linux:
+# PGDG's ${VERSION_CODENAME}-pgdg repo below must match the base, so a
+# generation-following bare tag would silently pull the wrong repo. Bump =
+# change tag AND digest together
+# (docker buildx imagetools inspect debian:bookworm-slim).
+FROM debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587
+
+# The slim base's /etc/dpkg/dpkg.cfg.d/docker drops /usr/share/doc/* at
+# install and re-includes only */copyright. Apache AGE ships its Apache-2.0
+# NOTICE as /usr/share/doc/postgresql-17-age/NOTICE, which that filter would
+# drop before it ever lands; this re-includes NOTICE files (read after
+# `docker`, so it wins).
+RUN printf '%s\n' 'path-include /usr/share/doc/*/NOTICE*' > /etc/dpkg/dpkg.cfg.d/zz-keep-notices
+
+# PGDG repo required for PG17 + AGE on bookworm (Debian ships PG15).
+# curl/gnupg exist only to add the repo and are purged in the same layer —
+# an entity's DB container has no business holding a network fetch tool.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl gnupg \
+    && install -d /etc/apt/keyrings \
+    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+        | gpg --dearmor -o /etc/apt/keyrings/postgresql.gpg \
+    && . /etc/os-release \
+    && echo "deb [signed-by=/etc/apt/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
+        > /etc/apt/sources.list.d/pgdg.list \
+    # PGDG's live repo drops a version once a newer one ships: once pgvector
+    # 0.8.5-1.pgdg12+1 was gone, every build without a cached layer stopped
+    # here (exit 100). The archive keeps every version, signed by
+    # the same key, so the pins below stay installable until they are bumped.
+    && echo "deb [signed-by=/etc/apt/keyrings/postgresql.gpg] https://apt-archive.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg-archive main" \
+        >> /etc/apt/sources.list.d/pgdg.list \
+    # PINNED (a supply-chain class): with only the base digest pinned, the
+    # server and extensions float, so a rebuild could silently ship
+    # a different PG or a different pgvector/AGE .so against an existing
+    # pgdata's catalog version. Bump these deliberately, in their own commit.
+    && apt-get update && apt-get install -y --no-install-recommends \
+        postgresql-17=17.10-1.pgdg12+1 \
+        postgresql-client-17=17.10-1.pgdg12+1 \
+        postgresql-17-pgvector=0.8.5-1.pgdg12+1 \
+        postgresql-17-age=1.7.0~rc0-1.pgdg12+1 \
+        tini \
+    && apt-get purge -y curl gnupg \
+    && apt-get autoremove -y --purge \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /usr/share/man/* \
+    # Docs go, but every package's /usr/share/doc/<pkg>/copyright stays: it
+    # is the licence notice PostgreSQL, pgvector, AGE and the GPL/LGPL
+    # libraries require on redistribution. NOTICE files stay as well: Apache
+    # AGE ships one (/usr/share/doc/postgresql-17-age/NOTICE) and Apache-2.0
+    # requires it to travel with the binaries. Symlinks left pointing at a
+    # removed file go; symlinked doc dirs (libgcc-s1 -> gcc-12-base) stay.
+    && find /usr/share/doc -type f ! -name copyright ! -name 'NOTICE*' -delete \
+    && find /usr/share/doc -xtype l -delete \
+    && find /usr/share/doc -mindepth 1 -type d -empty -delete \
+    # ssl-cert (a dependency of postgresql-common) generates a snakeoil key
+    # at build time; every copy of a published image would share it. Nothing
+    # here serves TLS, so it goes.
+    && rm -f /etc/ssl/private/ssl-cert-snakeoil.key /etc/ssl/certs/ssl-cert-snakeoil.pem
+
+# This image's own licence and notice (AGPL-3.0-only), and the third-party list.
+COPY LICENSE NOTICE THIRD-PARTY-NOTICES.md /usr/share/doc/cseries/
+
+# Strip SUID/SGID bits, and remove the escalation binaries the base drags in.
+# Same layers 7/8 as the kernel image.
+RUN find / -perm /6000 -type f -exec chmod a-s {} + 2>/dev/null || true \
+    && rm -f /bin/su /usr/bin/sudo 2>/dev/null || true
+
+# uid 1000 MUST match the kernel image's `privatae` user: the pgdata PVC is
+# chowned 1000:1000 by the operator's pgdata-chown initContainer, and the
+# kernel connects to the socket this container creates. A mismatch here is
+# not a permissions warning, it is a pod that never boots.
+#
+# The Debian PG packages create their own `postgres` uid 999 and expect to
+# run as it; we do not use it — the data directory belongs to 1000.
+RUN groupadd -g 1000 privatae \
+    && useradd -u 1000 -g privatae -m -d /home/privatae -s /bin/sh privatae \
+    && mkdir -p /app/pgdata /var/run/postgresql \
+    && chown -R privatae:privatae /app /var/run/postgresql \
+    && chmod 0700 /app/pgdata
+
+ENV PATH="/usr/lib/postgresql/17/bin:${PATH}"
+
+# glibc defaults to 8 malloc arenas per core; a long-lived postmaster plus
+# its backends fragment across them and RSS creeps. Two is the standard
+# production setting (same reasoning as Dockerfile.linux).
+ENV MALLOC_ARENA_MAX=2
+
+COPY --chown=privatae:privatae entrypoint-postgres.sh /app/entrypoint-postgres.sh
+RUN chmod +x /app/entrypoint-postgres.sh
+
+# Ratchet, mirroring Dockerfile.linux: no internal developer documentation
+# ships at the /app root. Reconnaissance material must not reach a container
+# that holds the entity's entire memory on disk.
+RUN set -eu; \
+    stray="$(find /app -maxdepth 1 -type f -name '*.md' -printf '%f ' 2>/dev/null || true)"; \
+    if [ -n "$stray" ]; then \
+        echo "BUILD FAILED: internal documentation would ship at /app: $stray" >&2; \
+        exit 1; \
+    fi; \
+    echo "ratchet ok: no internal docs at /app root"
+
+WORKDIR /app
+
+# The source repository, which links the published package to it on GHCR.
+LABEL org.opencontainers.image.source="https://github.com/Privatae/cseries"
+
+# Version metadata, same shape as the kernel image so a running DB container
+# can be attributed to a build. The DB image ships on its OWN cadence — its
+# tag is not the kernel's tag.
+ARG PG_TAG=dev
+ARG PG_DIGEST=""
+ARG PG_BUILT_AT=""
+ARG PG_IMAGE=cseries-postgres
+RUN mkdir -p /app/system && printf '{"image":"%s","tag":"%s","digest":"%s","built_at":"%s"}\n' \
+    "$PG_IMAGE" "$PG_TAG" "$PG_DIGEST" "$PG_BUILT_AT" > /app/system/build-info.json \
+    && chown privatae:privatae /app/system/build-info.json
+
+# Liveness is the postmaster answering on its own socket — not a TCP port
+# (there isn't one) and not a process check (a wedged postmaster still has a
+# pid).
+#
+# `-d postgres`, and it does not matter which database is named. Measured on
+# this image: `pg_isready -d nosuchdb` exits 0 ("accepting
+# connections") and the server logs `FATAL: database "nosuchdb" does not
+# exist`. pg_isready reports the SERVER's status, never the database's — so
+# naming the entity database here buys nothing and, whenever that database
+# is absent or renamed, prints a FATAL into every entity's log on every
+# probe interval forever. `postgres` exists from initdb onward on every
+# cluster, so this is the same signal without the noise.
+#
+# The check that the ENTITY database exists is the kernel's, not this one:
+# entrypoint.sh does a real `SELECT 1` against it in its boot wait. Do not move
+# that guarantee here — pg_isready cannot carry it.
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD pg_isready -h /var/run/postgresql -U entity -d postgres -q || exit 1
+
+USER privatae
+
+# tini as PID 1 (proper signal handling, zombie reaping) — SIGTERM must
+# reach the postmaster so it shuts down cleanly instead of being killed and
+# forcing crash recovery on the next boot.
+ENTRYPOINT ["tini", "--", "/app/entrypoint-postgres.sh"]

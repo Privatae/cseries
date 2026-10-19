@@ -1,0 +1,62 @@
+# The Host, run the way compose.yaml's host service runs it. Keep the two in
+# step: a setting changed there changes here.
+#
+# The image is not named here. `cseries-guest configure` writes it, pinned by
+# digest, to cseries-host.container.d/image.conf; until it has, this unit does
+# not exist.
+[Unit]
+Description=C-Series Host
+Wants=cseries-postgres.service
+After=cseries-postgres.service
+
+[Container]
+ContainerName=cseries-host
+Network=cseries.network
+User=1000
+Group=1000
+ReadOnly=true
+# Writable exactly where Docker's read_only leaves a container writable:
+# compose's /tmp (Docker mounts it noexec) and /dev/shm (64 MB, which
+# PostgreSQL needs). Podman's own read-only defaults would add /run and
+# /var/tmp, and without them it makes /dev/shm read-only, so both are
+# spelled out. /dev itself stays read-only.
+ReadOnlyTmpfs=false
+Tmpfs=/tmp:rw,nosuid,nodev,noexec
+Tmpfs=/dev/shm:rw,nosuid,nodev,noexec,size=65536k
+PidsLimit=4096
+DropCapability=ALL
+NoNewPrivileges=true
+SeccompProfile=/usr/share/cseries/seccomp-personal.json
+# The dashboard, and the bastion's enroll and lane listeners. On 127.0.0.1
+# only: WSL forwards them to 127.0.0.1 on the machine and nowhere else.
+PublishPort=127.0.0.1:8800:8800
+PublishPort=127.0.0.1:8810:8810
+PublishPort=127.0.0.1:8811:8811
+Environment=CSERIES_URL=http://home.cseries.localhost:8800
+Environment=CSERIES_TRUSTED_PROXIES=
+# The database socket the postgres container creates. The Host never sees the
+# data directory.
+Volume=cseries_pgsock:/var/run/postgresql
+# The root filesystem is read-only; these are every place the Host writes, and
+# they outlive the container, so an update keeps them.
+Volume=cseries_state:/var/lib/cseries
+Volume=cseries_home:/home/privatae
+Volume=cseries_workspace:/app/workspace
+Volume=cseries_projects:/app/projects
+Volume=cseries_ceigas:/app/ceigas
+Volume=cseries_portal:/app/portal
+Volume=cseries_user-files:/app/user-files
+Volume=cseries_data:/app/data
+Volume=cseries_secrets:/app/secrets
+Volume=cseries_integrations:/app/integrations
+Volume=cseries_engine:/app/engine
+Volume=cseries_training-jobs:/app/training_memory_jobs
+Pull=missing
+
+[Service]
+Restart=always
+RestartSec=5
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target

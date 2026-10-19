@@ -1,0 +1,506 @@
+/* ================================================================
+ * Calendar — per-app layout only.
+ *
+ * Colours, type, buttons, pills, inputs and the dialogs come from
+ * /css/cseries-components.css + /css/tokens.css. Nothing below sets a
+ * colour except by token, and every size is a token or a layout box.
+ * ================================================================ */
+
+.app-brand-text {
+    min-width: 0;
+}
+
+/* A desktop: the month on the left, the list (or one event) on the right. */
+.cal-body {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 360px);
+    overflow: hidden;
+}
+
+.cal-month {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    min-width: 0;
+    min-height: 0;
+    padding: var(--space-4) var(--space-5);
+    overflow-y: auto;
+}
+.cal-month-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+}
+.cal-month-label {
+    flex: 1;
+    min-width: 0;
+    margin: 0;
+    font-family: var(--font-display);
+    font-size: var(--text-xl);
+    font-weight: 600;
+    color: var(--cseries-paper);
+}
+.cal-month-nav {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+}
+.cal-chevron {
+    width: 18px;
+    height: 18px;
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 2;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    flex-shrink: 0;
+}
+
+/* Six weeks, seven days. */
+.cal-dow,
+.cal-grid {
+    display: grid;
+    grid-template-columns: repeat(7, minmax(0, 1fr));
+}
+.cal-dow {
+    color: var(--cseries-ash);
+    font-size: var(--text-xs);
+    text-align: center;
+}
+.cal-dow span {
+    padding: var(--space-1) 0;
+}
+/* The weeks share the height the window gives the month. */
+.cal-grid {
+    flex: 1 0 auto;
+    grid-auto-rows: minmax(88px, 1fr);
+    gap: 1px;
+    background: var(--cseries-mist);
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+}
+.cal-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 2px;
+    min-width: 0;
+    min-height: 88px;
+    padding: var(--space-1);
+    background: var(--cseries-night);
+    color: var(--cseries-paper);
+    border: none;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background var(--dur-hover) var(--ease-cseries);
+}
+.cal-cell:hover {
+    background: var(--cseries-silk);
+}
+.cal-cell:focus-visible {
+    outline: 1px solid var(--cseries-ember);
+    outline-offset: -1px;
+}
+.cal-cell.out .cal-daynum,
+.cal-cell.out .cal-chips {
+    opacity: 0.45;
+}
+.cal-cell.picked {
+    background: var(--cseries-ember-soft);
+}
+.cal-daynum {
+    align-self: flex-start;
+    min-width: 22px;
+    height: 22px;
+    line-height: 22px;
+    border-radius: var(--radius-xl);
+    font-size: var(--text-sm);
+    color: var(--cseries-linen);
+    text-align: center;
+}
+.cal-cell.today .cal-daynum {
+    background: var(--cseries-ember);
+    color: var(--cseries-ink);
+    font-weight: 600;
+}
+
+.cal-chips {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+.cal-chip {
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    min-width: 0;
+    font-size: var(--text-xs);
+    white-space: nowrap;
+}
+.cal-chip-time {
+    flex-shrink: 0;
+    color: var(--cseries-ash);
+    font-family: var(--font-mono);
+}
+.cal-chip-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.cal-dots {
+    display: none;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 3px;
+}
+.cal-more-n {
+    color: var(--cseries-ash);
+    font-size: var(--text-xs);
+}
+
+/* What an event is, as the colour of its dot: the Host's tasks, the
+   person's own events, the Host's log of what happened. */
+.cal-dot {
+    flex-shrink: 0;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--cseries-linen);
+}
+.cal-dot.k-task {
+    background: var(--cseries-dusk);
+}
+.cal-dot.k-yours {
+    background: var(--cseries-gold);
+}
+.cal-dot.k-log {
+    background: var(--cseries-ash);
+}
+
+.cal-note {
+    margin: 0;
+    color: var(--cseries-ash);
+    font-size: var(--text-sm);
+    line-height: var(--leading-relaxed);
+}
+
+/* The right side: the list, or one event in full. */
+.cal-side {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    border-left: 1px solid var(--cseries-seam);
+}
+.cal-list-view,
+.cal-detail {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    gap: var(--space-3);
+    min-height: 0;
+    padding: var(--space-4);
+    overflow-y: auto;
+}
+.cal-toolbar {
+    flex-wrap: nowrap;
+}
+.cal-toolbar .cseries-select {
+    flex: 1;
+    min-width: 0;
+}
+.cal-list {
+    gap: var(--space-2);
+}
+.cal-day-head {
+    margin-top: var(--space-2);
+}
+.cal-day-head:first-child {
+    margin-top: 0;
+}
+.cal-more {
+    align-self: center;
+}
+
+.cal-row {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+        "dot title state"
+        ".   sub   sub";
+    align-items: center;
+    column-gap: var(--space-2);
+    row-gap: 2px;
+    width: 100%;
+    padding: var(--space-2) var(--space-3);
+    background: var(--cseries-night);
+    color: var(--cseries-paper);
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-md);
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+    transition: background var(--dur-hover) var(--ease-cseries),
+                border-color var(--dur-hover) var(--ease-cseries);
+}
+.cal-row:hover {
+    background: var(--cseries-silk);
+    border-color: var(--cseries-mist-strong);
+}
+.cal-row:focus-visible {
+    outline: none;
+    border-color: var(--cseries-ember);
+    box-shadow: 0 0 0 1px var(--cseries-ember-ring);
+}
+.cal-row.active {
+    border-color: var(--cseries-ember);
+}
+.cal-row > .cal-dot {
+    grid-area: dot;
+}
+.cal-row > .cseries-pill {
+    grid-area: state;
+}
+.cal-row-title {
+    grid-area: title;
+    min-width: 0;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.cal-row-sub {
+    grid-area: sub;
+    min-width: 0;
+    color: var(--cseries-linen);
+    font-size: var(--text-sm);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+/* One event. */
+.cal-detail-bar {
+    display: flex;
+}
+.cal-detail-body {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+.cal-title {
+    margin: 0;
+    font-family: var(--font-display);
+    font-size: var(--text-xl);
+    font-weight: 600;
+    color: var(--cseries-paper);
+    word-break: break-word;
+}
+.cal-pills {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--space-2);
+}
+.cal-facts {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    gap: var(--space-2) var(--space-3);
+    margin: 0;
+}
+.cal-facts dt {
+    padding-top: 2px;
+}
+.cal-facts dd {
+    margin: 0;
+    color: var(--cseries-paper);
+    font-size: var(--text-sm);
+    line-height: var(--leading-relaxed);
+    word-break: break-word;
+}
+.cal-facts dd.cal-prose {
+    white-space: pre-wrap;
+}
+
+.cal-runs {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+.cal-runs > .cseries-btn {
+    align-self: flex-start;
+}
+.cal-run {
+    border-bottom: 1px solid var(--cseries-seam);
+}
+.cal-run-head {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    column-gap: var(--space-2);
+    row-gap: 2px;
+    padding: var(--space-2) 0;
+    cursor: pointer;
+    list-style: none;
+}
+.cal-run-head::-webkit-details-marker {
+    display: none;
+}
+.cal-run-head:focus-visible {
+    outline: 1px solid var(--cseries-ember);
+    outline-offset: 2px;
+    border-radius: var(--radius-sm);
+}
+.cal-run-when {
+    color: var(--cseries-linen);
+    font-size: var(--text-sm);
+}
+.cal-run-line {
+    grid-column: 2;
+    min-width: 0;
+    color: var(--cseries-ash);
+    font-size: var(--text-sm);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.cal-run[open] .cal-run-line {
+    display: none;
+}
+.cal-run .cal-run-out {
+    margin: 0 0 var(--space-2);
+}
+.cal-run-out,
+.cal-raw-body {
+    margin: var(--space-2) 0 0;
+    padding: var(--space-2);
+    max-height: 200px;
+    overflow: auto;
+    background: var(--cseries-twilight);
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-sm);
+    color: var(--cseries-linen);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.cal-raw summary {
+    cursor: pointer;
+}
+.cal-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    padding-top: var(--space-3);
+    border-top: 1px solid var(--cseries-seam);
+}
+
+/* + Event and the confirm dialog. */
+.cal-form {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+    max-width: 440px;
+}
+.cal-form .confirm-title {
+    margin-bottom: 0;
+}
+.cal-field {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-width: 0;
+}
+.cal-field-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-3);
+}
+.cal-field-row > .cal-field {
+    flex: 1 1 140px;
+}
+.cal-form-error {
+    margin: 0;
+    color: var(--cseries-clay);
+    font-size: var(--text-sm);
+}
+#cal-c-input {
+    margin-bottom: var(--space-4);
+}
+
+/* A phone: one column that scrolls, the month above the list, small cells
+   with a dot for each event, and an event as a screen of its own. */
+@media (max-width: 768px) {
+    /* One row of header: the name, and + Event beside it. */
+    .app-header {
+        flex-wrap: nowrap;
+        padding: var(--space-3);
+    }
+    .app-brand {
+        flex: 1;
+    }
+    .app-brand-sub {
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+    #cal-new {
+        flex-shrink: 0;
+    }
+    .cal-body {
+        display: flex;
+        flex-direction: column;
+        overflow-y: auto;
+    }
+    .cal-grid {
+        flex: none;
+        grid-auto-rows: auto;
+    }
+    .cal-month {
+        flex-shrink: 0;
+        padding: var(--space-3);
+        overflow: visible;
+    }
+    .cal-side {
+        flex-shrink: 0;
+        border-left: none;
+        border-top: 1px solid var(--cseries-seam);
+    }
+    .cal-list-view,
+    .cal-detail {
+        flex: none;
+        padding: var(--space-3);
+        overflow: visible;
+    }
+    .cal-cell {
+        align-items: center;
+        min-height: 48px;
+        padding: 2px;
+    }
+    .cal-daynum {
+        align-self: center;
+    }
+    .cal-chips {
+        display: none;
+    }
+    .cal-dots {
+        display: flex;
+    }
+    .cal-body.detail-open .cal-month {
+        display: none;
+    }
+    .cal-body.detail-open .cal-side {
+        border-top: none;
+    }
+    .cal-facts {
+        grid-template-columns: minmax(0, 1fr);
+        gap: var(--space-1);
+    }
+    .cal-facts dd {
+        margin-bottom: var(--space-2);
+    }
+}

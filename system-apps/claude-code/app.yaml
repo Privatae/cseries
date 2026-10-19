@@ -1,0 +1,122 @@
+id: claude-code
+name: Claude Code
+description: The Claude Code coding harness (harness id claude-code) — Anthropic's Agent SDK running in a harness pod on the user's Claude subscription. The Workbench's build tools route claude-code builds here instead of a raw LLM so the agent tool-loop + sandbox stays in the path.
+icon: icon.png
+icon_small: icon-64.png
+entrypoint: index.html
+provenance: standard
+# 0.2.11 (2026-09-18): claude-agent-sdk pin 0.2.152 → 0.2.154 in bin/main.py.
+# The dependency bot lands a pin and nothing else, so each such pin needs this
+# bump and a repack, or test_bundle_freshness and test_store_version_bump go red.
+# 0.1.9 (2026-07-06): dead vocabulary purge — the retired build app is gone
+# from the briefing. (2026-08-19: this is the Claude Code coding HARNESS,
+# described as such everywhere; display name/title now 'Claude Code'.)
+# 0.1.11 (2026-08-05): Connections-app references scrubbed (the app is
+# retired — sign-in is the user's own surface, keys live in the Keys app).
+# 0.2.0 (2026-08-15): the platform-hosted Anthropic OAuth surface is GONE.
+# The 0.1.11 note above said sign-in was already the user's own surface; it
+# was not. The Connect-with-OAuth card, the paste-authorization-code step,
+# and the sidecar's /oauth/{initiate,exchange,disconnect} handlers drove a
+# platform-hosted login: the platform frontend built Anthropic authorize URLs
+# with the Claude Code CLI's own client_id, held the PKCE verifier
+# server-side, and exchanged the code at Anthropic's token endpoint. All of
+# it removed, frontend route included. The app now reads the user's own
+# credential from the entity's on-disk creds file like every other builder
+# and explains how to connect instead of offering to do it for you.
+# /oauth/disconnect is now /disconnect (it only clears local creds).
+# 0.2.1 (2026-08-19): named "Claude Code" (the harness), no "coding lane" phrasing.
+# 0.2.3 (2026-08-25): prompt_behavior hardcoded the coding-engine roster and
+# had already gone stale — it omitted antigravity, which is in
+# server/routes/review.py:81-82 HARNESS_APP_IDS. The enumeration is gone
+# rather than extended: `coding_bench` (public_tool_registry.py:2145) returns
+# the engines that are actually connected, so it cannot rot. Manifest-only
+# change; store-lane app, so the bump is what carries it.
+# 0.2.12 (2026-09-21): claude-agent-sdk pin 0.2.154 → 0.2.157 in bin/main.py.
+# Same reason as every pin entry below; the lasting fix is in the dependency
+# bot's config.
+# 0.2.10 (2026-09-03): claude-agent-sdk pin 0.2.151 → 0.2.152 in bin/main.py.
+# 0.2.9 (2026-09-02): claude-agent-sdk pin 0.2.149 → 0.2.151 in bin/main.py.
+# 0.2.8 (2026-09-01): claude-agent-sdk pin 0.2.148 → 0.2.149 in bin/main.py.
+# 0.2.6 (2026-08-29): claude-agent-sdk pin 0.2.145 → 0.2.147 in bin/main.py.
+# 0.2.5 (2026-08-27): claude-agent-sdk pin 0.2.144 → 0.2.145 in bin/main.py.
+# 0.2.4 (2026-08-26): claude-agent-sdk pin 0.2.139 → 0.2.144 in bin/main.py.
+# Store-lane: without this bump the strictly-newer-only sync
+# skips the payload change forever — caught by test_store_version_bump.py.
+# 0.2.13 (2026-09-23): claude-agent-sdk pin → 0.2.158 in bin/main.py.
+# 0.2.14 (2026-09-25): claude-agent-sdk pin → 0.2.159 in bin/main.py.
+# 0.2.15 (2026-09-26): claude-agent-sdk pin → 0.2.160 in bin/main.py.
+# 0.2.16 (2026-09-27): POST /sessions and POST /sessions/continue retired
+# (410 Gone). They ran a Claude Agent SDK session inside the Host's container
+# with shell, write and edit tools (server/ceigas/ceigas_mcp.py, removed in
+# the same change); nothing in the product called them. The MCP wiring,
+# transcript writer and bin/synaptive_mcp_shim.py went with them, and the
+# UI's "runs" count and list, which nothing fills any more. The SDK bootstrap
+# and its pin stay: the Designs app's import-from-URL job loads the SDK from
+# this app's cache. (Never published; 0.2.17 carries it.)
+# 0.2.17 (2026-09-27): the rest of what existed only for that route. The
+# in-memory session store with its list, close, reaper and /gc-orphans
+# routes (POST /sessions was the store's only writer, so after the upgrade
+# restart it can never hold a session), /token-pull (no caller), and the
+# UI's session list and counts. All four permissions are dropped; see the
+# note on `permissions:` below. Same PR as 0.2.16, a second commit, so the
+# store-lane ratchet needs the new number.
+# 0.2.20 (2026-10-18): the product is renamed C-Series (names, paths, env vars).
+# 0.2.21 (2026-10-18): changelog and comments rewritten as plain rationale; no behaviour change.
+version: "0.2.21"
+# 0.2.19 (2026-09-28): manifest comment only — the ready_timeout note no longer
+# cites the SDK pip bootstrap removed in 0.2.18 (review). The store lane needs
+# the new number for the repacked bundle.
+# 0.2.18 (2026-09-28): the sidecar stops pip-installing the Claude Agent SDK
+# (~230 MB) into python-libs/ at every start and deletes a cache an earlier
+# version left. Its last reader — the Designs app's import-from-URL job — is
+# retired (website-to-desktop is the Host's artifact op='desktop_from_url',
+# no model). The renovate pin that tracked it goes with it. The coding
+# harness is unaffected: it bakes its own SDK into its image.
+# Environment-catalog facts (host-facing, code-true). Source for the L1
+# topology block + describe_app — NOT a surface_role body (this is a control
+# panel, not a conversational surface): what_it_is/user_path only.
+prompt_behavior:
+  what_it_is: |
+    The Claude Code app is the user's Anthropic connection — it links their
+    Claude subscription so the Claude Code coding engine (id claude-code)
+    can do build work for them. It is one of several coding engines the
+    user can connect; never recite a list of the others from memory, call
+    `coding_bench` and name the ones that are actually connected. The app
+    itself only shows the connection and explains how to make it — it does
+    not sign the user in, and the runs happen elsewhere, on the coding
+    machines.
+  user_path: "the Claude Code app, in the dock (sign in on your own login surface — the platform ships none; API keys live in the Keys app)"
+
+window:
+  title: Claude Code
+  width: 880
+  height: 640
+  resizable: true
+  min_width: 640
+  min_height: 480
+
+runtime:
+  kind: process
+  command: ["/usr/bin/env", "python3", "bin/main.py"]
+  port_env: PORT
+  ready_path: /health
+  # 120s dates from the claude-agent-sdk pip bootstrap (removed in 0.2.18);
+  # start is now a directory delete at most, but the ceiling is kept as the
+  # headroom it always gave under post-restart contention.
+  ready_timeout_seconds: 120
+
+# None (0.2.17). A permission here is a scope in this app's window token
+# (server/routes/applications.py launch mints it from this list), and it only
+# matters to a kernel route guarded by requires_permission
+# (server/applications/middleware.py). What is left of the app calls no such
+# route: app.js fetches /api/system/status (no permission required) and its own
+# sidecar's /status and /disconnect, and bin/main.py calls no kernel route at
+# all. Dropped:
+#   read:tickets       — GET /api/tickets/{id}, used only by /gc-orphans (removed)
+#   write:tickets      — ticket create/decide/dismiss; nothing in the app wrote one
+#   read:inference_log — the /api/compute/* reads and two /api/inference reads;
+#                        nothing in the app reads one
+#   execute:inference  — POST /api/brain/chat, GET /api/inference/test/{role},
+#                        POST /api/realtime/client_secrets; nothing in the app
+#                        calls one
+permissions: []

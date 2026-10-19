@@ -1,0 +1,69 @@
+/* ================================================================
+ * C-Series — Motion primitives
+ * One easing, one duration scale. Signature: Presence Breath.
+ * ================================================================ */
+
+/* ——— Presence Breath (signature motion) ——————————
+ * The entity-status dot in the taskbar inhales and exhales on a 4-second
+ * cycle. This is the only infinite animation in C-Series. Do not remove.
+ */
+@keyframes cseries-breath {
+    0%, 100% { opacity: 0.55; }
+    50%      { opacity: 1.0; }
+}
+
+.cseries-presence-dot {
+    animation: cseries-breath var(--dur-breath) var(--ease-cseries) infinite;
+}
+
+/* Reduce for users with motion sensitivity, but don't stop — identity matters */
+@media (prefers-reduced-motion: reduce) {
+    .cseries-presence-dot {
+        animation-duration: 8000ms;
+    }
+}
+
+/* ——— Window open/close ———————————————————————————— */
+@keyframes cseries-window-in {
+    from { opacity: 0; transform: translateY(8px) scale(0.995); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes cseries-window-out {
+    from { opacity: 1; transform: translateY(0) scale(1); }
+    to   { opacity: 0; transform: translateY(4px) scale(0.99); }
+}
+
+.cseries-window-in {
+    animation: cseries-window-in var(--dur-panel) var(--ease-cseries);
+}
+
+/* ——— Dropdown / menu ————————————————————————————— */
+@keyframes cseries-fade-in {
+    from { opacity: 0; transform: translateY(-4px); }
+    to   { opacity: 1; transform: translateY(0); }
+}
+
+.cseries-fade-in {
+    animation: cseries-fade-in var(--dur-state) var(--ease-cseries);
+}
+
+/* ——— Toast ———————————————————————————————————————— */
+@keyframes cseries-toast-in {
+    from { opacity: 0; transform: translateX(12px); }
+    to   { opacity: 1; transform: translateX(0); }
+}
+
+/* ——— Seam activity pulse ——————————————————————————
+ * When the bridge is actively communicating, the Threshold Seam
+ * can momentarily brighten. Keep it subtle and short (one beat).
+ */
+@keyframes cseries-seam-pulse {
+    0%   { background: var(--cseries-seam); }
+    40%  { background: var(--cseries-seam-active); }
+    100% { background: var(--cseries-seam); }
+}
+
+.cseries-seam-pulse {
+    animation: cseries-seam-pulse 1200ms var(--ease-cseries);
+}

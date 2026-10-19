@@ -1,0 +1,5 @@
+# A Kill through the route records the signed-in
+# caller (operator_identity.request_email) on the status/killed frame and as
+# result.cancelled_by on the stopped build's task record. Fails 6 checks before
+# the fix.
+test_kill_records_who_pressed_it.py

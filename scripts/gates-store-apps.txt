@@ -1,0 +1,59 @@
+# gates-store-apps.txt — the gates whose subject is a STORE app, and which app.
+#
+# Store apps are not kernel code, so their gates run separately.
+# A CI run once took 19 min: test_connector_telegram_example.py,
+# a 9-minute gate of the Telegram store app, was picked as covering a kernel
+# change, failed in the pool and ran 9 minutes more alone. A store app reaches a
+# Host when a person installs it (or the store updates it), on its own publish,
+# not with the image, so its gates run on its own lane:
+#   - scripts/store_app_gates.sh runs them (--changed-from <ref>, --app <id>,
+#     --all), with pre_merge_gates.sh's pool, per-gate limits and hang_watch;
+#   - the `store-apps` job in .gitea/workflows/check.yml runs the ones whose app
+#     a pull request changed, beside the gates job;
+#   - the store-lane publish of an app runs `--app <id>` first, and a red run
+#     stops that app's publish only.
+# pre_merge_gates.sh (the PR run and the ship's full run) and smoke_test.sh's
+# container-free pass never run a gate listed here. scripts/test_gate_coverage.py
+# counts a line here as the gate's registration and refuses a gate that is also
+# in gates-container-free.d/, gates-infra-only.d/ or invoked by smoke.
+#
+# A store app: a system-apps/<id> that is not in scripts/image_baked_apps.txt and
+# whose catalog row (app_store_apps) is distribution 'store' and not is_default,
+# i.e. one a person chooses to install. Kept in the kernel lane, with why:
+#   app-store, publisher  is_default: every new Host installs them at first boot
+#   claude-code, claude-code-harness, _harness_runtime  the coding-harness
+#                         plumbing (claude-code's row is distribution 'harness';
+#                         the other two have no store row)
+#   security, terminal    no store row; not installable from the store
+#   _template             the scaffold for new apps, not an app
+# A gate that tests kernel code with a store app as its fixture stays in the
+# kernel lane (test_app_origin.py uses backups; test_browser_profile.py tests
+# server/applications/browser_profile.py; test_connector_platform_inflight.py
+# tests server/routes/connector.py; test_connector_retry_wording.py also drives
+# the kernel's authz._do_http_call and nac_connector.platform_call).
+#
+# One gate per line:  <gate> <app-id>[,<app-id>...] [<path>...]
+#   <gate>   a scripts/ file name, or a tests/ path (the kernel lane's pytest
+#            run then leaves that file out)
+#   <path>   more source the gate's subject lives in, outside system-apps/<id>/;
+#            a path ending in / is a directory. A change there, to
+#            system-apps/<id>/ or to the gate file selects the gate.
+# '#' starts a comment.
+
+# The messaging connectors (first-party store apps, kind: process).
+test_connector_telegram_example.py   telegram                scripts/connector_gate_kit.py
+test_connector_slack_example.py      slack                   scripts/connector_gate_kit.py
+test_connector_discord_example.py    discord                 scripts/connector_gate_kit.py
+test_connector_permanent_failures.py telegram,slack,discord
+test_connector_runtime_image_race.py telegram,slack,discord  scripts/connector_gate_kit.py
+
+# The creative apps (kind: process, image: creative): their MCP bridge and the
+# toolchain image they run in.
+test_creative_mcp_bridge.py          blender-engine,cadcraft-engine,deckcraft-engine,designcraft-engine,effectcraft-engine,filmcraft-engine,gridcraft-engine,lightcraft-engine,pdfcraft-engine,photocraft-engine,soundcraft-engine,vectorcraft-engine,wordcraft-engine  sidecars/app-runtime-creative/
+test_app_runtime_creative_image.py   blender-engine,cadcraft-engine,deckcraft-engine,designcraft-engine,effectcraft-engine,filmcraft-engine,gridcraft-engine,lightcraft-engine,pdfcraft-engine,photocraft-engine,soundcraft-engine,vectorcraft-engine,wordcraft-engine  sidecars/app-runtime-creative/ sidecars/app-runtime-python/Dockerfile
+
+# The Browser app's own window and its control API's vendor-neutral surface.
+test_browser_neutral.py              browser                 sidecars/browser/control/
+
+# Training Memory's review screen (system-apps/training-memory/index.html).
+tests/test_training_memory_review_reachable.py  training-memory

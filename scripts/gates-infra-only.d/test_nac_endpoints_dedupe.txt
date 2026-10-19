@@ -1,0 +1,2 @@
+
+test_nac_endpoints_dedupe.py             # real Postgres — nac_endpoints keys on token_id and re-pairing mints a NEW token, so every enrolment a machine ever had left a posture row and the NAC page drew all of them (measured: 33 rows for 27 machines, one desktop holding five, six hostnames with no live enrolment incl. a server decommissioned 2026-08-11 still showing a working Quarantine button). Pins DISTINCT ON + the live-enrolment JOIN, and asserts the unfiltered query really would return all six so the test can fail

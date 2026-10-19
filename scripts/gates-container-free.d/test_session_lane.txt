@@ -1,0 +1,7 @@
+
+# Terminal sessions on a bastion — framing, the signed grant
+# reused byte-for-byte, the host gate before any S frame (revoked / expired / deny /
+# suspended), root needs an approval, session workers in their own pool, the tool
+# caps output and cannot name root, the app vendors xterm and has no host/port.
+# Fake pool + fake socket + a real key; no DB, no network.
+test_session_lane.py

@@ -1,0 +1,9 @@
+# The Oversight app and GET /api/oversight/machines.
+# Drives the real route against a stub pool: each machine's alert and detection
+# states must equal the host's own derivations (so the window and the host can
+# never describe one machine two ways), an unreadable ledger or machine list is a
+# 503 and never "nothing open" / "no machines", and the record keeps its three
+# values. Also the app's contract: exactly the two oversight scopes, only routes
+# that exist, no HTML written from machine-supplied text, image-baked with a
+# byte-current signed bundle, and a dock glyph. No container, no DB, no network.
+test_oversight_app.py

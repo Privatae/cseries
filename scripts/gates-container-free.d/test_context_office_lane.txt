@@ -1,0 +1,11 @@
+# Office documents: docx/xlsx/pptx. Pins the three OOXML
+# mimes to the job that reads them and pins the three LEGACY binary ones OUT — a
+# .doc is an OLE2 compound file, not a ZIP, and mapping it would route the file
+# to a job that would refuse it. Also pins the two sentences this lane can get
+# wrong: an empty spreadsheet must not be explained as "it is a scan, so the
+# words on it are a picture" (the fall-through that was there before it), and a
+# job built into the bastion must not be explained as one to go and install. The
+# extraction itself is proven in the gateway's contextoffice_test.go against real
+# LibreOffice-produced files, including six overlapping jobs. Static + imports;
+# no bastion, no DB, no network.
+test_context_office_lane.py

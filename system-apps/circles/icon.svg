@@ -1,0 +1,26 @@
+<!--
+  Circles — the platform's "linked rings" mark.
+
+  This is the SAME geometry as the shared glyph in dashboard/base/js/icons.js:30,
+  which is where the icon has always lived. Every surface that renders through
+  CSeriesIcons.markup() already drew it correctly (markup() prefers a GLYPH over
+  icon_url, icons.js:90-93); what was missing was a standalone FILE for the
+  surfaces that load an image instead — the launcher's icon_url and the floating
+  bubble's probe. app.yaml had declared icon.png/icon-64.png since before those
+  files were ever produced, so those two surfaces 404'd.
+
+  Concrete colours rather than currentColor: an <img> has no CSS context to
+  inherit from, so currentColor would render this black on a dark desktop. Values
+  are the tokens the glyph language specifies — --cseries-paper #E5E7EB for the
+  rings, --cseries-dusk #7fcfae for the single focal accent (tokens.css:53, :61).
+
+  One file serves both declared sizes; SVG scales, so there is no separate 64px
+  raster to keep in sync.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24"
+     fill="none" stroke="#E5E7EB" stroke-width="1.75"
+     stroke-linecap="round" stroke-linejoin="round">
+  <circle cx="9" cy="12" r="5.5"/>
+  <circle cx="15" cy="12" r="5.5"/>
+  <circle cx="12" cy="12" r="1.5" fill="#7fcfae" stroke="none"/>
+</svg>

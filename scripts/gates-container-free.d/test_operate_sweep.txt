@@ -1,0 +1,12 @@
+
+# 2026-09-19 (the operate sweep): the clerical tools moved into the no-model
+# lane and `dispatch` now refuses a scope that is entirely clerical. This gate
+# pins the lane per tool by NAME — a tool falling back to `dispatch` costs a
+# model call per call and looks exactly like nothing — asserts the
+# scheduling / host-door / code-exec walls the widening must not go through
+# (since 2026-10-12 the credential tools are operate ops kept off a schedule),
+# checks the per-op exclusions against the LIVE op enums so a rename cannot
+# turn one into a silent no-op, and fires the dispatch refusal in both
+# directions (in-platform scopes refused, untrusted reading admitted). Pure
+# imports over the registry; no DB, no container, no network.
+test_operate_sweep.py

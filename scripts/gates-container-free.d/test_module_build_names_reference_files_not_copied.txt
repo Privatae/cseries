@@ -1,0 +1,2 @@
+# Every project file a brief names that is not copied in is named, with its reason, to the harness and the user; no size or count caps beyond the Host's disk floor.
+test_module_build_names_reference_files_not_copied.py

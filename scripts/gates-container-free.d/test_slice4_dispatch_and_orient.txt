@@ -1,0 +1,2 @@
+# Dispatch and orient (agent 446 died on a max_rounds=8 the Host set itself): the dispatch verb has no round argument, a turn whose model still sends max_rounds hands the dispatcher none, the agent runs to the Host's runaway backstop; and orient (the groups-mode drill) is gone from the registry, the executor set, caps, lanes and the turn-type primitives. One real turn through EntityRuntime.send_message with a scripted model and a stub pool; no DB, no pod.
+test_slice4_dispatch_and_orient.py

@@ -1,0 +1,1895 @@
+/* The Workbench's book of pages: its own layout on the book's shared look.
+   app-web-kit/book/book.css comes first (src/book/book.tsx imports it before
+   this file): the typefaces, the desktop's colours as tokens, the running
+   count, "Where this stands", the nudge line and the press. Here: the book's
+   measures, the desk, the book and its page turn, the page's head and title,
+   the conversation and composer on paper, the tabs, the right side, the
+   Index and its chapters, the riffle, the phone layout and less motion, then
+   the bench, the run cards and a project's build. */
+
+:root[data-page="book"] {
+  /* the book's measures: the right side, the tab column, the book between */
+  --right-w: clamp(296px, 27vw, 410px);
+  --tabs-w: 150px;
+  --book-w: min(680px, calc(100vw - var(--right-w) - var(--tabs-w) - 96px));
+  --book-l: max(24px, calc((100vw - var(--right-w) - 48px - var(--book-w) - var(--tabs-w) + 8px) / 2));
+  --right-l: calc(100vw - var(--right-w) - 24px);
+}
+
+/* ── The desk ──────────────────────────────────────────────────────────────── */
+.book-desk {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background: radial-gradient(1000px 760px at 45% 40%, color-mix(in oklab, var(--desk) 80%, var(--paper)), var(--desk));
+}
+.book-grain {
+  position: absolute;
+  inset: 0;
+  opacity: 0.32;
+  mix-blend-mode: multiply;
+  pointer-events: none;
+}
+.book-bar {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 28px;
+  z-index: 50;
+}
+.book-who {
+  font: 500 11px var(--sans);
+  letter-spacing: 0.18em;
+  color: var(--ink2);
+}
+.book-who b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+/* ── The book ──────────────────────────────────────────────────────────────── */
+.book-book {
+  position: absolute;
+  left: var(--book-l);
+  width: var(--book-w);
+  top: 62px;
+  bottom: -30px;
+  z-index: 10;
+}
+.book-under {
+  position: absolute;
+  inset: 0;
+  background: var(--under);
+  border-radius: 3px;
+  box-shadow: 0 0 0 1px var(--rule), 0 10px 28px color-mix(in srgb, var(--shade) 8%, transparent);
+}
+.book-sheet {
+  position: absolute;
+  inset: 0;
+  background: var(--paper);
+  border-radius: 3px;
+  overflow: hidden;
+  /* The hairline round the page is the desktop's round a window. */
+  box-shadow: 0 0 0 1px var(--rule), 0 2px 6px color-mix(in srgb, var(--shade) 6%, transparent),
+    0 30px 70px color-mix(in srgb, var(--shade) 14%, transparent);
+}
+.book-shade {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--shade) 16%, transparent));
+  opacity: 0;
+  pointer-events: none;
+}
+.book-inner {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 52px 52px;
+}
+
+/* The page turn: a copy of the page as it was (src/book/flip.ts) turns about
+   its left edge over the new one; with reduced motion it fades instead. */
+.book-ghost {
+  z-index: 40;
+  pointer-events: none;
+  transform-origin: 0% 50%;
+  will-change: transform, opacity;
+}
+.book-ghost[data-motion="turn"] {
+  transition: transform 0.72s cubic-bezier(0.45, 0.05, 0.25, 1), opacity 0.72s, box-shadow 0.72s;
+}
+.book-ghost[data-motion="turn"] .book-shade {
+  transition: opacity 0.72s;
+}
+.book-ghost[data-motion="turn"].is-turning {
+  transform: perspective(2400px) rotateY(-96deg);
+  opacity: 0;
+  box-shadow: -30px 0 60px color-mix(in srgb, var(--shade) 25%, transparent);
+}
+.book-ghost[data-motion="turn"].is-turning .book-shade {
+  opacity: 1;
+}
+.book-ghost[data-motion="fade"] {
+  transition: opacity 0.18s ease-out;
+}
+.book-ghost[data-motion="fade"].is-turning {
+  opacity: 0;
+}
+
+/* ── The page's top: head, title, where this stands ──────────────────────── */
+.book-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  font: 500 10.5px var(--sans);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink3);
+}
+.book-head .book-repo {
+  font: inherit;
+  letter-spacing: inherit;
+  text-transform: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.book-head .book-repo:hover {
+  color: var(--ink2);
+}
+.book-head .book-ai {
+  white-space: nowrap;
+}
+.book-head-right {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 14px;
+  min-width: 0;
+}
+
+.book-title {
+  font: 400 40px/1.02 var(--serif);
+  letter-spacing: -0.4px;
+  margin: 12px 0 12px;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+/* ── The conversation, on paper ───────────────────────────────────────────── */
+.book-sheet [data-chrome="page"] {
+  margin-top: 6px;
+}
+/* The conversation fades in under the page's top. Painted over it, not a
+   mask: a mask is a containing block for fixed descendants, so a run's
+   version window, an expanded card or a compare laid side by side would be
+   clipped to the conversation (slice 4). */
+.book-sheet [data-chrome="page"] [role="log"]::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 16px;
+  z-index: 2;
+  pointer-events: none;
+  background: linear-gradient(var(--paper), transparent);
+}
+.book-sheet [data-chrome="page"] [role="log"] > div > div {
+  padding: 14px 0 18px;
+  gap: 20px;
+}
+/* The person's words: plain Inter on the page, no bubble. */
+.book-sheet .is-user {
+  max-width: 100%;
+  margin-left: 0;
+}
+.book-sheet .is-user > div {
+  margin-left: 0;
+  padding: 0;
+  background: none;
+  border-radius: 0;
+  font: 600 15.5px/1.5 var(--sans);
+  color: var(--ink);
+}
+/* The Host's: Newsreader. */
+.book-sheet .is-assistant {
+  max-width: 100%;
+}
+.book-sheet .is-assistant > div {
+  font: 400 17px/1.5 var(--serif);
+  color: var(--ink);
+}
+.book-sheet .is-assistant > div p {
+  margin: 0 0 6px;
+}
+.book-sheet .is-assistant > div :is(h1, h2, h3, h4) {
+  font-family: var(--serif);
+  font-weight: 500;
+}
+/* The meta line under each turn: time, model, tokens. */
+.book-sheet [data-chrome="page"] .text-\[11px\] {
+  font-family: var(--mono);
+  letter-spacing: 0;
+}
+.book-sheet .is-user .text-right {
+  text-align: left;
+}
+/* Cards the turns carry (tools, runs, artifacts): a raised panel on the page.
+   Only plain cards: the shadcn controls (data-slot: the textarea, inputs,
+   buttons) keep their own surfaces, and so does a button filled with the
+   accent (the run card's Open version), which this painted over: white words
+   on white before the book took the desktop's colours. */
+.book-sheet [data-chrome="page"] :is(div, button, details).rounded-md.border:not([data-slot], [class*="bg-primary"]),
+.book-sheet [data-chrome="page"] :is(div, button, details).rounded-lg.border:not([data-slot], [class*="bg-primary"]),
+.book-sheet [data-chrome="page"] :is(div, button, details).rounded-xl.border:not([data-slot], [class*="bg-primary"]) {
+  background-color: var(--raised);
+  border-color: var(--rule);
+}
+/* The composer: a ruled line to write on. */
+.book-sheet [data-chrome="page"] > footer {
+  border-top: 0;
+  padding: 10px 0 0;
+}
+.book-sheet [data-chrome="page"] > footer > div:has(> textarea) {
+  align-items: flex-end;
+  gap: 12px;
+  border-bottom: 1.5px solid var(--rule2);
+  padding-bottom: 7px;
+}
+.book-sheet [data-chrome="page"] footer textarea {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: transparent;
+  min-height: 30px;
+  padding: 2px 0;
+  font: 400 17.5px/1.5 var(--serif);
+  color: var(--ink);
+}
+.book-sheet [data-chrome="page"] footer textarea::placeholder {
+  color: var(--ink3);
+  font-style: italic;
+}
+.book-sheet [data-chrome="page"] footer textarea:focus-visible {
+  box-shadow: none;
+  outline: none;
+}
+/* Send and Stop: the round ink button (app-web-kit/ui/button.tsx stamps
+   data-size and data-variant; the paperclip and the holding Stop are ghost). */
+.book-sheet [data-chrome="page"] footer [data-slot="button"][data-size="icon"]:not([data-variant="ghost"]) {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  border: 1.5px solid var(--rule2);
+  background: var(--raised);
+  color: var(--lit-ink);
+  box-shadow: 0 2px 4px color-mix(in srgb, var(--shade) 6%, transparent);
+}
+.book-sheet [data-chrome="page"] footer [data-slot="button"][data-size="icon"]:not([data-variant="ghost"]):disabled {
+  opacity: 0.55;
+}
+/* Nudge, while a turn runs: the words go into it. */
+.book-sheet [data-chrome="page"] footer .book-nudge-btn {
+  height: 36px;
+  padding: 0 16px;
+  border-radius: 999px;
+  background: var(--ink);
+  color: var(--paper);
+  font: 600 12.5px var(--sans);
+}
+.book-sheet [data-chrome="page"] footer .book-hint {
+  margin: 7px 0 0;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--ink3);
+}
+
+/* ── Tabs on the book's edge ──────────────────────────────────────────────── */
+.book-tabs {
+  position: absolute;
+  top: 92px;
+  bottom: 124px;
+  left: calc(var(--book-l) + var(--book-w) - 8px);
+  width: var(--tabs-w);
+  z-index: 6;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow: hidden;
+}
+.book-tab {
+  position: relative;
+  flex: none;
+  height: 50px;
+  width: 100%;
+  padding: 7px 24px 0 18px;
+  text-align: left;
+  border-radius: 0 9px 9px 0;
+  cursor: pointer;
+  background: var(--tab);
+  border: 1px solid var(--rule);
+  border-left: 0;
+  box-shadow: 2px 3px 8px color-mix(in srgb, var(--shade) 7%, transparent);
+  transition: background 0.2s, box-shadow 0.3s, transform 0.2s;
+  font: inherit;
+  color: var(--ink);
+}
+.book-tab:hover {
+  transform: translateX(4px);
+}
+.book-tab:focus-visible {
+  outline: 2px solid var(--lit);
+  outline-offset: 1px;
+}
+.book-tab-title {
+  display: block;
+  font: 500 13px var(--sans);
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.book-tab-note {
+  display: block;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.book-tab[aria-selected="true"] {
+  background: var(--paper);
+  z-index: 2;
+  box-shadow: 3px 3px 10px color-mix(in srgb, var(--shade) 10%, transparent);
+  border-color: var(--rule2);
+}
+.book-tab[aria-selected="true"] .book-tab-title {
+  font-weight: 600;
+}
+/* Lit: tinted with the accent, or with what waits, and glowing in it. */
+.book-tab[data-light="green"]:not([aria-selected="true"]) {
+  background: color-mix(in oklab, var(--lit) 16%, var(--tab));
+  border-color: color-mix(in oklab, var(--lit) 60%, transparent);
+  animation: book-glow 1.8s ease-in-out infinite;
+}
+.book-tab[data-light="green"] .book-tab-note {
+  color: var(--lit-ink);
+}
+.book-tab[data-light="amber"]:not([aria-selected="true"]) {
+  background: color-mix(in oklab, var(--wait) 16%, var(--tab));
+  border-color: color-mix(in oklab, var(--wait) 60%, transparent);
+  animation: book-glow-amber 1.8s ease-in-out infinite;
+}
+.book-tab[data-light="amber"] .book-tab-note {
+  color: var(--wait-ink);
+}
+@keyframes book-glow {
+  0%, 100% { box-shadow: 0 0 0 0 var(--lit-glow); }
+  50% { box-shadow: 0 0 0 6px transparent, 0 0 22px var(--lit-glow); }
+}
+@keyframes book-glow-amber {
+  0%, 100% { box-shadow: 0 0 0 0 var(--wait-glow); }
+  50% { box-shadow: 0 0 0 6px transparent, 0 0 22px var(--wait-glow); }
+}
+/* Working dots: the Host has a turn running on that page. */
+.book-dots {
+  position: absolute;
+  right: 9px;
+  top: 14px;
+  display: flex;
+  gap: 3px;
+}
+.book-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--lit-ink);
+  animation: book-blink 1.1s infinite;
+}
+.book-dots i:nth-child(2) { animation-delay: 0.18s; }
+.book-dots i:nth-child(3) { animation-delay: 0.36s; }
+@keyframes book-blink {
+  50% { opacity: 0.25; }
+}
+.book-ixtab {
+  position: absolute;
+  bottom: 58px;
+  left: calc(var(--book-l) + var(--book-w) - 8px);
+  width: var(--tabs-w);
+  height: 52px;
+  z-index: 6;
+  cursor: pointer;
+  text-align: left;
+  background: var(--ink);
+  color: var(--paper);
+  border: 0;
+  border-radius: 0 9px 9px 0;
+  padding: 7px 12px 0 18px;
+  box-shadow: 2px 4px 12px color-mix(in srgb, var(--shade) 18%, transparent);
+  transition: transform 0.2s;
+}
+.book-ixtab:hover {
+  transform: translateX(4px);
+}
+/* The box keeps its 52px (the tabs above end 124px up, .book-tabs): the word
+   and two lines of the subtitle fit inside it, 7 + 16 + 2 × 13. */
+.book-ixtab b {
+  display: block;
+  font: 600 13px/16px var(--sans);
+  letter-spacing: 0.02em;
+}
+.book-ixtab span {
+  display: block;
+  font-size: 11px;
+  line-height: 13px;
+  color: color-mix(in oklab, var(--paper) 65%, var(--ink));
+}
+.book-ixtab svg {
+  position: absolute;
+  right: 12px;
+  top: 13px;
+}
+/* The tabs, the Index tab and (on a phone) "This page" sit in one edge; on a
+   desktop it adds no box, and each keeps its place on the book's edge. */
+.book-edge {
+  display: contents;
+}
+.book-sheettab,
+.book-sheet-close {
+  display: none;
+}
+
+/* ── The right side ───────────────────────────────────────────────────────── */
+.book-right {
+  position: absolute;
+  left: var(--right-l);
+  right: 24px;
+  top: 64px;
+  bottom: 24px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  font-size: 13px;
+}
+.book-right > .book-sec {
+  flex: none;
+  margin-bottom: 14px;
+}
+.book-sec .book-k {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font: 500 10px var(--sans);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  margin-bottom: 8px;
+}
+.book-sec .book-k span:last-child {
+  letter-spacing: 0.06em;
+  text-transform: none;
+  font-size: 11px;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.book-ctl {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 30px;
+  font-size: 13px;
+  color: var(--ink2);
+}
+.book-ctl[data-ctl="context"]:not(:has(> :nth-child(2))) {
+  display: none;
+}
+.book-ctl label {
+  width: 100%;
+  justify-content: space-between;
+  font-size: 13px;
+  color: var(--ink2);
+}
+.book-ctl select {
+  border: 1px solid var(--rule2);
+  background: var(--raised);
+  border-radius: 999px;
+  height: 26px;
+  padding: 0 10px;
+  font: 500 12px var(--sans);
+  color: var(--ink);
+}
+.book-pill {
+  border: 1px solid var(--rule2);
+  background: var(--raised);
+  border-radius: 999px;
+  padding: 3px 11px;
+  font: 500 12px var(--mono);
+  color: var(--ink);
+  max-width: 70%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The page's latest finished build (src/book/latest-build.tsx): its run, then
+   an Open for each engine that finished, the run card's own. */
+.book-latest {
+  margin: 0 0 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--rule);
+}
+.book-latest-what {
+  min-width: 0;
+  max-width: 62%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ink);
+}
+.book-latest-eng {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--ink);
+  font-weight: 500;
+}
+.book-latest-eng i {
+  flex: none;
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--engine-color);
+}
+.book-open {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 11px;
+  border: 1px solid var(--primary);
+  border-radius: 8px;
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font: 600 12px var(--sans);
+  cursor: pointer;
+}
+.book-open:hover {
+  background: color-mix(in oklab, var(--primary) 88%, var(--ink));
+}
+.book-open:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+
+/* The bench's sections, under "This page", restyled; their reads are
+   components/workbench/ops-pane.tsx's. */
+.book-right [data-chrome="page"] {
+  flex: 1;
+  min-height: 0;
+  margin: 0 -16px;
+}
+.book-right [data-chrome="page"] .uppercase.tracking-wide {
+  font: 500 10px var(--sans);
+  letter-spacing: 0.18em;
+  color: var(--ink3);
+}
+.book-right [data-chrome="page"] :is(div, button).rounded-md.border:not([data-slot]) {
+  background-color: color-mix(in oklab, var(--raised) 72%, transparent);
+  border-color: var(--rule);
+}
+.book-keys {
+  flex: none;
+  margin: 10px 0 0;
+  font-size: 11px;
+  color: var(--ink3);
+}
+.book-keys kbd {
+  font: 10px var(--mono);
+  border: 1px solid var(--rule2);
+  border-radius: 4px;
+  padding: 0 4px;
+  background: color-mix(in oklab, var(--raised) 60%, transparent);
+  color: var(--ink2);
+}
+.book-keys a {
+  color: inherit;
+}
+
+/* ── Notices, dialogs ─────────────────────────────────────────────────────── */
+.book-notices {
+  position: fixed;
+  top: 58px;
+  right: 24px;
+  z-index: 80;
+  display: flex;
+  width: 320px;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+.book-notices > * {
+  pointer-events: auto;
+  border-radius: 12px;
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--shade) 10%, transparent);
+}
+:root[data-page="book"] [role="dialog"] {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* ── An empty book ────────────────────────────────────────────────────────── */
+.book-empty {
+  margin: auto 0;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 14px;
+  font: 400 18px/1.5 var(--serif);
+  color: var(--ink2);
+}
+
+/* ── The Index (slice 5): a page of its own over the page in front ─────────
+   src/book/index-page.tsx. The mockup's index page: the box, Enter's two
+   modes, the pages re-sorting as the person types, then the chapters. */
+.book-index {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  display: flex;
+  flex-direction: column;
+  padding: 24px 52px 28px;
+  background: var(--paper);
+  overflow-y: auto;
+}
+.book-index .book-title {
+  margin-bottom: 4px;
+}
+.book-ix-input {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-bottom: 2px solid var(--ink);
+  padding: 6px 0 8px;
+  margin-top: 6px;
+  color: var(--ink);
+}
+.book-ix-input svg {
+  flex: none;
+}
+.book-ix-input input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  font: 400 22px/1.3 var(--serif);
+  color: var(--ink);
+}
+.book-ix-input input::placeholder {
+  color: var(--ink3);
+  font-style: italic;
+}
+.book-index[data-index-busy] .book-ix-input {
+  border-bottom-color: var(--ink3);
+}
+.book-ix-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 10px 0 2px;
+  align-items: center;
+  font-size: 12px;
+  color: var(--ink2);
+}
+.book-ix-mode button {
+  border: 1px solid var(--rule2);
+  background: var(--raised);
+  border-radius: 999px;
+  padding: 3px 10px;
+  font: 500 11.5px var(--sans);
+  color: var(--ink2);
+  cursor: pointer;
+}
+.book-ix-mode button[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--paper);
+  border-color: var(--ink);
+}
+.book-ix-line {
+  min-height: 1.4em;
+  margin: 8px 0 0;
+  font: italic 400 14px/1.4 var(--serif);
+  color: var(--ink2);
+}
+.book-ix-line[data-kind="busy"] {
+  color: var(--lit-ink);
+}
+.book-ix-line[data-kind="restore_refused"],
+.book-ix-line[data-kind="error"],
+.book-ix-line[data-error] {
+  color: var(--destructive);
+}
+.book-ix-ask {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.book-ix-ask button {
+  border: 1px solid var(--rule);
+  background: var(--raised);
+  border-radius: 8px;
+  padding: 4px 10px;
+  font: 500 14px var(--serif);
+  color: var(--ink);
+  cursor: pointer;
+}
+.book-ix-ask small {
+  font: 500 10px var(--sans);
+  color: var(--ink3);
+}
+.book-ix-list {
+  position: relative;
+  margin-top: 10px;
+}
+.book-ix-k {
+  margin: 12px 0 8px;
+  font: 500 10px var(--sans);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink3);
+}
+.book-ix-list > .book-ix-k:first-child {
+  margin-top: 0;
+}
+.book-ix-res {
+  position: relative;
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--rule);
+  background: var(--raised);
+  border-radius: 8px;
+  padding: 9px 14px;
+  margin-bottom: 8px;
+  cursor: pointer;
+  font: inherit;
+  color: var(--ink);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--shade) 5%, transparent);
+  transition: box-shadow 0.2s;
+}
+.book-ix-res:hover {
+  box-shadow: 0 6px 18px color-mix(in srgb, var(--shade) 12%, transparent);
+}
+.book-ix-res:focus-visible {
+  outline: 2px solid var(--lit);
+  outline-offset: 1px;
+}
+.book-ix-res[data-top] {
+  border-color: color-mix(in oklab, var(--lit) 70%, transparent);
+  box-shadow: 0 0 0 3px var(--hl);
+}
+.book-ix-t {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: baseline;
+  font: 500 16.5px/1.35 var(--serif);
+}
+.book-ix-t small {
+  font: 500 10px var(--sans);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink3);
+}
+.book-ix-res[data-archived] .book-ix-t small {
+  color: var(--wait-ink);
+}
+.book-ix-s {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  color: var(--ink2);
+}
+.book-ix-s mark {
+  background: var(--hl);
+  color: inherit;
+  padding: 0 1px;
+  border-radius: 2px;
+}
+.book-ix-go {
+  position: absolute;
+  right: 12px;
+  top: 10px;
+  font: 500 11px var(--sans);
+  color: var(--lit-ink);
+}
+.book-ix-empty {
+  margin: 4px 0 10px;
+  font: italic 400 14.5px/1.45 var(--serif);
+  color: var(--ink2);
+}
+.book-ix-about {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink2);
+}
+
+/* Chapters: the buckets, as stacks of paper (the mockup's .chap). */
+.book-ix-chapters {
+  margin-top: 6px;
+}
+.book-ix-chaps {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+  gap: 12px 14px;
+  padding: 0 6px 8px 0;
+}
+.book-chap {
+  position: relative;
+  display: block;
+  min-height: 70px;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+  background: linear-gradient(180deg, var(--raised), var(--tab));
+  border: 1px solid var(--rule);
+  border-top: 3px solid var(--rule2);
+  padding: 9px 12px;
+  font: inherit;
+  color: var(--ink);
+  /* the sheets under it: the page's colour, edged with the hairline */
+  box-shadow: 0 1px 0 color-mix(in oklab, var(--ink) 6%, transparent) inset, 3px 3px 0 -1px var(--under), 3px 3px 0 0 var(--rule),
+    6px 6px 0 -1px var(--under), 6px 6px 0 0 var(--rule);
+  transition: transform 0.2s, background 0.2s;
+}
+.book-chap:hover {
+  transform: translateY(-2px);
+}
+.book-chap:focus-visible {
+  outline: 2px solid var(--lit);
+  outline-offset: 2px;
+}
+.book-chap b {
+  display: block;
+  font: 500 16.5px/1.3 var(--serif);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.book-chap span {
+  font-size: 12px;
+  color: var(--ink3);
+}
+.book-chap[data-over] {
+  background: color-mix(in oklab, var(--lit) 16%, var(--tab));
+  border-color: color-mix(in oklab, var(--lit) 70%, transparent);
+  transform: translateY(-3px);
+}
+.book-chap-new {
+  background: transparent;
+  border-style: dashed;
+  box-shadow: none;
+}
+input.book-chap-new {
+  font: 500 15px var(--serif);
+  outline: none;
+}
+.book-ix-back {
+  align-self: flex-start;
+  margin: 2px 0 0;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--rule2);
+  background: none;
+  font: 500 12px var(--sans);
+  color: var(--ink2);
+  cursor: pointer;
+}
+.book-ix-chaphead {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+.book-ix-chaphead .book-title {
+  margin: 4px 0;
+}
+.book-chip {
+  flex: none;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--rule2);
+}
+.book-ix-name {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  border-bottom: 2px solid var(--ink);
+  outline: 0;
+  background: transparent;
+  font: 400 34px/1.1 var(--serif);
+  color: var(--ink);
+}
+.book-ix-link {
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--rule2);
+  background: none;
+  font: 500 12px var(--sans);
+  color: var(--ink2);
+  cursor: pointer;
+}
+.book-ix-swatches {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 6px;
+}
+.book-swatch {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  border: 0;
+  cursor: pointer;
+}
+.book-swatch[aria-pressed="true"] {
+  box-shadow: 0 0 0 2px var(--paper), 0 0 0 4px var(--ink);
+}
+/* The Index tab while the Index is in front. */
+.book-ixtab[data-open] {
+  background: color-mix(in oklab, var(--ink) 85%, var(--paper));
+}
+/* A page opened from a chapter, still archived. */
+.book-archived {
+  margin: -4px 0 10px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  background: var(--raised);
+  font: italic 400 13.5px/1.45 var(--serif);
+  color: var(--ink2);
+}
+.book-archived [data-restore-refused] {
+  color: var(--destructive);
+}
+/* A tab can be dragged onto a chapter. */
+.book-tab[draggable="true"] {
+  cursor: grab;
+}
+
+/* The riffle (src/book/riffle.ts): a run of pages turning away fast, one
+   after another; the mockup's riff. */
+.book-leaf {
+  pointer-events: none;
+  transform-origin: 0% 50%;
+  will-change: transform, opacity;
+}
+.book-leaf.is-turning {
+  animation: book-riff 0.46s cubic-bezier(0.5, 0.05, 0.3, 1) forwards;
+}
+.book-leaf .book-shade {
+  transition: opacity 0.46s;
+}
+.book-leaf.is-turning .book-shade {
+  opacity: 1;
+}
+.book-leaf-note {
+  margin: 0;
+  font: italic 400 14px var(--serif);
+  color: var(--ink3);
+}
+@keyframes book-riff {
+  0% { transform: perspective(2400px) rotateY(0deg); opacity: 1; }
+  80% { transform: perspective(2400px) rotateY(-78deg); opacity: 1; }
+  100% { transform: perspective(2400px) rotateY(-96deg); opacity: 0; }
+}
+
+/* ── The phone (slice 3b) ─────────────────────────────────────────────────
+   Narrower than a desktop window (the Workbench window's least width is
+   1024 px; lib/book.ts PHONE_MAX_PX): a full-width page, the tabs a strip
+   along the bottom with the Index tab in it, and the right side a sheet over
+   the page, opened by the strip's "This page". */
+@media (max-width: 860px) {
+  :root[data-page="book"] {
+    --strip-h: 64px;
+  }
+  .book-bar {
+    height: 40px;
+    padding: 0 14px;
+  }
+  .book-book {
+    left: 0;
+    right: 0;
+    width: auto;
+    top: 40px;
+    bottom: var(--strip-h);
+  }
+  .book-under {
+    display: none;
+  }
+  .book-sheet {
+    border-radius: 0;
+    box-shadow: 0 1px 0 var(--rule);
+  }
+  .book-inner {
+    padding: 14px 16px 10px;
+  }
+  .book-head {
+    flex-wrap: wrap;
+    gap: 4px 12px;
+  }
+  .book-title {
+    font-size: 28px;
+    margin: 8px 0;
+  }
+  .book-stands {
+    max-height: 24%;
+  }
+  .book-head .book-tip {
+    right: auto;
+    left: 0;
+  }
+  .book-edge {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    height: var(--strip-h);
+    display: flex;
+    align-items: stretch;
+    gap: 6px;
+    padding: 0 8px 8px;
+    background: var(--under);
+    border-top: 1px solid var(--rule);
+  }
+  .book-tabs {
+    position: static;
+    flex: 1;
+    min-width: 0;
+    width: auto;
+    flex-direction: row;
+    gap: 6px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    scrollbar-width: none;
+  }
+  .book-tab {
+    flex: none;
+    width: 124px;
+    height: 100%;
+    padding: 7px 20px 0 11px;
+    border: 1px solid var(--rule);
+    border-top: 0;
+    border-radius: 0 0 9px 9px;
+  }
+  .book-tab:hover {
+    transform: none;
+  }
+  .book-dots {
+    top: 11px;
+    right: 7px;
+  }
+  /* The Index and "This page": compact, an icon over a word. */
+  .book-ixtab,
+  .book-sheettab {
+    position: relative;
+    top: auto;
+    bottom: auto;
+    left: auto;
+    flex: none;
+    width: 64px;
+    height: 100%;
+    padding: 9px 4px 0;
+    border-radius: 0 0 9px 9px;
+    text-align: center;
+  }
+  .book-ixtab:hover {
+    transform: none;
+  }
+  .book-ixtab svg,
+  .book-sheettab svg {
+    position: static;
+    display: block;
+    margin: 0 auto 4px;
+  }
+  .book-ixtab b,
+  .book-sheettab b {
+    display: block;
+    font: 600 11.5px var(--sans);
+    letter-spacing: 0;
+    white-space: nowrap;
+  }
+  .book-ixtab span,
+  .book-sheettab span {
+    display: none;
+  }
+  .book-sheettab {
+    display: block;
+    cursor: pointer;
+    background: var(--tab);
+    border: 1px solid var(--rule);
+    border-top: 0;
+    color: var(--ink);
+  }
+  .book-desk[data-sheet] .book-sheettab {
+    background: var(--paper);
+  }
+  .book-right {
+    display: none;
+  }
+  .book-desk[data-sheet] .book-right {
+    display: flex;
+    left: 0;
+    right: 0;
+    top: 40px;
+    bottom: var(--strip-h);
+    z-index: 15;
+    padding: 12px 16px;
+    background: var(--paper);
+    overflow-y: auto;
+  }
+  .book-sheet-close {
+    display: inline-block;
+    align-self: flex-start;
+    margin-bottom: 12px;
+    padding: 0;
+    border: 0;
+    border-bottom: 1px solid var(--rule2);
+    background: none;
+    font: 500 12.5px var(--sans);
+    color: var(--ink2);
+    cursor: pointer;
+  }
+  .book-keys {
+    display: none;
+  }
+  .book-notices {
+    left: 12px;
+    right: 12px;
+    width: auto;
+  }
+}
+
+/* Less motion: no glow, no blinking, and the page turn is a crossfade (the
+   book picks it in src/lib/book.ts flipMotion; this holds it). */
+@media (prefers-reduced-motion: reduce) {
+  .book-tab,
+  .book-ixtab {
+    transition: none;
+  }
+  .book-tab[data-light] {
+    animation: none !important;
+  }
+  .book-dots i {
+    animation: none;
+  }
+  .book-ghost {
+    transform: none !important;
+  }
+  /* No riffle is drawn with less motion (src/book/riffle.ts); none glides. */
+  .book-leaf.is-turning {
+    animation: none;
+    opacity: 0;
+  }
+  .book-chap,
+  .book-ix-res {
+    transition: none;
+  }
+  .book-chap:hover,
+  .book-chap[data-over] {
+    transform: none;
+  }
+}
+
+/* The Index on a phone: the page's own margins. */
+@media (max-width: 860px) {
+  .book-index {
+    padding: 14px 16px 12px;
+  }
+  .book-ix-input input {
+    font-size: 19px;
+  }
+  .book-ix-chaps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* ── The bench in the book (slice 4): the run board, as strands ────────────
+   src/book/bench.tsx draws it; lib/strands.ts does its maths. Each engine
+   keeps one colour (lib/strands.ts ENGINE_COLORS): a category, the same on
+   any design, each clear of 3:1 on the stock dark page and on a light one;
+   the names, values and labels stay in ink. */
+.book-right .book-bench {
+  padding: 2px 16px 0;
+  margin-bottom: 18px;
+}
+.book-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--ink3);
+}
+.book-sec .book-k .book-live {
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  font-size: 10px;
+}
+.book-live[data-live] {
+  color: var(--lit-ink);
+}
+.book-live[data-live]::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--lit-ink);
+  animation: book-blink 1.6s ease-in-out infinite;
+}
+@keyframes book-blink {
+  50% {
+    opacity: 0.3;
+  }
+}
+.book-run-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.book-run-head b {
+  font: 500 14px var(--sans);
+  color: var(--ink);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.book-run-clock {
+  font: 500 13px var(--mono);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.book-run-brief {
+  margin: 3px 0 6px;
+  font-size: 12.5px;
+  line-height: 1.45;
+  color: var(--ink2);
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.book-run-brief button,
+.book-bench .book-run-pick span {
+  border: 0;
+  background: none;
+  padding: 0;
+  font: inherit;
+  color: var(--lit-ink);
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in oklab, var(--lit-ink) 35%, transparent);
+  text-underline-offset: 3px;
+}
+.book-run-brief-full {
+  margin: 0 0 8px;
+  max-height: 220px;
+  overflow: auto;
+  padding: 8px 10px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  font: 11.5px/1.55 var(--mono);
+  color: var(--ink2);
+  background: color-mix(in oklab, var(--raised) 72%, transparent);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+}
+
+/* The strands: the brief's dot top left; a fork from it into each lane. */
+.book-strands {
+  position: relative;
+  margin: 4px 0 2px;
+}
+.book-strands-svg {
+  display: block;
+  overflow: visible;
+}
+.book-strand {
+  cursor: pointer;
+}
+.book-strand-hit {
+  fill: transparent;
+}
+.book-strand:hover .book-strand-hit {
+  fill: color-mix(in oklab, var(--lit) 6%, transparent);
+}
+.book-strand-grid {
+  stroke: var(--rule);
+  stroke-dasharray: 2 3;
+}
+.book-strand-tick {
+  font: 9.5px var(--mono);
+  fill: var(--ink3);
+}
+.book-strand-now {
+  stroke: var(--lit-ink);
+  stroke-opacity: 0.45;
+  stroke-dasharray: 3 3;
+}
+.book-brief-dot {
+  fill: var(--lit);
+}
+.book-brief-word {
+  position: absolute;
+  left: 0;
+  width: 104px;
+  font: 500 10px var(--sans);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink3);
+  pointer-events: none;
+}
+.book-strand-fork {
+  fill: none;
+  stroke: var(--engine-color);
+  stroke-width: 1.5;
+  stroke-opacity: 0.55;
+}
+.book-strand-wait {
+  stroke: var(--engine-color);
+  stroke-opacity: 0.45;
+  stroke-width: 1.2;
+  stroke-dasharray: 1.5 3;
+}
+.book-strand-queued {
+  fill: color-mix(in oklab, var(--wait) 9%, transparent);
+  stroke: var(--wait);
+  stroke-opacity: 0.6;
+  stroke-dasharray: 3 3;
+}
+.book-strand-think {
+  fill: var(--engine-color);
+  fill-opacity: 0.15;
+}
+.book-strand-line {
+  stroke: var(--engine-color);
+  stroke-width: 2.2;
+  stroke-linecap: round;
+  stroke-opacity: 0.9;
+}
+.book-strand-mark {
+  fill: var(--paper);
+  stroke: var(--engine-color);
+  stroke-width: 1.3;
+}
+.book-strand-mark[data-kind="edit"] {
+  fill: var(--engine-color);
+}
+.book-strand-mark[data-kind="error"] {
+  fill: var(--destructive);
+  stroke: var(--paper);
+  stroke-width: 1;
+}
+.book-strand-head {
+  fill: var(--engine-color);
+}
+.book-strand-halo {
+  fill: var(--engine-color);
+  fill-opacity: 0.16;
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: book-breathe 2.4s ease-in-out infinite;
+}
+@keyframes book-breathe {
+  0%,
+  100% {
+    transform: scale(0.75);
+    fill-opacity: 0.2;
+  }
+  50% {
+    transform: scale(1.25);
+    fill-opacity: 0.08;
+  }
+}
+.book-strand-finish {
+  fill: var(--engine-color);
+  stroke: var(--paper);
+  stroke-width: 2;
+}
+.book-strand-finish[data-kind="failed"] {
+  fill: var(--destructive);
+}
+.book-strand-finish[data-kind="stopped"] {
+  fill: var(--ink3);
+}
+.book-strand-glyph {
+  fill: none;
+  stroke: var(--paper);
+  stroke-width: 1.6;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.book-strand-finish[data-kind="stopped"] + .book-strand-glyph {
+  fill: var(--paper);
+  stroke: none;
+}
+.book-strand-name {
+  position: absolute;
+  left: 0;
+  height: 30px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0 4px 0 0;
+  border: 0;
+  border-radius: 6px;
+  background: none;
+  text-align: left;
+  cursor: pointer;
+}
+.book-strand-name b {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font: 500 12px/1.2 var(--sans);
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.book-strand-name b i,
+.book-score-eng i {
+  flex: none;
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--engine-color);
+}
+.book-strand-name span {
+  padding-left: 16px;
+  font: 400 10px/1.3 var(--mono);
+  color: var(--ink3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.book-strand-name:hover b {
+  text-decoration: underline;
+  text-decoration-color: var(--rule2);
+  text-underline-offset: 3px;
+}
+.book-strand-name:focus-visible {
+  outline: 2px solid var(--lit);
+  outline-offset: 1px;
+}
+.book-bench-note {
+  margin: 2px 0 6px;
+  font-size: 12px;
+  color: var(--ink2);
+}
+
+/* The scoreboard: who finished first, and what each engine did. */
+.book-score {
+  width: 100%;
+  margin-top: 6px;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.book-score td {
+  padding: 6px 0;
+  border-top: 1px solid var(--rule);
+  vertical-align: top;
+  color: var(--ink2);
+}
+.book-score tr {
+  cursor: pointer;
+}
+.book-score tr:hover td {
+  background: color-mix(in oklab, var(--raised) 55%, transparent);
+}
+.book-score-eng {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  font-weight: 500;
+  color: var(--ink);
+}
+.book-first {
+  font: 500 10px var(--sans);
+  color: var(--lit-ink);
+  border: 1px solid color-mix(in oklab, var(--lit-ink) 40%, transparent);
+  border-radius: 999px;
+  padding: 0 7px;
+}
+.book-score-sub {
+  display: block;
+  padding-left: 16px;
+  font-size: 11px;
+  color: var(--ink3);
+}
+.book-score-state {
+  padding-left: 8px !important;
+  white-space: nowrap;
+}
+.book-score-state[data-state="running"] {
+  color: var(--lit-ink);
+}
+.book-score-state[data-state="failed"],
+.book-score-state[data-state="timeout"] {
+  color: var(--destructive);
+}
+.book-score-state[data-state="waiting"] {
+  color: var(--wait-ink);
+}
+.book-num {
+  padding-left: 10px !important;
+  text-align: right;
+  white-space: nowrap;
+  font: 500 11.5px var(--mono);
+  color: var(--ink) !important;
+  font-variant-numeric: tabular-nums;
+}
+.book-add {
+  color: var(--good-ink);
+}
+.book-del {
+  color: var(--destructive);
+}
+.book-dim {
+  color: var(--ink3);
+}
+.book-run-pick {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--ink2);
+}
+.book-run-pick select {
+  max-width: 62%;
+  border: 1px solid var(--rule2);
+  background: var(--raised);
+  border-radius: 999px;
+  height: 26px;
+  padding: 0 10px;
+  font: 500 12px var(--sans);
+  color: var(--ink);
+}
+.book-bench .book-run-pick span {
+  color: var(--ink2);
+  text-decoration: none;
+  cursor: default;
+}
+
+/* An engine's card on the page wears its strand's colour; turned to from
+   its strand, it glows once. */
+.book-sheet [data-run-card] {
+  border-left: 3px solid var(--engine-color, var(--rule));
+}
+.book-sheet [data-run-card][data-flash] {
+  animation: book-card-glow 1.5s ease-out;
+}
+@keyframes book-card-glow {
+  0% {
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--engine-color, var(--lit)) 55%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+/* A table in an engine's own words. */
+.md-table {
+  border-collapse: collapse;
+  margin: 2px 0 8px;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.md-table th,
+.md-table td {
+  border: 1px solid var(--rule);
+  padding: 3px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+.md-table th {
+  background: var(--secondary);
+  font-weight: 600;
+}
+
+/* A compare on the page: its run header over the cards, and side by side. */
+.book-compare {
+  margin: 4px 0 6px;
+}
+.book-compare-head {
+  font-family: var(--sans);
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--rule);
+}
+.book-compare-id {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+.book-compare-id b {
+  font: 500 13.5px var(--sans);
+  color: var(--ink);
+  white-space: nowrap;
+}
+.book-compare-id span {
+  font-size: 12px;
+  color: var(--ink3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.book-compare-clock {
+  font: 500 12.5px var(--mono);
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+.book-compare-wide {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  padding: 0 10px;
+  border: 1px solid var(--rule2);
+  border-radius: 999px;
+  background: var(--raised);
+  font: 500 12px var(--sans);
+  color: var(--ink2);
+  cursor: pointer;
+}
+.book-compare-wide:hover {
+  color: var(--ink);
+}
+/* A compare's engines: side by side when there is room, one under another
+   when there is not. */
+.book-engines {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 520px), 1fr));
+  gap: 14px;
+  align-items: start;
+}
+.book-compare[data-wide] {
+  position: fixed;
+  inset: 58px 22px 22px;
+  z-index: 60;
+  overflow: auto;
+  padding: 14px 18px 24px;
+  background: var(--desk);
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px var(--rule), 0 30px 70px color-mix(in srgb, var(--shade) 22%, transparent);
+}
+.book-compare[data-wide] .book-engines {
+  grid-template-columns: repeat(auto-fit, minmax(440px, 1fr));
+}
+.book-compare[data-wide] [data-run-card] {
+  margin-bottom: 0;
+}
+
+/* What a run changed, file by file. */
+.book-diff {
+  display: flex;
+  height: 100%;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--paper);
+}
+.book-diff-files {
+  flex: none;
+  width: 280px;
+  padding: 8px 0;
+  overflow: auto;
+  border-right: 1px solid var(--rule);
+  background: var(--under);
+}
+.book-diff-sum {
+  margin: 0 12px 6px;
+  font: 500 11.5px var(--mono);
+  color: var(--ink2);
+}
+.book-diff-files button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border: 0;
+  background: none;
+  font: 12px var(--mono);
+  text-align: left;
+  color: var(--ink);
+  cursor: pointer;
+}
+.book-diff-files button:hover {
+  background: var(--raised);
+}
+.book-diff-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.book-diff-status {
+  font: 10px var(--sans);
+  color: var(--ink3);
+}
+.book-diff-body {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+  font: 12px/1.55 var(--mono);
+}
+.book-diff-head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  gap: 10px;
+  padding: 7px 12px;
+  background: var(--raised);
+  border-top: 1px solid var(--rule);
+  border-bottom: 1px solid var(--rule);
+  font-weight: 500;
+}
+.book-diff-line {
+  padding: 0 12px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  color: var(--ink2);
+}
+.book-diff-line.is-add {
+  background: color-mix(in oklab, var(--cseries-moss, #5fae7f) 13%, transparent);
+  color: color-mix(in oklab, var(--good-ink) 75%, var(--ink));
+}
+.book-diff-line.is-del {
+  background: color-mix(in oklab, var(--cseries-clay, #c75f55) 12%, transparent);
+  color: color-mix(in oklab, var(--bad-ink) 75%, var(--ink));
+}
+.book-diff-line.is-hunk {
+  padding-top: 4px;
+  padding-bottom: 4px;
+  background: color-mix(in oklab, var(--lit) 7%, transparent);
+  color: var(--lit-ink);
+}
+.book-diff-more {
+  padding: 8px 12px;
+  color: var(--ink3);
+}
+
+@media (max-width: 860px) {
+  .book-compare[data-wide] {
+    inset: 40px 0 var(--strip-h, 64px);
+    border-radius: 0;
+  }
+  .book-compare[data-wide] .book-engines {
+    grid-template-columns: 1fr;
+  }
+  .book-diff {
+    flex-direction: column;
+  }
+  .book-diff-files {
+    width: auto;
+    max-height: 40vh;
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
+  }
+}
+
+/* Less motion: the strands do not breathe, the live mark does not blink, and
+   a card turned to shows a still ring for a moment instead of a glow. */
+@media (prefers-reduced-motion: reduce) {
+  .book-strand-halo,
+  .book-live[data-live]::before {
+    animation: none;
+  }
+  .book-sheet [data-run-card][data-flash] {
+    animation: none;
+    box-shadow: 0 0 0 3px color-mix(in srgb, var(--engine-color, var(--lit)) 45%, transparent);
+  }
+}
+
+/* Windows the shared components open over the page (the version window, a run
+   card expanded) sit inside the book, whose layer is under the desk's bar:
+   they start below the bar, so their own heads (Preview, Changes, Close) are
+   never covered by it. */
+.book-desk [data-testid="version-view"] {
+  top: 52px;
+}
+.book-desk [data-run-card].fixed {
+  top: 58px;
+}
+@media (max-width: 860px) {
+  .book-desk [data-testid="version-view"] {
+    top: 40px;
+  }
+  .book-desk [data-run-card].fixed {
+    inset: 46px 8px 8px;
+  }
+}
+
+/* A version window or an expanded run card opened from the right side is
+   fixed to the window, but it is drawn in the right side's own layer
+   (z-index 5, its phone sheet 15): under the page (10), the tabs (6) and the
+   phone's strip (20). While one is open, the right side's layer goes above
+   them all and above a page-turn copy (40), still under the bar (50), which
+   those windows start below. Last in the file, so it also outranks the phone
+   sheet's rule. */
+.book-right:has([data-testid="version-view"], [data-run-card].fixed) {
+  z-index: 45;
+}
+
+/* "Where this stands": one line until it is opened, and when open capped in
+   height with its own scroll, so the conversation stays in view
+   (page-top.tsx Stands; the same as Circles' cards.css .stands-box). */
+.book-stands-box {
+  flex: none;
+  margin: 0 0 6px;
+  padding: 4px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line, rgba(0, 0, 0, 0.12));
+}
+.book-stands-box[data-open] {
+  padding: 6px 12px 8px;
+  max-height: 34vh;
+  overflow: auto;
+}
+.book-stands-toggle {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  width: 100%;
+  min-width: 0;
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  cursor: pointer;
+}
+.book-stands-toggle .k {
+  flex: none;
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.book-stands-toggle .first {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}

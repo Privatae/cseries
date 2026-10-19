@@ -1,0 +1,222 @@
+#!/bin/sh
+# The guest's half of the cseries command. The command on the machine runs
+# these as root through the VM's exec channel (on Windows,
+# `wsl.exe -d cseries -u root --exec cseries-guest <command>`), so this file is
+# the whole interface between the two and nothing here listens on a network.
+#
+#   wait-boot          wait until systemd has finished starting
+#   configure          read the pinned images from stdin (host=, postgres=,
+#                      release=) and write them where the units read them
+#   pull               pull both images, with progress
+#   start | stop | restart
+#   status             key=value lines
+#   health             exit 0 when the Host answers on 127.0.0.1:8800
+#   logs host|postgres [--follow] [--lines N]
+#   host-log           the current Host container's own output
+#   pair-token         a one-time pairing token for the bastion, as JSON
+#   keepalive          hold the VM up while it runs; a second one exits at
+#                      once, so starting it at every login never piles up
+#   version            the guest image's version
+set -eu
+
+UNITS=/etc/containers/systemd
+STATE=/etc/cseries
+
+die() { printf '%s\n' "$*" >&2; exit 1; }
+
+# A command can arrive in the root of the guest's cgroup tree: docker exec puts
+# one there while systemd has not yet enabled any controllers, and where WSL's
+# exec channel puts its processes is not something this file can know. While a
+# process sits in that root, and the root is not the kernel's own (a
+# container's or a namespace's), the kernel refuses to enable controllers
+# below it, so systemd cannot, and the containers fail to start with
+# "controller pids is not available". A command found there moves itself
+# into init.scope first, as runc does.
+leave_root_cgroup() {
+    if [ "$(cat /proc/self/cgroup 2>/dev/null)" = "0::/" ] && [ -d /sys/fs/cgroup/init.scope ]; then
+        echo $$ > /sys/fs/cgroup/init.scope/cgroup.procs 2>/dev/null || true
+    fi
+}
+leave_root_cgroup
+
+image_of() {
+    # The Image= line configure wrote for $1 (host or postgres), or nothing.
+    f="$UNITS/cseries-$1.container.d/image.conf"
+    [ -f "$f" ] || return 0
+    sed -n 's/^Image=//p' "$f"
+}
+
+# An image reference as configure accepts it: a name pinned by digest, which
+# podman finds in its own store or pulls, and never takes a moved tag for.
+valid_ref() {
+    case "$1" in
+        *[!a-z0-9._/:@-]*|"") return 1 ;;
+        *@sha256:*) ;;
+        *) return 1 ;;
+    esac
+    digest=${1##*@sha256:}
+    [ ${#digest} -eq 64 ] || return 1
+    case "$digest" in *[!0-9a-f]*) return 1 ;; esac
+    return 0
+}
+
+write_if_changed() {
+    # $1 path, $2 content. Prints 1 when the file changed, 0 when not.
+    if [ -f "$1" ] && [ "$(cat "$1")" = "$2" ]; then
+        echo 0
+        return
+    fi
+    mkdir -p "$(dirname "$1")"
+    printf '%s\n' "$2" > "$1.new"
+    mv "$1.new" "$1"
+    echo 1
+}
+
+configure() {
+    host="" postgres="" release=""
+    while IFS='=' read -r key value || [ -n "$key" ]; do
+        case "$key" in
+            host) host=$value ;;
+            postgres) postgres=$value ;;
+            release) release=$value ;;
+            "") ;;
+            *) die "configure: unknown key $key" ;;
+        esac
+    done
+    valid_ref "$host" || die "configure: host image is not pinned by digest: $host"
+    valid_ref "$postgres" || die "configure: postgres image is not pinned by digest: $postgres"
+    case "$release" in
+        *[!0-9A-Za-z.+-]*|"") die "configure: release is not a version: $release" ;;
+    esac
+    a=$(write_if_changed "$UNITS/cseries-host.container.d/image.conf" "[Container]
+Image=$host")
+    b=$(write_if_changed "$UNITS/cseries-postgres.container.d/image.conf" "[Container]
+Image=$postgres")
+    c=$(write_if_changed "$STATE/release" "$release")
+    if [ "$a$b" != 00 ]; then
+        systemctl daemon-reload
+        echo changed=1
+    else
+        echo changed=0
+    fi
+    : "$c"
+}
+
+need_config() {
+    [ -n "$(image_of host)" ] && [ -n "$(image_of postgres)" ] ||
+        die "No images are configured in this guest yet. Run the cseries command on the machine again."
+}
+
+unit_state() {
+    s=$(systemctl is-active "$1" 2>/dev/null) || true
+    printf '%s' "${s:-unknown}"
+}
+
+# Starts (or restarts) both units and returns once both are running. A unit
+# whose first attempt fails is retried by systemd (Restart=always), so the
+# answer is the units' state after those retries, not the first systemctl
+# call's exit status.
+run_units() {
+    systemctl "$1" cseries-postgres.service cseries-host.service 2>/dev/null || true
+    i=0
+    while [ $i -lt 90 ]; do
+        if [ "$(unit_state cseries-postgres.service)" = active ] &&
+           [ "$(unit_state cseries-host.service)" = active ]; then
+            return 0
+        fi
+        sleep 2
+        i=$((i + 1))
+    done
+    systemctl status --no-pager --lines 15 cseries-postgres.service cseries-host.service >&2 || true
+    die "The Host's containers did not start. Their logs: cseries-guest logs host, cseries-guest logs postgres"
+}
+
+cmd=${1:-}
+[ $# -gt 0 ] && shift
+case "$cmd" in
+    wait-boot)
+        # The first command into a just-started VM can run before systemd
+        # answers on its bus; an empty answer is asked again. degraded still
+        # means boot finished; the Host's units are checked on their own.
+        s="" i=0
+        while [ $i -lt 180 ]; do
+            leave_root_cgroup
+            s=$(timeout 180 systemctl is-system-running --wait 2>/dev/null) || true
+            [ -n "$s" ] && break
+            sleep 1
+            i=$((i + 1))
+        done
+        echo "system=${s:-unknown}"
+        case "$s" in running|degraded) ;; *) exit 1 ;; esac
+        ;;
+    configure)
+        configure
+        ;;
+    pull)
+        need_config
+        for which in postgres host; do
+            ref=$(image_of "$which")
+            podman image exists "$ref" || podman pull "$ref"
+        done
+        ;;
+    start)
+        need_config
+        run_units start
+        ;;
+    stop)
+        systemctl stop cseries-host.service cseries-postgres.service 2>/dev/null || true
+        ;;
+    restart)
+        need_config
+        run_units restart
+        ;;
+    status)
+        echo "guest=$(cat "$STATE/guest-version" 2>/dev/null || echo unknown)"
+        echo "release=$(cat "$STATE/release" 2>/dev/null || echo none)"
+        echo "host_image=$(image_of host)"
+        echo "postgres_image=$(image_of postgres)"
+        echo "host=$(unit_state cseries-host.service)"
+        echo "postgres=$(unit_state cseries-postgres.service)"
+        if curl -fsS --max-time 3 -o /dev/null http://127.0.0.1:8800/api/system/health 2>/dev/null; then
+            echo "health=ok"
+        else
+            echo "health=down"
+        fi
+        ;;
+    health)
+        curl -fsS --max-time 3 -o /dev/null http://127.0.0.1:8800/api/system/health
+        ;;
+    logs)
+        which=${1:-host}
+        [ $# -gt 0 ] && shift
+        case "$which" in host|postgres) ;; *) die "logs: host or postgres" ;; esac
+        lines=200 follow=""
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --follow|-f) follow=-f ;;
+                --lines|-n) shift; lines=${1:-200} ;;
+                *) die "logs: unknown option $1" ;;
+            esac
+            shift
+        done
+        case "$lines" in *[!0-9]*|"") die "logs: --lines takes a number" ;; esac
+        exec journalctl -u "cseries-$which.service" --no-pager -o cat -n "$lines" $follow
+        ;;
+    host-log)
+        # Both streams in the order the Host wrote them: the newest setup code
+        # is the last one.
+        exec podman logs --tail 5000 cseries-host 2>&1
+        ;;
+    pair-token)
+        exec podman exec cseries-host python3 -m cli.cseries bastion pair-token
+        ;;
+    keepalive)
+        exec flock -n /run/cseries-keepalive.lock sleep infinity
+        ;;
+    version)
+        cat "$STATE/guest-version"
+        ;;
+    *)
+        die "usage: cseries-guest wait-boot|configure|pull|start|stop|restart|status|health|logs|host-log|pair-token|keepalive|version"
+        ;;
+esac

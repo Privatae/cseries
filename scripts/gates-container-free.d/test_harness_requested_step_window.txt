@@ -1,0 +1,2 @@
+# A tool step whose call asks for a longer timeout through the CLI's own tool contract (grok up to 10 h, claude-code Bash, kimi) gets max(tool-step window, request + margin), still judged by CPU and I/O liveness; opencode's running steps, which its output never shows, are read from opencode's own database; a spinning step stops at its request plus the margin and an idle one at the idle window. Scaled-down windows, stub CLIs, a stand-in SDK and a stand-in opencode database.
+test_harness_requested_step_window.py

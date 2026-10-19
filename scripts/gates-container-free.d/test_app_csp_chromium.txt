@@ -1,0 +1,17 @@
+# 2026-10-10: a store (community) app's CSP wall, measured in headless
+# Chromium. proxy._app_csp had no 'wasm-unsafe-eval', so PhotoCraft's official
+# web build hung on "Loading PhotoCraft..." as a store copy; only the HTML
+# page carried the policy, so the app's worker (which runs under its own
+# script's CSP) fetched any host past manifest.network; a store app with its
+# own pod served pages and workers with whatever policy the pod chose; and a
+# store app's service worker built responses with no policy at all. The real
+# _app_csp (both forms) and the real proxy.serve_app (DB row and pod wake
+# stubbed) over community install dirs, against loopback servers on free
+# ports: wasm compiles, eval stays refused, page and worker (on disk or from
+# the pod) are refused an undeclared host that counts its hits, and a store
+# app's service worker registration is refused while a first-party app's is
+# not. Needs Playwright and Chromium, which this lane already has for
+# test_sandbox_csp.py; no pod, no DB, no network. Measured 2026-10-10: 15
+# checks fail on the wasm-only commit, 11 on the worker commit before the pod
+# and service-worker fixes, 0 with them, 3 runs in a row.
+test_app_csp_chromium.py

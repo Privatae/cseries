@@ -1,0 +1,1 @@
+test_autofill_grant_pg.py                # real Postgres (TEST_DSN/PEER_TEST_DSN, else a throwaway cseries-postgres) on a fresh clone of the KERNEL's schema (scripts/kernel_schema.py), drives server/browser_autofill.py from the tree and never touches a live Host's database. Without a server or docker: SKIP by hand (exit 2), FAIL with GATE_LANE set

@@ -1,0 +1,8 @@
+# A search-mode Host
+# sends one fixed core per surface, byte-identical on every call but the
+# documented exits (the spend stop keeps it with tool_choice "none"; only
+# `escalate` alone differs); a tool a turn called rides the next turns'
+# history once, in find_tools' own bytes, counted in the history size,
+# evicted with its turn, never first in the window, and in PII mode too; a
+# note reaches Kimi K3 as the system message it already takes after history.
+test_tool_search_core.py

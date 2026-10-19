@@ -1,0 +1,68 @@
+id: security
+name: Security
+description: See what your host is allowed to reach, and scan your machine for known weaknesses.
+icon: icon.png
+icon_small: icon-64.png
+entrypoint: index.html
+provenance: standard
+system: true
+# 2.0.5 (2026-08-25): prompt_behavior described the scanner and nothing else,
+# so a host BLOCKED on its own pending access request had no way to route the
+# user to the screen that unblocks it — Approvals is a first-class view
+# (index.html:25-28) and is what app.js:327-380 spends most of its code on,
+# duration picker included. Manifest-only change; store-lane app, so the bump
+# is what carries it.
+# 2.0.6 (2026-10-01): the HTML escape helper escapes both quotes as well, so a
+# value from the Host, a machine or a provider stays inside the attribute it
+# is written into. App-only change.
+# 2.0.7 (2026-10-01): Approvals is gone. Its requests came only from the
+# Portal's add-folder route, which nothing called; no live Host ever held one;
+# and every Allow, Don't Allow and "Remove this permission" was refused at the
+# CEIGAS gate (core.governance is read-only to a Host). The view, its badge and
+# banner, the grant/deny/revoke calls and the two write scopes behind them are
+# removed, and prompt_behavior no longer sends the Host's user to it.
+# 2.0.8 (2026-10-02, batch merge): the security scan answers inside the
+# router's 30 s, going through a polled job when it runs longer
+# (server/applications/long_request.py). Together with 2.0.7 above.
+# 2.0.9 (2026-10-18): the product is renamed C-Series (names, paths, env vars).
+# 2.0.10 (2026-10-18): prompt_behavior is one paragraph saying what the app is
+#   and what lives in it; do_when_active is gone from the manifest contract,
+#   and its how-to lines live in skills and tool descriptions the Host reads on
+#   demand. Manifest-only; bundle repacked.
+version: "2.0.10"
+# Environment-catalog facts (host-facing, code-true). Source for the L1
+# topology block + describe_app. This is a control panel, not a conversational
+# surface, so the load-bearing content lives in what_it_is (the only field
+# describe_app returns besides user_path); the do_when_active line is the same
+# rule for the case where this app IS the active surface.
+prompt_behavior:
+  what_it_is: |
+    Security is where the user sees what their host is allowed to reach and
+    checks the machine for known weaknesses. Five views: Overview,
+    Permissions, Processes, Network, History.
+
+    It reports rather than gates: the permissions the host holds, scans of
+    the user's container (packages, operating-system settings, services
+    listening on the network) and the problems they turn up, what is
+    currently running, the network picture, and a history of governance
+    signals. Nothing waits here for the user's answer. Scans read system
+    state only — never the user's documents. Changing a network rule is not
+    done here; that is proposed and approved in the Network app.
+  user_path: "the Security app, in the dock"
+
+window:
+  title: Security
+  width: 900
+  height: 640
+  resizable: true
+  min_width: 600
+  min_height: 400
+
+permissions:
+  - execute:scan
+  - read:incidents
+  - read:network
+  - read:policy
+  - read:processes
+  - read:signals
+  - write:network

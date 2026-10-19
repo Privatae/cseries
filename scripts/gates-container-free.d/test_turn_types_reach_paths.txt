@@ -1,0 +1,2 @@
+# Turn types: what a typed turn reaches with no tool argument naming it — a dispatched agent's local model runs only on a server the type lists ('*' = any), and one served only elsewhere is refused, never moved to a cloud model; the browser's cold wake restores the kept sign-ins only when the type lists browser:profile. Untyped asserted unchanged first. Real functions against stubs; no pod, no DB, no network.
+test_turn_types_reach_paths.py

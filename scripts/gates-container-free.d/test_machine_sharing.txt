@@ -1,0 +1,8 @@
+
+# Sharing a machine's MODELS with another host. Pins the three
+# properties this side is responsible for — the model scope reaches the
+# SIGNED grant bytes (fixed vector, the box parses these exact bytes), an
+# approval costs the other side nothing until the second factor has been
+# checked, and an enrolment token never falls back to the platform relay.
+# Stub pool, stub mgmt relay, stub peer lane; no DB, no network.
+test_machine_sharing.py

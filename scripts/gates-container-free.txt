@@ -1,0 +1,40 @@
+# gates-container-free.txt: the container-free gate list, as a directory.
+#
+# This file lists NO gates. Each container-free gate is one file in
+# scripts/gates-container-free.d/, named after the gate (test_foo.py is
+# scripts/gates-container-free.d/test_foo.txt), holding the comment that says
+# why the gate exists and what it needs, then the gate's name on a line of its
+# own. To add a gate, add its file there; never add a line here.
+#
+# WHY A DIRECTORY. Every branch that added a gate appended a line
+# to the end of this one file, so any two such branches conflicted here, and a
+# pull request went unmergeable the moment another one merged: two in a row each had to be rebased after the one before them merged, for
+# this file alone. One file per gate cannot conflict with another gate's file.
+#
+# What the list is for: gate scripts that run against the SOURCE TREE and need
+# no image, no container, no DB server of the Host's own, no network. Both
+# scripts/smoke_test.sh (so they gate a ship) and scripts/pre_merge_gates.sh (so
+# they gate a merge, in seconds) read the directory: one entry runs in both
+# places at once. A gate that needs live infrastructure belongs in
+# scripts/gates-infra-only.d/ instead.
+#
+# WHY THIS FILE EXISTS.
+# Every script first listed here already existed in scripts/ and was invoked by NOTHING.
+# Not smoke, not any runbook, not CI — there is no CI. They were written as
+# gates, they pass, and they had been silently dead. test_phase_spec_gate.py sat
+# in that same dead set until a release session wired it in by hand, which is
+# what prompted counting the rest. Among these is test_migrations_guarded.py,
+# "the invariant ratchet for the v080 crashloop class" — a gate against the exact
+# failure mode (a migration that aborts entity startup) that had to be checked by
+# hand during that release because nothing was checking it automatically.
+#
+# All 18 exited 0 when they were first listed.
+#
+# The rules, enforced by scripts/test_gate_coverage.py:
+#   - every scripts/test_*.py and check_*.py is accounted for: invoked inline by
+#     smoke, or has a file here, or a file in gates-infra-only.d/. A new gate
+#     that is wired nowhere fails that ratchet instead of going quietly dead;
+#   - each file names exactly one gate, the one its file name says, and that
+#     gate exists;
+#   - this file lists no gate.
+#   - A gate must pass with: APP_ROOT=<repo> python3 scripts/<name>.py

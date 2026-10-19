@@ -1,0 +1,6 @@
+# A finding stop (v172) — named by fingerprint and
+# order id, never a pid — is cleared only by the box's answer to THAT order or
+# by its age, never by silence; malformed answers clear nothing; the grant gate
+# holds for the finding path. Recording fake pool, real functions; no DB, no
+# container, no network.
+test_contain_finding.py

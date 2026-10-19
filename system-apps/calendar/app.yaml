@@ -1,0 +1,56 @@
+id: calendar
+name: Calendar
+description: Your events and your Host's scheduled work in one calendar — the month at a glance, what is coming up, and every run of each task.
+icon: icon.svg
+icon_small: icon.svg
+entrypoint: index.html
+provenance: standard
+system: true
+# 0.1.0 (2026-10-10): first cut. The calendar leaves the rail in Circles and
+# becomes an app of its own;
+# Circles keeps a short "coming up" list that opens this one.
+#
+# ONE TABLE HOLDS IT ALL (calendar_events, in the Host's own database): the
+# Host's scheduled tasks (event_type scheduled_task; each run is a row of
+# calendar_event_runs), the Host's log of what happened (an app installed, a
+# pull request shipped), and the person's own events. A task is labelled as the
+# Host's, with when it runs next, how often it repeats, what it does and every
+# run with its result. Built-in and free, like the other image-baked apps: no
+# store row, no price.
+#
+# EVERYTHING FROM THE TABLE IS TEXT: titles, a task's prompt and a run's
+# output are written by the Host, a model or another app, so nothing here goes
+# through innerHTML.
+# 0.1.1 (2026-10-18): prompt_behavior is one paragraph saying what the app is
+#   and what lives in it; do_when_active is gone from the manifest contract,
+#   and its how-to lines live in skills and tool descriptions the Host reads on
+#   demand. Manifest-only; bundle repacked.
+# 0.1.2 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
+version: "0.1.2"
+prompt_behavior:
+  what_it_is: >
+    Calendar is where the user sees their own events and your scheduled work on
+    one calendar: a month grid, a list (coming up, today, everything, your
+    tasks, or one kind of event), and each event in full. Your scheduled tasks
+    are labelled as yours, and a task's page shows when it runs next, how often
+    it repeats, what it does and every run with its result. The user can add an
+    event, mark one done, or cancel one, a task of yours included.
+  user_path: "the Calendar app, in the dock"
+
+window:
+  title: Calendar
+  width: 1100
+  height: 760
+  resizable: true
+  min_width: 720
+  min_height: 520
+  # Phone mode: reflows to one column (the month above the list, an event as
+  # its own screen) instead of the shell's scale shim. Driven at 390 x 844 by
+  # scripts/test_calendar_app_browser.py.
+  mobile: responsive
+
+# Both scopes map to live routes (server/routes/calendar.py). The desktop's
+# own token holds read:calendar too, for the count on this app's dock icon.
+permissions:
+  - read:calendar    # GET /api/calendar/list, /read/{id}, /events/{id}/runs
+  - write:calendar   # POST /api/calendar, /complete/{id}, /cancel/{id}

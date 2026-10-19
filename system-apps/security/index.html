@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Security</title>
+    <link rel="stylesheet" href="/css/tokens.css">
+    <link rel="stylesheet" href="/css/motion.css">
+    <link rel="stylesheet" href="/css/cseries-components.css">
+    <link rel="stylesheet" href="/system-apps/security/style.css">
+</head>
+<body class="cseries-scroll">
+    <div class="app">
+        <header class="app-header">
+            <div class="app-brand">
+                <div class="app-brand-icon shield-icon" id="shield-icon" aria-hidden="true">&#x1F6E1;</div>
+                <div class="app-brand-text">
+                    <div class="app-brand-title">Security</div>
+                    <div class="app-brand-sub label-sys" id="status-tagline">system protection</div>
+                </div>
+            </div>
+
+            <nav class="cseries-nav" role="tablist" aria-label="Security sections">
+                <button class="cseries-nav-btn active" data-view="overview" role="tab" aria-selected="true">Overview</button>
+                <button class="cseries-nav-btn" data-view="permissions" role="tab" aria-selected="false">Permissions</button>
+                <button class="cseries-nav-btn" data-view="processes" role="tab" aria-selected="false">Processes</button>
+                <button class="cseries-nav-btn" data-view="network" role="tab" aria-selected="false">Network</button>
+                <button class="cseries-nav-btn" data-view="history" role="tab" aria-selected="false">History</button>
+            </nav>
+        </header>
+
+        <div class="cseries-seam"></div>
+
+        <main class="app-body">
+
+            <!-- ═══ Overview ═══ -->
+            <section id="view-overview" class="app-view" role="tabpanel">
+                <div class="status-banner" id="status-banner">
+                    <div class="status-icon" id="status-icon" aria-hidden="true">&#x1F6E1;</div>
+                    <div class="status-text">
+                        <div class="status-headline" id="status-headline">No scan yet</div>
+                        <div class="status-detail" id="status-detail">
+                            Run your first scan to check for vulnerabilities, outdated packages, and misconfigured permissions.
+                        </div>
+                    </div>
+                    <button class="cseries-btn primary" id="btn-scan">Run Scan</button>
+                </div>
+
+                <div class="scan-progress" id="scan-progress" hidden>
+                    <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+                    <div class="progress-label" id="progress-label">Collecting system data...</div>
+                </div>
+
+                <div id="findings-area"></div>
+
+                <div id="system-profile" hidden>
+                    <div class="section-label label-sys">System Profile</div>
+                    <div class="profile-grid" id="profile-grid"></div>
+                </div>
+            </section>
+
+            <!-- ═══ Permissions ═══ -->
+            <section id="view-permissions" class="app-view" role="tabpanel" hidden>
+                <div class="view-heading">
+                    <h2>What your Host can do</h2>
+                    <p class="view-sub">These are the permissions your Host has.</p>
+                </div>
+                <div id="permissions-list" class="stack"></div>
+            </section>
+
+            <!-- ═══ Processes ═══ -->
+            <section id="view-processes" class="app-view" role="tabpanel" hidden>
+                <div class="section-intro">
+                    What's running on your system right now. High memory or CPU usage may indicate a problem.
+                </div>
+                <div class="toolbar">
+                    <button class="cseries-btn" id="btn-refresh-procs">Refresh</button>
+                </div>
+                <div id="process-list"></div>
+            </section>
+
+            <!-- ═══ Network ═══ -->
+            <section id="view-network" class="app-view" role="tabpanel" hidden>
+                <div class="section-intro">
+                    Open ports and inbound listeners on this container.
+                </div>
+
+                <!-- ── Listeners (existing read-only) ── -->
+                <div class="manage-section">
+                    <div class="detail-label">Open ports</div>
+                    <p class="manage-desc">
+                        Inbound listeners on this container. Each one is a door — only expected services should be here.
+                    </p>
+                    <div class="view-toolbar">
+                        <button class="cseries-btn" id="btn-refresh-net">Refresh</button>
+                    </div>
+                    <div id="network-info"></div>
+                </div>
+            </section>
+
+            <!-- ═══ History ═══ -->
+            <section id="view-history" class="app-view" role="tabpanel" hidden>
+                <div class="view-heading">
+                    <h2>Activity History</h2>
+                    <p class="view-sub">Past security scans and permission changes in one place.</p>
+                    <div class="view-toolbar">
+                        <select id="history-filter" class="cseries-select">
+                            <option value="all">All activity</option>
+                            <option value="scans">Scans only</option>
+                            <option value="signals">Permission changes</option>
+                        </select>
+                    </div>
+                </div>
+                <div id="history-list"></div>
+            </section>
+
+        </main>
+
+        <footer class="app-footer">
+            <span class="label-sys" id="footer-left">security · <span id="footer-version">2.0.1</span></span>
+            <span class="label-sys app-footer-right" id="footer-right">ready</span>
+        </footer>
+    </div>
+
+    <script src="/system-apps/security/app.js"></script>
+</body>
+</html>

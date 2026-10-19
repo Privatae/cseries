@@ -1,0 +1,81 @@
+id: telegram
+name: Telegram
+description: Talk to your Host from Telegram. You pair one Telegram account with your own bot; its messages start turns in your chat, and the replies come back in Telegram. The bot's token stays in Keys.
+icon: icon.png
+icon_small: icon-64.png
+# 1.0.0 (2026-10-05): the Telegram connector as a store app. Until now a Host
+# built it by retyping the connectors skill's worked example (788 lines of
+# connector.py, measured at $0.93 of model tokens for one install, and its
+# first ship failed). A user should be able to install Telegram from the
+# app store and get those 788 lines. connector.py is that example, moved
+# here unchanged. The id is `telegram`, not the example's `telegram-connector`:
+# Hosts that already built their own keep it, and the store's upgrade sweep
+# (default_install.py) and the operator's store-manifest check both match by id.
+# 1.0.1 (2026-10-05): one picture at a time. Its memory limit is 128 MiB,
+# measured on the pod (resources below).
+# 1.0.2 (2026-10-05): a message the person forwards, or sends through an
+# inline bot, goes to the Host with its origin (forward_origin, via_bot), so
+# the Host reads it as someone else's words; the Host's retry_after is the
+# flood-control wait.
+# 1.0.3 (2026-10-08): a failure the connector tries again is logged in plain
+# words ("no updates this time (connection refused); trying again in 5 s"),
+# never Python's ("<urlopen error ...>"), so the Host's app proof no longer
+# reads a connector that recovered as a broken one; a message dropped or a
+# reply let go still reads as the error it is.
+# 1.0.4 (2026-10-09): Telegram refusing the bot token (getUpdates answered 401
+# Unauthorized, or 404 Not Found for a malformed one) is no longer asked again
+# every 5 s as an ordinary failure: it is logged once as an error, /health
+# answers ok false with it and the app's page says so, and it is checked
+# again every 10 minutes, so a token put right in Keys is picked up without a
+# restart. A message, a picture or an update given up on, and the Host not
+# recording what was sent, read as the errors they are.
+# 1.0.5 (2026-10-09): the report telling the Host what message a reply's part
+# was sent as is tried again when the Host cannot be reached or cannot take
+# it now (429, 5xx), up to 4 times with a growing wait, instead of being lost
+# on the first timeout; given up, it is logged once as an error.
+# 1.0.6 (2026-10-18): the product is renamed C-Series (names, paths, env vars).
+version: "1.0.6"
+provenance: standard
+# No index.html on purpose. A process app whose page has no file on disk is
+# forwarded to its pod (proxy.serve_app), and connector.py answers every path
+# but /health with its status page.
+entrypoint: index.html
+permissions: []
+# Only Telegram's API host. The connector never calls it itself (every Bot API
+# call goes through the Host), but the pairing refuses an app that declares no
+# host or any other host.
+network: [api.telegram.org]
+resources:
+  # The pod's memory LIMIT: the burst ceiling of the whole app container
+  # (run.py, the platform's wrapper, and connector.py), which reserves
+  # nothing. Lean, not worst case (better to explain a failure caused by
+  # optimizing memory than to over-reserve it): connector.py holds one picture at a
+  # time. Measured by part M of scripts/test_connector_telegram_example.py,
+  # which runs the pod's real shape under this limit and fails on an OOM
+  # kill. Peak of the container's cgroup (memory.peak), with the largest
+  # picture the Host streams (10 MiB), four runs on 2026-10-05: three replies
+  # at once with one each 66.0-83.6 MiB; one reply with three 56.3-67.0 MiB;
+  # a pod killed with three such replies saved, picked up by the next one,
+  # 66.4-68.3 MiB. The connector before this limit (no one-picture rule) was
+  # OOM-killed at 128.
+  baseline_memory_mi: 128
+runtime:
+  kind: process
+  image: python
+  lifecycle: resident
+  command: ["python3", "connector.py"]
+  ready_path: /health
+window:
+  title: Telegram
+  width: 520
+  height: 240
+  resizable: true
+prompt_behavior:
+  what_it_is: |
+    The Telegram app lets ONE Telegram account the person pairs talk to
+    them through their own chat: a message to their bot starts a turn in
+    one of their threads, and the reply goes back to Telegram. Its window
+    only shows what the connector is doing. Setting it up (the bot token in
+    Keys, the pairing, the approval) and how messages find their thread is
+    skill 'connectors'.
+  user_path: "the Telegram app (install it from the App Store); the pairing and the approval are in the Network app"

@@ -1,0 +1,2 @@
+# 2026-09-05: the host can look at a broken page itself (entity-9128).
+test_check_page_tool.py

@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Template</title>
+
+    <!-- C-Series design system. Always load in this order. -->
+    <link rel="stylesheet" href="/css/tokens.css">
+    <link rel="stylesheet" href="/css/motion.css">
+    <link rel="stylesheet" href="/css/cseries-components.css">
+
+    <!-- App-specific styles last -->
+    <link rel="stylesheet" href="/system-apps/TEMPLATE/style.css">
+</head>
+<body class="cseries-scroll">
+    <div class="app">
+        <!-- Standard C-Series app header: icon, title, (optional internal nav) -->
+        <header class="app-header">
+            <div class="app-brand">
+                <img src="/system-apps/TEMPLATE/icon-64.png" alt="" class="app-brand-icon">
+                <div class="app-brand-text">
+                    <div class="app-brand-title">Template</div>
+                    <div class="app-brand-sub label-sys">short tagline</div>
+                </div>
+            </div>
+
+            <!-- Internal nav (remove if the app has one view) -->
+            <nav class="cseries-nav" hidden>
+                <button class="cseries-nav-btn active" data-view="main">Main</button>
+                <button class="cseries-nav-btn" data-view="second">Second</button>
+            </nav>
+        </header>
+
+        <!-- The Threshold Seam under the header -->
+        <div class="cseries-seam"></div>
+
+        <!-- Main content area -->
+        <main class="app-body">
+            <section id="view-main" class="app-view">
+                <div class="cseries-empty">
+                    <span class="empty-title">Hello from a Privatae Host app</span>
+                    Copy /app/system/apps/_template/ to a new slug, edit app.yaml,
+                    index.html, style.css, app.js, swap the icons, and ship.
+                </div>
+            </section>
+        </main>
+
+        <!-- Optional footer strip (status, policy version, etc.) -->
+        <footer class="app-footer">
+            <span class="label-sys">template · 1.0.0</span>
+            <span class="label-sys app-footer-right">ready</span>
+        </footer>
+    </div>
+
+    <script src="/system-apps/TEMPLATE/app.js"></script>
+</body>
+</html>

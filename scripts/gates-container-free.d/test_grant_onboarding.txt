@@ -1,0 +1,2 @@
+# 2026-09-27 (grant onboarding): propose_mgmt_grant drafts only tokens a gate enforces, for a machine that has checked in; purposes (observe, map, ops, models, builds, contain) draft the exact ops each job's gate checks; an op a machine does not answer yet is a caution; the result states the 30-day lifetime approval signs. Stub pool; no pod, no DB.
+test_grant_onboarding.py

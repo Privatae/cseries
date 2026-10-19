@@ -1,0 +1,2 @@
+# Artifacts: an artifact revision keeps every file whatever its size (an unchanged one hard-linked, stored once); a restore brings files over 1 MiB back and a pre-fix revision never deletes what it did not record; every revision is kept, the oldest removed only when the disk cannot take the next and the revision says so; history and the artifact list page with total + next_offset; a tune edit is bounded by its page, not 2,048. Temp folders and a stub pool.
+test_caps_artifact_history.py

@@ -1,0 +1,15 @@
+# trivy config, auto-loaded from the working directory (trivy 0.73).
+#
+# It exists for ONE reason: trivy's default ignore file is `.trivyignore`, and
+# that format cannot scope an accepted finding to a PATH — it takes bare CVE
+# ids, so accepting one id would silence it everywhere in every image. We need
+# path scoping (see .trivyignore.yaml), which only the YAML format supports,
+# and trivy does NOT auto-discover the `.yaml` name.
+#
+# Without this file the release gate command —
+#   trivy image --exit-code 1 --severity CRITICAL --ignore-unfixed <image>
+# — silently ignores .trivyignore.yaml and goes red on an already-accepted
+# finding (measured on an image release: exit 1, 3 CRITICALs). Pointing trivy
+# at the committed file HERE keeps the rule intact: accepted findings live in a committed, dated, reviewed file and
+# are never silenced with a command-line flag.
+ignorefile: .trivyignore.yaml

@@ -1,0 +1,7 @@
+# The published tree carries no private tracking references, internal names or
+# contact details: no ticket or PR numbers, no references to plan or design
+# documents that are not in the tree, no reserved entity ids, no internal tool
+# or former project names, no personal mailboxes or real phone numbers, and no
+# claims that a sample was copied from a Host. Scans every tracked text file and
+# every .cseries bundle member. Reads files only.
+test_public_source_clean.py

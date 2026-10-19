@@ -1,0 +1,2 @@
+# Brief prompt: find_tools is the one discovery door. A skill, an app, a capability card, a turn type and a harness are each found by plain words with the call that uses it; an entry that is not a tool is never callable through read or operate; its next step is one this turn may take (a read-only route gets describe_app, not open_app); hits are compact and find_tools(name=...) gives one in full; one source that fails gives [] and the others still arrive. DoorCatalog with stand-in entries; no pod, no DB.
+test_discovery_index.py

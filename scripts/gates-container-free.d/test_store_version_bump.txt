@@ -1,0 +1,6 @@
+# One caveat on "source tree": test_store_version_bump.py additionally needs git
+# HISTORY (it pickaxes for the commit that last changed each app's version line)
+# and fails loudly, not silently, in an exported tree. Both readers below run
+# from real checkouts, so this holds — it is written down so a future
+# exported-tree lane discovers it here rather than as a red gate.
+test_store_version_bump.py

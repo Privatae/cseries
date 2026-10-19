@@ -1,0 +1,4 @@
+# Host mirror: per-turn blocks
+# never land on the cached static system message, every block is logged, and
+# context action='status' returns the host's own window. Static + a stubbed pool.
+test_host_mirror.py

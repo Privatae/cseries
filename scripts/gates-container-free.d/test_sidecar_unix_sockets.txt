@@ -1,0 +1,2 @@
+# 2026-10-13 (harness placement plan, slice 1): the sidecar serves its control plane on CSERIES_SIDECAR_CONTROL_SOCK (0600, capability wall unchanged, no PORT needed) and forwards egress through CSERIES_SIDECAR_EGRESS_SOCK via a loopback forwarder named in every proxy variable; a relative path refuses to start; both unset is the TCP sidecar unchanged. Real sidecars in child processes and a fake unix-socket proxy. No container, no network.
+test_sidecar_unix_sockets.py

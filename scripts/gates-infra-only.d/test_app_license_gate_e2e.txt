@@ -1,0 +1,1 @@
+test_app_license_gate_e2e.py             # real Postgres (E2E_DSN/PEER_TEST_DSN, else a throwaway cseries-postgres) on the KERNEL's schema as it stood before v147 (scripts/kernel_schema.py upto=147), v147 applied twice by the gate, then completed to today's schema for register() and the gates

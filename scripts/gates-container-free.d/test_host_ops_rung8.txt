@@ -1,0 +1,4 @@
+# 2026-09-25 (host-authored ops, rung 8): every BUILT-IN write on a machine goes through
+# the person's card (kind op_ask, shape mgmt: the mgmt door, the extract lane, the beat's
+# directives), and the Terminal needs no standing Host grant. Shared stubs; no DB, no pod.
+test_host_ops_rung8.py

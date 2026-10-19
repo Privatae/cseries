@@ -1,0 +1,7 @@
+# 2026-10-05: the kill — a running build or compare ends on its engine's pod
+# now. Every run the pod's stop reaches is marked before the stop and named
+# after it; a failed stop un-marks them; the project is halted BEFORE the stop
+# so the phase's automatic retry cannot restart what was killed; a killed run
+# is never redone through the re-dispatch or the buffered /run; and the Host's
+# build(action='kill') reaches a project's running builds.
+test_harness_run_kill.py

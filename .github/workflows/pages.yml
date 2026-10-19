@@ -1,0 +1,72 @@
+# Publishes .github/pages to GitHub Pages. It holds C-Series's OAuth Client ID
+# Metadata Document, oauth/client-metadata.json: its address is the client_id
+# every Host signs in to an MCP server with, at an authorization server that
+# supports these documents (server/mcp_oauth.py CIMD_URL_DEFAULT). A Host whose
+# redirect URI the document does not list registers itself instead.
+#
+# The address must answer the document itself: an authorization server does not
+# follow a redirect to it. So the site has no custom domain, the owner's own
+# user site (<owner>.github.io) never gets one either, since GitHub then serves
+# every project site of the account under that domain, and the repository and
+# its owner keep their names; moving any of them moves every Host's client_id.
+#
+# Once, in the repository's Settings, then Pages: Source is GitHub Actions.
+name: pages
+
+on:
+  push:
+    branches:
+      - "**"
+    paths:
+      - ".github/pages/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions: {}
+
+# One group per branch. GitHub cancels a run waiting in a group when another
+# joins it, so with one shared group a push to another branch, whose job is
+# skipped, could cancel the default branch's waiting deploy.
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Publish the site
+    # Only the default branch publishes, whatever it is named.
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: The document names its own address
+        run: |
+          python3 - <<'EOF'
+          import json, os
+          doc = json.load(open(".github/pages/oauth/client-metadata.json"))
+          owner, repo = os.environ["GITHUB_REPOSITORY"].lower().split("/")
+          want = f"https://{owner}.github.io/{repo}/oauth/client-metadata.json"
+          if doc.get("client_id") != want:
+              raise SystemExit(f"::error::client_id is {doc.get('client_id')!r}; "
+                               f"this site publishes it at {want}")
+          EOF
+
+      - name: Package the site
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: .github/pages
+
+      - name: Deploy
+        id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

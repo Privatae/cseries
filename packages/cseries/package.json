@@ -1,0 +1,34 @@
+{
+  "name": "cseries",
+  "version": "0.0.0-dev",
+  "description": "Install and run a Privatae C-Series Host on this machine: npx cseries",
+  "license": "AGPL-3.0-only",
+  "author": "Privatae",
+  "homepage": "https://github.com/Privatae/cseries#readme",
+  "bugs": "https://github.com/Privatae/cseries/issues",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Privatae/cseries.git",
+    "directory": "packages/cseries"
+  },
+  "bin": {
+    "cseries": "bin/cseries.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "release.json",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "os": [
+    "win32",
+    "darwin",
+    "linux"
+  ],
+  "scripts": {
+    "test": "node --test"
+  }
+}

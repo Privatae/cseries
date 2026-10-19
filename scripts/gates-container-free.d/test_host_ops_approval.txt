@@ -1,0 +1,6 @@
+# 2026-09-24 (host-authored ops, rungs 4+5 — the pod half of bastion 0.33.0): a write
+# on a machine anchored to this Host runs only on the person's approval, obtained
+# from their approval device or the machine's console (nac_approval), carried on the
+# management frame and beside the heartbeat directives; refusals and quarantines
+# become oversight findings. Stub pool + stub relay, the real code; no DB, no pod.
+test_host_ops_approval.py

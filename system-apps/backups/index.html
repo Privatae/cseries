@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Backups</title>
+
+    <link rel="stylesheet" href="/css/tokens.css">
+    <link rel="stylesheet" href="/css/motion.css">
+    <link rel="stylesheet" href="/css/cseries-components.css">
+    <link rel="stylesheet" href="/system-apps/backups/style.css">
+</head>
+<body class="cseries-scroll">
+    <div class="app">
+        <header class="app-header">
+            <div class="app-brand">
+                <img src="/system-apps/backups/icon-64.png" alt="" class="app-brand-icon" aria-hidden="true">
+                <div class="app-brand-text">
+                    <div class="app-brand-title">Your memory backup</div>
+                    <div class="app-brand-sub label-sys">Encrypted on your machine. Only you hold the key.</div>
+                </div>
+            </div>
+            <button type="button" id="refresh-btn" class="cseries-btn ghost" aria-label="Refresh status">Refresh</button>
+        </header>
+
+        <div class="cseries-seam"></div>
+
+        <main class="app-body">
+            <section class="app-view">
+
+                <div class="view-heading">
+                    <h2>Status</h2>
+                    <p class="view-sub">Your bastion encrypts your memory locally and stores ciphertext on Privatae. We never see your keys.</p>
+                </div>
+
+                <div id="status-card" class="status-card cseries-row">
+                    <div class="status-loading">Loading status&hellip;</div>
+                </div>
+
+                <div class="view-heading" style="margin-top: var(--space-5);">
+                    <h2>What's backed up</h2>
+                    <p class="view-sub">Counted by row, per resource. Embeddings stay local and are recomputed on restore.</p>
+                </div>
+
+                <div id="by-kind-list" class="stack">
+                    <div class="cseries-empty">
+                        <span class="empty-title">Waiting on first sync&hellip;</span>
+                    </div>
+                </div>
+
+                <div class="service-note">
+                    <div class="service-note-title">About service backups</div>
+                    <p>
+                        Privatae runs its own encrypted backups of platform state
+                        (provisioning, audit, billing) to off-site storage. Those
+                        backups protect the service. They do <strong>not</strong>
+                        cover your memory &mdash; that's what this page is for.
+                    </p>
+                    <p class="service-note-sub">
+                        Source files (PDFs, audio, video you upload) are not held
+                        by Privatae. Configure your own target in your gateway if
+                        you want them preserved.
+                    </p>
+                </div>
+
+            </section>
+        </main>
+
+        <footer class="app-footer">
+            <span class="label-sys" id="footer-summary">&mdash;</span>
+            <span class="label-sys app-footer-right" id="footer-refreshed" aria-live="polite">loading</span>
+        </footer>
+    </div>
+
+    <script src="/system-apps/backups/app.js"></script>
+</body>
+</html>

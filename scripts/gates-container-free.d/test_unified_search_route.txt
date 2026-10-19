@@ -1,0 +1,9 @@
+# The one index — /api/search over memory + documents (the
+# host's own federated recall, called once) + projects + journal + code; every
+# engine stubbed at its import seam, so it runs container-free.
+# A POST with the words in the body, never a GET. Driven over HTTP through the real router, token check and secret cut,
+# and every caller (the kit, the built Circles bundle, the Context app) is
+# checked to send a body. A GET is also sent through server.main's real route
+# table, in a child process: the /api catch-all answers it with a 404 (the
+# router alone would say 405). Measured: about 2 s wall.
+test_unified_search_route.py

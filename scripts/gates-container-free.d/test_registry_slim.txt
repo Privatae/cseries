@@ -1,0 +1,3 @@
+# Tool descriptions stay one short
+# paragraph; doctrine lives in skills; the wire size of the schemas is ratcheted.
+test_registry_slim.py

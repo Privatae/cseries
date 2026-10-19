@@ -1,0 +1,6 @@
+# Seen on a live test run of a peer group ("could not store the vote"):
+# asyncpg binds $n::timestamptz / ::date / ::interval only from datetime / date
+# / timedelta. store_vote bound the terms' ISO string, so no vote was ever
+# stored; the calendar day aggregate bound a str date. A pool that rejects a str
+# where Postgres would, driven through the real functions.
+test_typed_binds.py

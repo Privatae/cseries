@@ -1,0 +1,269 @@
+id: orchestrator
+name: Orchestrator
+provenance: native
+description: Route the right models for the right task. Every decision independent — each text role picks its provider and its model (plus a fallback provider for when the primary errors), coding picks harnesses and models for the Workbench, and embeddings run where you choose. Provider API keys live in the Keys app.
+icon: icon.png
+icon_small: icon-64.png
+entrypoint: index.html
+system: true
+# 0.3.2 (2026-07-05): the dead platform-metered lane is gone from the copy —
+# three lanes, all the user's own providers (OpenRouter key via the Keys app,
+# local, Claude subscription); the openrtr lane now calls OpenRouter directly
+# over governed egress (no bridge relay, no wallet). Catalog price labels are
+# product truth, not a billing surface.
+# 0.3.3 (2026-07-18): the openrtr column is DIRECT — provider → model per cell
+# on the user's own typed provider keys (backend registry, OpenRouter one
+# provider among them, never the column name); Local merges the mesh-advertised
+# model table so picks land on the advertising machine.
+# 0.4.0 (2026-08-05): provider/model routing rework. The
+# lanes-as-columns grid is gone: every text role is a row that picks PROVIDER →
+# MODEL from the user's per-provider favorites, plus an optional FALLBACK
+# PROVIDER (answers when the primary errors or doesn't host the model). The
+# Claude-subscription surface and the app's own OpenRouter key card are deleted — all
+# API keys live in the Keys app; Kimi (Moonshot) is a registry provider. The
+# Models tab is per-provider now: OpenRouter keeps the searchable catalog,
+# every other provider lists its own models, local lists the mesh table.
+# 0.5.0 (2026-08-06): the coding matrix. The harness multi-select and the separate ladder section
+# are ONE table now: every harness always visible in two bands — first-party
+# (the vendor's own key runs its harness, never a substitute) and generic
+# (opencode on whichever of the user's reseller keys they pick, the
+# picker writing credential_wiring and re-materializing immediately). Four key
+# states, four words (connected / not set up / disconnected / expired), one
+# action link per non-ready row. Model lists come from the key that pays
+# (/direct-models via the coding-matrix feed), prices shown where the catalog
+# knows them. Ladder rungs are chips on their harness's row — a rung runs its
+# row's model unless the chip declares its own; same harness on multiple rungs
+# with different models is escalation within a vendor and fully expressible;
+# the '*' full-bench rung is the LAST RESORT footer row.
+# 0.6.0 (2026-08-06): the Billing tab is now BALANCES (same day as the
+# Keys providers pass). The billing-mode switch (privatae, self, local) is gone —
+# nothing read billing_mode at inference time, 'privatae' was never a real
+# mode (no platform inference billing exists), and 'local' is a provider, not
+# a billing mode. The tab shows each provider account's balance dialed live
+# under the user's Keys credential (/api/inference/balances; OpenRouter +
+# Kimi expose balances over their APIs, the rest say so honestly). The Models
+# tab's per-provider panes gain context + price columns (OpenRouter and
+# DeepInfra publish per-token prices; Together's bare-array /models response
+# finally parses — it read as 'catalog unreachable' since the rework).
+# 0.6.1 (2026-08-07): the routing rows never dead-end (models could not be
+# set at all). A row with no stored route now PRIMES from the
+# effective route (legacy-normalized routes rendered as blank provider/model
+# controls while the role ran fine), and when the picked provider has no
+# favorites the model control falls back to the provider's FULL LIVE CATALOG
+# instead of the "star models in the Models tab" dead end. Catalog/balance
+# failures now carry the upstream reason (kimi 401 Invalid Authentication →
+# re-issue the key; xAI 403 spending limit → top up at the vendor) with an
+# Open Keys shortcut on auth errors.
+# 0.6.2 (2026-08-07): a broken catalog no longer makes a provider UNUSABLE
+# (models could not be selected for providers without catalogs). The
+# routing row and the Models-tab error pane both gain a manual model-id entry
+# (marked unverified) — typing the id saves the same route a catalog pick
+# saves, so xai/kimi are settable before their keys/credits are fixed.
+# 0.7.0 (2026-08-10): the whole-app cleanup (blocks of prose everywhere
+# replaced with a user-friendly layout). (1) EMBEDDING is one provider → model
+# row like every text role — a machine you run (local) or a keyed provider's
+# embedding models (openai/together/deepinfra/fireworks, /api/embedding/
+# provider-models + /use-provider, probe-gated, vault-brokered); the managed
+# "Privatae Endpoint" card is GONE (its bridge catalog serves zero models —
+# measured). (2) KIMI works on a Kimi-for-Coding subscription key: the base
+# the KEY authenticates on is probed and cached per key (api.moonshot.ai for
+# platform keys, api.kimi.com/coding/v1 for subscription keys — measured),
+# catalog + chat + balances all follow it; subscription models
+# price as 'subscription', never '—'. (3) PRICING coverage: Together's
+# pricing.input/output finally parses ($/1M); openai/anthropic/xai fill list
+# price + context from the cached OpenRouter catalog (first-party only,
+# provenance in the cell tooltip); failed catalogs cache briefly instead of
+# re-hitting upstream per render; non-USD balances show their currency code.
+# (4) COPY: every section help is one line; the stale "billed per token
+# embedded" embedding claim is gone (embeddings are never billed per call).
+# 0.7.1 (2026-08-18): the coding section's three broken pieces (same
+# day). (1) PARALLEL BUILDERS ticks "unchecked themselves": the save was
+# refused whenever the stored list still named a builder that had since
+# disconnected (codex/copilot/grok) — the store now accepts every known
+# builder (connection is checked at dispatch, where it belongs), and a
+# refused save prints its reason instead of silently reloading. (2) LADDER
+# "kimi can't run 'k3'": the save validated against OpenRouter's view of the
+# vendor while the picker listed what the user's own key serves — both now
+# read the coding matrix, one list. (3) TIME BUDGET is gone from the rung
+# editor: the per-rung wall clock is the platform's safety cap (60 min,
+# derived from this bench's own run history), never a number the user has
+# to guess. All three live in dashboard/base/js/model-picker.js + the
+# inference/ladder routes; this bundle is unchanged apart from this note.
+# 0.7.2 (2026-08-19): changelog wording only (host-tooling vocabulary sweep).
+# 0.7.3 (2026-08-21): the GitHub Copilot and C-Series Factory harnesses are
+# retired platform-wide (the grok-build fork never diverged from the
+# grok CLI already on the bench, and Copilot went unused) — the coding
+# matrix's harness list in what_it_is follows the code; bundle otherwise
+# unchanged.
+# 0.8.0 (2026-08-21): the coding section is TWO sections (same day; the
+# one-section layout still did not work). CODING ENGINES — one row per
+# engine: connected or not, its default model, its default effort, and ONE
+# Default tick (a build that doesn't name an engine runs there; a plain
+# single build finally has a home). No builder ticks, no ladder editor.
+# MULTI-AGENT CODING — a list of protocol FILES: JSON instructions the host
+# reads (which engines, one after another or at once, model/effort, a time
+# budget if any, what to do on pass/fail; name + author for credit; stats
+# ride along when shared). The host writes them in conversation ("Ask the
+# host to write one"), the user can edit the JSON inline, Export (download
+# with stats) / Import (paste) / Check (are its engines granted here?) /
+# Delete. Nothing runs from the file: the host follows it with its own
+# build tools. The old Parallel-Builders ticks and ladder rungs migrate into
+# two protocol files once; the old ladder's first engine becomes the Default
+# tick when none is set. Server: /api/coding-protocols (files under
+# /var/lib/cseries/coding-protocols), PUT /api/inference/coding-default, the
+# coding_protocol host tool, coding_bench's engines+protocols view. UI lives
+# in dashboard/base/js/model-picker.js; this bundle carries the briefing.
+# 0.9.0 (2026-08-22): TEXT ROLES GET A REASONING CONTROL (text roles had
+# no effort levels, yet reasoning=low and reasoning=max for kimi behave like two
+# different models; the user needs to find the sweet spot for host reasoning). The host's chat turn had a HARDCODED
+# `_reasoning_effort = "low"` (session.py) and the routing entry carried no
+# effort at all, so there was no sweet spot to look for.
+#   - Each text-role row now has a `reasoning` select beside its model. Blank =
+#     the provider's own default; picking a level stores it on the route.
+#   - It appears ONLY for providers the gateway actually sends an effort for —
+#     the same doctrine as the coding tab's per-engine effort. openrouter
+#     (minimal/low/medium/high/xhigh/max, its documented enum minus `none`) and
+#     kimi (low/high/max, the vendor's own set, reused verbatim from
+#     HARNESS_EFFORTS so the two cannot drift — note it has no `medium`, which
+#     is exactly why an invented ladder would have been wrong).
+#   - ABSENT for anthropic and local, and that is deliberate: provider_gateway
+#     passes reasoning_effort to _call_remote and NOT to _call_anthropic, and
+#     _call_local takes no such parameter, so a control there would save a value
+#     the provider never sees. Absent for openai/xai/deepinfra/together/
+#     fireworks/groq too — they reach _call_remote, but it sends OpenRouter's
+#     `reasoning: {effort}` object, which is not those vendors' own field shape.
+#     scripts/test_role_effort_wiring.py enforces the pairing.
+#   - An unset role still sends an explicit "low", unchanged from today: without
+#     an effort a reasoning-capable model may emit planning prose into the
+#     visible reply (a recorded incident). Only a deliberate pick changes it.
+# 0.10.0 (2026-08-27): SIMPLE MODE (a user-friendly configuration and routing overlay, with the existing UI kept
+# as advanced mode). The app opens on a
+# Simple surface; the entire previous UI is Advanced, unchanged, one toggle
+# away (the choice sticks per browser).
+#   - The OVERLAY ("What answers when"): one plain sentence per activity —
+#     which provider · model answers, at what reasoning effort, and what
+#     happens on failure (the route's one annotated fallback retry, or "you
+#     see the error — nothing substitutes silently"). Covers the text roles
+#     plus embedding, image/vision and the default coding engine, so the
+#     answer to "what runs what" is complete without reading the grid.
+#   - ONE-CLICK SETUP: cards for the providers the user holds keys for; one
+#     click writes a researched recommendation for every text role through the
+#     ordinary routing PUT — explicit, visible, editable in Advanced. The
+#     recommendations are DATA in this bundle (recommended-routes.json), never
+#     pins: the resolver does not read the file, an unapplied recommendation
+#     routes nothing, and the no-defaults doctrine stands.
+#     Candidates per role are ORDERED and checked against the provider's live
+#     catalog under the user's own key at apply time — vendor lineups move
+#     (xAI retired its 4.1 ids mid-2026); a stale id degrades to a skip or an
+#     honestly-marked unverified apply, never a wrong route. An optional
+#     backup provider (another keyed, recommended provider) rides along as the
+#     per-role fallback pair. Applies are sequential on purpose: the routing
+#     PUT read-modifies-writes behavioral_params, and parallel writes would
+#     race. Embedding/image/coding are surfaced in the overlay but never
+#     auto-applied — probe-gated and connection-driven stores stay deliberate.
+#     Gate: scripts/test_recommended_routes.py (wired into smoke_test.sh).
+#   - Fixes (same day): the image/vision overlay rows read
+#     the stored route too (the server's effective map never carries
+#     image_gen/vision — a configured image role showed as absent); a failed
+#     source load renders "couldn't read", never a false absence; an
+#     unreachable OpenRouter catalog degrades to the unverified apply instead
+#     of wedging the button at "Checking…"; provider cards + the backup select
+#     lock during an apply; and the local-first flip now DROPS a requested
+#     effort (annotated effort_dropped, shown on the plan row) instead of
+#     400ing the exact pick local-first exists to reward.
+# 0.11.1 (2026-09-05): recommended-routes.json only — the Anthropic plan is
+#     Sonnet 5 for chat, Fable 5.1 for review, Opus 5 everywhere else,
+#     every Opus/Fable row with a cheaper Claude fallback. Data,
+#     not code; the bump is what lets the image-baked bundle carry it.
+# 0.11.2 (2026-09-17): GPT-6 Astra. The CODING matrix picks it up with no
+#     change here — codex's row reads the CLI's own catalog, and the
+#     rust-v0.154.0 bump adds gpt-6-astra as a listed model and moves the
+#     CLI's no-model default onto it (both measured on the binary). Two things
+#     this app does carry: recommended-routes.json now leads OpenAI's coding,
+#     depth and agentic roles (review/plan/agents/tutor) with astra behind its
+#     full 5.6 chain, and the coding matrix's per-model `default_effort` is now
+#     the EFFECTIVE default — astra reads `medium`, the platform's own pick,
+#     with the CLI's own `low` alongside it as
+#     `vendor_default_effort` so the row shows the override instead of
+#     disagreeing with the binary.
+# 0.12.0 (2026-09-19): THREE text roles. The Routing tab and the "what answers
+#     when" overlay now carry Host model, Review and Memory — plan, research,
+#     agents, tutor and journal are gone as roles (less complexity: model calls
+#     only where reasoning happens). Measured on one Host over the preceding 14 days: plan, review,
+#     tutor and journal drew zero attributable calls, research 17 and agents
+#     15, against chat 291 and consolidation 545 — five seats the user had to
+#     fill before a feature would work at all, four of which never fired. Every
+#     consumer now names one of the three at its own call site: the Workbench
+#     planner, web research, a dispatched agent and the VS Code editor all run
+#     on the host's own route, and the session recap rides the memory lane
+#     beside the thread summary that was already there. A stored route under a
+#     removed key is ignored on read rather than migrated, and the reader drops
+#     it so the picker cannot round-trip one back into a save.
+#     recommended-routes.json loses the same five rows per provider.
+# 0.12.1 (2026-09-30): TWO text roles. The Memory role went with the
+#     background consolidator (memory ops are just tool
+#     calls); the Routing tab already showed two rows, but the host-facing
+#     description still named three, so the host would have described a
+#     Memory route that no longer exists.
+# 0.12.2 (2026-10-05): recommended-routes.json's xai chat row follows the
+#     Host model standard — grok-4.7, then grok-4.6, the two xAI models
+#     approved_models.json lists eligible (grok-4.5 is pending_card, grok-4.3
+#     below_floor). Data only; the Keys app's Sign in with xAI routes chat from
+#     this row when a Host has none.
+# 0.12.3 (2026-10-07): REASONING ON ANTHROPIC ROWS. The Anthropic
+#     wire now sends output_config.effort (provider_gateway._call_anthropic),
+#     so the Host model and Review rows routed to Anthropic get the reasoning
+#     select: the routed MODEL's own levels, read off the Models API
+#     (capabilities.effort), and a blank that reads as that model's default
+#     ("Default · medium" on Claude Haiku 5.5 and Claude Opus 5.5, "Default ·
+#     high" on most others, from the effort docs). Blank still sends nothing,
+#     as before. The server validates per model by the rule the gateway sends
+#     by, and a model pick carries a set effort only when the new model takes
+#     it. "What answers when" names the default an unset Anthropic route runs
+#     at. The UI is dashboard/base/js/model-picker.js; this bundle carries the
+#     briefing, which now says so.
+# 0.12.4 (2026-10-12): NO VISION ROW. Images are not a separate role; they
+#     are part of the Host. A picture the person shares, an
+#     app's render or one of the Host's own images goes to the Host model
+#     itself, so there is no second model to route for reading one: the
+#     Seeing step and the Advanced image card carry Make an image only, the
+#     "what answers when" overlay drops its read-an-image row, and
+#     recommended-routes.json drops its empty vision entry. The server no
+#     longer accepts a `vision` role (PUT answers "Invalid role", naming the
+#     roles that exist); a vision route saved earlier is ignored, never
+#     migrated. The catalog CAPABILITY filter stays — it is how the person
+#     picks a Host model that reads images.
+# 0.12.5 (2026-10-18): what_it_is is one paragraph under the 900-character cap,
+#   saying what the app is and what lives in it; the how-to it carried lives in
+#   skills and tool descriptions. Manifest-only; bundle repacked.
+# 0.12.6 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
+version: "0.12.6"
+# Host-facing catalog facts (code-true). Control panel, not a conversational
+# surface: what_it_is / user_path only.
+prompt_behavior:
+  what_it_is: >-
+    The Orchestrator app sets which provider and model answers each kind of work. It
+    opens in Simple mode, a setup checklist: Thinking (one click applies a
+    recommended route for both text roles from a provider the user holds a key for),
+    Memory (embeddings, on the user's own machine or a keyed provider), Seeing (the
+    model that makes images) and Hearing (the realtime-voice provider), then 'What
+    answers when' per activity. Advanced mode holds the full surface: Routing (exactly two text roles, HOST MODEL and REVIEW, each with provider, model, optional
+    fallback and reasoning effort), Models (each provider's catalog, starred
+    favourites), Coding engines (every engine with its key, default model, effort
+    and the default tick), Multi-agent coding (the user's coding protocols),
+    Embedding, Image generation, and Balances (what each provider account holds).
+    API keys live in the Keys app.
+  user_path: "the Orchestrator app, in the dock"
+
+window:
+  title: Orchestrator
+  width: 1040
+  height: 780
+  resizable: true
+  min_width: 780
+  min_height: 560
+
+permissions:
+  - read:inference_catalog
+  - write:inference_routing
+  - read:billing

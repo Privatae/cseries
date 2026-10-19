@@ -1,0 +1,9 @@
+
+# The peer app lane carries apps.
+# app.deliver is gated on app:<id> derived from its own params (a slip for X
+# can never carry Y; malformed params are an unknown op, never "no slip"),
+# app.grant on the message slip and only a slip naming (them -> us) is stored,
+# the receiver refuses an app that never declared read:peer_app, a retried
+# message_id is a duplicate not a row, and the outbox retries a transport
+# fault but never a refusal. Real handlers, stub pool; no pod, no network.
+test_peer_app_lane.py

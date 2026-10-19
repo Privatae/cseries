@@ -1,0 +1,6 @@
+
+# Every integration leaves an entity pod through the egress proxy or not at
+# all: a bare aiohttp session under server/integrations or server/reachout
+# fails here (measured 2026-09-23: a direct connection from the pod to
+# Gmail never connects). Reads files and builds one session; no network.
+test_integrations_egress.py

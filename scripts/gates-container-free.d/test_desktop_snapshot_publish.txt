@@ -1,0 +1,1 @@
+test_desktop_snapshot_publish.py

@@ -1,0 +1,45 @@
+# CADCraft Engine: the open-source CADCraft
+# 2D drafting program (github.com/storytold/cadcraft, MIT or Apache-2.0), run headless for the
+# Host. The program is in the creative toolchain image, pinned by sha256
+# (sidecars/app-runtime-creative/crafts.txt); this app is a recipe: the command
+# starts the image's own MCP bridge (creative_mcp.py), and `mcp` makes that
+# server one of the Host's connections when the app is installed
+# (manifest.McpSpec). The whole ArtCraft set, so a person can
+# make everything they need. Memory: 40 MB for a small drawing, 899 MB for CADCraft's own 200,000-object
+# benchmark (measured). vcpus 1: that benchmark took 1.2 s on 1, 2
+# and 4 CPUs alike.
+# A window is billed at its ceiling.
+id: cadcraft-engine
+name: CADCraft Engine
+description: Your Host makes technical drawings with CADCraft, an open-source drafting program with layers, dimensions and DXF and DWG files. It draws plans and parts to measure, opens your drawings and exports them as PNG, SVG or PDF, and everything it makes appears in this window.
+icon: icon.png
+icon_small: icon-64.png
+# 1.0.1 (2026-10-18): the product is renamed C-Series (names, paths, env vars).
+# 1.0.2 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
+version: "1.0.2"
+provenance: standard
+entrypoint: index.html
+permissions: []
+network: []
+resources:
+  baseline_memory_mi: 1024
+  vcpus: 1
+runtime:
+  kind: process
+  image: creative
+  command: ["python3", "/opt/app-runtime/creative_mcp.py", "cadcraft"]
+  ready_path: /health
+  ready_timeout_seconds: 120
+mcp:
+  path: /mcp
+window:
+  title: CADCraft Engine
+  width: 900
+  height: 640
+  resizable: true
+prompt_behavior:
+  what_it_is: |
+    CADCraft Engine is the person's own 2D drafting program that you operate: an MCP
+    server named cadcraft-engine (skill 'cadcraft-engine' says how). Its window shows the files
+    you made there.
+  user_path: "the CADCraft Engine app (install it from the App Store)"

@@ -1,0 +1,22 @@
+
+# A vendor pin and its companion checksum must
+# move TOGETHER. sidecars/harness-kimi/Dockerfile pins KIMI_RELEASE_VERSION and
+# KIMI_SHA256, and the build verifies the download against the second. Renovate
+# used to watch the version (npm datasource) and COULD NOT compute the
+# digest — the binary ships from Moonshot's CDN, not the npm tarball — so every
+# bump arrived with the digest left behind, and renovate.json's prBodyNotes asked
+# the reviewer to refresh it by hand (the harness auto-update job now moves both).
+# That instruction was missed on 0.41->0.42 and again on 0.42->0.43, and the
+# pattern is structural rather than accidental. Merged unfixed the build dies at
+# `sha256sum -c` — loud, and nothing unverified ships, which is the intended
+# floor — but it costs a full build cycle to find something visible in the diff.
+# NO NETWORK, per this lane's rule: it cannot ask the vendor what the digest
+# should be, so it uses the only local authority on which digest belongs to
+# which version — the file's own git history. A checksum recorded for version X
+# must never appear beside a different version Y. That is exactly the bot's
+# failure, and it is precisely NOT a correction: fixing a wrong digest for the
+# CURRENT version introduces a new sha for that version and trips nothing.
+# Verified red against the 0.42->0.43 bump's actual content. Needs git (like
+# test_store_version_bump.py) and exits 2 rather than skipping in an exported
+# tree. No container, no DB, no network.
+check_vendor_pin_pairs.py

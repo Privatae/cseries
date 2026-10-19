@@ -1,0 +1,22 @@
+id: TEMPLATE
+name: Template App
+description: Short description shown on hover and in the launcher.
+icon: icon.png
+icon_small: icon-64.png
+entrypoint: index.html
+system: true
+version: "1.0.0"
+
+window:
+  title: Template
+  width: 720
+  height: 480
+  resizable: true
+  min_width: 480
+  min_height: 320
+
+# What this app needs permission to do. CEIGAS uses this list to pre-seed
+# grant proposals when the app is first installed. Keep this LIST TIGHT —
+# only what the app actually uses. Unused permissions are a smell.
+permissions:
+  - read:policy       # example — replace for your app's real needs

@@ -1,0 +1,4 @@
+# One build door: the retired build words
+# ("fan-out", "bake-off", review.fan_out) never reach the host again — tool
+# schemas, skills, kernel/route string literals, system app manifests.
+check_host_vocabulary.py

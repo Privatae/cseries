@@ -1,0 +1,46 @@
+# VectorCraft Engine: the open-source VectorCraft
+# vector illustration program (github.com/storytold/vectorcraft, MIT or Apache-2.0), run headless for the
+# Host. The program is in the creative toolchain image, pinned by sha256
+# (sidecars/app-runtime-creative/crafts.txt); this app is a recipe: the command
+# starts the image's own MCP bridge (creative_mcp.py), and `mcp` makes that
+# server one of the Host's connections when the app is installed
+# (manifest.McpSpec). The whole ArtCraft set, so a person can
+# make everything they need. Memory: a 1920x1080 drawing exported to SVG, PNG and PDF peaked at 293 MB,
+# a 7680x4320 PNG at 471 MB, and sessions with a 15360x8640 export at 1.85 to
+# 4.3 GB (measured). vcpus 2: large exports ran 1.4 to 1.6x faster
+# on 4 CPUs than on 1.
+# A window is billed at its ceiling.
+id: vectorcraft-engine
+name: VectorCraft Engine
+description: Your Host draws with VectorCraft, an open-source vector illustration program with shapes, paths, gradients, type and SVG, PDF and Illustrator files. It makes wallpapers, posters, logos and diagrams, opens and edits your vector files, and everything it makes appears in this window.
+icon: icon.png
+icon_small: icon-64.png
+# 1.0.1 (2026-10-18): the product is renamed C-Series (names, paths, env vars).
+# 1.0.2 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
+version: "1.0.2"
+provenance: standard
+entrypoint: index.html
+permissions: []
+network: []
+resources:
+  baseline_memory_mi: 2048
+  vcpus: 2
+runtime:
+  kind: process
+  image: creative
+  command: ["python3", "/opt/app-runtime/creative_mcp.py", "vectorcraft"]
+  ready_path: /health
+  ready_timeout_seconds: 120
+mcp:
+  path: /mcp
+window:
+  title: VectorCraft Engine
+  width: 900
+  height: 640
+  resizable: true
+prompt_behavior:
+  what_it_is: |
+    VectorCraft Engine is the person's own vector illustration program that you operate: an MCP
+    server named vectorcraft-engine (skill 'vectorcraft-engine' says how). Its window shows the files
+    you made there.
+  user_path: "the VectorCraft Engine app (install it from the App Store)"

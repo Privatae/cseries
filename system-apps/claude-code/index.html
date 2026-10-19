@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Claude Code</title>
+    <link rel="stylesheet" href="/css/tokens.css">
+    <link rel="stylesheet" href="/css/motion.css">
+    <link rel="stylesheet" href="/css/cseries-components.css">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="cseries-scroll">
+    <div class="app">
+        <header class="app-header">
+            <div class="app-brand">
+                <img src="icon-64.png" alt="" class="app-brand-icon">
+                <div class="app-brand-text">
+                    <div class="app-brand-title">Claude Code</div>
+                    <div class="app-brand-sub label-sys" id="connection-status-line"></div>
+                </div>
+            </div>
+            <div class="status-cell">
+                <span class="cseries-pill" id="status-pill" aria-live="polite">—</span>
+            </div>
+        </header>
+
+        <div class="cseries-seam"></div>
+
+        <main class="app-body">
+
+            <!-- Not connected. The platform ships NO login surface for Claude:
+                 the OAuth card that used to live here (Connect with OAuth ->
+                 popup -> paste authorization code) drove a platform-hosted
+                 Anthropic OAuth flow, and it was removed 2026-08-15 along with
+                 the frontend route behind it. A vendor's login belongs to the
+                 vendor; the host only ever runs it. -->
+            <section class="card" id="card-disconnected">
+                <h2 class="card-title">Not connected</h2>
+                <p class="card-sub">
+                    Your Host runs the Claude Code harness on your own Claude
+                    subscription. Sign in through Anthropic's own login, then store the
+                    credential in the Keys app — the same way every other builder
+                    on this machine is connected. Privatae never mints or holds
+                    the grant.
+                </p>
+                <div class="connect-error" id="disconnected-error" hidden></div>
+            </section>
+
+            <!-- Connected: status only. Nothing runs in this app. -->
+            <section class="card" id="card-connected" hidden>
+                <div class="connected-header">
+                    <div>
+                        <h2 class="card-title">Connected</h2>
+                        <div class="label-sys" id="connected-since"></div>
+                    </div>
+                    <button id="btn-disconnect" class="cseries-btn ghost">Disconnect</button>
+                </div>
+                <p class="card-sub">
+                    Builds with Claude Code run in their own container on the
+                    coding machines, on this subscription.
+                </p>
+            </section>
+
+            <!-- Sidecar offline -->
+            <section class="card" id="card-offline" hidden>
+                <h2 class="card-title">Sidecar unavailable</h2>
+                <p class="card-sub" id="offline-message">
+                    The Claude Code sidecar isn't responding. The supervisor will retry on next window open.
+                </p>
+            </section>
+        </main>
+
+        <footer class="app-footer">
+            <span class="label-sys">claude code · v0.1.6</span>
+            <span class="label-sys app-footer-right" id="last-update">—</span>
+        </footer>
+    </div>
+
+    <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+
+# Seen on a live test run of a peer group: a member's vote answered 404 "no such ballot".
+# The owner's open ballots ride on the first roster page and a member's sync
+# stores them; a member's vote seq counts the votes it already sent (only the
+# owner writes group_votes, so every member vote was seq 1 and the second was
+# refused as a replay); the peer client reads answers past asyncio's 64 KiB.
+test_group_ballots_reach_members.py

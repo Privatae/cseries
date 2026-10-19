@@ -1,0 +1,161 @@
+/* ================================================================
+ * C-Series — Floating widget layer (js/widget-layer.js)
+ *
+ * Shell-owned floating cards above the app windows. All values
+ * reference tokens.css; the card language mirrors .window in
+ * desktop.css at a smaller scale.
+ * ================================================================ */
+
+/* Sibling of #window-layer inside #desktop. #window-layer carries no
+   z-index (windows' own z-indexes — the WindowManager zCounter — compete
+   directly in #desktop's stacking context), so this layer's z-index
+   creates a stacking context above every app window at once. #desktop is
+   position:fixed, so nothing here can rise over the taskbar / dock menu /
+   modals at document level. */
+#widget-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    pointer-events: none;
+    z-index: var(--z-widgets);
+}
+
+.widget-card {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    min-width: 160px;
+    min-height: 120px;
+    background: var(--cseries-night);
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--cseries-shadow-window);
+    overflow: hidden;
+    pointer-events: auto;
+    animation: cseries-window-in var(--dur-panel) var(--ease-cseries);
+}
+
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+    .widget-card {
+        background: rgba(14, 20, 22, 0.88);
+        backdrop-filter: blur(14px) saturate(1.15);
+        -webkit-backdrop-filter: blur(14px) saturate(1.15);
+    }
+}
+
+/* Header — the .window-header language, one size down. The whole card
+   drags, so the head is a label strip, not the only handle. */
+.widget-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    height: 28px;
+    padding: 0 var(--space-2) 0 var(--space-3);
+    flex-shrink: 0;
+    cursor: grab;
+    user-select: none;
+    position: relative;
+}
+
+.widget-head::after {
+    /* The Threshold Seam under the header */
+    content: '';
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 1px;
+    background: var(--cseries-seam);
+}
+
+.widget-glyph {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 14px;
+    height: 14px;
+    color: var(--cseries-linen);
+    flex-shrink: 0;
+}
+.widget-glyph svg {
+    width: 14px;
+    height: 14px;
+}
+
+.widget-title {
+    flex: 1;
+    font-family: var(--font-body);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--cseries-ash);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.widget-controls {
+    display: flex;
+    gap: 2px;
+}
+
+.widget-controls button {
+    width: 20px;
+    height: 20px;
+    border: none;
+    background: transparent;
+    color: var(--cseries-ash);
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    padding: 0;
+    font-family: var(--font-body);
+    transition: background var(--dur-hover) var(--ease-cseries),
+                color var(--dur-hover) var(--ease-cseries);
+}
+.widget-controls button:hover {
+    background: var(--cseries-silk);
+    color: var(--cseries-paper);
+}
+.widget-controls .btn-close:hover {
+    background: rgba(199, 95, 85, 0.2);
+    color: var(--cseries-clay);
+}
+
+.widget-body {
+    flex: 1;
+    overflow: hidden;
+    position: relative;
+    padding: var(--space-3);
+}
+
+/* One corner handle (SE) — widgets are small; eight handles is window
+   chrome, not widget chrome. */
+.widget-resize {
+    position: absolute;
+    right: 0;
+    bottom: 0;
+    width: 14px;
+    height: 14px;
+    cursor: se-resize;
+    /* Two hairline ticks so the affordance is visible without weight. */
+    background:
+        linear-gradient(135deg, transparent 0 50%, var(--cseries-mist-strong) 50% calc(50% + 1px), transparent calc(50% + 1px) 100%) no-repeat 3px 3px / 8px 8px,
+        linear-gradient(135deg, transparent 0 50%, var(--cseries-mist-strong) 50% calc(50% + 1px), transparent calc(50% + 1px) 100%) no-repeat 6px 6px / 8px 8px;
+}
+
+/* Minimized-to-tray chip (#taskbar-right, next to the tray chips). */
+.widget-chip {
+    color: var(--cseries-linen);
+}
+.widget-chip svg {
+    width: 16px;
+    height: 16px;
+}
+.widget-chip:hover {
+    color: var(--cseries-paper);
+}

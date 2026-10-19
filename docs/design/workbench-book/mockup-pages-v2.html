@@ -1,0 +1,648 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pages — round 2 mockup</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;1,6..72,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --desk:#E6E1D6; --page:#FBFAF6; --ink:#1C2220; --ink2:#59625D; --ink3:#9AA19B; --rule:#E7E3DA;
+  --green:#2E6A55; --mint:rgba(155,227,194,.6); --amber:#B7791F; --amberglow:rgba(244,184,96,.55); --mintglow:rgba(95,174,127,.55);
+  --cc:#C46A3A; --cx:#4F5FCB;
+  --serif:"Newsreader", "Iowan Old Style", Georgia, serif; --mono:"JetBrains Mono", ui-monospace, Menlo, monospace;
+  --book-l:150px; --book-w:660px; --right-l:1012px;
+}
+#app.ci{ --book-l:262px; --book-w:610px; --right-l:1040px; }
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:var(--desk);color:var(--ink);font:15.5px/1.6 Inter,system-ui,sans-serif;-webkit-font-smoothing:antialiased;overflow:hidden}
+#app{position:relative;width:100vw;height:100vh;min-width:1320px;min-height:760px;overflow:hidden;background:radial-gradient(1000px 760px at 45% 40%, #EEEAE1, var(--desk))}
+#grain{position:absolute;inset:0;opacity:.32;mix-blend-mode:multiply;pointer-events:none}
+
+/* top bar */
+.bar{position:absolute;left:0;right:0;top:0;height:52px;display:flex;align-items:center;padding:0 28px;z-index:50}
+.bar .who{font:500 11px Inter;letter-spacing:.18em;color:var(--ink2)} .bar .who b{color:var(--ink);font-weight:600}
+.switch{position:absolute;left:50%;transform:translateX(-50%);display:flex;gap:4px;padding:3px;border-radius:999px;background:rgba(255,255,255,.55);border:1px solid #DDD7CA}
+.switch button{border:0;background:transparent;font:500 12.5px Inter;color:var(--ink2);padding:5px 14px;border-radius:999px;cursor:pointer}
+.switch button.on{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(60,45,20,.12)}
+.bar .clock{margin-left:auto;font:500 11px var(--mono);color:var(--ink3)}
+
+/* contacts (Circles) */
+#contacts{position:absolute;left:20px;top:64px;width:214px;bottom:24px;display:none;z-index:5}
+#app.ci #contacts{display:block}
+.ck{font:500 10px Inter;letter-spacing:.18em;color:var(--ink3);margin:6px 0 8px 10px}
+.cv{display:flex;gap:4px;padding:3px;border-radius:999px;background:rgba(255,255,255,.5);border:1px solid #DDD7CA;margin:0 0 14px 6px;width:fit-content}
+.cv button{border:0;background:transparent;font:500 12px Inter;color:var(--ink2);padding:4px 14px;border-radius:999px;cursor:pointer}
+.cv button.on{background:#fff;color:var(--ink);box-shadow:0 1px 3px rgba(60,45,20,.12)}
+.cv button i{display:inline-block;width:6px;height:6px;border-radius:50%;background:var(--amber);vertical-align:2px;margin-left:3px}
+.contact{display:flex;align-items:center;gap:10px;padding:8px 10px;border-radius:12px;cursor:pointer;position:relative}
+.contact:hover{background:rgba(255,255,255,.45)}
+.contact.on{background:rgba(255,255,255,.75);box-shadow:0 1px 2px rgba(60,45,20,.08)}
+.av{width:34px;height:34px;border-radius:50%;display:grid;place-items:center;font:600 13px Inter;color:#fff;flex:none;position:relative}
+.av.host{border-radius:11px}
+.av i{position:absolute;right:-1px;bottom:-1px;width:10px;height:10px;border-radius:50%;border:2px solid #EEEAE1;background:#5FAE7F}
+.contact .n{font:500 13.5px Inter;color:var(--ink)} .contact .s{font-size:12px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px}
+.contact .u{position:absolute;right:10px;top:50%;width:8px;height:8px;border-radius:50%;background:var(--amber);transform:translateY(-50%);box-shadow:0 0 0 4px rgba(244,184,96,.18)}
+
+/* the book */
+#book{position:absolute;left:var(--book-l);width:var(--book-w);top:62px;bottom:-30px;z-index:10;transition:left .4s, width .4s}
+.under{position:absolute;inset:0;background:#F5F3ED;border-radius:3px;box-shadow:0 1px 0 rgba(0,0,0,.05),0 10px 28px rgba(60,45,20,.08)}
+.page{position:absolute;inset:0;background:var(--page);border-radius:3px;overflow:hidden;
+  box-shadow:0 1px 0 rgba(0,0,0,.05),0 2px 6px rgba(60,45,20,.06),0 30px 70px rgba(60,45,20,.14)}
+.page.ghost,.page.sheet{z-index:40;transform-origin:0% 50%;transition:transform .72s cubic-bezier(.45,.05,.25,1), opacity .72s, box-shadow .72s;will-change:transform}
+.page.sheet{transition:none}
+.page.sheet.turn{animation:riff .46s cubic-bezier(.5,.05,.3,1) forwards;transform:none;opacity:1}
+@keyframes riff{0%{transform:perspective(2400px) rotateY(0);opacity:1}80%{transform:perspective(2400px) rotateY(-78deg);opacity:1}100%{transform:perspective(2400px) rotateY(-96deg);opacity:0}}
+.page.ghost.turn,.page.sheet.turn{transform:perspective(2400px) rotateY(-96deg);opacity:0;box-shadow:-30px 0 60px rgba(60,45,20,.25)}
+.page .shade{position:absolute;inset:0;background:linear-gradient(90deg,rgba(40,30,10,0),rgba(40,30,10,.16));opacity:0;transition:opacity .72s;pointer-events:none}
+.page.turn .shade{opacity:1}
+.inner{position:absolute;left:52px;right:52px;top:0;bottom:0}
+.head{display:flex;justify-content:space-between;margin-top:24px;font:500 10.5px Inter;letter-spacing:.18em;color:var(--ink3)}
+h1{font:400 40px/1.02 var(--serif);margin:12px 0 12px;letter-spacing:-.4px}
+.stands{border-left:2px solid var(--green);padding:1px 0 1px 15px}
+.stands .k{font:500 10px Inter;letter-spacing:.18em;color:var(--green);margin-bottom:4px}
+.stands ul{margin:0;padding:0;list-style:none;font:400 16px/1.45 var(--serif)}
+.stands li:before{content:"— ";color:var(--ink3)}
+.hl{background:linear-gradient(transparent 55%, var(--mint) 55%);background-repeat:no-repeat;background-size:100% 100%}
+.hl.sweep{animation:sweep 1.2s ease-out}
+@keyframes sweep{0%{background-size:0% 100%}100%{background-size:100% 100%}}
+.need{color:var(--amber)}
+.tally{font:500 11px var(--mono);letter-spacing:0;color:var(--ink2);cursor:default;border-bottom:1px dotted #CFCABE;transition:color .3s}
+.tally.bump{color:var(--green)}
+.tk{font:500 10px var(--mono);letter-spacing:0;color:var(--ink3)}
+.nudge{font:italic 400 14.5px var(--serif);color:var(--ink2);margin:8px 0 0 14px;border-left:2px solid #D9D4C8;padding-left:10px}
+.nudge b{font:500 10px Inter;font-style:normal;letter-spacing:.14em;color:var(--ink3);margin-right:6px}
+.working{font:500 10.5px Inter;letter-spacing:.14em;color:var(--ink3);margin:13px 0 0;display:flex;gap:8px;align-items:center}
+.working i{width:6px;height:6px;border-radius:50%;background:#5FAE7F;animation:blink 1.1s infinite}
+.stopl{font:500 11.5px Inter;color:var(--ink2);cursor:pointer;margin-left:8px;border-bottom:1px solid #D9D4C8}
+.upd{font-size:11.5px;color:var(--ink3);margin:6px 0 0 17px}
+.flow{position:absolute;left:0;right:0;overflow:hidden;display:flex;flex-direction:column;justify-content:flex-end;
+  -webkit-mask-image:linear-gradient(to bottom,transparent 0,#000 16px);mask-image:linear-gradient(to bottom,transparent 0,#000 16px)}
+.w{font:500 10.5px Inter;letter-spacing:.14em;color:var(--ink3);margin:13px 0 3px;display:flex;gap:9px;align-items:center}
+.w b{color:var(--ink2);font-weight:600}
+.tag{font:500 10px/16px var(--mono);letter-spacing:0;padding:0 6px;border:1px solid #DDD8CC;border-radius:8px;color:var(--ink2)}
+.tag.eff{border-color:rgba(46,106,85,.4);color:var(--green)}
+.you{font:600 15.5px/1.5 Inter;color:var(--ink)} .you p,.host p{margin:0 0 5px}
+.host{font:400 17px/1.5 var(--serif);color:var(--ink)}
+.marker{font:italic 400 13.5px var(--serif);color:var(--green);margin:12px 0 0;display:flex;gap:8px;align-items:baseline}
+.marker:before{content:"";flex:none;width:18px;border-top:1px solid rgba(46,106,85,.4);transform:translateY(-4px)}
+.num{font:500 14px var(--mono)}
+.print{float:right;margin:-10px 0 0 16px;padding:4px 4px 11px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.12),0 8px 18px rgba(60,45,20,.16);transform:rotate(2.2deg)}
+.ledger{margin:8px 0 2px;font:400 14.5px var(--serif)}
+.ln{display:flex;align-items:baseline;gap:8px;margin:4px 0}
+.ln .dots{flex:1;border-bottom:1.5px dotted #CFCABE;transform:translateY(-4px)}
+.ln .v{white-space:nowrap;font:500 12.5px var(--mono);color:var(--ink2)}
+.pencil{height:2px;background:#E9E5DC;position:relative;overflow:hidden;border-radius:1px}
+.pencil i{position:absolute;left:0;top:0;bottom:0;background:var(--cx);opacity:.6;transition:width .6s}
+.opts{display:flex;gap:10px;margin:8px 0 4px}
+.opt{flex:1;border:1px solid #E4DFD4;border-radius:10px;padding:10px 12px;background:#fff;font-size:13px;color:var(--ink2)}
+.opt b{display:block;font:500 15px var(--serif);color:var(--ink)} .opt span{font:500 12px var(--mono);color:var(--green)}
+.slip{position:relative;margin:13px 0 0 -6px;padding:10px 16px 9px;background:#FFF6E2;border:1px solid #F0DDB2;border-radius:2px;
+  box-shadow:0 1px 1px rgba(0,0,0,.05),0 10px 22px rgba(120,80,10,.10);transform:rotate(-.6deg)}
+.slip .q{font:500 16px var(--serif)} .slip .d{font-size:12.5px;color:var(--ink2);margin:1px 0 8px}
+.sign{display:flex;align-items:center;gap:14px}
+.sigbox{position:relative;width:230px;height:36px;border-bottom:1.5px solid #CDB98C;cursor:pointer;user-select:none;touch-action:none}
+.sigbox span{position:absolute;left:0;bottom:5px;font:italic 400 13.5px var(--serif);color:#A48A55;pointer-events:none}
+.sigbox svg{position:absolute;left:0;top:0;width:230px;height:36px;overflow:visible}
+.slip .alt{font-size:12.5px;color:var(--ink2);cursor:pointer}
+.stamp{position:absolute;right:14px;top:10px;font:600 11px Inter;letter-spacing:.2em;color:var(--green);border:2px solid var(--green);padding:2px 7px;border-radius:3px;transform:rotate(-8deg);opacity:0;transition:opacity .3s}
+.stamp.on{opacity:.85}
+.composer{position:absolute;left:0;right:0;bottom:34px}
+.line{display:flex;align-items:flex-end;gap:14px;border-bottom:1.5px solid #D9D4C8;padding-bottom:7px}
+.line textarea{flex:1;resize:none;border:0;outline:0;background:transparent;color:var(--ink);font:400 17.5px/1.5 var(--serif);height:28px;padding:0}
+.line textarea::placeholder{color:#B2B5AE;font-style:italic}
+.press{position:relative;width:42px;height:42px;border-radius:50%;border:1.5px solid #CFCABE;background:#fff;cursor:pointer;padding:0;touch-action:none;flex:none;box-shadow:0 2px 4px rgba(0,0,0,.06)}
+.press svg{position:absolute;inset:0;width:100%;height:100%}
+.lvl{position:absolute;right:0;bottom:58px;pointer-events:none;font:500 12px Inter;color:var(--ink);background:#fff;border:1px solid #E0DBD0;border-radius:999px;padding:5px 12px;opacity:0;transform:translateY(4px);transition:.15s;white-space:nowrap;box-shadow:0 6px 16px rgba(60,45,20,.1)}
+.lvl b{font:600 11px var(--mono);color:var(--green);margin-right:6px;letter-spacing:.06em} .lvl.on{opacity:1;transform:none}
+.chint{margin-top:7px;font-size:11.5px;color:var(--ink3)}
+.archived-note{font:italic 400 13.5px var(--serif);color:var(--ink2);background:#F3F0E8;border-radius:6px;padding:6px 10px;margin-top:10px}
+
+/* index page */
+.ix-input{display:flex;align-items:center;gap:12px;border-bottom:2px solid var(--ink);padding:6px 0 8px;margin-top:6px}
+.ix-input svg{flex:none}
+.ix-input input{flex:1;border:0;outline:0;background:transparent;font:400 22px var(--serif);color:var(--ink)}
+.ix-input input::placeholder{color:#AEB2AB;font-style:italic}
+.ix-mode{display:flex;gap:6px;margin:10px 0 2px;font-size:12px;color:var(--ink2);align-items:center}
+.ix-mode button{border:1px solid #DDD8CC;background:#fff;border-radius:999px;padding:3px 10px;font:500 11.5px Inter;color:var(--ink2);cursor:pointer}
+.ix-mode button.on{background:var(--ink);color:#fff;border-color:var(--ink)}
+.results{position:relative;margin-top:12px}
+.res{position:relative;border:1px solid #E4DFD4;background:#fff;border-radius:8px;padding:10px 14px 10px 14px;margin-bottom:8px;cursor:pointer;
+  box-shadow:0 1px 2px rgba(60,45,20,.05);transition:box-shadow .2s}
+.res:hover{box-shadow:0 6px 18px rgba(60,45,20,.12)}
+.res .t{font:500 16.5px var(--serif);color:var(--ink);display:flex;gap:10px;align-items:baseline}
+.res .t small{font:500 10px Inter;letter-spacing:.14em;color:var(--ink3)}
+.res .s{font-size:13px;color:var(--ink2);margin-top:2px}
+.res mark{background:var(--mint);color:inherit;padding:0 1px;border-radius:2px}
+.res .go{position:absolute;right:12px;top:10px;font:500 11px Inter;color:var(--green);opacity:0}
+.res.top{border-color:rgba(46,106,85,.45);box-shadow:0 0 0 3px rgba(155,227,194,.25)}
+.res.top .go{opacity:1}
+.res .rel{position:absolute;left:0;top:10px;bottom:10px;width:3px;border-radius:2px;background:var(--green);opacity:.5}
+.chapters{margin-top:14px}
+.chapters .k{font:500 10px Inter;letter-spacing:.18em;color:var(--ink3);margin-bottom:8px}
+.chaps{display:flex;gap:12px}
+.chap{flex:1;cursor:pointer;position:relative;height:74px;border-radius:4px;background:linear-gradient(180deg,#F6F3EC,#EFEBE2);border:1px solid #E1DCD0;padding:10px 12px;
+  box-shadow:0 1px 0 #fff inset, 3px 3px 0 -1px #F2EFE7, 3px 3px 0 0 #DED8CB, 6px 6px 0 -1px #F2EFE7, 6px 6px 0 0 #DED8CB;transition:transform .2s}
+.chap:hover{transform:translateY(-2px)}
+.chap b{font:500 17px var(--serif);display:block} .chap span{font-size:12px;color:var(--ink3)}
+
+/* tabs */
+#tabs{position:absolute;top:92px;bottom:118px;width:150px;left:calc(var(--book-l) + var(--book-w) - 8px);z-index:6;transition:left .4s}
+.tab{position:relative;height:50px;margin-bottom:6px;padding:7px 24px 0 18px;border-radius:0 9px 9px 0;cursor:pointer;
+  background:#EFEBE2;border:1px solid #DDD7CA;border-left:0;box-shadow:2px 3px 8px rgba(60,45,20,.07);transition:background .2s, box-shadow .3s, transform .2s}
+.tab:hover{transform:translateX(4px)}
+.tab .tt{font:500 13px Inter;color:var(--ink);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tab .ts{font-size:11px;color:var(--ink3);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tab .chip{position:absolute;right:10px;top:13px;width:7px;height:7px;border-radius:50%}
+.tab.cur{background:var(--page);z-index:2;box-shadow:3px 3px 10px rgba(60,45,20,.10);border-color:#E4DFD4}
+.tab.cur .tt{font-weight:600}
+.tab.lit{background:#F2FBF6;border-color:rgba(95,174,127,.6);animation:glow 1.8s ease-in-out infinite}
+.tab.lit .ts{color:var(--green)}
+.tab.need{background:#FFF7E8;border-color:rgba(214,158,60,.6);animation:glowa 1.8s ease-in-out infinite}
+.tab.need .ts{color:var(--amber)}
+@keyframes glow{0%,100%{box-shadow:0 0 0 0 var(--mintglow)}50%{box-shadow:0 0 0 6px rgba(95,174,127,0),0 0 22px rgba(95,174,127,.45)}}
+@keyframes glowa{0%,100%{box-shadow:0 0 0 0 var(--amberglow)}50%{box-shadow:0 0 0 6px rgba(244,184,96,0),0 0 22px rgba(244,184,96,.5)}}
+#ixtab{position:absolute;bottom:58px;width:150px;left:calc(var(--book-l) + var(--book-w) - 8px);height:52px;z-index:6;cursor:pointer;
+  background:var(--ink);color:#F3F1EA;border-radius:0 9px 9px 0;padding:8px 12px 0 18px;box-shadow:2px 4px 12px rgba(20,20,20,.18);transition:left .4s, transform .2s}
+#ixtab:hover{transform:translateX(4px)}
+#ixtab b{font:600 13px Inter;display:block;letter-spacing:.02em} #ixtab span{font-size:11px;color:#A9B0AA}
+#ixtab svg{position:absolute;right:12px;top:13px}
+#ixtab.cur{background:#2a3330}
+
+/* right side: controls */
+#right{position:absolute;left:var(--right-l);right:24px;top:64px;bottom:24px;z-index:5;transition:left .4s}
+.sec{margin-bottom:20px}
+.sec .k{font:500 10px Inter;letter-spacing:.18em;color:var(--ink3);margin-bottom:8px;display:flex;justify-content:space-between}
+.ctl{display:flex;align-items:center;justify-content:space-between;font-size:13px;color:var(--ink2);margin:7px 0}
+.ctl b{font-weight:500;color:var(--ink)}
+.pill{border:1px solid #DDD7CA;background:rgba(255,255,255,.7);border-radius:999px;padding:3px 11px;font:500 12px Inter;color:var(--ink);cursor:pointer}
+.seg{display:flex;border:1px solid #DDD7CA;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.6)}
+.seg button{border:0;background:transparent;font:500 11.5px Inter;color:var(--ink2);padding:4px 10px;cursor:pointer}
+.seg button.on{background:var(--ink);color:#fff}
+.meter{height:5px;border-radius:3px;background:#E1DCD1;overflow:hidden;margin-top:4px} .meter i{display:block;height:100%;background:var(--green);opacity:.7}
+.wait{display:flex;gap:10px;align-items:flex-start;padding:9px 11px;border-radius:10px;background:rgba(255,247,232,.85);border:1px solid #F0DDB2;margin-bottom:7px;cursor:pointer;font-size:13px}
+.wait i{flex:none;width:8px;height:8px;border-radius:50%;background:var(--amber);margin-top:6px}
+.wait b{font-weight:500} .wait span{display:block;font-size:12px;color:var(--ink2)}
+.day{display:flex;gap:10px;font-size:13px;color:var(--ink2);margin:6px 0} .day b{font:500 12px var(--mono);color:var(--ink);width:82px;flex:none}
+#benchsvg{width:100%;height:auto;display:block;overflow:visible}
+.score{width:100%;border-collapse:collapse;font-size:12px;margin-top:8px}
+.score td{padding:5px 0;border-top:1px solid #E1DCD1;color:var(--ink2)} .score td.n{font:500 11.5px var(--mono);text-align:right;color:var(--ink)}
+.score td b{font-weight:500}
+.livebadge{font:500 10px Inter;letter-spacing:.12em;color:var(--green)}
+.livebadge:before{content:"";display:inline-block;width:6px;height:6px;border-radius:50%;background:#5FAE7F;margin-right:6px;animation:blink 1.4s infinite}
+@keyframes blink{50%{opacity:.25}}
+
+#badge{position:absolute;right:20px;bottom:6px;font:11px var(--mono);color:#A29D91;z-index:60}
+#toast{position:absolute;right:24px;top:58px;transform:translate(0,-8px);padding:7px 14px;border-radius:999px;background:#fff;border:1px solid #E0DBD0;color:var(--ink);font-size:12.5px;opacity:0;transition:.2s;z-index:80;pointer-events:none;box-shadow:0 6px 16px rgba(60,45,20,.1)}
+#toast.on{opacity:1;transform:translate(0,0)}
+.keys{position:absolute;left:var(--right-l);bottom:30px;font-size:11px;color:#A29D91;z-index:5}
+.keys kbd{font:10px var(--mono);border:1px solid #D6D0C3;border-radius:4px;padding:0 4px;background:rgba(255,255,255,.6);color:var(--ink2)}
+#app.ci .keys{display:none}
+</style>
+</head>
+<body>
+<div id="app" class="wb">
+  <svg id="grain" width="100%" height="100%"><filter id="n"><feTurbulence type="fractalNoise" baseFrequency=".8" numOctaves="3" stitchTiles="stitch"/><feColorMatrix values="0 0 0 0 .5  0 0 0 0 .45  0 0 0 0 .35  0 0 0 .18 0"/></filter><rect width="100%" height="100%" filter="url(#n)"/></svg>
+  <div class="bar"><span class="who"><b>IVY</b> · YOUR HOST</span>
+    <div class="switch"><button class="on" data-mode="wb">Workbench</button><button data-mode="ci">Circles</button></div>
+    <span class="clock">TUE 21:49</span></div>
+
+  <div id="contacts"></div>
+  <div id="book">
+    <div class="under" style="transform:translate(9px,7px) rotate(.35deg)"></div>
+    <div class="under" style="transform:translate(5px,4px) rotate(.18deg)"></div>
+    <div class="page current" id="pg"></div>
+  </div>
+  <div id="tabs"></div>
+  <div id="ixtab" title="Index — type what you remember, or just write your message">
+    <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="#F3F1EA" stroke-width="1.5"><circle cx="5" cy="5" r="3.8"/><path d="M8 8l3 3"/></svg>
+    <b>Index</b><span>type to find any page</span></div>
+  <div id="right"></div>
+  <div class="keys"><kbd>←</kbd><kbd>→</kbd> flip pages · <kbd>/</kbd> index · hold the ink button to think harder</div>
+  <div id="toast"></div>
+  <div id="badge">Mockup · sample content</div>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+const NS='http://www.w3.org/2000/svg'; const el=(t,a={},p)=>{const e=document.createElementNS(NS,t);for(const k in a)e.setAttribute(k,a[k]);if(p)p.appendChild(e);return e;};
+function toast(t){const x=$('#toast');x.textContent=t;x.classList.add('on');clearTimeout(toast.t);toast.t=setTimeout(()=>x.classList.remove('on'),2400);}
+const esc=s=>String(s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+const strip=h=>h.replace(/<[^>]+>/g,' ').replace(/\s+/g,' ');
+const demo=location.hash.includes('demo');
+let NOW=1000; // minutes, for ordering
+
+const shot=`<span class="print"><svg width="34" height="65" viewBox="0 0 78 150"><rect x="1" y="1" width="76" height="148" rx="12" fill="#1a1f1d"/><rect x="6" y="8" width="66" height="134" rx="7" fill="#f3f1ec"/><rect x="12" y="15" width="30" height="5" rx="2" fill="#1f2a27"/><rect x="12" y="27" width="16" height="16" rx="3" fill="#d9d3c6"/><rect x="31" y="29" width="28" height="4" rx="2" fill="#8b8679"/><rect x="12" y="48" width="16" height="16" rx="3" fill="#d9d3c6"/><rect x="31" y="50" width="24" height="4" rx="2" fill="#8b8679"/><rect x="12" y="72" width="54" height="40" rx="5" fill="#e6e1d6" stroke="#d3ccbe" stroke-dasharray="3 2"/><circle cx="39" cy="92" r="7" fill="none" stroke="#9b9586" stroke-width="2" stroke-dasharray="26 18"/><rect x="12" y="120" width="54" height="13" rx="4" fill="#b9b4a8"/></svg></span>`;
+const sigSVG=`<svg viewBox="0 0 230 36"><path class="sigpath" d="M6 26 C 18 6, 28 32, 40 18 S 56 8, 62 24 S 78 32, 86 13 C 92 4, 98 28, 108 22 S 126 9, 135 20 S 153 30, 164 15 S 186 20, 197 18 S 217 16, 225 11" fill="none" stroke="#1C3F33" stroke-width="2" stroke-linecap="round"/></svg>`;
+
+// ─────────── data: Workbench pages (projects) ───────────
+const WB={
+  storefront:{tok:214612,usd:1.84,eng:'2 runs, 1.2M tokens, $0.59',title:'Storefront',kind:'PROJECT · STOREFRONT REPO',chip:'#2E6A55',t:NOW-1,status:'2 engines working',need:true,
+    stands:[`Phones: 3.8 s now, <span class="hl">1.1 s with Claude Code's change</span> (not live).`,`Codex is still testing: <span data-live="cxn">15</span> of 20.`,`<span class="need">Waiting on you: which version lands.</span>`],
+    upd:'Ivy updated this at 21:48',
+    flow:[
+      {who:'you',time:'21:41',held:'high',html:`${shot}<p>Checkout feels slow on phones. Find out why and fix it. Try two engines and show me.</p>`},
+      {who:'host',time:'21:41',eff:'high',tk:21400,html:`<p>Measured first: on a mid-range phone, checkout takes <span class="num">3.8 s</span> to become usable, mostly the payment form loading before anything else. Same brief to Claude Code and Codex, each in its own sandbox.</p>
+        <div class="ledger"><div class="ln"><span style="color:var(--cc)">Claude Code</span><span class="dots"></span><span class="v">usable in 1.1 s ✓ · 6m 12s</span></div>
+        <div class="ln"><span style="color:var(--cx)">Codex</span><span class="dots"></span><span class="v" data-live="cxv">testing 15/20 · 7:33</span></div><div class="pencil"><i data-live="cxp" style="width:75%"></i></div></div>`},
+      {who:'host',time:'21:48',tk:6200,html:`<p>Claude Code's version is ready: usable in <span class="num">1.1 s</span>. The preview is live; Codex's number goes beside it when it lands.</p>`},
+      {slip:true,q:"Land Claude Code's version on the live site?",d:'Tests pass. Nothing changes on the real site until you sign.'},
+    ]},
+  newsletter:{tok:48210,usd:0.41,title:'Newsletter signup',kind:'PROJECT · STOREFRONT REPO',chip:'#7A6CCB',t:NOW-14,status:'building the form',
+    stands:[`Signup form: being built in a sandbox.`,`Double opt-in email: drafting.`],upd:'Ivy updated this at 21:35',
+    flow:[{who:'you',time:'21:33',html:`<p>Add a newsletter signup to the footer. Double opt-in, nothing pushy.</p>`},{who:'host',time:'21:35',html:`<p>On it. One field, one button, a thank-you line, and a confirmation email you read before it's connected.</p>`}]},
+  resizer:{tok:96100,usd:0.77,eng:'1 run, 410k tokens, $0.22',title:'Photo resizer',kind:'PROJECT · RESIZER REPO',chip:'#C46A3A',t:NOW-52,status:'1 Code Approval waits',need:true,
+    stands:[`Batch mode works on the 40 test photos.`,`<span class="need">Waiting on you: one Code Approval (adds "resize all").</span>`],upd:'Ivy updated this at 20:57',
+    flow:[{who:'host',time:'20:57',html:`<p>Batch mode works on all 40 test photos in 11 s. One Code Approval is waiting: it adds a "resize all" button and a progress bar.</p>`},{slip:true,q:'Approve: add "resize all" with a progress bar?',d:'3 files change. Tests pass. Read the plain-English summary first.'}]},
+  recipes:{tok:151300,usd:1.12,title:'Recipe site',kind:'PROJECT · RECIPES REPO',chip:'#B08A2E',t:NOW-1320,status:'live · 212 visits',
+    stands:[`Live since Monday; 212 visits.`,`Next: a print view (not started).`],upd:'Ivy updated this yesterday',
+    flow:[{who:'host',time:'Mon 18:02',html:`<p>Published. The site is live and the search works on all 64 recipes.</p>`}]},
+  inventory:{tok:22400,usd:0.18,title:'Inventory sync',kind:'PROJECT · STOREFRONT REPO',chip:'#5B7F95',t:NOW-4300,status:'quiet · 3 days',
+    stands:[`Stock syncs from the spreadsheet every hour.`,`No errors in 3 days.`],upd:'Ivy updated this on Saturday',
+    flow:[{who:'host',time:'Sat 09:12',html:`<p>The hourly sync has run 72 times without an error.</p>`}]},
+};
+// archives: chapters of finished pages
+const ARCH=[
+  {chapter:'September',pages:[
+    {id:'a-checkout',title:'Checkout redesign',date:'Sep 22',text:'Moved checkout to one page. On phones it became usable in 4.4 s, down from 6.1 s (measured Sep 22). Payment form still loads first.'},
+    {id:'a-ship',title:'Shipping rates',date:'Sep 17',text:'Flat rate under 2 kg, live rates above. Customers in Canada see duties up front.'},
+    {id:'a-photos',title:'Product photos',date:'Sep 9',text:'Reshot 31 products on white. Images are 2400 px wide; phone versions were never made.'},
+    {id:'a-gift',title:'Gift cards',date:'Sep 3',text:'Gift cards in $25, $50 and $100. Codes are emailed and never shown again.'}]},
+  {chapter:'August',pages:[
+    {id:'a-launch',title:'Store launch',date:'Aug 28',text:'The shop went live. First order at 9:14 am. Checkout errors: none.'},
+    {id:'a-domain',title:'Domain and email',date:'Aug 19',text:'Domain moved; shop email set up with the mail check passing.'},
+    {id:'a-logo',title:'Logo',date:'Aug 6',text:'Three logo directions; you picked the plain wordmark.'}]},
+  {chapter:'July',pages:[
+    {id:'a-kickoff',title:'Storefront kickoff',date:'Jul 30',text:'What the shop sells, who buys, and the rule that phones come first.'},
+    {id:'a-pricing',title:'Pricing research',date:'Jul 14',text:'Compared 12 shops selling prints. Your prices sit in the middle.'}]},
+];
+// ─────────── data: Circles (contacts → their pages) ───────────
+// Circles keeps Hosts and People in two separate views, never one list.
+const CONTACTS=[
+  {id:'ivy',name:'Ivy',sub:'your Host',color:'#2E6A55',host:true,view:'hosts',sec:'YOUR HOST'},
+  {id:'juno',name:'Juno',sub:"Ana's Host",color:'#C46A3A',host:true,view:'hosts',sec:'PEERS'},
+  {id:'kes',name:'Kestrel',sub:"Joel's Host",color:'#5B7F95',host:true,view:'hosts',sec:'PEERS'},
+  {id:'ana',name:'Ana',sub:'see you Thursday!',color:'#D9789B',view:'people',sec:'PEOPLE'},
+  {id:'joel',name:'Joel Park',sub:'invoice 1042',color:'#5B7F95',view:'people',sec:'PEOPLE'},
+  {id:'mara',name:'Mara',sub:'framing pickup',color:'#B08A2E',view:'people',sec:'PEOPLE'},
+  {id:'dad',name:'Sam',sub:'photos from the lake',color:'#7A6CCB',view:'people',sec:'PEOPLE'},
+  {id:'club',name:'Book club',sub:'5 people · Oct pick',color:'#8C9B94',view:'people',sec:'CIRCLES'},
+];
+let cview='hosts';
+const CI={
+  ivy:{
+    gift:{tok:38400,usd:0.29,title:'Gift for Sam',kind:'IVY · BIRTHDAY MAR 3',chip:'#7A6CCB',t:NOW-3,status:'3 options found',
+      stands:[`<span class="hl">3 options found</span>, all under $150.`,`Order by the 1st to have it by the 3rd.`],upd:'Ivy updated this at 21:46',
+      flow:[{who:'you',time:'21:20',html:`<p>Sam's birthday is the 3rd. Something for the garden, under $150, that he'd actually use.</p>`},
+        {who:'host',time:'21:46',tk:14800,html:`<p>Three that keen gardeners keep recommending in reviews, not ads:</p><div class="opts"><div class="opt"><b>Kneeling pad</b>closed-cell foam, wipes clean<br><span>$39</span></div><div class="opt"><b>Pruning saw</b>folding, fits a pocket<br><span>$64</span></div><div class="opt"><b>Tool roll</b>waxed canvas, eight pockets<br><span>$119</span></div></div><p>Pick one and I'll order it; I'll ask before paying.</p>`}]},
+    dinner:{tok:12100,usd:0.09,title:'Thursday dinner',kind:'IVY · WITH ANA',chip:'#D9789B',t:NOW-40,status:'booked · Corvo 7 pm',
+      stands:[`Corvo, Thursday 7:00 pm, away from the bar.`,`Ana confirmed; on both calendars.`],upd:'Ivy updated this at 21:09',
+      flow:[{who:'you',time:'20:58',html:`<p>Somewhere quiet near Ana's on Thursday, around 7.</p>`},{who:'host',time:'21:09',html:`<p>Booked Corvo for 7:00, a table away from the bar. Ana confirmed and it's on both calendars.</p>`}]},
+    inbox:{tok:9800,usd:0.07,title:'Inbox',kind:'IVY · MAIL AND MESSAGES',chip:'#5B7F95',t:NOW-5,status:'3 drafts need you',need:true,
+      stands:[`<span class="need">3 replies drafted; nothing goes out until you sign.</span>`],upd:'Ivy updated this at 21:44',
+      flow:[{who:'host',time:'21:44',html:`<p>Three replies are drafted from today's mail.</p>`},{slip:true,q:'Joel Park · Re: invoice 1042',d:'"Thanks Joel. Paid this afternoon; the receipt is attached."'}]},
+    backups:{tok:3100,usd:0.02,title:'Backups',kind:'IVY · NIGHTLY',chip:'#B08A2E',t:NOW-120,status:'all good',
+      stands:[`Last night's backup restored cleanly.`],upd:'Ivy updated this at 19:50',
+      flow:[{who:'host',time:'19:50',html:`<p>Last night's backup restored cleanly to a scratch machine. 14.2 GB; the key stays on your computer.</p>`}]},
+  },
+  ana:{
+    chat:{title:'Ana',kind:'CONVERSATION · ANA',chip:'#D9789B',t:NOW-30,status:'see you Thursday!',stands:[`Dinner Thursday at Corvo, 7 pm.`],upd:'',
+      flow:[{who:'them',name:'ANA',time:'21:12',html:`<p>Corvo is perfect. See you Thursday!</p>`},{who:'you',time:'21:13',html:`<p>Can't wait. I'll be the one early.</p>`}]},
+  },
+};
+['joel','mara','dad','club','juno','kes'].forEach(id=>{ const c=CONTACTS.find(x=>x.id===id); CI[id]={chat:{title:c.name,kind:'CONVERSATION · '+c.name.toUpperCase(),chip:c.color,t:NOW-200,status:c.sub,stands:[c.sub],upd:'',flow:[{who:'them',name:c.name.toUpperCase(),time:'earlier',html:`<p>${c.sub}.</p>`}]}}; });
+
+// ─────────── state ───────────
+let mode='wb', contact='ivy';
+let open='storefront';
+let pages=WB;               // the book in front of you
+let defaultEff=1;
+let ixMode='send';          // the index: 'send' = type the message, it finds the page; 'find' = open only
+const LV=[{k:'low',d:'quick'},{k:'medium',d:'balanced'},{k:'high',d:'thinks longer'},{k:'max',d:'thinks hardest · costs most'}];
+
+const order=()=>Object.keys(pages).sort((a,b)=>pages[b].t-pages[a].t);
+
+
+// ─────────── the page's running total ───────────
+const fmtK=n=> n>=1e6? (n/1e6).toFixed(2)+'M' : n>=1e3? (n/1e3).toFixed(1)+'k' : String(Math.round(n));
+function tallyTip(p){ const t=p.tok||0, cached=Math.round(t*.17), out=Math.round(t*.05), eng=p.eng||null;
+  return `Every turn on this page, added up. Host turns: ${fmtK(t-out)} in (${fmtK(cached)} of it from cache) and ${fmtK(out)} out.`+(eng?` Coding engines run from this page: ${eng}.`:''); }
+function bumpTally(id,addTok,addUsd){ const p=pages[id]; if(!p||p.tok==null) return; const from=p.tok; p.tok+=addTok; p.usd+=addUsd;
+  if(open!==id) return; const el2=document.querySelector('#pg .tally'); if(!el2) return; el2.classList.add('bump'); const t0=performance.now();
+  const step=t=>{ const k=Math.min(1,(t-t0)/700); const v=from+(p.tok-from)*(1-Math.pow(1-k,3)); el2.textContent=`${fmtK(v)} tokens · $${(p.usd-addUsd*(1-k)).toFixed(2)}`; if(k<1) requestAnimationFrame(step); else setTimeout(()=>el2.classList.remove('bump'),900); };
+  requestAnimationFrame(step); renderRight(); }
+// ─────────── page rendering ───────────
+function flowHTML(p){
+  return p.flow.map(it=>{
+    if(it.slip) return `<div class="slip"><div class="stamp">${mode==='ci'&&open==='inbox'?'SENT':'SIGNED'}</div><div class="q">${it.q}</div><div class="d">${it.d}</div>
+      <div class="sign"><div class="sigbox"><span>hold here to sign</span>${sigSVG}</div><span class="alt">not now</span></div></div>`;
+    if(it.marker) return `<div class="marker">${it.marker}</div>`;
+    if(it.nudge) return `<div class="nudge"><b>NUDGE · ${it.time}</b>${it.html}</div>`;
+    if(it.working) return `<div class="working"><i></i>IVY IS WORKING<span class="stopl" onclick="toast('Stop ends the turn; what is done stays')">stop</span></div>`;
+    const name = it.who==='you'?'YOU': it.who==='host'?'IVY':(it.name||'');
+    const tag = it.held?`<span class="tag eff">held · ${it.held}</span>`: it.eff?`<span class="tag">thought at ${it.eff}</span>`:'';
+    const tk = it.who==='host'&&it.tk ? `<span class="tk">+${fmtK(it.tk)} tokens</span>` : '';
+    return `<div class="w"><b>${name}</b> ${it.time} ${tag} ${tk}</div><div class="${it.who==='host'?'host':'you'}">${it.html}</div>`;
+  }).join('');
+}
+function renderPage(node,id){
+  if(id==='__index'){ renderIndex(node); return; }
+  const p = pages[id] || findArchived(id);
+  const arch = !pages[id];
+  node.innerHTML = `<div class="shade"></div><div class="inner">
+    <div class="head"><span>${p.kind || ('FROM THE '+p.chapter.toUpperCase()+' CHAPTER')}</span>${p.tok!=null?`<span class="tally" title="${tallyTip(p)}">${fmtK(p.tok)} tokens · $${p.usd.toFixed(2)}</span>`:`<span>${arch? p.date.toUpperCase() : ''}</span>`}</div>
+    <h1>${p.title}</h1>
+    ${p.stands?`<div class="stands"><div class="k">WHERE THIS STANDS</div><ul>${p.stands.map(s=>`<li>${s}</li>`).join('')}</ul></div>${p.upd?`<div class="upd">${p.upd} · tinted = changed since you last looked</div>`:''}`:''}
+    ${arch?`<div class="stands"><div class="k">WHERE THIS ENDED</div><ul><li>${p.text}</li></ul></div><div class="archived-note">This page is in the ${p.chapter} chapter. Write on it and it comes back to the top of the book.</div>`:''}
+    <div class="flow">${arch?(p.flow?flowHTML(p):''):flowHTML(p)}</div>
+    <div class="composer"><div class="line"><textarea placeholder="${p.busy?'Nudge Ivy while it works…':'Write on this page…'}"></textarea><button class="press" aria-label="Send — hold to think harder"><svg viewBox="-21 -21 42 42"></svg></button></div>
+      <div class="lvl"><b>HIGH</b>thinks longer</div><div class="chint">${p.busy?'Enter nudges: your words reach Ivy before its next step, without stopping it':'Enter sends at '+LV[defaultEff].k+' · hold the ink button to think harder · drop files onto the page'}</div></div>
+  </div>`;
+  wirePage(node,id);
+}
+function fitFlow(node){
+  const f=node.querySelector('.flow'); if(!f) return; const inner=node.querySelector('.inner'); f.style.justifyContent='flex-end';
+  const tops=[...inner.querySelectorAll('.upd,.archived-note,.stands,h1')].map(e=>e.offsetTop+e.offsetHeight); const top=Math.max(...tops)+8;
+  const comp=node.querySelector('.composer'); const bottom = inner.offsetHeight - comp.offsetTop + 10;
+  f.style.top=top+'px'; f.style.bottom=bottom+'px';
+  requestAnimationFrame(()=>{ const a=f.firstElementChild, z=f.lastElementChild; if(!a) return; const used=z.getBoundingClientRect().bottom-a.getBoundingClientRect().top+20; if(used<f.clientHeight) f.style.justifyContent='flex-start'; });
+}
+function wirePage(node,id){
+  fitFlow(node);
+  node.querySelectorAll('.sigbox').forEach(sb=>wireSign(sb,id));
+  const press=node.querySelector('.press'); if(press) wirePress(node,press,id);
+}
+
+// ─────────── flipping ───────────
+let flipping=false;
+function flipTo(id,opts={}){
+  if(flipping||id===open) { if(opts.after) opts.after(); return; }
+  flipping=true;
+  const pg=$('#pg'); const ghost=pg.cloneNode(true); ghost.removeAttribute('id'); ghost.querySelectorAll('[id]').forEach(e=>e.removeAttribute('id'));
+  ghost.classList.remove('current'); ghost.classList.add('ghost'); $('#book').appendChild(ghost);
+  open=id; if(pages[id]){ pages[id].lit=false; }
+  renderPage(pg,id); renderTabs(false); renderRight();
+  requestAnimationFrame(()=>requestAnimationFrame(()=>ghost.classList.add('turn')));
+  setTimeout(()=>{ ghost.remove(); flipping=false; if(opts.after) opts.after(); },760);
+}
+// riffle: a run of pages whizzes past, then lands on the one you wanted
+function riffle(sheets,landOn,after){
+  if(flipping) return; flipping=true;
+  const book=$('#book'); const pg=$('#pg');
+  const cover=pg.cloneNode(true); cover.removeAttribute('id'); cover.querySelectorAll('[id]').forEach(e=>e.removeAttribute('id')); cover.classList.remove('current'); cover.classList.add('sheet');
+  const nodes=[cover, ...sheets.map(s=>{ const d=document.createElement('div'); d.className='page sheet';
+    d.innerHTML=`<div class="shade"></div><div class="inner"><div class="head"><span>${s.chapter.toUpperCase()} CHAPTER</span><span>${s.date.toUpperCase()}</span></div><h1>${s.title}</h1><div class="stands"><div class="k">WHERE THIS ENDED</div><ul><li>${s.text}</li></ul></div></div>`; return d; })];
+  nodes.forEach((n,i)=>{ n.style.zIndex=60+nodes.length-i; book.appendChild(n); });
+  open=landOn; renderPage(pg,landOn); renderTabs(false); renderRight();
+  nodes.forEach((n,i)=>setTimeout(()=>n.classList.add('turn'), 60 + i*120 + (i>nodes.length-3? (i-(nodes.length-3))*110 : 0)));
+  const total=60+nodes.length*120+330+520;
+  setTimeout(()=>{ nodes.forEach(n=>n.remove()); flipping=false; if(after) after(); }, total);
+}
+function findArchived(id){ for(const c of ARCH) for(const p of c.pages) if(p.id===id) return {...p,chapter:c.chapter}; return null; }
+
+// ─────────── tabs ───────────
+function renderTabs(animate){
+  const col=$('#tabs');
+  const first=new Map([...col.querySelectorAll('.tab')].map(t=>[t.dataset.id,t.getBoundingClientRect().top]));
+  col.innerHTML='';
+  const ids=order().slice(0,7);
+  ids.forEach(id=>{ const p=pages[id]; const t=document.createElement('div');
+    t.className='tab'+(id===open?' cur':'')+(p.lit&&id!==open?' lit':'')+(p.need&&id!==open?' need':''); t.dataset.id=id;
+    t.innerHTML=`<i class="chip" style="background:${p.chip}"></i><div class="tt">${p.title}</div><div class="ts">${p.lit&&id!==open? (p.landed||'something landed') : p.status}</div>`;
+    t.onclick=()=>flipTo(id); col.appendChild(t); });
+  $('#ixtab').classList.toggle('cur', open==='__index');
+  if(animate) col.querySelectorAll('.tab').forEach(t=>{ const f=first.get(t.dataset.id); if(f==null) return; const dy=f-t.getBoundingClientRect().top; if(!dy) return;
+    t.style.transition='none'; t.style.transform=`translateY(${dy}px)`+(t.classList.contains('cur')?' translateX(-6px)':'');
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{ t.style.transition='transform .6s cubic-bezier(.2,.8,.2,1), background .2s, box-shadow .3s'; t.style.transform=''; })); });
+}
+function land(id, what){ // something lands on a page: it goes to the top, and its tab lights unless you're on it
+  const p=pages[id]; if(!p) return; NOW+=1; p.t=NOW; if(id!==open){ p.lit=true; p.landed=what; }
+  renderTabs(true); renderRight();
+}
+
+// ─────────── the index ───────────
+function allPages(){
+  const live=Object.entries(pages).map(([id,p])=>({id,title:p.title,where:'open page',date:'',text:strip((p.stands||[]).join(' ')+' '+p.flow.map(f=>f.html||f.q||'').join(' ')),live:true,t:p.t}));
+  const arch=mode==='wb'? ARCH.flatMap(c=>c.pages.map(p=>({id:p.id,title:p.title,where:c.chapter.toUpperCase()+' CHAPTER',date:p.date,text:p.text,live:false,t:0}))) : [];
+  return live.concat(arch);
+}
+const STOP=new Set(['the','and','for','with','that','this','from','what','was','were','you','your','about','last','time','when','where','have','had','did','make','made','just','into','like','some','then','than']);
+function search(q){
+  const toks=q.toLowerCase().split(/[^a-z0-9]+/).filter(t=>t.length>=3&&!STOP.has(t));
+  const all=allPages();
+  if(!toks.length) return all.filter(p=>p.live).sort((a,b)=>b.t-a.t).slice(0,5).map(p=>({...p,score:0}));
+  return all.map(p=>{ const T=p.title.toLowerCase(), X=p.text.toLowerCase(); let s=0;
+      toks.forEach(t=>{ const stem=t.replace(/(ing|ed|es|s)$/,''); if(T.includes(stem)) s+=3; if(X.includes(stem)) s+=1+ (X.split(stem).length-2)*.3; });
+      if(p.live && s>0) s+=2.5 + Math.max(0, .6 - (NOW-p.t)/400); return {...p,score:s}; })
+    .filter(p=>p.score>0.3).sort((a,b)=>b.score-a.score).slice(0,5);
+}
+function hlText(text,q){ const toks=q.toLowerCase().split(/[^a-z0-9]+/).filter(t=>t.length>=3&&!STOP.has(t)).map(t=>t.replace(/(ing|ed|es|s)$/,''));
+  let s=esc(text.length>150?text.slice(0,150)+'…':text); toks.forEach(t=>{ s=s.replace(new RegExp('('+t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+'[a-z]*)','gi'),'<mark>$1</mark>'); }); return s; }
+function renderIndex(node){
+  node.innerHTML=`<div class="shade"></div><div class="inner">
+    <div class="head"><span>INDEX · EVERY PAGE, OPEN AND ARCHIVED</span><span>TUESDAY 21:49</span></div>
+    <h1>Index</h1>
+    <div class="ix-input"><svg width="18" height="18" viewBox="0 0 12 12" fill="none" stroke="#1C2220" stroke-width="1.3"><circle cx="5" cy="5" r="3.8"/><path d="M8 8l3 3"/></svg>
+      <input id="ixq" placeholder="${ixMode==='send'?'Just write your message — Ivy finds its page':'Type what you remember'}" autocomplete="off"></div>
+    <div class="ix-mode"><span>Enter</span><button data-m="send" class="${ixMode==='send'?'on':''}">sends it to the page Ivy picks</button><button data-m="find" class="${ixMode==='find'?'on':''}">only opens the page</button></div>
+    <div class="results" id="ixr"></div>
+    ${mode==='wb'?`<div class="chapters"><div class="k">ARCHIVE · CHAPTERS</div><div class="chaps">${ARCH.map((c,i)=>`<div class="chap" data-c="${i}"><b>${c.chapter}</b><span>${c.pages.length} pages</span></div>`).join('')}</div></div>`:''}
+  </div>`;
+  const q=node.querySelector('#ixq');
+  node.querySelectorAll('.ix-mode button').forEach(b=>b.onclick=()=>{ ixMode=b.dataset.m; const v=q.value; renderIndex(node); const q2=node.querySelector('#ixq'); q2.value=v; q2.focus(); drawResults(v,false); });
+  node.querySelectorAll('.chap').forEach(c=>c.onclick=()=>{ const ch=ARCH[+c.dataset.c]; const sheets=ARCH.slice(0,+c.dataset.c+1).flatMap(x=>x.pages.map(p=>({...p,chapter:x.chapter}))); riffle(sheets.slice(0,-1), ch.pages[ch.pages.length-1].id); });
+  q.addEventListener('input',()=>drawResults(q.value,true));
+  q.addEventListener('keydown',e=>{ if(e.key==='Enter'){ e.preventDefault(); resurface(q.value); } if(e.key==='Escape'){ flipTo(order()[0]); } });
+  drawResults('',false);
+  setTimeout(()=>q.focus(),50);
+}
+let lastRes=[];
+function drawResults(q,animate){
+  const box=document.getElementById('ixr'); if(!box) return;
+  const first=new Map([...box.querySelectorAll('.res')].map(r=>[r.dataset.id,r.getBoundingClientRect().top]));
+  const res=search(q); lastRes=res;
+  const max=Math.max(1,...res.map(r=>r.score));
+  if(!res.length){ box.innerHTML=`<div class="res top" data-id="__new"><div class="t">A new page <small>NOTHING MATCHES</small></div><div class="s">${ixMode==='send'?'Enter starts a new page with your message on it.':'Nothing matches yet.'}</div><span class="go">↵ new page</span></div>`; return; }
+  box.innerHTML=res.map((r,i)=>`<div class="res${i===0&&q.trim()?' top':''}" data-id="${r.id}">${q.trim()?`<span class="rel" style="opacity:${.15+.7*r.score/max}"></span>`:''}
+    <div class="t">${esc(r.title)} <small>${r.live?'OPEN PAGE':r.where+' · '+r.date.toUpperCase()}</small></div><div class="s">${hlText(r.text,q)}</div>
+    <span class="go">${ixMode==='send'?'↵ sends here':'↵ opens'}</span></div>`).join('');
+  if(!q.trim()) box.insertAdjacentHTML('afterbegin','<div style="font:500 10px Inter;letter-spacing:.18em;color:var(--ink3);margin:0 0 8px">MOST RECENT</div>');
+  box.querySelectorAll('.res').forEach(r=>r.onclick=()=>openResult(r.dataset.id,null));
+  if(animate) box.querySelectorAll('.res').forEach(r=>{ const f=first.get(r.dataset.id); const l=r.getBoundingClientRect().top;
+    r.style.transition='none'; r.style.transform= f==null? 'translateY(14px)':`translateY(${f-l}px)`; r.style.opacity= f==null? 0 : 1;
+    requestAnimationFrame(()=>requestAnimationFrame(()=>{ r.style.transition='transform .45s cubic-bezier(.2,.8,.2,1), opacity .3s'; r.style.transform=''; r.style.opacity=1; })); });
+}
+function resurface(text){
+  const t=text.trim(); if(!t) return;
+  const top=lastRes[0];
+  if(ixMode==='find'){ if(top) openResult(top.id,null); return; }
+  if(!top || (top.score<=0 && t.split(/\s+/).length>2 && search(t).length===0)){ // nothing matches: a new page, started by the message
+    const id='p'+Date.now(); NOW+=1; pages[id]={title:t.split(/\s+/).slice(0,4).join(' '),kind: mode==='wb'?'PROJECT · NEW':'IVY · NEW PAGE',chip:'#2E6A55',t:NOW,status:'just started',stands:['Just started.'],upd:'',flow:[{marker:"Ivy started this page: nothing open matched what you wrote."}]};
+    openResult(id,t); return;
+  }
+  openResult(top.id,t);
+}
+function openResult(id,message){
+  if(id==='__new'){ resurface(document.getElementById('ixq')?.value||''); return; }
+  const live=!!pages[id];
+  const post=()=>{ if(!message) return; const p=pages[open]; if(!p) return;
+    p.flow.push({marker:`Ivy picked this page for your message: ${pickReason(p)}`});
+    p.flow.push({who:'you',time:'now',html:`<p>${esc(message)}</p>`}); NOW+=1; p.t=NOW;
+    renderPage($('#pg'),open); renderTabs(true);
+    setTimeout(()=>{ p.flow.push({who:'host',time:'now',html:`<p>Mockup reply. In the real thing the Host answers here, on the page it picked, and says so in the line above.</p>`}); renderPage($('#pg'),open); },1500); };
+  if(live){ flipTo(id,{after:post}); return; }
+  // archived: riffle back through the chapters, land on it, and bring it back to the top
+  const a=findArchived(id); let sheets=[];
+  for(const c of ARCH){ for(const p of c.pages){ if(p.id===id) break; sheets.push({...p,chapter:c.chapter}); } if(c.chapter===a.chapter) break; }
+  if(message){ NOW+=1; pages[id]={title:a.title,kind:'BACK FROM THE '+a.chapter.toUpperCase()+' CHAPTER',chip:'#8C9B94',t:NOW,status:'back from '+a.chapter,
+      stands:[a.text],upd:`Ivy brought this back from ${a.chapter}`,flow:[{marker:`This page was in the ${a.chapter} chapter; last written ${a.date}.`}]}; }
+  riffle(sheets.slice(-7), id, post);
+}
+function pickReason(p){ return p.title==='Storefront'?'it is about checkout speed on phones.': p.title==='Checkout redesign'?'it is where checkout speed was last measured (September).':`it matches "${p.title}".`; }
+
+// ─────────── signing (approvals) ───────────
+function wireSign(sb,id){
+  const sp=sb.querySelector('.sigpath'); const L=sp.getTotalLength(); sp.style.strokeDasharray=L; sp.style.strokeDashoffset=L;
+  let st=null,raf; const slip=sb.closest('.slip');
+  const step=()=>{ const p=Math.min(1,(performance.now()-st)/1250); sp.style.strokeDashoffset=L*(1-p); sb.querySelector('span').style.opacity=0;
+    if(p>=1){ slip.querySelector('.stamp').classList.add('on'); st=null;
+      if(id==='storefront'){ WB.storefront.need=false; WB.storefront.status='landed · watching it'; slip.querySelector('.q').textContent="Signed. The live site now serves Claude Code's version."; slip.querySelector('.d').textContent='Undo stays on this page for an hour.'; }
+      else if(id==='resizer'){ WB.resizer.need=false; WB.resizer.status='approved · merging'; slip.querySelector('.q').textContent='Signed. "Resize all" is merging.'; slip.querySelector('.d').textContent=''; renderRight(); }
+      else { slip.querySelector('.d').textContent='Signed and sent.'; }
+      renderTabs(false); return; }
+    raf=requestAnimationFrame(step); };
+  sb.addEventListener('pointerdown',e=>{ if(slip.querySelector('.stamp').classList.contains('on')) return; e.preventDefault(); st=performance.now(); raf=requestAnimationFrame(step); });
+  const stop=()=>{ if(st==null) return; cancelAnimationFrame(raf); st=null; sp.style.transition='stroke-dashoffset .3s'; sp.style.strokeDashoffset=L; setTimeout(()=>sp.style.transition='',320); sb.querySelector('span').style.opacity=1; };
+  sb.addEventListener('pointerup',stop); sb.addEventListener('pointerleave',stop);
+}
+
+// ─────────── the ink button: hold to think harder ───────────
+function drawPress(svg,level,holding,p){ svg.innerHTML=''; const r=holding?6+12*p:7;
+  el('circle',{r,fill:'#1C3F33',opacity:holding?.92:.85},svg); if(holding) el('circle',{r:r+3,fill:'none',stroke:'#1C3F33','stroke-opacity':.15,'stroke-width':4},svg);
+  for(let i=0;i<4;i++){ const a=(-90+i*90)*Math.PI/180; el('circle',{cx:18*Math.cos(a),cy:18*Math.sin(a),r:1.3,fill:i<=level?'#2E6A55':'#D6D1C5'},svg); } }
+function wirePress(node,press,id){
+  const svg=press.querySelector('svg'), lvl=node.querySelector('.lvl'), ta=node.querySelector('textarea'); drawPress(svg,defaultEff,false,0);
+  let hold=null;
+  const tick=()=>{ if(!hold) return; const T=performance.now()-hold.t0; if(T>240){ const p=Math.min(1,(defaultEff+1)/4-.12+(T-240)/2400); const li=Math.max(defaultEff,Math.min(3,Math.floor(p*3.999))); hold.level=li;
+      lvl.innerHTML=`<b>${LV[li].k.toUpperCase()}</b>${LV[li].d}`; lvl.classList.add('on'); drawPress(svg,li,true,p);} hold.raf=requestAnimationFrame(tick); };
+  const start=()=>{ if(hold) return; hold={t0:performance.now(),level:defaultEff}; tick(); };
+  const end=()=>{ if(!hold) return; cancelAnimationFrame(hold.raf); const lv=hold.level, held=performance.now()-hold.t0>240; hold=null; lvl.classList.remove('on'); drawPress(svg,defaultEff,false,0);
+    const v=ta.value.trim(); if(!v){toast('Write something first');return;} const p=pages[id]; if(!p) return;
+    if(p.busy){ const wi=p.flow.findIndex(x=>x.working); p.flow.splice(wi<0?p.flow.length:wi,0,{nudge:true,time:'now',html:esc(v)}); p.nudged=(p.nudged||0)+1;
+      renderPage($('#pg'),id); toast('Nudged. Ivy reads it before its next step.'); return; }
+    p.flow.push({who:'you',time:'now',held:held?LV[lv].k:null,html:`<p>${esc(v)}</p>`}); p.flow.push({working:true}); p.busy=true; NOW+=1; p.t=NOW; renderPage($('#pg'),id); renderTabs(true);
+    setTimeout(()=>{ p.flow=p.flow.filter(x=>!x.working); p.busy=false;
+      const tk=[6200,11800,21400,38600][lv];
+      p.flow.push({who:'host',time:'now',eff:held&&lv>=2?LV[lv].k:null,tk,html:`<p>Mockup reply at <em>${LV[lv].k}</em>${p.nudged?`, after reading your nudge`:''}. The block at the top would update after it, and the counter above just added this turn.</p>`}); p.nudged=0;
+      if(open===id) renderPage($('#pg'),id); bumpTally(id,tk,tk*0.0000085); }, 4200+lv*500); };
+  press.addEventListener('pointerdown',e=>{e.preventDefault();start();}); press.addEventListener('pointerup',end); press.addEventListener('pointerleave',()=>{ if(hold) end(); });
+  ta.addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); if(!e.repeat) start(); } });
+  ta.addEventListener('keyup',e=>{ if(e.key==='Enter') end(); });
+}
+
+// ─────────── right side: controls ───────────
+let cx={tests:15,secs:453,done:false};
+function renderRight(){
+  const r=$('#right');
+  const effSeg=`<div class="seg">${LV.map((l,i)=>`<button data-e="${i}" class="${i===defaultEff?'on':''}">${l.k}</button>`).join('')}</div>`;
+  if(mode==='wb'){
+    const waits=Object.entries(WB).filter(([k,p])=>p.need).map(([k,p])=>`<div class="wait" data-go="${k}"><i></i><div><b>${p.title}</b><span>${p.stands.find(s=>s.includes('Waiting'))?strip(p.stands.find(s=>s.includes('Waiting'))).replace('Waiting on you: ',''):p.status}</span></div></div>`).join('');
+    const ixSec = `<div class="sec"><div class="k"><span>THE INDEX</span><span>EVERY PAGE</span></div><div class="ctl" style="display:block;line-height:1.5">Searches the open pages and every chapter, by meaning and by words. With <b>sends it</b> on, Enter gives your message to the page Ivy picks, and Ivy writes on that page why it picked it.</div></div>`;
+    const pageSec = `<div class="sec"><div class="k"><span>THIS PAGE</span><span>${pages[open]?esc(pages[open].title):''}</span></div>
+        <div class="ctl"><span>Model</span><span class="pill" onclick="toast('Model picker opens here')">Opus 5.5 ▾</span></div>
+        <div class="ctl"><span>Effort</span>${effSeg}</div>
+        <div class="ctl" style="display:block"><div style="display:flex;justify-content:space-between"><span>Context</span><span style="font:500 11.5px var(--mono);color:var(--ink)">41k of 1M</span></div><div class="meter"><i style="width:6%"></i></div></div>
+        <div class="ctl" title="${pages[open]?tallyTip(pages[open]):''}"><span>On this page, all turns</span><b style="font:500 12px var(--mono)">${pages[open]&&pages[open].tok!=null?fmtK(pages[open].tok)+' tokens · $'+pages[open].usd.toFixed(2):'—'}</b></div></div>`;
+    const benchSec = `<div class="sec"><div class="k"><span>BENCH · STOREFRONT</span><span class="livebadge">${cx.done?'FINISHED':'LIVE'}</span></div><svg id="benchsvg" viewBox="0 0 380 118"></svg>
+        <table class="score"><tr><td><b style="color:var(--cc)">Claude Code</b></td><td>usable in 1.1 s</td><td class="n">6:12</td><td class="n">$0.38</td></tr>
+        <tr><td><b style="color:var(--cx)">Codex</b></td><td>${cx.done?'usable in 1.6 s':'testing '+cx.tests+'/20'}</td><td class="n">${cx.done?'8:02':Math.floor(cx.secs/60)+':'+String(cx.secs%60).padStart(2,'0')}</td><td class="n">${cx.done?'$0.21':'…'}</td></tr></table></div>`;
+    const waitSec = `<div class="sec"><div class="k"><span>WAITING ON YOU</span><span>${Object.values(WB).filter(p=>p.need).length}</span></div>${waits||'<div style="font-size:13px;color:var(--ink3)">Nothing right now.</div>'}</div>`;
+    r.innerHTML = (open==='__index' ? ixSec : pageSec) + benchSec + waitSec;
+    drawBench();
+  } else {
+    const c=CONTACTS.find(x=>x.id===contact);
+    r.innerHTML=`<div class="sec"><div class="k"><span>${c.host?'THIS HOST':'THIS CONVERSATION'}</span><span>${esc(c.name)}</span></div>
+        ${c.id==='ivy'?`<div class="ctl"><span>Model</span><span class="pill" onclick="toast('Model picker opens here')">Opus 5.5 ▾</span></div><div class="ctl"><span>Effort</span>${effSeg}</div>`:`<div class="ctl"><span>Ivy may reply for you</span><span class="pill">ask first ▾</span></div><div class="ctl"><span>Can reach you</span><span class="pill">anytime ▾</span></div>`}</div>
+      <div class="sec"><div class="k"><span>WAITING ON YOU</span><span>2</span></div>
+        <div class="wait" data-go="inbox"><i></i><div><b>3 replies to sign</b><span>Inbox · Joel, Mara, the dentist</span></div></div>
+        <div class="wait" data-go="gift"><i></i><div><b>Pick Sam's gift</b><span>3 options · order by the 1st</span></div></div></div>
+      <div class="sec"><div class="k"><span>COMING UP</span><span>THIS WEEK</span></div><div class="day"><b>Thu 16:00</b><span>Pick up the framed print · Mara</span></div><div class="day"><b>Thu ${CI.ivy.dinner.status.includes('7:30')?'19:30':'19:00'}</b><span>Dinner with Ana · Corvo</span></div></div>`;
+  }
+  r.querySelectorAll('.seg button').forEach(b=>b.onclick=()=>{ defaultEff=+b.dataset.e; renderRight(); const pg=$('#pg'); const svg=pg.querySelector('.press svg'); if(svg) drawPress(svg,defaultEff,false,0); const h=pg.querySelector('.chint'); if(h) h.innerHTML=`Enter sends at ${LV[defaultEff].k} · hold the ink button to think harder · drop files onto the page`; });
+  r.querySelectorAll('.wait').forEach(w=>w.onclick=()=>{ const g=w.dataset.go; if(pages[g]) flipTo(g); });
+}
+function drawBench(){
+  const s=document.getElementById('benchsvg'); if(!s) return; s.innerHTML='';
+  const X=m=>40+m/9*330; // minutes → x
+  for(let m=0;m<=9;m+=3){ el('line',{x1:X(m),x2:X(m),y1:12,y2:104,stroke:'#D9D3C6','stroke-dasharray':'2 3'},s); const t=el('text',{x:X(m),y:116,'text-anchor':'middle',fill:'#9AA19B','font-size':9.5,'font-family':'JetBrains Mono'},s); t.textContent=m+':00'; }
+  const lanes=[{n:'CC',c:'#C46A3A',y:34,end:6.2,done:true,steps:[.3,.9,1.4,2.2,2.6,3.1,3.9,4.4,5.1,5.8],think:[[.5,1.2],[3.2,3.8]]},
+               {n:'CX',c:'#4F5FCB',y:76,end:cx.done?8.03:cx.secs/60,done:cx.done,steps:[.4,1.1,1.6,2.9,3.4,4.2,5,5.6,6.3,6.9,7.3],think:[[1.7,2.7],[5.1,5.5]]}];
+  lanes.forEach(L=>{ const t=el('text',{x:0,y:L.y+4,fill:L.c,'font-size':11,'font-family':'JetBrains Mono','font-weight':500},s); t.textContent=L.n==='CC'?'Claude':'Codex';
+    // the strand: one line per engine, forked from the brief at 0:00
+    el('path',{d:`M ${X(0)} 56 C ${X(.25)} 56, ${X(.2)} ${L.y}, ${X(.55)} ${L.y} L ${X(L.end)} ${L.y}`,stroke:L.c,'stroke-width':2.4,fill:'none','stroke-linecap':'round',opacity:.85},s);
+    L.think.forEach(([a,b])=>{ if(a<L.end) el('rect',{x:X(a),y:L.y-5,width:X(Math.min(b,L.end))-X(a),height:10,rx:4,fill:L.c,opacity:.16},s); });
+    L.steps.forEach(m=>{ if(m<L.end) el('circle',{cx:X(m),cy:L.y,r:2.3,fill:'#FBFAF6',stroke:L.c,'stroke-width':1.3},s); });
+    if(L.done){ el('circle',{cx:X(L.end),cy:L.y,r:6.5,fill:L.c},s); el('path',{d:`M${X(L.end)-3} ${L.y}l2 2 4-4.2`,stroke:'#fff','stroke-width':1.6,fill:'none','stroke-linecap':'round'},s); }
+    else { const h=el('circle',{cx:X(L.end),cy:L.y,r:9,fill:L.c,opacity:.18},s); h.innerHTML='<animate attributeName="r" values="6;11;6" dur="1.6s" repeatCount="indefinite"/>'; el('circle',{cx:X(L.end),cy:L.y,r:4,fill:L.c},s); }
+  });
+  el('circle',{cx:X(0),cy:56,r:4.5,fill:'#2E6A55'},s);
+  const tb=el('text',{x:X(0)-8,y:60,'text-anchor':'end',fill:'#59625D','font-size':9.5,'font-family':'Inter'},s); tb.textContent='brief';
+}
+
+// ─────────── contacts (Circles) ───────────
+function renderContacts(){
+  const box=$('#contacts');
+  const unreadPeople=CONTACTS.some(c=>c.view==='people'&&c.unread), unreadHosts=CONTACTS.some(c=>c.view==='hosts'&&c.unread);
+  const list=CONTACTS.filter(c=>c.view===cview); const secs=[...new Set(list.map(c=>c.sec))];
+  box.innerHTML=`<div class="cv"><button data-v="hosts" class="${cview==='hosts'?'on':''}">Hosts${unreadHosts&&cview!=='hosts'?' <i></i>':''}</button><button data-v="people" class="${cview==='people'?'on':''}">People${unreadPeople&&cview!=='people'?' <i></i>':''}</button></div>`
+    + secs.map((sec,i)=>`<div class="ck"${i?' style="margin-top:14px"':''}>${sec}</div>`+list.filter(c=>c.sec===sec).map(cHTML).join('')).join('');
+  box.querySelectorAll('.cv button').forEach(b=>b.onclick=()=>{ cview=b.dataset.v; renderContacts(); });
+  box.querySelectorAll('.contact').forEach(n=>n.onclick=()=>{ if(contact===n.dataset.id) return; contact=n.dataset.id; pages=CI[contact]; const top=order()[0]; open=null; CONTACTS.find(c=>c.id===contact).unread=false; renderContacts(); flipTo(top); });
+}
+function cHTML(c){ return `<div class="contact${c.id===contact?' on':''}" data-id="${c.id}"><div class="av${c.host?' host':''}" style="background:${c.color}">${c.name[0]}${c.id==='ivy'||c.id==='ana'?'<i></i>':''}</div><div><div class="n">${c.name}</div><div class="s">${c.sub}</div></div>${c.unread?'<span class="u"></span>':''}</div>`; }
+
+// ─────────── mode switch ───────────
+document.querySelectorAll('.switch button').forEach(b=>b.onclick=()=>{ if(b.dataset.mode===mode) return; setMode(b.dataset.mode); });
+function setMode(m){
+  mode=m; document.querySelectorAll('.switch button').forEach(x=>x.classList.toggle('on',x.dataset.mode===m));
+  $('#app').className=m; if(m==='wb'){ pages=WB; } else { contact='ivy'; pages=CI.ivy; renderContacts(); }
+  const top=order()[0]; open=null;
+  setTimeout(()=>{ renderPage($('#pg'),top); open=top; renderTabs(false); renderRight(); },10);
+}
+
+// ─────────── live events ───────────
+setInterval(()=>{ if(cx.done) return; cx.secs++; const v=document.querySelector('[data-live="cxv"]'); if(v) v.textContent=`testing ${cx.tests}/20 · ${Math.floor(cx.secs/60)}:${String(cx.secs%60).padStart(2,'0')}`; if(mode==='wb') { const sc=document.querySelector('.score'); if(sc){ renderRight(); } } },1000);
+const cxTick=setInterval(()=>{ if(cx.done) return; cx.tests++;
+  document.querySelectorAll('[data-live="cxn"]').forEach(n=>n.textContent=Math.min(cx.tests,20)); document.querySelectorAll('[data-live="cxp"]').forEach(n=>n.style.width=Math.min(100,cx.tests/20*100)+'%');
+  if(cx.tests>=20){ clearInterval(cxTick); setTimeout(()=>{ cx.done=true;
+    WB.storefront.stands=[`Phones: 3.8 s now. <span class="hl sweep">Claude Code's change: 1.1 s. Codex's: 1.6 s.</span> Neither is live yet.`,`<span class="need">Waiting on you: which version lands.</span>`];
+    WB.storefront.upd='Ivy updated this at 21:50'; WB.storefront.status='2 versions ready'; WB.storefront.flow[1].html=WB.storefront.flow[1].html.replace(/testing 15\/20 · 7:33/,'usable in 1.6 s ✓ · 8m 02s').replace('width:75%','width:100%');
+    WB.storefront.flow[3]={slip:true,q:'Both are ready. Which one lands?',d:"Sign for Claude Code's (1.1 s), or tap Codex's (1.6 s) to switch the slip."};
+    if(mode==='wb'&&open==='storefront') renderPage($('#pg'),'storefront');
+    if(mode==='wb') land('storefront','Codex finished · 1.6 s');
+  }, 900); }
+}, demo?900:2300);
+// another page lands while you're reading this one
+setTimeout(()=>{ WB.newsletter.stands=[`Signup form built and tested; <span class="hl">the preview is ready</span>.`,`The confirmation email is drafted. Read it before it's connected.`]; WB.newsletter.upd='Ivy updated this at 21:49'; WB.newsletter.status='preview ready';
+  WB.newsletter.flow.push({who:'host',time:'21:49',html:`<p>The signup form is in the preview: one field, one button, a thank-you line. The confirmation email is drafted below; read it before I connect it.</p>`});
+  if(mode==='wb') { land('newsletter','preview ready'); toast('Newsletter signup — the preview landed'); } }, demo?3500:7000);
+setTimeout(()=>{ const a=CONTACTS.find(c=>c.id==='ana'); a.unread=true; a.sub='can we do 7:30?'; CI.ivy.dinner.stands=[`<span class="hl">Ana asked for 7:30; Ivy moved the table.</span>`,`Corvo, Thursday 7:30 pm, away from the bar.`]; CI.ivy.dinner.status='moved to 7:30'; CI.ivy.dinner.upd='Ivy updated this just now';
+  if(mode==='ci'){ if(contact==='ivy') land('dinner','moved to 7:30'); renderContacts(); } }, demo?5000:9000);
+
+// keys: flip, index
+window.addEventListener('keydown',e=>{
+  if(e.target.closest('textarea,input')) return;
+  const ids=order(); const i=ids.indexOf(open);
+  if(e.key==='ArrowRight'&&i>=0&&i<ids.length-1) flipTo(ids[i+1]);
+  if(e.key==='ArrowLeft'&&i>0) flipTo(ids[i-1]);
+  if(e.key==='/'){ e.preventDefault(); flipTo('__index'); }
+});
+$('#ixtab').onclick=()=>flipTo('__index');
+
+document.fonts.ready.then(()=>{ renderPage($('#pg'),open); renderTabs(false); renderRight(); });
+window.addEventListener('resize',()=>{ fitFlow($('#pg')); });
+</script>
+</body>
+</html>

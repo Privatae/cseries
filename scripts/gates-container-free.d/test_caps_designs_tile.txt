@@ -1,0 +1,2 @@
+# A design up to the render check's 4 MB page reaches the floor; a desktop over the 256 KB tile limit gets a reduced tile (inert parts, then the largest inline images, then every image, then the document) and the set door shows what was left out, or "no tile". Temp shell, stubs; no browser, no bridge.
+test_caps_designs_tile.py

@@ -1,0 +1,2 @@
+# A run whose processes keep using CPU but make no progress (no output, no model or tool event, no worktree change) is stopped by the progress backstop with a plain message, and a busy run printing output or changing files never is; 0 turns it off; a tool that setsid()s and is re-parented to pid 1 still counts as the run's (by its environment marker) and is stopped with it; a reader that goes away mid-flood leaks no stdout pump; the claude-code harness has the same backstop. Real spinning children, stub CLIs, a stand-in SDK; no pod.
+test_harness_progress_backstop.py

@@ -1,0 +1,1 @@
+test_session_ended_first_failure.py      # playwright chromium + local ports (loopback mock router/kernel, a second origin) — session ended: prompt on the first refused request, version cards say so and reload

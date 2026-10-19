@@ -1,0 +1,17 @@
+
+# 2026-09-17 (groups: a roster and a signed vote). The signature half is
+# the reason this gate exists: it signs through the PRODUCTION path (the real
+# entity_sign key material, nac_stepup's real canonical form, the real
+# verifier) and supplies only the key, because a test that hands the verifier
+# bytes it built itself cannot test the signer. Every signed field is then
+# mutated in turn and every mutation must fail — including the two binding
+# fields, so a signature lifted from one group's ballot can never count in
+# another's. Also pins what the OTHER half of a tally has to say out loud: an
+# unpinned member's vote is stored, uncounted, and REPORTED, because a tally
+# that silently omits it reads as complete when it is not. Then the lane
+# classification (each group op is in _OP_ACTION or _OP_ACTION_FROM_PARAMS and
+# none is slipless — the unclassified-op-becomes-ungated shape peer_server's
+# own comment names), the group app grant's local membership gate at deliver
+# time, the fan-out's roster scoping, replace-not-merge replication, and
+# first-key-wins pinning. Recording fake pool; no DB, no container, no network.
+test_groups_roster_votes.py

@@ -1,0 +1,6 @@
+# A call whose provider reported no usage stays
+# unknown in the readers too: the startup reprice pass never restates its NULL
+# row as a priced $0 call, a turn none of whose calls reported is 'unpriced'
+# rather than $0 at list, and the next-turn projection never stands on an
+# unreported call. Stubbed pool and price catalog only.
+test_usage_unknown_readers.py

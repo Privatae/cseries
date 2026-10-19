@@ -1,0 +1,41 @@
+
+# Rendezvous — batched introductions. Two properties are the reason this
+# gate exists and the rest follows them. NORMALISATION IS A FIXED POINT and
+# targets communityd's OWN slug rule, re-stated here as an independent
+# predicate rather than imported from the module under test: the host stores
+# normalised bytes and the platform merely re-validates them, so a host
+# normaliser that drifts from the Go `validSlug` (community/forum/groups.go:
+# 348-359) produces a tag that lists successfully and is then refused at
+# group-creation time — a disagreement invisible from either end. And THE
+# INTRODUCTION PAYLOAD NAMES NO IDENTITIES: `others` is a count, asserted on
+# the reader's exact key set, so a later field carrying who the others are
+# cannot be added quietly. Also the signing half through the PRODUCTION path
+# (real key material, real canonical form, real signer) with every signed field
+# mutated in turn; sorted tags, so one set is one signature; a monotonic seq,
+# which is the anti-replay that stops an old signed listing resurrecting a
+# withdrawn tag; replace-not-merge on the tag set; accepting an introduction
+# taking the group from the STORED CARD and sending the integer group_id
+# community.group.join actually parses; and the v155 / init-db.sql parity on
+# 'rendezvous_intro'.
+# It also drives the REAL domain_policy.check_inbound_allowed against a fake
+# pool holding a `*` allow_inbox = FALSE posture, because a join request comes
+# from someone who is BY DEFINITION not a contact and has no per-peer rule: a
+# kind missing from _REQUEST_KINDS is denied there, the card never reaches the
+# inbox, and the owner never learns they were asked: a feature that does not
+# work for its only case. Asserted through the function, not on set membership — membership
+# would still pass if the function stopped consulting the set.
+# It also asserts ROUTE DECLARATION ORDER: FastAPI matches in declaration
+# order, so every literal segment under /api/groups must be registered ahead of
+# the `/{group_id}` template, or /api/groups/rendezvous answers 400 "malformed
+# group id". Two route files carried that as a comment and a comment does not
+# survive someone tidying the file.
+# Verified red by mutation: dropping the sort from normalise_all
+# fails 2 checks; adding a member_ids field to the introduction reader fails
+# the no-identity key-set check; moving one rendezvous route below the
+# /{group_id} template fails the ordering check; dropping group_join and
+# rendezvous_intro from domain_policy._REQUEST_KINDS fails 2; dropping the
+# normalisation from withdraw_remote fails 3; dropping the `archived_at IS
+# NULL` guard from accept_intro fails 1 (an answered introduction could be
+# accepted again, each one a fresh join for a group we are already in).
+# Recording fake pool, real functions; no DB, no container, no network.
+test_rendezvous_host.py

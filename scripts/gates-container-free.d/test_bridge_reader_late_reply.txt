@@ -1,0 +1,4 @@
+# 2026-10-02: the bridge reader survives a reply read in the same loop turn its
+# waiter's timeout cancels it (it used to end the reader and drop the connection).
+# Real BridgeClient reader over in-memory streams; no network.
+test_bridge_reader_late_reply.py

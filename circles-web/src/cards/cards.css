@@ -1,0 +1,2048 @@
+/* Circles as cards, from docs/design/circles-cards/cards-2.html. Every colour is one of the
+   desktop's tokens (--cseries-*, /css/tokens.css, set on this frame's root by
+   the shell as the design changes), mixed as the mockup mixes them; the
+   fallbacks are the stock set, as src/index.css and app-web-kit/book/book.css
+   have them. The kit's book.css comes first (its fonts, the shadcn tokens
+   the shared components read, the running count, "Where this stands", the
+   nudge line and the press); these rules are the cards' own, all under
+   .cards. The phone (narrower than 700 px, mockup:585) is the reference
+   layout: [data-phone] on .cards. */
+
+.cards {
+  --desk: var(--cseries-ink, #0a0e0f);
+  --surface: var(--cseries-night, #0e1416);
+  --raised: var(--cseries-twilight, #131b1d);
+  --raised2: var(--cseries-silk, #1a2427);
+  --line: var(--cseries-mist, #263135);
+  --line2: var(--cseries-mist-strong, #3b4c51);
+  --ink: var(--cseries-paper, #e5e7eb);
+  --ink2: var(--cseries-linen, #9ca3af);
+  --ink3: var(--cseries-ash, #6b7280);
+  --accent: var(--cseries-ember, #4f7f6a);
+  --accent-text: var(--cseries-dusk, #7fcfae);
+  --green: var(--cseries-moss, #5fae7f);
+  --amber: var(--cseries-gold, #c2a86b);
+  --red: var(--cseries-clay, #c75f55);
+  --glow: var(--cseries-glow, rgba(127, 207, 174, 0.45));
+  /* Hosts carry a trace of the accent; people a trace of warmth. */
+  --host-panel: color-mix(in oklab, var(--raised) 90%, var(--accent));
+  --host-raised: color-mix(in oklab, var(--raised2) 86%, var(--accent));
+  --person-panel: color-mix(in oklab, var(--surface) 93%, var(--amber));
+  --person-raised: color-mix(in oklab, var(--raised) 88%, var(--amber));
+  --amber-wash: color-mix(in oklab, var(--amber) 16%, transparent);
+  --green-wash: color-mix(in oklab, var(--green) 16%, transparent);
+  --accent-wash: color-mix(in oklab, var(--accent) 22%, transparent);
+  /* Darkness for shadows, as the desktop's own (tokens.css --cseries-shadow-*):
+     never a surface or a word. */
+  --shade: #000;
+
+  position: fixed;
+  inset: 0;
+  display: grid;
+  grid-template-rows: 54px minmax(0, 1fr);
+  background: var(--desk);
+  color: var(--ink);
+  font: 14px/1.5 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+}
+/* The cards' own buttons start bare. Not inside a sheet's body: the views
+   moved there whole from the rail (a decision or a support ticket in full)
+   draw their buttons with Tailwind's classes, which sit in a cascade layer,
+   so this unlayered reset would strip them (a decision's options showed as
+   plain words). There Tailwind's own reset starts them bare instead. */
+.cards button:where(:not(.sheetbody *)) {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+@layer base {
+  .cards .sheetbody button:not(:disabled) {
+    cursor: pointer;
+  }
+}
+.cards input,
+.cards textarea {
+  font: inherit;
+  color: inherit;
+}
+.cards :focus-visible {
+  outline: 2px solid var(--accent-text);
+  outline-offset: 2px;
+}
+.cards .caps {
+  font: 600 10.5px/1 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink3);
+}
+.cards .mono {
+  font-family: var(--mono);
+}
+
+/* ── The top bar (desktop) ── */
+.cards .top {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 18px;
+  border-bottom: 1px solid var(--line);
+}
+.cards .brand {
+  font: 500 22px/1 var(--serif);
+  letter-spacing: -0.01em;
+  min-width: 110px;
+}
+.cards .search {
+  flex: 1;
+  max-width: 520px;
+  margin: 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 10px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--ink3);
+  position: relative;
+}
+.cards .search input {
+  flex: 1;
+  min-width: 0;
+  background: none;
+  border: 0;
+  outline: 0;
+  color: var(--ink);
+}
+.cards .search input::placeholder {
+  color: var(--ink3);
+}
+.cards .chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 9px;
+  border-radius: 99px;
+  font-size: 12px;
+  border: 1px solid var(--line);
+  color: var(--ink2);
+  background: var(--surface);
+  white-space: nowrap;
+}
+.cards .chip[aria-pressed="true"] {
+  border-color: var(--accent-text);
+  color: var(--accent-text);
+}
+.cards main.table {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr) 284px;
+  min-height: 0;
+}
+
+/* ── Faces: people are round, Hosts square. Everywhere. ── */
+.cards .av {
+  --s: 32px;
+  --hue: var(--accent);
+  width: var(--s);
+  height: var(--s);
+  flex: none;
+  display: grid;
+  place-items: center;
+  font: 500 calc(var(--s) * 0.44) / 1 var(--serif);
+  color: var(--ink);
+  position: relative;
+  background: color-mix(in oklab, var(--hue) 46%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--hue) 60%, transparent);
+}
+.cards .av.person {
+  border-radius: 50%;
+}
+.cards .av.host {
+  border-radius: 28%;
+  font-style: italic;
+  background: linear-gradient(155deg, color-mix(in oklab, var(--hue) 62%, var(--surface)), color-mix(in oklab, var(--hue) 30%, var(--surface)));
+}
+.cards .av.host::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border-radius: 24%;
+  border: 1px solid color-mix(in oklab, var(--ink) 14%, transparent);
+}
+.cards .av.team {
+  border-radius: 50%;
+  background: none;
+  box-shadow: inset 0 0 0 1.5px var(--line2);
+  font-family: var(--sans);
+  font-style: normal;
+  font-weight: 600;
+  color: var(--ink2);
+}
+.cards .hue-0 { --hue: var(--cseries-ember, #4f7f6a); }
+.cards .hue-1 { --hue: var(--cseries-gold, #c2a86b); }
+.cards .hue-2 { --hue: var(--cseries-clay, #c75f55); }
+.cards .hue-3 { --hue: var(--cseries-dusk, #7fcfae); }
+.cards .hue-4 { --hue: var(--cseries-linen, #9ca3af); }
+.cards .hue-5 { --hue: var(--cseries-moss, #5fae7f); }
+.cards .hue-6 { --hue: var(--cseries-bright, #9be3c2); }
+.cards .stack {
+  display: flex;
+}
+.cards .stack .av {
+  box-shadow: 0 0 0 2px var(--person-raised);
+}
+.cards .stack .av + .av {
+  margin-left: -9px;
+}
+
+/* lights: green = landed, amber = needs you */
+.cards .light {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+  display: inline-block;
+}
+.cards .light.green {
+  background: var(--green);
+  box-shadow: 0 0 0 3px var(--green-wash);
+}
+.cards .light.amber {
+  background: var(--amber);
+  box-shadow: 0 0 0 3px var(--amber-wash);
+}
+.cards .light.new {
+  animation: cards-lightin 0.9s ease-out;
+}
+@keyframes cards-lightin {
+  0% { transform: scale(0); opacity: 0; }
+  60% { transform: scale(1.6); }
+  100% { transform: scale(1); opacity: 1; }
+}
+.cards .working {
+  display: inline-flex;
+  gap: 3px;
+  align-items: center;
+}
+.cards .working i {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--accent-text);
+  animation: cards-work 1.1s infinite ease-in-out;
+}
+.cards .working i:nth-child(2) { animation-delay: 0.15s; }
+.cards .working i:nth-child(3) { animation-delay: 0.3s; }
+@keyframes cards-work {
+  0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
+  40% { opacity: 1; transform: translateY(-2px); }
+}
+
+.cards .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 11px;
+  border-radius: 8px;
+  border: 1px solid var(--line2);
+  font-size: 12.5px;
+  color: var(--ink);
+}
+.cards .btn:hover {
+  background: var(--raised2);
+}
+.cards .btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--desk);
+}
+.cards .btn.quiet {
+  border-color: transparent;
+  color: var(--ink2);
+}
+.cards .btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.cards .link {
+  color: var(--accent-text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* popovers, the toast */
+.cards .pop {
+  position: absolute;
+  z-index: 40;
+  min-width: 280px;
+  max-width: 380px;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: var(--raised2);
+  border: 1px solid var(--line2);
+  box-shadow: 0 18px 50px color-mix(in srgb, var(--shade) 35%, transparent);
+  font-size: 13px;
+  animation: cards-popin 0.16s ease-out;
+}
+@keyframes cards-popin {
+  from { opacity: 0; transform: translateY(-4px); }
+}
+.cards .pop h4 {
+  margin: 0 0 10px;
+  font: 600 10.5px/1 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink3);
+}
+.cards .pop dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 7px 12px;
+}
+.cards .pop dt { color: var(--ink2); }
+.cards .pop dd { margin: 0; color: var(--ink); }
+.cards .pop ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+}
+.cards .pop li button {
+  width: 100%;
+  text-align: left;
+  padding: 6px 8px;
+  border-radius: 8px;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.cards .pop li button:hover,
+.cards .pop li button:focus-visible {
+  background: var(--raised);
+}
+.cards .pop .why {
+  font-size: 11.5px;
+  color: var(--ink3);
+  margin-left: auto;
+  white-space: nowrap;
+}
+.cards .toast {
+  position: fixed;
+  left: 50%;
+  bottom: 22px;
+  transform: translateX(-50%);
+  padding: 9px 14px;
+  border-radius: 10px;
+  background: var(--raised2);
+  border: 1px solid var(--line2);
+  font-size: 12.5px;
+  color: var(--ink);
+  z-index: 45;
+  max-width: min(92vw, 520px);
+  animation: cards-popin 0.2s ease-out;
+}
+
+/* ── the deck ── */
+.cards .deck {
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 18px 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+.cards .deck > .caps {
+  padding: 6px 4px 2px;
+}
+.cards .dc {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+  border-radius: 14px;
+  min-height: 64px;
+  cursor: pointer;
+  text-align: left;
+  width: 100%;
+  flex-shrink: 0;
+  background: var(--person-raised);
+  box-shadow: 0 1px 0 color-mix(in oklab, var(--ink) 6%, transparent) inset, 0 6px 14px color-mix(in srgb, var(--shade) 18%, transparent);
+  transition: transform 0.25s cubic-bezier(0.3, 0.7, 0.3, 1), box-shadow 0.25s;
+}
+.cards .dc:hover {
+  transform: translateX(3px);
+}
+.cards .dc[aria-current="true"] {
+  transform: translateX(6px);
+  box-shadow: 0 0 0 1.5px var(--accent-text), 0 8px 18px color-mix(in srgb, var(--shade) 25%, transparent);
+}
+.cards .dc.lift {
+  animation: cards-lift 1.4s ease-out;
+}
+@keyframes cards-lift {
+  0% { transform: translateX(0); }
+  25% { transform: translateX(12px) rotate(-1deg); }
+  100% { transform: translateX(0); }
+}
+.cards .dc .face {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  min-width: 0;
+}
+.cards .dc .txt {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.cards .dc .nm {
+  font-weight: 550;
+  font-size: 14.5px;
+  display: flex;
+  gap: 7px;
+  align-items: center;
+}
+.cards .dc .sb {
+  font-size: 12.5px;
+  color: var(--ink3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cards .dc .sb.amber {
+  color: var(--amber);
+}
+.cards .dc .edge {
+  width: 48px;
+  flex: none;
+  border-radius: 0 14px 14px 0;
+  background: var(--host-panel);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  position: relative;
+}
+.cards .dc .edge::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 9px;
+  bottom: 9px;
+  width: 1px;
+  background: repeating-linear-gradient(to bottom, var(--line2) 0 3px, transparent 3px 6px);
+}
+.cards .dc.hostonly {
+  background: var(--host-panel);
+}
+.cards .dc.add {
+  min-height: 44px;
+  background: none;
+  border: 1px dashed var(--line2);
+  box-shadow: none;
+  color: var(--ink2);
+  justify-content: center;
+  align-items: center;
+  font-size: 13px;
+}
+.cards .dc.door {
+  background: none;
+  border: 1px dashed var(--line2);
+  box-shadow: none;
+  cursor: default;
+}
+.cards .dc.door:hover {
+  transform: none;
+}
+.cards .dc.door .face {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+.cards .dc.door .row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.cards .dc.door .acts {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.cards .dc.door .btn {
+  padding: 4px 10px;
+  font-size: 12px;
+}
+.cards .dc.door .said {
+  font-size: 12px;
+  color: var(--ink3);
+}
+.cards .dc.door[data-gone] {
+  opacity: 0.45;
+}
+.cards .door-err,
+.cards .err {
+  font-size: 12px;
+  color: color-mix(in oklab, var(--red) 80%, var(--ink));
+}
+.cards .connect {
+  display: grid;
+  gap: 8px;
+  padding: 12px;
+  border-radius: 14px;
+  border: 1px solid var(--line2);
+  background: var(--surface);
+}
+.cards .connect input {
+  height: 32px;
+  padding: 0 10px;
+  border-radius: 8px;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  outline: 0;
+}
+.cards .connect .row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.cards .connect p {
+  margin: 0;
+  font-size: 12px;
+  color: var(--ink3);
+}
+
+/* the phone-only parts of the deck */
+.cards .strip,
+.cards .soon,
+.cards .phonebar,
+.cards .phoneonly,
+.cards .cardbar {
+  display: none;
+}
+
+/* ── the card you hold ── */
+.cards .hold {
+  min-height: 0;
+  position: relative;
+  display: flex;
+  justify-content: center;
+  padding: 16px 8px;
+  perspective: 2200px;
+}
+.cards .card3d {
+  position: relative;
+  width: 100%;
+  max-width: 780px;
+  height: 100%;
+  transform-style: preserve-3d;
+  transition: transform 0.8s cubic-bezier(0.35, 0.1, 0.25, 1);
+}
+.cards .card3d.flipped {
+  transform: rotateY(180deg);
+}
+/* Less motion: the card does not turn in space; the side in front fades in. */
+.cards .card3d[data-motion="fade"] {
+  transition: none;
+  transform: none;
+}
+.cards .card3d[data-motion="fade"] .facecard {
+  transform: none;
+  backface-visibility: visible;
+  transition: opacity 0.18s;
+}
+.cards .card3d[data-motion="fade"] .facecard[aria-hidden="true"] {
+  opacity: 0;
+  pointer-events: none;
+}
+.cards .facecard {
+  position: absolute;
+  inset: 0;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+  border-radius: 22px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 1px 0 color-mix(in oklab, var(--ink) 7%, transparent) inset, 0 24px 60px color-mix(in srgb, var(--shade) 35%, transparent);
+}
+.cards .facecard[aria-hidden="true"] {
+  visibility: hidden;
+  transition: visibility 0s 0.4s;
+}
+.cards .facecard.front {
+  background: var(--person-panel);
+}
+.cards .facecard.back {
+  background: var(--host-panel);
+  transform: rotateY(180deg);
+}
+.cards .chead {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 34px 26px 12px;
+  position: relative;
+  flex: none;
+}
+.cards .chead h2 {
+  margin: 0;
+  font: 500 28px/1.05 var(--serif);
+  letter-spacing: -0.015em;
+}
+.cards .chead .sub {
+  font-size: 12.5px;
+  color: var(--ink3);
+  margin-top: 4px;
+}
+.cards .chead .who {
+  flex: 1;
+  min-width: 0;
+  padding-right: 96px;
+}
+.cards .chead .pickers {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 6px;
+}
+.cards .kind {
+  position: absolute;
+  top: 14px;
+  left: 26px;
+  font: 600 10px/1 var(--mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink3);
+}
+.cards .corner {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 118px;
+  height: 86px;
+  cursor: pointer;
+  z-index: 3;
+}
+.cards .corner::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 0;
+  height: 0;
+  border-style: solid;
+  border-width: 0 62px 62px 0;
+  border-color: transparent var(--desk) transparent transparent;
+  transition: border-width 0.25s;
+}
+.cards .corner::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 62px;
+  height: 62px;
+  background: linear-gradient(225deg, transparent 50%, var(--fold) 50%);
+  border-bottom-left-radius: 8px;
+  box-shadow: -3px 3px 8px color-mix(in srgb, var(--shade) 25%, transparent);
+  transition: all 0.25s;
+}
+.cards .corner:hover::before {
+  border-width: 0 76px 76px 0;
+}
+.cards .corner:hover::after {
+  width: 76px;
+  height: 76px;
+}
+.cards .corner > .lab {
+  position: absolute;
+  top: 68px;
+  right: 12px;
+  font: 600 10.5px/1 var(--mono);
+  letter-spacing: 0.06em;
+  color: var(--ink2);
+  white-space: nowrap;
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.cards .corner > .light {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1;
+}
+.cards .front .corner {
+  --fold: var(--host-raised);
+}
+.cards .back .corner {
+  --fold: var(--person-raised);
+}
+.cards .cbody {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 30px 14px;
+}
+.cards .day {
+  text-align: center;
+  margin: 16px 0 8px;
+  font: 600 10px/1 var(--mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink3);
+}
+.cards .notice {
+  text-align: center;
+  margin: 10px auto;
+  font-size: 12px;
+  color: var(--ink2);
+  max-width: 80%;
+}
+.cards .pb {
+  max-width: 76%;
+  width: fit-content;
+  padding: 8px 14px;
+  border-radius: 18px;
+  font: 16.5px/1.42 var(--serif);
+  margin: 3px 0;
+  position: relative;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.cards .pb.them {
+  background: var(--person-raised);
+  border-bottom-left-radius: 6px;
+}
+.cards .pb.me {
+  background: color-mix(in oklab, var(--accent) 30%, var(--person-panel));
+  margin-left: auto;
+  border-bottom-right-radius: 6px;
+}
+.cards .pt {
+  font: 11px/1 var(--mono);
+  color: var(--ink3);
+  margin: 2px 4px 8px;
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.cards .pt.me {
+  justify-content: flex-end;
+}
+.cards .pb.fresh {
+  animation: cards-pfresh 1.8s ease-out;
+}
+@keyframes cards-pfresh {
+  0% { box-shadow: 0 0 0 0 var(--glow); }
+  30% { box-shadow: 0 0 0 6px var(--glow); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+.cards .askivy {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 99px;
+  border: 1px solid var(--line);
+  color: var(--accent-text);
+  font: 11px var(--sans);
+  opacity: 0;
+  transition: opacity 0.15s;
+}
+.cards .msg:hover .askivy,
+.cards .msg:focus-within .askivy,
+.cards .askivy[aria-expanded="true"] {
+  opacity: 1;
+}
+.cards .composer {
+  margin: 0 22px 20px;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 9px 9px 9px 16px;
+  border: 1px solid var(--line2);
+  background: var(--surface);
+  flex: none;
+}
+.cards .front .composer {
+  border-radius: 22px;
+}
+.cards .back .composer {
+  border-radius: 12px;
+}
+.cards .composer textarea {
+  flex: 1;
+  background: none;
+  border: 0;
+  outline: 0;
+  resize: none;
+  min-height: 24px;
+  max-height: 140px;
+  line-height: 24px;
+  padding: 0;
+  min-width: 0;
+}
+.cards .composer textarea::placeholder {
+  color: var(--ink3);
+}
+.cards .composer textarea:disabled {
+  cursor: not-allowed;
+}
+.cards .send {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  background: var(--accent);
+  color: var(--desk);
+  font-weight: 700;
+}
+.cards .send:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.cards .front .send {
+  border-radius: 50%;
+}
+.cards .back .send {
+  border-radius: 9px;
+}
+.cards .composer .tool {
+  width: 34px;
+  height: 34px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  color: var(--ink2);
+}
+.cards .composer .tool:hover {
+  background: var(--raised2);
+}
+.cards .composer .nudge {
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 9px;
+  background: var(--accent);
+  color: var(--desk);
+  font-weight: 600;
+  font-size: 12.5px;
+}
+.cards .composer-wrap {
+  flex: none;
+}
+.cards .composer-wrap .hint {
+  margin: -14px 26px 12px;
+  font-size: 11px;
+  color: var(--ink3);
+}
+.cards .composer-wrap .files {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 0 26px 8px;
+}
+.cards .composer-wrap .files span {
+  font-size: 11.5px;
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--raised2);
+  color: var(--ink2);
+}
+.cards .composer-wrap .held {
+  margin: 0 22px 8px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--amber);
+  background: var(--amber-wash);
+  font-size: 12.5px;
+  display: grid;
+  gap: 8px;
+}
+.cards .banner {
+  margin: 0 26px 6px;
+  padding: 8px 12px;
+  border-radius: 10px;
+  background: var(--accent-wash);
+  font-size: 12.5px;
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  flex: none;
+}
+.cards .ballot {
+  margin: 8px 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line2);
+  background: var(--host-raised);
+  display: grid;
+  gap: 7px;
+}
+.cards .ballot .q {
+  font: 500 15.5px/1.35 var(--serif);
+}
+.cards .bnote {
+  font: 11px/1.3 var(--mono);
+  color: var(--ink3);
+}
+.cards .tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 22px 10px;
+  overflow-x: auto;
+  scrollbar-width: none;
+  flex: none;
+  align-items: center;
+}
+.cards .tab {
+  padding: 6px 11px;
+  border-radius: 9px;
+  font-size: 12.5px;
+  color: var(--ink2);
+  border: 1px solid transparent;
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  white-space: nowrap;
+}
+.cards .tab[aria-selected="true"] {
+  background: var(--host-raised);
+  border-color: var(--line);
+  color: var(--ink);
+}
+.cards .tab .theirs {
+  font: 600 10px/1 var(--mono);
+  letter-spacing: 0.06em;
+  color: var(--ink3);
+  border: 1px solid var(--line2);
+  border-radius: 6px;
+  padding: 2px 5px;
+}
+.cards .tab.add {
+  color: var(--ink3);
+}
+/* Another Host's topics (faces.tsx PeerBack): the original conversation is
+   pinned at the strip's start, so a topic the other Host titled like it is
+   never the only one in sight, and a topic it started is outlined, so its
+   badge is plainly that tab's. */
+.cards .tabs[data-peer-tabs] .tab[data-topic="original"] {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  flex: none;
+  background: var(--host-panel);
+  box-shadow: 10px 0 8px -8px rgb(0 0 0 / 0.55);
+}
+.cards .tabs[data-peer-tabs] .tab[data-topic="original"][aria-selected="true"] {
+  background: var(--host-raised);
+}
+.cards .tabs[data-peer-tabs] .tab[data-theirs] {
+  border-color: var(--line2);
+  border-style: dashed;
+  max-width: 15em;
+}
+.cards .tabs[data-peer-tabs] .tab[data-theirs][aria-selected="true"] {
+  border-style: solid;
+}
+.cards .tab .theirs {
+  flex: none;
+}
+.cards .tab .tl {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cards .tab-new {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.cards .tab-new input {
+  height: 28px;
+  padding: 0 8px;
+  border-radius: 8px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  outline: 0;
+  font-size: 12.5px;
+  width: 180px;
+}
+/* "Where this stands": one line until it is opened (stands.tsx). */
+.cards .stands-box {
+  margin: 0 26px 6px;
+  padding: 5px 12px;
+  border-radius: 12px;
+  background: var(--host-raised);
+  border: 1px solid var(--line);
+  flex: none;
+}
+.cards .stands-box[data-open] {
+  padding: 8px 14px 10px;
+  max-height: 34%;
+  overflow: auto;
+}
+.cards .stands-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.cards .stands-toggle {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+  padding: 2px 0;
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--ink2);
+}
+.cards .stands-toggle .caret {
+  flex: none;
+  font-size: 10px;
+  color: var(--ink3);
+}
+.cards .stands-toggle .k {
+  flex: none;
+  font: 600 10.5px/1.4 var(--mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink3);
+}
+.cards .stands-toggle .topic {
+  flex: 0 1 auto;
+  max-width: 40%;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--accent-text);
+}
+.cards .stands-toggle .first {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cards .stands-toggle:hover .k,
+.cards .stands-toggle:focus-visible .k {
+  color: var(--ink);
+}
+/* The row above carries the label. */
+.cards .stands-box .book-stands .book-k {
+  display: none;
+}
+.cards .stands-box .book-stands {
+  max-height: none;
+  border-left: 0;
+  padding-left: 0;
+}
+.cards .stands-box .book-stands ul {
+  font: 400 14px/1.45 var(--sans);
+}
+.cards .stands-box .book-upd {
+  margin: 4px 0 0;
+}
+.cards .stands-box .sf {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  font-size: 11.5px;
+  color: var(--ink3);
+  align-items: baseline;
+  flex: none;
+  white-space: nowrap;
+}
+.cards .reach {
+  margin: 0 26px 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  background: var(--host-raised);
+  display: grid;
+  gap: 8px;
+  font-size: 12.5px;
+  flex: none;
+}
+.cards .reach ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 4px;
+}
+.cards .reach li::before {
+  content: "↳ ";
+  color: var(--ink3);
+}
+.cards .reach .lim {
+  color: var(--ink3);
+  font-size: 12px;
+  border-top: 1px solid var(--line);
+  padding-top: 8px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.cards .rule {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+.cards .rule .chip {
+  cursor: pointer;
+}
+.cards .rule .chip[data-blocked] {
+  border-color: var(--red);
+  color: color-mix(in oklab, var(--red) 80%, var(--ink));
+}
+.cards .hm {
+  padding: 12px 0;
+  border-bottom: 1px dashed color-mix(in oklab, var(--line2) 60%, transparent);
+}
+.cards .hm:last-child {
+  border-bottom: 0;
+}
+.cards .hm .lb {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  font: 600 10.5px/1 var(--mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink3);
+}
+.cards .hm .lb .w {
+  color: var(--accent-text);
+}
+.cards .hm.you .lb .w {
+  color: var(--ink2);
+}
+.cards .hm .lb .t {
+  font-weight: 400;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+.cards .hm .tx {
+  margin-top: 6px;
+  font-size: 14px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.cards .hm.you .tx {
+  color: var(--ink2);
+}
+.cards .hm .mt {
+  margin-top: 6px;
+  font: 11px/1.3 var(--mono);
+  color: var(--ink3);
+}
+.cards .hm.fresh {
+  animation: cards-fresh 1.6s ease-out;
+}
+@keyframes cards-fresh {
+  0% { background: var(--accent-wash); }
+  100% { background: transparent; }
+}
+/* The shared message view inside a Host's message: no bubble of its own. */
+.cards .hm .body [data-role],
+.cards .hm .body .is-user,
+.cards .hm .body .is-assistant {
+  max-width: 100%;
+}
+.cards .hm .body {
+  margin-top: 4px;
+  font-size: 14px;
+}
+.cards .quote {
+  margin-top: 7px;
+  padding: 8px 12px;
+  border-left: 2px solid var(--amber);
+  background: var(--amber-wash);
+  border-radius: 0 8px 8px 0;
+  font: 15px/1.4 var(--serif);
+  white-space: pre-wrap;
+}
+.cards .quote small {
+  display: block;
+  font: 11px/1.2 var(--mono);
+  color: var(--ink3);
+  margin-bottom: 4px;
+}
+.cards .pcard {
+  padding: 14px 16px;
+  border-radius: 14px;
+  background: var(--person-raised);
+  border: 1px solid var(--line);
+  margin-bottom: 12px;
+}
+.cards .pcard h3 {
+  margin: 0 0 8px;
+  font: 600 10.5px/1 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink3);
+}
+.cards .pcard p {
+  margin: 4px 0;
+  font-size: 13.5px;
+}
+.cards .pcard .small {
+  color: var(--ink3);
+  font-size: 12px;
+  margin-top: 9px;
+}
+.cards .pcard .elsewhere {
+  font-size: 12px;
+  color: var(--accent-text);
+  margin-top: 8px;
+  display: inline-block;
+  cursor: pointer;
+}
+.cards .tags {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.cards .blank {
+  margin: auto;
+  max-width: 360px;
+  text-align: center;
+  color: var(--ink3);
+  font-size: 13px;
+  line-height: 1.55;
+  padding: 30px;
+}
+.cards .mini {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin: 0 26px 10px;
+  flex: none;
+}
+.cards .mini > div {
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--host-raised);
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 4px;
+  align-content: start;
+  font-size: 12px;
+  color: var(--ink2);
+}
+.cards .mini b {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--ink);
+}
+.cards .mini ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 3px;
+}
+.cards .slip {
+  margin: 8px 0;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border: 1px solid var(--line2);
+  background: var(--person-raised);
+  max-width: 92%;
+  display: grid;
+  gap: 8px;
+}
+.cards .slip .st {
+  font: 600 10.5px/1 var(--mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--amber);
+}
+.cards .slip .st.done {
+  color: var(--green);
+}
+.cards .slip h4 {
+  margin: 0;
+  font: 500 16.5px/1.35 var(--serif);
+}
+.cards .slip .body {
+  font-size: 13px;
+  color: var(--ink2);
+  white-space: pre-wrap;
+}
+.cards .slip label {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 13px;
+  color: var(--ink2);
+}
+.cards .slip input {
+  accent-color: var(--accent);
+  margin-top: 3px;
+}
+.cards .slip .acts {
+  display: flex;
+  gap: 6px;
+}
+.cards .ask-wrap {
+  position: relative;
+  flex: none;
+}
+.cards .ask-wrap:empty {
+  display: none;
+}
+
+/* ── across every card (desktop: a column; phone: the top of the deck) ── */
+.cards .today {
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 16px 16px 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.cards .box {
+  border-radius: 14px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  padding: 12px 12px 8px;
+}
+.cards .box > .caps {
+  padding: 2px 4px 8px;
+  display: flex;
+  justify-content: space-between;
+}
+.cards .box > .caps button {
+  color: var(--accent-text);
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-family: var(--sans);
+  font-weight: 500;
+}
+.cards .item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 10px;
+  align-items: center;
+  padding: 8px 6px;
+  border-radius: 9px;
+  text-align: left;
+  width: 100%;
+}
+.cards .item:hover,
+.cards .item[data-focus] {
+  background: var(--raised);
+}
+.cards .item .av {
+  --s: 22px;
+}
+.cards .item b {
+  font-weight: 550;
+  font-size: 13px;
+}
+.cards .item .it2 {
+  grid-column: 2;
+  font-size: 12px;
+  color: var(--ink3);
+}
+.cards .cu {
+  display: grid;
+  grid-template-columns: 86px 1fr;
+  gap: 7px 8px;
+  font-size: 12.5px;
+  padding: 2px 4px 6px;
+}
+.cards .cu .w {
+  font: 11px var(--mono);
+  color: var(--ink3);
+  padding-top: 2px;
+}
+.cards .legend {
+  font-size: 12px;
+  color: var(--ink3);
+  line-height: 1.6;
+  padding: 2px 6px;
+}
+.cards .legend .s {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  background: var(--ink2);
+  vertical-align: -1px;
+  margin-right: 5px;
+}
+.cards .empty {
+  font-size: 12px;
+  color: var(--ink3);
+  padding: 4px 6px 6px;
+}
+
+/* ════ The phone ═══════════════════════════════════════════════════════════
+   The deck is one screen, a card is the next (mockup:585-344). */
+.cards[data-phone] {
+  grid-template-rows: minmax(0, 1fr);
+}
+.cards[data-phone] .top,
+.cards[data-phone] .today {
+  display: none;
+}
+.cards[data-phone] main.table {
+  display: block;
+  position: relative;
+  height: 100%;
+  overflow: hidden;
+}
+.cards[data-phone] .phoneonly {
+  display: block;
+}
+.cards[data-phone] .chead .who {
+  padding-right: 64px;
+}
+.cards[data-phone] .deck {
+  position: absolute;
+  inset: 0;
+  padding: 0 14px 28px;
+  gap: 10px;
+  transition: transform 0.35s cubic-bezier(0.3, 0.7, 0.3, 1);
+}
+.cards[data-phone] .hold {
+  position: absolute;
+  inset: 0;
+  padding: 0;
+  flex-direction: column;
+  transform: translateX(100%);
+  transition: transform 0.35s cubic-bezier(0.3, 0.7, 0.3, 1);
+  background: var(--desk);
+  visibility: hidden;
+}
+.cards[data-phone][data-screen="card"] .deck {
+  transform: translateX(-30%);
+  visibility: hidden;
+  transition: transform 0.35s cubic-bezier(0.3, 0.7, 0.3, 1), visibility 0s 0.35s;
+}
+.cards[data-phone][data-screen="card"] .hold {
+  transform: none;
+  visibility: visible;
+}
+.cards[data-phone][data-reduced] .deck,
+.cards[data-phone][data-reduced] .hold {
+  transition: none;
+}
+.cards[data-phone] .dc {
+  min-height: 68px;
+}
+.cards[data-phone] .dc:hover,
+.cards[data-phone] .dc[aria-current="true"] {
+  transform: none;
+  box-shadow: 0 1px 0 color-mix(in oklab, var(--ink) 6%, transparent) inset, 0 6px 14px color-mix(in srgb, var(--shade) 18%, transparent);
+}
+.cards[data-phone] .phonebar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: max(16px, env(safe-area-inset-top)) 2px 4px;
+  flex-shrink: 0;
+}
+.cards[data-phone] .phonebar .brand {
+  font-size: 30px;
+  flex: 1;
+  min-width: 0;
+}
+.cards[data-phone] .phonebar .ib {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  display: grid;
+  place-items: center;
+  color: var(--ink2);
+  background: var(--surface);
+}
+.cards[data-phone] .phone-search {
+  display: flex;
+  flex-shrink: 0;
+}
+.cards[data-phone] .phone-search .search {
+  max-width: none;
+  margin: 0;
+}
+.cards[data-phone] .strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  margin: 0 -14px;
+  padding: 2px 14px 4px;
+  scrollbar-width: none;
+  flex-shrink: 0;
+}
+.cards[data-phone] .strip button {
+  flex: none;
+  width: 156px;
+  display: grid;
+  gap: 4px;
+  text-align: left;
+  padding: 10px 12px;
+  border-radius: 14px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+.cards[data-phone] .strip button[data-focus] {
+  border-color: var(--accent-text);
+}
+.cards[data-phone] .strip b {
+  font-size: 13px;
+  font-weight: 550;
+  display: flex;
+  gap: 7px;
+  align-items: center;
+  min-width: 0;
+}
+.cards[data-phone] .strip b span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cards[data-phone] .strip span.s2 {
+  font-size: 12px;
+  color: var(--ink3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cards[data-phone] .strip .av {
+  --s: 18px;
+}
+.cards[data-phone] .soon {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  font-size: 13px;
+  width: 100%;
+  text-align: left;
+  flex-shrink: 0;
+}
+.cards[data-phone] .soon .w {
+  font: 11px var(--mono);
+  color: var(--ink3);
+  white-space: nowrap;
+}
+.cards[data-phone] .soon .what {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cards[data-phone] .soon .go {
+  margin-left: auto;
+  color: var(--accent-text);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.cards[data-phone] .cardbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: max(12px, env(safe-area-inset-top)) 14px 8px;
+  flex: none;
+}
+.cards[data-phone] .cardbar button {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--accent-text);
+  font-size: 15px;
+}
+.cards[data-phone] .cardbar .hint {
+  margin-left: auto;
+  font: 11px var(--mono);
+  color: var(--ink3);
+}
+.cards[data-phone] .card3d {
+  flex: 1;
+  height: auto;
+  max-width: none;
+  margin: 0 8px 10px;
+  width: auto;
+}
+.cards[data-phone] .facecard {
+  border-radius: 26px;
+}
+.cards[data-phone] .chead {
+  padding: 30px 18px 10px;
+  gap: 12px;
+}
+.cards[data-phone] .chead h2 {
+  font-size: 25px;
+}
+.cards[data-phone] .chead .av.big {
+  --s: 44px !important;
+}
+.cards[data-phone] .kind {
+  left: 18px;
+  top: 13px;
+}
+.cards[data-phone] .cbody {
+  padding: 2px 16px 10px;
+}
+.cards[data-phone] .pb {
+  max-width: 84%;
+  font-size: 16px;
+}
+.cards[data-phone] .composer {
+  margin: 0 10px 12px;
+}
+.cards[data-phone] .composer-wrap .hint {
+  margin: -8px 16px 10px;
+}
+.cards[data-phone] .reach {
+  margin: 0 16px 8px;
+}
+.cards[data-phone] .stands-box,
+.cards[data-phone] .banner {
+  margin-left: 16px;
+  margin-right: 16px;
+}
+/* A phone's one line is the label and the first line; the count is in the
+   open box. */
+.cards[data-phone] .stands-box:not([data-open]) .sf {
+  display: none;
+}
+.cards[data-phone] .tabs {
+  padding: 0 12px 8px;
+}
+.cards[data-phone] .mini {
+  margin: 0 16px 10px;
+  grid-template-columns: 1fr;
+}
+.cards[data-phone] .corner {
+  width: 96px;
+  height: 78px;
+}
+.cards[data-phone] .corner > .lab {
+  top: 64px;
+  right: 10px;
+}
+/* Mismatch 4's default: on a phone the reading switch sits in the card's
+   header, under the name, rather than hidden (mockup:343). */
+.cards[data-phone] .readchip {
+  margin-right: 0 !important;
+}
+.cards[data-phone] .askivy {
+  opacity: 1;
+}
+.cards[data-phone] .pop {
+  left: 8px !important;
+  right: 8px;
+  max-width: none;
+}
+
+/* What the rail's thread list and chat view did, on your Host's
+   back. A topic marker is a quiet note that the talk turned, never a cut
+   (the rail's chat-view.tsx TopicMarker); the turn-type pick sits with the
+   model and effort pickers. */
+.cards .marker {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin: 10px auto;
+  font-size: 11.5px;
+  color: var(--ink3);
+  max-width: 86%;
+  text-align: center;
+}
+.cards .marker .ask {
+  color: var(--ink2);
+}
+.cards .turntype {
+  height: 26px;
+  padding: 0 6px;
+  border-radius: 8px;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  color: var(--ink2);
+  font-size: 12px;
+  max-width: 200px;
+}
+.cards .pop .connect {
+  border: 0;
+  padding: 0;
+  background: transparent;
+}
+.cards .pop .connect ul {
+  margin: 0 0 4px;
+  padding-left: 16px;
+  list-style: disc;
+  font-size: 12px;
+  color: var(--ink2);
+}
+.cards .earlier {
+  display: block;
+  margin: 6px auto 10px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--line2);
+  font-size: 12px;
+  color: var(--ink2);
+}
+.cards .earlier:disabled {
+  opacity: 0.6;
+}
+.cards .tobottom {
+  position: relative;
+  align-self: center;
+  margin: -42px auto 8px;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 1px solid var(--line2);
+  background: var(--raised2);
+  color: var(--ink2);
+  z-index: 5;
+  flex: none;
+}
+/* The working line above your Host's box (activity.tsx). Its "<Host> is
+   working" keeps the look the line under the conversation had. */
+.cards .act-wrap {
+  position: relative;
+  margin: 0 26px 6px;
+  flex: none;
+}
+.cards[data-phone] .act-wrap {
+  margin: 0 12px 6px;
+}
+.cards .act {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  padding: 7px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: var(--host-raised);
+  text-align: left;
+  white-space: nowrap;
+  overflow: hidden;
+  font-size: 12px;
+  line-height: 1.2;
+  color: var(--ink2);
+}
+.cards .act:hover {
+  border-color: var(--line2);
+}
+.cards .act .who {
+  flex: none;
+  font: 600 10.5px/1 var(--mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--accent-text);
+}
+.cards .act .step {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cards .act .secs {
+  flex: none;
+  font-variant-numeric: tabular-nums;
+  color: var(--ink3);
+}
+.cards .act .bad,
+.cards .act-pop .bad {
+  flex: none;
+  color: color-mix(in oklab, var(--amber) 85%, var(--ink));
+}
+.cards .act.fail {
+  border-color: color-mix(in oklab, var(--amber) 45%, var(--line));
+}
+.cards .act .caret {
+  margin-left: auto;
+  flex: none;
+  font-size: 10px;
+  color: var(--ink3);
+}
+.cards .act-pop {
+  max-height: min(50vh, 420px);
+  overflow: auto;
+}
+.cards .act-pop .k {
+  margin: 10px 0 2px;
+  font: 600 10px/1.2 var(--mono);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink3);
+}
+.cards .act-pop li {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 0;
+  border-top: 1px dashed var(--line);
+}
+.cards .act-pop li:first-child {
+  border-top: 0;
+}
+.cards .act-pop .t {
+  color: var(--ink);
+}
+.cards .act-pop .d {
+  font-size: 12px;
+  color: var(--ink2);
+  overflow-wrap: anywhere;
+}
+.cards .act-pop .btn {
+  margin-top: 6px;
+}
+/* Markdown in a person's or another Host's words (the rail drew every
+   message through the same renderer). */
+.cards .md p {
+  margin: 0 0 6px;
+}
+.cards .md p:last-child {
+  margin-bottom: 0;
+}
+.cards .md pre {
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+/* The Address book, on the cards: a contact's notes, Block and Remove; the
+   list of every contact. */
+.cards .contact-acts {
+  display: grid;
+  gap: 8px;
+  margin-top: 6px;
+}
+.cards .contact-acts .notes {
+  display: grid;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--ink3);
+}
+.cards .contact-acts textarea {
+  width: 100%;
+  min-height: 56px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  font-size: 12.5px;
+  color: var(--ink);
+  resize: vertical;
+}
+.cards .contact-acts .row,
+.cards .chead .row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.cards .small {
+  font-size: 11.5px;
+  color: var(--ink3);
+  margin: 0;
+}
+.cards .sheet {
+  display: grid;
+  gap: 8px;
+  max-height: min(70vh, 560px);
+  overflow: auto;
+}
+.cards .sheet .find {
+  height: 30px;
+  padding: 0 10px;
+  border-radius: 8px;
+  background: var(--raised);
+  border: 1px solid var(--line);
+}
+.cards .allcontacts {
+  display: block;
+  margin: 6px 4px 0;
+}
+/* A sheet: what a rail pane showed in full, over the cards. */
+.cards .shade {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--shade) 45%, transparent);
+}
+.cards .sheetpanel {
+  width: min(760px, 92vw);
+  height: min(86vh, 900px);
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+  background: var(--surface);
+  border: 1px solid var(--line2);
+  box-shadow: 0 30px 80px color-mix(in srgb, var(--shade) 40%, transparent);
+  overflow: hidden;
+}
+.cards .sheethead {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+.cards .sheethead h3 {
+  margin: 0;
+  flex: 1;
+  font: 500 18px/1.2 var(--serif);
+}
+.cards .sheetbody {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+.cards[data-phone] .sheetpanel {
+  width: 100vw;
+  height: 100dvh;
+  border-radius: 0;
+}
+.cards .sheetlist {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  display: grid;
+  gap: 4px;
+}
+.cards .sheetlist button {
+  width: 100%;
+  text-align: left;
+  padding: 8px 10px;
+  border-radius: 10px;
+  display: grid;
+  gap: 2px;
+}
+.cards .sheetlist button:hover,
+.cards .sheetlist button:focus-visible {
+  background: var(--raised);
+}
+.cards .sheetbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.cards .askmore {
+  display: block;
+  margin: 4px 26px 6px;
+  text-align: left;
+}
+.cards .shareitem details {
+  margin: 2px 0 6px 24px;
+  font-size: 11.5px;
+  color: var(--ink3);
+}
+.cards .shareitem pre,
+.cards .notebody .payload {
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font: 400 11.5px/1.45 var(--mono);
+  padding: 8px;
+  border-radius: 8px;
+  background: var(--raised);
+}
+.cards .notebody {
+  display: grid;
+  gap: 10px;
+  padding: 16px;
+}
+.cards .notebody .row {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.cards .notice-slip {
+  display: block;
+  width: 100%;
+  text-align: left;
+}
+.cards .notice-slip[data-unread] h4 {
+  font-weight: 600;
+}
+.cards .slip .row {
+  display: inline-flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.cards .notetext {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.5;
+}
+/* All your contacts, in a sheet: a row is the name, then what it is. */
+.cards .sheet {
+  padding: 12px 16px 16px;
+}
+.cards .sheet h4 {
+  margin: 4px 0 6px;
+  font: 600 10.5px/1 var(--mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink3);
+}
+.cards .sheet .sheetlist {
+  padding: 0;
+}
+.cards .sheet .sheetlist button {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.cards .sheet .sheetlist .why {
+  margin-left: auto;
+  font-size: 11.5px;
+  color: var(--ink3);
+  white-space: nowrap;
+}
+.cards .sheet .contact-acts {
+  padding: 4px 10px 10px;
+}
+/* A reply streaming beside the followed turn (one conversation): its own
+   working line, under it in the conversation. Not a button. */
+.cards .hm .act.beside {
+  margin-top: 6px;
+  width: auto;
+  cursor: default;
+}

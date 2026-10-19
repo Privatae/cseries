@@ -1,0 +1,2 @@
+# Clone-in and collect-out end on silence (no bytes for 120 s), never on a total; clone-in streams its tar from disk and names itself when it fails. Local aiohttp stand-in pod.
+test_pod_transfers_end_on_silence.py

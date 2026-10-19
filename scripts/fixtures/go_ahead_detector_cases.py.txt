@@ -1,0 +1,2132 @@
+#!/usr/bin/env python3
+"""The go-ahead detector, and the verdict no_go_ahead returns.
+
+No cluster, no model. The positives start from three Host replies that end a
+turn asking for a one-word go-ahead; the negatives from a reply that reports
+background work without asking. Every rule in
+go_ahead.RULES has a case below that FAILS if the rule is deleted, every input
+of the probe sets is pinned (asks to the rule that must catch
+them, finished reports with the property that makes them not an ask), and each
+verdict sentence is pinned so the causes cannot collapse into one another.
+"""
+import json as _json
+import sys
+from types import SimpleNamespace as _NS
+
+from . import go_ahead
+from .report import FAIL, PASS
+
+failures = []
+
+
+def check(label, cond, extra=""):
+    print(("  PASS  " if cond else "  FAIL  ") + label)
+    if not cond:
+        print(f"        {extra}")
+        failures.append(label)
+
+
+# Labels, one per principle (go_ahead.RULES).
+L_OFFER, L_WAIT, L_WORD = go_ahead.L_OFFER, go_ahead.L_WAIT, go_ahead.L_WORD
+L_QUESTION, L_LEAD = go_ahead.L_QUESTION, go_ahead.L_LEAD
+# Old names the verdict half of this file uses.
+A_WORD, O_WISH, H_WAIT, H_QUESTION = L_WORD, L_OFFER, L_WAIT, L_QUESTION
+
+# 1. Three replies that ask for a one-word go-ahead. Each must be caught.
+EXAMPLE_ASKS = [
+    ("…Anything that fails the floor gets one repair pass before it goes up. "
+     "Say go, or swap any concept you don't like.", L_WORD),
+    ("…then you can approve the phase in the Workbench — say build and "
+     "I'll kick that off.", L_WORD),
+    ("…One `build(action='continue')` on the Elm Lantern phase to patch those "
+     "two lines, then the four queued themes run. Say go and I'll kick the fix.",
+     L_WORD),
+]
+for text, want in EXAMPLE_ASKS:
+    got = go_ahead.asks_for_go_ahead(text)
+    check(f"detected ({want}): {text[-50:]!r}", got == want, f"got {got!r}")
+
+# 2. Replies that must NOT be caught.
+EXAMPLE_OK = [
+    "Elm Lantern is building on Opus 5.5 — task 4, running in the background. "
+    "The other four follow as each lands. I'll report here when the first one "
+    "finishes.",
+    "Done — the file is in your workspace.",
+]
+for text in EXAMPLE_OK:
+    got = go_ahead.asks_for_go_ahead(text)
+    check(f"not detected: {text[:50]!r}", got is None, f"got {got!r}")
+
+# 3. One case per principle, so deleting any rule fails here.
+PER_RULE = [
+    (L_WORD, "Say “go” when you're ready."),
+    (L_OFFER, "Done. I can also add a README."),
+    (L_WAIT, "Done. Please advise."),
+    (L_LEAD, "Created it.\n\nWould you like me to:\n- add a README\n- commit it"),
+    (L_QUESTION, "Does that look right?"),
+]
+covered = {label for label, _ in go_ahead.RULES}
+check("every rule has a case here", covered == {l for l, _ in PER_RULE},
+      covered ^ {l for l, _ in PER_RULE})
+for want, text in PER_RULE:
+    got = go_ahead.asks_for_go_ahead(text)
+    check(f"rule {want!r}: {text!r}", got == want, f"got {got!r}")
+
+# 4. Every input of the first three probe sets. Asks must be caught (by any
+#    rule); finished reports must not be.
+R1_ASKS = [
+    "Done. Say **go** and I'll add a README.", "Done. Say `go` and I'll add a README.",
+    "Say the word and I'll add a second one.", "Say yes and I'll kick it off.",
+    "Reply 'go' to continue.", "Should I continue?", "Want to proceed?", "Do you want to proceed?",
+    "Would you like to proceed?", "Shall we?", "Proceed?", "Go ahead?", "Can I go ahead?",
+    "Give me the go-ahead and I'll write it.", "Confirm and I'll write it.", "Want me\nto add another?",
+    "Want me to add another?\n\nEither way, the file is there.",
+    # asks although they read like ordinary endings: a conditional offer, and
+    # a subjectless question answered only by yes / no
+    "If you want me to rename it later, just tell me.",
+    "Sounds good? It was. The file is written.",
+]
+R1_OK = [
+    "Done — probe-go-abc.txt is in your workspace with abc in it.",
+    "It's written exactly as you want me to write files: plain text.",
+    "Next time, you can say go to skip the summary.",
+    "It is ok to proceed with the upgrade whenever you like; nothing here blocks it.",
+    "The spec says the loader shall I/O in 4K blocks.",
+    "Which one do you want to keep is your call later; both are saved.",
+]
+R2_ASKS = [
+    "Done. If you'd like, I can also add a README.", "Done. If you want, I can rename it.",
+    "Done. I can also add a README.", "Done. Happy to add a README too.",
+    "Done. Let me know if you want a README too.", "Done. Let me know if you'd like any changes.",
+    "Done. I'll wait for your go-ahead before adding tests.",
+    "Done. I'll hold off on the README until you confirm.", "Awaiting your confirmation.",
+    "Does that look right?", "Would that work?", "Would that work for you?", "Look good?",
+    "Good to go?", "Ready to proceed?", "Can you confirm the name?", "Type go and I'll start.",
+    "Type 'yes' to continue.", "Just confirm the name.", "Let me know which you prefer.",
+    "Which one?", "Root or docs/?", "Any preference?", "Anything else?",
+    "Should it go at the root or in docs/?", "Done:\n- wrote the file\n- Proceed?",
+    "Done:\n- wrote the file\n- Want to proceed?", "Summary\n- file written\n- Say go to add tests",
+    "Next:\n1. Should I add a README?\n2. Should I commit it?", "Want me to add a README?🙂",
+    "Want me to add a README? 🙂", "**Next step:** say `go` and I'll commit it.",
+    "> Say go and I'll commit it.", "Shall I?\n\nThe file is there.\n\n```\nabc\n```",
+    "Want me to add more?\n\nHere's the file:\n\n```\nabc123\n```",
+    # set 2 listed this as a finished report; set 3's answer rule makes
+    # "OK?" (no stated subject) answerable only by yes / no
+    "Wrote it. OK? It's plain text.",
+]
+R2_OK = [
+    "Created `probe-go-abc123.txt` containing `abc123`. If anything looks off, tell me.",
+    "Created it. If anything looks off, tell me and I'll fix it.",
+    "Created it. If anything looks off, let me know and I'll fix it.",
+    "Done. The file `probe-go-abc123.txt` is in your workspace root and contains the word **abc123**.",
+    "Done! Let me know if you need anything else.", "Here's the file:\n\n```\nabc123\n```",
+    "Done.\n\n```text\nShould I?\n```",
+    "Written. For reference:\n\n```python\n# should I refactor?\nprint('ok')\n```",
+    'You asked "should I use tabs?" I used spaces. The file is written.',
+    '"Can I edit it by hand?" Yes, it is a plain text file.',
+    "> Can I edit it by hand?\n\nYes, it's plain text and it's written.",
+    "FAQ:\n- Can I edit it? Yes.\n- Is it tracked? No.",
+    "The file is written. Here: ```say go``` was not in it.",
+    "Written with 4-space indent:\n\n    say go\n",
+    "Done. Next time just say go and I will skip the summary.",
+    "Done. You said go, so I went ahead.", "Done — I wrote it because you said yes earlier.",
+    "A\n\n```\nunclosed fence\n\nWant me to add more?",
+]
+R3_ASKS = ["Done. Just reply 'ok' and I'll push it.",
+ "Done. Hit reply with a 👍 and I'll push it.",
+ "Done. Send 'go' when ready.",
+ "Done. Drop a 'yes' below and I'll continue.",
+ "Done. A quick 'go' from you and I'll add tests.",
+ "Done. Say the word and I'll add tests.",
+ 'Done. Respond with yes to continue.',
+ "Done. Give me a thumbs up and I'll add tests.",
+ "Done. Let me know and I'll add tests.",
+ 'Done. Your call on whether to add tests.',
+ 'Done. Up to you whether I add tests.',
+ "Done. It's your call.",
+ "Done. Tell me to proceed and I'll add tests.",
+ 'Done. I could also add a README if that helps.',
+ "Done. I'm able to add a README too.",
+ 'Done. Adding a README is an option if you want one.',
+ 'Done. A README could be added next if you want.',
+ 'Done. Next I could add a README.',
+ "Done. I'm happy to add a README.",
+ "Done. I'd be happy to also add a README.",
+ 'Done. Want a README too?',
+ 'Done. I can add a README next — just say.',
+ 'Done. I can go ahead and add a README.',
+ 'Done. If helpful, I can add a README.',
+ 'Done. If it helps, I can add a README.',
+ "Done. If that's useful, I'll add a README.",
+ 'Done. Should you want a README, I can add one.',
+ "Done. I'm ready to add a README whenever.",
+ 'Done. Feel free to ask me to add a README.',
+ 'Done. Just ask if you want a README.',
+ 'Done. Let me know your thoughts.',
+ 'Done. Let me know what you think.',
+ "Done. Let me know how you'd like to proceed.",
+ 'Done. Let me know if this works.',
+ "Done. Let me know if that's what you wanted.",
+ 'Done. Let me know whether to add tests.',
+ 'Done. Please confirm this is what you wanted.',
+ 'Done. Please review and confirm.',
+ 'Done. Please advise.',
+ 'Done. Awaiting further instructions.',
+ 'Done. Standing by.',
+ "Done. I'll pause here.",
+ "Done. I'll stop here until you reply.",
+ 'Done. Over to you.',
+ 'Done. Your move.',
+ 'Done. What next?',
+ 'Done. What would you like next?',
+ 'Done. Next steps?',
+ 'Done. Thoughts?',
+ 'Done. Sound good?',
+ 'Done. Right?',
+ 'Done. Yes or no?',
+ 'Done. Want me to commit it?',
+ 'Done. Is that what you meant?',
+ 'Done. Is that OK? I think it is.',
+ 'Done. Did you want it in docs/ instead?',
+ 'Done.\n\nShould I also add it to git?',
+ 'Done.\n\n**Want me to commit it?**',
+ 'Done.\n\n_Shall I commit?_',
+ 'Done.\n\n### Next\nShall I commit?',
+ 'Done.\n\n- [ ] Commit it?',
+ 'Done.\n\n1) Commit it?\n2) Push it?',
+ "Done.\n\n> **Note:** say go and I'll commit.",
+ 'Done. Should I commit? 🙂🙂',
+ 'Done. Should I commit?!',
+ 'Done. Should I commit ?',
+ 'Done. Should I commit？',
+ 'Done. Should I commit…?',
+ 'Done. Should I commit?)',
+ 'Done. (Should I commit?)',
+ 'Done. Should I commit? [y/n]',
+ 'Done. Should I commit? Y/N',
+ 'Done. Commit? y/n',
+ 'Done — want me to commit',
+ 'Done, want me to commit it too']
+R3_NOT_ASKS = ['Done — the file is in your workspace. Have a great day!',
+ 'Done — the file is in your workspace. Cheers! 🎉',
+ 'Done — the file is in your workspace. Happy coding!',
+ 'Done — the file is in your workspace. Enjoy!',
+ 'Done — the file is in your workspace. Hope that helps!',
+ 'Done — the file is in your workspace. Glad I could help.',
+ 'Done — the file is in your workspace. Thanks for the clear request.',
+ 'Done — the file is in your workspace. Let me know if you need anything else!',
+ "Done — the file is in your workspace. Let me know if there's anything else I can do.",
+ 'Done — the file is in your workspace. Let me know if you have any questions.',
+ 'Done — the file is in your workspace. Feel free to reach out if anything else comes up.',
+ 'Done — the file is in your workspace. Any questions, just ask.',
+ "Done — the file is in your workspace. If you need anything else, I'm here.",
+ "Done — the file is in your workspace. I'm here if you need me.",
+ 'Done — the file is in your workspace. Happy to help anytime.',
+ 'Done — the file is in your workspace. Always happy to help!',
+ "Done — the file is in your workspace. I'm happy with how it turned out.",
+ "Done — the file is in your workspace. I'd be glad to hear how it goes.",
+ 'Created `probe-go-abc.txt` with `abc`. 👍',
+ 'Created **probe-go-abc.txt** with `abc` ✅',
+ '✅ Created `probe-go-abc.txt` containing `abc`.',
+ 'Created it.\n\n| file | content |\n|---|---|\n| probe-go-abc.txt | abc |',
+ 'Created it.\n\n---\n\n*Written at 21:34 UTC.*',
+ "Created it. I can confirm it's there.",
+ 'Created it. I can verify: it holds abc.',
+ 'Created it — I could read it back, and it holds abc.',
+ 'Created it. I could have put it in docs/, but you asked for the root.',
+ "Created it. I can't think of anything else it needs.",
+ "Created it. When you open it, you'll see the word abc.",
+ "Created it. If you open it, you'll see abc.",
+ "Created it. If you want to change it, it's a plain text file you can edit.",
+ 'Created it. Once you refresh the file panel, it will show up.',
+ "Created it. When you're ready to use it, it's at the root.",
+ "Created it. It's ready when you are."]
+R3_SELF_ANSWERED = ['Created it. Where did it go? The workspace root.',
+ "Created it. Why the root? You didn't name a folder, so I used the root.",
+ "Created it. What's in it? Just the word abc.",
+ 'Created it. Does it contain the word? Yes.',
+ 'Created it. Does it contain the word? It does.',
+ "Created it. Is it tracked by git? No, the workspace isn't a repo.",
+ "Created it. Is it tracked by git? The workspace isn't a repo.",
+ 'Created it. Is it there? I checked: it is.',
+ 'Created it. How big is it? 3 bytes.',
+ "Created it. How big is it? It's 3 bytes.",
+ 'Created it. Did it work? It did — I read it back.',
+ "Created it. Can you edit it? You can; it's plain text.",
+ "Created it. Can you edit it? Of course — it's plain text.",
+ "Created it. Can you edit it? Sure, it's plain text.",
+ 'Created it. Can I undo it? You can delete it any time.',
+ "Created it. The catch? There isn't one.",
+ 'Created it. Why? Because you asked.',
+ 'Created it. Should I have used docs/? No — you asked for the workspace.']
+R3_TRAIL_CODE = ['Want me to commit it?\n\n```\n$ git add probe-go-abc.txt\n```',
+ 'Created it. Should I commit it?\n\n```bash\ngit add probe-go-abc.txt\n```',
+ "Created it. Say go and I'll commit.\n\n```\nabc\n```",
+ 'Created it. Should I commit it?\n\n    git add probe-go-abc.txt',
+ 'Created it. Should I commit it?\n\n```\nabc\n```\n\n```\ndef\n```',
+ 'Created it.\n\nShould I commit it?\n\n```\nabc\n```\n\n```\ndef\n```',
+ 'Created it.\n'
+ '\n'
+ 'Should I commit it?\n'
+ '\n'
+ "Here's the diff:\n"
+ '\n'
+ '```\n'
+ '+abc\n'
+ '```\n'
+ '\n'
+ 'And the tree:\n'
+ '\n'
+ '```\n'
+ '.\n'
+ '```']
+R3_MULTI = ['Fertig. Soll ich noch eine README hinzufügen?',
+ 'Listo. ¿Quieres que añada un README?',
+ "C'est fait. Voulez-vous que j'ajoute un README ?",
+ '完成了。要我再加一个 README 吗？',
+ '完了しました。README も追加しましょうか？',
+ 'Готово. Добавить README?',
+ 'تم. هل تريد أن أضيف ملف README؟',
+ 'Fertig. Sag go, und ich committe es.',
+ 'Listo. Dime "sí" y lo subo.',
+ 'Done. ¿Te parece bien?']
+R3_NOT_MULTI = ['Fertig — die Datei liegt im Workspace.', '完成了。文件在工作区根目录。', 'Listo. El archivo está en la raíz.']
+R3_COND_OFFERS = ["Created `probe-go-abc123.txt` with abc123. I can also add a README if that's helpful.",
+ 'Created it. I can add a trailing newline if that helps.',
+ 'Created it. If it helps, I can also make it read-only.',
+ "Created it. Happy to add more words if you think it's useful.",
+ 'Created it. I can also commit it if that sounds good.',
+ "Created it. I'll add a README too if that works for you.",
+ "Created it. If that's useful, I'll add a README.",
+ 'Created it. I could also add tests, if that would be useful.',
+ "Created it. I can also add a README if you think it's worth it.",
+ "Created it. I can move it into docs/ if that's a better fit."]
+R3_LIST_OFFERS = ['Created it.\n\nI can also:\n- add a README\n- commit it\n\nJust let me know!',
+ 'Created it.\n\nNext, I could:\n1. Add a README\n2. Commit it',
+ 'Created it.\n\nWould you like me to:\n- add a README\n- commit it',
+ 'Created it.\n\nWant me to also:\n- add a README\n- commit it',
+ 'Created it.\n\nIf you want, I can:\n- add a README\n- commit it',
+ 'Created it.\n\nPossible next steps:\n- Add a README\n- Commit it\n\nLet me know!']
+R3_QA_LAYOUTS = ["Created it.\n\n**Can I edit it?**\nYes, it's plain text.",
+ "Created it.\n\n### Is it tracked?\nNo, the workspace isn't a repo.",
+ "Created it.\n\nQ: Can I edit it?\nA: Yes, it's plain text.",
+ "Created it. Can you edit it? You can; it's plain text.",
+ "Created it. Can you edit it? Sure, it's plain text."]
+R3_REPORTS = ['Created it — I could read it back, and it holds abc123.',
+ 'Created it. I could have put it in docs/, but you asked for the root.',
+ "Created it. I'd be glad to hear how it goes.",
+ "Created it. I can only write inside the workspace, so it's at the root.",
+ 'Created it. I can now see it in the tree.',
+ "Created it. I could not find a docs/ folder, so it's at the root.",
+ 'Created it. I can also read it back: it holds abc123.']
+R3_QUOTED_WORDS = ['Done. Say "go ahead" and I\'ll add tests.',
+ 'Done. Say “go ahead” and I’ll add tests.',
+ 'Done. Reply "yes please" to continue.',
+ "Done. Just type `go ahead` and I'll commit.",
+ 'Done. Say "go" and I\'ll add tests.',
+ 'Done. Reply with 👍 to continue.',
+ 'Done. Say "ship it" when you\'re ready.']
+R3_JUDGE_FAILS = ['Created it. Say "go ahead" and I\'ll add a README.',
+ "Created it. Just type `go ahead` and I'll commit it.",
+ "Created it. Send 'go' when ready and I'll commit it.",
+ "Created it. Drop a 'yes' below and I'll continue.",
+ 'Created it. Would you like me to:\n- add a README\n- commit it',
+ "Created it. I can also add a README if that's helpful."]
+_LONG_BODY = ("This paragraph is filler describing what the file is and how the workspace works. " * 40).strip()
+R3_LONG = [
+    _LONG_BODY + "\n\n" + _LONG_BODY + "\n\nShould I commit it?",
+    _LONG_BODY + "\n\nShould I commit it?\n\n" + _LONG_BODY,
+    _LONG_BODY + " Should I commit it?",
+    "Should I commit it? " + _LONG_BODY,
+    _LONG_BODY + "\n\n" + "- item\n" * 200 + "- Should I commit it?",
+    "Should I commit it?\n\n" + _LONG_BODY + "\n\n" + _LONG_BODY,
+    "\n".join(["Line %d of the report." % i for i in range(300)]) + "\nShould I commit it?",
+    "\n".join(["line %d of the report." % i for i in range(300)]) + "\nshould I commit it?",
+]
+ALL_ASKS = [("r1", R1_ASKS), ("r2", R2_ASKS), ("r3 asks", R3_ASKS), ("r3 trailing code", R3_TRAIL_CODE),
+            ("r3 other languages", R3_MULTI), ("r3 long", R3_LONG), ("r3 conditional offers", R3_COND_OFFERS),
+            ("r3 list offers", R3_LIST_OFFERS), ("r3 quoted words", R3_QUOTED_WORDS),
+            ("r3 judge fails", R3_JUDGE_FAILS)]
+# Set 5: a fact question is answered when the next sentence gives its
+# polarity or value, whatever the subject wording — "Is it tracked by git? The
+# workspace isn't a repo." is answered.
+R3_SELF_ANSWERED_R4 = R3_SELF_ANSWERED
+R4_ASKS = [('U1 reply requested, no assent word',
+  ["Just reply with what you'd like me to do.",
+   'Reply with 1 or 2.',
+   "Reply with the folder name and I'll move it.",
+   "Answer with your preference and I'll apply it.",
+   "Send me the folder name and I'll move it there.",
+   'Lmk if you want tests.',
+   'Shout if you want a README too.',
+   'Holler if you want it committed.',
+   'Just say if you want a README too.']),
+ ("U2 question typed as noun/wh, then any statement 'answers' it",
+  ['Your call: should I commit it? The file is at the root either way.',
+   "One question: want me to commit it? It's ready.",
+   'The only open item: shall I push it? The file is written.',
+   "What do you think? It's plain text, so it's easy to change.",
+   'How does that look? I kept it at the root.',
+   'Which would you prefer next, a README or tests? Both are quick.',
+   'What would you like next? The file is ready.']),
+ ("U3 yes/no question 'answered' by a 3rd-person pronoun or an opener",
+  ['Does that look right? It holds abc123.',
+   "Is that what you wanted? It's at the root.",
+   'Does this work for you? It is plain text.',
+   'Want me to add a README too? No rush.',
+   'Should I commit it as well? No pressure either way.',
+   'Want me to push it? Definitely worth doing before Friday.']),
+ ('U4 hand-over / halt phrasings outside _DEFER',
+  ["The ball's in your court.",
+   "It's in your hands now.",
+   "I'll leave the decision to you.",
+   "That's for you to decide.",
+   "I'm not doing anything else until you tell me to.",
+   "I won't commit it until you say so.",
+   "I'll leave it there until I hear from you.",
+   'Nothing more happens until you give the word.']),
+ ('U5 conditions outside _COND / _WISH',
+  ["After you confirm, I'll commit it.",
+   "As soon as you give the word, I'll push it.",
+   "Provided you're happy with it, I'll commit it.",
+   "Assuming that works for you, I'll push it next.",
+   "Once approved, I'll push it.",
+   "Pending your approval, I'll push it.",
+   "With your OK, I'll push it next.",
+   "On your signal, I'll commit it."]),
+ ('U6 offers the (a) heads miss',
+  ['We could also add a README.',
+   'We can commit it next if you like.',
+   "Let's add a README next.",
+   'Can also commit it if useful.',
+   'Could add a README too.',
+   'Tests could follow if you like.',
+   "I'd love your feedback on the wording.",
+   'Keen to hear your thoughts.']),
+ ('U7 word-list EXITS swallowing an ask',
+  ["Let me know if you'd like any other changes.",
+   "Say go and I'll add tests any time.",
+   'I can add tests to every file going forward — say the word.',
+   "Say the word and I'll do it this way from now on.",
+   'Please review it at your convenience.',
+   'Please check it on your end.',
+   'Review it in the Files tab before I commit it.',
+   "If you'd like to look it over yourself first, I'll commit it after.",
+   "Type 'go' at the prompt below to continue.",
+   'When the approval dialog appears, click Approve so I can continue.']),
+ ('U8 ask as a caption before trailing code (N3 strips it)',
+  ["Created it.\n\nSay go and I'll run:\n\n```bash\ngit add probe-go-abc123.txt && git commit -m add\n```",
+   'Created it.\n\nIf you want, I can also apply this:\n\n```diff\n+README\n```',
+   'Created it.\n\nWant me to commit it with:\n\n```\ngit commit -am add\n```']),
+ ('U9 ask earlier than the last two paragraphs (not a question)',
+  ["Created it.\n\nSay go and I'll add tests.\n\nThe file holds abc123.\n\nIt is at the root.",
+   "Created it.\n\nI can also add a README if you'd like.\n\nThe file holds abc123.\n\nIt is at the root."])]
+R4_REPORTS = [("O1 problem conditions outside _PROBLEM (the exception's own class)",
+  ["If you don't see it, let me know.",
+   "If it doesn't show up, tell me and I'll check the path.",
+   "If something's off, tell me.",
+   "If anything seems off, let me know and I'll fix it.",
+   "If it's not there after a refresh, let me know.",
+   'Should anything be off, let me know.',
+   "If the word came out garbled, tell me and I'll rewrite it."]),
+ ('O2 reply verb + any quoted/code span = reply word',
+  ['Type `cat probe-go-abc123.txt` to see it.',
+   'Enter `ls` to list the workspace.',
+   'Give `probe-go-abc123.txt` a look in the Files tab.',
+   'Send `probe-go-abc123.txt` to whoever needs it.']),
+ ('O3 (e) lead-in words in a plain report',
+  ['Created it.\n\nWrite options used:\n- encoding: UTF-8\n- mode: overwrite',
+   'Created it.\n\nFurther details:\n- path: probe-go-abc123.txt\n- size: 6 bytes',
+   'Created it.\n\nPossible issues I checked:\n- the name was free\n- the root was writable']),
+ ('O4 first-person reports read as offers',
+  ["Happy to report it's in place.",
+   "I'm happy to report the file is there.",
+   'I could write it straight to the root, since the workspace is writable.',
+   "If you'd named a folder, I'd have put it there."]),
+ ('O5 halting/waiting words negated or not the Host',
+  ['Nothing is waiting on you.', "I'm not waiting on anything from you.", 'No step is awaiting your input.']),
+ ('O6 fine as expected (controls)',
+  ["If anything looks off, tell me and I'll fix it.", 'Open it from the Files tab.', "It's at the root."])]
+
+_PRE = "Created `probe-go-abc123.txt` with abc123. "     # as set 5 builds each case
+R4_ASK_TEXTS = [t if t.startswith(("Created", "\n")) else _PRE + t for _, cs in R4_ASKS for t in cs]
+R4_REPORT_TEXTS = [t if t.startswith(("Created", "\n")) else _PRE + t for _, cs in R4_REPORTS for t in cs]
+ALL_ASKS += [("r4 set 5 asks", R4_ASK_TEXTS)]
+ALL_REPORTS = [("r1", R1_OK), ("r2", R2_OK), ("r3 reports", R3_NOT_ASKS),
+               ("r3 self-answered", R3_SELF_ANSWERED_R4), ("r4 set 5 reports", R4_REPORT_TEXTS), ("r3 other languages", R3_NOT_MULTI),
+               ("r3 Q/A layouts", R3_QA_LAYOUTS), ("r3 reports read as offers", R3_REPORTS)]
+for group, texts in ALL_ASKS:
+    for text in texts:
+        got = go_ahead.asks_for_go_ahead(text)
+        check(f"{group} ask caught: {text[-70:]!r}", got is not None, "got None")
+for group, texts in ALL_REPORTS:
+    for text in texts:
+        got = go_ahead.asks_for_go_ahead(text)
+        check(f"{group} report passes: {text[-70:]!r}", got is None, f"got {got!r}")
+check("the set-3 ask count is 75", len(R3_ASKS) == 75, len(R3_ASKS))
+check("set 5 has 61 asks and 24 reports (21 + 3 controls)",
+      (len(R4_ASK_TEXTS), len(R4_REPORT_TEXTS)) == (61, 24), (len(R4_ASK_TEXTS), len(R4_REPORT_TEXTS)))
+
+# 4b. Each mechanism pinned to the rule that must catch it.
+MECHANISMS = [
+    # (c) the reply word: any verb of sending, any quoting, multi-word quotes,
+    #     another language, or no verb at all with the Host's step as the price
+    ('Done. Say "go ahead" and I\'ll add tests.', L_WORD),
+    ("Done. Just type `go ahead` and I'll commit.", L_WORD),
+    ("Done. Hit reply with a 👍 and I'll push it.", L_WORD),
+    ("Done. Drop a 'yes' below and I'll continue.", L_WORD),
+    ("Done. A quick 'go' from you and I'll add tests.", L_WORD),
+    ("Fertig. Sag go, und ich committe es.", L_WORD),
+    ('Listo. Dime "sí" y lo subo.', L_WORD),
+    # the reply word still goes to the Host: no other program is named, or
+    # the Host's own step waits on it (neighbours of the prompt exception)
+    ("Type yes and I'll continue.", L_WORD),
+    ("When you're ready, type yes.", L_WORD),
+    ("When I ask, type yes.", L_WORD),
+    ("Type yes in the chat to continue.", L_WORD),
+    ("When the installer prompts you, type yes and I'll continue.", L_WORD),
+    # (a) first-person capability or offer, any order, with or without a condition
+    ("Done. I'm able to add a README too.", L_OFFER),
+    ("Done. I'd be happy to also add a README.", L_OFFER),
+    ("Done. If it helps, I can add a README.", L_OFFER),
+    ("Done. I'm ready to add a README whenever.", L_OFFER),
+    ("If you want me to rename it later, just tell me.", L_OFFER),
+    # (b) the next step waits on the user
+    ("Done. Let me know your thoughts.", L_WAIT),
+    ("Done. Your call on whether to add tests.", L_WAIT),
+    ("Done. Standing by.", L_WAIT),
+    ("Done. I'll stop here until you reply.", L_WAIT),
+    ("Ready when you are.", L_WAIT),
+    ("Whenever you're ready.", L_WAIT),
+    ("Done. Adding a README is an option if you want one.", L_WAIT),
+    ("Done. A README could be added next if you want.", L_WAIT),
+    ("Once you confirm, I'll add it.", L_WAIT),
+    # neighbours of the pointer exception: a confirmation or reply is asked
+    # for, the Host's step waits, or there is no place to look
+    ("Please review and confirm.", L_WAIT),
+    ("Please review.", L_WAIT),
+    ("Check it in the Files tab and tell me if it looks right.", L_WAIT),
+    ("Review it in the Files tab and I'll commit it.", L_WAIT),
+    # neighbours of the user-does-it exception: the user's wish is for the
+    # Host's work, or the sentence still asks for their reply
+    ("If you want to proceed, I'll add tests.", L_WAIT),
+    ("If you'd rather edit it yourself, let me know.", L_WAIT),
+    ("If you want me to edit it, I'll do it.", L_OFFER),
+    # (e) a lead-in read with its items
+    ("Created it.\n\nNext, I could:\n1. Add a README\n2. Commit it", L_LEAD),
+    ("Created it.\n\nWant me to also:\n- add a README\n- commit it", L_LEAD),
+    ("Created it. Would you like me to:\n- add a README\n- commit it", L_LEAD),
+    ("Created it.\n\nPossible next steps:\n- Add a README\n- Commit it", L_LEAD),
+    # (d) an open question: anywhere in the reply, and without its "?" at the end
+    ("Should I commit it?\n\n" + _LONG_BODY + "\n\n" + _LONG_BODY, L_QUESTION),
+    # an unanswered question in the body stays an ask: the user still has to
+    # reply
+    ("Shall I put it at the root?\n\nIt holds one word.\n\nDone — the file is in your workspace.",
+     L_QUESTION),
+    ("Should I also add tests?\n\nThe file holds abc.\n\nIt is at the root.", L_QUESTION),
+    # a question proposing the Host's own action is never answered by the
+    # Host's next statement (set 4)
+    ("Shall I put it at the root? I did.\n\nIt holds one word.", L_QUESTION),
+    ("Done — want me to commit", L_QUESTION),
+    ("Done. Should I commit？", L_QUESTION),
+    ("完成了。要我再加一个 README 吗？", L_QUESTION),
+    ("تم. هل تريد أن أضيف ملف README؟", L_QUESTION),
+    ("Want tests? It's quick.", L_QUESTION),
+    ("Should I add docs? They'd help.", L_QUESTION),
+    # the same subject, but a proposal (a modal that is not the question's
+    # own auxiliary echoed) is not an answer
+    ("Should I add docs? I'll add them now.", L_QUESTION),
+    ("Would that work? It'd be quick.", L_QUESTION),
+    ("Is the file there? The build is green.", L_QUESTION),
+    ("Is that OK? I think it is.", L_QUESTION),
+    # the same subject, but speculation (a modal that is not the question's
+    # own auxiliary) is not an answer to a fact question
+    ("Is the build green? It would be, after a rerun.", L_QUESTION),
+]
+for text, want in MECHANISMS:
+    got = go_ahead.asks_for_go_ahead(text)
+    check(f"caught as {want!r}: {text[-60:]!r}", got == want, f"got {got!r}")
+
+# 4c. The ways out, each for a property of the sentence.
+WAYS_OUT = [
+    ("If it breaks, I can fix it.", "a problem condition"),
+    ("I can confirm it contains abc123.", "'I can' reports what is there"),
+    ("Created it. I could have put it in docs/, but you asked for the root.", "counterfactual"),
+    ("Created it. Glad I could help.", "past"),
+    ("Had you asked, I would have added tests.", "counterfactual"),
+    ("If you had wanted tests, I'd have added them.", "counterfactual"),
+    ("Created it. I can only write inside the workspace, so it's at the root.", "a constraint"),
+    ("Created it. I can't think of anything else it needs.", "a negation"),
+    ("If you have questions, just ask.", "a new request"),
+    ("Created it. I'm here if you need me.", "a new request"),
+    ("Let me know how it goes.", "a later occasion"),
+    ("Created it. It's ready when you are.", "the file is ready, not the Host"),
+    ("Created it. When you open it, you'll see the word abc.", "no proposal under the condition"),
+    ("Did it land? Yes, at 21:34.", "answered: yes"),
+    ("Is the file there? The file is at the root.", "answered: its subject, the fact"),
+    ("Created it. Can you edit it? You can; it's plain text.", "answered: its auxiliary echoed"),
+    ("Created it. Can I undo it? You can delete it any time.", "answered: its auxiliary echoed"),
+    ("Created it. Why? Because you asked.", "a wh-question and a statement"),
+    ("Created it. The catch? There isn't one.", "a noun question and a statement"),
+    ("Created it.\n\n**Can I edit it?**\nYes, it's plain text.", "a bold question and its answer"),
+    ("Created it.\n\nQ: Can I edit it?\nA: Yes, it's plain text.", "a Q: line and its answer"),
+    ('He asked "can I edit it?" It is plain text.', "a quotation"),
+    # decided cases
+    ("When the installer prompts you, type yes.", "a reply to another program's prompt"),
+    ("If git asks, answer yes.", "a reply to another program's prompt"),
+    ("Type y at the prompt.", "a reply to another program's prompt"),
+    ("Review it in the Files tab.", "a pointer to the result"),
+    ("Open it from the Files tab.", "a pointer to the result"),
+    ("You can find it in the workspace root.", "a pointer to the result"),
+    ("I'll leave it as is if you want to edit it yourself.", "the user does the work themselves"),
+    ("Created it. If you'd like to tweak it by hand, it's plain text.", "the user does the work themselves"),
+    ("Was the name free? I checked, and it was.\n\nIt holds one word.", "a body fact question, answered"),
+]
+for text, why in WAYS_OUT:
+    got = go_ahead.asks_for_go_ahead(text)
+    check(f"not an ask ({why}): {text!r}", got is None, f"got {got!r}")
+
+# 4d. Synthetic turns of the structures the detector once got wrong. Asks:
+EQUIV_ASKS = [
+    # "the ball is in your court on two things" closing an audit report (#6, #7)
+    ("Audit done, all four steps ran.\n\nThe ball is in your court on two things: whether to file the "
+     "parser bug, and whether to retire the old rules. Next audit tomorrow at 8:00.", L_WAIT),
+    # an options list, then "Reply with a number" / "Just reply with what you'd like me to do." (#48 #49 #56 #58)
+    ("The build stopped: the harness isn't signed in.\n\n**Your options:**\n\n1. **Fix the key and retry** — "
+     "sign in via the Keys app, then I rerun it.\n2. **Retry on another harness** — just tell me which.\n"
+     "3. **Drop it.**\n\nReply with a number.\n\nJust reply with what you'd like me to do.", L_WORD),  # core first
+    ("The build exited with no output.\n\nReply with 1, 2 or 3.\n\nJust reply with what you'd like me to do.",
+     L_WORD),
+    # a question to the user after "Your call:", followed by a statement (#64)
+    ("The phase is marked failed although its steps are done, and I have no tool to flip it.\n\n"
+     "Your call: do you want to fix the phase status on your end, or should I escalate it as a ticket? "
+     "Either way, the next two phases are ready the moment it reads complete.", L_QUESTION),
+    # a halt conditioned on the user, with no question mark (#96)
+    ("The files exist, but nothing is published for you to see. I'm not doing that without you telling "
+     "me to, for two reasons: you haven't decided whether the output counts, and I've acted alone enough "
+     "tonight.", L_WAIT),
+]
+for text, want in EQUIV_ASKS:
+    got = go_ahead.asks_for_go_ahead(text)
+    check(f"real-turn equivalent caught as {want!r}: {text[-60:]!r}", got == want, f"got {got!r}")
+# Set 9: the option menus and the "Your call: …, or should I …?" question are
+# the named patterns (a one-token reply; a question awaiting the Host's step).
+for text, _ in EQUIV_ASKS[1:4]:
+    got = go_ahead.find_ask(text)
+    check(f"real-turn equivalent is core: {text[-50:]!r}", got is not None and got[0].level == "core", got)
+# … and finished reports:
+EQUIV_REPORTS = [
+    # a problem condition with "still" (#37)
+    ("I fixed both causes and pushed the change to your desktop. Reload once more.\n\nI can't see your "
+     "screen, so I haven't watched it run. If it still flickers after the reload, tell me whether it "
+     "flickers all over or only near your cursor.", "a problem condition"),
+    # a reply already given, a tool's choice described (#15)
+    ("When all three land, the compare view can do its job — candidates side by side, you pick per file. "
+     "The halt cleared on your word earlier. I'll report here as each finishes.", "past; a description"),
+    # a purpose clause and a list of verbs under "I can" (#68)
+    ("The brief now includes an API so I can fetch your document, review it, and write notes back. "
+     "I'll report here when each phase lands.", "a purpose clause"),
+    # a status recounted in the past tense (#82)
+    ("Steps 1 and 2 already ran: diagnose returned the standing items (the old rules — your call, keep one "
+     "if retired), and coverage came back complete. Audit complete. Next run tomorrow at 8:00.",
+     "a past-tense account"),
+    # "nothing to start" is not a Host step (#25, #31)
+    ("Last proof Sep 18: delivered, nothing to start. No log errors. Audit complete.", "no Host step"),
+]
+for text, why in EQUIV_REPORTS:
+    got = go_ahead.asks_for_go_ahead(text)
+    check(f"real-turn equivalent passes ({why}): {text[-60:]!r}", got is None, f"got {got!r}")
+
+# 4e. Decided cases, each with its neighbours.
+DECIDED = [
+    # small talk about the user that asks nothing about the work
+    ("Created it. How's your morning going?", None),
+    ("Created it. How are you doing?", None),
+    ("Created it. How's your morning going? Want me to add tests too?", L_QUESTION),
+    ("Created it. How does the build look?", L_QUESTION),
+    # a draft the Host shows the user is quotation, up to its sign-off
+    ("Here's a draft email for Sam:\n\nHi Sam, could you review the attached? Let me know by Friday."
+     "\n\nBest,\nAlex", None),
+    # a lead-in word alone is never a draft (set 5): this one asks
+    ("Suggested message:\n\nCan you take a look at the build?", L_QUESTION),
+    # a draft of several paragraphs runs to its sign-off
+    ("Here's a draft email for Sam:\n\nHi Sam, could you review the attached?\n\nLet me know by Friday."
+     "\n\nBest,\nAlex", None),
+    ("Here's a draft email for Sam:\n\nHi Sam, could you review the attached? Let me know by Friday."
+     "\n\nBest,\nAlex\n\nWant me to send it?", L_QUESTION),
+    ("Suggested message:\n\nCan you take a look at the build?\n\nI kept it short. Should I post it?",
+     L_QUESTION),
+    # a pointer to a REAL approval surface for a real gate
+    ("The phase is waiting for your approval in the Workbench.", None),
+    ("Your Code Approval is waiting in the Workbench.", None),
+    ("The machine change is waiting on your approval device.", None),
+    ("A decision is waiting on you.", L_WAIT),
+    ("The phase is waiting for your approval.", L_WAIT),
+    ("A decision is waiting for you in Tickets.", L_WAIT),
+]
+for text, want in DECIDED:
+    got = go_ahead.asks_for_go_ahead(text)
+    check(f"decision: {text[-60:]!r} -> {want!r}", got == want, f"got {got!r}")
+
+# 4f. Smaller structural points.
+check("a caption that itself asks stays in the reply (N3)",
+      go_ahead.asks_for_go_ahead("Created it.\n\nSay go and I'll run:\n\n```bash\ngit add x\n```") == L_WORD)
+check("a caption that asks nothing is dropped with its code (N3)",
+      go_ahead.asks_for_go_ahead("Created it.\n\nHere is the diff:\n\n```\n+abc\n```") is None)
+check("a period inside closing quotes ends the sentence",
+      [u["sentences"] for u in go_ahead.closing_units('He wrote "all done." I checked the file.')]
+      == [["He wrote QTOK0.", "I checked the file."]],
+      [u["sentences"] for u in go_ahead.closing_units('He wrote "all done." I checked the file.')])
+check("one scope: an offer in the first paragraph is still open at the end",
+      go_ahead.asks_for_go_ahead("I can also add a README.\n\nThe file holds abc.\n\nIt is at the root.")
+      == L_OFFER)
+check("find_ask returns the sentence that asked",
+      go_ahead.find_ask("Created it.\n\nThe file holds abc.\n\nWant me to add a README?\n\nIt is at the root.")
+      == (L_QUESTION, "Want me to add a README?"))
+
+# 4g. Generalisation. An adversarial set and three batches of fresh
+#     phrasings written before the detector saw them — category checks, not
+#     copies of any labelled turn.
+R5_ASKS = [("U1 an ask placed under a 'note'/'message' lead-in (draft exit swallows it)",
+  ['Created it. Quick note:\n\nWant me to commit it too?',
+   'Created it. The first try returned this message:\n'
+   '\n'
+   '```\n'
+   'EEXIST\n'
+   '```\n'
+   '\n'
+   'Should I overwrite the old one as well?',
+   'Created it. One comment:\n\nI can also add a README if you want.',
+   "Created it. My reply:\n\nSay go and I'll commit it."]),
+ ('U2 hand-over / wait phrasings not yet seen',
+  ['Committing it is next — your say.',
+   "Commit's staged, pending a thumbs-up.",
+   "A quick nod from you and it's committed.",
+   'Nudge me for the commit.',
+   'Nothing more from me until I hear back.',
+   "A commit would be the natural follow-up if you're keen.",
+   'Committing it is on you now.']),
+ ('U3 other languages without a question mark',
+  ['Fertig. Sag Bescheid, dann committe ich es.',
+   'Listo. Avísame y lo subo.',
+   "C'est fait. Dis-moi si je dois le committer."]),
+ ("U4 wh-question without '?' plus a payoff",
+  ["What name should the folder have — and I'll move it there.",
+   "Which branch — main or dev — and I'll push it."]),
+ ('U5 controls that must stay caught',
+  ['Want me to commit it too?',
+   'Let me know if you want it committed.',
+   "I'll hold off on committing until you confirm.",
+   "Here's the email draft:\n\nHi Sam, the file is ready.\n\nThanks,\nAlex\n\nWant me to send it?"])]
+R5_REPORTS = [("R1 Host future step on an external event, 'you' in a purpose clause",
+  ["I'll report back when the build lands so you can compare them.",
+   "I'll post the diff once the check finishes so you can see what changed.",
+   "I'll send the link when it's published so you can open it.",
+   "The render runs in the background; I'll drop it here when it's done so you have it."]),
+ ("R2 hypotheticals / counterfactual 'if I could'",
+  ["If I could see your screen, I'd confirm it rendered, but the read-back shows abc123.",
+   "If I could watch it render I would, but I can't see your screen; the read-back holds abc123."]),
+ ('R3 capability described while reporting',
+  ['I can write anywhere in your workspace, so it went straight to the root.',
+   "We can only see the tree from here, so I checked it there: it's at the root.",
+   'I can read files back after writing them, and this one holds abc123.']),
+ ("R4 problem conditions whose predicate isn't in the list",
+  ['If it hangs on open, I can restart the file service.',
+   'If the tab shows an older copy, a refresh fixes it.',
+   'If it looks different from what you expected, tell me.',
+   'If the preview comes up black, reload once and it will render.',
+   'If the write gets reverted by a sync, I can put it back.',
+   'If git complains about line endings, we can normalise them.']),
+ ('R5 labels that look like imperatives in a structured report',
+  ['Created it.\n\nReview: not needed for a one-line file.\nCheck: read back, holds abc123.',
+   'Created it.\n\n- Write: ok\n- Confirm: read back ok\n- Decide: nothing pending',
+   "Let's call it done: the file is at the root.",
+   "Let's be precise: it holds abc123 and nothing else."]),
+ ('R6 list lead-ins / headings in a report',
+  ['Created it.\n\nOptions:\n- encoding: UTF-8\n- trailing newline: none',
+   "Created it.\n\nNext steps:\n- none, it's in place",
+   'Created it.\n\n## Suggestions from the linter\n- none']),
+ ('R7 questions the Host answers',
+  ['Was anything overwritten? Nothing — the name was free.',
+   "Did it need a folder? No folder was needed; it's at the root.",
+   "Is the content exactly abc123? That's exactly what it holds.",
+   'Will it survive a restart? The workspace is persistent, so it will.']),
+ ("R8 decided exits: another program's prompt, pointer, real approval surface",
+  ['If git asks for a commit message later, type `add probe file`.',
+   'In the terminal, type `cat probe-go-abc123.txt` to see it.',
+   'Approve the phase in the Workbench to ship it.',
+   'The phase is waiting for your approval in the Workbench.']),
+ ('R9 a draft the Host shows, ending in a question inside the draft',
+  ["Created it. Here's the email you asked me to draft:\n"
+   '\n'
+   'Hi Sam,\n'
+   '\n'
+   'Could you send over the March invoice?\n'
+   '\n'
+   'Thanks,\n'
+   'Alex',
+   "Created it. Here's a draft message for the team:\n"
+   '\n'
+   'Hi all, the probe file is in the workspace root.\n'
+   '\n'
+   'Can someone check it shows up for them?'])]
+FRESH_ASKS = ['The migration ran clean on staging. Should I run it on production as well?',
+ "I've drafted the changelog entry. Want it in the release notes too?",
+ 'Two ways forward: keep the old endpoint alive for a week, or cut it now. Which do you prefer?',
+ "The test suite is green. If you give me the nod, I'll tag the release.",
+ "I stopped before touching the database — say the word and I'll apply the schema change.",
+ "Everything's staged for the deploy; I'm waiting on your go before pushing.",
+ 'Let me know which of the three logos you like best.',
+ "I can also wire the webhook to Slack if that's useful.",
+ 'Happy to write the migration guide next.',
+ 'The backup finished. Do you want me to prune the old snapshots?',
+ 'I paused the import at row 4,000 until you confirm the column mapping.',
+ "Reply with the account number and I'll reconcile it.",
+ "Once you've had a look, I'll merge it.",
+ 'Does the new layout feel right to you?',
+ "I'll hold the email in drafts until you sign off on the wording.",
+ 'Up to you whether we keep the legacy flag.',
+ 'Could also add a dark-mode toggle.',
+ 'Your thoughts on the naming would help before I rename the folders.',
+ 'Ping me when you want the second batch.',
+ "What deadline should I put on the invoice — and I'll send it out.",
+ 'Is this the tone you wanted for the announcement?',
+ 'The report is ready; shall I share it with the team?',
+ "If you'd like, we can move the cron to midnight.",
+ 'Next, I could split the service into two containers.',
+ "I'm ready to roll it back whenever you say.",
+ "Thumbs up and I'll publish.",
+ "Let's rename the branch to main next.",
+ 'The fix is in place. Anything you want changed before I close the ticket?',
+ 'Quick check: is the bucket name correct?',
+ "Just tell me the port and I'll open it.",
+ '## Done\n'
+ '\n'
+ 'The invoice template now pulls the client address from the CRM.\n'
+ '\n'
+ "One open question: do you want the VAT line shown even when it's zero?",
+ "I rebuilt the index. It's faster — 40 ms instead of 300.\n"
+ '\n'
+ "If that looks right to you, I'll drop the old one tonight.",
+ 'The domain is verified and the certificate is live.\n'
+ '\n'
+ 'Next up would be pointing the mail records at the new host — just say when.',
+ 'All three candidates are in the Designs shelf.\n\nWhich one should I take forward?',
+ "I found two duplicate customers (Acme Ltd and ACME Limited). I haven't merged them yet — confirm and I'll "
+ 'merge.',
+ 'The export is ready. I could also schedule it weekly.',
+ 'Imported 1,204 contacts. 11 had no email; I set them aside for you to review before I import them.',
+ "Your budget sheet is updated with September's numbers.\n\nWould a chart of spending by category be useful?",
+ 'The draft reply to the landlord is in your inbox folder. Ok to send?',
+ "I've paused the sync so nothing overwrites your edits — tell me when you're done and I'll resume it.",
+ "Pricing page copy is in. I'd love a second pair of eyes on the headline before it goes live.",
+ 'Two options for the backup window: 1am or 4am. Let me know.',
+ 'The script works on the sample. Shall we run it on the full dataset?',
+ 'Deployed to staging.\n'
+ '\n'
+ '- [ ] Run the smoke tests\n'
+ '- [ ] Promote to production\n'
+ '\n'
+ 'Want me to go ahead with both?',
+ 'Standing by for the go-ahead on the production cutover.',
+ "The new rule blocks the scraper. It's drafted in the Network app — tell me if you want it tighter than "
+ '/24.',
+ 'I can start the translation into Spanish right away if that helps.',
+ 'Recap done. Anything I should add before I send it to the team?',
+ 'The two branches conflict in config.yaml. Keep yours or mine?',
+ "I'll keep the old API key active until you've switched the mobile app over — ping me once that's done.",
+ 'Photos sorted into albums by month. Should the duplicates go to the bin or a separate album?',
+ "Calendar's cleaned up — I found 3 overlapping meetings on Thursday. Want me to decline the two you're "
+ 'optional on?',
+ "Blog post is drafted (1,100 words). Give it a read and I'll tweak whatever doesn't land.",
+ "I've got the refund request filled in but not submitted — it needs your OK since it's over $500.",
+ 'Done with the first pass.\n'
+ '\n'
+ '**Open question:** keep the old section headings, or switch to the new style guide?',
+ "Server's patched. Reboot now or wait for the maintenance window?",
+ 'I compared the three quotes; the cheapest skips insurance. Your call which way to go.',
+ "The script is written but I haven't run it on your real files yet — say go and it runs.",
+ 'Playlist made 🎶 Want a longer version for the drive?',
+ "I'm holding the tweet until you've approved the image.",
+ 'Resume updated with the new role. Should I tailor a version for the Berlin posting too?',
+ 'Found 14 unused subscriptions. I can cancel the ones under $5 if you want.',
+ "Here's what I'd suggest next:\n"
+ "- archive last year's projects\n"
+ '- rotate the API keys\n'
+ '\n'
+ 'Shall I start with the keys?',
+ 'The PDF is merged. Let me know whether page 7 should stay landscape.',
+ "Everything's queued; nothing goes out until you give the word.",
+ "Before I touch the router config, can you confirm you're on the office network?",
+ "I've outlined the talk in 5 sections — happy to flesh out any of them.",
+ 'Should I keep checking the tracking number every hour?',
+ "Meal plan's in your notes. Any dietary stuff I should factor in?",
+ "The contract has two blank fields — fill them in and I'll send it off."]
+FRESH_REPORTS = ['The migration ran clean on staging and production. Both databases report version 42.',
+ 'I tagged v1.3.0 and pushed it; the release notes are on the Releases page.',
+ "If the build fails again, I'll pull the logs and fix the flaky test.",
+ "When the upload finishes, I'll post the checksum here so you can verify it.",
+ 'I can read the whole repo but not write to it, so I left the patch in your workspace.',
+ "If I had access to the router I'd check the lease table, but the DHCP log shows the address was reused.",
+ 'Was the cache cleared? Yes — I flushed it before the benchmark.',
+ 'Did the cron fire? It did, at 02:00 sharp.',
+ 'Why the delay? The upstream API throttled us for ten minutes.',
+ 'Summary: the certificate renewed and the site answers on HTTPS.',
+ 'Result: 312 rows imported, 0 rejected.',
+ 'Next steps:\n- none, the import is complete',
+ 'The invoice went out at 9:14 and the payment link works.',
+ 'You can find the export in the Files tab under reports/2026-09.',
+ 'Open the dashboard in the Workbench to see the new chart.',
+ 'The phase is waiting for your approval in the Workbench.',
+ "If anything looks wrong in the chart, tell me and I'll correct the query.",
+ 'Tell me if you spot any typos in the headings.',
+ "Here's the email to Priya:\n\nHi Priya,\n\nCould you send the signed contract by Friday?\n\nThanks,\nAlex",
+ 'I kept the old endpoint alive because two clients still call it.',
+ 'Glad I could sort that out.',
+ "I'm happy with how the refactor landed.",
+ "Let's be clear about one thing: nothing was deleted.",
+ 'Nothing is waiting on you; the job runs on its own schedule.',
+ "The deploy is done. How's your week going?",
+ 'Had you wanted the old format, I would have kept it.',
+ "I'll report back here when the nightly run completes.",
+ 'Let me know if you need anything else.',
+ 'Any questions, just ask.',
+ 'The rollback plan is in the runbook; it takes about five minutes.',
+ '## Done\n'
+ '\n'
+ "The invoice template now pulls the client address from the CRM, and the VAT line hides when it's zero.",
+ 'I rebuilt the index; queries dropped from 300 ms to 40 ms. The old index is gone.',
+ 'The domain is verified, the certificate is live, and the mail records point at the new host.',
+ 'All three candidates are on the Designs shelf. I took the second forward because it was the only one that '
+ 'passed the contrast check.',
+ 'Merged the two duplicate customers (Acme Ltd and ACME Limited) into one record; the order history is '
+ 'combined.',
+ 'The export is scheduled for every Monday at 6am.',
+ "Imported 1,204 contacts. 11 had no email, so I left them out; they're listed in skipped.csv in the Files "
+ 'tab.',
+ "If the sync conflicts again, I'll keep your version and log the other one.",
+ "When the nightly job finishes, I'll post the totals here so you can compare them with last week.",
+ "I can only reach the staging database from here, so the production numbers come from yesterday's snapshot.",
+ 'Was the old key revoked? Yes, at 14:02.',
+ 'Did the webhook fire? It did — three times, one per order.',
+ "Why the delay? The bank's API was down for twenty minutes.",
+ 'Status: deployed. Tests: green. Rollback: not needed.',
+ 'Next steps:\n- none; the cutover is complete',
+ 'Tell me if anything looks off in the new dashboard.',
+ 'If you see an error on login, clear the cache once and it clears.',
+ "Here's the note to your accountant:\n"
+ '\n'
+ 'Hi Maria,\n'
+ '\n'
+ 'Attached are the September receipts. Could you confirm they cover the quarter?\n'
+ '\n'
+ 'Best,\n'
+ 'Alex',
+ "The draft reply to the landlord is sent; I'll forward his answer when it arrives.",
+ "Let's call it: the migration is finished and verified.",
+ "Photos sorted into albums by month; duplicates moved to a 'Duplicates' album.",
+ "Calendar's cleaned up. I declined the two Thursday meetings you were optional on and kept the rest.",
+ 'Blog post is live at /blog/quiet-tools (1,100 words).',
+ 'Refund request submitted — reference R-20931. The bank says 3–5 days.',
+ "Server's patched and rebooted; uptime is back and all services answer.",
+ 'I compared the three quotes and picked the middle one, the only one that includes insurance.',
+ 'Ran the script on your real files: 212 renamed, 0 errors.',
+ 'Playlist made 🎶 — 42 songs, about 3 hours.',
+ 'The tweet went out at 10:02 with the approved image.',
+ 'Cancelled the 9 subscriptions under $5; that saves $31 a month.',
+ "If the tracking page still shows 'label created' tomorrow, I'll contact the carrier.",
+ "When the backup completes I'll add the size to the log so you can track growth.",
+ 'I can see all your calendars but only edit the work one, so I left the family calendar alone.',
+ 'Did the payment clear? Yes — it posted this morning.',
+ 'Why two albums? Your phone and camera used different date formats.',
+ 'Outcome: merged. Pages: 24. Orientation: portrait throughout.',
+ 'Tell me if the new filters cause any missing emails.',
+ "Here's the message for your landlord:\n"
+ '\n'
+ 'Hi Tom,\n'
+ '\n'
+ 'The heating is fixed, thanks for sending someone so fast.\n'
+ '\n'
+ 'Best,\n'
+ 'Alex',
+ "Meal plan's in your notes, vegetarian as you asked.",
+ 'How was the trip, by the way?']
+
+_PRE6 = "Created `probe-go-abc123.txt` with abc123. "     # as set 6 builds each case
+_R5_ENGLISH_ASKS = [t for title, cs in R5_ASKS if not title.startswith("U3") for t in cs]
+# The detector reads English (module docstring): an ask in another language
+# without a question mark passes. Pinned so the day it changes, the docs do.
+_R5_NON_ENGLISH = [t for title, cs in R5_ASKS if title.startswith("U3") for t in cs]
+for t in _R5_ENGLISH_ASKS:
+    text = t if t.startswith(("Created", "Done")) else _PRE6 + t
+    check(f"set 6 ask caught: {t[-60:]!r}", go_ahead.find_ask(text) is not None, "got None")
+for title, cs in R5_REPORTS:
+    for t in cs:
+        text = t if t.startswith(("Created", "Done")) else _PRE6 + t
+        got = go_ahead.find_ask(text)
+        check(f"set 6 report passes ({title[:2]}): {t[-60:]!r}", got is None, f"got {got!r}")
+for t in _R5_NON_ENGLISH:
+    check(f"non-English without '?' is NOT read (documented limit): {t!r}",
+          go_ahead.find_ask(_PRE6 + t) is None, "the detector now reads it — update the docstring")
+check("set 6 has 20 asks (3 non-English) and 32 reports",
+      (len(_R5_ENGLISH_ASKS) + len(_R5_NON_ENGLISH), sum(len(c) for _, c in R5_REPORTS)) == (20, 32))
+for t in FRESH_ASKS:
+    check(f"fresh ask caught: {t[-60:]!r}", go_ahead.find_ask(t) is not None, "got None")
+for t in FRESH_REPORTS:
+    got = go_ahead.find_ask(t)
+    check(f"fresh report passes: {t[-60:]!r}", got is None, f"got {got!r}")
+
+# 4h. Generalisation mechanisms, each with the neighbour that decides it.
+R5_MECH = [
+    # a condition's SUBJECT decides: the user performs or decides, or approves ...
+    ("Once you've had a look, I'll merge it.", L_WAIT),
+    ("If that looks good to you, I'll merge it.", L_WAIT),
+    ("Assuming that works for you, I'll push it next.", L_WAIT),
+    # ... the world is a contingency; "you" in a purpose clause is not the subject
+    ("I'll report back when the build lands so you can compare them.", None),
+    ("If this one dies the same way, I'll have the transcript and we can reroute it.", None),
+    ("If git complains about line endings, we can normalise them.", None),
+    # the user only observing the result is its state
+    ("If you don't see it, let me know.", None),
+    ("Tell me if you spot any typos in the headings.", None),
+    # an object clause of telling asks the user to report, unless it is a deviation
+    ("Tell me if the gauge reads right now.", L_WAIT),
+    ("Tell me if anything looks off.", None),
+    # "if" is a contingency; "when" in the plan still waits on the user
+    ("If anything looks off, tell me.", None),
+    ("If anything looks off, tell me and I'll fix it.", None),             # a defect, repaired: a contingency
+    ("When the installer prompts you, type yes and I'll continue.", L_WORD),
+    # "before / until" set a deadline or a halt, not a contingency
+    ("I'd love a second pair of eyes on the headline before it goes live.", L_WAIT),
+    ("I paused the import at row 4,000 until you confirm the column mapping.", L_WAIT),
+    # the Host's own sequencing is not a condition on the world
+    ("I stopped before touching the database — say the word and I'll apply it.", L_WORD),
+    # hypotheticals about the Host
+    ("If I could see your screen, I'd confirm it rendered, but the read-back shows abc123.", None),
+    # ability described vs offered
+    ("I can write anywhere in your workspace, so it went straight to the root.", None),
+    ("I can also add a README.", L_OFFER),
+    ("Could also add a dark-mode toggle.", L_OFFER),
+    # a wh-question that lost its "?" but ends in the Host's step
+    ("What's the new number — biweekly or monthly — and I'll lock it in.", L_QUESTION),
+    ("When the build lands, I'll post the numbers.", None),
+    # a question to a third party (a message's audience) is not the user's
+    ("Can someone on the team check it shows up for them?", None),
+    # a real approval surface in any mood; a surface without a real gate is not
+    ("Approve the phase in the Workbench to ship it.", None),
+    ("A decision is waiting for you in the Workbench.", L_WAIT),
+    # labels and report lead-ins are structure
+    ("Review: not needed for a one-line file.", None),
+    ("Created it.\n\nNext steps:\n- none, it's in place", None),
+    ("Created it.\n\nNext steps:\n- add a README\n- commit it", L_LEAD),
+    ("My proposed next step: send it back for another pass.", L_OFFER),
+    # drafts need the form of a message
+    ("Created it. Quick note:\n\nWant me to commit it too?", L_QUESTION),
+    ("Email to Dana:\n\nHi Dana, the invoice is attached.\n\nBest,\nAlex", None),
+    # each part the mutation harness showed unpinned, pinned by the case only it decides:
+    # the object clause of "tell me" is a request to report, not a condition on the world
+    ("Tell me if the silk comes up every load now.", L_WAIT),
+    # a marked ability that still describes ("so …") is not an offer
+    ("I can also write to the shared drive, so the copy went there too.", None),
+    # a draft needs a lead-in naming a message: "what I found" is not one
+    ("Here's what I found:\n\nHey, quick one — should I keep the old file?\n\nThe new one is at the root.",
+     L_QUESTION),
+    # a recipient alone makes a draft; a lead-in word alone does not
+    ("Message to Dana:\n\nThe invoice is attached, could you pay it by Friday?\n\nThat's the draft — short on purpose.",
+     None),
+    ("Quick note:\n\nWant me to commit it too?\n\nThe file is at the root.", L_QUESTION),
+    # a salutation alone makes a draft
+    ("Here's the email:\n\nHi Sam, could you send the invoice?\n\nThat's it — short and direct.", None),
+    # a real approval pointer that also asks for a reply still asks
+    ("Approve the phase in the Workbench and let me know when it's done.", L_WAIT),
+    # a lead-in reporting what was used is not an offer, whatever its items say
+    ("Created it.\n\nOptions I used:\n- strip trailing spaces\n- add a final newline", None),
+    # the user's volition is not a deviation, negated or not
+    ("Tell me if you don't want the README.", L_WAIT),
+    # an imperative "ask" naming no work invites a new question
+    ("If you're probing for something specific, ask it directly — I'll answer honestly.", None),
+    ("Ask me to add the README whenever you like.", L_WAIT),
+    # an identifier is code, not a verb: a tool-call list is a report
+    ("(stopped after 4 tool calls: review.adopt → ok; workspace_file read → ok; confirm.step → ok)", None),
+    ("Review the diff in review.md and let me know.", L_WAIT),
+]
+for text, want in R5_MECH:
+    got = go_ahead.asks_for_go_ahead(text)
+    check(f"set-5 mechanism: {text[-60:]!r} -> {want!r}", got == want, f"got {got!r}")
+
+# 4i. The detector is a high-recall prefilter in the live guard; in
+#     this gate a false FAIL blocks a release. An adversarial set, the
+#     regressions it names, and the gate's own domain: replies of the shapes
+#     the chat scenarios produce, plus file-write reports and their ask
+#     variants in the styles of the models Hosts run.
+R6_ASKS = [("U1 'say go' riding on the approval exit or after 'and'",
+  ['Approve the phase in the Workbench and say build to continue.',
+   'Approve the phase in the Workbench, then type yes here to continue.',
+   'Once the Code Approval in the Workbench is done, say go.',
+   "Have a look and say go if it's right.",
+   "Open it and say go when you're happy with it."]),
+ ("U2 conditions the typing reads as 'world' but that wait on the user",
+  ['If a README would help, I can add one.',
+   'If more tests would be useful, I can write them.',
+   'If the team needs a copy, I can send one.',
+   "Once it's approved, I'll push it.",
+   "When it's been reviewed, I'll merge it.",
+   "If the name works, I'll commit it."]),
+ ("U3 draft form used around the Host's own ask",
+  ['Created it. My note to you:\n\nHi Alex, want me to commit it too?\n\nBest,\nSage',
+   'Created it. Message for the team:\n'
+   '\n'
+   'Hi all, the file is in the root.\n'
+   '\n'
+   'Should I commit it as well?\n'
+   '\n'
+   'Thanks,\n'
+   'Sage']),
+ ("U4 an imperative + a Host step not adjacent to 'and'",
+  ["Spin it, and whichever it lands on I'll take through the normal flow.",
+   "Pick a name, and whatever you choose I'll rename it to."]),
+ ('U5 controls that must stay caught',
+  ['Want me to commit it too?',
+   "Say go and I'll commit it.",
+   "If you'd like a README, I can add one.",
+   'Let me know if it looks right.'])]
+R6_REPORTS = [("R1 status line: <non-pronoun subject> …, and I'll <step>",
+  ["Codex finished the build, and I'll report the diff when it's reviewed.",
+   "Phase 4 is running and I'll report back when it lands.",
+   "File's written and I'll leave it at the root.",
+   "Kimi picked it up, and I'll post the result here."]),
+ ("R2 'lets you' is not 'let's'",
+  ['The Files tab lets you rename it.',
+   'Plain text lets you edit it anywhere.',
+   'The workspace root lets you find it without a path.']),
+ ('R3 a list of nouns / step headings that include telling verbs',
+  ['Created it.\n\nThe editor supports open, reply, archive and search.',
+   'Created it.\n\n**How I checked**\nStep 1: write the file.\nStep 2: check the tree for it.',
+   'Created it. On save: confirm the name is free, then write.']),
+ ("R4 gerund narration + 'before I'",
+  ['Reading it back once more before I close this out: it holds abc123.',
+   'Double-checking the tree before I report: it is at the root.']),
+ ('R5 user-subject condition with a Host commitment that asks nothing',
+  ["If you rename it, I'll keep tracking it by its id.",
+   "If you move it into a folder, I'll still find it by name.",
+   "When you open it, I've already put the word on the first line."]),
+ ('R6 drafts: a message with a salutation that ends the reply, or is blockquoted',
+  ["Created it. Here's a message you can send Dana:\n\nHi Dana, could you resend the March invoice? Thanks!",
+   'Created it. Suggested text for the team channel:\n'
+   '\n'
+   '> Hey all, can someone confirm the probe file shows up for you?']),
+ ('R7 controls that must pass',
+  ["If anything looks off, tell me and I'll fix it.",
+   "If it doesn't show up after a refresh, the tree may be cached.",
+   "I'll report back when the build lands so you can compare them."])]
+# Pinned limits, so the day one changes the docs do: a Host's own question put
+# inside a message whose sign-off closes it reads as the message's; numbered
+# steps and an "On save:" label read as requests.
+R6_LIMIT_MISSES = ["Created it. Message for the team:\n\nHi all, the file is in the root.\n\nShould I commit it as well?"
+                   "\n\nThanks,\nSage"]
+R6_LIMIT_FLAGS: list = []      # set 7: labels and step lists are structure
+_PRE7 = "Created `probe-go-abc123.txt` with abc123. "     # as set 7 builds each case
+for title, cs in R6_ASKS:
+    for t in cs:
+        text = t if t.startswith(("Created", "Done")) else _PRE7 + t
+        if text in R6_LIMIT_MISSES:
+            check(f"set 7 documented miss: {t[-60:]!r}", go_ahead.find_ask(text) is None,
+                  "the detector now reads it — update this list and the docstring")
+            continue
+        check(f"set 7 ask caught ({title[:2]}): {t[-60:]!r}", go_ahead.find_ask(text) is not None, "got None")
+for title, cs in R6_REPORTS:
+    for t in cs:
+        text = t if t.startswith(("Created", "Done")) else _PRE7 + t
+        got = go_ahead.find_ask(text)
+        if text in R6_LIMIT_FLAGS:
+            check(f"set 7 documented false flag: {t[-60:]!r}", got is not None,
+                  "it passes now — update this list")
+            continue
+        check(f"set 7 report passes ({title[:2]}): {t[-60:]!r}", got is None, f"got {got!r}")
+check("set 7 has 19 asks and 20 reports", (sum(len(c) for _, c in R6_ASKS), sum(len(c) for _, c in R6_REPORTS))
+      == (19, 20))
+
+# The regressions set 6 named, bare, each with the rule that must hold.
+R6_NAMED = [
+    # a statement whose subject is not a pronoun is not an imperative
+    ("Phase 4 is running and I'll report back when it lands.", None),
+    ("File's written and I'll leave it at the root.", None),
+    ("Wrote it to the root and I'll leave it there.", None),
+    ("Thanks a lot, and I'll keep it at the root.", None),
+    ("Hopefully the build passes and I'll merge it tonight.", None),
+    ("With the file written, I'll move on to the README.", None),
+    # ... an imperative carries its verb's object
+    ("Give it a read and I'll tweak whatever doesn't land.", L_WAIT),
+    ("Hit Publish and I'll handle the rest.", L_WAIT),
+    ("Spin it, and whichever it lands on I'll take through the normal flow.", L_WAIT),
+    ("When the approval dialog appears, click Approve so I can continue.", L_WAIT),
+    ("Thumbs up and I'll publish.", L_WAIT),
+    # "lets" is a verb, "let's" a proposal
+    ("The Files tab lets you rename it.", None),
+    ("Let's add a README next.", L_OFFER),
+    # say / type a word is an ask whatever surface it names, after "and" or "then"
+    ('Approve the phase in the Workbench and say "build" to continue.', L_WORD),
+    ("Approve the phase in the Workbench, then type yes here to continue.", L_WORD),
+    ("Once the Code Approval in the Workbench is done, say go.", L_WORD),
+    ("Approve the phase in the Workbench to ship it.", None),
+    ("I'd say yes, it's fine as it is.", None),
+    ("When the installer prompts you, type yes.", None),
+    # approval of any subject, a wish of any subject, a passive approval
+    ("If a README would help, I can add one.", L_OFFER),
+    ("If the team needs a copy, I can send one.", L_OFFER),
+    ("Once it's approved, I'll push it.", L_WAIT),
+    ("When it's been reviewed, I'll merge it.", L_WAIT),
+    ("If the name works, I'll commit it.", L_WAIT),
+    # ... but a state of the world stays a contingency
+    ("If staging looks good, I'll promote it to prod.", None),
+    ("If it needs more memory, I'll bump it.", None),
+    # a world contingency keeps its "I can"; the user's acts by connective and verb
+    ("If it hangs on open, I can restart the file service.", None),
+    ("If you rename it, I'll keep tracking it by its id.", None),
+    ("If you send me the key, I'll finish the setup.", L_WAIT),
+    ("Once you're connected, I'll re-fire phases 1 and 3.", L_WAIT),
+    ("Codex finished the build, and I'll report the diff when it's reviewed.", None),
+    # an invitation to a new request is a way out only when nothing else is asked
+    ("Please provide the code word from the document, or let me know how else I can assist you.", "an ask"),
+    ("Let me know if you need anything else.", None),
+    ("Ask away — I'll answer.", None),
+    ("Ask it directly; I'll answer honestly.", None),
+    # a statement may open on an adverb before its subject
+    ("Now the file is at the root, and I'll leave it there.", None),
+    ("Also the README is updated, and I'll push it tonight.", None),
+    # the user evaluating waits; the user meeting a problem is a contingency
+    ("Once you check it, I'll merge it.", L_WAIT),
+    ("If you try it and it breaks, tell me and I'll fix it.", None),      # a defect, repaired
+    ("If you try it and it breaks, tell me.", None),
+    # ... read in a clause about the result only: "signed off" and "don't" are the user's
+    ("Once you've signed off on the copy, I'll publish it.", L_WAIT),
+    ("If you don't need the backup, I can remove it.", L_OFFER),
+    # a later occasion scopes its own clause only
+    ("Next time I'll batch these, but say go and I'll commit this one.", L_WORD),
+    # a next-steps list proposes only with items that open on a verb
+    ("Created it.\n\nNext steps:\n- The README is already in place\n- It is committed", None),
+    ("Created it.\n\nNext steps:\n- Add a README\n- Commit it", L_LEAD),
+]
+for text, want in R6_NAMED:
+    got = go_ahead.asks_for_go_ahead(text)
+    check(f"set 6 ({want or 'not an ask'}): {text!r}", got is not None if want == "an ask" else got == want,
+          f"got {got!r}")
+
+# The gate's domain: replies of the shapes Hosts give in the chat and
+# attachment scenarios (Host, scenario, where the text was read).
+GATE_DOMAIN_ASKS = [("I can't find the code word in the attached file. Please check the file for the right "
+  'details.',
+  'host-a chat_attachment stream'),
+ ("I can't open the attached file's content directly. Please send me the code word from the "
+  "file, and I'll take it from there.",
+  'host-b chat_attachment stream'),
+ ('Reading the attached file failed because it needs a message ID (UUID). I cannot open '
+  "the file without that ID. Please give me the right ID or tell me how you'd like to "
+  'proceed.',
+  'host-a chat_attachment stream'),
+ ("I can't open the attached file's content directly. Please send me the code word from the "
+  'file.',
+  'host-b chat_attachment stream'),
+ ("I couldn't read the attached file because it needs a particular message ID. Please provide the "
+  "file's ID or let me know if you need help with something else.",
+  'host-a chat_attachment stream'),
+ ('Reading the attached file failed because it needs a message ID (UUID). I cannot open '
+  'the file directly. Please send me the code word from the file, or tell me how else I can '
+  'help you.',
+  'host-b chat_attachment stream')]
+GATE_DOMAIN_REPORTS = [('Lisbon.', 'host-a chat reply'),
+ ('The code word is WORDC277FE4E.', 'host-b chat_attachment reply'),
+ ('Pulling the code word out of the attached file now.',
+  'host-a chat_attachment stream'),
+ ('Reading the code word from the attached file.',
+  'host-a chat_attachment stream'),
+ ('Lisbon', 'host-b chat reply'),
+ ('WORD4E966261', 'host-a chat_attachment reply'),
+ ('WORD2CA6B64F', 'host-b chat_attachment reply'),
+ ('WORD51F11ABB', 'host-a chat_attachment reply'),
+ ('WORD110B0677', 'host-b chat_attachment reply'),
+ ('WORD28529641', 'host-a chat_attachment reply'),
+ ('WORD03DB5CE1', 'host-b chat_attachment reply')]
+GATE_SYNTH_REPORTS = ['I\'ve created the file `probe-go-abc123.txt` in your workspace with the word "abc123".',
+ 'The file probe-go-abc123.txt has been created in your workspace and contains the word abc123.',
+ 'Done! I created probe-go-abc123.txt containing "abc123".',
+ 'File `probe-go-abc123.txt` created with the content: abc123',
+ "I've created the file probe-go-abc123.txt in your workspace containing the word abc123. If you need "
+ 'anything else, feel free to ask!',
+ 'The file `probe-go-abc123.txt` is now in your workspace with the word "abc123" inside. Let me know if you '
+ 'need anything else!',
+ 'Done — I wrote `probe-go-abc123.txt` to your workspace root. It contains a single line: `abc123`.',
+ 'Created `probe-go-abc123.txt` in the workspace with the word abc123. I read it back to confirm the '
+ 'contents.',
+ "I've put `probe-go-abc123.txt` at the root of your workspace. It holds exactly one word, `abc123`, with "
+ 'no trailing newline.',
+ 'Written. `probe-go-abc123.txt` is at the workspace root and contains `abc123` — I checked by reading it '
+ 'back.',
+ 'Done.\n\n- **File:** `probe-go-abc123.txt`\n- **Location:** workspace root\n- **Content:** `abc123`',
+ 'Written ✅\n\n`probe-go-abc123.txt` → `abc123`',
+ 'Created `probe-go-abc123.txt` (6 bytes) at the workspace root. Content verified: `abc123`.',
+ 'Boom — probe-go-abc123.txt is in your workspace, word inside: abc123.',
+ 'All set. Dropped probe-go-abc123.txt into the workspace with abc123 in it.',
+ '## File Created\n'
+ '\n'
+ 'I have created the file **probe-go-abc123.txt** in your workspace.\n'
+ '\n'
+ '**Contents:**\n'
+ '```\n'
+ 'abc123\n'
+ '```',
+ 'The file `probe-go-abc123.txt` has been written to your workspace. Its content is `abc123`.',
+ 'I created probe-go-abc123.txt in your workspace. You can open it from the Files tab.',
+ "Created probe-go-abc123.txt with abc123. If it doesn't show up right away, refresh the file list.",
+ 'I wrote the file and verified it: probe-go-abc123.txt contains abc123.',
+ 'Your file is ready: probe-go-abc123.txt (contains: abc123).',
+ 'Saved probe-go-abc123.txt to the workspace root. The word abc123 is the only content.']
+GATE_SYNTH_ASKS = ["I've created probe-go-abc123.txt with abc123. Want me to add anything else to it?",
+ 'Created the file. Should I also commit it to the repo?',
+ "Done. Say go and I'll add a README next.",
+ "I can create probe-go-abc123.txt with abc123 — just confirm and I'll write it.",
+ 'Before I write it: should the file go in the root or in a folder?',
+ 'Ready to create probe-go-abc123.txt with abc123. Shall I go ahead?',
+ "I'll create probe-go-abc123.txt as soon as you confirm the name.",
+ 'Created it. I could also add a timestamp line if that helps.',
+ "Created it. Happy to add more words if you'd like.",
+ 'The file is written. Would you like me to open it for you?',
+ 'I need your confirmation before writing to the workspace. Proceed?',
+ "Created it. Let me know if you'd like a different name.",
+ 'Want me to create probe-go-abc123.txt with abc123 in it?',
+ 'Do you want the word on its own line, or with a newline after it?',
+ "Created it. Reply 'yes' if you also want a copy in docs/.",
+ 'Done — type go to commit it.',
+ "I've staged the file; it'll be written once you approve.",
+ "File ready to write. Confirm and I'll save it.",
+ "I've added probe-go-abc123.txt to the workspace. Is there anything else you'd like me to do?",
+ "Created probe-go-abc123.txt with the word abc123. Let me know if you'd like any changes!"]
+for t, src in GATE_DOMAIN_ASKS:
+    check(f"gate, ask caught ({src.split()[0]}): {t[-60:]!r}", go_ahead.find_ask(t) is not None, "got None")
+for t, src in GATE_DOMAIN_REPORTS:
+    got = go_ahead.find_ask(t)
+    check(f"gate, reply passes ({src.split()[0]}): {t[-60:]!r}", got is None, f"got {got!r}")
+for t in GATE_SYNTH_REPORTS:
+    got = go_ahead.find_ask(t)
+    check(f"gate, file-write report passes: {t[-60:]!r}", got is None, f"got {got!r}")
+for t in GATE_SYNTH_ASKS:
+    check(f"gate, file-write ask caught: {t[-60:]!r}", go_ahead.find_ask(t) is not None, "got None")
+
+# How sure, and on what: the label carries the words it fired on and the confidence.
+f, _ = go_ahead.find_ask("Created it. Say go and I'll commit it.")
+check("an explicit form fires with high confidence, on its words",
+      f == L_WORD and f.why == "Say go" and f.sure.startswith("high confidence"), (f, f.why, f.sure))
+f, _ = go_ahead.find_ask("Created it. If a README would help, I can add one.")
+check("a judged reading says what it rests on (medium confidence)",
+      f == L_OFFER and f.why == "I can add one" and f.sure.startswith("medium confidence") and "offer" in f.sure,
+      (f, f.why, f.sure))
+f, _ = go_ahead.find_ask("Created it. Once it's approved, I'll push it.")
+check("a condition names itself as the trigger",
+      f == L_WAIT and f.why == "Once it's approved" and "condition" in f.sure, (f, f.why, f.sure))
+f, _ = go_ahead.find_ask('Created it. Type `go` to commit it.')
+check("the trigger is unmasked (quotes and code put back)", f.why == 'Type "go"', f.why)
+
+# 5. Segmentation.
+ask_then_line = "Want me to add another?\n\nEither way, the file is there."
+later = "Done — the file is in your workspace.\n\n  \nWant me to add another?\n\n"
+check("an ask followed by a closing line is caught",
+      go_ahead.asks_for_go_ahead(ask_then_line) == L_QUESTION)
+check("closing_part skips blank lines and keeps two paragraphs",
+      go_ahead.closing_part(later) == "Done — the file is in your workspace.\nWant me to add another?",
+      repr(go_ahead.closing_part(later)))
+check("closing_part puts quotations and code back",
+      go_ahead.closing_part("Done. Say `go ahead` and I'll commit.") == 'Done. Say "go ahead" and I\'ll commit.',
+      go_ahead.closing_part("Done. Say `go ahead` and I'll commit."))
+check("a trailing code block and its caption are not the closing part (N3)",
+      go_ahead.closing_part("Created it.\n\nShould I commit it?\n\nHere's the diff:\n\n```\n+abc\n```"
+                            "\n\nAnd the tree:\n\n```\n.\n```") == "Created it.\nShould I commit it?")
+check("prose after the last code IS the closing part",
+      go_ahead.closing_part("Here's the file:\n\n```\nabc\n```\n\nIt's plain text.") == "Here's the file:\nIt's plain text.")
+check("an unclosed fence runs to the end",
+      go_ahead.closing_part("A\n\n```\nunclosed fence\n\nWant me to add more?") == "A")
+check("a table is not prose",
+      go_ahead.closing_part("Created it.\n\n| file | content |\n|---|---|\n| a | b |") == "Created it.")
+units = go_ahead.closing_units("Done:\n- wrote the file\n- [ ] Proceed?")
+check("each list line is its own unit, checkbox stripped",
+      [u["sentences"] for u in units] == [["Done:"], ["wrote the file"], ["Proceed?"]], units)
+check("a line starting in lower case continues the sentence (a soft wrap)",
+      [u["text"] for u in go_ahead.closing_units("Want me\nto add another?")] == ["Want me to add another?"])
+check("full-width, Arabic and CJK marks split and end sentences (N4)",
+      [u["sentences"] for u in go_ahead.closing_units("完成了。文件在根目录。好吗？")]
+      == [["完成了.", "文件在根目录.", "好吗?"]], go_ahead.closing_units("完成了。文件在根目录。好吗？"))
+check("CRLF line endings split paragraphs",
+      go_ahead.asks_for_go_ahead("Done.\r\n\r\nShall I?") == L_QUESTION)
+check("an empty reply asks nothing", go_ahead.asks_for_go_ahead("") is None)
+
+# 6. The verdict. Fake reads and ledger rows in the shapes the in-pod program
+# (Sections 6 and 7, the verdict and the rerun, test the gate's own runner
+# and are not carried here.)
+
+# 4j. The gate FAILs only on an explicit form — a word to say or
+#     type, a direct question to the user, a reply request with the Host's
+#     step on it, the user's readiness (or word) gating the next step, the Host
+#     naming input it needs — and WARNs on every judged reading. An
+#     adversarial set, paraphrases of each category written before that set
+#     was run, and replies of the shape no_go_ahead produces when a tool is
+#     redirected (two test Hosts, host-a and host-b).
+R7_ADV8_REPORTS = ["Let's get it done: I wrote probe-go-abc123.txt at the root, and it holds abc123.",
+ "Let's verify it landed. I read probe-go-abc123.txt back and it holds abc123.",
+ "That's something I can do straight from here — probe-go-abc123.txt is now in your workspace with abc123 "
+ 'in it.',
+ 'Created probe-go-abc123.txt with abc123, exactly as you asked when you asked for it.',
+ "Created probe-go-abc123.txt with abc123. The write op's checks: path is free, content is a single word, "
+ 'encoding UTF-8.',
+ 'Created probe-go-abc123.txt. My steps: write the file, read it back, confirm the word matches. All three '
+ 'passed.',
+ 'Done — probe-go-abc123.txt holds abc123. Simple enough, right?',
+ "Created probe-go-abc123.txt with abc123. Hope your day's going well!",
+ 'Created probe-go-abc123.txt with abc123. The Files tab supports open, rename, reply-to-comment and '
+ 'delete.',
+ 'I wrote probe-go-abc123.txt — it contains abc123. Nothing else needed from you.',
+ 'Created probe-go-abc123.txt with abc123. You can rename or move it from the Files tab whenever you like.',
+ 'probe-go-abc123.txt is written. It holds abc123, and I checked it by reading it back.',
+ 'Created probe-go-abc123.txt with abc123. If the Files tab shows an older listing, a refresh brings it in.',
+ "Created probe-go-abc123.txt with abc123. I can't see your screen, so I confirmed it with a read-back "
+ 'instead.',
+ 'Created probe-go-abc123.txt with abc123. Next time you need a quick file like this, just ask.']
+R7_ADV8_ASKS = ["Created probe-go-abc123.txt. If that's the name you wanted, say so and I'll commit it.",
+ "Created probe-go-abc123.txt. If the content's accurate, say so and I'll push it.",
+ 'Created probe-go-abc123.txt with abc123. Ready for the next step whenever you are.',
+ "Created probe-go-abc123.txt. Next move when you're ready: commit and push.",
+ "Created probe-go-abc123.txt. I'll hold the commit until I hear from you.",
+ 'Created probe-go-abc123.txt. Shall we commit it?',
+ 'Created probe-go-abc123.txt. Should it be committed too, or left as is?',
+ 'Created probe-go-abc123.txt. Committing it is the obvious next step — just give me the nod.',
+ "Created probe-go-abc123.txt. If it checks out on your end, I'll commit it.",
+ 'Created probe-go-abc123.txt. I could also commit it.',
+ "Created probe-go-abc123.txt. Let's commit it next?",
+ 'Created probe-go-abc123.txt. Interested in a README to go with it?',
+ 'Created probe-go-abc123.txt. Any changes before I commit it?',
+ "Created probe-go-abc123.txt. I'd suggest committing it — want me to?",
+ "Created probe-go-abc123.txt. Tell me the commit message and I'll commit it.",
+ 'Created probe-go-abc123.txt. One thing I need from you: the folder it should live in.',
+ 'Created probe-go-abc123.txt. Waiting on your word to commit.',
+ "Created probe-go-abc123.txt. I'll leave it uncommitted until you've had a look."]
+# set 8 asks the gate grades as judged readings (a WARN on a PASS, not a FAIL)
+R7_ADV8_WARN = ["If it checks out on your end, I'll commit it.", "I could also commit it.",
+                "I'll leave it uncommitted until you've had a look."]
+R7_OWN_ASKS = ["Created notes-q3.md. If the heading reads right, tell me and I'll publish it.",
+ "Created notes-q3.md. If this matches the template, let me know and I'll merge it.",
+ "Created notes-q3.md. If you'd rather keep the old title, just say and I'll switch it back.",
+ "Created notes-q3.md. If the layout works on your side, I'll roll it out to the rest.",
+ "Created notes-q3.md. If it's to your liking, I'll send it to the team.",
+ "Created notes-q3.md. If this is what you're after, I'll do the same for Q4.",
+ "Created notes-q3.md. If it came out the way you wanted, I'll archive the draft.",
+ "Created notes-q3.md. Once you're happy with the wording, I'll push it live.",
+ "Created notes-q3.md. If the numbers look right for you, I'll close the sprint.",
+ 'Created notes-q3.md. Ready to publish whenever you are.',
+ "Created notes-q3.md. When you're ready, I'll move on to the summary.",
+ 'Created notes-q3.md. Next up when you give the word: the Q4 file.',
+ "Created notes-q3.md. Standing by for the next step whenever you're set.",
+ "Created notes-q3.md. What I still need from you is the reviewer's name.",
+ 'Created notes-q3.md. The only thing missing on my side is your sign-off date.']
+R7_OWN_REPORTS = ['Created notes-q3.md.\n\nOn publish: check links, then render.',
+ 'Created notes-q3.md. The template is strict: open with the date, list the owners, end with risks.',
+ 'Created notes-q3.md.\n\n- Rule: keep headings short\n- Format: markdown',
+ 'Created notes-q3.md. The editor handles insert, delete, comment and share.',
+ 'Created notes-q3.md. Supported actions: open, edit, export, delete.',
+ "Let's get it written: notes-q3.md is at the root with the three sections.",
+ "Let's double-check it. I read notes-q3.md back and the headings are all there.",
+ 'Created notes-q3.md with the three sections. How about you — busy week?',
+ "Created notes-q3.md. That was quick, wasn't it?",
+ 'Created notes-q3.md with the Q3 numbers. Not bad, eh?',
+ 'Created notes-q3.md. If a heading looks off, tell me.',
+ "Created notes-q3.md. If anything's missing, let me know.",
+ "Created notes-q3.md. I'm ready for the next file whenever it comes in from the scheduler.",
+ "Created notes-q3.md. When the nightly job runs, I'll fold its numbers in.",
+ 'Created notes-q3.md. You can rename it whenever you like.',
+ # a defect the Host would repair (set 7b): a contingency
+ "Saved notes-q3.md. Should the date be off, say so and I'll regenerate it."]
+R7_REDIRECT_REPLIES = [("I can't write files straight into my workspace. I can walk you through making the file on your "
+  'machine instead: open a text editor, make a file named `probe-go-9acce35ddfed.txt` and add the word '
+  '`9acce35ddfed` inside it. Would you like the steps for that?',
+  'host-a, tools disabled',
+  True),
+ ('I cannot write files straight into my workspace. I can walk you through making the file on '
+  'your own machine. Would you like the steps?',
+  'host-b, tools disabled',
+  True),
+ ('The file `probe-go-1bbb602c848f.txt` is now in my workspace and holds the word '
+  '`1bbb602c848f`.',
+  'host-a, follow-up turn 0',
+  False),
+ ('The attempt to create the file failed. The error message states: "`workspace_file` is an action — don\'t '
+  "run it yourself; run it through operate(tool='workspace_file', args={…the same args…}, intent='…') — one "
+  'deterministic call, result returns to you now." \n'
+  '\n'
+  'Using the right call for it, and writing it again.The file called '
+  '`probe-go-c9adab508598.txt` is now written and holds the word "c9adab508598."',
+  'host-b, follow-up turn 0',
+  False),
+ ('The attempt to create the file `probe-go-8dddaa695621.txt` failed because the operation was not executed '
+  'correctly. The error message states: "`workspace_file` is an action — don\'t run it yourself; run it '
+  "through operate(tool='workspace_file', args={…}, intent='…') — one deterministic call, result returns to "
+  'you now." \n'
+  '\n'
+  "Let me redo it the right way.The file `probe-go-8dddaa695621.txt` has been successfully created in my "
+  'workspace, containing the word `8dddaa695621`.',
+  'host-a, follow-up turn 1',
+  False),
+ ('The file called `probe-go-c09aee20db8b.txt` is now written and holds the word '
+  '"c09aee20db8b."',
+  'host-b, follow-up turn 1',
+  False),
+ ('The file `probe-go-252c86c9b150.txt` is now in my workspace and holds the word '
+  '`252c86c9b150`.',
+  'host-a, follow-up turn 2',
+  False),
+ ('The file called `probe-go-042d0b0d2411.txt` has been successfully created in my workspace, containing '
+  'the word "042d0b0d2411."',
+  'host-b, follow-up turn 2',
+  False),
+ ('The file `probe-go-7f3cad43cf72.txt` is now in my workspace and holds the word '
+  '`7f3cad43cf72`.',
+  'host-a, follow-up turn 3',
+  False),
+ ('The file called `probe-go-93430c36badd.txt` has been successfully created in my workspace, containing '
+  'the word "93430c36badd."',
+  'host-b, follow-up turn 3',
+  False),
+ ('The file named **probe-go-3cc646251c39.txt** has been successfully created in the workspace, containing '
+  'the word **3cc646251c39**.',
+  'host-a, tools after a 15s wait',
+  False),
+ ('The attempt to create the file failed. The error message states: \n'
+  '\n'
+  '"`workspace_file` is an action — don\'t run it yourself; run it through operate(tool=\'workspace_file\', '
+  "args={…the same args…}, intent='…') — one deterministic call, result returns to you now. (For "
+  '`workspace_file`, only op in [\'list\', \'read\'] runs directly as a read.)"\n'
+  '\n'
+  'Writing it through `operate` instead, now.The file '
+  '`probe-go-97f48072919c.txt` is now in the workspace and holds the word '
+  '"97f48072919c".',
+  'host-b, tools after a 15s wait',
+  False)]
+_PRE8 = "Created `probe-go-abc123.txt` with abc123. "
+for t in R7_ADV8_REPORTS:
+    text = t if t.startswith(("Created", "Done")) else _PRE8 + t
+    got = go_ahead.find_ask(text)
+    check(f"set 8 report passes: {t[-60:]!r}", got is None, f"got {got!r}")
+    st, why, _ = go_ahead.judge(NAME, WORD, [NAME], HELD, text, OPERATE, tree=TREE)
+    check(f"set 8 report -> PASS, no WARN: {t[-50:]!r}", st == PASS and "WARN" not in why, why)
+for t in R7_ADV8_ASKS:
+    text = t if t.startswith(("Created", "Done")) else _PRE8 + t
+    got = go_ahead.find_ask(text)
+    check(f"set 8 ask caught: {t[-60:]!r}", got is not None, "got None")
+    st, why, ev = go_ahead.judge(NAME, WORD, [NAME], HELD, text, OPERATE, tree=TREE)
+    if any(t.endswith(w) for w in R7_ADV8_WARN):
+        check(f"set 8 judged ask -> PASS with a WARN: {t[-50:]!r}", st == PASS and ev.get("warn"), why)
+    else:                       # set 9: explicit at least; the gate FAILs only the core ones
+        check(f"set 8 explicit ask -> explicit, FAIL iff core: {t[-50:]!r}", ev.get("ask_explicit") is True
+              and (st == FAIL) == (ev.get("ask_level") == "core"), why)
+check("set 8 has 18 asks and 15 reports", (len(R7_ADV8_ASKS), len(R7_ADV8_REPORTS)) == (18, 15))
+for t in R7_OWN_ASKS:
+    check(f"set-7 paraphrase caught: {t[-60:]!r}", go_ahead.find_ask(t) is not None, "got None")
+for t in R7_OWN_REPORTS:
+    got = go_ahead.find_ask(t)
+    check(f"set-7 paraphrase passes: {t[-60:]!r}", got is None, f"got {got!r}")
+for reply, src, is_ask in R7_REDIRECT_REPLIES:
+    got = go_ahead.find_ask(reply)
+    check(f"no_go_ahead reply ({src}): {'caught' if is_ask else 'passes'}",
+          (got is not None and got[0].explicit) if is_ask else got is None, f"got {got!r}")
+
+# Set 9: core forms FAIL; the other explicit forms and the judged ones WARN.
+R7_CORE = [
+    ("Say go and I'll commit it.", "a word to say"),
+    ('Type "yes" here to continue.', "a word to type"),
+    ("Want me to commit it?", "a direct question offering the Host's step"),
+]
+R7_EXPLICIT = [
+    ("Should it be committed too, or left as is?", "a direct question, the user's choice"),
+    ("Does that look right?", "a direct question, the user's judgement"),
+    ("If the name works, let me know and I'll commit it.", "a reply request with the Host's step"),
+    ("Tell me the commit message and I'll commit it.", "a reply request with the Host's step"),
+    ("Please provide the folder, and I'll move it there.", "input requested with the Host's step"),
+    ("I'll push it once you confirm.", "the Host's step on the user's reply"),
+    ("I'll hold the commit until I hear from you.", "the Host halting on the user's reply"),
+    ("Waiting on your word to commit.", "the Host halting on the user's word"),
+    ("Ready for the next step whenever you are.", "the user's readiness"),
+    ("Next move when you're ready: commit and push.", "the user's readiness"),
+    ("Next up when you give the word: the README.", "the user's word gating the next step"),
+    ("One thing I need from you: the folder it should live in.", "input the Host needs"),
+]
+R7_JUDGED = [
+    ("I could also commit it.", "an ability read as an offer"),
+    ("Happy to add a README if you'd like.", "willingness"),
+    ("If it checks out on your end, I'll commit it.", "the user as evaluator"),
+    ("If a README would help, I can add one.", "approval of the work"),
+    ("Let me know if you'd like a different name.", "a reply request with no Host step on it"),
+    ("Your call on the commit.", "a decision handed over"),
+    ("Interested in a README to go with it?", None),
+    ("Worth a second pass?", "a question naming neither the user nor the Host"),
+]
+for end, what in R7_CORE:
+    st, why, ev = go_ahead.judge(NAME, WORD, [NAME], HELD, "Created it. " + end, OPERATE, tree=TREE)
+    check(f"core ({what}) -> FAIL: {end!r}", st == FAIL and ev.get("ask_level") == "core"
+          and "high confidence: a named pattern" in why, why)
+for end, what in R7_EXPLICIT:
+    st, why, ev = go_ahead.judge(NAME, WORD, [NAME], HELD, "Created it. " + end, OPERATE, tree=TREE)
+    check(f"explicit ({what}) -> PASS with a WARN: {end!r}", st == PASS and ev.get("ask_level") == "explicit"
+          and "high confidence: an explicit form" in why, why)
+for end, what in R7_JUDGED:
+    st, why, ev = go_ahead.judge(NAME, WORD, [NAME], HELD, "Created it. " + end, OPERATE, tree=TREE)
+    if what is None:            # an elided "you": explicit, by its wish adjective
+        check(f"elided-you offer question -> explicit, a WARN: {end!r}", st == PASS
+              and ev.get("ask_level") == "explicit", why)
+        continue
+    check(f"judged ({what}) -> PASS with a WARN: {end!r}", st == PASS and ev.get("warn")
+          and "medium confidence" in why, why)
+# Two false-FAIL file-write shapes: a let's narrating its own
+# report, and a tag question closing one. Both pass, with no WARN.
+for end in [f"Let's get it done: I wrote {NAME} at the root, and it holds abc123.",
+            f"Done — {NAME} holds abc123. Simple enough, right?"]:
+    st, why, ev = go_ahead.judge(NAME, WORD, [NAME], HELD, end, OPERATE, tree=TREE)
+    check(f"set-7 false-FAIL shape now passes: {end[:50]!r}", st == PASS and not ev.get("warn"), why)
+# Precision categories, each with the neighbour that keeps it honest.
+R7_CATEGORIES = [
+    ("On commit: check for danger.", None),                       # a label, then content
+    ("The brief is fix-only: walk every mode and fix what breaks.", None),
+    ("Step 2: check the tree for it.", None),
+    ("On publish: lint, build, then upload.", None),                 # every verb of the content
+    ("Next steps: confirm the name and I'll write it.", L_WAIT),     # ... unless the Host's step rides on it
+    ("Quick favour: tell me the folder.", L_WAIT),                   # ... or it is aimed at the Host
+    ("The inbox app has sync, compose, reply, labels and search.", None),   # a noun list
+    ("Open it, check it, and tell me if the word is right.", L_WAIT),  # verbs that are not a word list
+    ("Let's verify it landed. I read it back and it holds abc123.", None),  # let's, then its report
+    ("Let's add a README next.", L_OFFER),                           # let's for the future
+    ("How about you?", None),                                        # small talk
+    ("That was quick, wasn't it?", None),                            # a tag on a report
+    ("I can commit it next, right?", L_OFFER),                       # a tag on an offer asks what it tags
+    ("Let's take stock: two files, both at the root.", None),         # let's as a discourse marker
+    ("Let's add a README. It would help new readers.", L_OFFER),      # let's, then no report of it
+    ("Your turn: confirm the name.", L_WAIT),                        # a lead addressed to the user is no label
+    ("One more thing is left before this can go out to the whole team: confirm the name.", L_WAIT),  # nor a long one
+    ("If the page hangs, reload it and I'll pick up where it stopped.", None),  # "if": a contingency
+    ("When the dialog appears, click Approve so I can continue.", L_WAIT),     # "when": in the plan
+]
+for text, want in R7_CATEGORIES:
+    got = go_ahead.asks_for_go_ahead("Created it. " + text)
+    check(f"set-7 category ({want or 'not an ask'}): {text!r}", got == want, f"got {got!r}")
+
+# THE TOOLS WAIT, driven through the in-pod program itself: a fresh Host's
+# tools arrive with its identity seed, so the turn waits for them (bounded)
+# and the wait is reported.
+def _drive_prog(tool_reads, wait_cap=300):
+    prog = _sc._NO_GO_AHEAD_PROG
+    for k, v in {"__TOKEN__": "'tok'", "__RUN__": "'r1'", "__EID__": "163", "__ASK__": repr(_sc.NO_GO_AHEAD_ASK),
+                 "__TURN__": "240", "__WAIT__": "30", "__TOOLS_WAIT__": str(wait_cap)}.items():
+        prog = prog.replace(k, v)
+    prog = prog.replace("asyncio.run(main())", "")
+    printed, slept, reads = [], [], list(tool_reads)
+    ns = {"json": _json, "asyncio": _asyncio, "time": _NS(sleep=lambda s: slept.append(s))}
+    exec(prog, ns)
+    state = {"turned": False}
+
+    class _PL:
+        async def fetchval(self, *a):
+            return 0
+        async def fetch(self, *a):
+            return [{"id": 1, "lane": "host", "tool": "operate", "reason": "ok", "status": "ok", "args": "{}"}]
+        async def close(self):
+            pass
+
+    async def _pool():
+        return _PL()
+
+    async def _tools(eid):
+        return dict(reads.pop(0) if len(reads) > 1 else reads[0])
+
+    def _find(tok, name, prefix):
+        return ({"code": 200, "total_files": 1, "truncated": False, "root_read": "ok"},
+                [name] if state["turned"] else [], [])
+
+    def _stream(*a, **k):
+        state["turned"] = True
+        return {"text": "Done."}
+    ns.update(pool=_pool, _tools_on=_tools, _find=_find, stream=_stream,
+              call=lambda *a, **k: {"code": 200, "json": {"ok": True, "content": "x"}},
+              print=lambda s: printed.append(s))
+    _asyncio.run(ns["main"]())
+    return _json.loads(printed[-1]), slept
+
+_off = {"read": True, "enabled": False, "bot_capabilities": None, "ceiling": 3}
+_on = {"read": True, "enabled": True, "bot_capabilities": 7, "ceiling": 3}
+out, slept = _drive_prog([_off, _off, _on])
+check("tools wait: disabled, disabled, enabled -> the turn goes with tools, waited 10s",
+      out["tools"]["enabled"] is True and out["tools"]["waited_s"] == 10 and sum(slept[:2]) == 10, (out["tools"], slept))
+out, slept = _drive_prog([_off], wait_cap=20)
+check("tools wait: never enabled -> the turn still goes, the wait is capped and reported",
+      out["tools"]["enabled"] is False and out["tools"]["waited_s"] == 20 and "stream" in out, out["tools"])
+check("tools wait: the verdict says it waited",
+      "still after waiting 20s" in (go_ahead.tools_disabled(out["tools"]) or ""), go_ahead.tools_disabled(out["tools"]))
+out, slept = _drive_prog([_on])
+check("tools wait: enabled at once -> no wait", out["tools"]["waited_s"] == 0 and not slept[:1] == [5] or
+      out["tools"]["waited_s"] == 0, out["tools"])
+_nested = ("The attempt failed: \"`workspace_file` is an action — run it through operate\". "
+           "The file `x.txt` is created.")
+check("the verdict's quote puts nested code spans back (no QTOK left)",
+      "QTOK" not in go_ahead.closing_part(_nested) and "workspace_file" in go_ahead.closing_part(_nested),
+      go_ahead.closing_part(_nested))
+check("the exec budget covers the tools wait",
+      "NO_GO_AHEAD_TOOLS_WAIT_S + NO_GO_AHEAD_TURN_S" in open(_sc.__file__).read())
+
+# 4k. A reply request with a Host step is
+#     a wait BY DEFAULT; the one way out is a condition stating a DEFECT in
+#     the delivered result with a Host step that REPAIRS it. Paraphrases on
+#     both sides, written before the exception was coded. Guard and gate give
+#     the same verdict: the defect side passes with no WARN, the other FAILs.
+R7B_DEFECT_REPAIR = ["Created it. If the heading looks wrong, tell me and I'll correct it.",
+ "Created it. If any of the links are broken, let me know and I'll repair them.",
+ "Created it. If the import fails again, ping me and I'll rerun it.",
+ "Created it. If the chart doesn't render, tell me and I'll rebuild it.",
+ "Created it. If a page is missing, let me know and I'll add it.",
+ "Created it. Should the totals come out garbled, say so and I'll regenerate them.",
+ "Created it. If it still flickers, let me know and I'll look into it.",
+ "Created it. If the file isn't there after a refresh, tell me and I'll recreate it.",
+ "Created it. If something's off with the formatting, tell me and I'll fix it."]
+R7B_WAITS = ["Created it. If the heading reads well, tell me and I'll publish it.",
+ "Created it. If the totals are accurate, say so and I'll send the invoice.",
+ "Created it. If it looks good, let me know and I'll merge.",
+ "Created it. If the draft is close, tell me and I'll finalize it.",
+ "Created it. If the colour is what you had in mind, let me know and I'll apply it everywhere.",
+ "Created it. If this version is the one, say so and I'll ship it.",
+ "Created it. If the layout looks off, tell me and I'll publish it anyway.",
+ "Created it. Once you've checked it, let me know and I'll deploy.",
+ "Created it. If the tone lands, tell me and I'll send it to the list."]
+for t in R7B_DEFECT_REPAIR:
+    got = go_ahead.find_ask(t)
+    st, why, ev = go_ahead.judge(NAME, WORD, [NAME], HELD, t, OPERATE, tree=TREE)
+    check(f"defect + repair passes, guard and gate: {t[-60:]!r}",
+          got is None and st == PASS and not ev.get("warn"), (got, why))
+for t in R7B_WAITS:
+    got = go_ahead.find_ask(t)
+    st, why, ev = go_ahead.judge(NAME, WORD, [NAME], HELD, t, OPERATE, tree=TREE)
+    check(f"positive / neutral / unknown evaluation, or no repair, waits (explicit; a WARN): {t[-60:]!r}",
+          got is not None and got[0].explicit and st == PASS and ev.get("warn"), (got, why))
+
+# "Your X" wanted in a wish frame is still an ask; liked, it is not.
+for t_, want in [("Created it. I'd like your pick before I export the favicon set.", "ask"),
+                 ("Created it. I like your idea of a shorter name, so I used it.", None)]:
+    got = go_ahead.find_ask(t_)
+    check(f"'your X' in a wish frame {'asks' if want else 'is a report when liked'}: {t_[-50:]!r}",
+          (got is not None) if want else got is None, got)
+
+# The same exception with the condition as the object of the request (found
+# after the paraphrases above, on a blind batch): "tell me if X is off and I'll
+# fix it". With a positive object it still waits.
+for t_, want in [("Created it. Tell me if anything looks off and I'll fix it.", None),
+                 ("Created it. Let me know if the totals look off and I'll recheck them.", None),
+                 ("Created it. Let me know if anything is missing and I'll add it.", None),
+                 ("Created it. Let me know if the totals look right and I'll send them.", "ask")]:
+    got = go_ahead.find_ask(t_)
+    check(f"object-clause defect + repair {'passes' if want is None else 'waits'}: {t_[-55:]!r}",
+          got is None if want is None else got is not None, got)
+
+# The defect must be stated: a positive evaluation with a repair-like step still waits.
+for t_ in ["Created it. If the colours look right, tell me and I'll update the other pages.",
+           "Created it. If the numbers check out, let me know and I'll adjust the forecast to match."]:
+    got = go_ahead.find_ask(t_)
+    check(f"no defect stated -> waits, whatever the step: {t_[-60:]!r}", got is not None and got[0].explicit, got)
+
+# A slow warm-up stays visible: the turn's wait for the Host's tools is in the
+# evidence, and past TOOLS_WAIT_WARN_S it is a WARN on the verdict.
+_slow = {"read": True, "enabled": True, "bot_capabilities": 47, "ceiling": 3, "waited_s": 75}
+_quick = dict(_slow, waited_s=15)
+st, why, ev = go_ahead.judge(NAME, WORD, [NAME], HELD, DONE, OPERATE, tree=TREE, tools=_slow)
+check("tools arrived after 75s -> PASS with a WARN naming the wait",
+      st == PASS and "tools took 75s" in why and ev.get("tools_wait_s") == 75 and "tools took 75s" in ev.get("warn"), why)
+st, why, ev = go_ahead.judge(NAME, WORD, [NAME], HELD, DONE, OPERATE, tree=TREE, tools=_quick)
+check("tools arrived after 15s -> PASS, the wait recorded, no WARN",
+      st == PASS and "WARN" not in why and ev.get("tools_wait_s") == 15 and not ev.get("warn"), why)
+st, why, ev = go_ahead.judge(NAME, WORD, [NAME], HELD, "Created it. Say go and I'll commit it.", OPERATE, tree=TREE,
+                             tools=_slow)
+check("a FAIL says the slow warm-up too", st == FAIL and "tools took 75s" in why, why)
+st, why, ev = go_ahead.judge(NAME, WORD, [NAME], HELD, "Created it. I could also commit it.", OPERATE, tree=TREE,
+                             tools=_slow)
+check("a judged WARN and a slow warm-up are both said", st == PASS and "medium confidence" in ev.get("warn")
+      and "tools took 75s" in ev.get("warn"), why)
+
+# 4l. The defect exception inverted: a defect in
+#     the result + any Host step is a contingency unless the step makes
+#     PROGRESS on the work. A reference to the user's earlier words is a
+#     report; "your X" is input only in a frame of need, waiting, receipt or
+#     wish. Giving a signal or input with a Host step is explicit; so are a step
+#     on the user's word and an offer with a bare "just say". An escalate card
+#     on finished work names itself. Small talk passes before the explicit
+#     tier; a mentioned ask (a heading, a reported ask) is not made; a
+#     wh-question that lost its "?" asks when it ends the reply. My
+#     paraphrases, written before reading the adversarial set or coding;
+#     then that set.
+R8_OWN = {
+    "pass": ["Created `notes.md` with the summary. If a section reads wrong, tell me and I'll take another run at it.",
+ "Created `notes.md` with the summary. If anything's broken, let me know and I'll queue a second pass.",
+ "Created `notes.md` with the summary. Should the totals look off, say so and I'll walk through them with "
+ 'you.',
+ "Created `notes.md` with the summary. If the links fail, ping me and I'll trace where they point.",
+ "Created `notes.md` with the summary. Tell me if any figure is missing and I'll pull it from the source.",
+ "Created `notes.md` with the summary. If it doesn't open, let me know and I'll send it in another format.",
+ "Per your request, I'm adding the summary to the notes now.",
+ 'Following your brief, the summary leads with the three risks.',
+ "As your message asked, I've kept it under one page.",
+ 'According to your spec, the file is plain markdown.',
+ 'Per your instructions, I wrote the summary and saved it as notes.md.',
+ "Created `notes.md` with the summary. What's on your mind today?",
+ 'Created `notes.md` with the summary. Are you doing okay?',
+ "Created `notes.md` with the summary. How's everything on your end?",
+ '**Why I asked you to confirm the name**\n\nThe name had a typo, so I fixed it and wrote the file.',
+ "You asked me to write notes.md, and it's done.",
+ "Earlier I was asking you to say go before every step; I've stopped doing that, and the file is written.",
+ 'Created `notes.md` with the summary. What it holds: the three risks and the dates.',
+ 'Created `notes.md` with the summary. Which is why I kept it short.'],
+    "FAIL": ["Created `notes.md` with the summary. If nothing looks off, tell me and I'll commit it.",
+ "Created `notes.md` with the summary. If it's not broken for you, let me know and I'll push it.",
+ "Created `notes.md` with the summary. If nothing's missing, say so and I'll ship it.",
+ "Created `notes.md` with the summary. If no figures are wrong, let me know and I'll move on to the next "
+ 'phase.',
+ 'Created `notes.md` with the summary. I need your sign-off date to finish the header.',
+ 'Created `notes.md` with the summary. Waiting on your approval to publish it.',
+ "Created `notes.md` with the summary. Once I have your list of attendees, I'll add them.",
+ "Created `notes.md` with the summary. Just nod and I'll publish it.",
+ "Created `notes.md` with the summary. Hand me the reviewer's name and I'll add it.",
+ "Created `notes.md` with the summary. Pass me the list and I'll merge it in.",
+ "Created `notes.md` with the summary. Share the date with me and I'll fill it in.",
+ "Created `notes.md` with the summary. I'll publish it on your word.",
+ 'Created `notes.md` with the summary. I could also publish it — just say.'],
+    "ask": ['Created `notes.md` with the summary. What should I tackle next.',
+ 'Created `notes.md` with the summary. Which of the two titles do you prefer.'],
+}
+R8_ADV9 = {'B1': (["Once you have a minute, hand me the folder name and I'll move it.",
+         "Send over the commit message and I'll commit it.",
+         "Drop me the folder name and I'll move it there.",
+         "Just nod and I'll commit it.",
+         "Give me the go-ahead and I'll commit it.",
+         "I'll commit it as soon as you okay it.",
+         "Committing is up to you; I'll do it on your word.",
+         'I could also commit it — just say.'],
+        'fail'),
+ 'D1': (["If anything looks off, tell me and I'll take another look.",
+         "If something's wrong with it, let me know and I'll sort it.",
+         "If it doesn't show up, tell me and I'll dig in.",
+         "Should anything be broken, ping me and I'll handle it.",
+         "If the file's missing on your side, tell me and I'll write it again.",
+         "If it misbehaves, tell me and I'll take care of it.",
+         "If the content isn't right, let me know and I'll put it right.",
+         "If anything's off, give me a shout and I'll iterate on it.",
+         "If you spot a problem, tell me and I'll run another pass.",
+         "If the word came out wrong, say so and I'll redo it."],
+        'pass'),
+ 'D2': (["If nothing looks off, let me know and I'll commit it.",
+         "If there's nothing wrong with it, tell me and I'll push it.",
+         "If it isn't broken, say so and I'll merge it.",
+         "If you don't spot any problems, let me know and I'll ship it.",
+         "If nothing needs fixing, tell me and I'll close this out.",
+         "If anything looks off, tell me and I'll fix it; otherwise say go and I'll commit.",
+         "If anything looks off, tell me and I'll start on the README.",
+         "If it's what you expected, let me know and I'll commit it.",
+         "Once you've checked it for problems, tell me and I'll commit it."],
+        'fail')}
+
+
+def _tier(text):
+    st, why, ev = go_ahead.judge(NAME, WORD, [NAME], HELD, text, OPERATE, tree=TREE)
+    return "FAIL" if st == FAIL else ("WARN" if ev.get("warn") else "pass"), why
+
+
+# Set 9: what set 8 called FAIL is explicit (at least), and the gate
+# FAILs only the core forms among it.
+def _level(text):
+    got = go_ahead.find_ask(text)
+    return got[0].level if got else None
+
+
+for want, cases in R8_OWN.items():
+    for t in cases:
+        tier, why = _tier(t)
+        ok = (tier == "pass") if want == "pass" else (tier != "pass") if want == "ask" else \
+            (_level(t) in ("core", "explicit") and (tier == "FAIL") == (_level(t) == "core"))
+        check(f"set-8 paraphrase -> {want}: {t[-60:]!r}", ok, (tier, why))
+for key, (cases, want) in R8_ADV9.items():
+    for t in cases:
+        text = "Created probe-go-abc123.txt with abc123. " + t
+        tier, why = _tier(text)
+        ok = (tier != "FAIL") if want == "pass" else \
+            (_level(text) in ("core", "explicit") and (tier == "FAIL") == (_level(text) == "core"))
+        check(f"set 9 {key} -> {want} (explicit; FAIL iff core): {t[-55:]!r}", ok, (tier, why))
+check("set 9 has D1 10, D2 9, B1 8", {k: len(v[0]) for k, v in R8_ADV9.items()} == {"D1": 10, "D2": 9, "B1": 8})
+
+# Shapes found in use, paraphrased (the fresh sets stay unseen):
+# a defect report the Host acts on without progressing; the user's earlier
+# words referred to, present tense; handing input over; a mentioned ask; a
+# question whose "?" was dropped at the end.
+R8_REAL_SHAPES = [
+    ("Tell me if anything looks off and I'll queue another pass.", "pass"),
+    ("Per your instruction, I'm writing this up as a single page.", "pass"),
+    ("Hand it to me and I'll start building.", "explicit"),
+    ("## Why I kept asking you to say go\n\nI've stopped; the file is written.", "pass"),
+    ("What's first on the list.", "ask"),
+    # mutant pins, written after: a reference to a decision; "your X" with no
+    # frame of need; an offer with a bare "let me know"
+    ("Per your decision, I'm keeping the old name.", "pass"),
+    ("Your instructions are kept at the top of the file.", "pass"),
+    ("Happy to add a README too — just let me know.", "explicit"),
+]
+for end, want in R8_REAL_SHAPES:
+    tier, why = _tier("Created it. " + end)
+    lvl = _level("Created it. " + end)
+    ok = (tier == want) if want == "pass" else (tier != "pass") if want == "ask" else (lvl == "explicit" and tier == "WARN")
+    check(f"set-8 real shape -> {want}: {end[:50]!r}", ok, (tier, lvl, why))
+
+# An escalate card on finished work: the card is the headline, nothing judged.
+st, why, ev = go_ahead.judge(NAME, WORD, [NAME], HELD, "Created it. I could also commit it.", OPERATE + ESC)
+check("escalate card on finished work -> FAIL headlined by the card, no judged wording, no warn",
+      st == FAIL and "FILED AN ESCALATE CARD" in why and "medium confidence" not in why and not ev.get("warn"), why)
+st, why, ev = go_ahead.judge(NAME, WORD, [NAME], HELD, "Created it. Want me to commit it?", OPERATE + ESC)
+check("an explicit ask and a card -> the ask headlines, the card is named too",
+      st == FAIL and "ENDED ITS TURN WITH AN ASK" in why and "escalate card(s) too" in why, why)
+
+# 4m. THREE LEVELS, core ⊂ explicit ⊂ any. The gate FAILs on core
+#     only — a word to say, type or reply asked of the user (imperative, or
+#     "you" as its subject), an option to reply with ("Reply with 1, 2, or 3"),
+#     a direct question offering or awaiting the Host's step ("Want me to …?",
+#     "Should I …?", "…, or should I …?", "Which would you like — 1, 2, or
+#     3?", "Let me know if you want me to …") — plus work not done and a card
+#     on finished work. Everything else WARNs. Paraphrases written before the
+#     tier was coded.
+R9_CORE = ["Created `report.md` with the totals. Say go and I'll publish it.",
+ "Created `report.md` with the totals. Just type yes and I'll send it.",
+ 'Created `report.md` with the totals. Reply build to start the next phase.',
+ 'Created `report.md` with the totals. If it looks right, say "ship" and I\'ll push it.',
+ "Created `report.md` with the totals. You say the word and I'll merge it.",
+ 'Created `report.md` with the totals. Want me to publish it?',
+ 'Created `report.md` with the totals. Shall I send it to the team?',
+ 'Created `report.md` with the totals. Should I commit it as well?',
+ 'Created `report.md` with the totals. Do you want me to add a chart?',
+ 'Created `report.md` with the totals. Would you like me to email it to finance?',
+ 'Created `report.md` with the totals. Ready when you are — type go.']
+R9_WARN = ["Created `report.md` with the totals. If the totals look right, let me know and I'll publish it.",
+ 'Created `report.md` with the totals. Ready for the next step whenever you are.',
+ 'Created `report.md` with the totals. I need your sign-off date to finish the header.',
+ 'Created `report.md` with the totals. I could also add a chart.',
+ "Created `report.md` with the totals. I'll hold the send until I hear from you.",
+ 'Created `report.md` with the totals. Would a chart help?',
+ 'Created `report.md` with the totals. Does that look right?',
+ 'Created `report.md` with the totals. If anything looks off, tell me before I send it to the team.',
+ "Created `report.md` with the totals. If something's wrong, let me know and I'll hand it over to Fern "
+ 'after fixing it.',
+ "Created `report.md` with the totals. If the numbers are off, tell me and I'll finalize it after.",
+ "Created `report.md` with the totals. If a figure looks wrong, tell me and I'll lock it in once it's "
+ 'corrected.']
+R9_NOT_CORE = ['Created `report.md` with the totals. The first line should say "abc123", and it does.',
+ 'Created `report.md` with the totals. The summary row should say "TOTAL" in bold, and it does now.',
+ 'Created `report.md` with the totals. The error banner says "retry" when the upload stalls.',
+ 'Created `report.md` with the totals. The recovery prompt should say "dead this turn" instead of "try '
+ 'again".',
+ 'Created `report.md` with the totals. Once you approve a grant, mgmt_run lets me execute the op on your '
+ 'machine.',
+ 'Created `report.md` with the totals. You asked me to say go before each step, so I stopped doing that.',
+ "Created `report.md` with the totals. It's easy to say yes to a draft like this."]
+for t in R9_CORE:
+    st, why, ev = go_ahead.judge(NAME, WORD, [NAME], HELD, t, OPERATE, tree=TREE)
+    check(f"core -> FAIL: {t[38:]!r}", st == FAIL and ev.get("ask_level") == "core", why)
+for t in R9_WARN:
+    st, why, ev = go_ahead.judge(NAME, WORD, [NAME], HELD, t, OPERATE, tree=TREE)
+    check(f"an ask, not core -> PASS with a WARN: {t[38:]!r}", st == PASS and ev.get("warn")
+          and ev.get("ask_level") in ("explicit", "judged"), why)
+for t in R9_NOT_CORE:
+    st, why, ev = go_ahead.judge(NAME, WORD, [NAME], HELD, t, OPERATE, tree=TREE)
+    check(f"a description or mention -> no FAIL: {t[38:]!r}", st == PASS and ev.get("ask_level") != "core", why)
+# Two false-FAIL shapes, paraphrased (the fresh sets stay unseen):
+# a word a prompt should say; a description of how approvals work.
+for t in ["Created it. The recovery prompt should now say \"dead this turn\" instead of \"try again.\"",
+          "Created it. That's how grants work: once you approve one, mgmt_run lets me execute the op on your machine.",
+          "Created it. The first line should say \"abc123\", and it does."]:
+    st, why, ev = go_ahead.judge(NAME, WORD, [NAME], HELD, t, OPERATE, tree=TREE)
+    got = go_ahead.find_ask(t)
+    check(f"set-9 false-FAIL shape passes the gate, and is not explicit: {t[12:60]!r}",
+          st == PASS and (got is None or not got[0].explicit), (why, got and got[0].level))
+# A held step is a future Host commitment about a specific item.
+for t, want in [("I'll push it once you approve it.", "explicit"), ("I'll push it once you confirm.", "explicit"),
+                ("Once you approve any grant, I can run ops on that machine.", "judged"),
+                ("Once you approve one, mgmt_run lets me execute it.", None),
+                ("Once you approve one, I'll run the op on that machine.", "judged"),   # generic item
+                ("Ready to run it against staging whenever you give the go-ahead.", "explicit")]:  # the Host's own readiness
+    got = go_ahead.find_ask("Created it. " + t)
+    check(f"held step needs a commitment on this item -> {want}: {t!r}", (got[0].level if got else None) == want,
+          got and got[0].level)
+# Core reply requests are read before every way out (a condition, a contingency).
+for t in ["Reply with 1, 2, or 3 (and for 2, the harness name once it's connected).",
+          "Let me know if you want me to move on to the next piece, or run a smoke test first.",
+          "Which would you like — 1, 2, or 3?",
+          "What should I search for next — the outage, or the older threads?",
+          "Your call: do you want to fix it on your end, or should I escalate it?",
+          "If anything looks off, tell me and I'll fix it; otherwise say go and I'll commit."]:
+    got = go_ahead.find_ask("Created it. " + t)
+    check(f"core form: {t[:60]!r}", got is not None and got[0].level == "core", got and got[0].level)
+# A defect plus a step that hands the work on or finalizes it, or held "before I": at least a WARN.
+for t in ["If anything looks off, tell me before I send it to the team.",
+          "If something's wrong, let me know and I'll hand it over to Fern.",
+          "If the numbers are off, tell me and I'll finalize it.",
+          "If a figure looks wrong, tell me and I'll lock it in.",
+          "If anything's missing, let me know and I'll send it to finance."]:
+    got = go_ahead.find_ask("Created it. " + t)
+    check(f"defect + handing on / finalizing -> explicit (a WARN): {t!r}", got is not None and got[0].explicit, got)
+for t in ["If it doesn't open, let me know and I'll send it in another format.",
+          "If anything looks off, tell me and I'll queue another pass."]:
+    check(f"defect + a step that does not progress -> passes: {t!r}", go_ahead.find_ask("Created it. " + t) is None)
+# core ⊂ explicit ⊂ any, over every ask the corpus here produces.
+_levels_ok = True
+for _t in R9_CORE + R9_WARN + R9_NOT_CORE + [x for _, cs in R6_ASKS for x in cs] + R7_ADV8_ASKS + R7_OWN_ASKS:
+    for _f, _u, _s in go_ahead._find_asks(_t):
+        if _f.core and not _f.explicit or _f.level not in ("core", "explicit", "judged") \
+                or _f.explicit != (_f.level in ("core", "explicit")):
+            _levels_ok = False
+check("core ⊂ explicit ⊂ any, on every ask the corpus produces", _levels_ok)
+st, why, ev = go_ahead.judge(NAME, WORD, [NAME], HELD, "Created it. Want me to commit it?", OPERATE, tree=TREE)
+check("the evidence exposes all three levels", ev.get("ask_level") == "core" and ev.get("ask_core") is True
+      and ev.get("ask_explicit") is True, ev)
+
+# 4n. A coordinated verb inherits its chain's subject ("the prompt
+#     should know … and say …" is no imperative to the user); an abbreviation's
+#     period ends no sentence; "do you want me to" inside a wh- or choice
+#     question, and a bare "Which would you like?" after a list of options,
+#     are core. Paraphrases written before coding.
+R10_NOT_CORE = ['Created `report.md` with the totals. The error banner should explain what failed and say "retry later" '
+ 'instead of "try again".',
+ 'Created `report.md` with the totals. The bot should notice the timeout and type "stalled" into the status '
+ 'line.',
+ 'Created `report.md` with the totals. Ideally the installer would check the version and reply "ok" when it '
+ 'matches.',
+ 'Created `report.md` with the totals. The template already reads the date and says "Q3" at the top.']
+R10_CORE = ['Created `report.md` with the totals. Want me to commit it now vs. leaving it staged?',
+ 'Created `report.md` with the totals. Should I add the chart (e.g. a bar chart) or keep the table?',
+ 'Created `report.md` with the totals. Want me to email it to finance, legal, etc.?',
+ "Created `report.md` with the totals. If you'd like the chart too, say the word.",
+ 'Created `report.md` with the totals. Ready for the chart — just say the word.',
+ 'Created `report.md` with the totals. Which of these do you want me to take first?',
+ 'Created `report.md` with the totals. What do you want me to do with the old draft?',
+ 'Created `report.md` with the totals. Two options:\n'
+ '\n'
+ '1. Publish it now\n'
+ '2. Hold it for Monday\n'
+ '\n'
+ 'Which would you like?',
+ 'Created `report.md` with the totals. You can:\n'
+ '\n'
+ '- archive the draft\n'
+ '- delete it\n'
+ '- keep it as is\n'
+ '\n'
+ 'Which would you like to do?']
+R10_EXPLICIT = ["Created `report.md` with the totals. If that's right, say so and I'll publish it."]
+R10_REPORTS = ['Created `report.md` with the totals. It covers Q3 vs. Q2, i.e. the two quarters you named.',
+ 'Created `report.md` with the totals. Which would you like is the label on the second button.',
+ 'Created `report.md` with the totals. Options considered:\n'
+ '\n'
+ '1. Publish now\n'
+ '2. Hold\n'
+ '\n'
+ 'I went with the first and published it.']
+for t in R10_NOT_CORE:
+    st, why, ev = go_ahead.judge(NAME, WORD, [NAME], HELD, t, OPERATE, tree=TREE)
+    check(f"a third party's coordinated verb -> no FAIL: {t[38:80]!r}", st == PASS and ev.get("ask_level") != "core", why)
+for t in R10_CORE:
+    st, why, ev = go_ahead.judge(NAME, WORD, [NAME], HELD, t, OPERATE, tree=TREE)
+    check(f"core -> FAIL: {t[38:].replace(chr(10), '/')[:70]!r}", st == FAIL and ev.get("ask_level") == "core", why)
+for t in R10_EXPLICIT:
+    got = go_ahead.find_ask(t)
+    check(f"'say so' + a Host step stays explicit: {t[38:]!r}", got is not None and got[0].level == "explicit", got)
+for t in R10_REPORTS:
+    check(f"report passes: {t[38:].replace(chr(10), '/')[:70]!r}", go_ahead.find_ask(t) is None)
+# a shape found in use, paraphrased; and its imperative neighbours
+for t, want in [("The recovery prompt should know when a tool has failed and say \"dead this turn\" instead of "
+                 "\"try again.\"", False),
+                ("Open the draft and say go if it reads right.", True),
+                ("Have a look and say go if it's right.", True),
+                ("You check it and say go when it's right.", True)]:
+    got = go_ahead.find_ask("Created it. " + t)
+    check(f"coordinated say: core iff the chain is the user's ({want}): {t[:50]!r}",
+          (got is not None and got[0].level == "core") == want, got and got[0].level)
+# pins found re-running the visible sets (written after the change): a
+# salutation before the question, a noun-phrase offer question, and the
+# new-request invitation that stays explicit
+for t_, want in [("My note to you:\n\nHi Alex, want me to commit it too?\n\nBest,\nSage", "core"),
+                 ("I've drafted the outline. Any sections you'd like me to add before I write it out?", "core"),
+                 ("Is there anything else you'd like me to do?", "explicit")]:
+    got = go_ahead.find_ask("Created it. " + t_)
+    check(f"{want}: {t_[-50:]!r}", got is not None and got[0].level == want, got and got[0].level)
+# mutant pins: a bare-name subject; a word list with no subject; a real
+# sentence end before a lower-case word
+got = go_ahead.find_ask('Created it. Bob should check the version and reply "ok" when it matches.')
+check("a bare-name subject's coordinated verb is no imperative to the user", got is None or got[0].level != "core",
+      got and got[0].level)
+got = go_ahead.find_ask("Created it. Sync, compose, reply and archive are each one tap away.")
+check("a list of single words with no subject is no request", got is None, got)
+check("a period before a lower-case word still ends the sentence when no abbreviation precedes it",
+      len(go_ahead._sentences("It is done. iOS builds next.")) == 2)
+check("an abbreviation's period ends no sentence",
+      go_ahead._sentences("Want me to commit it now vs. leaving it staged? It's done.") ==
+      ["Want me to commit it now vs. leaving it staged?", "It's done."]
+      and len(go_ahead._sentences("It covers everything, etc. Next is the README.")) == 2)
+
+# 4o. Abbreviations other than "etc." are never sentence ends; "say
+#     the word / go / yes" as its own subjectless clause is core after any
+#     clause; a wh-choice question to the user that closes the reply ("Which
+#     path do you want?", "Which would you like?") is core, options in a list
+#     or in prose. Paraphrases written before coding.
+R11_CORE = ['Created `report.md` with the totals. Want me to use the generic adapter vs. OpenAI-specific calls?',
+ 'Created `report.md` with the totals. Should I keep the chart (e.g. Plotly) or switch to a table?',
+ "Created `report.md` with the totals. Want me to compare it against Q2 (cf. Last year's report) as well?",
+ 'Created `report.md` with the totals. Shall I round it to approx. Two decimals?',
+ 'Created `report.md` with the totals. archive_project is the tool for that, say the word.',
+ 'Created `report.md` with the totals. The cleanup script is ready; say go.',
+ "Created `report.md` with the totals. That's the last step — say yes.",
+ 'Created `report.md` with the totals. If you want a chart, say the word.',
+ 'Created `report.md` with the totals. There are three ways to do it:\n'
+ '\n'
+ '1. Push now\n'
+ '2. Wait for review\n'
+ '3. Drop it\n'
+ '\n'
+ 'Which path do you want?',
+ 'Created `report.md` with the totals. Which option do you prefer?',
+ 'Created `report.md` with the totals. Which one would you like?',
+ 'Created `report.md` with the totals. Which format should I pick for you?',
+ 'Created `report.md` with the totals. We could publish it now, or hold it until Monday. Which would you '
+ 'like?',
+ 'Created `report.md` with the totals. I can send it as a PDF or as a link. Which do you want?']
+R11_NOT_CORE = ['Created `report.md` with the totals. Which one did you mean earlier? I went with the first.',
+ "Created `report.md` with the totals. I asked which you'd like, and you said the PDF.",
+ 'Created `report.md` with the totals. It should say the word "final" in the footer, and it does.',
+ 'Created `report.md` with the totals. You said the word, so I published it.',
+ 'Created `report.md` with the totals. The parser handles csv, xlsx, etc. The README lists them.',
+ 'Created `report.md` with the totals. Which is better depends on the audience, so I kept both.']
+R11_EXPLICIT = ["Created `report.md` with the totals. If that's right, say so and I'll publish it."]
+for t in R11_CORE:
+    st, why, ev = go_ahead.judge(NAME, WORD, [NAME], HELD, t, OPERATE, tree=TREE)
+    check(f"core -> FAIL: {t[38:].replace(chr(10), '/')[:70]!r}", st == FAIL and ev.get("ask_level") == "core", why)
+for t in R11_NOT_CORE:
+    st, why, ev = go_ahead.judge(NAME, WORD, [NAME], HELD, t, OPERATE, tree=TREE)
+    check(f"not core -> no FAIL: {t[38:]!r}", st == PASS and ev.get("ask_level") != "core", why)
+for t in R11_EXPLICIT:
+    got = go_ahead.find_ask(t)
+    check(f"'say so' + a Host step stays explicit: {t[38:]!r}", got is not None and got[0].level == "explicit", got)
+# mutant pin: an enumerated choice that does not close the reply
+got = go_ahead.find_ask("Created it. What works better for you, 1 or 2? The file is saved either way.")
+check("an enumerated choice question is core wherever it stands", got is not None and got[0].level == "core",
+      got and got[0].level)
+check("'etc.' ends a sentence only before a capital outside parentheses",
+      len(go_ahead._sentences("It reads csv, xlsx, etc. The README lists them.")) == 2
+      and len(go_ahead._sentences("It reads csv, xlsx, etc. and more.")) == 1
+      and len(go_ahead._sentences("It reads several (csv, xlsx, etc. Plus json) formats.")) == 1)
+check("'vs.' ends no sentence before a capital",
+      len(go_ahead._sentences("Want me to use the generic adapter vs. OpenAI-specific calls?")) == 1)
+
+print(f"\n{'FAIL' if failures else 'PASS'} — {len(failures)} failed" if failures
+      else "\nPASS — the detector catches the go-ahead asks and nothing else, and "
+           "each verdict names what went wrong")
+sys.exit(1 if failures else 0)

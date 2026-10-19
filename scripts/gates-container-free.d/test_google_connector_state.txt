@@ -1,0 +1,13 @@
+# 2026-09-21 (google connector): the platform-client redirect bounce. Google
+# takes no wildcard redirect, so one callback on privatae.ai is registered and
+# `state` carries an UNSIGNED prefix naming the Host address to bounce back to.
+# Pins FIRST that the host reads its own address from X-Forwarded-Host and NOT
+# from Host — the router rewrites Host to the pod's upstream SAN, so reading it
+# built every redirect URI against an internal name Google was never told about.
+# Then: that the prefix survives the round trip, that its separator cannot
+# collide with the signature's own `<b64>.<mac>` split or with the dots in a
+# hostname, that only a real zone address can be bounced to, that the exchange
+# URI follows the state it came back with (a mismatch reads only as "token
+# exchange failed"), and — across TWO keys, because one key cannot show it —
+# that a state signed by another Host is refused here.
+test_google_connector_state.py

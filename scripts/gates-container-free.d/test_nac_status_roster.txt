@@ -1,0 +1,6 @@
+# 2026-10-06 (Telegram rework turns): nac_status carried each of 25
+# bastions' whole check-in record, ~144k characters re-sent on every later call
+# of its turn. It now returns a roster with the ids, and server= gives one
+# machine's full record; a typed turn's wall checks the hostname that record
+# belongs to. Stubbed snapshot and bastion list only.
+test_nac_status_roster.py

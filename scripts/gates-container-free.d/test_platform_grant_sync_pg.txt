@@ -1,0 +1,2 @@
+# 2026-10-04 (the bridge now enforces the CENTRAL infra.codebase grant): server/platform_grant_sync.py mirrors this Host's central level (bridge op platform.grant) into the pod row every pod-side reader uses — written on a level, deleted on a definite none, untouched on an old bridge / outage / no level / no connection; and a fresh pod from the kernel's own schema no longer seeds the row. Fresh clone of the kernel schema (scripts/kernel_schema.py) on TEST_DSN / PEER_TEST_DSN, else a docker throwaway.
+test_platform_grant_sync_pg.py

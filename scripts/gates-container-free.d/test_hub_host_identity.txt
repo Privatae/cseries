@@ -1,0 +1,2 @@
+# The Hub's WireGuard key is this Host's own, write-once in kernel_secrets and armed over the loopback control API; a pairing pins it (the bridge's key only while the Hub predates /identity, and a pairing still works when the bridge has none); the heartbeat tells a machine still on the platform's old key to move and leaves a moved one alone (never a client that cannot probe); the old key is retired only when the Hub holds ours and every machine it serves is on ours. Stub Hub on loopback, stub pool and bridge; no DB, no pod.
+test_hub_host_identity.py

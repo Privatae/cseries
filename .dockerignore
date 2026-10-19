@@ -1,0 +1,16 @@
+# Build-context diet (2026-07-12): the legacy builder tars + sends the whole
+# tree to the daemon on EVERY build — measured 704.9MB, dominated by
+# workbench-web/node_modules (410MB) which was never excluded. Nothing below
+# is referenced by any COPY in Dockerfile.linux (verified by grep before each
+# addition). Keep this list tight and verified — an over-eager exclude breaks
+# the build loudly, a missing one just silently costs minutes per ship.
+**/node_modules
+# Bytecode from local runs. The image compiles its own (compileall in
+# Dockerfile.linux); a local cache would carry modules that no longer exist
+# and text from older source into the image.
+**/__pycache__
+**/*.pyc
+NOTES/
+*.log
+.dockerignore
+Dockerfile.linux

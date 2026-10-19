@@ -1,0 +1,2 @@
+# Circles threads against a real kernel schema: turn zero, no cross-thread recall, the legacy scope, bounded reads, split, clear, delete, the list and the topic. Fresh clone on TEST_PG_DSN / PEER_TEST_DSN / TEST_DSN, else a docker throwaway; in the pod, the pod's own database.
+test_circles_threads.py

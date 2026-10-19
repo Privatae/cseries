@@ -1,0 +1,4 @@
+# The URL reader checks every redirect hop
+# before it is dialled and refuses the names a Host pod dials around squid
+# (.svc and whatever NO_PROXY lists); a config push cannot set web_search.
+test_url_reader_redirects.py

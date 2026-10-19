@@ -1,0 +1,76 @@
+id: terminal
+name: Terminal
+description: A shell on one of your own machines — opened by the machine itself, streamed to you, recorded there.
+icon: icon.svg
+icon_small: icon.svg
+entrypoint: index.html
+provenance: standard
+system: true
+# 0.1.0 (2026-09-08): first cut.
+# The SecureCRT shape: machines down the left, one tab per open shell, a real
+# terminal in the middle. There is no ssh client and no host/port field
+# anywhere — the only thing you can open is a machine that already carries
+# your bastion. The bastion spawns the shell ON that machine as an
+# unprivileged session user and streams it here over the tunnel it already
+# dialled (WS /api/network/sessions/{server}); a root shell needs your
+# approval typed on the machine itself. Every session is a management op:
+# granted (the grant must list session:open / session:root), audited, and
+# recorded to a transcript on the machine. Closing the tab kills the shell.
+# xterm.js 5.5.0 + the fit addon are vendored under vendor/ (no CDN).
+# 0.1.3 (2026-09-25): a shell needs no standing Host grant any more
+#   (bastion 0.39.0). Suspended,
+#   quarantined and a deny in a grant still refuse; the machine's own
+#   per-session approval is the authority. The words say so.
+# 0.1.4 (2026-10-01): the HTML escape helper escapes both quotes as well, so a
+# value from the Host, a machine or a provider stays inside the attribute it
+# is written into. App-only change.
+# 0.1.5 (2026-10-13): the Host's prompt says it runs ONE root command at a
+#   time itself with machine_exec, from its root thread, on a machine whose
+#   person granted it; the Terminal's sessions stay the user's. Words only.
+# 0.1.6 (2026-10-18): the product is renamed C-Series (names, paths, env vars).
+# 0.1.7 (2026-10-18): what_it_is is one paragraph under the 900-character cap,
+#   saying what the app is and what lives in it; the how-to it carried lives in
+#   skills and tool descriptions. The paragraph names the root turn
+#   (turn_type(op='root')) that root commands run in. Manifest-only; bundle
+#   repacked.
+# 0.1.8 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
+version: "0.1.8"
+# Terminal is NOT a conversational surface — the user types into the shell and
+# talks to the host in Circles/the Workbench. So this is the code-true source for
+# the ENVIRONMENT CATALOG (describe_app), what_it_is/user_path/step_up only.
+prompt_behavior:
+  what_it_is: >-
+    Terminal is where the user opens a shell on one of their own machines. The
+    machines down the left are their bastions, the same list as the Network app;
+    opening one starts a shell on that machine as an unprivileged session user,
+    streamed over the tunnel the machine already holds. There is no ssh client and
+    no host or port field: to reach another server the user runs ssh inside that
+    shell. Every session is the user's own act, audited and recorded on the machine;
+    a root shell is opened here and approved on the machine with the second factor
+    enrolled there. The Live sessions list shows every open session, and the user
+    can close any of them. A suspended or quarantined machine, or a grant that
+    denies shells there, refuses. Root commands you run yourself go through machine_exec in a root turn (turn_type(op='root')), not through this app.
+  user_path: "the Terminal app, in the dock"
+  step_up: >-
+    a root shell needs the user's approval on the machine itself
+    (privatae-bastion approve, with the authenticator enrolled there); an
+    ordinary shell needs a management grant that lists session:open.
+
+window:
+  title: Terminal
+  width: 1100
+  height: 680
+  resizable: true
+  min_width: 760
+  min_height: 440
+
+# Every scope maps to a live route:
+#   read:topology   → GET  /api/network/bastions (the machine rail)
+#   read:network    → GET  /api/network/sessions (the Live sessions list)
+#   write:network   → POST /api/network/sessions/{server}/ticket, then the
+#                     WS   /api/network/sessions/{server} it unlocks;
+#                     POST /api/network/sessions/{id}/close (Close in the list)
+permissions:
+  - read:topology
+  - read:network
+  - write:network

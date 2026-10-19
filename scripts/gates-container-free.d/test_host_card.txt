@@ -1,0 +1,5 @@
+# 2026-09-22 (anywhere another Host is named, it is a contact): one
+# resolver builds the contact card for another Host from this Host's own
+# records — contacts, peerings, held slips, rosters, and what that Host said it
+# is called. Name priority, address shape, relationship, never "entity".
+test_host_card.py

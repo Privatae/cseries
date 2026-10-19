@@ -1,0 +1,60 @@
+id: ships
+name: Ships
+description: Your pipelines and every run of them — each step on its machine, its signed receipt, and what waits for your tap.
+icon: icon.svg
+icon_small: icon.svg
+entrypoint: index.html
+provenance: standard
+system: true
+# 0.1.0 (2026-09-30): first cut.
+#
+# A SHIP IS ONE PLAN AND ONE TAP. Run builds one plan for the whole ship and
+# files it on the person's approval device; nothing reaches a machine until
+# they approve it there (with their code when a step is root work), and each
+# machine checks the plan itself. The runner then moves the ship on from the
+# receipts the machines sign (server/ships/runner.py), with no model in the
+# path. This window reads those records: it is where "what did the ship do,
+# on which machine, and did it pass" is answered.
+#
+# RUNS: every step with its machine, its state, its attempts and its receipt
+# (what the machine says it ran, pushed and checked). PIPELINES: the files at
+# ships/<name>/pipeline.yaml beside their ops, with Run. MACHINES: whether each
+# can take a ship step (bastion 0.46.0 action ops, a device pinned, the `ship`
+# grant, the pinned encryption key). KEYS: the credential names each step
+# takes and whether the vault holds them, never a value.
+#
+# EVERYTHING FROM A MACHINE OR A PIPELINE FILE IS TEXT: nothing here goes
+# through innerHTML.
+# 0.1.1 (2026-10-18): prompt_behavior is one paragraph saying what the app is
+#   and what lives in it; do_when_active is gone from the manifest contract,
+#   and its how-to lines live in skills and tool descriptions the Host reads on
+#   demand. Manifest-only; bundle repacked.
+# 0.1.2 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
+version: "0.1.2"
+prompt_behavior:
+  what_it_is: >
+    Ships is where the user watches their pipelines run. A pipeline is a file
+    at ships/<name>/pipeline.yaml beside the ops it runs; each run of it is ONE
+    plan the user approves on their approval device, and then each machine runs
+    its own steps and returns a receipt signed with its own key. The runner
+    moves a run on from those receipts with no model in the path; a step's
+    rule on failure (retry, undo, stop, ask) is part of the pipeline. The
+    Runs view shows every step with its receipt; Pipelines lists the files;
+    Machines says whether each machine can take a ship step; Keys lists the
+    credential names each step needs and whether the vault holds them.
+  user_path: "the Ships app, in the dock"
+
+window:
+  title: Ships
+  width: 1080
+  height: 740
+  resizable: true
+  min_width: 720
+  min_height: 480
+
+# Both scopes map to live routes (server/routes/ships.py) and neither is in
+# build_contract.COMMUNITY_ALLOWED_SCOPES — the runs name the person's
+# machines, what runs on them and the credentials each step takes.
+permissions:
+  - read:ships     # GET /api/ships/pipelines, /runs, /runs/{id}, /machines, /keys
+  - write:ships    # POST /api/ships/runs, /runs/{id}/stop; DELETE /machines/{id}/pin

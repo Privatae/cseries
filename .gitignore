@@ -1,0 +1,25 @@
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.swp
+.DS_Store
+dashboard/custom/
+
+# Awareness pipeline runtime state (LLM-extracted topic cache; generated briefs
+# live outside the source tree but the .cache
+# inside cseries is for project_topics extraction).
+.cache/
+
+# Dev-only empty placeholder for the dev bind mount
+# (-v .../teaching-memories.sql:/app/teaching-memories.sql:ro). It was git rm'd
+# in the Skills-architecture commit and is no longer COPY'd by Dockerfile.linux,
+# so it must NOT be tracked — but the dev mount needs the file to exist on disk to
+# mount it. Ignoring it keeps the ship's porcelain hard-gate clean without
+# breaking the dev mount. (Recurring gremlin, settled 2026-05-30.)
+teaching-memories.sql
+
+# The gates' pinned toolchain (scripts/gate_toolchain.py installs it with npm ci).
+scripts/toolchain/node_modules/
+scripts/toolchain/.install.lock
+scripts/toolchain/.install.failed

@@ -1,0 +1,4 @@
+# 2026-10-06: parallel task runs (phase 4) on a real kernel schema: lanes, turns at
+# once, per-thread claims, the width the Host's memory holds, a failed thread
+# sitting out a round, the lane's own registry key.
+test_task_parallel_pg.py

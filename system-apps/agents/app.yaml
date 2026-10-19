@@ -1,0 +1,98 @@
+id: agents
+name: Agents
+description: Everything your host has running — dispatched agents, work on the pool, and the standing jobs that need no model at all.
+icon: icon.svg
+icon_small: icon.svg
+entrypoint: index.html
+provenance: standard
+system: true
+# 0.1.0 (2026-07-26): first cut. Companion to Bench, deliberately a DIFFERENT
+# shape: Bench grids because harnesses race on one task; agents fan out across
+# different tasks, so this is master/detail — the fleet is the primary object and
+# the transcript is the drill-in. progress_cb fires from inside _execute_one,
+# so every dispatched agent writes identical frames. The model is shown per
+# agent so which model ran a given agent is visible rather than inferred.
+# An unrouted `agents` role gets a first-class empty state pointing at the
+# Orchestrator.
+# 0.1.1 (2026-08-19): host-tooling cleanup — briefing says "the agents you
+# dispatch" (no lane vocabulary), the retired-engine frame note is gone.
+# 0.1.2 (2026-08-25): prompt_behavior.user_path held troubleshooting prose
+# instead of a place. user_path is the ONLY field describe_app returns as
+# where_to_find_it (runtime/tools.py:2375-2379), so a host asked "where do I
+# find this" read out a fix for an error the user had not hit. The
+# troubleshooting content moved into what_it_is and do_when_active, and
+# user_path is now a location. Manifest-only change.
+# 0.2.0 (2026-08-30): FOUR LANES, and the contrast is the point. The app said
+# "on which model, right now" — true of dispatched agents, and it made "agent"
+# mean "model", which is the industry's meaning, not ours. It now also shows
+# the host's SCHEDULED work in both its lanes: a scheduled turn (the governed
+# pipeline on a clock, a model per fire) and a standing op (one deterministic
+# registry op, no model at all). Same scheduler, same clock, often the same
+# job — the contrast strip counts RUNS on each side so the user sees how much
+# of their recurring work never needed a model.
+# An op is never rendered "$0". est_cost_usd is NOT NULL DEFAULT 0.0 and that
+# is why cost_method exists (v113) — an unpriced call and a free one are the
+# same number, and 256 rows of real spend on one Host rendered as free. An op
+# has NO inference row, so it reads "no model": a stronger claim, and one a
+# meaningless zero cannot be confused with.
+# Each standing row carries a Stop button, always visible. The host creates
+# standing work WITHOUT asking (deterministic, already in scope, already
+# asked for), so seeing it and ending it in one action IS the user's control
+# surface — it replaces an approval prompt rather than sitting beside one.
+# NOT shown: the pod's own background workers. They are the host's plumbing,
+# not the user's agents, and 23 always-on rows would bury the real tasks.
+# 0.2.1 (2026-09-19): the `agents` role is gone — a dispatched agent runs on
+#     the host's own model now, because it IS the host doing a piece of work
+#     with a narrower tool grant (three-role cut: chat, review, memory). Two
+#     things here followed. The empty state says "Your host has no model" and
+#     sends the user to the host model rather than to a role the Orchestrator
+#     no longer offers. And it can actually appear: the trigger tested for
+#     "no agents model configured", a sentence nothing in the platform has
+#     ever emitted, so the state was unreachable — it now matches the
+#     resolver's own wording ("no chat route — pick a provider and model in
+#     the Orchestrator"), which is what the dispatch failure really says.
+# 0.2.2 (2026-09-22): the host's words — pool work is "a build or compare"
+# (the retired multi-harness word is gone from what the host reads).
+# 0.2.3 (2026-10-01): /api/agents now requires a scope on every route
+# (read:brain_tasks for the fleet and the transcript tail, read:calendar /
+# write:calendar for the standing lanes and their Stop button). The scopes
+# below were already declared. The two first loads retry a 401 briefly, so a
+# poll that leaves before the shell has stamped this window's token does not
+# show an error. Bundle repacked.
+# 0.2.4 (2026-10-01): the host's words never end on an offer — a scheduled
+# turn that repeats itself is named as able to run as a standing op, rebuilt
+# when the request covers it, or put in the question box. Bundle repacked.
+# 0.2.5 (2026-10-11): an agent's detail says where its model came from —
+# named on the dispatch, the person's or the Host's preference for that kind
+# of untrusted work (preference op='prefer'), or the Host's own model
+# (/api/agents model_choice.label). Bundle repacked.
+# 0.2.6 (2026-10-18): prompt_behavior is one paragraph saying what the app is
+#   and what lives in it; do_when_active is gone from the manifest contract,
+#   and its how-to lines live in skills and tool descriptions the Host reads on
+#   demand. Manifest-only; bundle repacked.
+version: "0.2.6"
+
+prompt_behavior:
+  what_it_is: >-
+    Agents is where the user watches everything running for them, in four lanes:
+    agents you dispatched (a model runs), work on the pool (a build or compare on a
+    harness), scheduled turns (the governed pipeline on a clock, a model per fire)
+    and standing ops (one deterministic operation per fire, no model at all). A
+    standing op shows "no model", never "$0", because it has no inference record.
+    Each standing row has a Stop button, the user's control. The window only
+    watches; agents are started and cancelled from chat. "Your host has no model"
+    means no model is assigned to the host yet, which is done in the Orchestrator. A
+    dispatched agent is for untrusted work only (the open web, a repo you neither
+    own nor were granted, another person's message) and runs on the model the
+    dispatch names, else the preference for that kind of work, else the host model.
+  user_path: "the Agents app, in the dock"
+
+permissions:
+  # read:calendar / write:calendar (2026-08-30) — scheduled work lives in
+  # calendar_events, not entity_tasks, so the standing lanes read it and the
+  # Stop button writes status='cancelled'. Since 2026-10-01 the routes enforce
+  # it: GET /api/agents/scheduled takes read:calendar and its cancel takes
+  # write:calendar; GET /api/agents and /{id}/stream take read:brain_tasks.
+  - read:brain_tasks
+  - read:calendar
+  - write:calendar

@@ -1,0 +1,11 @@
+# The Calendar app
+# in headless Chromium over the REAL calendar routes on a real kernel schema
+# (no mock of the API), in New York's time zone, at 1440 x 900 and 390 x 844:
+# the month and its six weeks, Coming up, the list's other choices and paging,
+# a day picked, a task with its runs, cancelling a task and marking an event
+# done, + Event, a held request, text never markup, the phone layout, links,
+# refusals in words, a stale answer dropped, a month too full to draw. Needs
+# Playwright, Chromium, fastapi and uvicorn on a loopback port, and a database
+# (TEST_PG_DSN / PEER_TEST_DSN / TEST_DSN, else a docker throwaway).
+# Measured on the build machine: 96 checks, 25 s wall, 15 s of CPU (Chromium counted).
+test_calendar_app_browser.py

@@ -1,0 +1,14 @@
+# Settings →
+# Response Shaping in headless Chromium over the REAL brain routes on a real
+# kernel schema (no mock of the API), with the window token minted from the
+# Settings manifest's own permissions, at 1440 x 900 and 390 x 844: the tab
+# beside Synaptive and not inside it; how much the Host explains, the ten
+# personality sliders and the envelope, each set in the page and read back from
+# the row and from a new window; Cancel and Discard send nothing; a fresh read
+# keeps an unsaved slider; a late read never draws over a newer choice;
+# refusals and a missing scope said in words; text never markup; a link moves
+# an open window; the phone layout. Needs Playwright, Chromium, fastapi and
+# uvicorn on a loopback port, and a database (TEST_PG_DSN / PEER_TEST_DSN /
+# TEST_DSN, else a docker throwaway).
+# Measured: 65 checks, 25 s wall, 16 s of CPU (Chromium counted).
+test_settings_response_shaping_browser.py

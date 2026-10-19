@@ -1,0 +1,4 @@
+# The FRAME — surface, project (+ newly
+# created), thread new/continuing + turn index, attachments, pills, handler, clock —
+# platform-written per turn; the clock left the cached prefix; the field travels.
+test_host_frame.py

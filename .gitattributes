@@ -1,0 +1,4 @@
+# Every file checks out exactly as committed. The images are Linux: a shell
+# script or Python file checked out with CRLF line endings (Git for Windows
+# converts by default) is copied into the image as-is and fails there.
+* -text

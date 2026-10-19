@@ -1,0 +1,35 @@
+# What the gates need from the python3 they run under on the host: the
+# pre-merge lane (scripts/pre_merge_gates.sh) and the host-side half of
+# scripts/smoke_test.sh (the gates it runs against the tree, and the
+# container-free list). Install where the gates run: a build machine and the
+# release workflow's runners.
+#   pip install --break-system-packages -r scripts/requirements-gates.txt
+#
+# This is not requirements.txt. That file is the image's; the gates exercise
+# the picture renderer (pytakumi, drawing in the font the image installs)
+# inside the image. Versions are the set the gates pass with.
+
+# pyflakes: the undefined-names lane. Pure python, no dependencies.
+pyflakes==4.0.1
+
+# pytest: the tests/ lane of pre_merge_gates.sh, and the gate timing report's
+# check of that lane (scripts/test_gate_timing_report.py, which smoke runs).
+pytest==9.1.1
+
+# Imported by gates that load server/ and brain/ modules on the host.
+fastapi==0.141.1
+starlette==1.6.0
+uvicorn==0.52.1
+pydantic==2.13.4
+python-multipart==0.0.32
+httpx==0.28.1
+aiohttp==3.14.3
+asyncpg==0.31.0
+PyYAML==6.0.3
+cryptography==46.0.5
+boto3==1.40.72
+
+# The Settings restore gate in headless Chromium
+# (scripts/test_settings_restore_chromium.py); its browser is installed with
+# `python3 -m playwright install --with-deps chromium`.
+playwright==1.62.0

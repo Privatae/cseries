@@ -1,0 +1,17 @@
+# The Debian packages in the WSL guest, on top of Essential and apt
+# (mmdebstrap --variant=apt). Their versions are whatever the pinned snapshot
+# in build-rootfs.sh holds; Recommends are not installed.
+systemd
+systemd-sysv
+dbus
+passwd
+podman
+crun
+conmon
+netavark
+aardvark-dns
+nftables
+iptables
+ca-certificates
+curl
+iproute2

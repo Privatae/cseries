@@ -1,0 +1,3 @@
+# Pairing grants: signer vector, heartbeat narrowing, approve/deny/
+# revoke against a recording pool + stubbed relay, fixed ed25519 seed. No DB, no network.
+test_pairing_grants.py

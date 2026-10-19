@@ -1,0 +1,29 @@
+id: backups
+name: Backups
+description: Status of your gateway-managed memory backup.
+icon: icon.png
+icon_small: icon-64.png
+entrypoint: index.html
+provenance: standard
+# 3.0.5 (2026-10-01): the HTML escape helper escapes both quotes as well, so a
+# value from the Host, a machine or a provider stays inside the attribute it
+# is written into. App-only change.
+# 3.0.6 (2026-10-18): the product is renamed C-Series (names, paths, env vars).
+version: "3.0.6"
+# Environment-catalog facts (host-facing, code-true). Source for the L1
+# topology block + describe_app — NOT a surface_role body (this is a control
+# panel, not a conversational surface): what_it_is/user_path only.
+prompt_behavior:
+  what_it_is: "Backups shows the status of the user's encrypted memory backup — what is backed up, when it last synced, and how many items. Read-only: the bastion daemon owns the backup and the container never holds the keys."
+  user_path: "the Backups app, in the dock"
+
+window:
+  title: Backups
+  width: 720
+  height: 560
+  resizable: true
+  min_width: 480
+  min_height: 400
+
+permissions:
+  - read:backup_list

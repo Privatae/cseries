@@ -1,0 +1,8 @@
+
+# 2026-09-12: the anchor step. Instructions ARE the feature here — the product
+# never named `set-mode networked` or `claim-anchor`, and the command then
+# wanted a SECOND pairing token to redeem against an already-paired machine.
+# The gate drives the real mint_pairing_token (stub pool) and feeds its real
+# output to the real card renderer, so server wording and UI cannot drift.
+# No pod, no DB, no network.
+test_anchor_step_is_visible.py

@@ -1,0 +1,1 @@
+test_links.py                            # real Postgres (TEST_PG_DSN/PEER_TEST_DSN/TEST_DSN, else a throwaway cseries-postgres) on a fresh clone of the KERNEL's schema (scripts/kernel_schema.py), drives link_ops through SandboxedPool — it used to drop entity_links on whatever TEST_PG_DSN or DATABASE_URL named and rebuild it from v115. Exits 2 and says so without docker

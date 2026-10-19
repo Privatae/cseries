@@ -1,0 +1,10 @@
+# MCP connections. The hand-written client against two local fake servers (modern
+# 2026-07-28 and legacy 2025-11-25 with sessions, each answering JSON and event
+# streams) through a stand-in egress gate, never the proxy variables; v212; the
+# connection service on a real kernel schema (draft + egress rule, approval only
+# in the Network app signing both, refused before approval and before the
+# skill, schema-checked arguments, fenced results, one vault_audit row a call);
+# never the read door; search entries by turn-type key; a real groups-mode Host
+# turn reading op='tools' and calling through operate with no MCP tool in its
+# tool list; stale skills, disconnect and rule removal.
+test_mcp_client.py

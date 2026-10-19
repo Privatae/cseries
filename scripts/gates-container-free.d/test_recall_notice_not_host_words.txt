@@ -1,0 +1,2 @@
+# The `recall` tool and the search route never hand out a platform notice as the Host's words — every recall arm splits a turn row through memory_engine.host_part, so a row with model_content and an old row ending in the old stall text both come back with the Host's words as content and the notice kind in platform_notice, and the recall text names it as a tag; rows with no notice and non-turn rows are untouched. Stand-in pool; no pod, no DB, no model, no network.
+test_recall_notice_not_host_words.py

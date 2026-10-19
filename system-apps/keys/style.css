@@ -1,0 +1,214 @@
+/* Keys — app styles. Built on the shared cseries tokens (/css/tokens.css). */
+
+.keys-app { display: flex; flex-direction: column; height: 100vh; }
+.keys-brandmark { color: var(--cseries-moss, #6f8f6a); display: inline-flex; }
+.keys-health { color: var(--cseries-ash, #8a8a82); }
+
+.keys-main {
+    flex: 1; overflow-y: auto;
+    padding: var(--space-4, 18px) var(--space-5, 24px);
+    display: flex; flex-direction: column; gap: var(--space-3, 14px);
+}
+
+/* Sovereignty banner */
+
+.view-heading h2 { margin: 0 0 4px; }
+.view-sub { color: var(--cseries-ash, #8a8a82); font-size: 13px; margin: 0 0 var(--space-2, 10px); line-height: 1.5; }
+.view-toolbar { display: flex; gap: var(--space-2, 10px); }
+
+/* Provider slot coverage strip */
+
+/* Key cards */
+.cseries-btn.danger { color: var(--cseries-clay, #c0492f); }
+
+/* Scrim + modal (centered) */
+.keys-scrim {
+    position: fixed; inset: 0; z-index: var(--z-modal, 1000);
+    background: rgba(0,0,0,0.55);
+    display: flex; align-items: center; justify-content: center;
+    padding: var(--space-4, 18px);
+}
+.keys-modal {
+    width: 100%; max-width: 460px; max-height: 86vh;
+    display: flex; flex-direction: column;
+    background: var(--cseries-surface, #16161a);
+    border: 1px solid var(--cseries-seam, #2a2a28);
+    border-radius: var(--radius-3, 14px);
+    box-shadow: var(--cseries-shadow-window-focus, 0 24px 60px rgba(0,0,0,0.5));
+}
+.keys-modal-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: var(--space-3, 14px) var(--space-4, 18px);
+    border-bottom: 1px solid var(--cseries-seam, #2a2a28);
+}
+.keys-modal-title { font-weight: 600; color: var(--cseries-paper, #ededea); }
+.keys-modal-body { padding: var(--space-4, 18px); overflow-y: auto; display: flex; flex-direction: column; gap: var(--space-3, 14px); }
+.keys-modal-actions { display: flex; justify-content: flex-end; gap: var(--space-2, 10px); padding: var(--space-3, 14px) var(--space-4, 18px); border-top: 1px solid var(--cseries-seam, #2a2a28); }
+
+/* Form fields */
+.keys-field { display: flex; flex-direction: column; gap: 6px; }
+.keys-field-label { font-size: 12px; color: var(--cseries-ash, #8a8a82); text-transform: uppercase; letter-spacing: 0.04em; }
+.keys-field-hint { font-size: 12px; color: var(--cseries-ash, #8a8a82); line-height: 1.5; }
+.keys-field-hint em { color: var(--cseries-paper, #ededea); font-style: normal; }
+.keys-input {
+    width: 100%; box-sizing: border-box;
+    background: var(--cseries-well, rgba(0,0,0,0.25));
+    border: 1px solid var(--cseries-seam, #2a2a28);
+    border-radius: var(--radius-1, 8px);
+    color: var(--cseries-paper, #ededea);
+    padding: 9px 11px; font-size: 14px; font-family: inherit;
+}
+.keys-input:focus { outline: none; border-color: var(--cseries-moss, #6f8f6a); }
+.keys-input[readonly] {
+    color: var(--cseries-ash, #8a8a82);
+    font-family: var(--font-mono, ui-monospace, monospace); font-size: 13px;
+}
+
+/* Add-modal mode toggle (Provider key / Custom) */
+.keys-mode {
+    display: flex; border: 1px solid var(--cseries-seam, #2a2a28);
+    border-radius: var(--radius-1, 8px); overflow: hidden;
+}
+.keys-mode-btn {
+    flex: 1; padding: 8px 10px; background: transparent; border: 0; cursor: pointer;
+    color: var(--cseries-ash, #8a8a82); font: inherit; font-size: 13px;
+}
+.keys-mode-btn + .keys-mode-btn { border-left: 1px solid var(--cseries-seam, #2a2a28); }
+.keys-mode-btn.active {
+    background: var(--cseries-veil, rgba(255,255,255,0.02));
+    color: var(--cseries-paper, #ededea); font-weight: 600;
+}
+.keys-textarea { min-height: 96px; resize: vertical; font-family: var(--font-mono, ui-monospace, monospace); font-size: 12.5px; }
+.keys-callout {
+    background: var(--cseries-veil, rgba(255,255,255,0.02));
+    border: 1px solid var(--cseries-seam, #2a2a28); border-radius: var(--radius-1, 8px);
+    padding: var(--space-3, 14px); font-size: 13px; color: var(--cseries-ash, #8a8a82); line-height: 1.5;
+}
+.keys-confirm { margin: 0; font-size: 14px; color: var(--cseries-paper, #ededea); line-height: 1.55; }
+
+/* Revealed secret */
+.keys-mono, .keys-secret { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12.5px; }
+.keys-secret { cursor: pointer; color: var(--cseries-paper, #ededea); border-bottom: 1px dashed var(--cseries-ash, #8a8a82); }
+.keys-secret.copied { color: var(--cseries-moss, #6f8f6a); }
+.keys-secret-block {
+    display: block; word-break: break-all; padding: 11px;
+    background: var(--cseries-well, rgba(0,0,0,0.25)); border: 1px solid var(--cseries-seam, #2a2a28);
+    border-radius: var(--radius-1, 8px); border-bottom-style: solid;
+}
+.keys-reveal-row { display: flex; flex-direction: column; gap: 6px; align-items: center; text-align: center; }
+
+/* QR */
+.keys-qr-wrap { display: flex; flex-direction: column; align-items: center; gap: var(--space-3, 14px); }
+.keys-qr { width: 188px; height: 188px; background: #fff; padding: 10px; border-radius: 10px; box-sizing: border-box; }
+.keys-qr svg { width: 100%; height: 100%; display: block; }
+
+/* TOTP entry boxes */
+.keys-totp { display: flex; gap: 8px; justify-content: center; }
+.keys-totp-box {
+    width: 38px; height: 46px; border-radius: var(--radius-1, 8px);
+    border: 1px solid var(--cseries-seam, #2a2a28); background: var(--cseries-well, rgba(0,0,0,0.25));
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px; font-family: var(--font-mono, ui-monospace, monospace); color: var(--cseries-paper, #ededea);
+}
+.keys-totp-box.filled { border-color: var(--cseries-moss, #6f8f6a); }
+.keys-totp-box.caret { border-color: var(--cseries-ash, #8a8a82); }
+
+.cseries-empty { text-align: center; padding: var(--space-6, 36px); color: var(--cseries-ash, #8a8a82); display: flex; flex-direction: column; gap: 6px; }
+.cseries-empty .empty-title { color: var(--cseries-paper, #ededea); font-weight: 600; }
+.status-banner.error { background: rgba(192,73,47,0.12); border: 1px solid var(--cseries-clay, #c0492f); color: var(--cseries-paper, #ededea); border-radius: var(--radius-1, 8px); padding: 10px 14px; font-size: 13px; }
+
+/* ── Menu + section layout (rebuilt 2026-08-06) ─────────────────────── */
+.keys-body { display: flex; flex: 1 1 auto; min-height: 0; }
+.keys-menu {
+    flex: 0 0 176px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 12px 8px;
+    border-right: 1px solid rgba(156, 163, 175, 0.12);
+}
+.keys-menu-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    width: 100%;
+    padding: 8px 10px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    cursor: pointer;
+    color: var(--cseries-linen);
+    font-size: 13px;
+    text-align: left;
+}
+.keys-menu-item:hover { background: rgba(156, 163, 175, 0.06); }
+.keys-menu-item.active {
+    background: rgba(79, 127, 106, 0.12);
+    border-color: var(--cseries-ember);
+    color: var(--cseries-paper);
+}
+.keys-menu-count { opacity: 0.65; }
+.keys-main { flex: 1 1 auto; min-width: 0; padding: 14px 16px; }
+.keys-head { margin-bottom: 10px; }
+.keys-head h2 { margin: 0 0 4px; font-size: 15px; color: var(--cseries-paper); }
+.keys-band { margin: 14px 0 6px; }
+.keys-band-hint { opacity: 0.7; }
+
+/* One row shape for every credential, everywhere. */
+.keys-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 10px;
+    border-bottom: 1px solid rgba(156, 163, 175, 0.08);
+}
+.keys-row-main { flex: 1 1 auto; min-width: 0; }
+.keys-row-name { font-size: 13px; color: var(--cseries-paper); }
+.keys-row-sub { margin-top: 2px; }
+.keys-row-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+.keys-empty { padding: 22px 10px; display: flex; flex-direction: column; align-items: flex-start; gap: 10px; }
+
+/* Providers — one line per provider, its slots as real buttons. */
+.keys-provider {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 8px 10px;
+    border-bottom: 1px solid rgba(156, 163, 175, 0.08);
+}
+.keys-provider-name { flex: 0 0 150px; font-size: 13px; color: var(--cseries-paper); }
+.keys-provider-slots { display: flex; gap: 8px; flex-wrap: wrap; }
+.keys-slot {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 10px;
+    background: transparent;
+    border: 1px solid rgba(156, 163, 175, 0.16);
+    border-radius: 999px;
+    cursor: pointer;
+    color: rgba(156, 163, 175, 0.85);
+    font-size: 12px;
+}
+.keys-slot:hover { border-color: var(--cseries-ember); color: var(--cseries-paper); }
+.keys-slot.filled { border-color: rgba(79, 127, 106, 0.5); color: var(--cseries-paper); }
+.keys-slot.deactivated { border-style: dashed; opacity: 0.75; }
+/* A slot rendered as a <span> is a STATUS CHIP, not a control: the host-filled
+   sign-in, and the state half of a stored key. Only a <button> slot is
+   clickable, so only a button gets the pointer and the hover — a chip that
+   lights up under the cursor reads as "click me for the thing you cannot do". */
+span.keys-slot { cursor: default; }
+span.keys-slot:hover { border-color: rgba(156, 163, 175, 0.16); color: rgba(156, 163, 175, 0.85); }
+span.keys-slot.filled:hover { border-color: rgba(79, 127, 106, 0.5); color: var(--cseries-paper); }
+.keys-slot-waiting { border-style: dashed; }
+.keys-slot-state { opacity: 0.7; font-size: 11px; }
+.keys-slot-actions { display: inline-flex; gap: 4px; align-items: center; }
+
+/* Deactivated credentials — dimmed row + an explicit tag, never silent. */
+.keys-row-off { opacity: 0.62; }
+.keys-off-tag {
+    margin-left: 6px; padding: 1px 7px; font-size: 10px;
+    border: 1px dashed rgba(156, 163, 175, 0.5); border-radius: 999px;
+    color: rgba(156, 163, 175, 0.9); text-transform: uppercase; letter-spacing: 0.05em;
+}

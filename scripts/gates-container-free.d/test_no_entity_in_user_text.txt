@@ -1,0 +1,14 @@
+
+# The user-facing noun is Host: the word
+# "entity" never reaches a user or the Host — circles-web text, system-app
+# strings and HTML text, skills, and tool descriptions. Identifiers, stored
+# addresses (entity-<id>, @entity.<domain>) and the named-entities sense are
+# on a commented allow-list. Also every React app + the kit, the dashboard
+# shell, app manifests, JSX text beside an {expression}, and the Python errors
+# and results (HTTPException / raised messages, "error"/"result"/"detail"/"note"
+# values, mcp.py descriptions); a JSX-aware scanner (text holding ; = && and a
+# lone word after {n} are read as text); EVERY string literal under server/ and
+# all of brain/mastercode/ (the prompt builders, memory and research prompts
+# included); and "synaptive" banned in skills, tool/MCP descriptions and prompt
+# builders. A literal JSX child and a literal assigned to textContent/title are text.
+test_no_entity_in_user_text.py

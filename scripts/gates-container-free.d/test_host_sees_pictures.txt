@@ -1,0 +1,5 @@
+# The Host's own model sees pictures: the per-turn picture channel, the Messages
+# payload a round with pictures produces, look on kept files and web pictures (one
+# tool-less call, answer screened), an app's render, taint marks, fetch_bytes
+# internal-host refusals. Source tree only, fakes at every seam.
+test_host_sees_pictures.py

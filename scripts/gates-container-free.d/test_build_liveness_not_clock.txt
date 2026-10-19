@@ -1,0 +1,2 @@
+# A session is over by silence, never by elapsed time (held by this process = live); the buffered /run fallback waits on the pod's health, not max_minutes*60+30, and says when the pod stops answering; acceptance checks hold the pod's lease; the build's default is the 3600 s model-wait backstop with a named 4 h maximum. Local aiohttp stand-in pods; no pod, no DB.
+test_build_liveness_not_clock.py

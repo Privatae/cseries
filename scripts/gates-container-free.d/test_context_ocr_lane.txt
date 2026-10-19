@@ -1,0 +1,11 @@
+# OCR: a scanned PDF is images wrapped in a PDF, so
+# pdftotext SUCCEEDS and returns nothing for one — the single worst outcome in
+# this lane is a user being told, by a job that exited 0, that their contract has
+# no words on it. Pins the routing to the job that reads scanned pages, and pins
+# apart the three answers an empty result can have (blank pages / an engine with
+# no language data / no engine at all), which are fixed by three different
+# commands. Its live half BUILDS a real image-only PDF and OCRs it when the tools
+# are present, and skips saying so when they are not — those tools belong on a
+# BASTION and must never be in a platform image, so a runner without them is
+# correct. No bastion, no DB, no network.
+test_context_ocr_lane.py

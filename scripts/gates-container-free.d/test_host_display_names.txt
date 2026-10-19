@@ -1,0 +1,5 @@
+# 2026-09-22 (same review): a stored placeholder name ("Entity", "Entity 9003",
+# "entity-9003") is shown as "Host #N" by server/host_display.py and its Settings
+# twin, which agree case for case; the inbox/calendar not-ready envelope is a 503
+# by its `retryable` flag, not by the words "entity id".
+test_host_display_names.py

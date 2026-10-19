@@ -1,0 +1,2 @@
+# 2026-10-13 (harness placement plan, slice 1): every sidecars/harness-*/Dockerfile HEALTHCHECK passes in control-socket mode (CSERIES_SIDECAR_CONTROL_SOCK set, no TCP port) by checking /health over the socket with real curl against a real sidecar, fails when nothing listens there, runs exactly `curl -fsS --unix-socket <path> http://localhost/health` (no proxy flag: curl never proxies a unix-socket request), and with the variable unset still runs today's exact curl to 127.0.0.1:<EXPOSE port>. No container, no network.
+test_harness_healthcheck_socket.py

@@ -1,0 +1,1 @@
+e2e_hosted_map_egress.py                 # real Chromium (playwright) + a local probe server — measures what the host-authored map frame can actually send, because the CSP source-greps in test_network_map_routes.py were all green while self-navigation leaked the whole graph; skips without playwright, and a skip proves nothing

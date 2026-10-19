@@ -1,0 +1,376 @@
+/* The book of pages: the look every app that draws one shares, from
+   docs/design/workbench-book/mockup-pages-v2.html: the typefaces, the
+   desktop's colours as the book's tokens, the running count (Tally), "Where
+   this stands" (Stands), the nudge line, and Send with hold-to-think (the
+   press). Each app imports it first, then its own rules for its own layout
+   (the Workbench: workbench-web/src/book/book.css, the desk, the tabs, the
+   page turn, the Index and the phone layout), and sets data-page="book" on
+   its root: the tokens below sit under :root[data-page="book"].
+
+   The components the book shares (the conversation, the tool cards, the
+   composer) colour themselves from the shadcn tokens of the app's
+   src/index.css; giving those tokens the desktop's values here is what
+   restyles them. Rules here are outside any cascade layer, so they win over
+   Tailwind's utilities (which sit in @layer utilities). The rules below keep
+   the selectors they had in the Workbench, so nothing there changes; the
+   nudge line's matches the Workbench page (.book-sheet [data-chrome="page"])
+   or the back of a Circles card ([data-book-nudges]) at the weight it had. */
+
+/* ── The typefaces, packed into the bundle (./fonts, FONT-LICENSES.txt) ─────
+   Their own family names, so nothing on this page resolves to the desktop's
+   /fonts/ copies that index.css and /css/tokens.css declare under "Inter" and
+   "JetBrains Mono". */
+@font-face {
+  font-family: "Book Newsreader";
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("./fonts/newsreader-latin-opsz-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Book Newsreader";
+  font-style: italic;
+  font-weight: 200 800;
+  font-display: swap;
+  src: url("./fonts/newsreader-latin-wght-italic.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Book Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("./fonts/inter-latin-wght-normal.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Book JetBrains Mono";
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("./fonts/jetbrains-mono-latin-wght-normal.woff2") format("woff2");
+}
+/* The licence the four files above ship under (SIL OFL 1.1, with each
+   family's copyright), named here so the build emits it under assets/ beside
+   them whenever it emits them. The bundle carries it; no page shows it. */
+:root[data-page="book"] {
+  --book-font-licences: url("./fonts/FONT-LICENSES.txt");
+}
+
+/* ── The desktop's colours ────────────────────────────────────────────────
+   The book wears the desktop's design, as every app does: each colour on it
+   is one of the desktop's tokens, the ones the rail layout read
+   (src/index.css). /css/tokens.css
+   carries them, with whatever the desktop design declares, and the shell sets
+   the design's on this frame's root as it changes (dashboard/base/js/
+   desktop-surface.js applyTokens). The fallbacks are the stock set, as in
+   index.css. The page lies on the desk the way a window lies on the desktop
+   (dashboard/base/css/desktop.css .window): the desktop's surface under it, a
+   window's body for the page, the hairline round it, a raised panel for what
+   sits on it. Words that carry a state colour are that colour mixed with the
+   ink, so they read on a dark design and on a light one. */
+:root[data-page="book"] {
+  /* the desk, the page and what sits on it */
+  --desk: var(--cseries-ink, #0a0e0f);
+  --paper: var(--cseries-night, #0e1416);
+  --raised: var(--cseries-twilight, #131b1d);
+  --under: color-mix(in oklab, var(--paper) 50%, var(--desk));
+  --tab: color-mix(in oklab, var(--paper) 45%, var(--desk));
+  /* the ink, strong to faint, and the hairlines */
+  --ink: var(--cseries-paper, #e5e7eb);
+  --ink2: var(--cseries-linen, #9ca3af);
+  --ink3: var(--cseries-ash, #6b7280);
+  --rule: var(--cseries-mist, #263135);
+  --rule2: var(--cseries-mist-strong, #3b4c51);
+  /* the accent: as a fill, and as words */
+  --lit: var(--cseries-ember, #4f7f6a);
+  --lit-ink: var(--cseries-dusk, #7fcfae);
+  /* something waits on the person */
+  --wait: var(--cseries-gold, #c2a86b);
+  --wait-ink: color-mix(in oklab, var(--wait) 60%, var(--ink));
+  /* what changed since the person last looked, and the glows */
+  --hl: color-mix(in oklab, var(--cseries-bright, #9be3c2) 32%, transparent);
+  --lit-glow: var(--cseries-glow, rgba(127, 207, 174, 0.45));
+  --wait-glow: color-mix(in oklab, var(--wait) 55%, transparent);
+  /* a state's words, readable on any of the desktop's surfaces */
+  --good-ink: color-mix(in oklab, var(--cseries-moss, #5fae7f) 62%, var(--ink));
+  --bad-ink: color-mix(in oklab, var(--cseries-clay, #c75f55) 80%, var(--ink));
+  /* Shadows and the page turn's shading are darkness, with no hue of their
+     own, as the desktop's are (tokens.css --cseries-shadow-*): the one literal
+     colour here, never a surface or a word. */
+  --shade: #000;
+  --serif: "Book Newsreader", "Iowan Old Style", Georgia, serif;
+  --sans: "Book Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "Book JetBrains Mono", ui-monospace, Menlo, monospace;
+
+  /* the shadcn tokens the shared components read, on the desktop's colours */
+  --background: var(--paper);
+  --foreground: var(--ink);
+  --card: var(--raised);
+  --card-foreground: var(--ink);
+  --popover: var(--raised);
+  --popover-foreground: var(--ink);
+  --primary: var(--lit);
+  --primary-foreground: var(--desk);
+  --secondary: var(--cseries-silk, #1a2427);
+  --secondary-foreground: var(--ink);
+  /* between the page and what sits on it: a run card's footer and wells */
+  --muted: color-mix(in oklab, var(--raised) 50%, var(--paper));
+  --muted-foreground: var(--ink2);
+  --accent: var(--cseries-silk, #1a2427);
+  --accent-foreground: var(--ink);
+  --destructive: var(--bad-ink);
+  --destructive-foreground: var(--desk);
+  --success: var(--good-ink);
+  --warning: var(--wait-ink);
+  --link: var(--lit-ink);
+  --border: var(--rule);
+  --input: var(--cseries-veil, #223034);
+  --ring: var(--lit);
+  --sidebar: var(--paper);
+  --sidebar-foreground: var(--ink);
+  --sidebar-border: var(--rule);
+  /* The run card's activity marks (blue a call, orange a file written) are
+     src/index.css's, unchanged here: two categories, not the desktop's
+     colours, each clear of 3:1 on the stock dark page and on a light one. */
+
+  /* Dark or light is the design's: book/scheme.ts followScheme reads the
+     page's colour and sets color-scheme and the dark class to match. */
+  background: var(--desk);
+}
+
+:root[data-page="book"] body {
+  background: var(--desk);
+  color: var(--ink);
+  font: 15.5px/1.6 var(--sans);
+}
+/* Every face on this page is one of the bundle's. */
+:root[data-page="book"] .font-mono,
+:root[data-page="book"] code,
+:root[data-page="book"] kbd,
+:root[data-page="book"] pre,
+:root[data-page="book"] samp {
+  font-family: var(--mono);
+}
+:root[data-page="book"] .font-sans,
+:root[data-page="book"] button,
+:root[data-page="book"] input,
+:root[data-page="book"] select,
+:root[data-page="book"] textarea {
+  font-family: var(--sans);
+}
+:root[data-page="book"] * {
+  scrollbar-color: var(--rule2) transparent;
+}
+:root[data-page="book"] *::-webkit-scrollbar-thumb {
+  background: var(--rule2);
+  background-clip: content-box;
+}
+
+/* The page's running token count: mono, never uppercase; hover or
+   focus shows what it is made of, and the engines' runs on a second line. */
+.book-tally-wrap {
+  position: relative;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.book-tally {
+  font: 500 11px var(--mono);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--ink2);
+  background: none;
+  border: 0;
+  border-bottom: 1px dotted var(--rule2);
+  padding: 0;
+  cursor: default;
+  white-space: nowrap;
+  transition: color 0.3s;
+}
+.book-tally[data-bump] {
+  color: var(--lit-ink);
+}
+.book-tally[data-state="unknown"] {
+  color: var(--ink3);
+  font-style: italic;
+}
+.book-tally:focus-visible {
+  outline: 2px solid var(--lit);
+  outline-offset: 2px;
+}
+.book-tip {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 8px);
+  z-index: 30;
+  width: min(340px, 80vw);
+  display: none;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  background: var(--raised);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  box-shadow: 0 10px 24px color-mix(in srgb, var(--shade) 14%, transparent);
+  font: 400 12.5px/1.45 var(--sans);
+  letter-spacing: 0;
+  text-transform: none;
+  text-align: left;
+  white-space: normal;
+  color: var(--ink2);
+  /* A tooltip: nothing in it to press, so a tap goes through to the page. */
+  pointer-events: none;
+}
+.book-tally-wrap:hover .book-tip,
+.book-tally-wrap:focus-within .book-tip {
+  display: flex;
+}
+.book-tip-engines {
+  border-top: 1px solid var(--rule);
+  padding-top: 6px;
+  color: var(--ink);
+}
+
+.book-stands {
+  flex: none;
+  max-height: 30%;
+  overflow-y: auto;
+  border-left: 2px solid var(--lit);
+  padding: 1px 0 1px 15px;
+}
+.book-stands .book-k {
+  font: 500 10px var(--sans);
+  letter-spacing: 0.18em;
+  color: var(--lit-ink);
+  margin-bottom: 4px;
+}
+.book-stands ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  font: 400 16px/1.45 var(--serif);
+  color: var(--ink);
+}
+.book-stands li::before {
+  content: "— ";
+  color: var(--ink3);
+}
+.book-stands li b {
+  font: 500 10.5px var(--sans);
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink2);
+  margin-right: 4px;
+}
+.book-stands .book-ids {
+  font: 500 11.5px var(--mono);
+  color: var(--ink2);
+}
+.book-stands .book-stands-empty {
+  margin: 0;
+  font: italic 400 15px/1.45 var(--serif);
+  color: var(--ink2);
+}
+.book-hl {
+  background: linear-gradient(transparent 55%, var(--hl) 55%);
+}
+.book-upd {
+  flex: none;
+  font-size: 11.5px;
+  color: var(--ink3);
+  margin: 6px 0 0 17px;
+}
+
+/* Words sent into a running turn: a line of their own (the
+   mockup's .nudge), on a Workbench page and on the back of a Circles card
+   ([data-book-nudges], circles-web/src/cards/). One rule for both: :is()
+   takes its most specific argument, so the Workbench's selector weighs what
+   it always did and its pages look as they did. */
+:is(.book-sheet [data-chrome="page"], [data-book-nudges]) .book-nudge {
+  margin: -6px 0 0 14px;
+  padding-left: 10px;
+  border-left: 2px solid var(--rule2);
+  font: italic 400 14.5px/1.45 var(--serif);
+  color: var(--ink2);
+}
+:is(.book-sheet [data-chrome="page"], [data-book-nudges]) .book-nudge b {
+  margin-right: 6px;
+  font: 500 10px var(--sans);
+  font-style: normal;
+  letter-spacing: 0.14em;
+  color: var(--ink3);
+}
+
+/* The press: Send with hold-to-think. The ink grows and a circle
+   fills round it while it is held; the dots round it are the model's levels,
+   lit up to the one it sends at; the level reached shows above it. */
+.book-press-wrap {
+  position: relative;
+  flex: none;
+}
+.book-press {
+  position: relative;
+  display: block;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border-radius: 999px;
+  border: 1.5px solid var(--rule2);
+  background: var(--raised);
+  box-shadow: 0 2px 4px color-mix(in srgb, var(--shade) 6%, transparent);
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+.book-press:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.book-press:focus-visible {
+  outline: 2px solid var(--lit);
+  outline-offset: 2px;
+}
+.book-press svg {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.book-press-ink {
+  fill: var(--lit-ink);
+  opacity: 0.85;
+}
+.book-press[data-holding] .book-press-ink {
+  opacity: 0.92;
+}
+.book-press-ring {
+  stroke: var(--lit);
+  stroke-opacity: 0.4;
+}
+.book-press-dot {
+  fill: var(--rule2);
+}
+.book-press-dot[data-on] {
+  fill: var(--lit);
+}
+.book-lvl {
+  position: absolute;
+  right: 0;
+  bottom: 52px;
+  z-index: 10;
+  pointer-events: none;
+  white-space: nowrap;
+  padding: 5px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--raised);
+  box-shadow: 0 6px 16px color-mix(in srgb, var(--shade) 10%, transparent);
+  font: 500 12px var(--sans);
+  color: var(--ink);
+}
+.book-lvl b {
+  margin-right: 6px;
+  font: 600 11px var(--mono);
+  letter-spacing: 0.06em;
+  color: var(--lit-ink);
+}

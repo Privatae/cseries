@@ -1,0 +1,71 @@
+id: oversight
+name: Oversight
+description: What your machines report and how long it has been true — the findings your host keeps against every machine it watches, worst first.
+icon: icon.svg
+icon_small: icon.svg
+entrypoint: index.html
+provenance: standard
+system: true
+# 0.1.0 (2026-09-23): first cut.
+# The ledger (oversight_findings, v156) was written every five minutes on
+# every host and shown NOWHERE — the routes existed, no window
+# read them, and the host's only oversight tool writes the ledger rather than
+# reading it. So the one record that answers "how long has this been wrong"
+# was invisible to the person who needed it.
+#
+# FINDINGS FIRST, READ-ONLY, ONE VERB. The pane lists what the ledger holds,
+# worst first, with first_seen (the one fact no heartbeat can carry) beside
+# last_seen. The only action is "Mark resolved" — a person saying they dealt
+# with it, the one thing the deterministic fold can never derive. There is no
+# apply button and no command line: the host proposes changes as pull requests,
+# never as actions on a box, and nothing here can reach a machine.
+#
+# MACHINES: every watched machine's PRESENT TENSE — alert source, detection,
+# posture, its own record — beside what the ledger holds open against it. The
+# alert and detection states come from GET /api/oversight/machines, which calls
+# the host's own derivations (runtime/tools.py), so this window and the host
+# can never describe the same machine two ways.
+#
+# NEVER AN ALL-CLEAR. The ledger holds problems only, so an empty list says
+# "nothing is filed", never "everything was checked" — the Machines view is
+# where "who is actually being watched" is answered, and `unconfigured` there
+# is written as nobody watching, never as quiet.
+#
+# DEEP LINKS (open_app view): findings | machines | finding:<id> |
+# machine:<name>.
+# 0.1.2 (2026-10-01): the host proposes the observe:alerts grant for the user
+# to approve instead of offering to. Bundle repacked.
+# 0.1.3 (2026-10-18): prompt_behavior is one paragraph saying what the app is
+#   and what lives in it; do_when_active is gone from the manifest contract,
+#   and its how-to lines live in skills and tool descriptions the Host reads on
+#   demand. Manifest-only; bundle repacked.
+# 0.1.4 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
+version: "0.1.4"
+prompt_behavior:
+  what_it_is: >
+    Oversight is where the user reads the findings you keep about their
+    machines — one row per problem a machine reported, with when it was FIRST
+    seen and when it was last seen, worst first. The rows come from your
+    five-minute oversight pass (no model) folding what each machine's bastion
+    reports: its alert source, its detection plane, its host posture, whether it
+    is still heartbeating, and its own findings record. The Machines view shows
+    each machine's state right now beside what is still open against it. The
+    ledger only ever holds problems: an empty list means nothing is filed, not
+    that every machine was checked — a machine whose alert source is
+    "unconfigured" is one nobody is watching.
+  user_path: "the Oversight app, in the dock"
+
+window:
+  title: Oversight
+  width: 1040
+  height: 720
+  resizable: true
+  min_width: 720
+  min_height: 480
+
+# Both scopes map to live routes (server/routes/oversight.py) and neither is in
+# build_contract.COMMUNITY_ALLOWED_SCOPES — the ledger names a customer's
+# machines and what is firing on them.
+permissions:
+  - read:oversight     # GET /api/oversight/findings, /findings/{id}, /machines
+  - write:oversight    # POST /api/oversight/findings/{id}/resolve — the one verb

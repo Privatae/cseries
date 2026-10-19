@@ -1,0 +1,197 @@
+@import "tailwindcss";
+@source "../../app-web-kit";
+/* streamdown ships its Tailwind classes in its own dist; Tailwind skips
+   node_modules, so without these lines rendered markdown loses them. */
+@source "../node_modules/streamdown/dist/*.js";
+/* streamdown's link/image hardening writes its own classes for blocked URLs. */
+@source "../node_modules/rehype-harden/dist/*.js";
+/* dist/ is tracked in this repo; scanning it fed each build's classes
+   into the next one. */
+@source not "../dist";
+
+/* Community is dark-only (house rule for React system apps); the `dark` class rides on <html> (set in main.tsx). */
+@custom-variant dark (&:is(.dark *));
+
+/* ================================================================
+ * shadcn/ui semantic tokens mapped onto the C-Series "Vault" palette.
+ * Source of truth for the raw hex: dashboard/base/css/tokens.css
+ * (--cseries-*). Inlined here so the bundle is self-contained (works
+ * in `vite preview` and in-container without /css/tokens.css).
+ * ================================================================ */
+:root {
+  --radius: 0.625rem;
+
+  --background: var(--cseries-ink, #0A0E0F); /* cseries-ink */
+  --foreground: #e5e7eb; /* cseries-paper */
+
+  --card: var(--cseries-night, #0E1416); /* cseries-night */
+  --card-foreground: #e5e7eb;
+  --popover: var(--cseries-twilight, #131B1D); /* cseries-twilight */
+  --popover-foreground: #e5e7eb;
+
+  --primary: var(--cseries-ember, #4F7F6A); /* cseries-ember */
+  --primary-foreground: #08110d;
+  --secondary: var(--cseries-silk, #1A2427); /* cseries-silk */
+  --secondary-foreground: #e5e7eb;
+
+  --muted: var(--cseries-twilight, #131B1D); /* cseries-twilight */
+  --muted-foreground: var(--cseries-linen, #9CA3AF); /* cseries-linen */
+  --accent: var(--cseries-silk, #1A2427); /* cseries-silk — hover surfaces */
+  --accent-foreground: #e5e7eb;
+
+  --destructive: var(--cseries-clay, #C75F55); /* cseries-clay */
+  --destructive-foreground: #f7ece9;
+
+  --success: var(--cseries-moss, #5FAE7F); /* cseries-moss */
+  --warning: var(--cseries-gold, #C2A86B); /* cseries-gold */
+  --link: var(--cseries-dusk, #7FCFAE); /* cseries-dusk — readable accent */
+
+  --border: var(--cseries-mist, #263135); /* cseries-mist */
+  --input: var(--cseries-veil, #223034); /* cseries-veil */
+  --ring: var(--cseries-ember, #4F7F6A); /* cseries-ember */
+
+  --sidebar: var(--cseries-night, #0E1416);
+  --sidebar-foreground: #e5e7eb;
+  --sidebar-primary: var(--cseries-ember, #4F7F6A);
+  --sidebar-primary-foreground: #08110d;
+  --sidebar-accent: var(--cseries-silk, #1A2427);
+  --sidebar-accent-foreground: #e5e7eb;
+  --sidebar-border: var(--cseries-mist, #263135);
+  --sidebar-ring: var(--cseries-ember, #4F7F6A);
+
+  --chart-1: var(--cseries-ember, #4F7F6A);
+  --chart-2: var(--cseries-dusk, #7FCFAE);
+  --chart-3: var(--cseries-gold, #C2A86B);
+  --chart-4: var(--cseries-clay, #C75F55);
+  --chart-5: #9be3c2;
+}
+
+/* Always-dark: keep .dark identical so component dark: variants resolve. */
+.dark {
+  --background: var(--cseries-ink, #0A0E0F);
+  --foreground: #e5e7eb;
+  --card: var(--cseries-night, #0E1416);
+  --card-foreground: #e5e7eb;
+  --popover: var(--cseries-twilight, #131B1D);
+  --popover-foreground: #e5e7eb;
+  --primary: var(--cseries-ember, #4F7F6A);
+  --primary-foreground: #08110d;
+  --secondary: var(--cseries-silk, #1A2427);
+  --secondary-foreground: #e5e7eb;
+  --muted: var(--cseries-twilight, #131B1D);
+  --muted-foreground: var(--cseries-linen, #9CA3AF);
+  --accent: var(--cseries-silk, #1A2427);
+  --accent-foreground: #e5e7eb;
+  --destructive: var(--cseries-clay, #C75F55);
+  --destructive-foreground: #f7ece9;
+  --success: var(--cseries-moss, #5FAE7F);
+  --warning: var(--cseries-gold, #C2A86B);
+  --link: var(--cseries-dusk, #7FCFAE);
+  --border: var(--cseries-mist, #263135);
+  --input: var(--cseries-veil, #223034);
+  --ring: var(--cseries-ember, #4F7F6A);
+  --sidebar: var(--cseries-night, #0E1416);
+  --sidebar-foreground: #e5e7eb;
+  --sidebar-primary: var(--cseries-ember, #4F7F6A);
+  --sidebar-primary-foreground: #08110d;
+  --sidebar-accent: var(--cseries-silk, #1A2427);
+  --sidebar-accent-foreground: #e5e7eb;
+  --sidebar-border: var(--cseries-mist, #263135);
+  --sidebar-ring: var(--cseries-ember, #4F7F6A);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-link: var(--link);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --font-sans:
+    "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono:
+    "JetBrains Mono", "SF Mono", "Cascadia Code", Consolas, monospace;
+}
+
+/* Self-hosted brand fonts (served from the kernel overlay at /fonts/*;
+   falls back to system-ui for standalone preview). */
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url("/fonts/inter-var-latin.woff2") format("woff2");
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  font-style: normal;
+  font-weight: 100 800;
+  font-display: swap;
+  src: url("/fonts/jetbrains-mono-var-latin.woff2") format("woff2");
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    margin: 0;
+    background-color: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* Shell fit: the app IS the viewport — panes scroll, the page never does
+   (the page-level scrollbar doubled with the conversation's). */
+html, body, #root { height: 100%; overflow: hidden; }
+
+/* Dark scrollbars (match the shell's cseries-components treatment). */
+* { scrollbar-width: thin; scrollbar-color: #3B4C51 transparent; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: #3B4C51; border-radius: 5px; border: 2px solid transparent; background-clip: content-box; }

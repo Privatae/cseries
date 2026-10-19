@@ -1,0 +1,300 @@
+{
+  "_doctrine": "The HOST MODEL STANDARD: a model may hold a Host text role only if it is APPROVED, judged per MODEL (the vendor's weights) whatever provider serves it. Approved = ELIGIBLE here (test 1: published quality floor; test 2: vendor's original weights with a published system card that includes safety evaluations) AND validated by the platform's own judge-free benches (test 3: validated_models.json, the admission bench and the in-house safety bench — ON HOLD until the Host system prompt is validated). This file is data the platform ships; changing it is a PR, reviewed like any change to what ships to everyone.",
+  "_floor": "Test 1. Artificial Analysis Intelligence Index v4.3.2 >= 30.0 at the effort the Host runs the model. 30.0 is Claude Sonnet 4.6 (AA 30.06, adaptive reasoning, max effort; https://artificialanalysis.ai/models/claude-sonnet-4-6-adaptive) — the model the Host was built around. Pinned to the index VERSION, not to re-running the floor model: when AA ships a new index version the floor is re-stated on the new scale in a reviewed change, never silently. min_effort is the lowest AA-measured effort at which the model clears the floor; 'max' where AA measured only that one.",
+  "_evidence": "Scores are Artificial Analysis Intelligence Index v4.3.2 as published on 2026-09-29; each entry's aa_source is the model's page there (per-effort variants are separate AA rows, e.g. <slug>-low). A model whose system card was not found or not read is 'pending_card' — eligible only once a card with safety evaluations is confirmed and linked here.",
+  "_gate": "enforce=false: nothing is refused; routing status and the catalog report the verdict. When true, an unapproved model is refused where a route is SAVED (server/routes/inference.py apply_role_route) and where a request is SENT (provider_gateway.call_model, including the fallback re-dial). Do not flip it while the benches are on hold: no model is validated yet, so every route would be refused. BEFORE FLIPPING IT: run model_standard.audit_routes() over every Host's stored behavioral_params.model_routing and resolve each row it returns (re-route, or re-save at an effort the model clears) — effort is judged only when a route is saved, so a route stored below its model's min_effort while the standard was off is never re-judged at send.",
+  "standard_version": "1",
+  "floor": {
+    "index": "Artificial Analysis Intelligence Index",
+    "index_version": "4.3.2",
+    "score": 30.0,
+    "reference": "anthropic/claude-sonnet-4-6 at max effort (30.06)"
+  },
+  "enforce": false,
+  "models": [
+    {
+      "canonical": "anthropic/claude-opus-5-5",
+      "status": "eligible",
+      "aa_score": 57.6,
+      "min_effort": "low",
+      "aa_score_at_min": 42.3,
+      "card": "https://www-cdn.anthropic.com/fc1b44717c85dc068bc6ba5024219938094694bd/Claude%20Opus%205.5%20System%20Card.pdf",
+      "aa_source": "https://artificialanalysis.ai/models/claude-opus-5-5"
+    },
+    {
+      "canonical": "anthropic/claude-sonnet-5-5",
+      "status": "eligible",
+      "aa_score": 56.0,
+      "min_effort": "low",
+      "aa_score_at_min": 35.8,
+      "card": "https://www.anthropic.com/claude-sonnet-5-5-system-card",
+      "aa_source": "https://artificialanalysis.ai/models/claude-sonnet-5-5"
+    },
+    {
+      "canonical": "anthropic/claude-fable-5-1",
+      "status": "eligible",
+      "aa_score": 53.4,
+      "min_effort": "low",
+      "aa_score_at_min": 46.8,
+      "card": "https://www-cdn.anthropic.com/0339e6a7c5c7b87f5c07798616dc32c215d14235/Claude%20Fable%205.1%20&%20Claude%20Mythos%205.1%20System%20Card.pdf",
+      "aa_source": "https://artificialanalysis.ai/models/claude-fable-5-1"
+    },
+    {
+      "canonical": "anthropic/claude-haiku-5-5",
+      "status": "pending_card",
+      "aa_score": 43.0,
+      "min_effort": "medium",
+      "aa_score_at_min": 34.0,
+      "card": null,
+      "note": "Released 2026-10-07 with no system card on anthropic.com/system-cards that day. AA v4.3.2: low 29 (under the floor), medium 34, max 43.",
+      "aa_source": "https://artificialanalysis.ai/models/claude-haiku-5-5"
+    },
+    {
+      "canonical": "anthropic/claude-opus-5",
+      "status": "eligible",
+      "aa_score": 50.8,
+      "min_effort": "low",
+      "aa_score_at_min": 39.4,
+      "card": "https://www-cdn.anthropic.com/c5fbac3f0b1280a933ebd26d3cb8bb9f5bdeaf48/Claude%20Opus%205%20System%20Card.pdf",
+      "aa_source": "https://artificialanalysis.ai/models/claude-opus-5"
+    },
+    {
+      "canonical": "anthropic/claude-opus-4-8",
+      "status": "eligible",
+      "aa_score": 41.8,
+      "min_effort": "max",
+      "aa_score_at_min": 41.8,
+      "card": "https://www-cdn.anthropic.com/0b4915911bb0d19eca5b5ee635c80fef830a37ea.pdf",
+      "aa_source": "https://artificialanalysis.ai/models/claude-opus-4-8"
+    },
+    {
+      "canonical": "anthropic/claude-sonnet-5",
+      "status": "eligible",
+      "aa_score": 38.2,
+      "min_effort": "high",
+      "aa_score_at_min": 31.7,
+      "card": "https://www-cdn.anthropic.com/480e0bb54327b9622282e9c39a83a4f490ed377e/Claude%20Sonnet%205%20System%20Card.pdf",
+      "aa_source": "https://artificialanalysis.ai/models/claude-sonnet-5"
+    },
+    {
+      "canonical": "anthropic/claude-sonnet-4-6",
+      "status": "eligible",
+      "aa_score": 30.1,
+      "min_effort": "max",
+      "aa_score_at_min": 30.1,
+      "card": "https://www-cdn.anthropic.com/78073f739564e986ff3e28522761a7a0b4484f84.pdf",
+      "aa_source": "https://artificialanalysis.ai/models/claude-sonnet-4-6-adaptive"
+    },
+    {
+      "canonical": "openai/gpt-6-astra",
+      "status": "eligible",
+      "aa_score": 52.7,
+      "min_effort": "low",
+      "aa_score_at_min": 45.8,
+      "card": "https://deploymentsafety.openai.com/gpt-6-astra",
+      "aa_source": "https://artificialanalysis.ai/models/gpt-6-astra"
+    },
+    {
+      "canonical": "openai/gpt-6-sol",
+      "status": "pending_card",
+      "aa_score": 47.5,
+      "min_effort": "low",
+      "aa_score_at_min": 33.9,
+      "card": null,
+      "note": "No GPT-6 Sol card found on 2026-09-29 (openai.com returned 403 to the research pass).",
+      "aa_source": "https://artificialanalysis.ai/models/gpt-6-sol"
+    },
+    {
+      "canonical": "openai/gpt-6-luna",
+      "status": "pending_card",
+      "aa_score": 37.3,
+      "min_effort": "high",
+      "aa_score_at_min": 32.1,
+      "card": null,
+      "note": "No GPT-6 Luna card found on 2026-09-29.",
+      "aa_source": "https://artificialanalysis.ai/models/gpt-6-luna"
+    },
+    {
+      "canonical": "openai/gpt-5.6-terra",
+      "status": "pending_card",
+      "aa_score": 42.1,
+      "min_effort": "medium",
+      "aa_score_at_min": 30.1,
+      "card": null,
+      "note": "A GPT-5.6 family card exists (https://deploymentsafety.openai.com/gpt-5-6); not yet confirmed to cover Terra.",
+      "aa_source": "https://artificialanalysis.ai/models/gpt-5-6-terra"
+    },
+    {
+      "canonical": "google/gemini-3.8-flash",
+      "status": "eligible",
+      "aa_score": 40.9,
+      "min_effort": "low",
+      "aa_score_at_min": 33.5,
+      "card": "https://deepmind.google/models/model-cards/gemini-3-8-flash/",
+      "aa_source": "https://artificialanalysis.ai/models/gemini-3-8-flash"
+    },
+    {
+      "canonical": "xai/grok-4.7",
+      "status": "eligible",
+      "aa_score": 46.4,
+      "min_effort": "high",
+      "aa_score_at_min": 46.3,
+      "card": "https://media.x.ai/v1/website/4p7card-5eccc980.pdf",
+      "aa_source": "https://artificialanalysis.ai/models/grok-4-7"
+    },
+    {
+      "canonical": "xai/grok-4.6",
+      "status": "eligible",
+      "aa_score": 44.3,
+      "min_effort": "low",
+      "aa_score_at_min": 35.1,
+      "card": "https://media.x.ai/v1/website/card-4p6-4cd2dc57.pdf",
+      "aa_source": "https://artificialanalysis.ai/models/grok-4-6"
+    },
+    {
+      "canonical": "xai/grok-4.5",
+      "status": "pending_card",
+      "aa_score": 38.8,
+      "min_effort": "high",
+      "aa_score_at_min": 38.8,
+      "card": null,
+      "note": "Grok 4.5 card not located on 2026-09-29.",
+      "aa_source": "https://artificialanalysis.ai/models/grok-4-5"
+    },
+    {
+      "canonical": "moonshot/kimi-k3",
+      "status": "no_card",
+      "aa_score": 43.6,
+      "min_effort": "max",
+      "aa_score_at_min": 43.6,
+      "card": null,
+      "note": "Clears the floor; no safety evaluations in the model card or the 47-page technical report (2026-09-29).",
+      "aa_source": "https://artificialanalysis.ai/models/kimi-k3"
+    },
+    {
+      "canonical": "zai/glm-5.3",
+      "status": "no_card",
+      "aa_score": 44.8,
+      "min_effort": "max",
+      "aa_score_at_min": 44.8,
+      "card": null,
+      "note": "Clears the floor; no safety section found (2026-09-29).",
+      "aa_source": "https://artificialanalysis.ai/models/glm-5-3"
+    },
+    {
+      "canonical": "deepseek/deepseek-v4.1-flash",
+      "status": "no_card",
+      "aa_score": 39.5,
+      "min_effort": "max",
+      "aa_score_at_min": 39.5,
+      "card": null,
+      "note": "Clears the floor at max reasoning; no safety section found in the 51-page report (2026-09-29).",
+      "aa_source": "https://artificialanalysis.ai/models/deepseek-v4-1-flash"
+    },
+    {
+      "canonical": "qwen/qwen3.8-2.4t-a95b",
+      "status": "no_card",
+      "aa_score": 39.9,
+      "min_effort": "max",
+      "aa_score_at_min": 39.9,
+      "card": null,
+      "note": "Clears the floor; no safety section found (2026-09-29).",
+      "aa_source": "https://artificialanalysis.ai/models/qwen3-8-2-4t-a95b"
+    },
+    {
+      "canonical": "xiaomi/mimo-v2.6-pro",
+      "status": "no_card",
+      "aa_score": 46.3,
+      "min_effort": "max",
+      "aa_score_at_min": 46.3,
+      "card": null,
+      "note": "Clears the floor; no safety section found in the 44-page report (2026-09-29).",
+      "aa_source": "https://artificialanalysis.ai/models/mimo-v2-6-pro"
+    },
+    {
+      "canonical": "xai/grok-4.3",
+      "status": "below_floor",
+      "aa_score": 24.9,
+      "min_effort": null,
+      "aa_score_at_min": null,
+      "card": null,
+      "aa_source": "https://artificialanalysis.ai/models/grok-4-3"
+    },
+    {
+      "canonical": "anthropic/claude-haiku-4-5",
+      "status": "below_floor",
+      "aa_score": 16.9,
+      "min_effort": null,
+      "aa_score_at_min": null,
+      "card": null,
+      "aa_source": "https://artificialanalysis.ai/models/claude-4-5-haiku-reasoning"
+    },
+    {
+      "canonical": "google/gemini-3.1-pro-preview",
+      "status": "below_floor",
+      "aa_score": 29.7,
+      "min_effort": null,
+      "aa_score_at_min": null,
+      "card": "https://deepmind.google/models/model-cards/gemini-3-1-pro/",
+      "aa_source": "https://artificialanalysis.ai/models/gemini-3-1-pro-preview"
+    }
+  ],
+  "_aliases": "How each provider spells a model, mapped to its canonical id. Only MODEL identity lives here — never a provider judgement. First-party providers (anthropic, openai, xai, google, kimi) resolve by rule in model_standard.canonical_model; this table covers the spellings the rule cannot derive. A spelling not resolvable to a canonical id is UNAPPROVED: a bare local tag, a quantisation, a fine-tune or an abliterated build is never the base model.",
+  "aliases": {
+    "anthropic": {
+      "claude-haiku-4-5-20251001": "anthropic/claude-haiku-4-5"
+    },
+    "openrouter": {
+      "moonshotai/kimi-k3": "moonshot/kimi-k3",
+      "z-ai/glm-5.3": "zai/glm-5.3",
+      "deepseek/deepseek-v4.1-flash": "deepseek/deepseek-v4.1-flash",
+      "qwen/qwen3.8-2.4t-a95b": "qwen/qwen3.8-2.4t-a95b",
+      "xiaomi/mimo-v2.6-pro": "xiaomi/mimo-v2.6-pro"
+    }
+  },
+  "_image_standard": "IMAGE GENERATION (no NSFW or uncensored image models). An image model is approved only when listed 'eligible' below: its provider filters sexual content by default, the platform's closed request body (image_engine._generate sends model, prompt and n only) cannot relax that filter, and the vendor publishes a card with safety results. No quality floor and no bench apply to image models. Local image generation has no filter and is never identifiable, so it is never approved; a route that pins its own endpoint is unidentified. A model that reads images is the Host model itself (there is no vision role), so it is held to the TEXT standard like any Host model.",
+  "image_models": [
+    {
+      "canonical": "openai/gpt-image-2.5-sunburst",
+      "status": "eligible",
+      "card": "https://deploymentsafety.openai.com/chatgpt-images-2-5",
+      "note": "Filtered by default (moderation 'auto'); the card reports 89.1% of adversarial sexual prompts blocked. The platform never sends moderation='low'."
+    },
+    {
+      "canonical": "openai/gpt-image-2.5-flare",
+      "status": "eligible",
+      "card": "https://deploymentsafety.openai.com/chatgpt-images-2-5",
+      "note": "Filtered by default (moderation 'auto'); the card reports 84.5% of adversarial sexual prompts blocked. The platform never sends moderation='low'."
+    },
+    {
+      "canonical": "xai/grok-imagine-image-2.0",
+      "status": "pending_card",
+      "card": null,
+      "note": "Automatic moderation is documented, but no card covering Grok Imagine was found (2026-09-29), and xAI's usage policy has no general ban on adult sexual content."
+    },
+    {
+      "canonical": "xai/grok-imagine-image-2.0-quality",
+      "status": "pending_card",
+      "card": null,
+      "note": "As grok-imagine-image-2.0."
+    },
+    {
+      "canonical": "google/gemini-3.1-flash-image",
+      "status": "pending_review",
+      "card": null,
+      "note": "Google's adjustable sexual-content filter defaults to Off for Gemini 2.5/3, and what applies on the OpenAI-compatible images endpoint the platform uses is undocumented."
+    },
+    {
+      "canonical": "google/gemini-3-pro-image",
+      "status": "pending_review",
+      "card": null,
+      "note": "As gemini-3.1-flash-image."
+    },
+    {
+      "canonical": "rundiffusion/juggernaut",
+      "status": "excluded",
+      "card": null,
+      "note": "the vendor published an NSFW-branded build (Juggernaut-X-RunDiffusion-NSFW) of an earlier version."
+    }
+  ]
+}

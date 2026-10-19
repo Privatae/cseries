@@ -1,0 +1,2 @@
+# Turn types: a Host turn bound to a type cannot reach outside it at the tool gate (group, key name, server name), through operate and a dispatched agent alike; asserted FIRST that an untyped turn is unchanged. No pod, no DB, no model.
+test_turn_types_gate.py

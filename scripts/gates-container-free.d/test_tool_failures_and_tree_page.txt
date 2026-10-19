@@ -1,0 +1,4 @@
+# A tool that fails the same way twice is DEAD for the turn (no "try again" nudge), the synthesizer carries errors
+# verbatim, code_tree is paged, the loaded-tools line names each group's skill and
+# the Workbench manifest points at build-workflow instead of restating it.
+test_tool_failures_and_tree_page.py

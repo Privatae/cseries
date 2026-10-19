@@ -1,0 +1,7 @@
+
+# Reach-out: the dispatcher fires
+# once, and only when it should. Drives the real service and dispatcher against
+# a row-storing fake pool, so the idempotency gate, the cool-down, the
+# destination pin and the step-up wall are exercised rather than string-matched.
+# No container, no DB, no network.
+test_reachout.py

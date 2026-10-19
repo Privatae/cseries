@@ -1,0 +1,4 @@
+# 2026-09-06 (a fan-out): a variant that fails before any frame
+# closes its run terminal; antigravity's files are collected from where agy put
+# them; the bridge client dials its own node first. Stubs only, no network.
+test_fanout_wake_failure_closes_terminal.py

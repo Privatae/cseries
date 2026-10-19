@@ -1,0 +1,2 @@
+# The app-SDK build and api contract gates read every file (no 400-file cap, no 2 MB skip), large files in bounded windows.
+test_contract_scans_every_file.py

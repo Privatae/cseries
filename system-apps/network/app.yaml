@@ -1,0 +1,448 @@
+id: network
+name: Network
+description: Your sovereign network — bastions, peers, and access control in one control panel.
+icon: icon.svg
+icon_small: icon.svg
+entrypoint: index.html
+provenance: standard
+system: true
+# 1.7.0 (2026-09-07): THE MAP IS A SWAPPABLE RENDERING, AND THERE ARE TWO.
+# The scene used to be one hardcoded wheel — host at the centre, every node on
+# one ring. That is the LOGICAL path ("everything belongs to my Host"): true,
+# and not what someone pictures when they ask where their data goes: people
+# understand the physical path.
+#   - The drawing is split in three: buildGraph() makes ONE view-model
+#     ({host, nodes, edges}); a renderer turns that graph into markup and does
+#     nothing else; renderers register themselves by name in VIEWS. A picker in
+#     the scene head is filled FROM that registry, so adding a view touches no
+#     markup. The choice is remembered (localStorage, with an in-memory
+#     fallback so a browser that refuses storage still switches).
+#   - LOGICAL: the original wheel, moved across unchanged.
+#   - PHYSICAL: the path itself, left to right — your machine → the relay its
+#     tunnel dials → your Host. Every value on it (hostname, platform, tunnel
+#     address, relay endpoint) already rode the heartbeat or the enrollment
+#     row; nothing new is collected. Peers are NAMED but not drawn: they are
+#     hosts reached host-to-host, not machines on our relay, and silently
+#     dropping them would misstate what is in the network.
+#   - A renderer that throws is caught and named, so a broken view cannot take
+#     the lens down with it.
+#   - Both renderers draw EVERY machine, including one that has never reported.
+#     Pinned by scripts/test_network_views.js — a view that quietly omits an
+#     offline machine tells the user their network is smaller than it is.
+# The split is also the seam a HOST-AUTHORED map renders through: the same
+# graph is what crosses the sandbox bridge to a host's own HTML, the way the
+# desktop is a host-authored artifact today.
+# 1.6.0 (2026-09-04): NAC Egress gains WHO and WHICH WAY OUT (v127). Rules carry a
+# subject ('*', 'pod', 'app:<id>', 'harness:<id>') and an exit ('default',
+# 'platform', 'bastion:<machine>'), so the Browser can leave through the user's own
+# machine instead of the node's shared public address — the reason banks refuse it.
+# Three surface changes, and the first is the security-relevant one:
+#   - the PENDING card now names the subject and the exit. It is where the
+#     authenticator code is typed, and a code typed over a description that omits
+#     what is being granted proves nothing: a rule pinning traffic to one of the
+#     user's machines used to read only as "reach api.x.ai".
+#   - rule rows show the subject/exit pills, plus an "unsigned edit" pill when a
+#     row disagrees with what was signed (the gate enforces the signed terms).
+#   - ADD RULE: the create path this tab never had. Every rule used to begin as a
+#     host draft the user could only approve or decline. A user-authored rule still
+#     lands as a draft and goes through the same approve + step-up, because the
+#     threat this gate exists for is a session acting as the user.
+# 1.0.1 (2026-06-19): removed the egress allowlist/posture surface — the platform
+# must not control the user's outbound (sovereign-network egress doctrine). Dropped read:network.
+# 1.0.2 (2026-06-20): added a READ-ONLY egress status to the Bastions lens — a visibility-only
+# mirror of the user's OWN host-local egress policy (reach, exit bastions, their own limits). No
+# controls, no destinations; governance stays host-local via the agent. (read:topology covers it.)
+# 1.0.3 (2026-06-20): surface each bastion's version + an "update available / Update" affordance
+# (the host-directed self-update path); reads /api/network/bastion-latest (the published manifest).
+# 1.0.4 (2026-06-20): Agents lens (P9.4) — observe → reconcile → contain. Lists the AI/agent activity
+# the bastions report, sorts requested vs unrequested against delegation tags, mints/revokes those
+# tags, and contains a detected agent. Header chip + rail badge for unrequested activity; the host
+# also pushes it to the inbox so it finds the user. (read:topology reads, write:network acts.)
+# 1.0.5 (2026-06-20): Acknowledge — a third disposition for unrequested activity between sanction and
+# contain. Marks an agent seen/accepted WITHOUT a delegation tag: it leaves the alert count + stops
+# re-alerting but stays unrequested (a new pid re-alerts). Button on the card + inspector.
+# 1.1.0 (2026-06-21): NAC lens (approve-only) — your agent PROPOSES policy/egress/management drafts;
+# you APPROVE them here. Pending proposals, per-bastion posture (read-only), egress ACL, management
+# grants, and the management audit log. Widen (allow/grant/removing a deny) requires a TOTP step-up;
+# tighten (decline/deny/revoke) is free. Reads /nac/policy|egress|mgmt/grants|endpoints|mgmt/audit;
+# acts via the propose/approve/revoke routes + /nac/stepup/{enroll,confirm}. The approve routes need
+# resolve:decision (added below) — without it every approve 401s. (read:topology reads, write:network
+# tightens, resolve:decision approves widens.)
+# 1.2.0 (2026-06-23): NAC revisions. (1) The step-up enrollment otpauth URI now renders as a REAL
+# scannable QR (vendored dependency-free qrcode-generator at /js/qrcode.js), with the base32 secret
+# kept as a copyable manual-entry fallback. (2) Step-up + enrollment moved OUT of the side-rail
+# inspector into a CENTERED popup modal over a dimmed scrim. (3) Added the INGRESS lane (inbound
+# policy: /nac/policy rules → enforcement profile; allow widens → step-up, quarantine free) with the
+# same propose→approve→step-up UX. (4) Ingress / Egress / Management now render as three SEPARATE
+# collapsible lanes (header + count chip + chevron; a lane auto-opens when it has pending drafts);
+# posture + audit stay their own blocks. (5) Per-bastion SUSPEND/RESUME (temporary, distinct from
+# revoke): suspend tightens (free, denies management + harness even with valid grants, grants kept),
+# resume widens (→ step-up). Reads /nac/endpoints (now returns `suspended`); acts via
+# /nac/mgmt/{suspend,resume}.
+# 1.3.0 (2026-06-23): C1 — per-bastion QUARANTINE/RELEASE in the posture lens, the missing rung
+# between suspend (mgmt/harness LANES only) and revoke (destructive). Quarantine is a whole-mesh
+# cut: it drops the box's concentrator peer (tunnel dead — no inbound/outbound) AND denies the
+# mgmt+harness gates, while keeping the bearer so release brings the box back with NO re-enrol.
+# Quarantine tightens (free); release widens (→ step-up). Reads /nac/endpoints (now also returns
+# `quarantined`); acts via /nac/{quarantine,unquarantine}.
+# 1.4.0 (2026-06-28): Embeddings on the bastion inspector — the sovereign embed lane. Capabilities
+# now render as discrete chips with an Embeddings emphasis; an embed-capable bastion shows its served
+# endpoint + a "● serving your embeddings" badge when it's the host's live embedder, plus the
+# previously-computed-never-rendered enrollment (wg endpoint/ips) + any reported hardware/GPU. One-click
+# "Serve my embeddings here" / "Use managed instead" on an online embed-capable box (keeps the model,
+# no re-embed). Reads /api/embedding/current (read:inference_catalog) + /api/embedding/bastions; acts
+# via /api/embedding/use-bastion|use-managed (write:inference_routing). New scopes below.
+# 1.5.0 (2026-07-10): Bastion identity is the embed truth. The "serving your embeddings" badge now
+# matches on the persisted bastion HOSTNAME (/api/embedding/current returns `bastion`), not a URL
+# prefix compare against a tunnel IP that goes stale on every re-enroll. Pairs with the server-side
+# identity lane: use-bastion persists the hostname and the engine resolves the live endpoint from the
+# bastion's latest heartbeat at embed time — a re-enrolled bastion self-heals, nothing pins.
+# 1.5.1 (2026-08-25): prompt_behavior named four of the app's six rail lenses
+# (index.html:45-88) — Map (topology) and Usage were missing, so a host asked
+# "can I see my network" or "how much traffic have I used" had nothing true to
+# point at. Manifest-only change.
+# 1.5.2 (2026-08-29): FreeAgents lens — one row per machine store granted
+# 'search' with the bastion's per-store report (heartbeat freeagent_stores,
+# v118): serving / needs Python / needs openssl / installing / failed, in the
+# member's words. Capability chips label pii and freeagent.
+# 1.5.3 (2026-08-29): NAC agent — the bastion inspector shows what the box
+# ENFORCES (grants held, tunnel scope, management ops, binary digest; heartbeat
+# `enforcing`, v119) beside the host's verdict (posture + why). Drift between
+# what the host granted and what the box holds reads 'degraded' in Posture.
+# 1.5.4 (2026-09-02): agents vs apps. One Windows box reported the Claude
+# DESKTOP app as nine 'claude-code' agents (eight Chromium helpers) — nine
+# cards, nine kill buttons. Observations now carry a kind (agent / app /
+# client) and a family; the lens shows one card per family, apps in their
+# own "Apps using a model" block with no alert and no Contain, and Contain on
+# an agent terminates it and every process it started (the bastion takes the
+# tree and refuses apps).
+# 1.5.5 (2026-09-04): plain-text grants. A management grant now
+# carries a DENY list beside its allow list and the user's own words (intent:
+# want / do_not_want). The pending card and the grant row read those words
+# back and show "never [...]"; a deny-only grant is a tighten, so its Approve
+# asks for no code. Deny beats allow at the gate (nac_mgmt.mgmt_denied_by).
+# 1.6.1 (2026-09-06): agent detection phase 1 (bastion 0.13.12, v129). Every
+# observation says how it was STARTED (interactive / remote / scheduler /
+# service / agent) and opens to the bastion's typed evidence; a scheduler
+# origin is the alert's headline. Two new blocks: Scheduled (crontab, timer,
+# launchd, Task Scheduler entries that would run an agent — before they fire)
+# and Automations (browser drivers, input injectors, RPA: no model, inventory
+# only, never alerted, containable). Reads schedulers off /api/network/bastions.
+# 1.9.0 (2026-09-08): UPDATE THE FLEET IN ONE DECISION. Individual update
+# buttons with two popups each do not scale. With 21 machines the old path was a
+# per-card Update, a confirm, and an alert to dismiss — 42 clicks to act on one
+# intention. Now: one button in the Bastions toolbar that names the count
+# ("Update 6 machines to 0.17.0"), one confirmation that LISTS the machines and
+# their current versions (a single click has to say what it covers, or it is
+# blind), and no second popup at all. The card is the answer instead — its pill
+# flips to "updating on next check-in" and the button goes, and a line under
+# the toolbar says how many were asked. The per-machine Update stays for the
+# one-off case, minus its alert. The button hides itself when nothing is out of
+# date. Nothing is pushed to any machine: the route parks a directive each box
+# picks up on its next heartbeat and applies only if the published sha256
+# matches, which is the same path a single update always took.
+# 1.8.0 (2026-09-08): anchoring + pairing approvals (bastion 0.15, v133).
+# Each bastion card says which of the two
+# bastions it runs ('local' / 'networked'), who anchored it, and lists every
+# pairing with its state. On a machine you anchored a later pairing is PENDING
+# and holds nothing until you approve it here: Approve picks the caps ceiling
+# (observe / session / dcn / harness) then asks for your code — the same
+# centered step-up as an egress approve — and signs a pairing grant the
+# machine verifies against your anchor key; Deny records a refusal (nothing is
+# sent, the attempt stays reported); Revoke drops an admitted host's lanes at
+# once and asks for no code. Unapproved attempts show as a red pill. Reads the
+# new fields off /api/network/bastions; acts via /bastions/pairings/{approve,
+# deny,revoke} (approve = resolve:decision, the others write:network).
+# 1.9.1 (2026-09-10): the "Set up a bastion" card no longer tells the user to
+# point an operator client at 127.0.0.1:7878. The bastion's MCP relay is gone
+# (in the bastion's gateway): nothing on the user's machine
+# drives the host, the host reaches the machine only through lanes the bastion
+# opens and gates itself. Fallback copy only; the server's own note
+# (bastion_enroll.py) changed with it.
+# 1.9.2 (2026-09-10): a sixth cap on the Admit card — "use this machine's
+# local models and PII sterilizer" (inference). With the bastion build that
+# carries the family the three inbound forwards
+# (ollama, an OpenAI-compatible server, the PII sterilizer) are gated by the
+# ceiling like every other lane; before, every admitted host got them
+# regardless. Checked by default like the others; an older bastion ignores
+# the cap.
+# 1.9.3 (2026-09-11): the FreeAgents lens is the BASTION AGENTS lens — the
+# program was renamed. Labels and copy only; the lens key, element
+# ids, the capability string and the heartbeat fields are unchanged, so an
+# un-upgraded bastion still reports correctly.
+# 1.9.4 (2026-09-11): the Bastions lens no longer goes SILENT when it cannot
+# learn the latest published version. Treating a failed lookup as "nothing is
+# out of date" hid the Update all button entirely for two days while
+# Cloudflare refused the host's manifest fetch — a dead
+# fleet-update path with nothing on screen to say so. It now states that it
+# cannot tell, and that the machines themselves are unaffected.
+# 1.9.5 (2026-09-11): a standing update directive only counts as "already
+# asked" when it names the CURRENT published version. A box refuses any other
+# target and the directive never clears, so a leftover one hid its machine
+# from Update all forever — 8 of 23 machines on one Host were in that state,
+# and one click would have skipped every one of them.
+# Also: the unknown-version notice no longer says updates can still be asked
+# for from here; they cannot, only from the host.
+# 1.10.0 (2026-09-12): SECOND-BASTION DETECTION on the bastion card (bastion
+# 0.21.0): the anchor host is alerted
+# when a new bastion is installed on the machine. The singleton refuses a
+# second bastion going forward; it can do nothing about the ones already on
+# disk, so the box now scans its own machine's users and reports what it finds.
+# A pill names them — red when one is actually serving Hosts of its own, amber
+# when it is installed but not yet paired. The absent value renders as "second
+# bastion not checked" rather than as nothing, and only on a box already on the
+# latest build: a bastion only looks when it runs as root on Linux, so absence
+# means UNKNOWN, and showing a clean card for a machine nobody checked is the
+# one thing this feature must not do.
+# 1.10.1 (2026-09-12): THE UPDATE BUTTON NOW NOTICES A NEW PUBLISH. The latest
+# published version was read ONCE per page load, guarded on `=== null`, so a tab
+# opened before a publish held the old number for as long as it stayed open —
+# every machine still reported the version it was already on, isOutdated() went
+# false for all of them, and the button hid itself. Refresh did not help, because
+# the guard blocked the re-read; only a full page reload cured it and nothing on
+# screen said so. Measured: 0.22.0 published, every box on 0.21.0, the API
+# answering 0.22.0 correctly, and no update offered anywhere in the app. Now
+# re-read on every load (the server caches it 5 minutes), and a FAILED re-read
+# never downgrades a known-good answer — that would hide a working update path
+# and show the cannot-tell notice over one blipped fetch.
+# 1.10.2 (2026-09-19): A KILL ORDER THE BOX CANNOT CARRY OUT YET IS VISIBLE. A
+# containment rides the heartbeat and is delivered only on a check-in where the
+# bastion can see its agents; a pairing whose observe is off now HOLDS the order
+# (before this the host read the missing list as "every agent is
+# gone", marked the order done and never delivered it). Nothing on screen said an
+# order was waiting, so: the bastion card pills "containment waiting" with the
+# reason read from the beat (not watching / offline), the agent card and
+# inspector say "containment pending" in place of a second Contain button (a
+# second click only lands on the same open order), and the lapse rule — an
+# order not carried out within an hour is dropped and written to the
+# management audit — is stated where the order is shown. Also: the scheduled-
+# jobs note no longer tells the user to update a bastion that is already past
+# 0.13.12 and simply not watching for this pairing; the host keeps the last
+# inventory on a blind beat instead of wiping it, and the note says so.
+# 1.10.3 (2026-09-22): THE SETUP CARD STAYS ON SCREEN. Since 1.10.1 the bastion
+# list reload closed whatever inspector was open, and "Set up a bastion" reloaded
+# the list right after opening the one-time token card, so the card vanished as
+# soon as the list came back and the token was never readable (one token minted
+# per click, none seen). The card now opens first and the reload is told to
+# leave it alone; the reload still closes a stale row snapshot everywhere else.
+# 1.10.4 (2026-09-23): FINDING STOPS ARE VISIBLE. A program the bastion's delta
+# reported can now be stopped by fingerprint (v172); an
+# order the box has not answered yet shows on the card beside the agent
+# containment pill, with the reason it is waiting — offline, a bastion before
+# 0.32.0 (which never answers, so the order lapses after an hour), or simply
+# the next check-in.
+# 1.10.5 (2026-09-23): A LINK CAN OPEN A BASTION. The view 'bastion:<token id>'
+# — on the frame ('#view=') or as a 'cseries:app-view' message from the desktop —
+# opens the Bastions lens with that machine's inspector. Circles' new Bastions
+# pane sends it from "Open in Network". A view from anything but the framing
+# desktop is ignored; an id this Host has no bastion for opens nothing. Scopes
+# unchanged.
+# 1.11.0 (2026-09-23): AUTOMATIC UPDATES. A strip in the Bastions
+# lens: the switch (GET/PUT /api/network/bastions/auto-update, on by default)
+# and one sentence about the newest published version — this Host's ring, and
+# whether that version is soaking on the canary, released, or held (with ring
+# 0's reason). The Host moves its own bastions on a standing loop
+# (server/network/bastion_autoupdate.py); Update all stays as the manual path.
+# Turning it off on the canary Host asks first, since no customer moves while
+# it is off. Scopes unchanged.
+# 1.12.0 (2026-09-23): THE USAGE VIEW IS GONE. It showed a prepaid wallet
+# balance, week-to-date spend and top-ups from /api/billing/*. The wallet
+# is removed, so there is no balance to show; the real bill
+# (compute past the plan's included hours) is the monthly invoice. The lens,
+# its rail button and the read:billing scope are removed; no replacement view
+# in this change.
+# 1.13.0 (2026-09-24): THE WRITE GATE on the bastion card (bastion 0.33.0).
+# A machine anchored to this Host runs a write
+# only on your approval — from your approval device or its console — and its
+# card says which: "writes need your approval (device|console)", "writes
+# refused — pin your device" when it can take none, "approval device" on the
+# machine that is one, and "write lanes quarantined for <host>" when the
+# machine closed a pairing's writes after five refusals in ten minutes. Reads
+# from the enforcing report the box already sends (write_gate, second_factor,
+# device, approval_device, quarantined); nothing here acts.
+# 1.14.0 (2026-09-24): the `services` family on a pairing grant (bastion 0.34.0): "keep a
+# server it built for you running on this machine" — the service slot, separate from
+# `harness` (a job that cleans up). The pairing card lists it and can grant it.
+# 1.15.0 (2026-09-24): the SERVERS lens (bastion 0.36.0 reach grants): the servers your hosts
+# built on your machines and which host may reach each — Approve (a widen: step-up, or on the
+# machine) and Revoke (a tighten, pushed at once). Reads /nac/services/reach (read:topology),
+# approves with resolve:decision, revokes with write:network — no new permission.
+# 1.16.0 (2026-09-25): the Servers lens shows a reach grant's MIRROR list (bastion 0.38.0) —
+# the https repos your machine may fetch, over your own connection, into that server — so
+# the person sees exactly what they approve. Approving with the step-up code sends back the
+# fingerprint of the list drawn on the card; a list changed since then is refused.
+# 1.16.1 (2026-09-27): the write-gate pill's tooltip says that from bastion 0.44.0 an
+# update to a newer bastion version needs no approval (the release signature is the
+# approval), and a move to an older one still does. Text only.
+# 1.16.2 (2026-09-28): a standing bastion update says what it waits on — "waiting
+# for your approval", "update needs an approval device", "update refused", "update
+# refused by the machine", "updated by its anchor Host", or "updating on next
+# check-in" — from the server's own rules. The update target was selected for the
+# card and never returned, so a machine automatic updates had queued was offered
+# Update again. Update and Update all reload the list, and their notices say which
+# machines wait for an approval. The write-gate pills say a forward update needs
+# no approval only on a machine this Host anchors.
+# 1.16.3 (2026-09-28): the text says what the code does. The Logical view no longer
+# says the platform is out of the path (every machine's tunnel runs through the
+# relay; the Physical view draws it). Ingress admits the machines you have paired
+# until a rule says otherwise (its pill reads "Default: PAIRED", not DENY), a widen
+# of a draft needs your code, and an empty grant list says no management operation
+# your Host sends runs without a grant. Text only.
+# 1.16.4 (2026-09-28): an Ingress rule says what it admits. The card and the pending
+# proposal show the lanes an allow rule's permits name ("admits paired machines (mcp)"),
+# read from the signed terms once approved. An allow that names no lane shows "admits
+# nothing, so every machine it matches is locked out" — which is what the engine does
+# with it — and the pending card says it cannot be approved (the Host now refuses it).
+# Revoking an APPROVED ingress rule that keeps machines out — a quarantine, or an allow
+# that admits no lane — now asks for your authenticator code, through the same prompt as
+# removing an egress deny: it lets those machines back in, which widens. Revoking an
+# allow that admits, or declining a draft, stays free. Which Revoke asks is the Host's own
+# answer (revoke_needs_code on /nac/policy), so a rule whose signature no longer verifies
+# asks too. If a removal sent without a code comes back needing one (a draft approved while
+# you declined it), the app says so and offers the code prompt instead of only an error —
+# for ingress rules, egress rules and management grants alike.
+# 1.16.5 (2026-09-28): the lane help says which removals ask for your code. Ingress:
+# removing an approved rule that keeps machines out (a quarantine, or an allow that
+# admits nothing) asks for it, as 1.16.4 made it. Management: the help no longer says
+# revoking is always free — revoking an approved grant that carries your "do NOT" asks
+# for your code, as it already did — and says a grant and its "do NOT" stop applying
+# when it expires. The Revoke confirm no longer says revoking lets the host do those
+# things again: a "do NOT" grants nothing, and an expired one already stopped applying.
+# Text only.
+# 1.16.6 (2026-09-28): the NAC cards say what the engine enforces. When an approved Ingress
+# rule fails the Host's integrity check (its signature does not verify, or its profile is
+# gone), the engine refuses every paired machine; the Ingress lane now opens with a banner
+# saying so, naming the rule and the way out (revoke it, which asks for your code, then have
+# your agent draft it again), and that rule's card says it admits nothing. The state comes
+# from the running engine itself (engine + integrity on /nac/policy), so a rule nothing could
+# check is never shown as failing. When the Host can't read its signing key, Revoke still
+# asks for your code and now says that is the reason, instead of claiming the rule keeps
+# machines out. A management grant past its expiry no longer applies at the gate, "do NOT"
+# included: its card says "expired 3d ago — no longer applies", shows its terms as what they
+# were, and removing it is free on the Host and here alike (the Management help says so).
+# Live grants read "expires in 12d"
+# (every future time used to read "just now"), and the confirm says what removing a live
+# grant, an expired one, or a draft does.
+# 1.16.7 (2026-09-28): a Posture card says what your Host does with that machine now. It
+# printed a stored profile nothing ever wrote, so every card read "default-preserve" — under
+# a quarantine rule that matched it, and while the Host refused every machine with a device
+# fingerprint because an Ingress rule failed its integrity check. Each card now shows the
+# running engine's own decision: the rule or default profile that decides it (or "integrity
+# lock"), whether it is admitted or refused, and why when refused. A machine whose pairing
+# carries no device fingerprint reads "admitted; your Ingress rules skip it", a machine
+# whose pairing token has expired reads refused, a rule the Host cannot evaluate is shown
+# as such (the Host lets the machine in), and with no engine running the card says "not
+# checked" instead of guessing. A machine you quarantined reads "cut off (quarantined)".
+# The Ingress lock banner now says it locks out every paired
+# machine WITH a device fingerprint, which is what the Host does.
+# 1.16.8 (2026-10-01): the HTML escape helper escapes both quotes as well, so a
+# value from the Host, a machine or a provider stays inside the attribute it
+# is written into. App-only change.
+# 1.16.9 (2026-10-04): messaging connectors in the Ingress lane. When your Host starts
+# pairing a Telegram, Discord or Slack account with a connector app it built, the
+# one-time code is shown here, and only here, with a countdown: send it to your bot
+# from the account you want to let in. The account the connector reports then waits
+# for you: "Let this account in" asks for your authenticator code, "Don't pair" is
+# free. A live connector shows its account and a free Revoke (its next message is
+# refused; the app keeps running until you delete it).
+# 1.16.10 (2026-10-04): the approval card names the Keys entry the connector
+# sends to the platform (the Host named it when it proposed the pairing), so
+# you approve the key as well as the account; the same words as the approval
+# ticket in Circles.
+# 1.16.11 (2026-10-05): the Ingress lane no longer says the connector app is one
+# your Host built. Telegram is a store app now (Telegram, id telegram): the empty
+# list says to install it from the App Store or ask your Host to, and the lane
+# says the pairing code is shown here and on its card in your chat, never to
+# your Host. App-only change.
+# 1.16.12 (2026-10-05): Slack and Discord are store apps too (ids slack and
+# discord): the empty list and the lane say to install Telegram, Slack or
+# Discord from the App Store. App-only change.
+# 1.17.0 (2026-10-06): an egress rule
+# drafted for an MCP server shows that server on its card: its name, URL and
+# the Keys entry it uses, beside the code box on the pending card. Approving
+# it connects the server (the rule and the connection are signed together);
+# the platform refuses that approval anywhere but here. Removing the rule
+# disconnects the server. Bundle repacked.
+# 1.18.0 (2026-10-10): what Circles'
+# Bastions and Domain policy panes had, before the cards replace Circles' rail.
+#   - Each machine's card in Bastions lists the other Hosts the machine says it
+#     serves (GET /api/network/bastions/directory, read:topology): each Host's
+#     name opens its card; the row says Not identified yet, Request sent,
+#     Blocked or No longer announced, or offers Request connection (POST
+#     /api/contacts/request-peer, so write:address_book is added) or Message,
+#     which opens Circles with the link card:entity:<id>.
+#   - Peers lists the per-peer rules under the posture, with Delete and an Add
+#     rule form (the /api/domain-policy routes this app already holds).
+# Bundle repacked.
+# 1.19.0 (2026-10-11): Request
+# connection holds request:peer, a scope that opens POST
+# /api/contacts/request-peer and nothing else, in place of write:address_book,
+# which also opens contact delete, block and accept. The route
+# takes either, so a caller that holds write:address_book still works. Scopes
+# changed; app unchanged, bundle repacked.
+# 1.19.1 (2026-10-18): what_it_is is one paragraph under the 900-character cap,
+#   saying what the app is and what lives in it; the how-to it carried lives in
+#   skills and tool descriptions. Manifest-only; bundle repacked.
+# 1.19.2 (2026-10-18): a code comment no longer cites an internal note.
+# 1.19.3 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
+# 1.20.0 (2026-10-18): signing in to an MCP server (server/mcp_oauth.py). The
+# card of a connected server that asked for an OAuth sign-in says where you
+# sign in and whether you have, with Sign in / Sign in again / Sign out. Sign
+# in opens the authorization server through a link with rel=noopener (the page
+# it opens cannot reach this window) and the card reads the outcome back.
+version: "1.20.0"
+# Network is NOT a conversational surface — the user operates it directly and
+# talks to the host in Circles/the Workbench. So this is the code-true source for
+# the ENVIRONMENT CATALOG (topology block + describe_app), NOT a surface_role
+# "behavior when active" body — hence what_it_is/user_path/step_up only, no
+# do_when_active. Accurate to the routes above; widen-needs-step-up matches the
+# NAC gating (network.py policy/egress/mgmt approve paths).
+prompt_behavior:
+  what_it_is: >-
+    Network is the user's network control panel. Map draws how everything they own
+    connects, two ways chosen in its header: Logical, their Host at the centre, and
+    Physical, the path left to right (their machine, the relay its tunnel dials,
+    their Host), which shows where their data actually goes. Bastions lists the
+    machines that carry traffic in and out, each with the other Hosts it says it
+    serves; the user can message one they are connected with or send a connection
+    request. NAC is their access-control policy: who can reach them, what their
+    traffic may do, and which management actions are allowed on which server. Agents
+    shows what is running out on their machines. Peers lists the other Hosts they
+    talk to, who can reach them, and the per-peer rules that let one sender in or
+    keep it out. You can read it live and propose changes the user approves.
+  user_path: "the Network app, in the dock"
+  step_up: >-
+    widening access (an allow rule, an egress allow, or any management grant on
+    a server) needs the user's approval with their 2FA; tightening (deny,
+    revoke, decline) is free.
+
+window:
+  title: Network
+  width: 1180
+  height: 760
+  resizable: true
+  min_width: 980
+  min_height: 560
+
+# Every scope maps to a live route:
+#   write:network                → /api/network/bastions setup + revoke
+#   read:topology                → /api/network/overview|bastions|peers
+#   read:domain_policy/write:…   → /api/domain-policy (peer reachability posture)
+#   read:inference_catalog       → /api/embedding/current|bastions (the embed lane: status + targets)
+#   write:inference_routing      → /api/embedding/use-bastion|use-managed (serve here / fall back to managed)
+#   read:address_book            → /api/hosts/cards (the contact card for another Host)
+#   request:peer                 → /api/contacts/request-peer (Request connection to a Host on one of
+#                                  your machines; the route checks the id against this Host's own
+#                                  peerings; the request-only scope since 1.19.0)
+#   read:topology also covers    → /api/network/bastions/directory (the other Hosts on each machine)
+#   read/write:domain_policy     → also /api/domain-policy/rules (the per-peer rules list)
+permissions:
+  - write:network
+  - read:topology
+  - resolve:decision
+  - read:domain_policy
+  - write:domain_policy
+  - read:inference_catalog
+  - write:inference_routing
+  - read:address_book
+  - request:peer

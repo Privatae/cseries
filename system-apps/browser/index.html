@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Browser</title>
+  <link rel="stylesheet" href="/css/tokens.css" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="app">
+    <header id="bar">
+      <div id="bar-left">
+        <label for="url">Address</label>
+        <input id="url" type="url" placeholder="https://…" aria-label="Address"
+               autocomplete="off" spellcheck="false" />
+
+        <label for="project">Grant to project</label>
+        <select id="project">
+          <option value="">(none — read-only browsing)</option>
+        </select>
+        <input id="project-path" type="text" placeholder="/var/lib/cseries/projects/…" aria-label="Project path" hidden />
+
+        <button id="btn-open" type="button">Open</button>
+      </div>
+      <div id="bar-right">
+        <!-- Recording: an explicit mode with a visible indicator. Nothing
+             is written down until "Create agent" is pressed, and it stops
+             when "Stop & save" (or Discard) is. -->
+        <span id="rec-pill" class="pill rec" hidden>● Recording <b id="rec-name"></b> · <span id="rec-count">0</span> steps</span>
+        <button id="btn-agents" type="button" title="Your recorded agents">Agents</button>
+        <button id="btn-record" type="button"
+                title="Do a task once by hand; it is written down as steps a browser can repeat">Create agent</button>
+        <button id="btn-rec-stop" type="button" hidden>Stop &amp; save</button>
+        <button id="btn-rec-discard" type="button" hidden>Discard</button>
+        <button id="btn-save-form" type="button"
+                title="Save what you have typed into this form, so it can be filled in for you later">Save these entries</button>
+      </div>
+    </header>
+
+    <main id="stage">
+      <div id="pagebar" role="tablist" aria-label="Open pages" hidden></div>
+      <canvas id="viewport" tabindex="0"
+              aria-label="Live browser viewport — click to focus, then type"
+      ></canvas>
+      <div id="vp-status" aria-live="polite"></div>
+
+      <!-- Confirm panel for "save these entries". Nothing is stored until
+           the user ticks fields here and presses Save — the capture is
+           read on the button press and discarded if they cancel. -->
+      <div id="form-capture" role="dialog" aria-modal="true"
+           aria-labelledby="fc-title" hidden>
+        <div id="fc-panel">
+          <h2 id="fc-title">Save these entries</h2>
+          <p id="fc-sub">
+            Choose what to keep for <b><span id="fc-host"></span></b>.
+            Passwords are saved without being shown.
+          </p>
+          <div id="fc-fields" role="group" aria-labelledby="fc-title"></div>
+          <p id="fc-note">
+            These are sealed in your vault. Only you can read them —
+            they are never shown to the AI.
+          </p>
+          <div id="fc-actions">
+            <button id="fc-cancel" type="button">Cancel</button>
+            <button id="fc-save" type="button">Save selected</button>
+          </div>
+          <div id="fc-status" aria-live="polite"></div>
+        </div>
+      </div>
+
+      <!-- Name the agent before recording starts. -->
+      <div id="rec-start" role="dialog" aria-modal="true" aria-labelledby="rs-title" hidden>
+        <div class="panel">
+          <h2 id="rs-title">Create an agent</h2>
+          <p class="sub">Give it a name, then do the task once by hand in the viewport — sign in,
+            click through, download. Every click and field is written down as a step.
+            Nothing you type is recorded; sign-in entries are read once when you submit and
+            sealed in Keys.</p>
+          <label class="field">Name
+            <input id="rs-name" type="text" placeholder="bank-ledger-export" autocomplete="off"
+                   spellcheck="false" pattern="[a-z0-9][a-z0-9-]{0,38}[a-z0-9]" />
+          </label>
+          <div class="actions">
+            <button id="rs-cancel" type="button">Cancel</button>
+            <button id="rs-go" type="button">Start recording</button>
+          </div>
+          <div id="rs-status" aria-live="polite" class="status"></div>
+        </div>
+      </div>
+
+      <!-- Review the recording, seal the entries, set a schedule, save. -->
+      <div id="rec-save" role="dialog" aria-modal="true" aria-labelledby="rv-title" hidden>
+        <div class="panel wide">
+          <h2 id="rv-title">Save agent <b id="rv-name"></b></h2>
+          <p class="sub">Site: <b id="rv-site"></b>. Remove any step that should not be repeated.</p>
+          <ol id="rv-steps" class="steps"></ol>
+          <div id="rv-add">
+            <button id="rv-add-pause" type="button" class="ghost"
+                    title="If the site asks for a code only you have, the run pauses and asks you">
+              + Pause and ask me if the page shows…</button>
+          </div>
+          <h3 class="h3">Sign-in entries</h3>
+          <p class="sub" id="rv-fields-note">Read once when you submitted. Passwords are sealed in Keys without being
+            shown; other entries are sealed by default, or kept in the agent file if you tick "keep".</p>
+          <div id="rv-fields"></div>
+          <h3 class="h3">Schedule</h3>
+          <div class="row">
+            <select id="rv-recurrence" aria-label="How often">
+              <option value="">Only when asked</option>
+              <option value="daily">Every day</option>
+              <option value="hourly">Every hour</option>
+              <option value="weekly">Every week</option>
+              <option value="monthly">Every month</option>
+            </select>
+            <label class="inline">first at
+              <input id="rv-fire-at" type="datetime-local" aria-label="First run" />
+            </label>
+          </div>
+          <p class="sub">The agent uses about a gigabyte of the plan's memory for the minute it runs.
+            A run that is refused, or a site that asks for a code, shows up in the Agents list and in your inbox.</p>
+          <div class="actions">
+            <button id="rv-cancel" type="button">Cancel</button>
+            <button id="rv-save" type="button">Save agent</button>
+          </div>
+          <div id="rv-status" aria-live="polite" class="status"></div>
+        </div>
+      </div>
+
+      <!-- The agents on this machine: run, see the last run, delete. -->
+      <div id="agents" role="dialog" aria-modal="true" aria-labelledby="ag-title" hidden>
+        <div class="panel wide">
+          <h2 id="ag-title">Agents</h2>
+          <p class="sub">Tasks you recorded. A run is a real browser repeating your steps; no AI is involved.
+            Your Host can run one when you ask, and any app you allow can run one on its own.</p>
+          <div id="ag-list"></div>
+          <div class="actions">
+            <button id="ag-close" type="button">Close</button>
+          </div>
+          <div id="ag-status" aria-live="polite" class="status"></div>
+        </div>
+      </div>
+    </main>
+
+    <footer id="hint">
+      <span id="hint-text" aria-live="polite">
+        Type an address and click <b>Open</b>. Grant a project if the
+        site asks for a local folder. The viewport is live — click +
+        type inside it just like a normal browser tab.
+      </span>
+    </footer>
+  </div>
+
+  <script src="viewport.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

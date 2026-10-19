@@ -1,0 +1,2 @@
+# 2026-09-30 (public wiki): the leak scan catches every internal category it names and passes ordinary product copy; a page goes "changed" when a cited Python symbol changes and not when another symbol in the same file does; an unverified page, a missing source, a dead wiki: link, a leak and a stale status file each fail the repo check; the image bundle carries no sources, stamps the tag, attaches app facts and refuses a leak. Temp dirs only; no pod, no DB.
+test_wiki_pages.py

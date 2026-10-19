@@ -1,0 +1,5 @@
+# 2026-09-18 (two desktops on one Host). The palette half of that fix is
+# pinned by test_desktop_contract.py, which smoke already invokes off the tree.
+# The `artifact` tool's half: create hears the floor too, a document that declares
+# nothing still gets a verdict, and kind='desktop' seeds the template server-side.
+test_artifact_desktop_feedback.py

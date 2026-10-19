@@ -1,0 +1,1 @@
+test_context_markers_storable.py         # live DB (asyncpg via TEST_PG_DSN/DATABASE_URL) — round-trips the markers through a real TEXT column; skips without a DSN, and a skip proves nothing

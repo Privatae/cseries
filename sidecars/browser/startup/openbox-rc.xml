@@ -1,0 +1,117 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  openbox config for the browser sidecar's virtual display.
+
+  This exists because the noVNC view is a PRODUCT SURFACE, not a debug
+  aid: it is how a person watches a recipe sign into their bank, and how
+  they take over when a login needs a code. The first attempt at this
+  sidecar ran with no window manager at all — unmanaged windows, no
+  frames, no titles, every session stacked at the display origin with no
+  way to raise or switch. It looked broken, and that is why it was
+  shelved.
+
+  Tuned for watching rather than working: a readable title bar (the page
+  title is how you tell one session from another), no desktop menus or
+  wallpaper to be confused by, no animation to smear over a slow VNC
+  link, and no keybindings that could close a window mid-run by accident.
+-->
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+
+  <resistance>
+    <strength>10</strength>
+    <screen_edge_strength>20</screen_edge_strength>
+  </resistance>
+
+  <focus>
+    <!-- The newest session window takes focus, which is almost always the
+         one someone just asked for. -->
+    <focusNew>yes</focusNew>
+    <followMouse>no</followMouse>
+    <focusLast>yes</focusLast>
+    <underMouse>no</underMouse>
+    <raiseOnFocus>yes</raiseOnFocus>
+  </focus>
+
+  <placement>
+    <!-- Smart placement keeps a second session's window from landing
+         exactly on top of the first, which is the whole complaint. -->
+    <policy>Smart</policy>
+    <center>yes</center>
+    <monitor>Primary</monitor>
+  </placement>
+
+  <theme>
+    <name>Clearlooks</name>
+    <titleLayout>LC</titleLayout>
+    <keepBorder>yes</keepBorder>
+    <animateIconify>no</animateIconify>
+    <font place="ActiveWindow">
+      <name>Liberation Sans</name>
+      <size>10</size>
+      <weight>Bold</weight>
+    </font>
+    <font place="InactiveWindow">
+      <name>Liberation Sans</name>
+      <size>10</size>
+    </font>
+  </theme>
+
+  <desktops>
+    <!-- One. Multiple desktops would hide windows from the viewer, which
+         is the opposite of what this surface is for. -->
+    <number>1</number>
+    <firstdesk>1</firstdesk>
+    <names><name>browser</name></names>
+    <popupTime>0</popupTime>
+  </desktops>
+
+  <resize>
+    <drawContents>yes</drawContents>
+    <popupShow>Never</popupShow>
+  </resize>
+
+  <applications>
+    <application class="*">
+      <!-- Decorated so each session's window carries its page title —
+           that title is the only way to tell sessions apart in the
+           stream. Maximized so a page is readable at 1440x900 rather
+           than opening at some fraction of it. -->
+      <decor>yes</decor>
+      <maximized>yes</maximized>
+      <focus>yes</focus>
+    </application>
+  </applications>
+
+  <keyboard>
+    <!-- Alt-Tab only. Deliberately no close/kill binding: a stray
+         keystroke over a live VNC session must not be able to end a run
+         that is halfway through a login. -->
+    <keybind key="A-Tab">
+      <action name="NextWindow"/>
+    </keybind>
+    <keybind key="A-S-Tab">
+      <action name="PreviousWindow"/>
+    </keybind>
+  </keyboard>
+
+  <mouse>
+    <context name="Titlebar">
+      <mousebind button="Left" action="Press">
+        <action name="Focus"/>
+        <action name="Raise"/>
+      </mousebind>
+      <mousebind button="Left" action="Drag">
+        <action name="Move"/>
+      </mousebind>
+    </context>
+    <context name="Client">
+      <mousebind button="Left" action="Press">
+        <action name="Focus"/>
+        <action name="Raise"/>
+      </mousebind>
+    </context>
+    <!-- No Desktop context: right-clicking the background opens no menu,
+         because there is nothing on this display a viewer should launch. -->
+  </mouse>
+
+</openbox_config>

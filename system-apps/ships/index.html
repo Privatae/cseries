@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ships</title>
+
+    <link rel="stylesheet" href="/css/tokens.css">
+    <link rel="stylesheet" href="/css/motion.css">
+    <link rel="stylesheet" href="/css/cseries-components.css">
+
+    <link rel="stylesheet" href="/system-apps/ships/style.css">
+</head>
+<body class="cseries-scroll">
+    <div class="app">
+        <header class="app-header">
+            <div class="app-brand">
+                <img src="/system-apps/ships/icon.svg" alt="" class="app-brand-icon">
+                <div class="app-brand-text">
+                    <div class="app-brand-title">Ships</div>
+                    <div class="app-brand-sub label-sys">one plan, one tap, every step signed</div>
+                </div>
+            </div>
+            <nav class="cseries-nav">
+                <button class="cseries-nav-btn active" data-view="runs">Runs</button>
+                <button class="cseries-nav-btn" data-view="pipelines">Pipelines</button>
+                <button class="cseries-nav-btn" data-view="machines">Machines</button>
+                <button class="cseries-nav-btn" data-view="keys">Keys</button>
+            </nav>
+        </header>
+
+        <div class="cseries-seam"></div>
+
+        <main class="app-body">
+            <!-- ── Runs: newest first, every step with its receipt ── -->
+            <section id="view-runs" class="app-view sh-view">
+                <div id="sh-runs-banner" class="status-banner" hidden></div>
+                <div class="view-toolbar">
+                    <select id="r-pipeline" class="filter-select" aria-label="Pipeline">
+                        <option value="">Every pipeline</option>
+                    </select>
+                    <button id="r-refresh" class="cseries-btn ghost" type="button">Refresh</button>
+                </div>
+                <div id="sh-runs" class="stack"></div>
+            </section>
+
+            <!-- ── Pipelines: the files, and Run ── -->
+            <section id="view-pipelines" class="app-view sh-view" hidden>
+                <div class="view-heading">
+                    <h2>Pipelines</h2>
+                    <p class="view-sub">Each pipeline is a file at <code>ships/&lt;name&gt;/pipeline.yaml</code>
+                        beside the ops it runs. Run builds one plan for the whole ship and sends it to your
+                        approval device; nothing reaches a machine until you approve it there.</p>
+                </div>
+                <div id="sh-pipes-banner" class="status-banner" hidden></div>
+                <div id="sh-pipes" class="stack"></div>
+            </section>
+
+            <!-- ── Machines: can each one take a ship step ── -->
+            <section id="view-machines" class="app-view sh-view" hidden>
+                <div class="view-heading">
+                    <h2>Machines</h2>
+                    <p class="view-sub">Every machine a pipeline names. A machine takes a ship step when its
+                        bastion runs action ops (0.46.0 or later), your approval device is pinned there, and a
+                        grant with purpose <em>ship</em> covers it.</p>
+                </div>
+                <div id="sh-machines-banner" class="status-banner" hidden></div>
+                <div id="sh-machines" class="sh-grid"></div>
+            </section>
+
+            <!-- ── Keys: credential names, never values ── -->
+            <section id="view-keys" class="app-view sh-view" hidden>
+                <div class="view-heading">
+                    <h2>Keys</h2>
+                    <p class="view-sub">The credentials each step's op declares, by name, and whether your
+                        Host's vault holds them. A step is sealed its credentials for that one run, to that one
+                        machine; the values never show here.</p>
+                </div>
+                <div id="sh-keys-banner" class="status-banner" hidden></div>
+                <div id="sh-keys" class="stack"></div>
+            </section>
+        </main>
+
+        <footer class="app-footer">
+            <span class="label-sys">ships · 0.1.0</span>
+            <span id="sh-updated" class="label-sys app-footer-right">read: …</span>
+        </footer>
+    </div>
+
+    <div id="sh-confirm" class="confirm-overlay" hidden>
+        <div class="confirm-box" role="dialog" aria-modal="true" aria-labelledby="c-title">
+            <div id="c-title" class="confirm-title"></div>
+            <div id="c-message" class="confirm-message"></div>
+            <input id="c-input" class="cseries-input" type="text" hidden autocomplete="off" spellcheck="false">
+            <div class="confirm-actions">
+                <button id="c-cancel" class="cseries-btn ghost" type="button">Cancel</button>
+                <button id="c-ok" class="cseries-btn primary" type="button">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/system-apps/ships/app.js"></script>
+</body>
+</html>

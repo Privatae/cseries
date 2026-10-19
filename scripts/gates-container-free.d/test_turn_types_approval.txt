@@ -1,0 +1,2 @@
+# 2026-09-26 (turn types, step 4 — design §4.2): the Host drafts, only the person's click decides; the card is the platform's words; one writer of a type's status and profile (repo swept); Once for the next turn only. Stub store; no pod, no DB, no model.
+test_turn_types_approval.py

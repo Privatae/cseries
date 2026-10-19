@@ -1,0 +1,4 @@
+# 2026-10-07: entity_tasks op='list' takes project_id and
+# filters the list and its counts by result.project_id or result.origin's.
+# Fails 8 checks before the fix.
+test_entity_tasks_project_filter.py

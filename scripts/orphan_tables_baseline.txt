@@ -1,0 +1,75 @@
+# Orphan tables: declared in *.sql, referenced by no runtime .py.
+# Accepted/known as of the freeze below. Regenerate with:
+#   python3 scripts/audit_orphan_tables.py --update-baseline
+# The linter FAILS on any orphan NOT listed here (new dead schema).
+
+lifecycle_hooks
+memory_subscriptions
+network_audit
+network_custom_services
+network_service_state
+# debug lane (v093) RETIRED: both tables are DROPped platform-side
+# by the platform's own migration; v093 stays in the
+# immutable migration history. Replaced by support_tickets (v119) + the
+# platform.ticket bridge op.
+bug_reports
+debug_reporters
+# codebook_recommendations retired: dropped
+# by migrations/v094_restoration_two_systems.sql, replaced by the
+# constitution-side rule promoter + direct user sliders. Still declared in
+# the already-shipped migrations/v088_..._codebook_parity.sql (immutable
+# migration history — not edited) and briefly created-then-dropped by v094
+# for a freshly provisioned entity, so it stays orphan-visible by design.
+codebook_recommendations
+# dcn_chunks + dcn_chunk_previews became VISIBLE as orphans when the runtime
+# DDL went, and the way they were hidden is the point. Arm 1 asks "is this
+# table named by any runtime .py", and brain/mastercode/dcn.py's defensive
+# `CREATE TABLE IF NOT EXISTS dcn_chunks ...` mirror counted as a naming. A
+# table's own CREATE is not a reader or a writer; it proves nothing about the
+# table being used. Deleting the mirror removed the thing that was answering
+# arm 1 on their behalf.
+#
+# They are NOT a defect. v091_dcn_route_map.sql declares them as the designed
+# shape of the DCN chunk lane: dcn_chunks carries locator ranges and
+# STRUCTURALLY no content column, and previews live in the separate
+# dcn_chunk_previews guarded by the dcn_preview_tier_guard trigger so a
+# machine-class store can never hold one. That invariant is exercised on every
+# ship by scripts/check_dcn_cn0.py, which INSERTs into both and asserts the
+# trigger refuses — but scripts/ is outside the audit's _CODE_DIRS by design,
+# so a gate is not a caller either.
+#
+# What is genuinely true: nothing in server/ or brain/ writes a chunk row yet.
+# Listed here so the gate stays green and the fact stays visible, not to close
+# the question of when the writer lands.
+dcn_chunks
+dcn_chunk_previews
+# backup_ship_source RETIRED (server/backup_ship.py): the second copy
+# now sends the Host's own newest backup (host_backup_runs). An operator
+# lane still writes this table until the switch-over stops that lane, so it is not
+# dropped yet; the DROP ships with the lane's removal.
+backup_ship_source
+# entity_rate_limits is an orphan: its
+# only reader/writer was brain/mastercode/rate_limiter.py, a per-entity daily
+# API-call limiter that nothing imported — dead code, so it was deleted. The
+# table is declared by init-db.sql and migrations/v099_entity_rate_limits.sql
+# (immutable migration history). Dropping it is a schema change, decided
+# separately; until then it is listed here so the fact stays visible.
+entity_rate_limits
+# catalog_entries + catalog_installs RETIRED (the old
+# open-design catalog): the asset catalog's router, tool and build
+# argument were deleted and migrations/v206_remove_old_catalog_and_coding_packs.sql
+# DROPs both tables on every Host. Still declared by the already-shipped
+# migrations/v009_catalog_tables.sql (immutable migration history — not
+# edited), so a fresh Host creates them and v206 drops them in the same boot;
+# they stay orphan-visible by design, as codebook_recommendations does.
+catalog_entries
+catalog_installs
+# domain_signal_rollup: the retired domain engine's; dropped by migrations/v238_domain_engine_retired.sql,
+# still CREATEd by the shipped migrations a fresh database replays (v019, v196, v205).
+domain_signal_rollup
+# domain_synapse: the retired domain engine's; dropped by migrations/v238_domain_engine_retired.sql,
+# still CREATEd by the shipped migrations a fresh database replays (v019, v196, v205).
+domain_synapse
+# trust_ledger: the retired domain engine's; dropped by migrations/v238_domain_engine_retired.sql,
+# still CREATEd by the shipped migrations a fresh database replays (v019, v196, v205).
+trust_ledger

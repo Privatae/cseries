@@ -1,0 +1,4 @@
+# Dispatch door (seen on a live test run with a chat attachment, entity 9163): a scope name that is no
+# tool is refused naming the real one, an agent left with no tools never starts, and a
+# dispatch naming a file attached this turn is refused. Scripted model; no DB, no pod.
+test_dispatch_door.py

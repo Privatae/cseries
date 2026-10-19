@@ -1,0 +1,5 @@
+# 2026-09-06 (fan-out waves, review Q8): the per-variant stream tail is IDLE,
+# not a 30-minute total, and a tab resumes a cleanly-ended live stream from
+# its cursor — a variant waiting for memory must never freeze. Drives the real
+# route generator with shortened windows; no pod, no network.
+test_stream_tail_resumes.py

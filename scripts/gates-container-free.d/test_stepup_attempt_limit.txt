@@ -1,0 +1,2 @@
+# The second factor's attempt limit: five wrong codes free, then each try waits from the last failure (60 s doubling to an hour), a try inside the wait is not looked at or counted, a right code clears the count, and the backup routes answer 429 with the wait. Stub kernel_secrets; no pod, no DB.
+test_stepup_attempt_limit.py

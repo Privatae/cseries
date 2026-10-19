@@ -1,0 +1,2 @@
+# Code Repositories and Code Approvals: the plain-English approval format, who wrote it from the run records, auto-merge refusing on the hidden marker, mount/fork refusals before any row, seeding a mounted or forked repository with real git (URL rewritten to local bare repos), delete-repo refused before anything changes, no merge route. Fakes for the forge and pool.
+test_code_approvals.py

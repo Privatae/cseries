@@ -1,0 +1,18 @@
+# An installed app's own MCP server is a connection of its
+# Host. manifest `mcp: {path}` only on a process app with a runtime.image; v221
+# (app_id, app:// URLs for app rows only); sync_app at install signs it with
+# the Host's key and drafts no egress rule; calls go straight to the app's pod
+# with the app's own token and never reach the egress gate or the proxy
+# variables (both traps); the skill gate and fencing hold; an image the app
+# returns is kept in the Host's gallery and named, and the Host's own image is
+# sent to the app as a data: URL; a moved pod costs one re-wake; uninstall or a
+# changed manifest refuses and revokes; an app's own server is held to its own
+# limits (a 6 MB image comes back, all ten of ten images are kept); a file of
+# another installed app, named app://<app id>/files/<path>, reaches an app
+# whole as a data: URL, fetched with that app's own token, and an app not
+# installed, a missing file, a name with .. and a call over the shared total
+# are refused, as are the files of a disabled app (its connection row still
+# active) and a handover the holding app does not answer.
+# Real kernel schema (kernel_schema.py), a fake app pod on
+# loopback. Measured: 51 checks, about 20 s.
+test_mcp_app_connections_pg.py

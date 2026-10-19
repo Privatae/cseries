@@ -1,0 +1,17 @@
+
+# A data-bearing app declares its tables and every one of
+# them carries the owner-subject column. That column is what makes a move
+# between databases KEYED rather than a dump: the export selects
+# `WHERE <subject_column> = $1` and carries one person's rows. A table declared
+# without it leaves the whole table as the only possible "move", i.e. every
+# other member's rows too, so the omission is refused rather than defaulted.
+# Drives the SHIPPED validator on every case (data_contract_violations,
+# manifest.load over a real file, validate_publish over a real bundle zip) and
+# pairs every refusal with the nearest accepting manifest, so a validator that
+# started refusing everything fails here instead of taking the store down.
+# Also re-checks all 27 shipped system-apps manifests: `data` is optional with a
+# default, so none of them may have gained a violation.
+# Verified red by mutation: dropping the subject-in-columns check
+# from data_contract_violations fails 5 of 48 checks, named.
+# Static + in-memory against a temp tree; no container, no DB, no network.
+test_app_data_subject_contract.py

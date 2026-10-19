@@ -1,0 +1,42 @@
+# The Host's database, run the way compose.yaml's postgres service runs it.
+# Keep the two in step: a setting changed there changes here.
+#
+# The image is not named here. `cseries-guest configure` writes it, pinned by
+# digest, to cseries-postgres.container.d/image.conf; until it has, this unit
+# does not exist.
+[Unit]
+Description=C-Series database
+Wants=network-online.target
+After=network-online.target
+
+[Container]
+ContainerName=cseries-postgres
+Network=cseries.network
+User=1000
+Group=1000
+ReadOnly=true
+# Writable exactly where Docker's read_only leaves a container writable:
+# compose's /tmp (Docker mounts it noexec) and /dev/shm (64 MB, which
+# PostgreSQL needs). Podman's own read-only defaults would add /run and
+# /var/tmp, and without them it makes /dev/shm read-only, so both are
+# spelled out. /dev itself stays read-only.
+ReadOnlyTmpfs=false
+Tmpfs=/tmp:rw,nosuid,nodev,noexec
+Tmpfs=/dev/shm:rw,nosuid,nodev,noexec,size=65536k
+PidsLimit=4096
+DropCapability=ALL
+NoNewPrivileges=true
+Volume=cseries_pgsock:/var/run/postgresql
+Volume=cseries_pgdata:/app/pgdata
+# The image is pulled once, by `cseries-guest pull`; a boot without a network
+# starts from what is already here.
+Pull=missing
+
+[Service]
+Restart=always
+RestartSec=5
+# A first start may pull the image.
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target

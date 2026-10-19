@@ -1,0 +1,1 @@
+test_session_real_use.py      # playwright chromium + local ports (loopback mock router, a second origin) — only real input reports use (desktop, same-origin and isolated frames via userActivation); polls stop once the session is known ended

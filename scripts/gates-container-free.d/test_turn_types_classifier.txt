@@ -1,0 +1,2 @@
+# 2026-09-26 (turn types, step 3 — design §4.3/§4.8): the platform decides which type a message is before the turn with the pre-turn pick's scorer over each active type's words; a pick lands in the type's thread and teaches it; bound stays, scored moves, held stays; the send reports where it landed. Stub store; no pod, no DB, no model.
+test_turn_types_classifier.py

@@ -1,0 +1,4 @@
+# 2026-09-24 (tickets: one system, two shapes — slice 1): the join between a Circles
+# ticket and a Workbench phase, both directions, plus the credential-ask option
+# shape. Executes the ticket services against a stub pool; no DB, no pod.
+test_tickets_phase_join.py

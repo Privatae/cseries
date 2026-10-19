@@ -1,0 +1,8 @@
+# One web origin per isolated app. The key (pinned vectors), the label grammar (the
+# router's vectors), the real AppOriginGuard on HTTP and WebSocket, the pinned
+# frame-ancestors, the token-to-origin binding in the real token middleware,
+# /launch withholding an isolated app's token from every browser page (the
+# residual: a desktop-origin page asking for Settings' token), frame_token on the
+# app's own origin only, collisions, and app-runner.js frameOrigin run in node.
+# No pod, no DB, no network.
+test_app_origin.py

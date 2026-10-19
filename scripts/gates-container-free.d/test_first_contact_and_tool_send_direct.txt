@@ -1,0 +1,9 @@
+# The two host↔host paths that were still bridge-only — the host_message TOOL's
+# send (every DM the MODEL
+# sends, as opposed to the ones a person types into Circles) and first contact by
+# phone alias. A knock that cannot arrive means no slip is ever issued, and a slip
+# is the sole authority for host↔host messaging, so that one gates the whole
+# relationship. Two of its checks guard regressions this lane has already had: a
+# RECEIVER refusal must be raised and never retried onto the same gate, and the id
+# on the wire must not be the id of our own copy.
+test_first_contact_and_tool_send_direct.py

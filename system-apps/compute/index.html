@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Compute</title>
+<link rel="stylesheet" href="/css/tokens.css">
+<link rel="stylesheet" href="/css/motion.css">
+<link rel="stylesheet" href="/css/cseries-components.css">
+<link rel="stylesheet" href="/system-apps/compute/app.css">
+</head>
+<body>
+<div class="ca-root">
+  <header class="ca-header">
+    <div class="ca-brand">
+      <h1 class="ca-title">Compute</h1>
+      <div class="ca-subtitle">Where your compute and inference go — by project, billable, harness, and run.</div>
+    </div>
+    <div class="ca-header-controls">
+      <div class="ca-lanes" aria-label="The three money lanes">
+        <span class="ca-lane ca-lane-billed" title="Privatae billables — the amounts the platform actually charged. Real, metered money.">Billed</span>
+        <span class="ca-lane ca-lane-est" title="Vendor / inference spend — an ESTIMATE. Your provider's bill is never visible to Privatae, and none of this is billed by Privatae.">Estimate</span>
+        <span class="ca-lane ca-lane-usage" title="Resource usage — seconds, tokens, bytes. Some metered and charged, some metered for visibility only; the Billables view says which, per row.">Usage</span>
+      </div>
+      <div class="ca-window-picker" id="window-picker" role="group" aria-label="Time window">
+        <button type="button" data-window="7d" aria-pressed="false">7d</button>
+        <button type="button" data-window="30d" class="active" aria-pressed="true">30d</button>
+        <button type="button" data-window="90d" aria-pressed="false">90d</button>
+        <button type="button" data-window="all" aria-pressed="false">All</button>
+      </div>
+    </div>
+  </header>
+
+  <nav class="ca-tabs" role="tablist" aria-label="Compute views">
+    <button class="ca-tab active" role="tab" aria-selected="true" data-view="projects">Projects</button>
+    <button class="ca-tab" role="tab" aria-selected="false" data-view="billables">Billables</button>
+    <button class="ca-tab" role="tab" aria-selected="false" data-view="harnesses">Harnesses</button>
+    <button class="ca-tab" role="tab" aria-selected="false" data-view="runs">Runs</button>
+    <button class="ca-tab" role="tab" aria-selected="false" data-view="inference">Inference <span class="ca-tab-est">est</span></button>
+  </nav>
+
+  <main id="view-root" class="ca-view" aria-live="polite">
+    <div class="ca-loading">Loading…</div>
+  </main>
+
+  <footer class="ca-footer">
+    <span id="poll-status"><span class="ca-dot"></span> refreshes every 60s while visible</span>
+    <span id="last-update" aria-live="polite"></span>
+  </footer>
+</div>
+<div id="ca-tooltip" class="ca-tooltip" hidden></div>
+<script src="/system-apps/compute/app.js"></script>
+</body>
+</html>

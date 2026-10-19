@@ -1,0 +1,2 @@
+# 2026-09-28 (routed-path checks): Starlette before 1.0.1 (0.41.3 in the image then) rebuilt request.url from the Host header unchecked, so `Host: x/api/system/health?` opened every route past the localhost-only gate. A Host that could not be a host is refused outermost (HTTP 400, WebSocket close); the security middleware reads only the routed path; the gate is proven against a Host-rebuilt request.url. In-process ASGI; no pod, no network.
+test_routed_path_checks.py

@@ -1,0 +1,4 @@
+# A build's registry row carries its BILLED
+# cost + tokens with provenance (None when the harness reported none); failed runs
+# are classified by kind so a dead stream never scores against the model.
+test_run_ledger_truth.py

@@ -1,0 +1,55 @@
+# image_baked_apps.txt — THE single source of the image-baked app set.
+#
+# One app id per line; '#' comments and blank lines ignored. Sorted.
+#
+# Consumers (all read this file — none holds its own copy any more):
+#   scripts/rebuild_factory_bundles.sh   packs these into /app/native-bundles/
+#   scripts/smoke_test.sh                pins the baked set in the image gate
+#   scripts/test_store_version_bump.py   skips these in the store-lane ratchet
+# The platform DB mirrors the catalog-facing half as
+# app_store_apps.distribution='image' (a platform-side migration); the
+# store-delisted ratchet flags drift between the two.
+#
+# Being here means: the app's .cseries bundle ships inside the entity image
+# and reaches every Host at boot (category-2 ids gate actual install via
+# the manifest's target_entities). It does NOT mean kernel-required —
+# that is server/applications/kernel.py::KERNEL_REQUIRED_APPS (3 ids),
+# a deliberately different, smaller set.
+#
+# History notes carried over from the old rebuild_factory_bundles.sh array:
+#   sites          added (factory-only strand — the UI served stale)
+#   artifacts      added (artifact window)
+#   designs        added (design-template gallery)
+#   getting-started added (first-run walkthrough)
+#   compute        added (store-lane strand — reached nobody;
+#                  stays uninstallable by choice, no store row)
+#   oversight      added (the findings ledger every host
+#                  writes had no window; image-baked like network, no store row)
+#   ships          added (Ships: every Host's pipelines and runs, one plan and
+#                  one tap per ship; image-baked like oversight, no store row)
+#   bench          removed (retired: folded into the Workbench's book
+#                  of pages; kernel.RETIRED_APPS)
+#   calendar       added (the calendar leaves Circles' rail for an app
+#                  of its own; built in and free, no store row)
+#   vscode         removed (retired with the Coding Tutor;
+#                  kernel.RETIRED_APPS)
+agents
+artifacts
+calendar
+circles
+community
+compute
+context-manager
+designs
+getting-started
+gitea
+keys
+network
+oracle
+orchestrator
+oversight
+settings
+ships
+sites
+skills
+workbench

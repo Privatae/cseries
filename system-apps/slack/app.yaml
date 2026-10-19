@@ -1,0 +1,90 @@
+id: slack
+name: Slack
+description: Talk to your Host from Slack. You pair one Slack account with your own Slack app; its direct messages start turns in your chat, and the replies come back in Slack. The app's two tokens stay in Keys.
+icon: icon.png
+icon_small: icon-64.png
+# 1.0.0 (2026-10-05): the Slack connector as a store app, the same shape as
+# the Telegram app (system-apps/telegram): one Slack account, direct messages
+# only, a message in a Slack thread answered in that thread. It reads
+# messages over Socket Mode, so the person's Slack app needs no public URL.
+# Every Web API call goes through the Host with the bot token from Keys, and
+# apps.connections.open with the app-level token; the connector opens the
+# socket URL that call returns, and each picture's upload URL, itself.
+# 1.0.1 (2026-10-05): a message the person shares into the DM goes to the
+# Host as its own message with its origin, so the Host reads it as someone
+# else's words; a rate limit is waited out as long as Slack's Retry-After
+# says (the Host passes it back as retry_after).
+# 1.0.2 (2026-10-08): a failure the connector tries again is logged in plain
+# words ("no connection to Slack this time (broken pipe); trying again in 5
+# s"), never Python's or a status line's ("500 Internal Server Error"), so the
+# Host's app proof no longer reads a connector that recovered as a broken one;
+# a message dropped or a reply let go still reads as the error it is.
+# 1.0.3 (2026-10-09): Slack refusing the sign-in or the connection (auth.test
+# or apps.connections.open answered invalid_auth, token_revoked, missing_scope
+# and the like) and Socket Mode turned off (link_disabled) are no longer
+# asked again every few seconds as ordinary failures: each is logged once as
+# an error, /health answers ok false with it and the app's page says so, and
+# it is checked again every 10 minutes, so a token put right in Keys is
+# picked up without a restart. A message or a picture given up on, and the
+# Host not recording what was sent, read as the errors they are.
+# 1.0.4 (2026-10-09): the report telling the Host what message a reply's part
+# was sent as is tried again when the Host cannot be reached or cannot take
+# it now (429, 5xx), up to 4 times with a growing wait, instead of being lost
+# on the first timeout; given up, it is logged once as an error.
+# 1.0.5 (2026-10-18): the product is renamed C-Series (names, paths, env vars).
+version: "1.0.5"
+provenance: standard
+# No index.html on purpose. A process app whose page has no file on disk is
+# forwarded to its pod (proxy.serve_app), and connector.py answers every path
+# but /health with its status page.
+entrypoint: index.html
+permissions: []
+# Only slack.com. The Web API (slack.com/api) is called through the Host;
+# the Socket Mode socket (wss-primary.slack.com and the like) and the upload
+# URLs (files.slack.com) are its subdomains, which the pod's egress wall lets
+# through for a declared host (sidecars/app-egress/egress.py _host_allowed).
+# The pairing refuses an app that declares no host or any other host.
+network: [slack.com]
+resources:
+  # The pod's memory LIMIT: the burst ceiling of the whole app container
+  # (run.py, the platform's wrapper, and connector.py), which reserves
+  # nothing. Lean: connector.py holds one picture at a time and uploads it a
+  # piece at a time. Measured by part M of
+  # scripts/test_connector_slack_example.py, which runs the pod's real shape
+  # under this limit and fails on an OOM kill. The container's cgroup on
+  # 2026-10-05, five runs: idle and listening 37.2-40.6 MiB (52.7 once, 14.9
+  # of it page cache); one reply with three of the largest pictures the Host
+  # streams (10 MiB) peak 54.9-59.9; three replies at once with one each peak
+  # 62.2-66.4, and once 80.0, the limit, when page cache (17.8 MiB) filled it
+  # and was reclaimed with no OOM kill (memory.peak counts page cache, which
+  # the kernel reclaims before it kills). Under a 56 MiB limit the
+  # three-at-once case was OOM-killed; under 80 every case passed in every
+  # run.
+  # The limit cannot go below 128: the operator gives every process app's
+  # pod a 128 MiB memory REQUEST (rendered with this number as the limit),
+  # and Kubernetes refuses a pod
+  # whose request is above its limit. The reservation, which is what the
+  # person's plan pays for, is that 128 whatever this says; the measured
+  # use above is what the Host-managed allocation work
+  # starts this app's reservation from.
+  baseline_memory_mi: 128
+runtime:
+  kind: process
+  image: python
+  lifecycle: resident
+  command: ["python3", "connector.py"]
+  ready_path: /health
+window:
+  title: Slack
+  width: 520
+  height: 240
+  resizable: true
+prompt_behavior:
+  what_it_is: |
+    The Slack app lets ONE Slack account the person pairs talk to them
+    through their own chat: a direct message to their Slack app starts a
+    turn in one of their threads, and the reply goes back to Slack. Its
+    window only shows what the connector is doing. Setting it up (the Slack
+    app at api.slack.com, its two tokens in Keys, the pairing, the approval)
+    and how messages find their thread is skill 'connectors'.
+  user_path: "the Slack app (install it from the App Store); the pairing and the approval are in the Network app"

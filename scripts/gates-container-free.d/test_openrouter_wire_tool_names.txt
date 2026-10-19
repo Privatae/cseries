@@ -1,0 +1,6 @@
+# The gateway renamed dotted tool names for every
+# OpenAI-wire provider EXCEPT openrouter; openai/gpt-4o-mini via openrouter then
+# 400'd every Workbench turn ("tools[16].function.name ... ^[a-zA-Z0-9_-]+$")
+# and the turn ended with no reply. Drives the real _call_remote: wire-safe names
+# in the tools array and replayed history, registry names back to the caller.
+test_openrouter_wire_tool_names.py

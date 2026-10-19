@@ -1,0 +1,68 @@
+id: security
+name: Security
+description: Approve or refuse what your host asks to reach, and scan your machine for known weaknesses.
+icon: icon.png
+icon_small: icon-64.png
+entrypoint: index.html
+provenance: standard
+system: true
+# 2.0.5 (2026-08-25): prompt_behavior described the scanner and nothing else,
+# so a host BLOCKED on its own pending access request had no way to route the
+# user to the screen that unblocks it — Approvals is a first-class view
+# (index.html:25-28) and is what app.js:327-380 spends most of its code on,
+# duration picker included. Manifest-only change; store-lane app, so the bump
+# is what carries it.
+# 2.0.6 (2026-10-01): the HTML escape helper escapes both quotes as well, so a
+# value from the Host, a machine or a provider stays inside the attribute it
+# is written into. App-only change.
+version: "2.0.6"
+# Environment-catalog facts (host-facing, code-true). Source for the L1
+# topology block + describe_app. This is a control panel, not a conversational
+# surface, so the load-bearing content lives in what_it_is (the only field
+# describe_app returns besides user_path); the do_when_active line is the same
+# rule for the case where this app IS the active surface.
+prompt_behavior:
+  what_it_is: |
+    Security is where the user says yes or no to what their host is allowed
+    to reach, and where the machine is checked for known weaknesses. Six
+    views: Overview, Approvals, Permissions, Processes, Network, History.
+
+    APPROVALS IS THE ONE THAT BLOCKS WORK. When you need access to something
+    you do not already have, the request waits here until the user answers
+    it. They allow or refuse each one, and when they allow it they choose
+    how long it lasts: just this once, ten minutes, an hour, or always.
+    Nothing you asked for happens until they do. So if you are stuck waiting
+    on your own access request, say exactly what you asked for and send the
+    user to Security → Approvals — the pending count shows on the tab, and
+    "Nothing pending" means there is nothing of yours waiting.
+
+    The rest of the app reports rather than gates: scans of the user's
+    container (packages, operating-system settings, services listening on
+    the network) and the problems they turn up, what is currently running,
+    the network picture, and a history of what was decided. Scans read
+    system state only — never the user's documents. Changing a network rule
+    is not done here; that is proposed and approved in the Network app.
+  do_when_active:
+    - "If you are waiting on an access request of your own, name the exact thing you asked for and point the user at the Approvals tab. Do not say you are blocked without saying where to unblock you."
+    - "When the user is deciding on a request, explain what allowing it would let you do and offer the shortest duration that gets the job done — 'just this once' is a real answer, not a lesser one."
+    - "A scan finding is information, not an emergency. Say what it means in plain words and what the user would actually gain by fixing it."
+  user_path: "the Security app, in the dock — the Approvals tab is where requests from your host wait"
+
+window:
+  title: Security
+  width: 900
+  height: 640
+  resizable: true
+  min_width: 600
+  min_height: 400
+
+permissions:
+  - execute:scan
+  - read:incidents
+  - read:network
+  - read:policy
+  - read:processes
+  - read:signals
+  - write:incident_decision
+  - write:network
+  - write:policy_proposals

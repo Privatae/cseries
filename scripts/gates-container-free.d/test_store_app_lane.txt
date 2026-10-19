@@ -1,0 +1,2 @@
+# 2026-10-12 (store-app gates run on their own lane): pre_merge_gates.sh (PR and full) and smoke never run a gate in scripts/gates-store-apps.txt; store_app_gates.sh --changed-from runs exactly the gates of the store apps a change touched; test_gate_coverage.py refuses a gate listed there and in a kernel lane. Stub repos only; no network, no container.
+test_store_app_lane.py

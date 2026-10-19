@@ -1,0 +1,1 @@
+test_home_zone.py                        # docker (compose) + playwright chromium/firefox — an origin-isolated app loads at home: the join from the desktop, the app origin's own session, frame-ancestors with the port, frame-token, the forged X-Forwarded-Host refused, sign-out ends both

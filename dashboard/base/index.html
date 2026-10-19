@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Privatae Host</title>
+    <link rel="icon" type="image/svg+xml" href="/assets/favicon.svg">
+    <link rel="icon" type="image/x-icon" href="/assets/favicon.ico">
+    <link rel="icon" type="image/png" sizes="64x64" href="/assets/favicon.png">
+    <link rel="apple-touch-icon" href="/assets/apple-touch-icon.png">
+    <link rel="stylesheet" href="/css/tokens.css?v=__PC_TAG__">
+    <link rel="stylesheet" href="/css/motion.css?v=__PC_TAG__">
+    <link rel="stylesheet" href="/css/cseries-components.css?v=__PC_TAG__">
+    <link rel="stylesheet" href="/css/theme.css?v=__PC_TAG__">
+    <link rel="stylesheet" href="/css/desktop.css?v=__PC_TAG__">
+    <link rel="stylesheet" href="/css/dock-menu.css?v=__PC_TAG__">
+    <link rel="stylesheet" href="/css/boot-screen.css?v=__PC_TAG__">
+    <link rel="stylesheet" href="/css/floating-apps.css?v=__PC_TAG__">
+    <link rel="stylesheet" href="/css/widget-layer.css?v=__PC_TAG__">
+</head>
+<body>
+    <div id="boot-screen" aria-hidden="true">
+        <div class="boot-brand">
+            <div class="boot-title">Privatae Host</div>
+            <div class="boot-sub">loading..</div>
+        </div>
+    </div>
+    <!-- Desktop Surface -->
+    <div id="desktop">
+        <div id="desktop-icons"></div>
+        <div id="presence-line" class="presence-line" aria-live="polite"></div>
+        <div id="window-layer"></div>
+        <!-- Shell-owned floating widgets — sibling of #window-layer, stacked
+             above it (see #widget-layer in widget-layer.css) -->
+        <div id="widget-layer"></div>
+    </div>
+
+    <!-- Dock menu (app launcher popup) -->
+    <div id="dock-backdrop" class="dock-backdrop hidden"></div>
+    <div id="dock-menu" class="dock-menu hidden">
+        <div class="dock-head">
+            <div class="dock-brand">
+                <svg class="dock-logo" viewBox="-0.5 -0.5 17 21" width="32" height="40" aria-hidden="true" style="flex:none;">
+                    <rect x="0" y="0" width="16" height="4" rx="1.5" fill="none" stroke-width="0.8" style="stroke:var(--cseries-ember)"/>
+                    <rect x="0" y="8" width="16" height="4" rx="1.5" style="fill:var(--cseries-bright)"/>
+                    <rect x="0" y="16" width="16" height="4" rx="1.5" fill="none" stroke-width="0.8" style="stroke:var(--cseries-ember)"/>
+                </svg>
+                <div class="dock-brand-text">
+                    <div class="dock-brand-title">Privatae Host</div>
+                    <div class="label-sys dock-brand-sub">Apps &middot; Skills &middot; Places</div>
+                </div>
+                <span id="dock-app-count" class="cseries-pill info"></span>
+            </div>
+            <input id="dock-search" class="cseries-input" placeholder="Search apps..." autocomplete="off">
+        </div>
+        <div class="cseries-seam active"></div>
+        <div id="dock-grid-wrap" class="dock-grid-wrap cseries-scroll">
+            <div class="label-sys dock-section-label">All apps</div>
+            <div id="dock-grid" class="dock-grid"></div>
+        </div>
+        <div class="cseries-seam"></div>
+        <div class="dock-footer">
+            <div class="dock-footer-left">
+                <span class="status-dot cseries-presence-dot connected"></span>
+                <span id="dock-entity" class="label-sys">Host &middot; ready</span>
+            </div>
+            <span class="label-sys dock-footer-right">Privatae Host</span>
+        </div>
+    </div>
+
+    <!-- Floating apps dock (bottom-right bubbles for always-on apps) -->
+    <div id="floating-dock"></div>
+
+    <!-- Taskbar -->
+    <div id="taskbar">
+        <div id="taskbar-left">
+            <button id="btn-menu" class="taskbar-btn taskbar-start" title="Apps" aria-label="Apps">
+                <!-- Logo strokes/fills are tokens (style="", not presentation
+                     attributes — SVG attributes cannot take var()), so a
+                     design's --cseries-ember / --cseries-bright recolour the mark. -->
+                <svg class="start-logo" viewBox="-0.5 -0.5 17 21" width="20" height="25" aria-hidden="true" style="flex:none;">
+                    <rect x="0" y="0" width="16" height="4" rx="1.5" fill="none" stroke-width="1" style="stroke:var(--cseries-ember)"/>
+                    <rect x="0" y="8" width="16" height="4" rx="1.5" style="fill:var(--cseries-bright)"/>
+                    <rect x="0" y="16" width="16" height="4" rx="1.5" fill="none" stroke-width="1" style="stroke:var(--cseries-ember)"/>
+                </svg>
+            </button>
+        </div>
+        <div id="taskbar-center"></div>
+        <div id="taskbar-right">
+            <span id="entity-status" class="entity-indicator">
+                <span class="status-dot cseries-presence-dot"></span>
+                <span id="entity-name">Starting up...</span>
+            </span>
+            <!-- The machine: the pod's memory in use against the plan. No
+                 balance chip here: billing is postpaid,
+                 one monthly balance, and it lives in the Compute app — the
+                 taskbar is design surface, not a meter. -->
+            <button id="tray-resources" class="taskbar-btn tray-chip" title="Your machine — memory in use">—</button>
+            <button id="btn-support" class="taskbar-btn" title="Help &amp; Support">?</button>
+            <!-- Show desktop: minimize every window, expose the desktop
+                 surface; click again to bring them back (js/taskbar.js). -->
+            <button id="btn-show-desktop" class="taskbar-btn" title="Show desktop" aria-label="Show desktop" aria-pressed="false">
+                <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
+                    <rect x="1.5" y="2.5" width="13" height="9" rx="1.5"/>
+                    <path d="M5 14h6"/>
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <!-- The machine panel (memory, every unit, every process) — a sibling of
+         #taskbar, not a child: a design that draws its own bar hides #taskbar
+         (body.design-bar) and opens this panel from its own machine control
+         (desktop:machine), so it must not vanish with the taskbar. -->
+    <div id="tray-resources-panel" class="tray-panel hidden">
+        <div class="tray-panel-header label-sys">System resources</div>
+        <div id="tray-resources-detail" class="tray-panel-list">
+            <div class="tray-panel-empty">Loading…</div>
+        </div>
+    </div>
+
+    <!-- Support modal -->
+    <div id="support-modal" class="hidden support-modal">
+        <div class="support-title">Help &amp; Support</div>
+        <div class="support-links">
+            <a href="https://privatae.ai/support" target="_blank" rel="noopener" class="support-link">Documentation</a>
+            <a href="mailto:support@privatae.ai" class="support-link">Email Support</a>
+            <div class="support-footer label-sys">Privatae Host</div>
+        </div>
+    </div>
+
+    <!-- shell-token.js first of all: it starts minting the shell's scoped app
+         token immediately, so the mint is already in flight by the time the
+         gated pollers (presence.js, floating-apps.js) make their first call.
+         Nothing blocks on it — a slow mint costs one poll cycle, not a render.
+         icons.js next: it owns window.iconMarkup for every consumer below.
+         viewport.js after that: it owns the phone-mode breakpoint the window
+         manager, app runner, and wallpaper all read. -->
+    <script src="/js/shell-token.js?v=__PC_TAG__"></script>
+    <script src="/js/icons.js?v=__PC_TAG__"></script>
+    <script src="/js/viewport.js?v=__PC_TAG__"></script>
+    <script src="/js/desktop-layout.js?v=__PC_TAG__"></script>
+    <!-- sandbox-csp.js before desktop-surface.js: it defines the policy every
+         host-authored frame is mounted under, and swapFrame reads it. -->
+    <script src="/js/sandbox-csp.js?v=__PC_TAG__"></script>
+    <!-- desktop-surface.js before desktop.js: applyWallpaper hands the
+         appearance payload to DesktopSurface.apply (the HTML desktop). -->
+    <script src="/js/desktop-surface.js?v=__PC_TAG__"></script>
+    <script src="/js/desktop.js?v=__PC_TAG__"></script>
+    <script src="/js/taskbar.js?v=__PC_TAG__"></script>
+    <script src="/js/app-runner.js?v=__PC_TAG__"></script>
+    <script src="/js/desktop-restore.js?v=__PC_TAG__"></script>
+    <script src="/js/walkthrough-autolaunch.js?v=__PC_TAG__"></script>
+    <script src="/js/deep-link.js?v=__PC_TAG__"></script>
+    <script src="/js/session-keeper.js?v=__PC_TAG__"></script>
+    <script src="/js/dock-menu.js?v=__PC_TAG__"></script>
+    <script src="/js/tray-status.js?v=__PC_TAG__"></script>
+    <script src="/js/presence.js?v=__PC_TAG__"></script>
+    <script src="/js/ws-client.js?v=__PC_TAG__"></script>
+    <script src="/js/floating-apps.js?v=__PC_TAG__"></script>
+    <script src="/js/widget-layer.js?v=__PC_TAG__"></script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+# 2026-09-28 (Ships phase 0, bastion 0.45.0): an op sees only what it declares. The manifest's
+# reads, the credential-store refusal (the box's list and overlap rule), and no op door to a
+# box that does not report op_view_closed. Shared stubs; no DB, no pod.
+test_op_view_closed.py

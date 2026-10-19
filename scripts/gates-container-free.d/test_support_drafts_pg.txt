@@ -1,0 +1,5 @@
+# 2026-10-07: support tickets, against a real kernel schema, through the Host's
+# tickets tool: op='list' returns decision rows small, support_update rewrites
+# a draft in place, the shared context names no provider account or request,
+# and a ticket about a harness run offers that run's outcome and log end.
+test_support_drafts_pg.py

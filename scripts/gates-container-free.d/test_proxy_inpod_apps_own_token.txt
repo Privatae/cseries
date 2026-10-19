@@ -1,0 +1,2 @@
+# 2026-09-27 (SECURITY, in-pod app backends): an app backend in the Host container (kind=process with no runtime.image, kind=external with no runtime.harness, the loopback WebSocket) answers only its own window token or a current verify cap for that app; claude-code's real UI call paths are forwarded with its token and refused with another app's, none, or a rotated-secret token. Loopback fake sidecar, stub registry/pool/secret; no pod, no DB.
+test_proxy_inpod_apps_own_token.py

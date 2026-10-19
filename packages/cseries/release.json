@@ -1,0 +1,12 @@
+{
+  "version": "dev",
+  "images": {
+    "host": {"ref": "ghcr.io/privatae/cseries:dev", "digest": "dev"},
+    "postgres": {"ref": "ghcr.io/privatae/cseries-postgres:dev", "digest": "dev"}
+  },
+  "guest": {
+    "wsl-x64": {"url": "dev", "sha256": "dev"},
+    "wsl-arm64": {"url": "dev", "sha256": "dev"}
+  },
+  "bastion": {"min_version": "0.53.0"}
+}

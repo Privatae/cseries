@@ -1,0 +1,3 @@
+# No original conversation (2026-10-12): the threadless-send net leaves project, thread and
+# hidden-lane sends alone; a decided decision forward-turn starts and is followed. No DB.
+test_no_original_conversation.py

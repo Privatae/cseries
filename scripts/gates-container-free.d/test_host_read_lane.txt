@@ -1,0 +1,1 @@
+test_host_read_lane.py        # the host reads PDF/Office itself, tags kept (2026-09-22)

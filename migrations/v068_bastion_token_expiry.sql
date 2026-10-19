@@ -1,0 +1,14 @@
+-- v068 (2026-06-21): bastion bearer expiry — B1, bastion security cleanup (finding #1).
+--
+-- The bastion WS lanes (/bastion-egress|mgmt|harness) and /mcp authed a bastion bearer
+-- with ONLY revoked_at — a captured bearer replayed indefinitely (no expiry, no nonce).
+-- Add a sliding expiry: set at mint (server/network/bastion_enroll.redeem, now()+7d) and
+-- renewed on every heartbeat (server/network/topology.upsert_heartbeat). A live bastion
+-- keeps its bearer fresh; a decommissioned one's bearer dies 7d after its last heartbeat,
+-- bounding a leaked-but-unused bearer.
+--
+-- NULL = no expiry: bearer-only / pasted tokens (sovereign full access, #3) AND
+-- pre-B1 bastion rows until their first post-deploy heartbeat renews them — so nothing
+-- locks out on deploy. Enforcement is additive in synaptive_handler._validate_bearer and
+-- the three WS-relay auth queries: `expires_at IS NULL OR expires_at > now()`.
+ALTER TABLE mcp_client_tokens ADD COLUMN IF NOT EXISTS expires_at timestamptz;

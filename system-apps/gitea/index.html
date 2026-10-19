@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gitea</title>
+
+    <!-- C-Series design system. Always load in this order. -->
+    <link rel="stylesheet" href="/css/tokens.css">
+    <link rel="stylesheet" href="/css/motion.css">
+    <link rel="stylesheet" href="/css/cseries-components.css">
+
+    <!-- App-specific styles last -->
+    <link rel="stylesheet" href="/system-apps/gitea/style.css">
+</head>
+<body class="cseries-scroll">
+    <div class="app">
+        <header class="app-header">
+            <div class="app-brand">
+                <img src="/system-apps/gitea/icon-64.png" alt="" class="app-brand-icon">
+                <div class="app-brand-text">
+                    <div class="app-brand-title">Gitea</div>
+                    <div class="app-brand-sub label-sys">your code · Gitea</div>
+                </div>
+            </div>
+
+            <nav class="cseries-nav">
+                <button class="cseries-nav-btn active" data-view="user" type="button">Your repos</button>
+                <button class="cseries-nav-btn" data-view="host" type="button">Host repos</button>
+                <button class="cseries-nav-btn" data-view="perms" type="button">Permissions</button>
+                <button class="cseries-nav-btn" data-view="mirrors" type="button">Mirrors</button>
+            </nav>
+        </header>
+
+        <div class="cseries-seam"></div>
+
+        <main class="app-body">
+            <!-- YOUR REPOS: the logged-in user's own repositories -->
+            <section id="view-user" class="app-view">
+                <div id="user-list" class="gitea-repos">
+                    <div class="cseries-empty"><span class="empty-title">Loading your repositories…</span></div>
+                </div>
+            </section>
+
+            <!-- HOST REPOS: the host's own gitea identity (its clean room) -->
+            <section id="view-host" class="app-view" hidden>
+                <p class="gitea-lens-caption label-sys">The host’s own git — the clean room it drafts and builds in, and opens pull requests toward you from. Review and merge those in the Workbench.</p>
+                <div id="host-list" class="gitea-repos">
+                    <div class="cseries-empty"><span class="empty-title">Loading…</span></div>
+                </div>
+            </section>
+
+            <!-- PERMISSIONS: grant the host access to your repos -->
+            <section id="view-perms" class="app-view" hidden>
+                <p class="gitea-lens-caption label-sys">Grant the host access to your repositories — <strong>Read</strong> to let it read, <strong>Write</strong> to let it build. This adds the host as a collaborator on your gitea repo; <strong>Revoke</strong> removes it. You’re in control, per repo, any time.</p>
+                <div id="perms-list" class="gitea-repos">
+                    <div class="cseries-empty"><span class="empty-title">Loading…</span></div>
+                </div>
+            </section>
+
+            <!-- MIRRORS: keep GitHub repos synced into your gitea, automatically -->
+            <section id="view-mirrors" class="app-view" hidden>
+                <p class="gitea-lens-caption label-sys">Bring your GitHub repositories home — pick repos and Gitea keeps a private copy current automatically (no AI involved, ever). GitHub is never written to.</p>
+                <div id="mirrors-github" class="gitea-repos"></div>
+                <div id="mirrors-list" class="gitea-repos">
+                    <div class="cseries-empty"><span class="empty-title">Loading…</span></div>
+                </div>
+                <div id="mirrors-picker" class="gitea-repos" hidden></div>
+            </section>
+
+            <!-- Shared browse detail (opened from Your repos / Host repos) -->
+            <div id="repo-detail" hidden>
+                <div class="gitea-detail-head">
+                    <button id="repo-back" class="cseries-btn ghost" type="button">← Back</button>
+                    <div class="gitea-detail-title">
+                        <span id="repo-detail-name" class="gitea-repo-name"></span>
+                        <span id="repo-detail-vis" class="cseries-pill" hidden></span>
+                        <span id="repo-detail-branch" class="cseries-pill" hidden></span>
+                    </div>
+                    <div id="repo-detail-desc" class="label-sys"></div>
+                </div>
+
+                <nav class="cseries-nav gitea-subnav">
+                    <button class="cseries-nav-btn active" data-pane="files" type="button">Files</button>
+                    <button class="cseries-nav-btn" data-pane="commits" type="button">Commits</button>
+                    <button class="cseries-nav-btn" data-pane="branches" type="button">Branches</button>
+                </nav>
+
+                <div id="pane-files" class="gitea-pane">
+                    <div id="files-breadcrumb" class="gitea-breadcrumb label-sys"></div>
+                    <div id="files-body">
+                        <div class="cseries-empty"><span class="empty-title">Loading…</span></div>
+                    </div>
+                </div>
+                <div id="pane-commits" class="gitea-pane" hidden></div>
+                <div id="pane-branches" class="gitea-pane" hidden></div>
+            </div>
+        </main>
+
+        <footer class="app-footer">
+            <span class="label-sys">gitea · 0.7.1</span>
+            <span id="gitea-status" class="label-sys app-footer-right" aria-live="polite">checking…</span>
+        </footer>
+    </div>
+
+    <script src="/system-apps/gitea/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,727 @@
+# C-Series Personal Computer — Container Image
+#
+# The entity KERNEL: FastAPI dashboard + brain runtime + app machinery.
+# Entity manages and customizes everything. CEIGAS governs every action.
+#
+# The database is NOT in this image. PostgreSQL 17 + pgvector + AGE ship as
+# cseries-postgres (Dockerfile.postgres), a peer container in the same pod
+# sharing the run-pgsock volume. This image keeps the PG CLIENT because the
+# kernel still owns its schema. A kernel image built from this file will NOT
+# boot in a pod that has no postgres container.
+#
+# Security posture (14 layers — see build doc):
+#   - Debian-slim base (minimal packages, glibc for Ollama compat)
+#   - Non-root user (privatae, UID 1000)
+#   - Read-only rootfs (docker-compose enforced)
+#   - cap_drop ALL, no-new-privileges
+#   - Custom seccomp (memfd_create, ptrace, unshare blocked)
+#   - SUID/SGID stripped
+#   - PID/CPU/memory limits (docker-compose enforced)
+#   - Localhost-only dashboard port
+#   - mTLS to tunnel proxy (CEIGAS CA)
+#   - CEIGAS governance on every API call
+#
+# Services in this image:
+#   - FastAPI (dashboard SPA, API routes, relay client)
+#   - the brain runtime + the app/bundle machinery
+#   - the PG client only (psql/pg_isready) — the server is cseries-postgres
+
+# ============================================================
+# Stage 1: Build (install Python deps + Claude Code CLI)
+# ============================================================
+# Digest-pinned to the EXPLICIT bookworm tag:
+# the bare :3.14-slim tag follows Debian generations silently, and PGDG's
+# ${VERSION_CODENAME}-pgdg repo below must match the base. Bump = change tag
+# AND digest together (docker buildx imagetools inspect python:3.14-slim-bookworm).
+FROM python:3.14-slim-bookworm@sha256:5127143f679a1bcf59e6b9ea1a95e6cef8b8d0905bf1ca459a7f0141398ddc4f AS builder
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc libffi-dev libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Python deps (pinned versions from audit)
+COPY requirements.txt /build/requirements.txt
+RUN pip install --no-cache-dir --prefix=/install -r /build/requirements.txt
+
+# Code search's tree-sitter parsers, in the image. tree-sitter-language-pack
+# ships no grammars: get_parser() fetches a 22 MB bundle from github.com on
+# first use into ~/.cache, and a Host pod's home is an emptyDir — measured
+# on a live Host, the cache did not exist until a chunk call made the
+# pod download it, and every restart starts over (where egress is closed it
+# never loads, and every file is chunked by line window, not by function).
+# prefetch() verifies the bundle against the release manifest's sha256; only
+# the grammars the chunker parses (chunker.CHUNKABLE_NODE_TYPES, read from the
+# source, not retyped) are kept, and the bundle itself is dropped. The pack
+# refuses a cache it does not own, so the runtime stage hands it to privatae.
+# This step is the only thing that creates /install/share, and it leaves it
+# mode 0700; `COPY --from=builder /install /usr/local` carries that mode onto
+# /usr/local/share, and the privatae user then cannot reach the parsers at all
+# (the parsers gate then fails on every grammar). The chmod puts it back to 0755.
+COPY brain/codesearch/chunker.py /build/chunker.py
+RUN cd /build && TREE_SITTER_LANGUAGE_PACK_CACHE_DIR=/install/share/tree-sitter-language-pack \
+    PYTHONPATH=/install/lib/python3.14/site-packages:/build python3 -c "import sys; \
+import tree_sitter_language_pack as t; from chunker import CHUNKABLE_NODE_TYPES as C; \
+want = sorted(C); t.prefetch(want); missing = set(want) - set(t.downloaded_languages()); \
+sys.exit(f'tree-sitter parsers not baked: {sorted(missing)}') if missing else print('baked', want)" \
+    && find /install/share/tree-sitter-language-pack \( -name bundles -o -name .download.lock \) -prune \
+            -exec rm -rf {} + \
+    && test -z "$(find /install/share/tree-sitter-language-pack -name '*.tar.zst')" \
+    && chmod 0755 /install/share
+
+# age, for the Host's own backups and exports (server/host_backup.py,
+# server/host_export.py): every file is encrypted with age before it leaves
+# the Host, to the owner's Host recovery key and their bastions' keys (an
+# export: to the key the owner confirmed), none of which the platform holds.
+# The official release, pinned by the sha256 of the release archive
+# (github.com/FiloSottile/age releases), unpacked with Python. The release's
+# LICENSE (BSD-3-Clause) is kept beside the binary: redistributing age means
+# carrying its notice, and the runtime stage installs it at
+# /usr/share/doc/age/LICENSE.
+# One archive per architecture, each pinned: AGE_SHA256 is the linux-amd64
+# archive's, AGE_SHA256_ARM64 the linux-arm64 one's (both are the digests the
+# release publishes for its assets). TARGETARCH is set by BuildKit to the
+# platform being built; any other architecture stops the build here.
+ARG AGE_VERSION=1.3.2
+ARG AGE_SHA256=cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10
+ARG AGE_SHA256_ARM64=6b8dc4333c53a5a57c9e5834e3a48f92605d7154014cd07269ff3327db5d37f4
+ARG TARGETARCH
+RUN python3 -c "import hashlib, io, os, sys, tarfile, urllib.request; \
+v, arch = os.environ['AGE_VERSION'], os.environ.get('TARGETARCH', ''); \
+want = {'amd64': os.environ['AGE_SHA256'], 'arm64': os.environ['AGE_SHA256_ARM64']}.get(arch) or sys.exit(f'age: no pinned archive for TARGETARCH={arch!r}'); \
+raw = urllib.request.urlopen(f'https://github.com/FiloSottile/age/releases/download/v{v}/age-v{v}-linux-{arch}.tar.gz', timeout=120).read(); \
+got = hashlib.sha256(raw).hexdigest(); \
+sys.exit(f'age sha256 {got} != {want}') if got != want else None; \
+tar = tarfile.open(fileobj=io.BytesIO(raw)); \
+open('/install/age', 'wb').write(tar.extractfile('age/age').read()); \
+open('/install/age-LICENSE', 'wb').write(tar.extractfile('age/LICENSE').read())" \
+    && chmod 0755 /install/age && chmod 0644 /install/age-LICENSE
+
+# The one font the connector picture renderer draws in (server/connectors/
+# picture.py SHIPPED_FONT): InterVariable.ttf from the Inter 4.1 release, with
+# its licence (OFL-1.1, which asks that the licence travel with the font).
+# Fetched from the release tag and pinned by sha256; the file is the same, byte
+# for byte, as the copy pictex shipped before the renderer moved to Takumi.
+# It lands at /usr/local/share/cseries/fonts (the runtime stage copies
+# /install to /usr/local): under the interpreter's prefix, where the renderer's
+# child looks for it (_picture_child.FONT_FILE), and outside every path where
+# the Host keeps data, so the child may allow reads of that directory alone.
+ARG INTER_VERSION=4.1
+ARG INTER_TTF_SHA256=4989b125924991b90d05b2d16e0e388c48f7d5bb8b30539bbf9c755278d0ccaf
+ARG INTER_LICENSE_SHA256=262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a
+RUN python3 -c "import hashlib, os, sys, urllib.request; \
+v, d = os.environ['INTER_VERSION'], '/install/share/cseries/fonts'; \
+get = lambda path: urllib.request.urlopen(f'https://raw.githubusercontent.com/rsms/inter/v{v}/{path}', timeout=120).read(); \
+ttf, lic = get('docs/font-files/InterVariable.ttf'), get('LICENSE.txt'); \
+bad = [n for n, raw, sha in (('InterVariable.ttf', ttf, os.environ['INTER_TTF_SHA256']), \
+                             ('LICENSE.txt', lic, os.environ['INTER_LICENSE_SHA256'])) \
+       if hashlib.sha256(raw).hexdigest() != sha]; \
+sys.exit(f'Inter {v}: sha256 mismatch for {bad}') if bad else None; \
+os.makedirs(d, exist_ok=True); \
+open(f'{d}/InterVariable.ttf', 'wb').write(ttf); open(f'{d}/LICENSE.txt', 'wb').write(lic)" \
+    && chmod 0755 /install/share /install/share/cseries /install/share/cseries/fonts \
+    && chmod 0644 /install/share/cseries/fonts/InterVariable.ttf /install/share/cseries/fonts/LICENSE.txt
+
+# No Claude Code CLI npm package: its duplicated npm copies (~440MB) served
+# no runtime purpose. The Python SDK (claude_agent_sdk, which bundles its own
+# `claude` binary) is not in this image either (requirements.txt), and nothing
+# in the Host uses it: its last reader, the Designs import job, is retired and
+# the claude-code app no longer installs it (it deletes the old per-app cache
+# at start). The coding harness bakes its own copy into its image.
+
+# ============================================================
+# What the Debian and PostgreSQL archives publish right now
+# ============================================================
+# Docker reuses a RUN layer from its build cache while the line and its
+# inputs are unchanged, whatever Debian has published since. Measured: a CI
+# build reused an apt layer two days old with perl 5.36.0-7+deb12u3, and the
+# CVE gate failed on 12 fixable criticals (across perl, perl-base,
+# perl-modules-5.36 and libperl5.36) that the same layer built that day does
+# not have (deb12u4). The release build runs with --no-cache for the same
+# reason; this is for the builds that keep their cache, CI's among them.
+# The runtime stage's apt layer mounts these four index files, so its cache
+# holds exactly until one of the archives it reads publishes something, and
+# nothing of them lands in the image. Needs BuildKit (RUN --mount), which both
+# builds use.
+FROM scratch AS apt-indexes
+ADD https://deb.debian.org/debian/dists/bookworm/InRelease debian-bookworm
+ADD https://deb.debian.org/debian/dists/bookworm-updates/InRelease debian-bookworm-updates
+ADD https://deb.debian.org/debian-security/dists/bookworm-security/InRelease debian-bookworm-security
+ADD https://apt.postgresql.org/pub/repos/apt/dists/bookworm-pgdg/InRelease pgdg-bookworm
+
+# ============================================================
+# Stage 2: Runtime (minimal, hardened)
+# ============================================================
+#
+# No Ollama in the image: entity pods hold no
+# embedding models. Embeds go to the configured embedding backend
+# instead. Image is ~1.1GB smaller as a result.
+# ============================================================
+FROM python:3.14-slim-bookworm@sha256:5127143f679a1bcf59e6b9ea1a95e6cef8b8d0905bf1ca459a7f0141398ddc4f
+
+# Runtime-only system deps — NO compilers, NO recon tools
+# PGDG repo required for the PG17 CLIENT on bookworm (Debian ships 15).
+# The connector picture renderer (server/connectors/picture.py) needs no system
+# package at all: pytakumi links only glibc and libgcc_s, and its font is
+# installed by the builder stage above. (The GL dispatch libraries and the
+# no-vendor stub package that skia-python needed left with it.)
+#
+# The slim base's /etc/dpkg/dpkg.cfg.d/docker drops /usr/share/doc/* at
+# install and re-includes only */copyright; zz-keep-notices also re-includes
+# Apache-2.0 NOTICE files, which must travel with the binaries (same file as
+# Dockerfile.postgres, where Apache AGE ships one).
+RUN printf '%s\n' 'path-include /usr/share/doc/*/NOTICE*' > /etc/dpkg/dpkg.cfg.d/zz-keep-notices
+
+# Debian's updates on top of the pinned base, rebuilt whenever an archive
+# publishes (the apt-indexes stage above). `install` alone moves only the
+# packages it installs and their exact-version dependencies; `upgrade` also
+# patches what the base ships and nothing here installs.
+RUN --mount=type=bind,from=apt-indexes,target=/run/apt-indexes \
+    apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl gnupg \
+    && install -d /etc/apt/keyrings \
+    && curl -fsSL https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+        | gpg --dearmor -o /etc/apt/keyrings/postgresql.gpg \
+    && . /etc/os-release \
+    && echo "deb [signed-by=/etc/apt/keyrings/postgresql.gpg] http://apt.postgresql.org/pub/repos/apt ${VERSION_CODENAME}-pgdg main" \
+        > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update && DEBIAN_FRONTEND=noninteractive apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
+        # No xdotool/xclip: X11-only capability,
+        # no X server in an entity pod; server/capabilities/linux/mouse_keyboard.py
+        # fail-softs when the binary is absent. wget dropped: zero code callers.
+        ripgrep \
+        git openssh-client \
+        # CLIENT ONLY. The SERVER (postgresql-17 + pgvector + AGE) is in
+        # the cseries-postgres image — see Dockerfile.postgres.
+        #
+        # postgresql-client-17 is LOAD-BEARING and must not be trimmed as
+        # "leftovers of the split": the kernel owns its schema, so
+        # entrypoint.sh still runs init-db.sql + /app/migrations/v*.sql with
+        # psql over the shared socket, and every in-container gate
+        # (smoke_test.sh, scripts/test_*.py) reads the DB with psql from
+        # THIS container. pg_isready ships in this package too — it is the
+        # kernel's boot wait for the DB container.
+        postgresql-client-17 \
+        tini \
+    && rm -rf /var/lib/apt/lists/*
+
+# Purge what we don't run at entity-pod runtime.
+# The DB SERVER stack (postgres + pgvector + AGE) is not in this image; it is
+# the cseries-postgres container. The PG client stays — see the note above.
+#   * python3.13 — Debian deps drag it in; we run the base image's python3.14 only.
+#   * libcrypto.a — static lib, runtime uses .so. It sits in the multiarch
+#     directory (x86_64-linux-gnu or aarch64-linux-gnu), hence the glob.
+#   * docs/man — never read inside the container. Every package's
+#     /usr/share/doc/<pkg>/copyright stays: it is the licence notice the
+#     GPL/LGPL/BSD packages here require on redistribution (the slim base's
+#     dpkg config keeps it on install for the same reason). NOTICE files
+#     stay as well (Apache-2.0 requires them to travel with the binaries).
+#     Symlinks left pointing at a removed file go; symlinked doc dirs
+#     (libgcc-s1 -> gcc-12-base) stay, they lead to a kept copyright file.
+RUN (apt-get update \
+     && apt-get purge -y \
+        python3.13 python3.13-minimal libpython3.13-stdlib libpython3.13-minimal \
+        || true) \
+    && apt-get autoremove -y --purge || true \
+    && rm -f /usr/lib/*-linux-gnu/libcrypto.a /usr/lib/*-linux-gnu/libssl.a \
+    && rm -rf /var/lib/apt/lists/* /var/cache/apt/* /usr/share/man/* \
+    && find /usr/share/doc -type f ! -name copyright ! -name 'NOTICE*' -delete \
+    && find /usr/share/doc -xtype l -delete \
+    && find /usr/share/doc -mindepth 1 -type d -empty -delete
+
+# Copy built Python packages from builder (and the age binary and its
+# licence, which the builder leaves at /install/age and /install/age-LICENSE).
+COPY --from=builder /install /usr/local
+RUN mv /usr/local/age /usr/local/bin/age && age --version \
+    && install -d /usr/share/doc/age \
+    && mv /usr/local/age-LICENSE /usr/share/doc/age/LICENSE
+
+# Non-root user (UID 1000 — standard, avoids conflicts)
+RUN groupadd -g 1000 privatae \
+    && useradd -u 1000 -g privatae -m -d /home/privatae -s /bin/sh privatae
+
+# Strip SUID/SGID bits (layer 7)
+RUN find / -perm /6000 -type f -exec chmod a-s {} + 2>/dev/null || true
+
+# Remove shells/tools that shouldn't exist in production
+RUN rm -f /bin/su /usr/bin/sudo 2>/dev/null || true
+
+# Application directories
+#   /app/server             — FastAPI app code
+#   /app/dashboard          — SPA (base + overlay)
+#   /app/system/apps        — first-party apps baked into the image (CEIGAS, etc.)
+#   /app/projects           — entity-built apps (mounted volume at runtime)
+#   /app/workspace          — Claude Code workspace (mounted volume at runtime)
+#   /app/ceigas             — materialized policy + signal cache (mounted volume)
+#   /app/portal, /app/user-files, /app/data, /app/secrets, /app/integrations,
+#   /app/engine, /app/training_memory_jobs — state the Host writes (mounted
+#   volumes; the root filesystem is read-only). Made here so a volume mounted
+#   on them starts owned by privatae rather than root.
+#
+# /app/pgdata is GONE: the data directory belongs to the cseries-postgres
+# container. This image only needs the socket dir the DB container shares.
+RUN mkdir -p /app/server /app/dashboard /app/system/apps \
+    /app/workspace /app/projects /app/ceigas /app/portal \
+    /app/user-files /app/data /app/secrets /app/integrations /app/engine \
+    /app/training_memory_jobs \
+    /var/run/postgresql \
+    /etc/privatae/certs /etc/privatae/certs-persistent /home/privatae/.claude \
+    && chown -R privatae:privatae /app /home/privatae /var/run/postgresql /etc/privatae \
+    && chown -R privatae:privatae /usr/local/share/tree-sitter-language-pack
+
+ENV PATH="/usr/lib/postgresql/17/bin:${PATH}"
+# The parsers baked in the builder (read-only at runtime, no download).
+ENV TREE_SITTER_LANGUAGE_PACK_CACHE_DIR=/usr/local/share/tree-sitter-language-pack
+
+# Runtime-memory posture:
+#   MALLOC_ARENA_MAX — glibc defaults to 8 malloc arenas per core; on a
+#   multi-core node the long-running kernel process fragments across dozens
+#   of arenas and RSS creeps for weeks (the 110Mi->170Mi idle drift class).
+#   Two arenas is the standard production setting for Python services.
+#   NODE_OPTIONS — the bundled `claude` engine is a Node process with an
+#   unbounded V8 heap; a live Host hit a V8 fatal OOM that the entrypoint's
+#   ulimit -c 0 guards on the disk side only. 1024MB keeps a runaway session
+#   under the pod limit so it degrades the session, not the entity (and not
+#   the co-resident postmaster).
+ENV MALLOC_ARENA_MAX=2 \
+    NODE_OPTIONS=--max-old-space-size=1024
+
+# Git config for workspace
+RUN git config --system init.defaultBranch main \
+    && git config --system user.name "entity" \
+    && git config --system user.email "entity@ceigas.internal"
+
+# Copy application code (owned by privatae)
+COPY --chown=privatae:privatae server/ /app/server/
+COPY --chown=privatae:privatae brain/ /app/brain/
+COPY --chown=privatae:privatae services/ /app/services/
+COPY --chown=privatae:privatae dashboard/ /app/dashboard/
+COPY --chown=privatae:privatae cli/ /app/cli/
+# Shared harness runtime library (NOT app source — no app.yaml; the bundle
+# packer skips it). The bundle-installed coding-harness sidecars' bin/main.py
+# shims import `_harness_runtime` via the same /app/cli path they already put
+# on sys.path for cseries_sidecar.
+COPY --chown=privatae:privatae system-apps/_harness_runtime/ /app/cli/_harness_runtime/
+# Kernel-only image.
+#
+# Only kernel-required native apps ship baked-in, as signed bundles in
+# /app/native-bundles/. Everything else lives in the central app store
+# (the platform database) and is fetched on first boot by the default-install
+# bootstrap (server/applications/default_install.py) over the bridge.
+#
+# What's gone (intentionally):
+#   - system-apps/ source copy (no app source in image)
+#   - factory-bundles/ copy (installable bundles live in the store)
+#
+# Why: an image that carries app source AND signed bundles AND the install
+# path on a volume has three sources of truth, and they drift apart (stale
+# UI on existing Hosts). Now there's exactly one: the store.
+COPY --chown=privatae:privatae native-bundles/ /app/native-bundles/
+# App SDK floor — the image-baked, Privatae-signed SDK installed on first boot. Built by scripts/build_sdk_bundle.py before docker build.
+COPY --chown=privatae:privatae native-sdk/ /app/native-sdk/
+COPY --chown=privatae:privatae default-skills/ /app/default-skills/
+COPY --chown=privatae:privatae init-db.sql /app/init-db.sql
+COPY --chown=privatae:privatae migrations/ /app/migrations/
+# Smoke gate for the SDK transcript JSONL format
+COPY --chown=privatae:privatae scripts/test_transcript_format.py /app/scripts/test_transcript_format.py
+COPY --chown=privatae:privatae scripts/test_picture_fit_image.py /app/scripts/test_picture_fit_image.py
+# Factory-build gate: the smoke suite execs this in-image (plan→gate→build over
+# the stub harness) — the "verify builds before anyone tests" ratchet.
+COPY --chown=privatae:privatae scripts/test_factory_build_gate.py /app/scripts/test_factory_build_gate.py
+COPY --chown=privatae:privatae scripts/test_tool_registry_parity.py /app/scripts/test_tool_registry_parity.py
+COPY --chown=privatae:privatae scripts/test_circles_threads.py /app/scripts/test_circles_threads.py
+COPY --chown=privatae:privatae scripts/test_knowledge_toc.py /app/scripts/test_knowledge_toc.py
+COPY --chown=privatae:privatae scripts/test_provider_credentials.py /app/scripts/test_provider_credentials.py
+COPY --chown=privatae:privatae scripts/test_credential_resolver.py /app/scripts/test_credential_resolver.py
+COPY --chown=privatae:privatae scripts/test_direct_models_pricing.py /app/scripts/test_direct_models_pricing.py
+COPY --chown=privatae:privatae scripts/test_cache_stable_wire.py /app/scripts/test_cache_stable_wire.py
+COPY --chown=privatae:privatae scripts/test_harness_keys_fallback.py /app/scripts/test_harness_keys_fallback.py
+COPY --chown=privatae:privatae scripts/test_harness_dispatch_fields.py /app/scripts/test_harness_dispatch_fields.py
+COPY --chown=privatae:privatae scripts/test_shell_token.py /app/scripts/test_shell_token.py
+COPY --chown=privatae:privatae scripts/test_harness_revocation.py /app/scripts/test_harness_revocation.py
+COPY --chown=privatae:privatae scripts/test_harness_login_routes.py /app/scripts/test_harness_login_routes.py
+COPY --chown=privatae:privatae scripts/test_harness_login_next_step.py /app/scripts/test_harness_login_next_step.py
+COPY --chown=privatae:privatae scripts/test_coding_matrix.py /app/scripts/test_coding_matrix.py
+# Writing standard: the no-DB gate + the in-pod A/B harness that
+# measures the calibration and writing_standard blocks on a live entity
+# (CSERIES_CALIBRATION_TEST_ENABLE=1). Neither was in the image before, so the
+# harness could not run where its own docstring says to run it.
+COPY --chown=privatae:privatae scripts/test_writing_standard.py /app/scripts/test_writing_standard.py
+COPY --chown=privatae:privatae scripts/calibration_effectiveness_test.py /app/scripts/calibration_effectiveness_test.py
+COPY --chown=privatae:privatae scripts/test_platform_token_refresh_default.py /app/scripts/test_platform_token_refresh_default.py
+COPY --chown=privatae:privatae scripts/test_picker_layout.py /app/scripts/test_picker_layout.py
+COPY --chown=privatae:privatae scripts/test_harness_effort_wiring.py /app/scripts/test_harness_effort_wiring.py
+COPY --chown=privatae:privatae scripts/test_role_effort_wiring.py /app/scripts/test_role_effort_wiring.py
+# Web-research dialers gate — smoke execs this in-container beside the
+# effort-wiring gates; the COPY is load-bearing.
+COPY --chown=privatae:privatae scripts/test_web_research_dialers.py /app/scripts/test_web_research_dialers.py
+# Two gates smoke_test.sh execs in-container. A gate wired into smoke without
+# its COPY line execs as file-not-found and reports nothing rather than run;
+# the smoke self-check red-fails on a missing COPY for that reason.
+COPY --chown=privatae:privatae scripts/test_inference_usage_telemetry.py /app/scripts/test_inference_usage_telemetry.py
+COPY --chown=privatae:privatae scripts/test_background_effort_and_json_budgets.py /app/scripts/test_background_effort_and_json_budgets.py
+# The FAILURE half of the same ledger — smoke execs it in-container beside its
+# success-lane sibling above; the COPY is load-bearing (the
+# exec-as-file-not-found shape the note above describes).
+COPY --chown=privatae:privatae scripts/test_background_activity.py /app/scripts/test_background_activity.py
+# Tool-trail context lane gate — smoke execs this in-container beside its
+# effort-wiring sibling above; the COPY is load-bearing.
+COPY --chown=privatae:privatae scripts/test_tool_trail.py /app/scripts/test_tool_trail.py
+# End-to-end SDK training loop test
+COPY --chown=privatae:privatae scripts/test_sdk_training_loop.py /app/scripts/test_sdk_training_loop.py
+# Host SDK engine wall gate — the smoke gate execs this in-container; without
+# this COPY the gate fails on a missing script rather than on the wall's
+# actual invariants.
+COPY --chown=privatae:privatae scripts/test_agent_grant_wall.py /app/scripts/test_agent_grant_wall.py
+COPY --chown=privatae:privatae scripts/test_dispatch_spawn.py /app/scripts/test_dispatch_spawn.py
+# Dispatch-skill doc-truth gate — smoke execs this in-container; the COPY is
+# load-bearing.
+COPY --chown=privatae:privatae scripts/test_dispatch_grant_doc.py /app/scripts/test_dispatch_grant_doc.py
+# Host build-door gate — smoke execs this in-container; the COPY is
+# load-bearing.
+COPY --chown=privatae:privatae scripts/test_host_build_door.py /app/scripts/test_host_build_door.py
+# Build harness resolution + credential truth gate —
+# smoke execs this in-container; the COPY is load-bearing.
+COPY --chown=privatae:privatae scripts/test_build_harness_resolution.py /app/scripts/test_build_harness_resolution.py
+# Coding-protocol file rules + migration + default tick — smoke
+# execs this in-container; the COPY is load-bearing.
+COPY --chown=privatae:privatae scripts/test_coding_protocols.py /app/scripts/test_coding_protocols.py
+# One-table lane ratchet — smoke execs it
+# in-container; the COPY is load-bearing.
+COPY --chown=privatae:privatae scripts/check_tool_lanes.py /app/scripts/check_tool_lanes.py
+# Workbench surface names its project — smoke execs it in-container;
+# the COPY is load-bearing.
+COPY --chown=privatae:privatae scripts/test_workbench_names_project.py /app/scripts/test_workbench_names_project.py
+# Project preview + landed-file read gate — smoke execs this in-container;
+# the COPY is load-bearing.
+COPY --chown=privatae:privatae scripts/test_project_preview.py /app/scripts/test_project_preview.py
+# Governance floor gate (SB 243) — smoke execs this in-container; the COPY is
+# load-bearing.
+COPY --chown=privatae:privatae scripts/test_governance_floor.py /app/scripts/test_governance_floor.py
+# PII sterilize path gate — smoke execs this in-container; the COPY is
+# load-bearing.
+COPY --chown=privatae:privatae scripts/test_pii_path.py /app/scripts/test_pii_path.py
+COPY --chown=privatae:privatae scripts/test_untrusted_content_screen.py /app/scripts/test_untrusted_content_screen.py
+# Secret-shapes gate — pasted keys/credentials are redacted at
+# the top of send_message from brain/mastercode/secret_shapes.json (the same
+# rules file the composers warn from). Smoke execs this in-container; the
+# COPY is load-bearing.
+COPY --chown=privatae:privatae scripts/test_secret_shapes.py /app/scripts/test_secret_shapes.py
+# Software-for-the-AI gates — smoke execs all three in-container,
+# so these COPYs are load-bearing. check_host_parity.py additionally reads the
+# committed ratchet floor docs/parity-baseline.json (copied below), alongside
+# the capabilities.json the generator writes into /app/docs at build.
+COPY --chown=privatae:privatae scripts/check_direct_ops.py /app/scripts/check_direct_ops.py
+COPY --chown=privatae:privatae scripts/check_host_parity.py /app/scripts/check_host_parity.py
+COPY --chown=privatae:privatae scripts/check_kernel_ops.py /app/scripts/check_kernel_ops.py
+COPY --chown=privatae:privatae docs/parity-baseline.json /app/docs/parity-baseline.json
+# Capability-surface gates. Both read /app/docs/capabilities.json,
+# which the generator writes at build (see below), so they are image-lane only —
+# a source tree has no generated doc to check.
+#   check_capability_coverage.py — every schema'd, reachable tool is either
+#     documented or declared out of scope with a reason that still holds. Exists
+#     because the host's five permanent orchestration verbs (dispatch, operate,
+#     recall, agent_status, escalate) were advertised on every turn and appeared
+#     nowhere in the doc, which told the host they did not exist.
+#   test_capability_answers.py — the adversarial half: ask in a user's plain
+#     words and check a usable answer comes back, in BOTH directions (real
+#     capabilities must be findable; invented ones must not match).
+COPY --chown=privatae:privatae scripts/check_capability_coverage.py /app/scripts/check_capability_coverage.py
+COPY --chown=privatae:privatae scripts/test_capability_answers.py /app/scripts/test_capability_answers.py
+# test_app_manifest_scopes.py — an app's DATA-declared endpoints (a step table's
+# `endpoint:` strings, which the build-time conformance check cannot parse) vs.
+# its manifest permissions. Image lane for a different reason than the two
+# above: it imports server.main to read each route's RESOLVED scope, so it needs
+# the full runtime dependency set rather than a generated doc.
+COPY --chown=privatae:privatae scripts/test_app_manifest_scopes.py /app/scripts/test_app_manifest_scopes.py
+COPY --chown=privatae:privatae scripts/test_harness_control_cap.py /app/scripts/test_harness_control_cap.py
+COPY --chown=privatae:privatae scripts/test_codesearch_rerank_lane.py /app/scripts/test_codesearch_rerank_lane.py
+# DB lane: the code-search store on the entity's own Postgres (code_chunks, v200).
+COPY --chown=privatae:privatae scripts/test_codesearch_pg.py /app/scripts/test_codesearch_pg.py
+# Parser lane: the tree-sitter grammars baked above load with no network.
+COPY --chown=privatae:privatae scripts/test_codesearch_parsers_baked.py /app/scripts/test_codesearch_parsers_baked.py
+# Connector pictures: smoke runs this in a fresh container from the image under
+# the Host's seccomp profile; the COPY is load-bearing.
+COPY --chown=privatae:privatae scripts/test_connector_picture_image.py /app/scripts/test_connector_picture_image.py
+# SDK partial-streaming invariant — exactly-once emission bookkeeping
+# Detached-turn registry gate — the turn lifecycle wall (detach/
+# reattach/lock/cancel/timeout); smoke execs it in-container
+COPY --chown=privatae:privatae scripts/test_turn_registry.py /app/scripts/test_turn_registry.py
+# Error-lane gate — recorder contract + schema parity + the
+# choke-point coverage ratchet; smoke execs it in-container
+COPY --chown=privatae:privatae scripts/test_error_lane.py /app/scripts/test_error_lane.py
+COPY --chown=privatae:privatae scripts/test_role_routing_lanes.py /app/scripts/test_role_routing_lanes.py
+COPY --chown=privatae:privatae scripts/test_harness_streaming.py /app/scripts/test_harness_streaming.py
+# Sidecar proxy bridge idle-transparency gate — the 10 s upstream
+# timeout that cut grok/antigravity streams; smoke execs it in-container
+COPY --chown=privatae:privatae scripts/test_sidecar_proxy_bridge.py /app/scripts/test_sidecar_proxy_bridge.py
+# Embed bastion-identity lane ratchet — the stale-pinned-IP failure class
+COPY --chown=privatae:privatae scripts/test_embed_identity_lane.py /app/scripts/test_embed_identity_lane.py
+# Directive effectiveness audit
+COPY --chown=privatae:privatae scripts/directive_effectiveness_test.py /app/scripts/directive_effectiveness_test.py
+# App SDK signing-key revocation ratchet — runs in-container (smoke + live entity)
+COPY --chown=privatae:privatae scripts/_revocation_gate_incontainer.py /app/scripts/_revocation_gate_incontainer.py
+# NAC engine invariant — runs in-container (smoke + live entity): nac-pdp-bound-default-preserve
+COPY --chown=privatae:privatae scripts/check_nac_engine.py /app/scripts/check_nac_engine.py
+# Bastion fp-from-CSR invariant — runs in-container (smoke + live entity)
+COPY --chown=privatae:privatae scripts/check_fp_from_csr.py /app/scripts/check_fp_from_csr.py
+# Bastion posture re-decides invariant (device_health) — runs in-container
+COPY --chown=privatae:privatae scripts/check_posture_redecides.py /app/scripts/check_posture_redecides.py
+# Machine refusal accounting (enforcing.audit) — runs in-container
+COPY --chown=privatae:privatae scripts/test_machine_refusal_posture.py /app/scripts/test_machine_refusal_posture.py
+# Bastion update forward needs no approval (bastion 0.44.0) — runs in-container
+COPY --chown=privatae:privatae scripts/test_heartbeat_update_forward.py /app/scripts/test_heartbeat_update_forward.py
+# MCP NAC gate invariant (the inbound wall) — runs in-container
+COPY --chown=privatae:privatae scripts/check_mcp_nac_gate.py /app/scripts/check_mcp_nac_gate.py
+# NAC user-gate invariant (step-up + signing) — runs in-container
+COPY --chown=privatae:privatae scripts/check_nac_user_gate.py /app/scripts/check_nac_user_gate.py
+# Hub PDP armed invariant — runs in-container
+COPY --chown=privatae:privatae scripts/check_hub_pdp_armed.py /app/scripts/check_hub_pdp_armed.py
+# DCN CN-0 invariant (route-map groundwork) — runs in-container
+COPY --chown=privatae:privatae scripts/check_dcn_cn0.py /app/scripts/check_dcn_cn0.py
+# DCN CN-1 invariant (store grants + the DCN pod gate) — runs in-container
+COPY --chown=privatae:privatae scripts/check_dcn_cn1.py /app/scripts/check_dcn_cn1.py
+# Box op vocabulary — a box reported degraded when it was not. The e2e test EXECS
+# in-container; check_box_ops_sync.py is IMPORTED by it (for the one copy of the
+# measured op list), and smoke's preflight only greps for exec'd /app/scripts
+# paths, so an imported script has to be copied here deliberately or the e2e
+# dies at import with the gate reporting a pass-shaped failure.
+COPY --chown=privatae:privatae scripts/check_box_ops_sync.py /app/scripts/check_box_ops_sync.py
+COPY --chown=privatae:privatae scripts/test_box_ops_not_degraded.py /app/scripts/test_box_ops_not_degraded.py
+# NAC liveness reaper invariant (CoA) — runs in-container
+COPY --chown=privatae:privatae scripts/check_nac_reaper.py /app/scripts/check_nac_reaper.py
+# NAC egress decision-core invariant (the user's outbound layer) — runs in-container
+COPY --chown=privatae:privatae scripts/check_nac_egress.py /app/scripts/check_nac_egress.py
+COPY --chown=privatae:privatae scripts/check_git_lane.py /app/scripts/check_git_lane.py
+# NAC mgmt + harness dispatch invariant (signed-grant gate + image allowlist) — runs in-container
+COPY --chown=privatae:privatae scripts/check_nac_mgmt.py /app/scripts/check_nac_mgmt.py
+# Agent-management presentation invariants for get_network (blind≠quiet, one disposition, drift) — runs in-container
+COPY --chown=privatae:privatae scripts/check_agent_management_context.py /app/scripts/check_agent_management_context.py
+# Embed reverse-relay transport invariant (token-keyed, no worker ⇒ None) — runs in-container
+COPY --chown=privatae:privatae scripts/check_embed_relay.py /app/scripts/check_embed_relay.py
+# prompt_behavior truth gate (host-environment awareness) — runs in-container:
+# every backticked tool/app reference in an app's prompt_behavior must resolve to a real
+# tool or app, so a host's environment direction can't go stale or promise a fake capability.
+COPY --chown=privatae:privatae scripts/test_prompt_behavior_truth.py /app/scripts/test_prompt_behavior_truth.py
+# Realtime voice ephemeral-token mint gate — runs in-container:
+# hermetic gate for server/routes/realtime.py (TTL clamp, vault key resolution, clean 400/502 paths).
+COPY --chown=privatae:privatae scripts/test_realtime_client_secrets.py /app/scripts/test_realtime_client_secrets.py
+# Vendor-lock gate — runs in-container: proves triage's grok
+# classifier is ripped, image_gen/vision route through the user's own model (no xAI
+# default, no platform billing), and dead model constants are gone.
+COPY --chown=privatae:privatae scripts/test_pin_removal.py /app/scripts/test_pin_removal.py
+# App /api conformance gate (App SDK) — runs in-container (smoke): proves
+# the code-true route contract + validate_build diff (nonexistent-route + undeclared-
+# scope) hold. Same COPY discipline as every gate above — smoke execs it at
+# /app/scripts/test_app_conformance.py, so the file MUST be baked in or the gate
+# red-fails on its own absence.
+COPY --chown=privatae:privatae scripts/test_app_conformance.py /app/scripts/test_app_conformance.py
+# In-container prompt gates (smoke): check_system_separation.py proves the two registered
+# slider writers are the only writers of a weight column and that the personality package
+# stays gone; test_prompt_provenance.py proves prompt_log rows for every
+# injected block. Same COPY discipline as every gate above.
+COPY --chown=privatae:privatae scripts/check_system_separation.py /app/scripts/check_system_separation.py
+COPY --chown=privatae:privatae scripts/test_prompt_provenance.py /app/scripts/test_prompt_provenance.py
+# test_context_read_resolution.py proves relayed/mangled identifiers resolve (or error
+# naming real candidates) in context_ingest read, so a missed lookup never reads as absence.
+COPY --chown=privatae:privatae scripts/test_context_read_resolution.py /app/scripts/test_context_read_resolution.py
+# test_memory_recall_engine.py proves the unified recall engine: filter coherence
+# (superseded rows in zero lanes), lexical arm without embeddings, honest
+# RecallUnavailable, federated front door, memory_search retired.
+COPY --chown=privatae:privatae scripts/test_memory_recall_engine.py /app/scripts/test_memory_recall_engine.py
+# test_memory_prefire_recall.py proves the per-turn pre-fire: the
+# live user message drives a hybrid recall that leads the memory block, prefired
+# rows dedup out of the standing sections, no-query/no-match render no section.
+COPY --chown=privatae:privatae scripts/test_memory_prefire_recall.py /app/scripts/test_memory_prefire_recall.py
+# test_context_budget.py + test_thread_consolidator.py prove conversation-depth
+# token budgeting against the model window (derivation,
+# per-thread overrides, the ONE trim order, overflow retry seams) and the
+# thread consolidator (full-window input, atomic supersede, in-flight guard).
+COPY --chown=privatae:privatae scripts/test_context_budget.py /app/scripts/test_context_budget.py
+COPY --chown=privatae:privatae scripts/test_thread_consolidator.py /app/scripts/test_thread_consolidator.py
+# test_context_janitor.py proves conversation depth: artifact
+# capture, janitor KEEP/DROP + embed submission, federated pre-fire, topic
+# segments, idle-gap trigger. Same COPY discipline as every gate above.
+COPY --chown=privatae:privatae scripts/test_context_janitor.py /app/scripts/test_context_janitor.py
+COPY --chown=privatae:privatae scripts/test_memory_integrity_db.py /app/scripts/test_memory_integrity_db.py
+COPY --chown=privatae:privatae scripts/test_live_context_db.py /app/scripts/test_live_context_db.py
+# test_pod_conn_retry.py and test_sidecar_error_encoding.py are two build
+# gates smoke execs in-container. A gate wired into smoke_test.sh without a
+# COPY line is the exact trap smoke's self-check exists to catch. Adding a gate
+# script means adding its COPY in the same commit, always.
+COPY --chown=privatae:privatae scripts/test_pod_conn_retry.py /app/scripts/test_pod_conn_retry.py
+COPY --chown=privatae:privatae scripts/test_sidecar_error_encoding.py /app/scripts/test_sidecar_error_encoding.py
+COPY --chown=privatae:privatae scripts/test_modules_versions.py /app/scripts/test_modules_versions.py
+COPY --chown=privatae:privatae scripts/test_ticket_import.py /app/scripts/test_ticket_import.py
+COPY --chown=privatae:privatae scripts/test_integrations_store_pg.py /app/scripts/test_integrations_store_pg.py
+COPY --chown=privatae:privatae scripts/test_ticket_projects_share_repo.py /app/scripts/test_ticket_projects_share_repo.py
+COPY --chown=privatae:privatae scripts/test_parallel_builds_db.py /app/scripts/test_parallel_builds_db.py
+COPY --chown=privatae:privatae scripts/test_pipeline_db.py /app/scripts/test_pipeline_db.py
+COPY --chown=privatae:privatae entrypoint.sh /app/entrypoint.sh
+# ARCHITECTURE.md deliberately NOT copied — see the ratchet below.
+COPY --chown=privatae:privatae LICENSE /app/LICENSE
+COPY --chown=privatae:privatae NOTICE /app/NOTICE
+# The third-party licence texts travel with the binaries they cover.
+COPY --chown=privatae:privatae THIRD-PARTY-NOTICES.md /app/third_party/THIRD-PARTY-NOTICES.md
+COPY --chown=privatae:privatae third_party/licenses /app/third_party/licenses
+
+# C-Series app-signing public key — kernel uses this to verify every
+# built-in bundle's signature at install time. The private key never
+# enters the image or the repo.
+RUN mkdir -p /etc/cseries/keys
+COPY --chown=privatae:privatae etc/cseries-apps.pub.raw /etc/cseries/keys/cseries-apps.pub.raw
+# Community publishing public key — the kernel trusts it for `community`
+# provenance ONLY (never standard/native). The central store signs third-party
+# published apps with the matching private key; this lets a host verify and
+# install a community app while the C-Series key stays reserved for first-party,
+# so third-party code can never carry first-party trust.
+COPY --chown=privatae:privatae etc/community-apps.pub.raw /etc/cseries/keys/community-apps.pub.raw
+# The network's root certificate (public; no key ever ships). A Host that joins
+# the network in Settings -> Network trusts this one certificate, and nothing
+# else, for the enrolment door and the member door (server/bridge/membership.py
+# reads it from here; CSERIES_NETWORK_ROOT_CERT points elsewhere if needed).
+COPY --chown=privatae:privatae etc/ceigas_root_v2.crt /etc/cseries/keys/ceigas_root_v2.crt
+
+# Apps install at boot into /var/lib/cseries/apps/<id>/ from signed
+# factory bundles. Per-app workspace data lives at
+# /var/lib/cseries/appdata/<id>/ and survives uninstall. Both dirs must
+# exist and be writable by the runtime user before the kernel boots.
+RUN mkdir -p /var/lib/cseries/apps /var/lib/cseries/appdata /var/lib/cseries/cc-sessions \
+    && chown -R privatae:privatae /var/lib/cseries
+
+# Brain code AND the app root on PYTHONPATH.
+# Not ":${PYTHONPATH:-}": PYTHONPATH is set nowhere earlier in this file, so
+# that expansion is always empty and produces "/app/brain:" — a TRAILING
+# COLON, which Python reads as an empty path entry and resolves to the working
+# directory (and BuildKit warns UndefinedVar on every build).
+#
+# Dropping the colon alone breaks the in-container gates: that empty entry is
+# load-bearing. WORKDIR is /app, so `docker exec <c> python3
+# /app/scripts/<t>.py` inherits cwd=/app, and the empty entry is what put /app
+# on sys.path — that is how the in-container gate scripts resolve `from server
+# ... import`. Python seeds sys.path[0] with the SCRIPT's directory
+# (/app/scripts), never the cwd, so nothing else supplied /app. Measured on the
+# built image: with "/app/brain" the embed-identity gate dies at `from
+# server.routes import embedding` (ModuleNotFoundError: No module named
+# 'server'); with the empty entry restored, it passes.
+#
+# So name /app explicitly rather than inheriting it from whatever cwd a process
+# happens to have. Identical result for every process this image starts (all run
+# from WORKDIR /app), minus the silent dependency on cwd.
+ENV PYTHONPATH="/app/brain:/app"
+
+RUN chmod +x /app/entrypoint.sh
+
+# Bake bytecode: the pod runs with PYTHONDONTWRITEBYTECODE=1
+# (operator-set env) on a read-only rootfs, so nothing can cache .pyc at
+# runtime — every process start recompiled the entire server+brain tree
+# from source on every boot. Compile at build; runtime reads the baked
+# __pycache__ (DONTWRITEBYTECODE only stops writes, not reads). -q quiet;
+# a file that can't compile fails the build loudly instead of shipping.
+RUN python3 -m compileall -q /app/server /app/brain /app/services /app/cli /app/scripts
+
+# Bake version metadata. A release build fills these via --build-arg and
+# passes PC_IMAGE explicitly, so build-info names the image actually
+# published; a local build is tagged plain `cseries`.
+ARG PC_TAG=dev
+ARG PC_DIGEST=""
+ARG PC_BUILT_AT=""
+ARG PC_IMAGE=cseries
+RUN mkdir -p /app/system && printf '{"image":"%s","tag":"%s","digest":"%s","built_at":"%s"}\n' \
+    "$PC_IMAGE" "$PC_TAG" "$PC_DIGEST" "$PC_BUILT_AT" > /app/system/build-info.json \
+    && chown privatae:privatae /app/system/build-info.json \
+    && sed -i "s|__PC_TAG__|${PC_TAG}|g" /app/dashboard/base/index.html
+
+# Capabilities surface: generate docs/CAPABILITIES.md +
+# docs/capabilities.json — the single source that answers "can C-Series do
+# this?" — from the shipped code itself (scopes, manifest schema, tool
+# catalog, api-contract route table, native bundles). Runs AFTER the
+# build-info stamp so the doc carries this build's tag. Smoke regenerates
+# in-container (--check) and fails the ship on drift, so the doc can never
+# lag a C-Series update.
+COPY --chown=privatae:privatae scripts/generate_capabilities.py /app/scripts/generate_capabilities.py
+# REQUIRED input, not optional: the curated user-vocabulary aliases. Derived
+# text can only contain words the code already says, so a user asking about
+# "voice" or "screenshot" matched nothing — this file is what bridges their
+# words to a capability. The generator FAILS THE BUILD when it is absent
+# rather than quietly emitting a corpus with no vocabulary, which is how the
+# original gap went unnoticed.
+COPY --chown=privatae:privatae scripts/capability_aliases.txt /app/scripts/capability_aliases.txt
+# THE image-baked app set, so the generator can say how each app reaches the
+# user (baked in the image vs delivered by the store) instead of guessing.
+COPY --chown=privatae:privatae scripts/image_baked_apps.txt /app/scripts/image_baked_apps.txt
+# Store-lane app MANIFESTS, for the doc only. Without these the catalog covers
+# just the 19 image-baked apps and every store-lane app (browser, security,
+# app-store, publisher, backups, claude-code, training-memory) is absent from
+# the doc, and a host then denies that the Browser app exists. The generator globs these dirs and tolerates
+# them being empty, so their absence fails SILENTLY: it would pass on a source
+# tree and ship a half-corpus. Hence copied, not assumed.
+#
+# Install-safe, checked rather than assumed: installer._image_bundle_dir
+# returns NATIVE_BUNDLE_DIR whenever it exists and only falls back to
+# /app/factory-bundles when it does not. native-bundles always ships, so these
+# are inert for installation and are read here purely as manifest input.
+COPY --chown=privatae:privatae factory-bundles/ /app/factory-bundles/
+# The public wiki. Its pages become `page:` cards in the
+# capability corpus, and generate_wiki.py bakes the published bundle,
+# docs/wiki.json, stamped with this build's tag; the frontend's wiki sync reads
+# that file out of the released image. status.json is computed in the repo (the
+# pages' sources are not all in the image) and checked there by smoke.
+# docs/wiki/sources.yaml — which page describes which code — is deliberately
+# NOT copied: the pages are public, a map from them to the code is not.
+COPY --chown=privatae:privatae scripts/wiki_pages.py /app/scripts/wiki_pages.py
+COPY --chown=privatae:privatae scripts/generate_wiki.py /app/scripts/generate_wiki.py
+COPY --chown=privatae:privatae docs/wiki/pages/ /app/docs/wiki/pages/
+COPY --chown=privatae:privatae docs/wiki/status.json /app/docs/wiki/status.json
+# The server.main import has module-level mkdir side effects (projects/,
+# review-sessions/, ladder-runs/, training_memory_jobs/). This RUN executes
+# as root — remove those runtime dirs after generation or they ship
+# root-owned and every privatae-user write inside them EACCES-fails at
+# runtime (they are created at runtime today, privatae-owned; keep it so).
+# /app/training_memory_jobs is made again, empty and privatae-owned: it is a
+# volume mount point, and a mount point missing from the image is made by
+# Docker as root.
+RUN python3 /app/scripts/generate_capabilities.py --root /app --out /app/docs \
+    && python3 /app/scripts/generate_wiki.py --bundle --root /app --out /app/docs \
+    && chown -R privatae:privatae /app/docs \
+    && rm -rf /var/lib/cseries/projects /var/lib/cseries/review-sessions \
+              /var/lib/cseries/ladder-runs /app/training_memory_jobs \
+    && install -d -o privatae -g privatae /app/training_memory_jobs
+
+# ── Ratchet: internal developer documentation must never ship in the image ────
+# Nothing reads a developer document such as ARCHITECTURE.md at runtime.
+#
+# Why this is a security ratchet and not tidiness: ARCHITECTURE.md carried a
+# "## Security Model" section into the least-trusted process on the platform, and
+# understated it — describing seccomp as a four-item blocklist when the loaded
+# profile is a 346-name default-deny allowlist. In a containment evaluation, two
+# separate frontier models read it within the first ten commands and used it to
+# select the mTLS bridge as their highest-value target.
+#
+# Scoped to the /app ROOT on purpose: /app/docs (generated capability reference,
+# built above) and /app/default-skills/*.md (skill definitions the runtime loads)
+# are legitimate and must keep shipping.
+RUN set -eu; \
+    stray="$(find /app -maxdepth 1 -type f -name '*.md' -printf '%f ' 2>/dev/null || true)"; \
+    if [ -n "$stray" ]; then \
+        echo "BUILD FAILED: internal documentation would ship at /app: $stray" >&2; \
+        echo "Nothing reads these at runtime; they are reconnaissance material" >&2; \
+        echo "inside the least-trusted process. Put developer docs in the repo," >&2; \
+        echo "not the image. See the ratchet in Dockerfile.linux." >&2; \
+        exit 1; \
+    fi; \
+    echo "ratchet ok: no internal docs at /app root"
+
+WORKDIR /app
+
+# The source repository, which links the published package to it on GHCR.
+LABEL org.opencontainers.image.source="https://github.com/Privatae/cseries"
+
+# Health check — FastAPI responds on /api/system/health
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD python3 -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8800/api/system/health')" || exit 1
+
+USER privatae
+
+# tini as PID 1 (proper signal handling, zombie reaping)
+ENTRYPOINT ["tini", "--", "/app/entrypoint.sh"]

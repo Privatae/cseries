@@ -1,0 +1,17 @@
+# Speech to text: a recording's words. Pins the four
+# formats whisper.cpp opens BY ITSELF (wav/mp3/flac/ogg) to the plain job and the
+# containers (mp4/m4a/aac/webm) to the one that unpacks the audio track with
+# ffmpeg first — an m4a mapped to the plain job would route a voice memo to
+# something that refuses it. Pins a clip's DEFAULT to its transcript rather than
+# its keyframes. Pins the three sentences this
+# lane can get wrong: a silent recording is a FINISHED job, an engine with no
+# model is its own answer (the whisper.cpp package ships none, so that is where
+# every user lands after installing it), and neither is a scan. Pins the
+# transcript chunker to the engine's own segment boundaries so every row keeps
+# the millisecond it was said at (media_offset_ms, v135), and pins the model that
+# ran onto the row — base.en and large-v3-turbo are 3x apart in word error rate
+# on hard audio and their transcripts look identical. The transcription itself is
+# proven in the gateway's contextstt_test.go against real whisper-cli on real
+# audio, over the pull transport. Static + imports; no bastion, no DB, no
+# network.
+test_stt_lane.py

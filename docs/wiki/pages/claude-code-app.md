@@ -1,0 +1,31 @@
+---
+title: Claude Code
+summary: The Claude Code app shows whether your Claude subscription is connected for Claude Code builds, and lets you disconnect it. The sign-in is Anthropic's own; Privatae hosts no login page for it.
+section: apps
+order: 10
+app: claude-code
+questions:
+  - How do I connect my Claude subscription to my Host?
+  - Can I use my Claude Pro or Max plan for coding on Privatae?
+  - Where do Claude Code builds run?
+  - Does Privatae bill me for Claude Code tokens?
+  - How do I disconnect Claude Code from my Host?
+---
+
+Claude Code is Anthropic's coding agent and one of the [coding engines](wiki:coding-agents) your Host can build with. This app is its connection panel. It shows whether your Claude subscription is connected, since when, and when the current sign-in expires. Nothing runs inside the app itself.
+
+## How do I connect my Claude subscription?
+
+Through Anthropic's own sign-in; Privatae hosts no login page for Claude. Ask your Host to connect Claude Code and it starts Anthropic's own login inside the Claude Code container. You sign in on Anthropic's page and give your Host the code that page shows you, and your Host passes it straight to the login. The sign-in is then kept with your Host, in the cluster we run, and handed to the Claude Code container whenever a build runs.
+
+## Whose plan pays for it?
+
+Yours. Claude Code builds run on your own Claude subscription, Pro or Max. The engine is set up to use that sign-in and never an Anthropic API key, so a build cannot quietly switch to pay-per-use billing. Privatae does not bill you for the tokens.
+
+## Where do the builds run?
+
+In their own container beside your Host, never inside it, and the container's workspace is thrown away when the build is done. You start a build by asking your Host, usually in the [Workbench](wiki:workbench-app), and you watch it there, on the project's page.
+
+## How do I get the app, and how do I disconnect?
+
+The app is not built into the Host and is not listed in the App Store; your Host installs it when you ask. While it is installed, your Host tells you with a Notice on the Support card in Circles when the Claude sign-in has expired or is close to expiring; to connect again, ask your Host to connect Claude Code, which runs Anthropic's own sign-in. To disconnect Claude Code, revoke its sign-in in the Vault section of [Keys](wiki:keys-app).

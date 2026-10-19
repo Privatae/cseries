@@ -1,0 +1,3 @@
+# The replay rig replays each turn on its own message, adds K staples that are
+# not already core, cuts the held-out split by time, and prices search mode.
+test_rig_tool_surface.py

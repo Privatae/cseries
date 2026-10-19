@@ -1,0 +1,2 @@
+# 2026-09-30 (Ships, sealed credentials): server/ships/seal.py verifies a machine's encryption-key claim (a bastion-written fixture) only under the machine key the signed plan names, pins the key on first sight and refuses another, opens each declared credential from the vault by name and seals it bound to the plan's nonce; the round trip needs PyNaCl (in the image; SKIPPED and said where absent). Stub pool and vault; no pod, no DB.
+test_ship_seal.py

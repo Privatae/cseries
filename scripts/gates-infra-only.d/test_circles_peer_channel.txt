@@ -1,0 +1,1 @@
+test_circles_peer_channel.py             # live DB (asyncpg via PEER_TEST_DSN) — drives the real circles helper + peer_discovery against a real Postgres (liveness windows, joins, dormancy are all SQL); runs against a throwaway cseries-postgres container, skips without a DSN, and a skip proves nothing

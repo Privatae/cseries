@@ -1,0 +1,1 @@
+test_bastion_autoupdate_sql.py  # needs a real Postgres (scripts/peer_test_db.sh): v176 applied twice, first directive record wins, revoked machines drop out of the verdict, the state row

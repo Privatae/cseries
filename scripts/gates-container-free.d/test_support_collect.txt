@@ -1,0 +1,6 @@
+# 2026-09-24 (tickets: one system, two shapes — slice 2): the operator Host's collect
+# of the platform's support queue, the fix/ask/decline verdicts applied on the decide,
+# and (2026-10-01) one numbered project per ticket with 'fixed' only on the person's
+# click after the fix lands. Executes runtime/support_collect.py and the two
+# tickets.py seams against a stub pool and a fake bridge; no DB, no pod.
+test_support_collect.py

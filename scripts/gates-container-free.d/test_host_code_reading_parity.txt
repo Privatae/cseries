@@ -1,0 +1,5 @@
+# Search first, then grep, then read. search_my_code returns locators that arrive
+# whole, the index holds module-level code and files over 1 MB, code_* take
+# forge repo names with the configured default repo, and a range read is never
+# stored.
+test_host_code_reading_parity.py

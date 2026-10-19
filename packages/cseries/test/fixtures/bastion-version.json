@@ -1,0 +1,30 @@
+{
+  "version": "0.52.0",
+  "built_from": "4376a51",
+  "binaries": {
+    "darwin-amd64": {
+      "url": "https://dl.privatae.ai/dl/privatae-bastion-darwin-amd64?v=0.52.0",
+      "sha256": "36ca8243713f1d7ff464bb02ac341495394e580e9fe409c9f8adc224fa866405"
+    },
+    "darwin-arm64": {
+      "url": "https://dl.privatae.ai/dl/privatae-bastion-darwin-arm64?v=0.52.0",
+      "sha256": "29fb24df9c47cd55d9efa0a915052236d06c2bad7977f8cd579c119b4037371c"
+    },
+    "linux-amd64": {
+      "url": "https://dl.privatae.ai/dl/privatae-bastion-linux-amd64?v=0.52.0",
+      "sha256": "156727c1acd56dbf04062b4fb402647d54cadceae570dcd415987f02596129da"
+    },
+    "linux-arm64": {
+      "url": "https://dl.privatae.ai/dl/privatae-bastion-linux-arm64?v=0.52.0",
+      "sha256": "407aaf526a2a0076e4dc6e370cad4cb6c69d7ba6b9c762879723132a4ddd35ca"
+    },
+    "windows-amd64.exe": {
+      "url": "https://dl.privatae.ai/dl/privatae-bastion-windows-amd64.exe?v=0.52.0",
+      "sha256": "0b0cab06a366ec27c46c28411c081a5ea33b2bb3b3888681693d9d6e2d0b0521"
+    },
+    "windows-arm64.exe": {
+      "url": "https://dl.privatae.ai/dl/privatae-bastion-windows-arm64.exe?v=0.52.0",
+      "sha256": "87f82c6e0bba6d27c5a8d377e7aaa74916ab973f41a541d3f19bbff02fc8c2b5"
+    }
+  }
+}

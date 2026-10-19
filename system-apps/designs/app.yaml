@@ -1,0 +1,93 @@
+id: designs
+name: Designs
+description: Desktops to try — the ones we make for everyone, and every one your Host made. See each live, click to wear it, go back with one more click, and share your own.
+icon: icon.png
+icon_small: icon-64.png
+entrypoint: index.html
+system: true
+# 1.0.1 (2026-10-01): the HTML escape helper escapes both quotes as well, so a
+# value from the Host, a machine or a provider stays inside the attribute it
+# is written into. App-only change.
+# 1.0.2 (2026-09-30): Try and Publish now wait on a real-browser render check
+# on the server (server/applications/desktop_render.py). The status line says
+# "checking … in a browser" while it runs, and a check that outlasts the
+# router's 30 s answers 202 with a job the app follows to the same answer —
+# the result, or the refusal with its error and line. No scope change.
+# 1.0.3 (2026-10-05): manifest-only. The design-system catalog this app first
+# browsed (0.1.0 to 0.2.1 below) is gone from the platform (migrations/v206).
+# Those notes now name its
+# routes and column in words, so nothing here points at what was removed. The
+# app is unchanged; bundle repacked.
+# 1.0.4 (2026-10-18): prompt_behavior is one paragraph saying what the app is
+#   and what lives in it; do_when_active is gone from the manifest contract,
+#   and its how-to lines live in skills and tool descriptions the Host reads on
+#   demand. Manifest-only; bundle repacked.
+# 1.0.5 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
+version: "1.0.5"
+# 1.0.0 (2026-09-28): rebuilt as a shelf of DESKTOPS: a repository of designs
+# for everyone that people can preview, click and try, instead of designs
+# stuck in artifacts where nobody can see what they look like. Two shelves: Ours
+# (the house shelf — designs the platform's own hosts publish, for every host)
+# and Yours (this account's published designs + every desktop made on this
+# Host). Every card is the real document rendered live in a sandboxed frame
+# with a stand-in desktop bridge (/js/desktop-preview.js). Try = copy + wear
+# at once; "Go back" restores the previous desktop and discards the trial copy.
+# Server: server/routes/designs.py (bridge design.list/get/publish/delete).
+# The brand-template gallery, the per-project style and the default template
+# are gone — there is no per-project style; artifacts wear the desktop.
+# 0.2.1 (2026-08-25): prompt_behavior had no user_path at all (describe_app's
+# where_to_find_it came back empty), and what_it_is never mentioned the
+# URL-import bar (index.html:45-50, app.js:337-360 -> the catalog's
+# import-from-URL route) even though a do_when_active line already relied on
+# it. Manifest-only change.
+# 0.2.0 (2026-07-24): import-from-URL — paste a website address, a background
+# job (bounded WebFetch-only harness run, same jailed lane as deep_research)
+# distills the site's design language into DESIGN.md/tokens.css/components.html
+# and lands it as an INSTALLED local catalog entry (origin='url-import',
+# file bodies self-contained in manifest.files — previews and reinstalls
+# without the bridge). Live progress card in the gallery rail; no chat needed.
+# Server lane: the catalog's import-from-URL route and its job poll.
+# 0.1.2 (2026-07-12): live card thumbnails — every gallery card renders the
+# ACTUAL design system scaled down (same sandboxed preview lane, lazy via
+# IntersectionObserver, unloaded off-screen, cached client+server). Closes
+# the "thumbnails" deferral honestly: no screenshots, the real thing.
+# 0.1.1 (2026-07-12, first hands-on): the split layout actually
+# splits now — the shared .app-view base is a padded 860px-max COLUMN, so
+# without explicit row/max-width/padding overrides the gallery collapsed
+# into one long column with the actions below the whole list. Actions moved
+# to a bar pinned at the BOTTOM of the preview frame (where users expect
+# them), and the first-open empty state now says what to do in order.
+# 0.1.0 (2026-07-12): the design-template gallery (per-project style + style
+# library — the taste piece of the artifact-window initiative). Browses the
+# platform catalog (kind=design_system, 150+ OpenDesign systems served at the
+# bridge), renders LIVE previews in the same sandboxed srcdoc lane as the
+# artifact window (catalog bodies are third-party HTML and never touch a
+# privileged context), installs copies into the host's ContextStore, and
+# closes the loop that made the library dormant: PUT /api/projects/{id}
+# design_system -> the project's design-system column (v011, write-only
+# until now) and the catalog's default-design route (the "new artifact" base
+# template). The host's prompt names the active template per surface — change
+# it here and the very next design follows it.
+
+window:
+  title: Designs
+  width: 1280
+  height: 840
+  resizable: true
+  min_width: 720
+  min_height: 480
+
+permissions:
+  # /api/designs/* — wear, try, go back, publish, remove (the desktop pointer
+  # is appearance state, the same scope the Artifacts window's "Use as
+  # desktop" holds).
+  - write:appearance
+
+prompt_behavior:
+  what_it_is: |
+    The Designs app — a shelf of complete DESKTOPS the user can look at and
+    wear. "Ours" holds the designs the platform publishes for everyone;
+    "Yours" holds the designs this account shared and every desktop you have
+    made on this Host. Each card is the real design rendered live; "Try it"
+    puts it on the screen at once and "Go back" restores what they had.
+  user_path: "the Designs app, in the dock"

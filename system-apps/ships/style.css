@@ -1,0 +1,117 @@
+/* ================================================================
+ * Ships — per-app layout only.
+ *
+ * Colours, type, pills, rows, cards and the confirm dialog come from
+ * /css/cseries-components.css + /css/tokens.css. Nothing below sets a
+ * colour except by token, and nothing sets a font family.
+ * ================================================================ */
+
+.app-brand-text {
+    min-width: 0;
+}
+
+.sh-view {
+    max-width: none;
+}
+
+.sh-run-head,
+.sh-pipe-head,
+.sh-card-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    min-width: 0;
+}
+.sh-run-title {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    min-width: 0;
+}
+.sh-error {
+    margin: var(--space-2) 0 0;
+    color: var(--cseries-linen);
+    font-size: var(--text-sm);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+
+/* A run's steps: one line each, in order. */
+.sh-steps {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    margin-top: var(--space-2);
+}
+.sh-step {
+    display: grid;
+    grid-template-columns: 28px minmax(120px, 1fr) minmax(140px, 1.2fr) auto;
+    align-items: start;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border: 1px solid var(--cseries-seam);
+    border-radius: var(--radius-sm);
+}
+.sh-step-n {
+    color: var(--cseries-linen);
+    font-family: var(--font-mono);
+}
+.sh-step-detail {
+    grid-column: 2 / -1;
+    margin: 0;
+    padding: var(--space-2);
+    background: var(--cseries-night);
+    border: 1px solid var(--cseries-seam);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--cseries-linen);
+    white-space: pre-wrap;
+    word-break: break-word;
+    max-height: 240px;
+    overflow: auto;
+}
+.sh-mono {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    word-break: break-all;
+}
+
+.sh-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: var(--space-3);
+}
+.sh-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+.sh-line {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+}
+.sh-line-label {
+    min-width: 96px;
+}
+.sh-actions {
+    display: flex;
+    gap: var(--space-2);
+    flex-wrap: wrap;
+}
+
+#c-input {
+    width: 100%;
+    margin-top: var(--space-2);
+    font-family: var(--font-mono);
+}
+
+@media (max-width: 760px) {
+    .sh-step {
+        grid-template-columns: 24px 1fr;
+    }
+}

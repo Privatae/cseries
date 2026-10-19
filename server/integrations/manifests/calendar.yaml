@@ -1,0 +1,43 @@
+key: calendar
+display_name: Google Calendar
+categories: [calendar, google]
+
+connection_kind: calendar
+connection_provider: calendar
+
+auth:
+  mode: oauth2
+  family: google
+  authorize_endpoint: https://accounts.google.com/o/oauth2/v2/auth
+  token_endpoint: https://oauth2.googleapis.com/token
+  revoke_endpoint: https://oauth2.googleapis.com/revoke
+  scopes:
+    - https://www.googleapis.com/auth/calendar.readonly
+    - https://www.googleapis.com/auth/userinfo.email
+  extra_authorize:
+    access_type: offline
+    prompt: consent
+    include_granted_scopes: "true"
+
+proxy:
+  base_url: https://www.googleapis.com/calendar/v3
+  rate_limit:
+    requests_per_minute: 240
+    concurrent: 4
+
+resources:
+  - name: event
+    canonical_model: CalendarEvent
+    sync:
+      strategy: cursor                # syncToken-based incremental
+      cursor_field: syncToken
+      endpoint: events.list
+      page_size: 100
+      poll_seconds: 90
+    signal:
+      operation_read: read
+      source_display: Google Calendar
+
+reauth_triggers:
+  - invalid_grant
+  - unauthorized_client

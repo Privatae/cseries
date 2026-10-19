@@ -1,0 +1,6 @@
+# 2026-09-28 (NAC Posture cards): each card shows what the running engine decides for that
+# machine now (decide + permits_inbound, the MCP gate's own call), checked equal to evaluate() for every
+# machine — no rules, a quarantine rule, the default profile, the integrity lock; a bearer-only token is
+# not governed; no engine reads "not checked". nac_endpoints.assigned_profile is never written, so the
+# card used to say "default-preserve" for everything. Stub pool, real key, real route, real app.js. No pod, no DB.
+test_nac_posture_card_decision.py

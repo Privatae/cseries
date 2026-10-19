@@ -1,0 +1,8 @@
+# OpenRouter returns an image INLINE (b64_json, no url) and
+# the engine kept only url entries — measured: 200, $0.0387 charged, "ok, count
+# 0". Drives the real engine against a stand-in provider: inline images are
+# stored and served from /api/images/<id>; what is stored is decided by the
+# BYTES (HTML, SVG, bad base64, oversized are refused however labelled); a 200
+# that keeps nothing is an error, never "ok"; the route serves only well-formed
+# ids and raster types, with a sandboxing CSP. Red on the unfixed engine.
+test_image_inline_b64.py

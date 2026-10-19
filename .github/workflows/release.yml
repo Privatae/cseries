@@ -1,0 +1,639 @@
+# A pushed tag vX.Y.Z releases version X.Y.Z: the two images (multi-arch,
+# each architecture built, scanned and smoke-tested natively before anything
+# is pushed), the WSL guest images on the GitHub release, and the npm packages
+# with a release.json that pins all of it. docs/RELEASING.md is the runbook,
+# including what the maintainer runs before tagging.
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  HOST_IMAGE: ghcr.io/privatae/cseries
+  POSTGRES_IMAGE: ghcr.io/privatae/cseries-postgres
+  # The repo's vulnerability gate (trivy.yaml): fixable findings at these
+  # severities fail the release; accepted ones live, path-scoped, in
+  # .trivyignore.yaml. Fixable findings at the report severity are listed in
+  # the log and flagged on the run, and do not fail it.
+  VULN_FAIL_SEVERITY: CRITICAL
+  VULN_REPORT_SEVERITY: HIGH
+  BUILDKIT_IMAGE: moby/buildkit:v0.34.0@sha256:b059f8d7226d0b326bc871af489a5dddf65e36af4d20d14251b072974d9ee87c
+  # trivy.yaml and .trivyignore.yaml were measured with this version.
+  TRIVY_VERSION: 0.73.0
+  CRANE_VERSION: 0.22.1
+  CRANE_SHA256_X86_64: 0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0
+
+jobs:
+  version:
+    name: Version from the tag
+    runs-on: ubuntu-24.04
+    permissions: {}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Read X.Y.Z from vX.Y.Z
+        id: version
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::a release tag is vX.Y.Z; '$TAG' is not"
+            exit 1
+          fi
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
+  image:
+    name: Images (${{ matrix.arch }})
+    needs: version
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 240
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+            machine: x86_64
+            trivy_asset: Linux-64bit
+            trivy_sha256: 2edd39da482bb4e9831962487b68f68e3928ec3137794757f54d00383d79547b
+            crane_asset: x86_64
+            crane_sha256: 0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            machine: aarch64
+            trivy_asset: Linux-ARM64
+            trivy_sha256: 13833d97e8a1a5367471c372a173180157f593bece570e20d5d925fef552f5dd
+            crane_asset: arm64
+            crane_sha256: 898c0cff975f898a33e8c4580bdafb0e7c02c7faa33374e946762f97c4ab7110
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      # The whole history: the schema gates build the database as the tree
+      # stood before a migration was added, read from git (kernel_schema.py
+      # rev_before), and a shallow clone has no such commit. Measured: on a
+      # depth-1 clone test_one_memory_migration_pg.py fails for exactly that.
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Check the runner is ${{ matrix.machine }}
+        env:
+          MACHINE: ${{ matrix.machine }}
+        run: |
+          if [[ "$(uname -m)" != "$MACHINE" ]]; then
+            echo "::error::the $ARCH images are built natively, and this runner is $(uname -m)"
+            exit 1
+          fi
+
+      # The versions the gates pass with on a build machine
+      # (scripts/requirements-gates.txt lists the packages).
+      - name: Python for the host-side gates
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14.4"
+
+      - name: Node for the smoke test's browser-module gates
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "22.22.2"
+          package-manager-cache: false
+
+      - name: Install trivy and crane, pinned by sha256
+        env:
+          TRIVY_ASSET: ${{ matrix.trivy_asset }}
+          TRIVY_SHA256: ${{ matrix.trivy_sha256 }}
+          CRANE_ASSET: ${{ matrix.crane_asset }}
+          CRANE_SHA256: ${{ matrix.crane_sha256 }}
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/bin" dl="$RUNNER_TEMP/dl"
+          mkdir -p "$bin" "$dl"
+          fetch() {
+            curl -fsSL --retry 3 -o "$dl/$3" "$1"
+            echo "$2  $dl/$3" | sha256sum -c -
+          }
+          fetch "https://github.com/aquasecurity/trivy/releases/download/v$TRIVY_VERSION/trivy_${TRIVY_VERSION}_$TRIVY_ASSET.tar.gz" \
+            "$TRIVY_SHA256" trivy.tar.gz
+          fetch "https://github.com/google/go-containerregistry/releases/download/v$CRANE_VERSION/go-containerregistry_Linux_$CRANE_ASSET.tar.gz" \
+            "$CRANE_SHA256" crane.tar.gz
+          tar -xzf "$dl/trivy.tar.gz" -C "$bin" trivy
+          tar -xzf "$dl/crane.tar.gz" -C "$bin" crane
+          echo "$bin" >> "$GITHUB_PATH"
+
+      # One build per image, written to an archive that is both a Docker load
+      # tarball (for the smoke test) and an OCI layout (what is pushed), so
+      # the bytes pushed are the bytes tested. Rebuilding for the push would
+      # not be: the apt-indexes stage re-reads the Debian and PostgreSQL
+      # archives on every build. A fresh builder, so nothing comes from a
+      # cache.
+      - name: Build both images
+        run: |
+          set -euo pipefail
+          docker buildx create --name release --driver docker-container \
+            --driver-opt "image=$BUILDKIT_IMAGE" --bootstrap
+          built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          out="$RUNNER_TEMP/oci"
+          mkdir -p "$out"
+          # PG_DIGEST and PC_DIGEST stay empty: an image cannot hold its own
+          # digest, which exists only once it is built. The tag names the
+          # build, and release.json carries the digests.
+          docker buildx build --builder release --platform "linux/$ARCH" \
+            --provenance=false --sbom=false -f Dockerfile.postgres \
+            --build-arg PG_TAG="$VERSION" --build-arg PG_IMAGE="$POSTGRES_IMAGE" \
+            --build-arg PG_DIGEST= --build-arg PG_BUILT_AT="$built_at" \
+            --output "type=docker,dest=$out/postgres.tar,name=cseries-postgres:release,oci-mediatypes=true" .
+          docker buildx build --builder release --platform "linux/$ARCH" \
+            --provenance=false --sbom=false -f Dockerfile.linux \
+            --build-arg PC_TAG="$VERSION" --build-arg PC_IMAGE="$HOST_IMAGE" \
+            --build-arg PC_DIGEST= --build-arg PC_BUILT_AT="$built_at" \
+            --output "type=docker,dest=$out/host.tar,name=cseries:release,oci-mediatypes=true" .
+          # Nothing below builds. Its cache (2.6 GB for amd64, measured) is
+          # room the smoke test needs on a hosted runner.
+          docker buildx rm release
+
+      - name: Load the images and check they are the ones that will be pushed
+        id: oci
+        run: |
+          set -euo pipefail
+          for name in postgres host; do
+            docker load -i "$RUNNER_TEMP/oci/$name.tar"
+            mkdir -p "$RUNNER_TEMP/oci/$name"
+            tar -xf "$RUNNER_TEMP/oci/$name.tar" -C "$RUNNER_TEMP/oci/$name"
+          done
+          host="$(python .github/scripts/release.py oci-check "$RUNNER_TEMP/oci/host" cseries:release "$ARCH")"
+          postgres="$(python .github/scripts/release.py oci-check "$RUNNER_TEMP/oci/postgres" cseries-postgres:release "$ARCH")"
+          echo "host=$host" >> "$GITHUB_OUTPUT"
+          echo "postgres=$postgres" >> "$GITHUB_OUTPUT"
+
+      # What the build generates and bakes is in the image and not in the
+      # tree, so the tree's own run of this gate does not cover it.
+      - name: Public-source gate over each image's /app
+        run: |
+          set -euo pipefail
+          for name in host postgres; do
+            if [[ "$name" == host ]]; then image=cseries:release; else image=cseries-postgres:release; fi
+            dir="$RUNNER_TEMP/app-$name"
+            mkdir -p "$dir"
+            id="$(docker create "$image")"
+            docker cp "$id:/app" "$dir/"
+            docker rm "$id" > /dev/null
+            echo "$image:/app"
+            APP_ROOT="$dir/app" python scripts/test_public_source_clean.py --source="$GITHUB_WORKSPACE"
+          done
+
+      # From the repo root, where trivy loads trivy.yaml and through it
+      # .trivyignore.yaml. The archives scanned are the ones pushed.
+      - name: Scan for secrets and vulnerabilities
+        run: |
+          set -euo pipefail
+          trivy image --download-db-only
+          for name in host postgres; do
+            archive="$RUNNER_TEMP/oci/$name.tar"
+            trivy image --skip-db-update --input "$archive" \
+              --scanners secret --exit-code 1
+            trivy image --skip-db-update --input "$archive" \
+              --scanners vuln --severity "$VULN_FAIL_SEVERITY" --ignore-unfixed --exit-code 1
+            rc=0
+            trivy image --skip-db-update --input "$archive" \
+              --scanners vuln --severity "$VULN_REPORT_SEVERITY" --ignore-unfixed --exit-code 3 || rc=$?
+            if (( rc == 3 )); then
+              echo "::warning title=$VULN_REPORT_SEVERITY findings ($name, $ARCH)::fixable $VULN_REPORT_SEVERITY findings in the $name image, listed in this step's log; the release gate fails on $VULN_FAIL_SEVERITY"
+            elif (( rc != 0 )); then
+              exit "$rc"
+            fi
+          done
+
+      # What smoke_test.sh needs from the machine beyond Docker: the gates'
+      # Python packages, node, headless Chromium, and an age binary on PATH
+      # (the one the image ships).
+      - name: Smoke test prerequisites
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/ms-playwright
+        run: |
+          set -euo pipefail
+          python -m pip install -r scripts/requirements-gates.txt
+          python -m playwright install --with-deps chromium
+          id="$(docker create cseries:release)"
+          docker cp "$id:/usr/local/bin/age" "$RUNNER_TEMP/bin/age"
+          docker rm "$id"
+          "$RUNNER_TEMP/bin/age" --version
+
+      # As root, as the suite runs on a build machine: the connector gates
+      # start their children in their own user and PID namespaces, which
+      # Ubuntu 24.04 refuses an unprivileged user. Its own HOME, so nothing
+      # root-owned lands in the runner user's.
+      #
+      # From a copy of the tree in /srv, as on a build machine. The checkout
+      # is under /home, which the picture renderer's sandbox refuses to read
+      # (picture.HOST_DATA_PATHS), and its gate reads the tree's fonts:
+      # measured, read roots under /home/runner/work fail its check and the
+      # same roots under /srv pass.
+      - name: Smoke test
+        env:
+          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/ms-playwright
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/smoke-home"
+          sudo cp -R --preserve=mode,timestamps "$GITHUB_WORKSPACE" /srv/cseries
+          sudo -E env "PATH=$PATH" "HOME=$RUNNER_TEMP/smoke-home" \
+            IMAGE=cseries:release PG_IMAGE=cseries-postgres:release \
+            bash /srv/cseries/scripts/smoke_test.sh
+
+      - name: Push by digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          HOST_DIGEST: ${{ steps.oci.outputs.host }}
+          POSTGRES_DIGEST: ${{ steps.oci.outputs.postgres }}
+        run: |
+          set -euo pipefail
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          crane push "$RUNNER_TEMP/oci/host" "$HOST_IMAGE@$HOST_DIGEST"
+          crane push "$RUNNER_TEMP/oci/postgres" "$POSTGRES_IMAGE@$POSTGRES_DIGEST"
+          for ref in "$HOST_IMAGE@$HOST_DIGEST" "$POSTGRES_IMAGE@$POSTGRES_DIGEST"; do
+            got="sha256:$(crane manifest "$ref" | sha256sum | cut -d' ' -f1)"
+            if [[ "$ref" != *"@$got" ]]; then
+              echo "::error::the registry's manifest for $ref hashes to $got"
+              exit 1
+            fi
+          done
+          mkdir -p "$RUNNER_TEMP/digests"
+          echo "$HOST_DIGEST" > "$RUNNER_TEMP/digests/host"
+          echo "$POSTGRES_DIGEST" > "$RUNNER_TEMP/digests/postgres"
+
+      - name: Attest the host image
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.HOST_IMAGE }}
+          subject-digest: ${{ steps.oci.outputs.host }}
+          push-to-registry: true
+          # Storage records exist only for organization-owned repositories.
+          create-storage-record: false
+
+      - name: Attest the database image
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.POSTGRES_IMAGE }}
+          subject-digest: ${{ steps.oci.outputs.postgres }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Keep the digests for the merge
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: digests-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/
+          if-no-files-found: error
+          # A re-run replaces its own earlier upload. What is published is
+          # guarded downstream: a tag, asset or npm version that exists must
+          # match, or the job fails.
+          overwrite: true
+
+  merge:
+    name: Multi-arch tags
+    needs: [version, image]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    outputs:
+      host: ${{ steps.tag.outputs.host }}
+      postgres: ${{ steps.tag.outputs.postgres }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: The digests each architecture tested and pushed
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: digests-*
+          path: ${{ runner.temp }}/digests
+
+      - name: Install crane, pinned by sha256
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin" "$RUNNER_TEMP/dl"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/dl/crane.tar.gz" \
+            "https://github.com/google/go-containerregistry/releases/download/v$CRANE_VERSION/go-containerregistry_Linux_x86_64.tar.gz"
+          echo "$CRANE_SHA256_X86_64  $RUNNER_TEMP/dl/crane.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/dl/crane.tar.gz" -C "$RUNNER_TEMP/bin" crane
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      # A tag is never moved: an existing X.Y.Z is accepted only when it is
+      # already exactly these two images (this job, re-run).
+      - name: Tag X.Y.Z from exactly the tested digests
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          d="$RUNNER_TEMP/digests"
+          for image in host postgres; do
+            if [[ "$image" == host ]]; then repo="$HOST_IMAGE"; else repo="$POSTGRES_IMAGE"; fi
+            amd64="$(cat "$d/digests-amd64/$image")"
+            arm64="$(cat "$d/digests-arm64/$image")"
+            if crane digest "$repo:$VERSION" > /dev/null 2> "$RUNNER_TEMP/probe.err"; then
+              if ! crane manifest "$repo:$VERSION" \
+                   | python3 .github/scripts/release.py index-check - "$amd64" "$arm64"; then
+                echo "::error::$repo:$VERSION already exists and holds other images; a released tag is never moved"
+                exit 1
+              fi
+              echo "$repo:$VERSION already holds these two images"
+            elif grep -qiE 'MANIFEST_UNKNOWN|NAME_UNKNOWN|NOT_FOUND|404' "$RUNNER_TEMP/probe.err"; then
+              docker buildx imagetools create -t "$repo:$VERSION" "$repo@$amd64" "$repo@$arm64"
+            else
+              cat "$RUNNER_TEMP/probe.err" >&2
+              echo "::error::could not tell whether $repo:$VERSION exists"
+              exit 1
+            fi
+            crane manifest "$repo:$VERSION" \
+              | python3 .github/scripts/release.py index-check - "$amd64" "$arm64"
+            echo "$image=$(crane digest "$repo:$VERSION")" >> "$GITHUB_OUTPUT"
+          done
+
+      - name: Attest the host index
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.HOST_IMAGE }}
+          subject-digest: ${{ steps.tag.outputs.host }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Attest the database index
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.POSTGRES_IMAGE }}
+          subject-digest: ${{ steps.tag.outputs.postgres }}
+          push-to-registry: true
+          create-storage-record: false
+
+  guest:
+    name: WSL guest image (${{ matrix.arch }})
+    needs: version
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 90
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - arch: x64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      ARCH: ${{ matrix.arch }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Each architecture on its own runner: build-rootfs.sh refuses a
+      # foreign one unless qemu-user is registered, and these runners have
+      # none.
+      - name: Build the guest image
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/guest"
+          mkdir -p "$out"
+          bash vm/wsl/build-rootfs.sh --arch "$ARCH" --version "$VERSION" --out "$out"
+          name="cseries-wsl-rootfs-$VERSION-$ARCH.tar.gz"
+          stated="$(cut -d' ' -f1 "$out/$name.sha256")"
+          got="$(sha256sum "$out/$name" | cut -d' ' -f1)"
+          if [[ "$stated" != "$got" ]]; then
+            echo "::error::$name.sha256 says $stated, the file hashes to $got"
+            exit 1
+          fi
+
+      - name: Keep the guest image for the release
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: guest-${{ matrix.arch }}
+          path: ${{ runner.temp }}/guest/
+          if-no-files-found: error
+          overwrite: true
+
+  release:
+    name: GitHub release
+    needs: [version, merge, guest]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: ${{ github.ref_name }}
+      HOST_DIGEST: ${{ needs.merge.outputs.host }}
+      POSTGRES_DIGEST: ${{ needs.merge.outputs.postgres }}
+    steps:
+      - name: The guest images
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: guest-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/guest
+
+      # A released asset is never replaced: one already on the release (this
+      # job, re-run) must be byte for byte the file this run built, because
+      # a published CLI may already pin its sha256.
+      - name: Publish the release and upload the guest images
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          assets=()
+          for arch in x64 arm64; do
+            name="cseries-wsl-rootfs-$VERSION-$arch.tar.gz"
+            for f in "$RUNNER_TEMP/guest/$name" "$RUNNER_TEMP/guest/$name.sha256"; do
+              if [[ ! -f "$f" ]]; then
+                echo "::error::$(basename "$f") was not built"
+                exit 1
+              fi
+              assets+=("$f")
+            done
+          done
+          {
+            echo "Images (multi-arch, linux/amd64 and linux/arm64):"
+            echo
+            echo "- \`$HOST_IMAGE:$VERSION\` \`$HOST_DIGEST\`"
+            echo "- \`$POSTGRES_IMAGE:$VERSION\` \`$POSTGRES_DIGEST\`"
+            echo
+            echo "WSL guest images for x64 and arm64 are attached, each with its .sha256."
+            echo "Install with \`npx cseries@$VERSION\`."
+          } > "$RUNNER_TEMP/notes.md"
+          if ! gh release view "$TAG" > /dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          fi
+          present="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+          for f in "${assets[@]}"; do
+            name="$(basename "$f")"
+            if grep -qxF "$name" <<< "$present"; then
+              have="$(gh release download "$TAG" --pattern "$name" --output - | sha256sum | cut -d' ' -f1)"
+              want="$(sha256sum "$f" | cut -d' ' -f1)"
+              if [[ "$have" != "$want" ]]; then
+                echo "::error::$name is already on the release with other contents ($have, this run built $want); a released asset is never replaced"
+                exit 1
+              fi
+              echo "$name is already on the release, with these contents"
+            else
+              gh release upload "$TAG" "$f"
+            fi
+          done
+
+  npm:
+    name: npm packages
+    needs: [version, merge, guest, release]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      HOST_DIGEST: ${{ needs.merge.outputs.host }}
+      POSTGRES_DIGEST: ${{ needs.merge.outputs.postgres }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Trusted publishing needs npm 11.5.1 or later; Node 24.22.0 ships 11.19.1.
+      - name: Node and npm
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24.22.0"
+          package-manager-cache: false
+
+      - name: The guest images
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: guest-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/guest
+
+      - name: Write release.json
+        env:
+          DOWNLOAD_BASE: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.ref_name }}
+        run: |
+          python3 .github/scripts/release.py release-json packages/cseries/release.json \
+            --version "$VERSION" \
+            --host-image "$HOST_IMAGE" --host-digest "$HOST_DIGEST" \
+            --postgres-image "$POSTGRES_IMAGE" --postgres-digest "$POSTGRES_DIGEST" \
+            --guest-dir "$RUNNER_TEMP/guest" --download-base "$DOWNLOAD_BASE"
+
+      # Everything release.json names must be fetchable by anyone, with no
+      # login, before a CLI that pins it is published.
+      - name: Check what release.json pins is public
+        run: |
+          set -euo pipefail
+          for ref in "$HOST_IMAGE@$HOST_DIGEST" "$POSTGRES_IMAGE@$POSTGRES_DIGEST"; do
+            if ! docker buildx imagetools inspect "$ref" > /dev/null; then
+              echo "::error::$ref cannot be pulled without a login. Make both GHCR packages public (docs/RELEASING.md), then re-run this job."
+              exit 1
+            fi
+          done
+          python3 - packages/cseries/release.json > "$RUNNER_TEMP/guest-urls" <<'EOF'
+          import json, sys
+          for g in json.load(open(sys.argv[1]))["guest"].values():
+              print(g["url"], g["sha256"])
+          EOF
+          while read -r url sha; do
+            got="$(curl -fsSL --retry 3 "$url" | sha256sum | cut -d' ' -f1)"
+            if [[ "$got" != "$sha" ]]; then
+              echo "::error::$url hashes to $got, release.json says $sha"
+              exit 1
+            fi
+          done < "$RUNNER_TEMP/guest-urls"
+
+      - name: Set the version and pack
+        run: |
+          set -euo pipefail
+          npm_version="$(npm --version)"
+          if ! node -e 'const [a, b, c] = process.argv[1].split(".").map(Number);
+                        process.exit(a > 11 || (a === 11 && (b > 5 || (b === 5 && c >= 1))) ? 0 : 1)' "$npm_version"; then
+            echo "::error::npm trusted publishing needs npm 11.5.1 or later; this is $npm_version"
+            exit 1
+          fi
+          python3 .github/scripts/release.py stamp-npm "$VERSION" packages/*/package.json
+          mkdir -p "$RUNNER_TEMP/npm"
+          # The CLI last: it depends on the per-platform packages.
+          for dir in packages/*/; do
+            [[ "$dir" == packages/cseries/ ]] && continue
+            (cd "$dir" && npm pack --json --pack-destination "$RUNNER_TEMP/npm") > "$RUNNER_TEMP/npm/$(basename "$dir").json"
+            basename "$dir" >> "$RUNNER_TEMP/npm/order"
+          done
+          (cd packages/cseries && npm pack --json --pack-destination "$RUNNER_TEMP/npm") > "$RUNNER_TEMP/npm/cseries.json"
+          echo cseries >> "$RUNNER_TEMP/npm/order"
+
+      # The exact tarballs, for the owner's first publish of a package by
+      # hand (docs/RELEASING.md) and for checking what went out.
+      - name: Keep the packed tarballs
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: npm-packages
+          path: ${{ runner.temp }}/npm/*.tgz
+          if-no-files-found: error
+          overwrite: true
+
+      # Trusted publishing: npm exchanges this job's OIDC token for a
+      # one-time publish credential. There is no npm token anywhere.
+      - name: Publish
+        run: |
+          set -euo pipefail
+          while read -r pkg; do
+            meta="$RUNNER_TEMP/npm/$pkg.json"
+            name="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1]))[0].name' "$meta")"
+            file="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1]))[0].filename' "$meta")"
+            integrity="$(node -p 'JSON.parse(require("fs").readFileSync(process.argv[1]))[0].integrity' "$meta")"
+            if ! npm view "$name" name > /dev/null 2> "$RUNNER_TEMP/view.err"; then
+              if grep -q E404 "$RUNNER_TEMP/view.err"; then
+                echo "::error::$name is not on npm yet, and trusted publishing cannot create a package. Publish $file from this run's npm-packages artifact by hand and add its trusted publisher (docs/RELEASING.md, one-time steps), then re-run this job."
+              else
+                cat "$RUNNER_TEMP/view.err" >&2
+                echo "::error::could not read $name from npm"
+              fi
+              exit 1
+            fi
+            published="$(npm view "$name@$VERSION" dist.integrity 2> /dev/null || true)"
+            if [[ -n "$published" ]]; then
+              if [[ "$published" != "$integrity" ]]; then
+                echo "::error::$name@$VERSION is already on npm with different contents"
+                exit 1
+              fi
+              echo "$name@$VERSION is already published, with these contents"
+              continue
+            fi
+            npm publish "$RUNNER_TEMP/npm/$file" --provenance --access public
+          done < "$RUNNER_TEMP/npm/order"

@@ -1,0 +1,5 @@
+# 2026-09-07: the browser scales to zero when nobody holds it. Holders (a
+# viewport or a one-shot run) decide, not a guess about who woke it, and an
+# open-but-silent socket stops holding. Pure state arithmetic on
+# harness_backend — no pod, no k8s, no network.
+test_browser_holders.py

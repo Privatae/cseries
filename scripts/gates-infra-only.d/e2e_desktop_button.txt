@@ -1,0 +1,1 @@
+e2e_desktop_button.py                    # real Chromium (playwright) — drives the artifacts window against a stubbed kernel and asserts the "Use as desktop" button follows the verdict both ways; the source-level check (test_desktop_eligibility.py) passed while the button read "checking…" forever, so this is the half that knows; skips without playwright

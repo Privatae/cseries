@@ -1,0 +1,259 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Publisher</title>
+
+    <link rel="stylesheet" href="/css/tokens.css">
+    <link rel="stylesheet" href="/css/motion.css">
+    <link rel="stylesheet" href="/css/cseries-components.css">
+    <link rel="stylesheet" href="/system-apps/publisher/style.css">
+</head>
+<body class="cseries-scroll">
+    <div class="app">
+        <header class="app-header">
+            <div class="app-brand">
+                <img src="/system-apps/publisher/icon.svg" alt="" class="app-brand-icon">
+                <div class="app-brand-text">
+                    <div class="app-brand-title">Publisher</div>
+                    <div class="app-brand-sub label-sys" id="header-sub">Loading&hellip;</div>
+                </div>
+            </div>
+            <nav class="cseries-nav" role="tablist" aria-label="Publisher sections">
+                <button class="cseries-nav-btn active" data-view="overview" role="tab" aria-selected="true">Overview</button>
+                <button class="cseries-nav-btn" data-view="apps" role="tab" aria-selected="false">My Apps</button>
+                <button class="cseries-nav-btn" data-view="sales" role="tab" aria-selected="false">Sales</button>
+                <button class="cseries-nav-btn" data-view="publish" role="tab" aria-selected="false">Publish</button>
+            </nav>
+        </header>
+
+        <div class="cseries-seam"></div>
+
+        <main class="app-body">
+            <!-- Overview ─────────────────────────────────────── -->
+            <section class="view" data-view="overview" role="tabpanel">
+                <div class="kpi-row">
+                    <div class="kpi cseries-card">
+                        <div class="kpi-label label-sys">Lifetime earned</div>
+                        <div class="kpi-value" id="kpi-earned">&mdash;</div>
+                    </div>
+                    <div class="kpi cseries-card">
+                        <div class="kpi-label label-sys">Sales</div>
+                        <div class="kpi-value" id="kpi-sales">&mdash;</div>
+                    </div>
+                    <div class="kpi cseries-card">
+                        <div class="kpi-label label-sys">Apps published</div>
+                        <div class="kpi-value" id="kpi-apps">&mdash;</div>
+                    </div>
+                </div>
+
+                <div class="flywheel cseries-card">
+                    <div class="flywheel-eyebrow label-sys">The flywheel</div>
+                    <div class="flywheel-headline">Sales are paid into your own Stripe account.</div>
+                    <div class="flywheel-body">
+                        Buyers pay through Stripe Connect, straight to you.
+                        Privatae keeps a platform fee on each paid sale to run
+                        the catalog; the rest is yours.
+                    </div>
+                </div>
+
+                <div class="recent cseries-card">
+                    <div class="recent-head">
+                        <span class="recent-title">Recent sales</span>
+                        <span class="label-sys" id="recent-meta">&mdash;</span>
+                    </div>
+                    <div id="recent-list" class="recent-list">
+                        <div class="cseries-empty">
+                            <span class="empty-title">Loading&hellip;</span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- My Apps ─────────────────────────────────────── -->
+            <section class="view" data-view="apps" role="tabpanel" hidden>
+                <div id="apps-list" class="apps-list">
+                    <div class="cseries-empty">
+                        <span class="empty-title">Loading apps&hellip;</span>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Publish ─────────────────────────────────────── -->
+            <section class="view" data-view="publish" role="tabpanel" hidden>
+                <div class="publish-help cseries-card">
+                    <div class="publish-help-eyebrow label-sys">How to publish</div>
+                    <div class="publish-help-body">
+                        Publish from the Workbench: your host packs the
+                        project from its repo and submits it here. Drop
+                        a <code>.cseries</code> bundle the platform built
+                        below if you have one. A zip assembled by hand
+                        carries no build record and is refused &mdash; the
+                        store distributes what the platform packed from a
+                        committed repo, so every installer can verify it.
+                        Your request then goes to
+                        <strong>human review</strong> — every publish is
+                        reviewed for safety, quality, and duplicates
+                        before it appears in the store. You'll see the
+                        decision (and the reason, if declined) under
+                        Publish requests below. The store is free at
+                        launch, so apps publish at no price.
+                    </div>
+                </div>
+
+                <div class="publish-form cseries-card">
+                    <label class="publish-file">
+                        <span class="label-sys">App zip</span>
+                        <input type="file" id="publish-file" accept=".zip,application/zip">
+                        <div class="publish-file-status label-sys" id="publish-file-status">
+                            No file selected.
+                        </div>
+                    </label>
+
+                    <div id="publish-manifest" class="publish-manifest" hidden>
+                        <div class="publish-manifest-title">Manifest preview</div>
+                        <div class="publish-manifest-grid" id="publish-manifest-grid"></div>
+                    </div>
+
+                    <div class="publish-fields">
+                        <label class="pub-field">
+                            <span class="label-sys">Version (override)</span>
+                            <input type="text" id="publish-version" placeholder="use manifest's">
+                        </label>
+                        <label class="pub-field">
+                            <span class="label-sys">Price</span>
+                            <input type="text" value="Free — the store launches without pricing" disabled>
+                        </label>
+                        <label class="pub-field">
+                            <span class="label-sys">Audience</span>
+                            <select id="publish-audience">
+                                <option value="public">Public — visible in catalog</option>
+                                <option value="internal">Internal — hidden</option>
+                                <option value="circle">Circle — one group only</option>
+                            </select>
+                        </label>
+                        <!-- Shown only for audience=circle. The list is the
+                             groups THIS host owns: a circle app is gated on a
+                             roster its publisher holds, so a group we merely
+                             replicate is not a choice that could work. -->
+                        <label class="pub-field" id="publish-group-field" hidden>
+                            <span class="label-sys">Group whose roster may see it</span>
+                            <select id="publish-group-ref"></select>
+                        </label>
+                        <label class="pub-field">
+                            <span class="label-sys">Flavors of your app</span>
+                            <select id="publish-fork-policy">
+                                <option value="open">Open — anyone may publish a flavor</option>
+                                <option value="closed">Closed — no published flavors</option>
+                            </select>
+                        </label>
+                        <label class="pub-field full">
+                            <span class="label-sys">Summary</span>
+                            <input type="text" id="publish-summary" placeholder="One-line catalog description (optional — uses manifest description if blank)">
+                        </label>
+                        <label class="pub-field">
+                            <span class="label-sys">Started from a store app? (its app id)</span>
+                            <input type="text" id="publish-forked-from" placeholder="leave blank if original work">
+                        </label>
+                        <label class="pub-field">
+                            <span class="label-sys">…at which version</span>
+                            <input type="text" id="publish-forked-version" placeholder="exact parent version">
+                        </label>
+                    </div>
+
+                    <div class="publish-agreement" id="publish-agreement">
+                        <div class="publish-help-eyebrow label-sys" id="publish-agreement-title">Publishing Agreement</div>
+                        <div class="publish-agreement-text" id="publish-agreement-text">Loading the agreement…</div>
+                        <label class="pub-checkbox">
+                            <input type="checkbox" id="publish-agree" disabled>
+                            <span id="publish-agree-label">I accept the Publishing Agreement</span>
+                        </label>
+                    </div>
+
+                    <div class="publish-actions">
+                        <button class="cseries-btn primary" id="publish-submit" disabled>
+                            Submit for review
+                        </button>
+                        <span id="publish-status" class="label-sys"></span>
+                    </div>
+                </div>
+
+                <div class="cseries-card" id="publish-requests-card">
+                    <div class="publish-help-eyebrow label-sys">Publish requests</div>
+                    <div id="publish-requests">No requests yet.</div>
+                </div>
+            </section>
+
+            <!-- Sales ─────────────────────────────────────── -->
+            <section class="view" data-view="sales" role="tabpanel" hidden>
+                <div class="sales-controls">
+                    <label class="sales-filter label-sys">
+                        Filter by app
+                        <select id="sales-app-filter">
+                            <option value="">All apps</option>
+                        </select>
+                    </label>
+                </div>
+                <div id="sales-table" class="sales-table">
+                    <div class="cseries-empty">
+                        <span class="empty-title">Loading sales&hellip;</span>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <footer class="app-footer">
+            <span class="label-sys" id="footer-status">&mdash;</span>
+            <span class="label-sys app-footer-right" id="footer-ts"></span>
+        </footer>
+    </div>
+
+    <!-- Set-price modal -->
+    <div id="price-modal" class="pub-modal" hidden>
+        <div class="pub-modal-backdrop" data-modal-close></div>
+        <div class="pub-modal-card cseries-card" role="dialog" aria-modal="true" aria-labelledby="price-modal-title">
+            <button class="pub-modal-close" data-modal-close aria-label="Close">&times;</button>
+            <div class="pub-modal-title" id="price-modal-title">Set price</div>
+            <div class="pub-modal-body">
+                <label class="pub-field">
+                    <span class="label-sys">Price (USD)</span>
+                    <input type="number" id="price-input" step="0.01" min="0" value="0">
+                </label>
+                <div class="pub-hint label-sys" id="price-hint">
+                    0 = free. The platform fee is standard and set by the platform.
+                </div>
+            </div>
+            <div class="pub-modal-actions">
+                <button class="cseries-btn" data-modal-close>Cancel</button>
+                <button class="cseries-btn primary" id="price-save">Save</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Yank modal -->
+    <div id="yank-modal" class="pub-modal" hidden>
+        <div class="pub-modal-backdrop" data-modal-close></div>
+        <div class="pub-modal-card cseries-card" role="dialog" aria-modal="true" aria-labelledby="yank-modal-title">
+            <button class="pub-modal-close" data-modal-close aria-label="Close">&times;</button>
+            <div class="pub-modal-title" id="yank-modal-title">Yank version</div>
+            <div class="pub-modal-body">
+                <div class="pub-hint label-sys">
+                    Yanking pulls this version from the catalog. The reason is
+                    logged and not shown to buyers.
+                </div>
+                <label class="pub-field">
+                    <span class="label-sys">Reason (optional)</span>
+                    <input type="text" id="yank-reason" placeholder="Why is this version being pulled?">
+                </label>
+            </div>
+            <div class="pub-modal-actions">
+                <button class="cseries-btn" data-modal-close>Cancel</button>
+                <button class="cseries-btn danger" id="yank-confirm">Yank</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/system-apps/publisher/app.js"></script>
+</body>
+</html>

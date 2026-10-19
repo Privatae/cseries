@@ -1,0 +1,2 @@
+# CI speed: smoke_test.sh does not re-run the 359 container-free gates when pre_merge_gates.sh already passed this exact, clean tree (CI's gates job in the same run, handed over as SMOKE_SHARED_GATES_PASSED_TREE; or the ship's step-1 run, via its <tree>.pass record). Measured: that serial pass was ~37 of a 43-minute smoke. Pins: no record, a dirty or untracked file, or another tree's record all still run the gates; CI's smoke needs the gates job; the writer and reader agree on the record's path. Pure git/filesystem.
+test_gate_pass_recorded.py

@@ -1,0 +1,2 @@
+# 2026-09-30 (Ships, the signed plan on the pod side): server/ships/plan.py builds the draft the person's device signs, judges it as the device's planShape does, and opens the device's envelope and the machines' line receipts — against a plan and receipts signed by the bastion's own code (scripts/fixtures/ship_plan_signed.json): a changed byte, a key not pinned, another plan's receipt each refused; verbs and inputs left out when empty, as Go compares the bytes. No pod, no DB.
+test_ship_plan.py

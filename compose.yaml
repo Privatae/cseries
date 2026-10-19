@@ -1,0 +1,121 @@
+# C-Series on one machine: the Host and its database.
+#
+#   docker compose up -d --build
+#   docker compose logs host | grep "SETUP CODE"
+#   open http://home.cseries.localhost:8800 and create the owner account
+#   with that code
+#
+# C-Series is opened on a name, not an address: each app runs on a name of
+# its own beside it (apps-<key>-home.cseries.localhost), so one app's page
+# can never read another's. Chrome, Firefox, and Safari on macOS 26 or later
+# send every *.localhost name to this machine without any DNS setup.
+#
+# The dashboard is published on 127.0.0.1 only. It serves plain HTTP: to reach
+# it from other machines, put it behind a reverse proxy that terminates TLS
+# rather than publishing this port on a network address. Give it a name with
+# a wildcard DNS record for its zone (home.cseries.lan and *.cseries.lan,
+# say), set CSERIES_URL to that address (https://home.cseries.lan), and set
+# CSERIES_TRUSTED_PROXIES to the proxy's address so a wrong-password lockout
+# applies to the visitor, not to everyone behind the proxy, and the proxy's
+# X-Forwarded-Host is believed.
+
+name: cseries
+
+services:
+  postgres:
+    build:
+      context: .
+      dockerfile: Dockerfile.postgres
+    image: cseries-postgres:dev
+    restart: unless-stopped
+    user: "1000:1000"
+    read_only: true
+    pids_limit: 4096
+    volumes:
+      - pgsock:/var/run/postgresql
+      - pgdata:/app/pgdata
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+
+  host:
+    build:
+      context: .
+      dockerfile: Dockerfile.linux
+    image: cseries:dev
+    restart: unless-stopped
+    user: "1000:1000"
+    read_only: true
+    pids_limit: 4096
+    depends_on:
+      - postgres
+    ports:
+      - "127.0.0.1:${CSERIES_PORT:-8800}:8800"
+      # A bastion on this machine pairs on 8810 (HTTPS, the redeem) and
+      # dials in on 8811 (mutual TLS, its lanes), both under the Host's own
+      # CA (server/network/local_bastion.py). Loopback only, like 8800.
+      - "127.0.0.1:${CSERIES_ENROLL_PORT:-8810}:8810"
+      - "127.0.0.1:${CSERIES_LANE_PORT:-8811}:8811"
+    environment:
+      # The address the owner opens C-Series on (server/home_origin.py).
+      CSERIES_URL: ${CSERIES_URL:-http://home.cseries.localhost:${CSERIES_PORT:-8800}}
+      CSERIES_TRUSTED_PROXIES: ${CSERIES_TRUSTED_PROXIES:-}
+      # Where those two ports are published, so the pairing token's redeem
+      # URL and the lane address the redeem answers name them.
+      CSERIES_ENROLL_PORT: ${CSERIES_ENROLL_PORT:-8810}
+      CSERIES_LANE_PORT: ${CSERIES_LANE_PORT:-8811}
+    volumes:
+      # The database socket the postgres container creates. The Host never
+      # sees the data directory.
+      - pgsock:/var/run/postgresql
+      # The root filesystem is read-only; these are every place the Host
+      # writes, and they outlive the container, so an update keeps them.
+      - state:/var/lib/cseries
+      - home:/home/privatae
+      - workspace:/app/workspace
+      - projects:/app/projects
+      - ceigas:/app/ceigas
+      - portal:/app/portal
+      - user-files:/app/user-files
+      - data:/app/data
+      - secrets:/app/secrets
+      - integrations:/app/integrations
+      - engine:/app/engine
+      - training-jobs:/app/training_memory_jobs
+      # The one directory shared with the machine: a bastion on this machine
+      # pairs on enroll.sock and dials in on lane.sock there, and serves each
+      # coder run on runs/<id>.sock (server/network/local_bastion.py). Create
+      # it on the machine first, with the privatae-host group:
+      # etc/tmpfiles.d/privatae-host.conf says how. Without it the Host runs
+      # as before and no bastion can pair to it.
+      - ${CSERIES_BASTION_DIR:-/run/privatae-host}:/run/privatae-host
+    # The privatae-host group's id on the machine, so the Host can make its
+    # two sockets in that directory and reach the bastion's run sockets:
+    #   CSERIES_BASTION_GID=$(getent group privatae-host | cut -d: -f3)
+    # Unset, it is the Host's own group, which grants nothing new.
+    group_add:
+      - "${CSERIES_BASTION_GID:-1000}"
+    tmpfs:
+      - /tmp
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+      - seccomp=./seccomp-personal.json
+
+volumes:
+  pgsock:
+  pgdata:
+  state:
+  home:
+  workspace:
+  projects:
+  ceigas:
+  portal:
+  user-files:
+  data:
+  secrets:
+  integrations:
+  engine:
+  training-jobs:

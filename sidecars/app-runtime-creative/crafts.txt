@@ -1,0 +1,22 @@
+# The ArtCraft programs in the creative image (sidecars/app-runtime-creative/
+# Dockerfile reads this file): <name> <version> <sha256>. Each is the
+# command-line program from github.com/storytold/<name>, release v<version>,
+# asset <name>-<version>-linux-x86_64.tar.gz; the sha256 is the release asset's
+# own digest on GitHub, checked before the archive is unpacked. Every one links
+# only libc, libm and libgcc_s (ldd, 2026-10-11). An engine app per line runs it:
+# system-apps/<name>-engine.
+#
+# BUMPING one: change its version and sha256 together, rebuild, and re-run the
+# proof (scripts/app_runtime_creative_proof.py) in the ship runbook.
+photocraft  0.7.0 641f831252fd31b43ee1a12e572d7442e5652c2e5bf623de085741c370f0c91d
+filmcraft   0.6.0 b3d706d599699ead76b46a29d5697287b9f75a0bc9eb40f7733db7657dae8204
+vectorcraft 0.9.0 afbc4a0904740dfd1208e717664eb294965055e74c227c2ac3dc53af502e46a4
+lightcraft  0.6.0 d738f16b3a717b1e66716981aa4f8dbd68caa5bf9d04d175801a2278f18f69f1
+pdfcraft    0.6.0 9a136e71e37b459ed5746dbe19a364ce84cf5d995c6f6c98af6147d818390a53
+effectcraft 0.8.0 725c88cf379122d70f941dd3edacb54479d63ff1e2a00fae318eaee02ad762c4
+designcraft 0.6.0 abb661cd2fc53677d040fe0be3f241bbb8c0fad9619192a83109d53bd514bfb9
+soundcraft  0.5.0 b1305b1a7ba7b8563204084dc0de652ef4236769ccf46a5e7f545a4a1060e803
+cadcraft    0.5.0 036c3b401987b6a9991b5fc7ba097d5b717e8d18522f7c3f626b0f6a363e208e
+wordcraft   0.5.0 994bb376479ef6d76735cf4029e5ef3c2d52a85a4c9acde2b37c33b19c570203
+gridcraft   0.5.0 e6505c2f929f9854c350a0df26189c4e56c8adf87cc61625f80d6a8eec2b628d
+deckcraft   0.5.0 c2648c6071f631ecc6639ce6b7d60f68eed83ddeaba6b1559b07c5046863117c

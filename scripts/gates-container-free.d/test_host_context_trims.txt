@@ -1,0 +1,9 @@
+# 2026-10-07 (a harness test): review_session is a line
+# per variant with variant= for one whole; code_grep pages on the Host side
+# with a long line as the excerpt around its match; an empty reply is retried
+# inside the loop with the turn's own tools; a call with no usage is unknown
+# (None, NULL in inference_cost_log), never 0/0, and the stall notice says what
+# came back; a platform-started turn is never a self turn; per_call carries the
+# provider's request id and the cache-pin hash. Stubbed services, a fake wire
+# and a scripted model only.
+test_host_context_trims.py

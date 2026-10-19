@@ -1,0 +1,46 @@
+# EffectCraft Engine: the open-source EffectCraft
+# motion graphics compositor (github.com/storytold/effectcraft, MIT or Apache-2.0), run headless for the
+# Host. The program is in the creative toolchain image, pinned by sha256
+# (sidecars/app-runtime-creative/crafts.txt); this app is a recipe: the command
+# starts the image's own MCP bridge (creative_mcp.py), and `mcp` makes that
+# server one of the Host's connections when the app is installed
+# (manifest.McpSpec). The whole ArtCraft set, so a person can
+# make everything they need. Memory: the MCP process peaked at 330 to 517 MB with a render inside the
+# call; a render job beside it 204 MB at 1080p on 2 CPUs, 293 MB on 4
+# (measured). vcpus 4: 4 s of 1080p rendered in 11 s on 1 CPU, 6 s
+# on 2, 4 s on 4.
+# A window is billed at its ceiling.
+id: effectcraft-engine
+name: EffectCraft Engine
+description: Your Host makes motion graphics with EffectCraft, an open-source compositor with layers, keyframes, effects and a render queue. It animates titles, shapes and your images and renders them to video, and everything it makes appears in this window.
+icon: icon.png
+icon_small: icon-64.png
+# 1.0.1 (2026-10-18): the product is renamed C-Series (names, paths, env vars).
+# 1.0.2 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
+version: "1.0.2"
+provenance: standard
+entrypoint: index.html
+permissions: []
+network: []
+resources:
+  baseline_memory_mi: 1536
+  vcpus: 4
+runtime:
+  kind: process
+  image: creative
+  command: ["python3", "/opt/app-runtime/creative_mcp.py", "effectcraft"]
+  ready_path: /health
+  ready_timeout_seconds: 120
+mcp:
+  path: /mcp
+window:
+  title: EffectCraft Engine
+  width: 900
+  height: 640
+  resizable: true
+prompt_behavior:
+  what_it_is: |
+    EffectCraft Engine is the person's own motion graphics compositor that you operate: an MCP
+    server named effectcraft-engine (skill 'effectcraft-engine' says how). Its window shows the files
+    you made there.
+  user_path: "the EffectCraft Engine app (install it from the App Store)"

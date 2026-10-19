@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Designs</title>
+
+    <!-- C-Series design system. Always load in this order. -->
+    <link rel="stylesheet" href="/css/tokens.css">
+    <link rel="stylesheet" href="/css/motion.css">
+    <link rel="stylesheet" href="/css/cseries-components.css">
+
+    <!-- App-specific styles last -->
+    <link rel="stylesheet" href="/system-apps/designs/style.css">
+</head>
+<body class="cseries-scroll">
+    <div class="app">
+        <header class="app-header">
+            <div class="app-brand">
+                <img src="/system-apps/designs/icon-64.png" alt="" class="app-brand-icon">
+                <div class="app-brand-text">
+                    <div class="app-brand-title">Designs</div>
+                    <div class="app-brand-sub label-sys">desktops to try — click one to wear it</div>
+                </div>
+            </div>
+
+            <nav class="cseries-nav">
+                <button class="cseries-nav-btn active" data-shelf="house">Ours</button>
+                <button class="cseries-nav-btn" data-shelf="yours">Yours</button>
+            </nav>
+        </header>
+
+        <div class="cseries-seam"></div>
+
+        <!-- Shown while a design is being tried: keep it, or put the old one back. -->
+        <div id="trying" class="trying" hidden>
+            <span id="trying-text" class="trying-text"></span>
+            <span class="trying-spacer"></span>
+            <button class="cseries-btn" id="btn-keep">Keep it</button>
+            <button class="cseries-btn" id="btn-back">Go back</button>
+        </div>
+
+        <main class="app-body shelf-body">
+            <div id="shelf-note" class="label-sys shelf-note"></div>
+            <div id="grid" class="grid"></div>
+            <div id="empty" class="cseries-empty" hidden>
+                <span class="empty-title" id="empty-title"></span>
+                <span id="empty-text"></span>
+            </div>
+        </main>
+
+        <footer class="app-footer">
+            <span class="label-sys" id="footer-left">designs · 1.0.0</span>
+            <span class="label-sys app-footer-right" id="footer-status">loading…</span>
+        </footer>
+    </div>
+
+    <!-- A full-size look at one design before trying it. -->
+    <div id="viewer" class="viewer" hidden>
+        <div class="viewer-bar">
+            <span id="viewer-title" class="viewer-title"></span>
+            <span class="trying-spacer"></span>
+            <button class="cseries-btn" id="viewer-try">Try it</button>
+            <button class="cseries-btn" id="viewer-close">Close</button>
+        </div>
+        <div class="viewer-stage" id="viewer-stage">
+            <!-- SECURITY INVARIANT: designs are
+                 host-authored HTML. allow-scripts ONLY — never allow-same-origin,
+                 so the frame is an opaque origin with no session, no token, no
+                 API reach — and every document is mounted under the shared
+                 sandbox CSP (sandbox-csp.js). -->
+            <iframe id="viewer-frame" class="viewer-frame" sandbox="allow-scripts" title="design preview"></iframe>
+        </div>
+    </div>
+
+    <!-- The CSP every host-authored frame is mounted under, and the stand-in
+         desktop bridge a preview needs. Both must load before app.js. -->
+    <script src="/js/sandbox-csp.js"></script>
+    <script src="/js/desktop-preview.js"></script>
+    <script src="/system-apps/designs/app.js"></script>
+</body>
+</html>

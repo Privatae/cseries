@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-0.5 -0.5 17 21" width="17" height="21">
+  <!-- C-Series plate glyph — three stacked plates, middle one lit.
+       Matches PlateGlyphOutline on privatae.ai (marketing nav). -->
+  <rect x="0" y="0" width="16" height="4" rx="1.5" fill="none" stroke="#4F7F6A" stroke-width="1"/>
+  <rect x="0" y="8" width="16" height="4" rx="1.5" fill="#9be3c2"/>
+  <rect x="0" y="16" width="16" height="4" rx="1.5" fill="none" stroke="#4F7F6A" stroke-width="1"/>
+</svg>

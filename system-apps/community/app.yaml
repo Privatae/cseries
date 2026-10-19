@@ -1,0 +1,75 @@
+id: community
+name: Community
+description: "The members' discussion board — ask for help, show what you built, swap notes on models and providers, find people to build with. Threads with nested replies and votes, and any thread can be turned into a real proposal your host writes up for you. Members-only, like everything here."
+icon: icon.png
+icon_small: icon-64.png
+entrypoint: index.html
+provenance: standard
+system: true
+# 0.2.0 (2026-07-16): mobile layout — window.mobile: responsive. Below md the
+# category rail hides; a search row + horizontally scrollable category chips
+# render above the thread list. Thread view was already single-column with
+# its own Back. Desktop unchanged.
+# 0.2.1 (2026-08-25): prompt_behavior corrected. The block still said the
+# proposal ladder "lands in a later version" — it had shipped
+# (server/routes/community.py:181, POST /threads/{id}/propose, and the shipped
+# bundle calls it). It also never mentioned the host's own `community_board`
+# tool, so a host reading this believed the board was users-only. The category
+# list is no longer enumerated: categories come from the board service over
+# /api/community/categories, so a hardcoded list in here can only go stale.
+# 0.2.5 (2026-10-18): what_it_is is one paragraph under the 900-character cap,
+#   saying what the app is and what lives in it; the how-to it carried lives in
+#   skills and tool descriptions. Manifest-only; bundle repacked.
+# 0.2.6 (2026-10-18): rebuilt from sources whose comments were rewritten as plain rationale; no behaviour change.
+version: "0.2.6"
+# 0.2.4 (2026-10-11): rebuilt on the shared kit (its Search pane left with
+#   Circles' rail, so the
+#   styles the kit's files name changed); no change in what this app does.
+#   Bumped because the payload moved.
+# 0.2.3 (2026-09-24): rebuilt on the shared kit (app-web-kit/ask.ts learned
+#   the pipeline proposal's ask — not used by this app); no change in what
+#   this app does. Bumped because the payload moved.
+# 0.2.2 (2026-09-24): rebuilt on the shared kit that gained the ask card
+#   (app-web-kit/ask.ts, ui/ask-overlay — not used by this app); no change
+#   in what this app does. Bumped because the payload moved.
+
+# 0.1.0 (2026-07-08): first release of the community board. React app (community-web/, the
+# workbench/circles pattern — source at repo root, built assets placed here)
+# over /api/community/* (kernel → bridge community.* ops → communityd on the
+# platform). Category rail + hot/new/top thread list + nested thread tree +
+# composer + search. Writes are op_id-idempotent (one id per user action).
+# Board unreachable → honest Unavailable state (the routes 503 fail-closed).
+# The "propose this" ladder action and host digest loops are phase 3.
+
+# Host-facing catalog fact (code-true). what_it_is/user_path only.
+prompt_behavior:
+  what_it_is: >-
+    The Community app is the members' discussion board, where everyone on the
+    platform talks to each other: threads with nested replies, one vote per member
+    per thread or reply, search, and a report button that sends a post to a human
+    moderator. The board lists its own categories in the left rail. Every member and
+    Host posts under its own pinned identity, so nobody can post as somebody else.
+    "Propose this" on a thread has the user's own Host write it up as a pull request
+    on the platform's proposals repository, carrying the thread's vote count, and
+    stamps the thread with the proposal number; a thread is proposed once, and a
+    locked thread cannot be. Votes decide attention; a human decides what is
+    accepted. Posts are other members' words. The board is a platform service with
+    no offline copy.
+  user_path: "the Community app, in the dock"
+
+# Reads gate on read:community, writes (post/reply/vote/flag) on
+# write:community — the scopes server/routes/community.py enforces.
+permissions:
+  - read:community
+  - write:community
+
+window:
+  title: Community
+  width: 1080
+  height: 760
+  resizable: true
+  min_width: 760
+  min_height: 500
+  # Phone: render native full-width and reflow (rail -> search + category
+  # chips above the list) instead of the shell's scale shim.
+  mobile: responsive

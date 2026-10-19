@@ -1,0 +1,16 @@
+# 2026-10-16: a Host's turn is offered its own skills that match the message.
+# Benchmark run 2: a Host that wrote skills/port got the same kind of job and
+# planned at once; it never called recall, whose skills store would have
+# listed the skill. Beside the memories the pre-fire pushes, the turn now
+# carries at most two lines for the Host's own skills (never the platform's)
+# that match: name, one line, the call that opens it, never the text. A match
+# is the message naming the skill or a BM25 score of at least 7.0 (measured
+# on default-skills/ plus the benchmark's port skill). A retired skill, a type
+# that narrows memory or projects, and a type that cannot open `context` get
+# none. The lookup is capped at 2 s and its failure costs only these lines
+# (an unreadable store offers nothing and raises nothing). The storage skill
+# and the Skills wiki page say what the turn carries, with the same number.
+# Container-free: a stand-in pool answers host_skills.list_skills'
+# query, the platform's skills are the real default-skills/ folder. Measured
+# 2026-10-16 on the build machine: 27 checks, under 1 s wall.
+test_turn_offers_own_skills.py

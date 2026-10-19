@@ -1,0 +1,4 @@
+# Schemas on demand — tools= on the first
+# call is the verbs + orient + the prefire pick (surface defaults, trail, words, frame);
+# an orient open extends tools= mid-turn; the first-call wire is ratcheted per surface.
+test_host_prefire_tools.py

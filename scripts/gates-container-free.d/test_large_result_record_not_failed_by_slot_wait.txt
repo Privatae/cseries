@@ -1,0 +1,2 @@
+# A large terminal record's 300 s times the transfer, not the wait for a parse slot, and a finished run that hits it keeps its own ok with a result_cut note.
+test_large_result_record_not_failed_by_slot_wait.py

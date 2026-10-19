@@ -1,0 +1,1 @@
+test_machine_forge.py          # docker: a real rootless Gitea (the image a code server on a bastion runs) behind a CONNECT proxy standing in for the Hub peer forward — the relay, the reach-grant refusal, repo creation + main seeding, save point, rolling PR, fast-forward, auto-merge, token never on disk. Exits FAIL without docker

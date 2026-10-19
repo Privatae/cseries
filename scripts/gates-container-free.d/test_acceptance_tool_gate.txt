@@ -1,0 +1,4 @@
+# 2026-09-06 (a factory build): an acceptance check that needs a tool
+# the harness image does not ship (node on kimi) is refused by name at authoring,
+# at the build door and on the chain — never run into exit 127. Stub pools only.
+test_acceptance_tool_gate.py

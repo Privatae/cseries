@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Artifacts</title>
+
+    <!-- C-Series design system. Always load in this order. -->
+    <link rel="stylesheet" href="/css/tokens.css">
+    <link rel="stylesheet" href="/css/motion.css">
+    <link rel="stylesheet" href="/css/cseries-components.css">
+
+    <!-- App-specific styles last -->
+    <link rel="stylesheet" href="/system-apps/artifacts/style.css">
+</head>
+<body class="cseries-scroll">
+    <div class="app">
+        <header class="app-header">
+            <div class="app-brand">
+                <img src="/system-apps/artifacts/icon-64.png" alt="" class="app-brand-icon">
+                <div class="app-brand-text">
+                    <div class="app-brand-title">Artifacts</div>
+                    <div class="app-brand-sub label-sys">live builds from your host</div>
+                </div>
+            </div>
+
+            <nav class="cseries-nav">
+                <button class="cseries-nav-btn active" data-view="gallery">Gallery</button>
+                <button class="cseries-nav-btn" data-view="viewer" id="viewer-tab" hidden>Viewer</button>
+            </nav>
+        </header>
+
+        <div class="cseries-seam"></div>
+
+        <main class="app-body">
+            <section id="view-gallery" class="app-view gallery-view">
+                <div class="gallery-controls">
+                    <input id="gallery-search" class="cseries-input" type="search"
+                           placeholder="Search artifacts…" autocomplete="off">
+                    <div class="gallery-filters" role="group" aria-label="Show">
+                        <button class="cseries-btn filter-btn active" data-filter="all">All</button>
+                        <button class="cseries-btn filter-btn" data-filter="other">Artifacts</button>
+                        <button class="cseries-btn filter-btn" data-filter="desktop">Desktops</button>
+                    </div>
+                </div>
+                <div id="gallery-list" class="artifact-grid"></div>
+                <div id="gallery-empty" class="cseries-empty" hidden>
+                    <span class="empty-title">No artifacts yet</span>
+                    Ask your host to sketch something — a mockup, a plan, a report.
+                    Artifacts it designs in conversation appear here, live.
+                </div>
+            </section>
+
+            <section id="view-viewer" class="app-view" hidden>
+                <div class="viewer-bar">
+                    <button class="cseries-btn" id="btn-back">&#8592; Gallery</button>
+                    <span id="viewer-name" class="viewer-name"></span>
+                    <span id="viewer-status" class="label-sys viewer-status"></span>
+                    <!-- The page switcher: shown when the artifact has several pages
+                         and none opens by default (the render's 300), once one is open. -->
+                    <select id="page-switch" class="page-switch" aria-label="Page" hidden></select>
+                    <button class="cseries-btn" id="btn-tune" title="Click elements to reference them in chat; double-click text to edit it">Tune</button>
+                    <button class="cseries-btn" id="btn-history" title="Every change is a revision — view and restore any of them">History</button>
+                    <!-- Disabled until the kernel says this document meets the desktop floor
+                         (GET /api/appearance/desktop/check, the same gates the PUT runs).
+                         Starts disabled so it is never clickable before the answer is in. -->
+                    <button class="cseries-btn" id="btn-desktop" disabled
+                            title="checking whether this can be your desktop…">Use as desktop</button>
+                    <button class="cseries-btn" id="btn-refresh">Refresh</button>
+                </div>
+                <div class="viewer-bar variant-bar" id="variant-bar" hidden></div>
+                <div class="viewer-bar variant-bar" id="history-bar" hidden></div>
+                <!-- SECURITY INVARIANT: artifact HTML is
+                     host-authored content. allow-scripts ONLY — never allow-same-origin,
+                     so the frame is an opaque origin with no session, no token, no API. -->
+                <iframe id="artifact-frame" class="artifact-frame" sandbox="allow-scripts" title="artifact"></iframe>
+                <div id="viewer-empty" class="cseries-empty" hidden>
+                    <span class="empty-title">Nothing to render yet</span>
+                    This artifact has no index.html yet — the host may still be writing it.
+                </div>
+                <!-- Several pages and none at the root: the kernel names them (a 300,
+                     the same answer the Workbench's preview gives) and the person picks
+                     one — nothing is opened for them. -->
+                <div id="viewer-pages" class="viewer-pages" hidden>
+                    <p id="viewer-pages-detail" class="label-sys"></p>
+                    <div id="viewer-pages-list" class="viewer-pages-list"></div>
+                </div>
+            </section>
+        </main>
+
+        <footer class="app-footer">
+            <span class="label-sys" id="footer-left">artifacts · 0.5.2</span>
+            <span class="label-sys app-footer-right" id="footer-status">loading…</span>
+        </footer>
+    </div>
+
+    <!-- The CSP every host-authored frame is mounted under (one definition,
+         dashboard/base/js/sandbox-csp.js). Must load before app.js. -->
+    <script src="/js/sandbox-csp.js"></script>
+    <!-- A desktop design reads window.CSeriesDesktop from its first line; its
+         card preview gets the inert stand-in (same as the Designs shelf). -->
+    <script src="/js/desktop-preview.js"></script>
+    <script src="/system-apps/artifacts/app.js"></script>
+</body>
+</html>

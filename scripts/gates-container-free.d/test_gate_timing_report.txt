@@ -1,0 +1,2 @@
+# 2026-10-06 (continuous optimization): every pre_merge_gates.sh run records each gate's wall and CPU time (scripts/gate_timing.py), starts the gates that took longest last time first (unknown first), and ends, pass or fail, with how it could have been faster: slot use, the floor, the gate it waited on alone, serial lanes, the slowest 10, gates markedly slower than last time. Drives the real script on a fake repo of tiny gates and the report on known durations. No containers.
+test_gate_timing_report.py

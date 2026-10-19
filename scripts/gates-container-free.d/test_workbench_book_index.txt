@@ -1,0 +1,9 @@
+# The "index" group of test_workbench_book.py (the Index,
+# its three Enter modes, chapters and their riffle, a new page, secret shapes in
+# what is typed, the switch), split out because the book's scenarios in one
+# process spent over the pool's 180 s CPU budget. Same needs as
+# test_workbench_book.txt: the BUILT app, headless Chromium, a loopback mock
+# kernel; no pod, no DB, no network beyond loopback. Measured
+# under hang_watch beside the other two book gates: 139 checks, 54.7 s
+# of CPU, 67 s wall.
+test_workbench_book_index.py

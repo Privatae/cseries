@@ -1,0 +1,194 @@
+/* ================================================================
+ * Designs — per-app layout styles only.
+ * Primitives (colors, type, buttons, cards, nav, seam) come from
+ * /css/cseries-components.css + /css/tokens.css. Layout only here.
+ * ================================================================ */
+
+.app-brand-text {
+    min-width: 0;
+}
+
+/* The shared .app-view base is a padded, 860px-max column; the shelf is a
+   full-width grid, so it opts out of that width. */
+.shelf-body {
+    max-width: none;
+    padding: var(--space-4);
+    overflow-y: auto;
+    min-height: 0;
+}
+
+.shelf-note {
+    margin-bottom: var(--space-3);
+    color: var(--cseries-linen);
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: var(--space-4);
+}
+
+.card {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-lg);
+    background: var(--cseries-twilight);
+    overflow: hidden;
+    transition: border-color var(--dur-hover) var(--ease-cseries);
+}
+
+.card:hover {
+    border-color: var(--cseries-mist-strong);
+}
+
+/* A live, scaled-down render of the real document. The frame is laid out at
+   desktop size and scaled to the card (app.js sizeThumbs); it takes no
+   pointer events, so a click anywhere on it opens the full-size viewer. */
+.thumb {
+    position: relative;
+    display: block;
+    width: 100%;
+    aspect-ratio: 16 / 10;
+    padding: 0;
+    border: 0;
+    border-bottom: 1px solid var(--cseries-seam);
+    background: var(--cseries-ink);
+    overflow: hidden;
+    cursor: zoom-in;
+}
+
+.thumb:focus-visible {
+    outline: 2px solid var(--cseries-dusk);
+    outline-offset: -2px;
+}
+
+.thumb iframe {
+    position: absolute;
+    left: 0;
+    top: 0;
+    border: 0;
+    transform-origin: 0 0;
+    pointer-events: none;
+    background: var(--cseries-ink);
+}
+
+.card-meta {
+    padding: var(--space-3) var(--space-3) 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+}
+
+.card-name {
+    font-weight: 600;
+    color: var(--cseries-paper);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.card-by {
+    color: var(--cseries-ash);
+}
+
+.chips {
+    display: flex;
+    gap: 4px;
+    margin-top: var(--space-1);
+    min-height: 12px;
+}
+
+.chip {
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 1px solid var(--cseries-mist);
+}
+
+.card-actions,
+.card-form {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-3);
+}
+
+.card-form {
+    padding-top: 0;
+    flex-wrap: wrap;
+}
+
+.card-form .cseries-input {
+    flex: 1;
+    min-width: 140px;
+}
+
+.cseries-btn.ghost {
+    background: transparent;
+}
+
+.worn {
+    color: var(--cseries-dusk);
+}
+
+/* Trying a design: keep it, or put the old one back. */
+.trying {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-4);
+    background: var(--cseries-ember-soft);
+    border-bottom: 1px solid var(--cseries-ember-ring);
+}
+
+.trying-text {
+    color: var(--cseries-paper);
+}
+
+.trying-spacer {
+    flex: 1;
+}
+
+/* The full-size viewer. */
+.viewer {
+    position: fixed;
+    inset: 0;
+    z-index: var(--z-overlay);
+    display: flex;
+    flex-direction: column;
+    background: var(--cseries-ink);
+}
+
+.viewer[hidden] {
+    display: none;
+}
+
+.viewer-bar {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-4);
+    border-bottom: 1px solid var(--cseries-seam);
+}
+
+.viewer-title {
+    font-weight: 600;
+    color: var(--cseries-paper);
+}
+
+.viewer-stage {
+    position: relative;
+    flex: 1;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.viewer-frame {
+    position: absolute;
+    left: 0;
+    top: 0;
+    border: 0;
+    transform-origin: 0 0;
+}

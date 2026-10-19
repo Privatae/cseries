@@ -1,0 +1,213 @@
+{
+ "pages": {
+  "agents": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "agents-app": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "app-store-app": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "approvals": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "apps-overview": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "artifacts-and-designs": {
+   "checked": "2026-10-11",
+   "status": "changed"
+  },
+  "artifacts-app": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "browser-app": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "building-apps": {
+   "checked": "2026-10-11",
+   "status": "changed"
+  },
+  "calendar-app": {
+   "checked": "2026-10-11",
+   "status": "changed"
+  },
+  "circles-app": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "claude-code-app": {
+   "checked": "2026-10-11",
+   "status": "changed"
+  },
+  "code-repositories": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "coding-agents": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "community-app": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "compute-app": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "connected-folders": {
+   "checked": "2026-10-11",
+   "status": "changed"
+  },
+  "context-app": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "designs-app": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "getting-help": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "getting-started-app": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "gitea-app": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "glossary": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "handing-over-a-host": {
+   "checked": "2026-10-11",
+   "status": "changed"
+  },
+  "how-a-host-handles-a-request": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "how-your-host-is-protected": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "keys-app": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "local-models": {
+   "checked": "2026-10-11",
+   "status": "changed"
+  },
+  "memory": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "memory-app": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "models-and-keys": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "network-app": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "orchestrator-app": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "oversight-app": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "plans-and-billing": {
+   "checked": "2026-10-11",
+   "status": "changed"
+  },
+  "publisher-app": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "publishing-sites": {
+   "checked": "2026-10-11",
+   "status": "changed"
+  },
+  "settings-app": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "sites-app": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "skills-app": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "talking-to-other-hosts": {
+   "checked": "2026-10-11",
+   "status": "changed"
+  },
+  "the-bastion": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "updates-and-versions": {
+   "checked": "2026-10-11",
+   "status": "changed"
+  },
+  "what-a-host-cannot-do": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "what-a-host-is": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "what-is-privatae": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "what-the-platform-can-see": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "where-your-data-lives": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "workbench": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "workbench-app": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "your-machines": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  },
+  "your-private-network": {
+   "checked": "2026-10-12",
+   "status": "changed"
+  }
+ },
+ "schema": 1
+}

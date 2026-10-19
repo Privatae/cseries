@@ -1,0 +1,3 @@
+# The task record against a real kernel schema: v208, checks, coverage, quote-checked findings,
+# the coverage statement, the project boundary and the sandbox allowlist.
+test_task_record_pg.py

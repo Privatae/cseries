@@ -1,0 +1,4 @@
+# Coding engine provisioning (seen on a live test run, entity-9163): a connect whose key
+# bytes are unchanged still puts the engine on Entity.spec.harnesses, and boot re-asserts
+# every connected engine. Stubbed vault and bridge; no DB, no pod.
+test_coding_harness_provisioned.py

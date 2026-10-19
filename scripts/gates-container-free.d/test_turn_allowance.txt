@@ -1,0 +1,6 @@
+
+# test_turn_allowance.py — the per-turn dollar allowance that replaced the
+# per-model tool-round cap. Measured: APP_ROOT=<repo> python3
+# scripts/test_turn_allowance.py passes in 0.4s. It reads brain/mastercode
+# sources and asserts against them — no DB, no container, no network.
+test_turn_allowance.py

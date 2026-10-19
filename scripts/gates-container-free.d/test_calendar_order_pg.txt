@@ -1,0 +1,12 @@
+# The two reads the
+# Calendar app needed, through the real handlers on a real kernel schema. The
+# list with no order is newest first, as main's own statement (read from git)
+# orders it; order=asc is soonest first and "scheduled, from now, three" is the
+# next three; rows sharing a moment keep one order across pages both ways; an
+# order that is neither is a 400; another Host's rows never appear; each row
+# says how it repeats; on 20,000 rows both pages read through a calendar index
+# with no sort of the table, under 60 buffers. A task's runs with no limit are
+# every run in the old shape; with a limit, a page, the total and where the
+# next starts; a limit that is not a number is a 400. Fresh clone of the kernel
+# schema on TEST_PG_DSN / PEER_TEST_DSN / TEST_DSN, else a docker throwaway.
+test_calendar_order_pg.py

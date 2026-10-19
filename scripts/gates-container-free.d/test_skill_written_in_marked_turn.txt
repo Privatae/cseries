@@ -1,0 +1,12 @@
+# A Host skill written in a turn that read
+# untrusted content records it (host_skills.untrusted, migrations/v232), and
+# every path that puts it into a later turn marks that turn the way a recalled
+# marked memory does (turn_taint.mark_rows): recall's skills store, a context
+# read, list or diff, a turn type riding it, find_tools, list_skills. The
+# per-turn offer of the Host's own skills never offers a marked one. The
+# person's save in the Skills app clears it, the same text included; the
+# Host's rewrite of the same text does not; a restore carries the mark.
+# Container-free: a stand-in pool answers host_skills' own SQL from an
+# in-memory table. Measured on the build machine: 28 checks, 19 of them
+# failing before the change, under 1 s wall.
+test_skill_written_in_marked_turn.py

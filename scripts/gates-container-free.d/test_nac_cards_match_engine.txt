@@ -1,0 +1,7 @@
+# 2026-09-28 (NAC cards say what the engine enforces): /nac/policy reports the RUNNING engine's own
+# tamper flag and per-rule integrity verdict, and the Ingress lane shows the lock banner, marks the
+# failing card and stops it claiming it admits; "could not check" is never shown as "failed"; an
+# unreadable signing key is named as the reason a removal asks for the code; an expired management
+# grant (column OR signed expiry, the gate's rule) is shown as expired and revokes free; an
+# expiry reads forward (fmtExpiry) while fmtRel stays past-tense. Stub pool, real key, real app.js under node. No pod, no DB.
+test_nac_cards_match_engine.py

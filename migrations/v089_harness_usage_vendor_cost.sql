@@ -1,0 +1,11 @@
+-- v089: vendor-reported run cost on harness_usage — DISPLAY-ONLY.
+--
+-- The Claude SDK's ResultMessage carries total_cost_usd — the vendor's own
+-- dollar figure for the run, computed on the subscription/API side. We record
+-- it for the usage surfaces (taskbar tray, ComputeView).
+--
+-- HARD RULE: subscription financials can never interfere
+-- with the user's wallet. This column is display-only; cost_microdollars
+-- (our metered compute fee) remains the only figure that debits the wallet
+-- (billingd via the bridge charge op).
+ALTER TABLE harness_usage ADD COLUMN IF NOT EXISTS vendor_cost_microdollars BIGINT;

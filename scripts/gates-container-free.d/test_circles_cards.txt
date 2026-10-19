@@ -1,0 +1,15 @@
+# Circles, the cards, in the BUILT app (system-apps/
+# circles/index.html, tracked) in headless Chromium over a loopback mock
+# kernel (fastapi + uvicorn) on a free port, at 390 x 844 (touch) and
+# 1440 x 900. The mock answers through the real server readers where they can
+# (the deck's pairing, the door, Waiting on you, topics, a person's chat, a
+# Host's topic, your Host's pages, the carried quote, the contacts list) over
+# an in-memory pool, so its shapes cannot drift; its turns are
+# scripts/book_mock_turns.py, shared with the Workbench's book harness. It
+# also covers what the rail did (a page's actions and markers, Load earlier, the
+# address book, the Decisions sheet, support in full, the inbox's other
+# kinds, the box's lanes, the Host's mood, context and ribbon) and every deep
+# link at both sizes. Needs Playwright, Chromium, and the repo's brain/ and
+# server/ on the path; no pod, no DB, no network beyond loopback.
+# Measured on the build machine: 302 checks, 17 s of CPU, 124 s wall.
+test_circles_cards.py

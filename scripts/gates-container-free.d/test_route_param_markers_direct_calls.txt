@@ -1,0 +1,2 @@
+# A route's FastAPI marker default (offset: int = Query(0)) never reaches a direct Python caller. Parses the tree, resolves every direct call to a route through its imports, fails on one that leaves a Query/Path/Body/Header/Cookie/Form/File/Depends/Security default as the marker object. The Annotated form and a route that normalises the parameter (isinstance) pass. Source only; no DB, no container.
+test_route_param_markers_direct_calls.py

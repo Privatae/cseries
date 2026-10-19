@@ -1,0 +1,785 @@
+/* Network — LAYOUT only. All color/type/motion come from the design tokens
+   (/css/tokens.css) and component vocabulary (/css/cseries-components.css).
+   This file references var(--cseries-*) etc. but introduces no raw values. */
+
+.net-app { height: 100vh; }
+
+/* ── Header health cluster ─────────────────────────────── */
+.net-brandmark {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border-radius: var(--radius-md);
+    background: var(--cseries-night);
+    border: 1px solid var(--cseries-mist);
+    color: var(--cseries-ember);
+    flex-shrink: 0;
+}
+.net-health { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; justify-content: flex-end; }
+.net-health-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    height: 26px;
+    padding: 0 var(--space-3);
+    background: var(--cseries-night);
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-md);
+    font-size: var(--text-xs);
+    color: var(--cseries-linen);
+    white-space: nowrap;
+}
+.net-health-chip .label-sys { color: var(--cseries-ash); }
+.net-health-chip b { color: var(--cseries-paper); font-weight: 600; }
+
+/* ── Shell: rail · main · inspector ────────────────────── */
+.net-shell {
+    flex: 1;
+    display: flex;
+    min-height: 0;        /* allow children to scroll */
+    position: relative;
+}
+
+.net-rail {
+    flex-shrink: 0;
+    width: 92px;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    padding: var(--space-3) var(--space-2);
+    background: var(--cseries-twilight);
+    border-right: 1px solid var(--cseries-seam);
+    overflow-y: auto;
+}
+.net-rail-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-1);
+    padding: var(--space-2) var(--space-1);
+    background: transparent;
+    color: var(--cseries-linen);
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    transition: background var(--dur-hover) var(--ease-cseries),
+                color var(--dur-hover) var(--ease-cseries),
+                border-color var(--dur-hover) var(--ease-cseries);
+}
+.net-rail-btn svg { width: 22px; height: 22px; }
+.net-rail-label {
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+}
+.net-rail-btn:hover { background: var(--cseries-silk); color: var(--cseries-paper); }
+.net-rail-btn.active {
+    background: var(--cseries-ember-soft);
+    color: var(--cseries-ember);
+    border-color: var(--cseries-ember-ring);
+}
+.net-rail-btn:focus-visible { outline: none; border-color: var(--cseries-ember); }
+
+.net-main {
+    flex: 1;
+    min-width: 0;
+    overflow-y: auto;
+    padding: var(--space-5);
+}
+.net-lens { display: flex; flex-direction: column; gap: var(--space-4); max-width: 1040px; }
+
+/* ── Stat strip (topology header) ──────────────────────── */
+.net-statstrip {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+    gap: var(--space-2);
+}
+.net-stat {
+    background: var(--cseries-twilight);
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-md);
+    padding: var(--space-3) var(--space-4);
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.net-stat-val {
+    font-family: var(--font-mono);
+    font-size: var(--text-2xl);
+    font-weight: 600;
+    color: var(--cseries-paper);
+    font-variant-numeric: tabular-nums;
+    line-height: 1.1;
+}
+.net-stat-val.warn { color: var(--cseries-gold); }
+.net-stat-val.danger { color: var(--cseries-clay); }
+.net-stat-lbl { color: var(--cseries-ash); }
+
+/* ── Topology scene ────────────────────────────────────── */
+.net-scene-wrap {
+    background: var(--cseries-twilight);
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+}
+.net-scene-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding: var(--space-4) var(--space-5) 0;
+}
+.net-scene-head .view-heading h2 { margin-top: 0; }
+.net-scene-controls { display: flex; flex-direction: column; align-items: flex-end; gap: var(--space-2); flex-shrink: 0; }
+
+/* Map view picker — one button per registered renderer. */
+.net-viewpick { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--cseries-mist); border-radius: var(--radius-md); background: var(--cseries-silk); }
+.net-viewbtn {
+    appearance: none;
+    border: 0;
+    background: transparent;
+    color: var(--cseries-linen);
+    font-family: var(--font-body);
+    font-size: var(--text-xs);
+    padding: 4px var(--space-3);
+    border-radius: calc(var(--radius-md) - 3px);
+    cursor: pointer;
+    transition: background var(--dur-hover) var(--ease-cseries), color var(--dur-hover) var(--ease-cseries);
+}
+.net-viewbtn:hover { color: var(--cseries-paper); }
+.net-viewbtn.active { background: var(--cseries-twilight); color: var(--cseries-paper); }
+.net-viewbtn:focus-visible { outline: 2px solid var(--cseries-bright); outline-offset: 1px; }
+
+.net-legend { display: flex; gap: var(--space-3); flex-shrink: 0; padding-top: 2px; }
+.net-leg { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-xs); color: var(--cseries-linen); }
+.net-leg .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.net-leg .dot.live { background: var(--cseries-moss); }
+.net-leg .dot.stale { background: var(--cseries-gold); }
+.net-leg .dot.down { background: var(--cseries-ash); }
+
+.net-scene {
+    position: relative;
+    width: 100%;
+    height: 420px;
+    min-height: 320px;
+}
+.net-scene svg { width: 100%; height: 100%; display: block; }
+.net-scene-skeleton { position: absolute; inset: var(--space-5); border-radius: var(--radius-md); }
+
+/* SVG node visuals */
+.topo-edge { stroke: var(--cseries-mist-strong); stroke-width: 1.5; }
+.topo-edge.live { stroke: var(--cseries-ember); stroke-opacity: 0.7; }
+.topo-edge.down { stroke: var(--cseries-mist); stroke-dasharray: 4 4; }
+.topo-node-ring { fill: var(--cseries-silk); stroke: var(--cseries-mist-strong); stroke-width: 1.5; cursor: pointer; }
+.topo-node-ring.live { stroke: var(--cseries-moss); }
+.topo-node-ring.down { stroke: var(--cseries-ash); }
+.topo-node-ring.hub { fill: var(--cseries-ember); stroke: var(--cseries-bright); stroke-opacity: 0.5; cursor: default; }
+/* A Host that shares one of your machines — reached through the box, not by you. */
+.topo-node-ring.peer { fill: var(--cseries-night); stroke: var(--cseries-dusk); }
+.topo-edge.shared { stroke: var(--cseries-dusk); stroke-dasharray: 3 3; }
+.topo-node-g { transition: opacity var(--dur-state) var(--ease-cseries); }
+.topo-node-g.is-down { opacity: 0.55; }
+.topo-node-g:hover .topo-node-ring:not(.hub) { stroke: var(--cseries-bright); }
+.topo-node-label { fill: var(--cseries-linen); font-family: var(--font-body); font-size: 11px; text-anchor: middle; }
+.topo-node-icon { fill: var(--cseries-paper); }
+.topo-pulse { fill: var(--cseries-bright); animation: net-pulse 2.4s var(--ease-cseries) infinite; }
+@keyframes net-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+
+/* Physical view — columns, hops and segment labels */
+.topo-col-head { fill: var(--cseries-ash); font-family: var(--font-body); font-size: 10px; letter-spacing: 0.08em; text-transform: uppercase; }
+.topo-node-sub { fill: var(--cseries-ash); font-family: var(--font-body); font-size: 10px; text-anchor: middle; }
+.topo-seg-label { fill: var(--cseries-ash); font-family: var(--font-mono); font-size: 9.5px; text-anchor: middle; }
+.topo-hop { fill: var(--cseries-silk); stroke: var(--cseries-mist); stroke-width: 1; }
+.topo-hop-label { fill: var(--cseries-linen); font-family: var(--font-mono); font-size: 10px; text-anchor: middle; }
+.topo-hop-port { fill: var(--cseries-ash); font-family: var(--font-mono); font-size: 9.5px; text-anchor: middle; }
+.topo-path { pointer-events: none; }   /* the path is scenery; the machine is the target */
+.topo-path.is-down { opacity: 0.55; }
+.topo-path.is-down .topo-hop { stroke-dasharray: 4 3; }
+.topo-foot { fill: var(--cseries-ash); font-family: var(--font-body); font-size: 10.5px; }
+.topo-shared { fill: var(--cseries-ash); font-family: var(--font-body); font-size: 10px; }
+
+/* The host's own map. Sandboxed, opaque-origin, no chrome of its own. */
+.topo-hosted { width: 100%; height: 100%; border: 0; display: block; background: transparent; }
+
+.net-a11y { font-size: var(--text-sm); }
+.net-a11y summary { cursor: pointer; padding: var(--space-2) 0; }
+
+/* ── Blocks (reused across lenses) ─────────────────────── */
+.net-block { display: flex; flex-direction: column; gap: var(--space-2); }
+.net-block-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding-bottom: var(--space-1);
+    border-bottom: 1px solid var(--cseries-seam);
+}
+.net-inline-status { font-size: var(--text-sm); color: var(--cseries-linen); }
+.net-inline-status.success { color: var(--cseries-moss); }
+.net-inline-status.error { color: var(--cseries-clay); }
+
+/* ── Generic network card / row ────────────────────────── */
+.net-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    background: var(--cseries-night);
+    border: 1px solid rgba(55, 65, 81, 0.5);
+    border-left: 3px solid var(--cseries-mist);
+    border-radius: var(--radius-md);
+}
+.net-card.live   { border-left-color: var(--cseries-moss); }
+.net-card.stale  { border-left-color: var(--cseries-gold); }
+.net-card.down   { border-left-color: var(--cseries-ash); }
+.net-card-main { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
+.net-card-title { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.net-card-name { font-family: var(--font-display); font-weight: 500; color: var(--cseries-paper); }
+.net-card-sub {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--cseries-ash);
+    word-break: break-all;
+}
+/* Explanatory prose under an inspector field — a SENTENCE, so normal case.
+ * .label-sys is the small-caps system label and is right for one or two words;
+ * a two-sentence explanation set in it renders as a wall of tracked-out capitals
+ * (text-transform: uppercase, letter-spacing .14em at 10.5px). Caught in a real
+ * browser on 2026-09-12 — the headless gate asserted the text was PRESENT and
+ * had no way to see that it was unreadable. */
+.net-field-note {
+    margin-top: var(--space-1);
+    font-size: var(--text-xs);
+    line-height: 1.5;
+    color: var(--cseries-ash);
+}
+.net-field-note strong { color: var(--cseries-linen); }
+.net-field-note code { background: var(--cseries-mist); padding: 1px 5px; border-radius: 3px; }
+
+/* Stale/offline recovery hint — the OS-specific restart command. */
+.net-recover { margin-top: var(--space-1); color: var(--cseries-gold); }
+.net-recover code { background: var(--cseries-mist); padding: 1px 5px; border-radius: 3px; color: var(--cseries-mint, var(--cseries-gold)); }
+.net-card-actions { display: flex; gap: var(--space-2); flex-shrink: 0; align-items: center; }
+.net-card.clickable { cursor: pointer; transition: border-color var(--dur-hover) var(--ease-cseries); }
+.net-card.clickable:hover { border-color: var(--cseries-mist-strong); }
+
+.net-status-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; background: var(--cseries-ash); }
+.net-status-dot.live { background: var(--cseries-moss); }
+.net-status-dot.stale { background: var(--cseries-gold); }
+
+/* ── Posture picker (peers reachability) ───────────────── */
+.net-postures { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: var(--space-2); }
+.net-posture {
+    text-align: left;
+    padding: var(--space-3) var(--space-4);
+    background: var(--cseries-night);
+    border: 1px solid rgba(55, 65, 81, 0.5);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    color: var(--cseries-paper);
+    font-family: inherit;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    transition: border-color var(--dur-hover) var(--ease-cseries);
+}
+.net-posture:hover { border-color: var(--cseries-mist-strong); }
+.net-posture.active { border-color: var(--cseries-ember); background: var(--cseries-ember-soft); }
+.net-posture .p-name { font-weight: 600; }
+.net-posture .p-desc { font-size: var(--text-xs); color: var(--cseries-linen); line-height: var(--leading-normal); }
+
+/* ── Toggle (egress services) ──────────────────────────── */
+.net-toggle { display: inline-flex; align-items: center; gap: var(--space-2); cursor: pointer; user-select: none; }
+.net-toggle input { accent-color: var(--cseries-ember); transform: scale(1.1); }
+.net-toggle input:disabled { cursor: not-allowed; opacity: 0.6; }
+.net-toggle span { font-size: var(--text-xs); letter-spacing: 0.06em; text-transform: uppercase; color: var(--cseries-ash); }
+
+.net-add-row { display: grid; grid-template-columns: 1fr 1.4fr auto; gap: var(--space-2); }
+.net-add-row .cseries-input { min-width: 0; }
+.net-check { display: inline-flex; align-items: center; gap: var(--space-2); cursor: pointer; }
+.net-check input { accent-color: var(--cseries-ember); }
+.net-posture-pick { display: inline-flex; align-items: center; gap: var(--space-2); }
+
+/* ── Inspector ─────────────────────────────────────────── */
+.net-inspector {
+    flex-shrink: 0;
+    width: 360px;
+    max-width: 80vw;
+    display: flex;
+    flex-direction: column;
+    background: var(--cseries-twilight);
+    border-left: 1px solid var(--cseries-seam);
+    animation: cseries-slide-left var(--dur-state) var(--ease-cseries);
+}
+.net-inspector-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--cseries-seam);
+    flex-shrink: 0;
+}
+.net-inspector-title { font-family: var(--font-display); font-weight: 600; color: var(--cseries-paper); }
+.net-inspector-body { flex: 1; overflow-y: auto; padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }
+.net-inspector-actions { display: flex; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-top: 1px solid var(--cseries-seam); flex-wrap: wrap; }
+.net-inspector-actions:empty { display: none; }
+
+.net-field { display: flex; flex-direction: column; gap: 3px; }
+.net-field-label { font-size: 10.5px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--cseries-ash); }
+.net-field-val { font-size: var(--text-sm); color: var(--cseries-linen); word-break: break-word; }
+.net-field-val.mono { font-family: var(--font-mono); font-size: var(--text-xs); }
+
+@keyframes cseries-slide-left { from { transform: translateX(100%); } to { transform: translateX(0); } }
+
+/* ════════════════════════════════════════════════════════════════════
+ * NAC lens — host-local network access control (approve-only).
+ * Net-new bits only: gold proposed-accent, posture cards, default-line tags,
+ * and the TOTP/step-up entry (rendered inside the existing inspector). Every
+ * value is a design token; .net-card / .net-block / .cseries-pill / .net-field
+ * vocabulary is reused, not redefined.
+ * ════════════════════════════════════════════════════════════════════ */
+
+/* ── Sovereignty banner — neutral ember framing (a standing statement). ── */
+.nac-sov {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding: var(--space-4) var(--space-5);
+    background: var(--cseries-ember-soft);
+    border: 1px solid var(--cseries-ember-ring);
+    border-radius: var(--radius-lg);
+    flex-wrap: wrap;
+    row-gap: var(--space-2);
+}
+.nac-sov-text { min-width: 0; max-width: 760px; }
+.nac-sov-text strong { color: var(--cseries-paper); font-weight: 600; }
+.nac-sov-text .nac-sov-lead {
+    font-family: var(--font-display);
+    font-size: var(--text-md);
+    color: var(--cseries-paper);
+    font-weight: 600;
+    margin: 0 0 2px;
+}
+.nac-sov-text p {
+    margin: 0;
+    font-size: var(--text-sm);
+    color: var(--cseries-linen);
+    line-height: var(--leading-relaxed);
+}
+/* enrolled second-factor chip — same vocabulary as .net-health-chip */
+.nac-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    height: 26px;
+    padding: 0 var(--space-3);
+    background: var(--cseries-night);
+    border: 1px solid var(--cseries-ember-ring);
+    border-radius: var(--radius-md);
+    font-size: var(--text-xs);
+    color: var(--cseries-linen);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.nac-chip b { color: var(--cseries-moss); font-weight: 600; }
+.nac-chip .nac-chip-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--cseries-moss); }
+
+/* ── widen/tighten rule note — a quiet inline strip ── */
+.nac-rule-note {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    background: var(--cseries-night);
+    border: 1px dashed rgba(55, 65, 81, 0.5);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+    color: var(--cseries-linen);
+    line-height: var(--leading-normal);
+}
+.nac-rule-note svg { width: 15px; height: 15px; flex-shrink: 0; color: var(--cseries-gold); }
+.nac-rule-note strong { color: var(--cseries-paper); font-weight: 600; }
+
+/* ── Pending-proposals region — pinned, gold edge ── */
+.nac-pending {
+    background: rgba(194, 168, 107, 0.05);
+    border: 1px solid rgba(194, 168, 107, 0.30);
+    border-radius: var(--radius-lg);
+    padding: var(--space-4) var(--space-5) var(--space-5);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+.nac-pending-head { display: flex; align-items: center; gap: var(--space-3); flex-wrap: wrap; }
+.nac-pending-head .label-sys { color: var(--cseries-gold); }
+.nac-pending-head .nac-pending-sub { font-size: var(--text-sm); color: var(--cseries-linen); }
+
+/* a proposal card — built on .net-card but with a gold left edge + column body */
+.nac-prop {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--space-4);
+    padding: var(--space-4);
+    background: var(--cseries-night);
+    border: 1px solid rgba(55, 65, 81, 0.5);
+    border-left: 3px solid var(--cseries-gold);
+    border-radius: var(--radius-md);
+    flex-wrap: wrap;
+    row-gap: var(--space-3);
+}
+.nac-prop-main { display: flex; flex-direction: column; gap: var(--space-2); min-width: 0; flex: 1; }
+.nac-prop-title { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.nac-prop-name { font-family: var(--font-display); font-weight: 600; color: var(--cseries-paper); font-size: var(--text-md); }
+.nac-prop-rule {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--cseries-paper);
+    background: var(--cseries-ink);
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-sm);
+    padding: 2px var(--space-2);
+    display: inline-block;
+    word-break: break-all;
+}
+.nac-prop-why { font-size: var(--text-sm); color: var(--cseries-linen); line-height: var(--leading-normal); }
+/* The user's own words on a management grant, read back verbatim (intent.want / do_not_want). */
+.nac-grant-words { font-size: var(--text-sm); color: var(--cseries-linen); line-height: var(--leading-normal); margin: 4px 0 2px; }
+.nac-prop-why code {
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--cseries-dusk);
+    background: var(--cseries-ink);
+    padding: 1px 5px;
+    border-radius: var(--radius-sm);
+}
+.nac-prop-actions { display: flex; gap: var(--space-2); flex-shrink: 0; align-items: center; flex-wrap: wrap; }
+
+/* ── Posture grid (per-bastion cards, read-only) ── */
+.nac-posture-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: var(--space-3);
+}
+.nac-posture-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    padding: var(--space-4);
+    background: var(--cseries-night);
+    border: 1px solid rgba(55, 65, 81, 0.5);
+    border-left: 3px solid var(--cseries-mist);
+    border-radius: var(--radius-md);
+}
+.nac-posture-card.healthy     { border-left-color: var(--cseries-moss); }
+.nac-posture-card.degraded    { border-left-color: var(--cseries-gold); }
+.nac-posture-card.quarantined { border-left-color: var(--cseries-clay); }
+.nac-posture-top { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); }
+.nac-posture-host { display: flex; align-items: center; gap: var(--space-2); min-width: 0; }
+.nac-posture-host .nac-host-name { font-family: var(--font-display); font-weight: 600; color: var(--cseries-paper); }
+.nac-posture-meta { display: flex; flex-direction: column; gap: 4px; }
+.nac-kv { display: flex; align-items: baseline; gap: var(--space-2); font-size: var(--text-sm); }
+.nac-kv .nac-kv-k {
+    font-size: 10px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase;
+    color: var(--cseries-ash); flex-shrink: 0; min-width: 64px;
+}
+.nac-kv .nac-kv-v { color: var(--cseries-linen); }
+.nac-kv .nac-kv-v.mono { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--cseries-paper); }
+.nac-why {
+    font-size: var(--text-sm);
+    color: var(--cseries-linen);
+    line-height: var(--leading-normal);
+    padding-top: var(--space-1);
+    border-top: 1px solid var(--cseries-seam);
+}
+.nac-why.alert { color: var(--cseries-gold); }
+
+/* ── ACL / grant section default-line ── */
+.nac-default-line {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-size: var(--text-sm);
+    color: var(--cseries-linen);
+    line-height: var(--leading-relaxed);
+}
+.nac-default-line .nac-def-tag {
+    font-family: var(--font-body);
+    font-size: 9.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+    padding: 2px var(--space-2); border-radius: var(--radius-sm);
+}
+.nac-def-tag.open { background: rgba(95, 174, 127, 0.15); color: var(--cseries-moss); }
+.nac-def-tag.deny { background: rgba(199, 95, 85, 0.14); color: var(--cseries-clay); }
+
+/* rule / grant row — composed from .net-card vocabulary, mono rule text */
+.nac-acl-rule .net-card-name,
+.nac-grant-row .net-card-name { font-family: var(--font-mono); font-size: var(--text-base); }
+.nac-draft-row {
+    border-left-color: var(--cseries-gold) !important;
+    border-style: dashed;
+}
+.nac-draft-row .net-card-sub { color: var(--cseries-gold); }
+/* an approved rule the engine rejected (integrity 'failed'): it is what locks the lane */
+.nac-failed-row { border-left-color: var(--cseries-clay); }
+.nac-failed-row .net-card-sub { color: var(--cseries-clay); }
+
+/* ── Step-up entry (TOTP) — rendered inside the existing inspector body ── */
+.nac-stepup-callout {
+    padding: var(--space-3) var(--space-4);
+    background: var(--cseries-ember-soft);
+    border: 1px solid var(--cseries-ember-ring);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+    color: var(--cseries-paper);
+    line-height: var(--leading-relaxed);
+}
+.nac-stepup-callout strong { color: var(--cseries-paper); }
+.nac-totp { display: flex; gap: var(--space-2); justify-content: flex-start; }
+.nac-totp-box {
+    width: 42px;
+    height: 52px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--cseries-night);
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-md);
+    font-family: var(--font-mono);
+    font-size: var(--text-2xl);
+    font-weight: 600;
+    color: var(--cseries-paper);
+}
+.nac-totp-box.filled { border-color: var(--cseries-ember); }
+.nac-totp-box.caret {
+    border-color: var(--cseries-ember);
+    box-shadow: 0 0 0 1px var(--cseries-ember-ring);
+    color: var(--cseries-ash);
+}
+
+/* ── Three NAC lanes as separate collapsible sections (Ingress/Egress/Mgmt) ──
+   Each lane is a clickable header (name + count chip + chevron) over a body that
+   expands/collapses. Built on .net-block vocabulary; the header is a button row. */
+.nac-lane { display: flex; flex-direction: column; }
+.nac-lane-head {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    width: 100%;
+    padding: var(--space-3) var(--space-4);
+    background: var(--cseries-twilight);
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    color: var(--cseries-paper);
+    font-family: inherit;
+    text-align: left;
+    transition: border-color var(--dur-hover) var(--ease-cseries),
+                background var(--dur-hover) var(--ease-cseries);
+}
+.nac-lane-head:hover { border-color: var(--cseries-mist-strong); background: var(--cseries-silk); }
+.nac-lane-head:focus-visible { outline: none; border-color: var(--cseries-ember); box-shadow: 0 0 0 1px var(--cseries-ember-ring); }
+.nac-lane.open .nac-lane-head { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.nac-lane-chev {
+    width: 16px; height: 16px; flex-shrink: 0; color: var(--cseries-ash);
+    transition: transform var(--dur-state) var(--ease-cseries);
+}
+.nac-lane.open .nac-lane-chev { transform: rotate(90deg); }
+.nac-lane-title { font-family: var(--font-display); font-weight: 600; font-size: var(--text-md); color: var(--cseries-paper); }
+.nac-lane-deftag {
+    font-family: var(--font-body);
+    font-size: 9.5px; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+    padding: 2px var(--space-2); border-radius: var(--radius-sm);
+}
+.nac-lane-deftag.open { background: rgba(95, 174, 127, 0.15); color: var(--cseries-moss); }
+.nac-lane-deftag.deny { background: rgba(199, 95, 85, 0.14); color: var(--cseries-clay); }
+/* count chip — pending drafts get the gold treatment, else neutral */
+.nac-lane-count {
+    display: inline-flex; align-items: center; height: 18px; padding: 0 var(--space-2);
+    margin-left: auto;
+    background: var(--cseries-silk); color: var(--cseries-linen);
+    border-radius: var(--radius-sm);
+    font-size: 9.5px; font-weight: 600; letter-spacing: 0.06em;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+.nac-lane-count.pending { background: rgba(194, 168, 107, 0.18); color: var(--cseries-gold); }
+.nac-lane-count.locked { background: rgba(199, 95, 85, 0.18); color: var(--cseries-clay); }
+.nac-lane-body {
+    display: flex; flex-direction: column; gap: var(--space-3);
+    padding: var(--space-4);
+    border: 1px solid var(--cseries-mist);
+    border-top: none;
+    border-bottom-left-radius: var(--radius-md);
+    border-bottom-right-radius: var(--radius-md);
+    background: var(--cseries-night);
+}
+.nac-lane:not(.open) .nac-lane-body { display: none; }
+
+/* ── Per-bastion SUSPEND — a "suspended" pill + the pause/resume control ── */
+.nac-posture-card.suspended { border-left-color: var(--cseries-clay); }
+.cseries-pill.suspend { background: rgba(199, 95, 85, 0.18); color: var(--cseries-clay); }
+.nac-suspend-note {
+    font-size: var(--text-sm);
+    color: var(--cseries-clay);
+    line-height: var(--leading-normal);
+    padding-top: var(--space-1);
+    border-top: 1px solid var(--cseries-seam);
+}
+.nac-posture-actions { display: flex; gap: var(--space-2); flex-wrap: wrap; padding-top: var(--space-2); }
+
+/* ══════════════════════════════════════════════════════════════════════
+ * Step-up / enrollment — CENTERED POPUP MODAL over a dimmed scrim.
+ * Ported from the approved mockup (.nac-scrim + .nac-stepup-modal) but
+ * CENTERED (the mockup anchored it to the right rail; the revision moves
+ * it to a centered card). The TOTP entry + the enrollment QR live here.
+ * ══════════════════════════════════════════════════════════════════════ */
+.nac-scrim {
+    position: fixed;
+    inset: 0;
+    background: rgba(11, 15, 20, 0.66);
+    z-index: var(--z-overlay);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-5);
+    animation: confirm-fade-in var(--dur-state) var(--ease-cseries);
+}
+.nac-stepup-modal {
+    width: 420px;
+    max-width: 92vw;
+    max-height: 90vh;
+    display: flex;
+    flex-direction: column;
+    background: var(--cseries-twilight);
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--cseries-shadow-window-focus);
+    z-index: var(--z-modal);
+    animation: confirm-scale-in var(--dur-state) var(--ease-cseries);
+}
+.nac-modal-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--cseries-seam);
+    flex-shrink: 0;
+}
+.nac-modal-title { font-family: var(--font-display); font-weight: 600; color: var(--cseries-paper); }
+.nac-modal-body { flex: 1; overflow-y: auto; padding: var(--space-4); display: flex; flex-direction: column; gap: var(--space-3); }
+.nac-modal-body .nac-totp { justify-content: center; }
+.nac-modal-actions { display: flex; gap: var(--space-2); padding: var(--space-3) var(--space-4); border-top: 1px solid var(--cseries-seam); justify-content: flex-end; flex-wrap: wrap; }
+
+/* ── The enrollment QR canvas + its manual-entry fallback ── */
+.nac-qr-wrap { display: flex; flex-direction: column; align-items: center; gap: var(--space-3); }
+.nac-qr {
+    /* white quiet-zone plate so any scanner reads it against the dark UI */
+    background: #ffffff;
+    padding: 12px;
+    border-radius: var(--radius-md);
+    border: 1px solid var(--cseries-mist);
+    line-height: 0;
+}
+.nac-qr canvas, .nac-qr svg, .nac-qr img { display: block; width: 192px; height: 192px; image-rendering: pixelated; }
+.nac-qr-fallback {
+    width: 100%;
+    display: flex; flex-direction: column; gap: 4px;
+    align-items: center; text-align: center;
+}
+.nac-qr-secret {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--cseries-paper);
+    background: var(--cseries-ink);
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-sm);
+    padding: var(--space-2) var(--space-3);
+    word-break: break-all;
+    letter-spacing: 0.06em;
+    cursor: pointer;
+    max-width: 100%;
+}
+.nac-qr-secret:hover { border-color: var(--cseries-mist-strong); }
+.nac-qr-hint { font-size: var(--text-xs); color: var(--cseries-ash); }
+
+/* ── Narrow window: collapse rail labels, overlay inspector ─ */
+/* ── A machine's other Hosts (on its Bastions card) ────── */
+.net-hosts {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+    padding-top: var(--space-2);
+    border-top: 1px solid var(--cseries-seam);
+    cursor: default;
+}
+.net-hosts-head { display: flex; align-items: baseline; gap: var(--space-2); flex-wrap: wrap; }
+.net-host-note { font-size: var(--text-xs); color: var(--cseries-ash); }
+.net-host-row { display: flex; align-items: center; justify-content: space-between; gap: var(--space-2); flex-wrap: wrap; }
+.net-host-who { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1 1 180px; }
+.net-host-title { display: flex; align-items: center; gap: var(--space-2); flex-wrap: wrap; }
+.net-host-name {
+    font: inherit;
+    font-weight: 500;
+    color: var(--cseries-paper);
+    background: none;
+    border: 0;
+    padding: 0;
+    text-align: left;
+}
+button.net-host-name { cursor: pointer; text-decoration: underline dotted; text-underline-offset: 3px; }
+button.net-host-name:focus-visible { outline: 1px solid var(--cseries-ember); outline-offset: 2px; }
+.net-host-sub { font-size: var(--text-xs); color: var(--cseries-ash); overflow-wrap: anywhere; }
+.net-host-status { font-size: var(--text-xs); color: var(--cseries-linen); }
+.net-host-error { font-size: var(--text-xs); color: var(--cseries-clay); }
+.net-host-action { flex-shrink: 0; }
+
+/* ── Per-peer rules (Peers) ────────────────────────────── */
+.net-rule-peer { overflow-wrap: anywhere; }
+.net-rule-add { display: flex; gap: var(--space-2); flex-wrap: wrap; }
+.net-rule-add #peers-rule-peer { flex: 1 1 220px; min-width: 0; }
+
+/* A phone: the main column is narrow, so a card's buttons wrap under it. */
+@media (max-width: 560px) {
+    .net-main { padding: var(--space-3); }
+    .net-card { flex-wrap: wrap; }
+    .net-card-main { flex-basis: 100%; }
+}
+
+@media (max-width: 1040px) {
+    .net-rail { width: 60px; }
+    .net-rail-label { display: none; }
+    .net-inspector { position: absolute; right: 0; top: 0; bottom: 0; z-index: var(--z-overlay); box-shadow: -4px 0 24px rgba(0,0,0,0.4); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .net-inspector { animation: none; }
+    .nac-scrim, .nac-stepup-modal { animation: none; }
+    .nac-lane-chev { transition: none; }
+    .topo-node-g { transition: none; }
+    .topo-pulse { animation: none; }
+}
+
+/* ── Pairings on an anchored machine (1.8.0): one row per pairing on the card,
+   state pill first, actions on the right ── */
+.net-pairing-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-2); }
+.net-pairing-actions { margin-left: auto; display: inline-flex; gap: var(--space-2); }
+
+/* Messaging connectors (Ingress lane): the pairing code, large enough to read across a room. */
+.nac-connector-code { display: flex; align-items: baseline; gap: var(--space-3); margin-top: var(--space-2); }
+.nac-pair-code {
+    font-family: var(--font-mono);
+    font-size: var(--text-xl);
+    letter-spacing: 0.12em;
+    color: var(--cseries-paper);
+    background: var(--cseries-ink);
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-sm);
+    padding: var(--space-1) var(--space-3);
+    user-select: all;
+}

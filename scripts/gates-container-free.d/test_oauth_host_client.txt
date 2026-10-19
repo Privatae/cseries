@@ -1,0 +1,9 @@
+# 2026-09-21 (email integrations): a host's OWN OAuth client. has_client() now
+# derives from client_source, which is what choose_client turns into a 503 — so
+# if host-registered clients did not feed it, pasting your own Google client
+# would change nothing visible. Pins the precedence
+# (host-owned beats platform — grants are issued to a specific client_id, so
+# serving the platform's would invalidate every refresh token that host holds),
+# that an empty resolution is never cached, and that a REPLACED client needs the
+# invalidation. Pure Python: SQLite store, a stubbed vault resolve, a dict merge.
+test_oauth_host_client.py

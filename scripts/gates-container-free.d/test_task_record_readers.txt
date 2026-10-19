@@ -1,0 +1,3 @@
+# 2026-10-06: the readers feed a project's task record only when it is open,
+# the page text never reaches the model twice, and quote matching.
+test_task_record_readers.py

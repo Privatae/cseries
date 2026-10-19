@@ -1,0 +1,9 @@
+# harness_connections op='matrix'
+# (165,985 chars) and coding_bench (30,729) rode along in every later call of
+# their turn, ~400k of its 609,633 input tokens. The matrix, coding_bench's
+# routing, get_network and manage_bastion op='list' now return one line per
+# item, with harness= / server= / token_id= for one item's whole record; and a
+# big read the model has already answered after is replaced by a stub naming
+# how to read it again, once the cut pays (D >= S), all eligible at once, a
+# re-call running whole. Stubbed services and a scripted model only.
+test_condensed_tool_results.py

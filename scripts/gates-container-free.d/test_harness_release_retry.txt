@@ -1,0 +1,3 @@
+# 2026-09-06: a harness.release survives an operator roll (antigravity
+# stranded on metered compute for 15+ min). Stub bridge, millisecond backoff.
+test_harness_release_retry.py

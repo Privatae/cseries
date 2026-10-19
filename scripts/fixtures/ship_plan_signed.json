@@ -1,0 +1,62 @@
+{
+  "device_key": "CeV/5QNo8UcTmH/Mu+IK/VE9DpC1bALdfSrKCqBou7k=",
+  "draft": {
+    "kind": "ship_plan",
+    "plan": {
+      "commit": "cccccccccccccccccccccccccccccccccccccccc",
+      "expires": "2026-09-30T23:32:46Z",
+      "lines": [
+        {
+          "machine": "build-box",
+          "n": 1,
+          "op": "bridge-build",
+          "op_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "params": "{\"x\":\"1\"}",
+          "step": "build"
+        },
+        {
+          "inputs": {
+            "digest": "build.digest"
+          },
+          "machine": "build-box",
+          "n": 2,
+          "op": "bridge-roll",
+          "op_sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "params": "{}",
+          "step": "roll",
+          "undo": true,
+          "verbs": [
+            {
+              "args": {
+                "unit": "x.service"
+              },
+              "verb": "unit.restart"
+            }
+          ]
+        }
+      ],
+      "pipeline": "bridge"
+    }
+  },
+  "envelope": {
+    "payloadType": "application/vnd.privatae.ship-plan.v1+json",
+    "payload": "eyJ2IjoxLCJraW5kIjoic2hpcF9wbGFuIiwicGlwZWxpbmUiOiJicmlkZ2UiLCJ2ZXJzaW9uIjoxLCJjb21taXQiOiJjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjIiwibm9uY2UiOiJjOTMwMWVhYmYwN2ZlZDJiMmEyNWY2MjFhMWEzODgxYyIsImV4cGlyZXMiOiIyMDI2LTA5LTMwVDIzOjMyOjQ2WiIsInJvb3QiOnRydWUsImNvZGVfZ2l2ZW4iOnRydWUsImRldmljZSI6IkNlVi81UU5vOFVjVG1IL011K0lLL1ZFOURwQzFiQUxkZlNyS0NxQm91N2s9IiwibWFjaGluZXMiOnsiYnVpbGQtYm94IjoiZHFGTUZYb2x4TElGVllXN3NmbzFYUVFzamJWc0IvcXE2M1RpQmJpR0hrRT0ifSwibGluZXMiOlt7Im4iOjEsInN0ZXAiOiJidWlsZCIsIm1hY2hpbmUiOiJidWlsZC1ib3giLCJvcCI6ImJyaWRnZS1idWlsZCIsIm9wX3NoYTI1NiI6ImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEiLCJwYXJhbXMiOiJ7XCJ4XCI6XCIxXCJ9In0seyJuIjoyLCJzdGVwIjoicm9sbCIsIm1hY2hpbmUiOiJidWlsZC1ib3giLCJvcCI6ImJyaWRnZS1yb2xsIiwib3Bfc2hhMjU2IjoiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYiIsInBhcmFtcyI6Int9IiwiaW5wdXRzIjp7ImRpZ2VzdCI6ImJ1aWxkLmRpZ2VzdCJ9LCJ2ZXJicyI6W3sidmVyYiI6InVuaXQucmVzdGFydCIsImFyZ3MiOnsidW5pdCI6Inguc2VydmljZSJ9fV0sInVuZG8iOnRydWV9XX0=",
+    "signature": "74Ezg6l87mlTC+argix1ggvFnn7RSFhk+8Vg1/6eRxZZXxESjScJnuJlKBrYOoGnUpWJuTx10xMWbaz+I5DeAQ=="
+  },
+  "envelope_text": "{\"payloadType\":\"application/vnd.privatae.ship-plan.v1+json\",\"payload\":\"eyJ2IjoxLCJraW5kIjoic2hpcF9wbGFuIiwicGlwZWxpbmUiOiJicmlkZ2UiLCJ2ZXJzaW9uIjoxLCJjb21taXQiOiJjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjIiwibm9uY2UiOiJjOTMwMWVhYmYwN2ZlZDJiMmEyNWY2MjFhMWEzODgxYyIsImV4cGlyZXMiOiIyMDI2LTA5LTMwVDIzOjMyOjQ2WiIsInJvb3QiOnRydWUsImNvZGVfZ2l2ZW4iOnRydWUsImRldmljZSI6IkNlVi81UU5vOFVjVG1IL011K0lLL1ZFOURwQzFiQUxkZlNyS0NxQm91N2s9IiwibWFjaGluZXMiOnsiYnVpbGQtYm94IjoiZHFGTUZYb2x4TElGVllXN3NmbzFYUVFzamJWc0IvcXE2M1RpQmJpR0hrRT0ifSwibGluZXMiOlt7Im4iOjEsInN0ZXAiOiJidWlsZCIsIm1hY2hpbmUiOiJidWlsZC1ib3giLCJvcCI6ImJyaWRnZS1idWlsZCIsIm9wX3NoYTI1NiI6ImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEiLCJwYXJhbXMiOiJ7XCJ4XCI6XCIxXCJ9In0seyJuIjoyLCJzdGVwIjoicm9sbCIsIm1hY2hpbmUiOiJidWlsZC1ib3giLCJvcCI6ImJyaWRnZS1yb2xsIiwib3Bfc2hhMjU2IjoiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYiIsInBhcmFtcyI6Int9IiwiaW5wdXRzIjp7ImRpZ2VzdCI6ImJ1aWxkLmRpZ2VzdCJ9LCJ2ZXJicyI6W3sidmVyYiI6InVuaXQucmVzdGFydCIsImFyZ3MiOnsidW5pdCI6Inguc2VydmljZSJ9fV0sInVuZG8iOnRydWV9XX0=\",\"signature\":\"74Ezg6l87mlTC+argix1ggvFnn7RSFhk+8Vg1/6eRxZZXxESjScJnuJlKBrYOoGnUpWJuTx10xMWbaz+I5DeAQ==\"}",
+  "machines": {
+    "build-box": "dqFMFXolxLIFVYW7sfo1XQQsjbVsB/qq63TiBbiGHkE="
+  },
+  "plan_sha256": "e33315e7fe62246068e2b7c6f729bec87068b30ec0759e9a6ef4204242661695",
+  "receipt_failed": {
+    "payloadType": "application/vnd.privatae.line-receipt.v1+json",
+    "payload": "eyJ2IjoxLCJwbGFuIjoiYzkzMDFlYWJmMDdmZWQyYjJhMjVmNjIxYTFhMzg4MWMiLCJwbGFuX3NoYTI1NiI6ImUzMzMxNWU3ZmU2MjI0NjA2OGUyYjdjNmY3MjliZWM4NzA2OGIzMGVjMDc1OWU5YTZlZjQyMDQyNDI2NjE2OTUiLCJwaXBlbGluZSI6ImJyaWRnZSIsImNvbW1pdCI6ImNjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2MiLCJuIjoyLCJzdGVwIjoicm9sbCIsIm1hY2hpbmUiOiJidWlsZC1ib3giLCJrZXkiOiJkcUZNRlhvbHhMSUZWWVc3c2ZvMVhRUXNqYlZzQi9xcTYzVGlCYmlHSGtFPSIsIm9wX3NoYTI1NiI6ImJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmJiYmIiLCJwYXJhbXNfc2hhMjU2IjoiNDQxMzZmYTM1NWIzNjc4YTExNDZhZDE2ZjdlODY0OWU5NGZiNGZjMjFmZTc3ZTgzMTBjMDYwZjYxY2FhZmY4YSIsImF0IjoiMjAyNi0wOS0zMFQyMDowMDowMFoiLCJhdHRlbXB0IjoxLCJvayI6ZmFsc2UsImVycm9yIjoicm9sbG91dCBkaWQgbm90IGZpbmlzaCJ9",
+    "signature": "Cye8wqu36fyPpGAt5nMoondjhyV1KtrHKeUDmhhii6bU7IQ3gXaCdfhd51CJfqjbibegj3m3sGu+LUl/nZ/CBg=="
+  },
+  "receipt_ok": {
+    "payloadType": "application/vnd.privatae.line-receipt.v1+json",
+    "payload": "eyJ2IjoxLCJwbGFuIjoiYzkzMDFlYWJmMDdmZWQyYjJhMjVmNjIxYTFhMzg4MWMiLCJwbGFuX3NoYTI1NiI6ImUzMzMxNWU3ZmU2MjI0NjA2OGUyYjdjNmY3MjliZWM4NzA2OGIzMGVjMDc1OWU5YTZlZjQyMDQyNDI2NjE2OTUiLCJwaXBlbGluZSI6ImJyaWRnZSIsImNvbW1pdCI6ImNjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2MiLCJuIjoxLCJzdGVwIjoiYnVpbGQiLCJtYWNoaW5lIjoiYnVpbGQtYm94Iiwia2V5IjoiZHFGTUZYb2x4TElGVllXN3NmbzFYUVFzamJWc0IvcXE2M1RpQmJpR0hrRT0iLCJvcF9zaGEyNTYiOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIiwicGFyYW1zX3NoYTI1NiI6IjAxM2JkY2IyYjRkMzhiN2QyNmYxM2YyYTQ4NjMxZTlhNWFlNDU1MzBjM2VmMGU1OTQ2NjY4ZDRmMTg5MmJhYTEiLCJhdCI6IjIwMjYtMDktMzBUMjA6MDA6MDBaIiwiYXR0ZW1wdCI6MSwib2siOnRydWUsImltYWdlcyI6W3siaW1hZ2UiOiJnaXQucHJpdmF0YWUuYWkvcHJpdmF0YWUvYnJpZGdlIiwiZGlnZXN0Ijoic2hhMjU2OmRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGRkZGQiLCJzb3VyY2UiOiJodHRwczovL2dpdC5wcml2YXRhZS5haS9jYXNleS9wcml2YXRhZSIsImNvbW1pdCI6ImNjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2MifV19",
+    "signature": "JQmxNFsbcF9N05DcpX1LTznWgxZ6Setf1na/a5QJ7kn3+YYUgRkTzKULIHzGmmHoouZzh7tOjY7fvvCr8mu3Cg=="
+  },
+  "words": "Ship bridge at commit cccccccccccc: 2 step(s), within 3h0m0s.\nIt runs ROOT work on your machines (the steps marked root below): approving it needs your code.\n1. build on build-box: op bridge-build (aaaaaaaaaaaaaaaa, program only) with {\"x\":\"1\"}\n2. roll on build-box: op bridge-roll (bbbbbbbbbbbbbbbb, root) with {}\n   digest = the digest step build builds\n   unit.restart unit=x.service\n   may be undone, to what that machine had before, if a later step fails"
+}

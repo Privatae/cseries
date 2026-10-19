@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Oversight</title>
+
+    <link rel="stylesheet" href="/css/tokens.css">
+    <link rel="stylesheet" href="/css/motion.css">
+    <link rel="stylesheet" href="/css/cseries-components.css">
+
+    <link rel="stylesheet" href="/system-apps/oversight/style.css">
+</head>
+<body class="cseries-scroll">
+    <div class="app">
+        <header class="app-header">
+            <div class="app-brand">
+                <img src="/system-apps/oversight/icon.svg" alt="" class="app-brand-icon">
+                <div class="app-brand-text">
+                    <div class="app-brand-title">Oversight</div>
+                    <div class="app-brand-sub label-sys">what your machines report</div>
+                </div>
+            </div>
+            <nav class="cseries-nav">
+                <button class="cseries-nav-btn active" data-view="findings">Findings</button>
+                <button class="cseries-nav-btn" data-view="machines">Machines</button>
+            </nav>
+        </header>
+
+        <div class="cseries-seam"></div>
+
+        <main class="app-body">
+            <!-- ── Findings: the ledger, worst first ── -->
+            <section id="view-findings" class="app-view ov-view">
+                <div id="ov-tiles" class="ov-tiles"></div>
+                <div id="ov-banner" class="status-banner" hidden></div>
+                <div class="view-toolbar">
+                    <select id="f-state" class="filter-select" aria-label="Open or resolved">
+                        <option value="open" selected>Open</option>
+                        <option value="resolved">Resolved</option>
+                        <option value="all">Open and resolved</option>
+                    </select>
+                    <select id="f-severity" class="filter-select" aria-label="Severity">
+                        <option value="">Every severity</option>
+                        <option value="critical">Critical</option>
+                        <option value="high">High</option>
+                        <option value="warn">Warn</option>
+                        <option value="notice">Notice</option>
+                    </select>
+                    <select id="f-machine" class="filter-select" aria-label="Machine">
+                        <option value="">Every machine</option>
+                    </select>
+                    <select id="f-source" class="filter-select" aria-label="Where it came from">
+                        <option value="">Every source</option>
+                        <option value="alert">Alert source</option>
+                        <option value="heartbeat">Heartbeat</option>
+                        <option value="store">Machine record</option>
+                        <option value="observe">Observe</option>
+                        <option value="correlation">Correlation</option>
+                    </select>
+                    <button id="f-refresh" class="cseries-btn ghost" type="button">Refresh</button>
+                </div>
+                <div id="ov-findings" class="stack"></div>
+            </section>
+
+            <!-- ── Machines: what each one reports right now ── -->
+            <section id="view-machines" class="app-view ov-view" hidden>
+                <div class="view-heading">
+                    <h2>Machines</h2>
+                    <p class="view-sub">Each machine as its bastion reports it right now, beside what is
+                        still open against it. Only a machine that is online with a quiet, firing or
+                        critical alert source is being watched; <em>unconfigured</em>, <em>stale</em>
+                        and offline all mean nobody is watching it at the moment.</p>
+                </div>
+                <div id="ov-machines-banner" class="status-banner" hidden></div>
+                <div id="ov-machines" class="ov-machines"></div>
+                <div id="ov-other" class="stack" hidden></div>
+            </section>
+        </main>
+
+        <footer class="app-footer">
+            <span class="label-sys">oversight · 0.1.0</span>
+            <span id="ov-ingest" class="label-sys app-footer-right">ledger pass: …</span>
+        </footer>
+    </div>
+
+    <!-- One finding. Read-only apart from the single verb. -->
+    <aside id="ov-detail" class="detail-panel" hidden aria-live="polite">
+        <div class="detail-header">
+            <div id="d-title" class="detail-title"></div>
+            <button id="d-close" class="cseries-btn ghost icon-only" type="button" aria-label="Close">×</button>
+        </div>
+        <div id="d-body" class="detail-body"></div>
+    </aside>
+
+    <div id="ov-confirm" class="confirm-overlay" hidden>
+        <div class="confirm-box" role="dialog" aria-modal="true" aria-labelledby="c-title">
+            <div id="c-title" class="confirm-title">Mark this finding resolved?</div>
+            <!-- Filled per finding by app.js resolveNote(): what happens after a
+                 resolve depends on where the finding came from. -->
+            <div id="c-message" class="confirm-message">It stays in the ledger with its history.</div>
+            <div class="confirm-actions">
+                <button id="c-cancel" class="cseries-btn ghost" type="button">Cancel</button>
+                <button id="c-ok" class="cseries-btn primary" type="button">Mark resolved</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/system-apps/oversight/app.js"></script>
+</body>
+</html>

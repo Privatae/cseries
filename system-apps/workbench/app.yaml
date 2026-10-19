@@ -1,0 +1,1088 @@
+id: workbench
+name: Workbench
+description: The AI interface for building anything. Each project is a conversation with your host on one Code Repository — align, research, plan, then watch it build on your coding engines while everything runs live on the bench. Each change comes to you as a Code Approval in plain English; you approve it, or let the Host approve its own with Auto-Approve.
+icon: icon.png
+icon_small: icon-64.png
+entrypoint: index.html
+system: true
+# 0.6.0 (2026-07-06): ground-up React rebuild (workbench-web/, the circles-web
+# pattern — source at repo root, built assets placed here). The app is now
+# project-first: project rail (each project = a chat thread + a workflow) ·
+# the conversation with the host (same orchestrator as Circles, this surface
+# prompt, project-scoped via /api/brain/messages + project_id-tagged memory) ·
+# the bench (live coding runs + dispatched agents + the repo's PRs). The
+# 0.5.x ladder/settings panels are gone: no user-facing routing config here —
+# execution strategy is an alignment conversation with the host, not a form.
+# 0.6.1 (2026-07-06, first live-test feedback): tool calls + dispatched agents
+# render with the SAME cards as Circles (ported chat/tool-card.tsx — live
+# agent status poll, cost, Kill veto); the bench keeps FINISHED agents visible
+# with an output/failure fold (they used to vanish on completion); briefing
+# gains two hard rules the test exposed: alignment before any dispatch, and
+# the pool rule (agent `dispatch` refuses code-exec tools — building code is
+# the build tool / review.fan_out, exactly the snag the host hit live).
+# 0.6.2 (2026-07-06): project archive — trash button on the rail (soft
+# delete: DELETE /api/projects/{id} -> status archived; archived projects
+# leave every list so test projects stop confusing the host).
+# 0.6.3 (2026-07-07, live-test fixes): (1) app-token delivery race — the
+# shell wraps this iframe's fetch on 'load', which lands after React's
+# mount fetches; requires_permission 401s a token-less call regardless of
+# audit mode, so the app looked dead ("cant do anything"). Fix: retry-on-401
+# in the api layer. (2) surfaces were the OLD blue-tinted cseries palette;
+# remapped to the shared cseries green-black tokens (/css/tokens.css) — "kill
+# the blue" (tokens.css:43).
+# 0.6.5 (2026-07-11): agent delivery + live activity. (1) the bench matches
+# the registry's real statuses/fields (in_progress, result/error/verdict —
+# the old "running"/output/failure keys never matched the API, so agents
+# looked finished and output never rendered); (2) running agents show the
+# live tool-by-tool activity feed the registry now persists, finished ones
+# open with their output prominent, a 'blocked' verdict says which code-exec
+# tool was refused; (3) when an agent finishes, the chat pane refetches the
+# thread so the host's delivered answer appears without a reload (rides the
+# existing 3s bench poll — no new ws plumbing).
+# 0.6.6 (2026-07-11): the bench becomes the full lifecycle view (the bar the
+# retired factory surface set) + live-turn survival. (1) PLAN: the project's
+# phases/steps with status, lazily folded; (2) RUNS: factory builds
+# (factory_build registry rows from the gated build tool) join agents + fan-outs, per-variant
+# rendered previews on done harnesses; (3) ACTIVITY: the project's merged
+# live stream (/activity) while anything runs; (4) RESULT: the built app
+# embedded from /user-apps/<id>/ with manual + build-completion refresh.
+# (5) chat state is per-thread now — switching projects mid-turn no longer
+# destroys the live stream; returning shows the turn still streaming.
+# 0.6.7 (2026-07-11): briefing pool rule retaught for the gated build tool
+# (plan → user's yes → per-phase pool builds); retired sdk_build/sdk_continue
+# names purged (the prompt truth gate caught them post-retirement).
+# 0.6.9 (2026-07-12): relay the host's open_app tool call to the desktop
+# shell (cseries:open-app + deep-link view) — lets the host pop the Artifacts
+# window from chat.
+# 0.6.10 (2026-07-12): NO INVISIBLE BUILDS joins the briefing —
+# user-facing surfaces get an approved artifact mock BEFORE dispatch; design
+# iterates in direct responses, agents only wire.
+# 0.7.0 (2026-07-14): mobile layout — window.mobile: responsive (opt out of
+# the shell's phone-mode scale shim). Below md the three columns become one
+# screen at a time behind a bottom tab bar (Projects / Chat / Bench); picking
+# or creating a project jumps to Chat. Also fixes the chat pane's double
+# scrollbar (same Conversation-wrapper overflow bug as circles 0.5.3).
+# 0.8.0 (2026-07-18): the bench shows what the backend already runs. (1) run
+# cards render the MoA arms off the dispatch manifest (Self-MoA samples per
+# harness, vCPUs, minute cap, seeded vs greenfield — review.list_sessions now
+# serializes them); (2) ACTIVE runs live-tail the SSE endpoint
+# (/api/review/sessions/{id}/events, token-less status frames) so per-variant
+# flips land within ~1s — the 3s poll stays as the fallback and completeness
+# source, idle unchanged; (3) the Ladder section: climb runs (GET /api/ladder/
+# runs) with expandable rung attempts (config, per-variant outcomes, watchdog
+# verdicts, verify results, the evidence that climbed) and the human gate —
+# Accept / Reject-with-note — on awaiting_review runs. Ladder routes ride the
+# read:review / write:review scopes already granted below.
+# 0.9.0 (2026-07-19): general-chat memory model + turn metrics (the
+# cache→project design). (1) Every turn shows its timestamp; assistant turns
+# add "took Ns · N tok (in/out)" from the runtime's per-turn metadata stamp
+# (gen_ms/tokens_*/model at write_turn_row; live turns measure client-side
+# and adopt the durable stamp on next load). (2) General is STAGING: the
+# create dialog offers "bring the General conversation into this project" —
+# POST /api/projects {adopt_thread} retags turns + derived memories into the
+# project (never deletes) and leaves a marker turn behind; the general pane
+# invalidates cleanly (never-wipe rule respected via explicit reset nonce).
+# (3) Archived fold in the rail: soft-deleted projects are finally VISIBLE
+# (list status='archived') with one-click restore — closes "deleted but
+# where do they go".
+# 0.10.0 (2026-07-20): composer upload → embedded project context. Paperclip
+# on the chat composer uploads files to /api/brain/context/upload tagged
+# project:<id> (general thread: untagged), so statements/CSVs/docs become
+# embedded, host-searchable context for THAT project; an inline strip shows
+# upload → embedding n/m → done per file (polls the per-file embed job).
+# Live-test gap: there was no way to hand the host files
+# from the surface where the work happens.
+# 0.10.1 (2026-07-20): honest upload strip (batch-1 "stop the lying" sweep).
+# The embed poll no longer caps at ~5min and then CLAIMS done (nor flips to
+# done on one failed poll): it polls to a real terminal state with backoff,
+# shows a paused job as "paused — retrying", and after 4 consecutive lost
+# polls says it lost the job (error), never "done". job_id=null uploads now
+# distinguish binary "stored" from text rows whose embedding was SKIPPED
+# (backend's new embed_skipped reason) — the strip says so instead of
+# implying the file is semantically searchable.
+# 0.10.2 (2026-07-20): agent status cards can't go stale (batch-2 caps sweep,
+# same change as circles 0.7.1): status poll runs to a terminal state with
+# backoff instead of silently dying at ~6 min; agents list fetched with
+# limit=100 so older still-running agents stay visible to the bench, the
+# chat card, and delivery detection.
+# 0.11.0 (2026-07-20): the experience pass (batch-4, the original bug
+# list). (1) Agent cards in CHAT are no longer a black box: running agents
+# show the live tool-by-tool activity feed (same registry data the bench
+# renders), finished ones show their output/failure inline. (2) Delivery
+# always lands: the post-agent thread refetch adopts on turn IDENTITY (a
+# newest-60 window never grows at the cap, so the old length check could
+# never fire on long threads) and waits up to ~60s for the delivery model
+# call. (3) NOT JSON: tool cards render parameters and results as compact
+# key→value prose with the raw payload behind a "raw" fold; long text folds,
+# data never truncates. (4) "read" cards are titled by the INNER tool +
+# subject ("Read · get_network — …"), never the bare meta-tool name.
+# (5) Stop works after an auto-retry (the first attempt's cleanup was
+# nulling the retry's abort controller).
+# 0.11.2 (2026-08-04): governance floor disclosure — the chat header now
+# carries the explicit "an AI, not a person" line (SB 243 / NY §1700).
+# 0.12.0 (2026-08-18): provenance + context ledger (the Workbench was
+# missing model provenance and the context each turn used).
+# Every assistant turn's meta line now PRINTS the model and provider that
+# answered (it was a hover title), flags a provider failover in amber, and
+# carries a "context" toggle that opens the turn's context ledger — model
+# calls with in/cached/out per call, system-prompt size, per-turn blocks,
+# history turns/chars, tool-schema count/size, tool-result sizes. Live turns
+# get it from the context frame; reloaded turns from the row's metadata.
+# 0.12.1 (2026-08-19): honest blocked-agent caption — the ops pane prints the
+# record's own blocked_reason (code-exec stripped / out of grant / grant too
+# narrow) instead of one fixed "code work runs on the host's build lane"
+# sentence, which mislabelled a grant refusal.
+# 0.12.2 (2026-08-19): build cards name the harness ("build on kimi · failed")
+# — the row carries it from open, so which builder ran is never inferred
+# from error prose (a build ran on claude-code while the host said Kimi).
+# 0.13.0 (2026-08-19): live delivery. The Workbench now subscribes to the
+# kernel's /ws like Circles does — a finished agent/build push refetches
+# the thread at once (the bench poll stays as fallback), and the kernel's
+# "Finished / Couldn't finish" notification frames render as an in-app
+# notice stack (they only ever reached the dashboard shell before). Row
+# status now follows the run's outcome (a failed run is red, not green
+# "completed · fail"), and a failed phase says failed.
+# 0.13.1 (2026-08-20): the run surface (the build's live terminal renders
+# inline under its chip) PLUS the landed result's FACE: a finished
+# build's terminal block gains "open app", rendering the project's LANDED
+# entry via the new /api/projects/{id}/preview (same asset-inlining + jail
+# as the artifact render) in a sandboxed iframe. Origin: the finance build
+# landed (index.html at the project root) and the user still had nothing to
+# look at — and the host, with no read path into the landed tree, offered
+# to redraw the app from spec instead of showing the real one.
+# 0.13.2 (2026-08-20): fan-out rows on the bench. A chat review.fan_out now
+# opens a registry row (task_type 'fan_out') like a build does, so the bench
+# shows "fan-out on claude-code, kimi · in_progress" while it runs and the
+# host's completion report lands in the thread. Pool rows (build + fan-out)
+# share one rule: build-style card, project-scoped, no veto, RESULT refresh
+# on finish. Origin: an Opus 5 fan-out ran clean for 203 s and the user saw
+# neither a card nor a follow-up — the run had no row to be seen through.
+# 0.13.3 (2026-08-20): n harnesses → n terminals. A review.fan_out chip now
+# mounts ONE inline RunTerminal PER VARIANT under itself (live scrollback off
+# the per-variant stream; Self-MoA samples are their own rows), and each
+# finished variant gets its own "open app" rendering THAT harness's worktree
+# via /api/review/sessions/{id}/preview/{harness} — nothing lands in the
+# project until a pick/merge, so the project preview would be the wrong
+# face. The session id rides the chip (live result; persisted chip carries
+# session_id since this ship; older chips resolve it from their fan_out
+# registry row). Origin: two clean claude-code fan-outs showed
+# a chip and nothing else; a fan-out build of n should show n live views and
+# n open-app buttons.
+# 0.13.4 (2026-08-20): three kinks from the first claude-code builds.
+#   - Project rail orders by MOST RECENT ACTIVITY (server last_activity_at =
+#     newest of row update / chat turn in the thread / build against it);
+#     sending into an older project moves it to the top at once, and a
+#     delivery re-reads the order.
+#   - The run terminal shows the SUBSTANCE: the prompt the host sent the
+#     harness (collapsed header, full text on click), each tool call's
+#     command/path/description (shell commands verbatim, clipped at 40
+#     lines), and each result's output — it used to print "→ Bash" / "✓"
+#     and nothing else ("users can't see what the host sends the coding
+#     agent … same with commands the harness is running").
+#   - Kernel side (same ship): the build delivery no longer restates the
+#     harness's closing report that the run card already shows ("two
+#     identical responses"); manifest prompt cap 2000 → 8000 chars.
+# 0.13.5 (2026-08-21): the run terminal JOINS token deltas. Vendors stream
+# prose and reasoning a word or two at a time — one grok build emitted 675
+# such frames, and antigravity splits a sentence across its ACTIVE/DONE pair
+# — and this surface rendered ONE LINE PER FRAGMENT (Bench had joined them
+# since the grok fix; the Workbench half had no joining at all). foldFrame
+# now appends chunks the parser marked `delta` into one block and closes it
+# on any non-delta frame, so prose reads as prose and nothing is glued
+# across a tool call.
+# 0.14.0 (2026-08-22): the bench's right pane becomes a NUMBERED runs log:
+# a collapsible log on the right, so a user can run down the numbered runs,
+# click open app, and reference a run by number in the conversation.
+#   - RUNS is now one row per harness_run, labelled #<id>, newest first,
+#     inside a collapsible section. Expanding a row mounts the SAME
+#     RunTerminal the chat feed uses, so the scrollback and the "open app"
+#     button are the same component, not a second rendering of the truth.
+#     The chat copy is untouched — the live feeds stay where they were.
+#   - Why harness_run.id and not a fresh counter: the row already exists, it
+#     is written one-per-(session, harness), so a 7-harness fan-out is 7
+#     addressable rows — the unit the user actually has an opinion about.
+#     It is unique across projects and it never dies (curate_harness_runs
+#     strips transcripts, never rows), so a number said tomorrow resolves.
+#   - The old per-session RunCards and the finished-agent cards are GONE;
+#     that list showed the same work in a shape nothing could point at. What
+#     survives is a "Working now" strip of work still IN FLIGHT, because a
+#     dispatched agent has no harness_run row and a running one must never
+#     be invisible here.
+#   - Reads GET /api/compute/runs (already shipped, already covered by the
+#     read:inference_log permission below) — no new route, no new scope.
+#   - Kernel side (same ship): harness_transcript takes `run_id`, so the host
+#     can resolve a run the user names by NUMBER. Its only address used to be
+#     (session_id, harness) — a UUID plus a name — which nobody can say out
+#     loud, so a spoken run reference had nothing to resolve against.
+# 0.15.0 (2026-08-22): the bench pane keeps what points at something, and a
+# run's buttons follow what that run produced.
+#   - LADDER / ACTIVITY / RESULT sections are GONE (the ladder is not
+#     always used, and activity was unnecessary). RESULT was also broken: it probed /user-apps/<id>/index.html
+#     and framed /user-apps/<id>/, and the directory form is not served, so a
+#     raw {"detail":"Not Found"} rendered in the iframe. Since run-scoped
+#     worktrees it was stale by construction anyway. "Install as my app" is KEPT
+#     — it merely lived inside that section — and moves beside "Publish as site"
+#     under "Ship this project".
+#   - OPEN APP now renders THIS run's own worktree, never the project's last
+#     landed state. A finished backend run used to offer "open app" and show an
+#     older frontend run. REVIEW DIFF sits beside it on every completed run —
+#     a build worktree is seeded, so an inherited index.html cannot tell a UI
+#     run from a backend one; the diff always can.
+#   - The chat feed shows AUTO-ADVANCED phases live. The chat mounts a terminal
+#     off a `build` tool chip, and a phase the approved-plan chain starts has no
+#     tool call in any turn — so nothing moved in the conversation while it ran
+#     and it only appeared when the host reported it ("it shows up when its
+#     done ... the only thing i see is live activity in the right pane"). The
+#     bench poll now reports running pool builds up; any without a chip get the
+#     SAME RunTerminal below the thread. Not a synthetic tool chip: a tool call
+#     the model never made would corrupt the history.
+#   - The run terminal says when its LIVE FEED dies instead of freezing under a
+#     pulsing "live" badge (kernel-side status/stream_lost frame).
+# 0.15.1 (2026-08-22): a session that is not there YET is not a session that is
+# MISSING. The chat mounts a run terminal the instant `build` returns its
+# task_id, but the DETACHED build creates the session dir ~650ms later
+# (measured on a live task: task row 18:38:23.891, session dir
+# 18:38:24.545). The mount fetched ONCE and latched on that 404, printing "no
+# recorded session (predates the run surface)" over a healthy, actively
+# streaming build for the rest of its life — a race, so it hit some runs and
+# not others, which is why 311-313 looked fine and 314 did not.
+#   - The resolve now retries while the session is unresolvable (404, or a 200
+#     whose manifest.json has not landed yet — the second half of the same
+#     race), backing off to 2s, and only calls it missing after 30s.
+#   - The message states what was observed, not a cause: a session can be
+#     absent because the run predates the run surface, because the retention
+#     sweep reclaimed it, or because it never started, and this component
+#     cannot tell those apart.
+# 0.15.3 (2026-08-25): prompt_behavior hardcoded the coding-engine roster and
+# had gone stale twice over — it omitted grok AND antigravity, both in
+# server/routes/review.py:81-82 HARNESS_APP_IDS. Replaced with a pointer to
+# `coding_bench` (public_tool_registry.py:2145), which returns the connected
+# engines, so the list cannot rot again. Also added the two shipped surfaces
+# the block never mentioned: composer file upload (assets/index-DCOfKugF.js,
+# POST /api/brain/context/upload) and the one-click "Publish as site" button
+# on the bench. Manifest-only change.
+# 0.16.0 (2026-08-28): the PR surface tells the truth, and can land the plan.
+#   All four from one session on one project.
+#   1. The PR section defaulted to the FIRST repo the gitea listed for the whole
+#      account, because PrSection took no project id at all — so with a project
+#      open it showed another project's pull requests, or an honest-looking
+#      "no open pull requests" for a repo that was not this one. It now opens on
+#      the selected project's own repo (projects.repo, which the list route has
+#      always sent — projects.py:432 — and nothing had ever declared).
+#   2. A phase's SAVE POINT is now on the bench: "committed <sha> to PR #N",
+#      linked. sync_project_repo has written that since the pipeline shipped and
+#      it was projected nowhere, so a phase could commit and open a PR with the
+#      bench showing no trace — which reads as "the build did nothing".
+#   3. Auto-merge PRs — a per-project opt-in under the PR section. One rolling
+#      PR (host/build), each phase a commit inside it; with this on the host
+#      merges that PR when the LAST phase of the approved plan lands clean, so
+#      the plan finishes without stopping to ask. Off by default: the standing
+#      rule is still that the user merges (workbench.py merge_pr). It refuses to
+#      merge a PR carrying build-contract violations or a conflict.
+#   4. A FAILED phase now gets one seeded retry (the failure text goes back to
+#      the same harness), then the chain stops and says so. Before, failure hit
+#      the `if ok:` guard: nothing ran and nothing explained why.
+#   Backend: projects.py get/set_auto_merge (projects.config, no migration),
+#   project_git.merge_project_pr, tools._phase_retry_pick, agent_dispatch
+#   list_agents now projects repo_sync + auto_merge.
+# 0.16.1 (2026-08-28): pasted keys are caught before they leave the composer.
+#   Same strip as Circles 0.9.1: a credential shape in the draft (vendor API
+#   key, PEM, JWT, bearer, URL password) holds the send — "Send redacted" or
+#   "Edit message"; soft hits (assignment, high-entropy token) also offer
+#   "Send as-is". Rules come from the one shared file
+#   brain/mastercode/secret_shapes.json; the pod redacts the hard shapes at the
+#   top of send_message regardless. Nothing scanned leaves the browser.
+#   Plus "Store in Keys": one click seals the caught key into the vault (the
+#   Keys app's own POST /api/vault/secrets; vendor keys on the canonical
+#   provider name) and the message goes out with (stored in Keys as "…") in
+#   its place. Adds write:vault for that one call.
+# 0.16.2 (2026-09-02): stub projects speak. A fresh entity held a "Trading
+#   software" project with a repo, zero phases and an empty description, and
+#   nothing prompted "this has no plan — want me to draft one?".
+#   list_projects now carries has_plan / phase_count / phases_ready /
+#   phases_complete / last_phase_at and a hint on plan-less rows; the briefing
+#   tells the host to surface a stub and offer the plan on selection. Prompt
+#   copy only here; no route, scope, or schema change in the app.
+# 0.16.4 (2026-09-03): placement rule in the briefing. A host found the
+#   in-pod lane, called it merely feasible, and told the user to use a
+#   bastion — nothing in the briefing or the skill
+#   said where a personal app runs. Now it does: the pod by default, a site
+#   when it is a site, a bastion only when the user names one or the work
+#   needs their hardware (build-workflow skill, "Where it runs"). Prompt copy
+#   only; no route, scope, or schema change. Kernel-side (same ship): a
+#   dispatch round narrates EVERY agent it fired, the narration reaches the
+#   screen even after streamed prose, and when the last agent of a project
+#   round reports the host is woken to synthesize and continue the workflow
+#   instead of leaving the reports in the thread with nobody acting.
+#   "Where it runs" states the runtime lane the way 0.16.3 requires: the
+#   lifetime is read from the "What this machine can run" block, and a 24/7
+#   loop is runtime.lifecycle: resident, not a bastion.
+# 0.16.5 (2026-09-03): desktops are artifacts, not app builds. A user asked
+#   for a desktop here and the host scaffolded an app with coders — the
+#   briefing said code runs only on the pool and every build follows the
+#   build workflow, while the desktop skill says the document is written
+#   in-turn. Now the briefing names the lane: one index.html on the desktop
+#   contract; variety via review.fan_out across harnesses/models and the
+#   user's pick; the host then lands the pick as an artifact + set_desktop
+#   (the pointer only accepts an artifact — appearance.py
+#   set_desktop_artifact). Same ship: the document's cseries-tokens meta
+#   recolours the shell and every app. Prompt copy only; no route, scope, or schema change.
+# 0.16.3 (2026-09-02): alignment at the user's altitude. A host planning
+#   an always-on app argued runtime architecture in the
+#   alignment conversation from an inferred (and false) model of what the pod
+#   can run, decided the pod could not host it, and recommended a VPS — against
+#   the standing rule that a personal app's runtime lives in the pod. Two
+#   changes: the briefing now carries a "What this machine can run" block
+#   generated by server/applications/build_contract.host_runtime_brief() from
+#   the same constants the build validator enforces (rendered by
+#   prompt_builder here and in Circles, where alignment often starts), and
+#   do_when_active gains the rule:
+#   align on the want, never design the how, never propose external hosting.
+#   Prompt copy only; no route, scope, or schema change in the app.
+# 0.16.6 (2026-09-03): the run card stops calling a static render an app.
+#   On one project three phases landed, the card said "open
+#   app" over a page that had never been installed, and the host told the
+#   user three times to open the live app. The static render is now
+#   "preview files"; "open app" appears only when the platform OBSERVED an
+#   installed app for the project (review get_session_service `app`, from
+#   server/applications/app_state) and opens it the way the desktop does.
+#   Same ship (v124): phases carry executed acceptance and a user approval
+#   gate — the plan pane shows "awaiting your approval" with an Approve
+#   button (the ONLY writer of approved_at), "landed, unproven" for a phase
+#   in 'review', and "proven · N checks" when the pod ran its checks.
+#   Bundle repacked; new route POST /api/projects/{id}/phases/{pid}/approve.
+# 0.16.7 (2026-09-03): "Install as my app" works. The button has always
+#   called POST /api/applications/build (ops-pane.tsx PublishSection), the
+#   route has always been scope-gated, and this manifest never declared the
+#   scope — so every click 403'd with "app 'workbench' did not declare
+#   permission 'execute:install'" (reproduced in-pod with a real
+#   window token). Handing Workbench execute:install would have fixed it and
+#   also granted store checkout, refunds, entitlement and uninstall-any-app,
+#   so /build moved to a new narrow scope instead (execute:ship_project,
+#   scopes.py) and this manifest declares that. The host's own ship path was
+#   never affected — it reaches /build through the internal loopback
+#   allow-list — which is why `ship_project_app` succeeded while the button
+#   did not. Bundle repacked.
+# 0.31.9 (2026-10-18): prompt_behavior is one paragraph saying what the app is
+#   and what lives in it; do_when_active is gone from the manifest contract,
+#   and its how-to lines live in skills and tool descriptions the Host reads on
+#   demand. Manifest-only; bundle rebuilt, repacked and re-signed.
+# 0.31.10 (2026-10-18): rebuilt from sources whose comments were rewritten as plain rationale; no behaviour change.
+version: "0.31.10"
+# 0.31.8 (2026-10-18): when a turn ends without reading words you
+#   typed into it and your Host starts its next turn with them, the page now
+#   always follows that turn. It used to miss it now and then on a busy
+#   machine, and stayed on the ended turn. Bundle rebuilt, repacked and
+#   re-signed.
+# 0.31.5 (2026-10-11, brief prompt): the runtime brief no longer
+#   rides the prompt as a block; the line that said it was "rendered below"
+#   now names where it is, find_tools(name='capability:machine-runtime').
+#   The bundle is rebuilt because its bytes changed.
+# 0.31.7 (2026-10-12): "Where this stands" at the top of a page is one line
+#   (its label and the first line) until you tap it, as in Circles. Open, it
+#   is capped in height with its own scroll, so the conversation stays in
+#   view; each page remembers which way you left it on this device. Bundle
+#   rebuilt, repacked and re-signed.
+# 0.31.6 (2026-10-11): words you type while your Host is working are never
+#   lost. The server keeps them from the moment it gets them, so the page no
+#   longer keeps its own copy to send again: a reload, a closed tab or a
+#   dropped connection cannot lose them. After a reload they show again as
+#   sent and not yet read (GET /api/brain/pending). If the turn ends before
+#   reading them, they start your Host's next turn on that page, and the page
+#   follows it. In PII mode, where nothing is written down, the page keeps
+#   its copy and sends it as your next message if the turn never read it.
+#   Bundle rebuilt, repacked and re-signed.
+# 0.31.4 (2026-10-11): when the platform's crisis check flags your words, the
+#   Workbench shows the platform's own notice over the page — the 988 Suicide
+#   & Crisis Lifeline (call or text 988, chat at 988lifeline.org), marked as
+#   the platform's, never your Host's — and you can dismiss it. It does not
+#   cover the reply or stop you typing, and it comes back after a reload
+#   until you dismiss it. Your Host answers in its own words, told the check
+#   fired; the check no longer replaces its reply. Bundle rebuilt, repacked
+#   and re-signed.
+# 0.31.3 (2026-10-11): the
+#   shared kit's ask card says a decision is also in Circles, under Waiting
+#   on you, where it said Tickets (the Tickets pane left Circles with the
+#   rail), and offers In full when an app gives it somewhere to go (the
+#   Workbench gives none, so its card is the same); its Search pane, which
+#   only Circles used, is gone. The bundle is rebuilt because its bytes
+#   changed.
+# 0.31.2 (2026-10-10):
+#   nothing the Workbench shows or does changes. The shared kit's nudge-line
+#   rule also matches a Circles card (its selector weighs what it did), and
+#   newlyLit and stoppedWorking moved into the kit; the bundle is rebuilt
+#   because its bytes changed.
+# 0.31.1 (2026-10-10): nothing the Workbench shows or does changes. The
+#   book's parts that Circles' cards will share moved into the kit
+#   (app-web-kit/book/):
+#   the instants, the light rule, the pages the Host is working on and what
+#   changed since the person looked (rules.ts), the page's running count and
+#   "Where this stands", hold-to-think and its press, the nudge line and the
+#   rules for a nudge's held copy, the colour reading, and the look's
+#   typefaces, tokens and those parts' rules (book.css). The tabs, the page
+#   turn, the riffle, the Index and the book's own layout stay here. The
+#   built stylesheet holds the same rules as 0.31.0, the shared ones first;
+#   the :root block is split in two (the tokens, then the book's measures).
+#   Scopes unchanged; bundle rebuilt and repacked.
+# 0.31.0 (2026-10-09): the book wears the desktop's colours, and "This page"
+#   opens the latest finished build.
+#   - Every colour the book draws is one of the desktop's tokens, the ones the
+#     rail layout read (book.css): the desk is --cseries-ink, the page
+#     --cseries-night with the --cseries-mist hairline round it, what sits on the
+#     page --cseries-twilight, the words --cseries-paper, --cseries-linen and
+#     --cseries-ash, the accent --cseries-ember with --cseries-dusk for its words.
+#     Lit tabs, the "changed since you last looked" tint, the glows and the
+#     highlights are mixes of those colours; a state's words (done, waiting,
+#     failed) are its colour mixed with the ink, so they read on a dark design
+#     and on a light one. A design set or changed while the book is open is
+#     followed (the shell's applyTokens), and so is dark or light: the dark
+#     class and the colour scheme, which the code blocks' theme and the
+#     browser's own controls go by (src/book/scheme.ts). The run card, the
+#     version window, the notices and the bench's sections lose their fixed
+#     colours too. Shadows stay darkness with no hue of their own, as the
+#     desktop's are; each engine keeps its colour.
+#   - The run card's own Open version was white words on a white button in
+#     the book (the rule for plain cards painted over it); it is the accent
+#     button again.
+#   - "This page" shows the page's latest finished build, with an Open for
+#     each engine that finished: the run card's own (the same version window,
+#     run-terminal.tsx RunVersionWindow), with no scrolling up to the run. It
+#     moves to a newer run when that one finishes, shows nothing on a page with
+#     no finished build, and on a phone is in the "This page" sheet.
+#   - Dark or light reads the page's colour as a background, never inherited:
+#     a design's page colour the browser cannot draw (a digit short, which the
+#     shell's token grammar lets through) is drawn clear over the desk, and the
+#     desk's colour decides. Read as a text colour it inherited the page's ink
+#     and gave the opposite scheme.
+#   - An engine the colour table does not name is drawn in the desktop's
+#     secondary ink (--cseries-linen) instead of a fixed grey, which read at
+#     2.95:1 on the stock dark page; the desktop holds that ink at 3:1 or more
+#     on the page, whatever the design. A Mermaid fence in the Host's words is
+#     checked on the dark and the light set: the markdown carries no Mermaid
+#     engine, so it is a listing of its source in the design's ink, 4.5:1 or
+#     more on its panel on both.
+#   Scopes unchanged; bundle rebuilt and repacked.
+# 0.30.0 (2026-10-09): the Index can start a page. A third mode under the
+#   Index's box, "starts a new page": Enter makes a page of its own for the
+#   words and turns to it, with the words as its first message, whatever
+#   page the Host would have picked, so a pick that went wrong can be
+#   overridden. The page is made as the Start box makes one (POST
+#   /api/projects: its title suggested from the words, the words its
+#   description, a new Code Repository), no server route is added, and the
+#   words go as a message through the page itself, so the page shows them and
+#   the reply as it does for any message. The Index says "Starting the page…"
+#   while it is made and takes no second Enter, also when it is closed and
+#   opened again; a failure says why and the words stay. The mode is chosen
+#   each time and never kept (it makes a Code Repository on every Enter);
+#   "sends it" and "only opens" are kept as before. Words that hold a secret
+#   shape wait in the new page's box for the composer's strip instead of
+#   going at once, and the page is made with every secret shape cut from its
+#   title and description (hard and soft). The Index's search, which runs as
+#   the person types, takes every secret shape out of the words before they
+#   leave the browser. Those words, and the Start box's project search, now
+#   go in a POST body (POST /api/projects/index and POST /api/projects/search,
+#   which replace the two GET routes) and never in a URL, which whatever sits
+#   in front of the pod may keep: a password typed a character at a time
+#   reached the URL a prefix at a time. A page no longer attaches to a
+#   turn it is already streaming when its answer to "is a turn running"
+#   arrives late. With reduced motion the page turn is the usual crossfade.
+# 0.29.0 (2026-10-09): the book of pages: the book is the
+#   Workbench. index.html opens it; the rail, chat and bench columns are
+#   deleted (App.tsx, project-rail.tsx, project-viewer.tsx), and so are
+#   book.html and its copy step (place-book.mjs). What only the rail offered
+#   and the book still needs came into the book: "Archive it" under This
+#   page (the same ArchiveDialog, so the Code Repository is deleted only on
+#   request and after typing its name), "Delete" on a chapter in the Index,
+#   and the one-time move of the retired General thread's turns into a
+#   project (the Start dialog opens with them). The Bench app is retired
+#   (kernel.RETIRED_APPS): its run board lives on every page's right side
+#   since 0.27.0. "Ship this project": the site-name box's placeholder is
+#   the field's name and the address hint is a line under it, so neither
+#   is cut off at the right side's width (182 px, 151 px on a phone).
+#   read:search is dropped: only the rail's Search dialog called
+#   GET /api/search; the book's Index is GET /api/projects/index, and the
+#   search over memory, documents and code stays in Circles. The Host's
+#   instructions (here and prompt_builder.py) say projects are opened from
+#   the book's tabs and its Index, not the rail. Bundle rebuilt and repacked.
+# 0.28.0 (2026-10-09): the book of pages, still only on
+#   book.html; the rail layout (index.html) is unchanged.
+#   - The Index: the tab at the bottom turns to a page of its own. Typing
+#     re-sorts every page, open and archived, by what it matches, with no
+#     model call (GET /api/projects/index). Enter in "send" mode (the
+#     default) gives the message to the page the Host picks
+#     (POST /api/workbench/index/send) and lands there; a page brought back
+#     from the archive riffles up, and one that cannot come back says why.
+#     The Index blocks a second send while the page is picked, also after
+#     it is closed and opened again, and every send carries an id of its
+#     own, so a double Enter is one turn. The page picked shows the Host's
+#     note of why, also when it is the page already in front. Enter in
+#     "open" mode opens the top page. A page's own box still writes to it.
+#   - Chapters: the buckets, with their archived pages, and "Loose pages".
+#     Opening one riffles through it; dragging a tab onto one files its page
+#     there; renaming and colours as in the rail. An archived page opened
+#     from the Index comes back to the book when written on.
+#   - With reduced motion the riffle is a crossfade.
+# 0.27.0 (2026-10-08): the book of pages, still only on
+#   book.html; the rail layout (index.html) is unchanged.
+#   - The bench in the book: the Bench app's shared timeline and scoreboard
+#     move to the right side, drawn as strands (src/book/bench.tsx): the brief
+#     splits into one line per engine, each carrying that engine's steps over
+#     time and ending in its finish mark or a live head at now; the scoreboard
+#     says who finished first, each engine's run time, what it did and the
+#     lines its patch changed. A strand, its name or its row turns the page to
+#     that engine's card, which glows once. The run header names the run and
+#     keeps the session clock; earlier runs of the page are a pick away.
+#     Screen readers get the strands as a plain list; with reduced motion
+#     nothing moves; on a phone it is in the right side's sheet.
+#   - The pod's clock: live times read the pod's clock, corrected by the
+#     smallest arrival-minus-ts seen on the run's frames (the Bench's rule).
+#   - A compare on a page gets its run header and the Bench's engine grid
+#     ("Side by side" across the window); an engine's prose shows markdown
+#     tables as tables; Changes in the version window lists the files with
+#     their +/- counts, each a link to its part of the diff.
+#   - One reader per engine's stream, shared by its card and its strand
+#     (lib/run-feed.ts); the maths is lib/strands.ts, ported from
+#     system-apps/bench/app.js and tested under node.
+#   Scopes unchanged; bundle rebuilt and repacked.
+# 0.26.1 (2026-10-08): the composer's secret-shape warning matches
+#   what the pod cuts (lib/secret-shapes.ts scanSecrets, the scan of
+#   brain/mastercode/secret_shapes.py): a [REDACTED:<id>] marker already in
+#   the text, and a span one rule claims, read as one opaque run to the rules
+#   after it. A link whose password slot is already a marker no longer warns
+#   as a key, and a Telegram token or a PEM block used as a link's user name
+#   is named together with the link's password. Rules file unchanged; scopes
+#   unchanged; bundle rebuilt and repacked.
+# 0.26.0 (2026-10-08): the book of pages, still only on
+#   book.html; the rail layout (index.html) is unchanged.
+#   - The running token count: each page's head (and "This page") shows every
+#     Host turn on it added up, from GET /api/projects/{id}/page `totals`
+#     ("214.6k tokens · $1.84"; dollars marked partial when a reply has no
+#     price, "since <first counted turn>" when older turns were never counted,
+#     "tokens not counted" when none was); hover or focus shows what it is made
+#     of and, on a second line, the coding-engine runs launched from the page.
+#     Each Host reply shows its own "+N tokens" and price, the live one at
+#     once, and the total ticks up when the turn's row lands. lib/page-count.ts.
+#   - Nudge: while a turn runs, Send is Nudge (POST /api/brain/turns/{id}/
+#     nudge) and Stop stays; the words are their own line, kept across a
+#     reload (the registry's replayed nudge frame, then the saved row); when
+#     the turn ended first (409) they go as the next message and the page says
+#     so. lib/holding.ts nudgesInstead, hooks/use-workbench-chat.ts pageLines.
+#   - Hold-to-think: a tap sends at the page's effort; holding Send (mouse,
+#     touch long-press, Space or Enter on it, or Enter in the box) climbs to
+#     high at 0.5 s and max at 1.2 s, only through levels the Host model takes,
+#     shows the level as it climbs, and sends at it (`effort` on POST
+#     /api/brain/messages, that one turn). lib/hold-to-think.ts,
+#     components/workbench/press-button.tsx.
+#   - The phone: below 860 px, a full-width page, the tabs a strip along the
+#     bottom with the Index tab in it, and the right side a sheet the strip's
+#     "This page" opens.
+#   - The exact seen mark: the page's own turn ending marks it seen with that
+#     turn's token (PUT /api/projects/{id}/seen {turn_token}), and the tabs
+#     light from the list's unseen_landed_at, which never counts that reply
+#     however late its row is written (v217 projects.seen_turns). 3a's
+#     five-minute guess (REPLY_WAIT_MS) is gone.
+#   Scopes unchanged; bundle rebuilt and repacked.
+# 0.25.0 (2026-10-08): the book of pages, on its own address:
+#   book.html, beside the rail layout, which is unchanged (index.html). Each
+#   open project is a page: its kind, its title, "Where this stands" (GET
+#   /api/projects/{id}/page; what changed since the person last looked is
+#   tinted), the conversation and the box to write on it. Seven tabs on the
+#   book's edge, newest first, light green when something lands on a page not
+#   open and amber while something waits on the person, with working dots
+#   while the Host has a turn there; the Index tab opens the search. A tab
+#   click or ←/→ turns the page (a crossfade with reduced motion). Opening a
+#   page, and a turn landing on it while open, marks it seen (PUT
+#   /api/projects/{id}/seen). The right side is "This page" (the model, the
+#   effort pick, the context panel) above the bench's sections. The paper look
+#   of the mockup; Newsreader, Inter and JetBrains Mono ship in the bundle
+#   (SIL OFL, assets/FONT-LICENSES-*.txt). The desktop link
+#   /?open=workbench&view=book opens it. The book reuses the rail layout's chat
+#   pane and bench in a "page" chrome (src/book/, lib/book.ts); book.html is a
+#   copy of index.html (workbench-web/place-book.mjs). Scopes unchanged; bundle
+#   rebuilt and repacked.
+# 0.24.2 (2026-10-07): a reasoning-effort pick in the project thread's header,
+#   the Workbench's counterpart of the one beside Circles' model picker: the Host model's levels (GET /api/inference/effort-options), its
+#   blank read as that model's own default ("Default · medium" on Claude
+#   Haiku 5.5). The pick is held per thread for the page's life and rides
+#   every send of that thread (`effort` on /api/brain/messages, a retry and a
+#   held message included); the route checks it against the Host model and
+#   refuses a level it would not get, and a pick the model no longer takes
+#   drops back to the default. Logic in hooks/use-workbench-chat.ts,
+#   hooks/use-effort-options.ts and lib/effort.ts; the control is a plain
+#   select. Scopes unchanged; bundle rebuilt and repacked.
+# 0.24.1 (2026-10-07): a thinking stretch is activity. A build
+#   on Claude Haiku 5.5 thought for 5m 33s while the pod sent a thinking
+#   frame every ~24 s, and the run card's stats line read "No activity yet"
+#   the whole time. That line now reads "Thinking m:ss · N heartbeats" while
+#   live and "Thought for …" after; the thinking row and the footer carry the
+#   heartbeat count too. "Brief from your Host" shows the message this run's
+#   harness actually received (manifest sent_prompt, keyed by run label) and
+#   falls back to the task prompt when that entry is missing or empty, as on
+#   older runs. Bundle repacked.
+# 0.24.0 (2026-10-06): the run card — the harness live feed redesigned, and a
+#   landed run's version loads IN the card, so the user scrolls and sees
+#   which version it is without clicking Open version first. The terminal's lines become STEPS (lib/run-steps.ts): one row per
+#   command, read, search or file write with its time and a tick or cross,
+#   opening to the command and its output; the engine's messages as prose;
+#   thinking as one timed row; three or more calls in a row folded into one
+#   "Read 4 files, ran 3 commands" row; a "now" line in the footer says what
+#   the engine is doing this second. Measured on one build (Claude
+#   Code): 68 thinking heartbeats printed 68 lines; the same 220 frames are 75
+#   rows. When the terminal frame lands the card loads the run's page through
+#   the per-run preview route, sealed by the SAME useVersionDoc "open version"
+#   uses (extracted from version-view.tsx, so the two can never seal or choose
+#   pages differently): a 1280×800 view scaled to the card, no pointer or
+#   wheel, click to open; 300 lets the person pick a page, 404 says the run
+#   left none. Changed files and +/− come from the diff route (diffs/<h>.patch)
+#   — NOT the stream's terminal `diff`, which on one build was the whole
+#   worktree against an empty tree (21 "new" files, 0 deletions) where the
+#   patch is 7 files, +1393 −28. Kept from the terminal: the reconnect from
+#   the cursor, the brief, Raw, full screen, the one Open version button, and
+#   Kill with its notes; a killed run reads "Stopped by you", never failed.
+#   The engine's prose renders as a small React markdown subset, never HTML
+#   and never through the chat's Streamdown, so an html fence an ENGINE writes
+#   can never become a live visual in the Host's turn. Kernel side (same
+#   change): a run's preview pages are kept at collect (previews/<run>/) so the
+#   card still shows them after the worktree is reclaimed. Bundle repacked.
+# 0.23.1 (2026-10-05): a running build can be killed. The run terminal shows
+#   a "kill" button while its run is on a pod (never while it is queued for
+#   memory). One click, no question — a stop is always allowed — POSTs
+#   /api/review/sessions/{id}/kill (write:review, already declared), which
+#   stops the run on its engine's pod now and halts the project's
+#   auto-advance. The pod's stop ends every run it holds, so the button's
+#   title says so and the note under the terminal names any other run that
+#   stopped with it. A killed run reads "stopped by
+#   you" (or "by your Host"), never "failed", and is not drawn in the error
+#   colour. Before this the only stops were the phase-boundary brake and the
+#   idle watchdog, which never stops a run that keeps working. Bundle
+#   repacked.
+# 0.23.0 (2026-10-05): cards come up in the project's conversation, and the
+#   Workbench reopens on the project it was left on: no chasing apps in the middle of a
+#   conversation, tickets render in chat, and Circles and the Workbench
+#   reopen on the last open project/thread. (1) The open project's own tickets come
+#   up as the ask card on opening it and every 10 s (GET
+#   /api/tickets?asked_in=project:<id>); "Not now" is remembered on the
+#   device. (2) A credential ask is answered on the card — the sealed field
+#   and "Store in Keys" (if absent; the Host gets the name only) — instead of
+#   sending the person to Circles › Tickets. (3) A connector pairing the Host
+#   starts shows its one-time code on a card with a countdown, read from the
+#   code route by this window; scope + read:topology, the only blocker
+#   (routes/network.py _person_window already admits workbench). (4) The
+#   open project is stored on the Host (GET/PUT /api/projects/last-open): a
+#   link wins, else the last-open project whatever its status, else the
+#   newest Active one; every change is stored, a thread_moved follow
+#   included. (5) The composer catches Telegram bot tokens and Slack
+#   app-level tokens, Slack refresh, rotating and workflow tokens, and a
+#   Google key or JWT ending in '-'. (6) A card answered somewhere else
+#   (Network, Tickets, another window) goes on the project's next poll: a
+#   card whose ticket the open list no longer names is read back (GET
+#   /api/tickets/{id}) and dropped once it is not open; a card that reads
+#   back open stays. Bundle rebuilt and repacked.
+# 0.21.7 (2026-10-03): a project can be picked up out of Unfiled again with
+#   buckets folded. dragstart opened every folded bucket at once, which
+#   pushed the row down under the pointer, and Chromium and WebKit drop a
+#   drag whose row has moved: dragstart, then dragend 4 ms later, nothing
+#   lifted (reproduced with real OS drags on a live rail;
+#   Firefox was not affected).
+#   A drag now opens nothing by itself: opening every bucket just after
+#   dragstart lifted the row but moved the rows beneath the pointer, so a
+#   short move inside Unfiled filed the project in another bucket (all three
+#   engines). A folded bucket's header takes a drop as it is (the project
+#   goes last); resting on it for 600 ms opens that one bucket until the drag
+#   ends. The drag is still marked on the next task, so dragstart changes
+#   nothing on the page.
+#   A drop while the rail autoscrolls lands: the rail now takes dragenter as
+#   well as dragover. Chromium fires only dragenter on the move that reaches
+#   a new row, and a list scrolling under the pointer reaches a new row on
+#   every move, so every release during the scroll was refused (the long drag
+#   from deep in Unfiled up to the first bucket; Firefox and WebKit landed).
+#   Same release: an empty bucket's "drop here" takes the drop (it took
+#   nothing; only the header did). tests/test_workbench_rail_drag_js.py (the
+#   gate lane, Chromium's own drag code); scripts/test_workbench_panes.py D
+#   and P; scripts/test_workbench_rail_native_drag.py (real OS drags,
+#   Chromium, Firefox and WebKit). Bundle repacked.
+# 0.22.0 (2026-10-03): VISUALS and artifact cards in the chat — the same
+#   feature as Circles 0.13.0, from the same code (app-web-kit/visuals). A
+#   ```visual fence in the Host's reply is drawn as the page in the sealed
+#   frame (sandbox allow-scripts only + /js/sandbox-csp.js, already loaded by
+#   index.html; fails closed without it), never saved unless the user clicks
+#   Save as artifact / Download / Copy; Full size and Code beside them. An
+#   artifact a turn made or changed shows as a live thumbnail that opens the
+#   Artifacts window, live and after reload (persisted chips now keep
+#   operate_tool and digest). Every assistant turn here is the user's own
+#   Host, so every visual runs. prompt_behavior: a one-line VISUALS pointer;
+#   the guidance lives in skill 'artifacts' (this list is capped at one
+#   screen). Scopes unchanged (read:projects + write:projects already held).
+#   Bundle rebuilt and repacked.
+# 0.21.6 (2026-10-02): the live session chip no longer says
+#   "<N>m cap". max_minutes is not a limit on a run; it is how long one model
+#   call may go with nothing arriving, so the chip reads "model wait <N>m".
+#   Bundle repacked.
+# 0.21.5 (2026-10-02, the batch merged with main): main's 0.21.3 (a build
+#   landed or failed, below) and the batch's two 0.21.3s ("open version"
+#   + sealed previews; the ask card's answer reaches the turn that asked)
+#   in one release, its bundle rebuilt from npm ci. The batch's 0.21.4 also
+#   carried build-continue-fixes' held-run card, which is not in it.
+# 0.21.3 (2026-10-01): a build either landed its files or failed; the plan no
+# longer says a phase is proven or unproven. The Confirm button on a 'review'
+# phase and the "proven by ..." words on phases and modules are gone; an old
+# 'review' row shows as complete. Acceptance checks show as a count only. The
+# Approve button on a gate='user' phase stays. Bundle repacked.
+# 0.21.3 (2026-09-30): "open version"
+#   shows a desktop design as it would look on the desktop. A design reads
+#   window.CSeriesDesktop from its first script line; only the shell injects
+#   it, so here it threw there and painted its bare background (the static
+#   render was a plain black desktop). The window
+#   now gives it the inert stand-in the Designs
+#   shelf and Artifacts window use (/js/desktop-preview.js), with this Host's
+#   installed apps; other pages are mounted untouched. Same release: the
+#   window opens the page THE RUN made. A run that changed one of five
+#   equal-depth themes opened whichever the filesystem listed first; the
+#   kernel now asks the run's own diff first (entry_pages.choose_entry) and
+#   answers 300 with the list when several pages qualify, which the window
+#   shows as a list, then a page switcher in its header — except that when
+#   the root index.html is among the changed pages it opens directly and the
+#   switcher offers the rest. And SEALED: every page in the window is a harness's, and a
+#   sandbox="allow-scripts" frame still has the network, so it is mounted
+#   under the shared sandbox CSP (/js/sandbox-csp.js — the one definition
+#   Artifacts and Designs use), fails closed when that file did not load, and
+#   names what the policy blocked above the frame. Gates:
+#   scripts/test_workbench_version_view.py, scripts/test_run_entrypoints.py,
+#   scripts/test_sandbox_csp.py (the fifth surface). Bundle rebuilt and
+#   repacked.
+# 0.21.3 (2026-10-01):
+#   the ask card's answer reaches the turn that asked.
+#   Deciding a ticket now speaks the answer into the running turn that filed
+#   it (tickets.decide_ticket_service -> session.answer_into_turn), and the
+#   turn holds for it at its exit, so the Host goes on in the same turn. The
+#   copy this card held for the thread's idle moment is settled by the turn's
+#   nudge_read receipt (src/lib/pending-sends.ts) instead of also going as a
+#   new message. When the turn that asked has ended, the decide starts a turn
+#   with the answer in this thread on the server (session.answer_after_turn)
+#   and the card reattaches to it instead of sending the answer again. While
+#   a turn HOLDS for what it started (its waiting card is up) the composer
+#   stays a Send composer, Stop beside it: what the person types goes into
+#   that turn (POST /api/brain/turns/{id}/nudge), held to go as the next
+#   message if the turn ends first; a nudge's saved row replaces its echo.
+#   Bundle rebuilt and repacked. (preview-animated also bumps the Workbench;
+#   whichever merges second re-bumps and repacks.)
+# 0.21.2 (2026-10-01): the live view reads GET /api/agents and
+# /api/agents/scheduled, stops a timer with POST /api/agents/scheduled/{id}/
+# cancel and vetoes an agent with POST /api/agents/{id}/cancel. All four had no
+# scope, so any app on the Host could do the same; they now take
+# read:brain_tasks / write:brain_tasks (dispatched agents are entity_tasks rows)
+# and read:calendar / write:calendar (scheduled work is calendar_events rows),
+# which this manifest now declares. Manifest-only change; bundle repacked.
+# 0.21.1 (2026-09-28): 0.20.7 carried onto 0.21.0. "Publish as site" says a new site goes live public, and
+#   Sites sets who else can see it. Bundle rebuilt and repacked.
+# 0.21.0 (2026-09-27): Code Repositories and Code Approvals. A project
+#   mounts one Code Repository: Start offers a new one (the default) or any the
+#   Host can reach, and one that already has a project, or that the Host can only
+#   read, is offered as a fork into the new project. Its name and link sit at the
+#   top of the project; the right pane's repository dropdown is gone. "Pull
+#   requests" became Code Approvals: plain-English rows that open a card over
+#   the chat — Approve opens a window on privatae.ai that merges as the person,
+#   Ask for changes sends their words to the Host. The Merge button that merged
+#   with the Host's own login is gone. Auto-deliver became Auto-Approve and moved
+#   beside the chat input, offered only where the Host can merge. Archiving a
+#   project asks, unticked, whether to delete its Code Repository too, where
+#   that is allowed. Bundle repacked.
+# 0.20.7 (2026-09-27): "Publish as site" says what now happens -- a new site
+#   goes live public, and Sites sets who else can see it. It used to promise
+#   a private preview that any logged-in account could open.
+# 0.20.6 (2026-09-25): a project whose code lives on the user's own machine
+#   (pipeline source machine-forge — the code server the Host built there).
+#   The project table shows its repo as "on your machine" instead of a
+#   forge link (only the Host can reach that server), and the PR
+#   pane opens on its pull requests — reached through the Host — whether or
+#   not a platform gitea is linked.
+# 0.20.5 (2026-09-25): the approval card for an op on one of the person's
+#   machines: the card rises here too
+#   from mgmt_run's op door, with the machine's own dry-run diff folded under
+#   the words (app-web-kit/ask.ts `attachment`). The module list names the
+#   `op` target — a program for one of the person's machines.
+# 0.20.4 (2026-09-24): a pipeline change that adds a check running outside the
+#   platform takes a code from the person's authenticator. The ask card shows
+#   a code box on the option the kernel marked (the `pipeline` result's
+#   stepup_option — never an option a Host wrote); 'apply' stays disabled
+#   until six digits are in; the code rides that decide only, and a wrong one
+#   leaves the card open.
+# 0.20.3 (2026-09-24): the ask card also rises for a pipeline proposal — the
+#   `pipeline` tool's result carries the decision ticket the kernel filed
+#   (app-web-kit/ask.ts RESULT_ASK_TOOLS). Only
+#   that named tool, read from `operate`'s args.tool when the Host runs it as
+#   a registry op: an ask-shaped result from any other tool raises nothing.
+# 0.20.2 (2026-09-24): the ask card — an overlay over the chat, never a message
+#   in it. An `escalate` the Host raises on a
+#   live turn opens a dialog over the thread; the click decides the ticket
+#   through the Tickets route and the Host reads the person's words as the
+#   next message on the thread (an answer given mid-turn waits for the turn
+#   to end — the Workbench has no nudge lane — and goes to the thread that
+#   asked, whichever project is open by then). Not now sets the card aside;
+#   the ticket stays in Tickets; a credential ask opens Circles › Tickets.
+#   Scopes: + read:tickets, write:tickets (the decide route and the read-back
+#   that keeps a replayed turn from re-raising an answered ticket).
+#   app-web-kit/ask.ts + ui/ask-overlay.
+# 0.20.1 (2026-09-23): faster streaming replies. The reply text now lands at most
+#   once per animation frame (app-web-kit/stream-batch.ts) instead of one React
+#   update per streamed chunk; tool calls, errors and the end of the turn flush
+#   it first, so what the user sees arrives in the same order. Messages split
+#   into blocks incrementally while they stream (app-web-kit/incremental-
+#   blocks.ts) — only the end of the reply is re-split, not the whole text —
+#   pinned equal to Streamdown's own split by test/incremental-blocks.test.ts.
+#   Streamdown 2.5.0 -> 2.6.0 for remend 1.3.1, whose link repair was measured
+#   at 47 ms per update on a 40 KB reply under 1.3.0 (7.8 ms under 1.3.1).
+#   Build assets are now cached by the browser (server/applications/proxy.py
+#   _asset_cache_control), so reopening the window no longer re-downloads the
+#   app. Scopes unchanged.
+# 0.20.0 (2026-09-23): parallel builds. A PLAN
+#   phase row says what it waits for ("after 2, 3" — the phase numbers, by
+#   the same rule the build chain schedules with), its own engine when the
+#   plan named one, and "did not land — collided with another phase" (the
+#   conflict in its tooltip) when its run could not be merged with a phase
+#   that landed while it built. Route: GET /api/projects/{id}/phases adds
+#   waits_for, depends_on, harness, model, integration_error. Scopes
+#   unchanged. Bundle repacked.
+# 0.19.0 (2026-09-23): the three panes.
+#   Left rail: buckets replace the four status groups. Buckets ARE the v130
+#   folders, renamed in the UI and the API (/api/projects/buckets, bucket_id;
+#   the table keeps its name). The rail is bucket → project; status is a badge
+#   on the row and a filter over the rail ("Open" = not archived, by default).
+#   A bucket is created inline, renamed in place, coloured from a swatch and
+#   deleted from its header (its projects come back unfiled). Projects are
+#   dragged into a bucket and, in Manual order, into place inside it — one
+#   request per drop (PATCH /api/projects/{id}/place, v173 projects.sort_order,
+#   the bucket renumbered 1..n server-side); Recent order is the alternative.
+#   Right pane: MODULES at the top — module → versions, one "open version"
+#   each, "make current" / "undo" on the pointer, and the finished runs built
+#   for a module that are not a version yet as candidates with "use as
+#   version" (review.adopt into=module). Installed/running is a badge on the
+#   module (observed app state, from the module's own app.yaml; the root app's
+#   for a project with no modules). PLAN groups phases under their module with
+#   how each is proven. RUNS opens collapsed.
+#   Chat pane: a run card carries ONE button, "open version" — the run's own
+#   worktree, adopted or not, installed or not, with its changes beside it;
+#   disabled while the run is live. "preview files", "open app" and "review
+#   diff" are gone. The compare view (compare-terminals.tsx, was
+#   fan-out-terminals.tsx) is N terminals with N open-version buttons.
+#   Routes: GET /api/projects/{id}/modules adds candidates, app and root_app;
+#   GET /api/projects/{id}/phases adds module and validation. Scopes
+#   unchanged (write:review already covers review.adopt). Bundle repacked.
+# 0.18.1 (2026-09-23): a link can open a project. The view `project:<id>` —
+#   on the frame (`#view=`) when the window is launched with one, or as a
+#   `cseries:app-view` message while it is open — selects that project instead
+#   of the newest one. It is what a "build finished" reach-out links to
+#   (server/deep_link.py: /?open=workbench&view=project:<id>). A project
+#   that is gone says so, a failed load says that instead. A view posted
+#   before the app mounted is held, not lost, and boot and a later view share
+#   one requested project so neither overrides the other.
+#   src/lib/app-view.ts; scopes unchanged.
+# 0.18.0 (2026-09-22): one build door. The host's
+#   words are "build" (one task, one engine) and "compare" (the same task on
+#   N engines/models, the user picks); "fan-out" is retired from the UI. A
+#   compare is now build(action='run', variants=[…]) — the chat mounts its N
+#   terminals off that chip (a `build` chip that named variants or carries a
+#   compare session id) instead of the removed review.fan_out; a single
+#   build(action='run') mounts the one build terminal as before. Chips in
+#   older history under the review.fan_out name still mount. Bench rows and
+#   the loading line say "compare". Bundle repacked; no route or scope change.
+# 0.17.5 (2026-09-17): Search in the rail — the one index. A dialog over the
+#   whole window with one box over everything the host can see: its memory and
+#   the user's documents (the SAME recall engine, filters and relevance floor
+#   the host's per-turn pre-fire uses; not its per-model visibility filter,
+#   own-words cap or 6-item cut), plus projects, the journal and the in-pod code index, each under its
+#   own heading and honest when it could not run; a project hit opens that
+#   project. One index surface for finding context, files, etc.
+#   Shared with Circles through app-web-kit/search.tsx; the route is GET
+#   /api/search (server/routes/search.py). New scope read:search.
+# 0.17.4 (2026-09-17): a turn lives with the project its work touched. Once
+#   the ask for an app was typed into a stub project; the host reached
+#   create_project through `operate` (no surface gate on that lane, by design)
+#   and made a second project for the same work, the carry-forward pulled
+#   turns into it, and every reply and every "yes" stayed in the first
+#   (filed by window) while every build report landed in the second (filed by
+#   build). Kernel: create_project is
+#   refused inside a project thread and names the project to plan on; the
+#   carry-forward moves untagged (Circles) turns only and stamps their
+#   source_context; when a turn's WRITE tools acted on exactly one other
+#   project, the reply is filed there, the user row follows, a marker stays
+#   where it was typed, and a `thread_moved` frame tells this client
+#   (runtime/turn_home.py). Here: the chat hook carries the two bubbles to
+#   the target thread, leaves the same marker locally, and the app opens
+#   that project with a notice. project_adopt_thread(kind='project') folds
+#   one project's conversation into another — the repair for a split that
+#   already happened. Briefing gains one line on where an ask lands; the
+#   builder's shared "Finding projects" block is split per surface (the
+#   Workbench copy no longer offers to create). Bundle repacked.
+# 0.17.3 (2026-09-16): a per-turn spend budget in dollars, beside the depth
+#   dial — "Budget for each turn", with what the next turn is projected to
+#   cost and what the last one actually cost under it. The host stops
+#   starting new rounds of tool calls once it cannot afford the next one,
+#   instead of being cut at a per-model round count that meant nothing to the
+#   person paying. A reply is never cut mid-sentence, so the worst overspend
+#   is one reply. On a model with no published per-token price the panel says
+#   the budget is measured in tokens rather than showing fabricated dollars.
+# 0.17.2 (2026-09-16): the context panel says WHY it has nothing to show.
+#   A peer thread (dm/entity) is built by the OTHER host, so no prompt is
+#   assembled here and the block list and pre-fired memories are empty
+#   permanently — the panel now says that in a sentence instead of
+#   rendering an empty section that reads as a bug. A thread that simply
+#   has not had a turn yet says that instead. Reads the new
+#   `prefire_state` field on GET thread-context; a backend that does not
+#   send it renders exactly as before. No scope change.
+# 0.17.1 (2026-09-15): an agent whose cost the platform cannot price now reads
+#   "unpriced" on the bench instead of showing nothing. Agent runs are priced
+#   from the model catalog and come back null when it holds no published rate
+#   for the model that ran; a hardcoded rate table in
+#   agent_dispatch.py used to invent a number rather than admit that, and removing it
+#   left an empty cell — which a person reads as $0, the one thing it does not
+#   mean. Two surfaces: the ops-pane row and the chat agent card. A run still
+#   in flight is unchanged (no cost reported yet is not the same as no rate).
+# 0.17.0 (2026-09-07): everything is a project. The General staging thread
+#   and the New-project form are gone; Start opens "What would you like to
+#   work on?" — one box, the typed text ranked against existing projects by
+#   the new project index (GET /api/projects/search: core Postgres full-text
+#   over name/description/phase titles, plus the host's own embedding model
+#   when one is configured, semantic:false otherwise — never an outage). Pick
+#   a match and its thread opens with the text in the composer; nothing fits
+#   and the text becomes the description of a new project, the title
+#   suggested from it. The Workbench opens on the newest Active project, or
+#   on that dialog when there is none. The rail is four collapsible groups
+#   (Active/Pending/Completed/Archived, counts, Active open) under the user's
+#   folders (v130 — flat, one folder per project, "Unfiled" for the rest;
+#   deleting a folder never deletes a project), and "All projects" opens a
+#   full-window viewer: filter by group/folder, search, sort, bulk move /
+#   archive / restore / complete, folder management. An entity that still
+#   has turns in the old General thread gets the dialog pre-filled on first
+#   open and the project it opens adopts them (retag, never delete). The
+#   frame no longer describes a General thread. Bundle repacked; new routes
+#   GET/POST/PATCH/DELETE /api/projects/folders[/{id}], GET
+#   /api/projects/search, PUT /api/projects/{id} takes folder_id, GET
+#   /api/projects takes include_archived (Workbench-only; the default and
+#   the host's list_projects are unchanged).
+#   (0.19.0 renamed these: /api/projects/buckets[/{id}] and bucket_id.)
+# 0.16.13 (2026-09-06): the Workbench behavior block stops restating the
+#   build-workflow skill. The static prompt measured at 78k chars with
+#   ~7.4k of it this manifest's prompt_behavior, most of it a second copy of
+#   the skill (alignment gate, parallel research, cheap rung first, review,
+#   proven delivery, where it runs, desktops, invisible builds). The skill is
+#   the one copy now (the three rules it lacked moved INTO it); this block
+#   keeps only what is about THIS window — run numbers, project names, the
+#   machine block — and one pointer. Manifest-only; bundle repacked.
+# 0.16.12 (2026-09-06): tool cards are titled "<Tool> <op>" with the argument
+#   as a muted, quoted subject — same change as circles 0.11.2 (the card code
+#   is the ported copy). Bundle repacked.
+# 0.16.11 (2026-09-06): a variant waiting for memory never freezes. The
+#   stream route's 30-minute tail was a TOTAL per connection (its idle counter
+#   never reset on a frame) and the run terminal treated a clean end as
+#   terminal, so a queued variant's tab timed out on "waiting for memory" and
+#   the run's output never arrived without a reload. The route now measures
+#   idle from the last frame, and run-terminal.tsx resumes from its cursor
+#   when a stream ends cleanly while the run is still live
+#   (run-frames.ts resumeAfterCleanEnd). Bundle repacked.
+# 0.16.10 (2026-09-06): a fan-out variant queued for memory reads "waiting
+#   for memory", not "live" and not "failed". Check available
+#   resources for multi-harness runs and run in series when the memory limit
+#   is the issue — series is the fallback, parallel stays parallel where the
+#   plan has room. review.py now runs the harnesses the plan holds as wave 1
+#   and starts the rest as running harnesses release; the kernel writes a
+#   `status/waiting` frame with the plain reason before such a run starts.
+#   run-frames.ts folds that into RunSummary.waiting (cleared by the run's
+#   first frame); run-terminal.tsx shows an outline "waiting for memory"
+#   badge with no pulse instead of a pulsing "live" over an empty scrollback.
+#   Bundle repacked.
+# 0.16.8 (2026-09-04): delivery is proven. A host had no read on
+#   its app's runtime pod (log_tail was "" for pod apps by construction), the
+#   ship ended at "installed", and the user had to paste the bootstrap
+#   failure into the chat. Now: after every install the kernel starts the app
+#   and proves it (mastercode.runtime.app_verify — ready check + captured
+#   log), reports a 'prove: <app>' task, and with auto-deliver on dispatches
+#   up to two seeded repairs itself. The switch is renamed Auto-deliver in
+#   the ops pane (it now merges + installs + proves, not just merges); the
+#   briefing gains the "delivery is proven" rule below and the host's runtime
+#   brief its matching block. Bundle repacked.
+# 0.15.2 (2026-08-22): "open app" now re-asks what the run left behind.
+#   hasEntry is review._session_entrypoints' answer — is there an index.html in
+#   THIS run's worktree — and it was captured once, on mount. A greenfield
+#   worktree is empty at mount by construction, so every from-scratch run
+#   latched hasEntry=false and offered only "review diff" (one session:
+#   antigravity mounted 21:39:54 against an empty tree, wrote
+#   index.html 21:43:17, finished 21:43:26). Seeded runs inherit the project's
+#   index.html at t=0, so the only lane this broke was the greenfield one that
+#   "open app" was built for. A separate effect re-fetches on the terminal
+#   frame — safe because collection lands first (21:43:25.980 vs 21:43:26.040).
+
+# Chat-surface briefing (rendered by runtime/prompt_builder._build_surface_role
+# into "## Where You Are" when the host is active in this app). Workbench is a
+# CHAT SURFACE with its own system prompt.
+prompt_behavior:
+  project_scoped: true
+  what_it_is: >-
+    The Workbench is where projects are built. Each project is a conversation thread
+    plus a workflow: the user aligns with you there, you research, plan and phase,
+    and builds run on the user's connected coding engines, live on the bench with
+    their output and time. Runs are numbered on the bench (#<number>), and that number is
+    the run's id. Agents doing untrusted outside work show on the bench too. Each
+    project's turns are memory-tagged to it. Projects open from the book's tabs and
+    its Index. Diffs land as pull requests on the user's own gitea and the user
+    merges them; Code Approvals are approved here. The composer takes file uploads,
+    which become context files. "Publish as site" on the bench puts a finished
+    project on the public web, with no upload step.
+  user_path: "the Workbench app, in the dock"
+
+window:
+  title: Workbench
+  width: 1440
+  height: 900
+  resizable: true
+  min_width: 1024
+  min_height: 640
+  start_maximized: true
+  # Phone mode: render native full-width and reflow (three columns become
+  # one screen at a time behind a bottom tab bar) instead of the scale shim.
+  mobile: responsive
+
+permissions:
+  - read:review
+  - write:review
+  - read:inference_catalog
+  - write:inference_routing
+  - read:inference_log
+  # Chat surface (the no-sessions brain path + history + project scoping).
+  - write:session
+  - read:brain_memory
+  - read:projects
+  # The Start dialog creates projects (POST /api/projects).
+  - write:projects
+  # One-click "Publish as site" -> /api/applications/sites/publish-project.
+  - publish:sites
+  # 0.16.7: the other disposition in the same section — "Install as my app"
+  # -> POST /api/applications/build. Narrow by construction: this scope ships
+  # the user's OWN project and nothing else. It is NOT execute:install, which
+  # would also hand Workbench store checkout/refunds and uninstall-any-app.
+  - execute:ship_project
+  # Composer upload -> /api/brain/context/upload (project-tagged, embedded).
+  - write:memory
+  # 0.16.1: the composer's "Store in Keys" seals a caught credential
+  # (POST /api/vault/secrets). Write only — no read:vault, no reveal.
+  - write:vault
+  # 0.20.2: the ask card decides the Host's decision ticket from the overlay
+  # (POST /api/tickets/{id}/decide) and reads it back before raising a card
+  # for a replayed turn (GET /api/tickets/{id}). The same scopes Circles holds
+  # for its Tickets pane; nothing else under /api/tickets is called from here.
+  - read:tickets
+  - write:tickets
+  # 0.21.2: the live view -> GET /api/agents, POST /api/agents/{id}/cancel,
+  # GET /api/agents/scheduled, POST /api/agents/scheduled/{id}/cancel.
+  - read:brain_tasks
+  - write:brain_tasks
+  - read:calendar
+  - write:calendar
+  # 0.23.0: the pairing code card in the chat reads the one-time code itself
+  # (GET /api/network/nac/connector/{id}/code, read:topology) and the open
+  # pairings started in this project (GET /api/network/nac/connector). The
+  # code route also answers only the person's own windows as the platform
+  # signed them (routes/network.py _person_window: network, circles,
+  # workbench), so no other holder of this scope reads a code. Read-only; the
+  # same scope Circles holds.
+  - read:topology

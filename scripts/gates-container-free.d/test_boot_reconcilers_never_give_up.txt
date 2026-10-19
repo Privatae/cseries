@@ -1,0 +1,2 @@
+# The boot reconcilers (default_install, harness_sync) retry with a doubling wait (300 s .. 1 h) for as long as the bridge is down or a pass crashes, logging each retry — they gave up after 12 x 300 s, default_install silently; the dead rlimit table in hardening.py (256 files, 64 processes) is gone and a sidecar inherits the kernel's limits; the dead lesson store brain/mastercode/brain_memory.py is deleted. The loops run for real with sleep and run_once scripted; no bridge, no DB.
+test_boot_reconcilers_never_give_up.py

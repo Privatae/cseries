@@ -1,0 +1,9 @@
+# 2026-09-21 (email integrations): the broker's two safety properties. WHERE a
+# call may land — the app names a path, never a URL, and urljoin ALONE does not
+# give that (it replaces the base for an absolute URL and swaps the host for a
+# protocol-relative one), so all four escapes are pinned: absolute, //host,
+# dot-dot off the base path, and traversal hidden mid-path. WHO may call — a
+# grant is per (connection, app), absence means refuse, the FK forbids granting
+# against an account that was never connected, and deleting a connection
+# cascades its grants away so disconnecting really does revoke.
+test_integration_broker.py

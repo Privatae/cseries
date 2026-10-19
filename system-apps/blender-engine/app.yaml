@@ -1,0 +1,42 @@
+# Blender Engine: Blender 5.2.2 (blender.org,
+# GPL-2.0-or-later), run headless for the Host. Blender is in the creative
+# toolchain image, pinned by sha256 (it is 1.2 GB unpacked, more than any store
+# bundle may carry); this app is a recipe that starts the image's MCP bridge
+# (creative_mcp.py), and `mcp` connects it to the Host at install. Memory: a
+# 1920x1080 Cycles render of a glass-and-metal scene peaked at 2.0 GB (measured,
+# file cache included); 2.5 GB for heavier scenes. No GPU.
+# vcpus 4: Cycles uses every core it is given (the same render took 309 s on
+# 1 CPU and 150 s on 2); a window is billed at its ceiling.
+id: blender-engine
+name: Blender Engine
+description: Your Host builds and renders 3D scenes with Blender, for wallpapers, backgrounds and artwork. It writes each scene as a script, renders it on the CPU, and everything it makes appears in this window.
+icon: icon.png
+icon_small: icon-64.png
+# 1.0.2 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
+version: "1.0.2"
+provenance: standard
+entrypoint: index.html
+permissions: []
+network: []
+resources:
+  baseline_memory_mi: 2560
+  vcpus: 4
+runtime:
+  kind: process
+  image: creative
+  command: ["python3", "/opt/app-runtime/creative_mcp.py", "blender"]
+  ready_path: /health
+  ready_timeout_seconds: 120
+mcp:
+  path: /mcp
+window:
+  title: Blender Engine
+  width: 900
+  height: 640
+  resizable: true
+prompt_behavior:
+  what_it_is: |
+    Blender Engine is the person's own 3D renderer that you operate: an MCP
+    server named blender-engine (skill 'blender-engine' says how). Its window
+    shows the files you made there.
+  user_path: "the Blender Engine app (install it from the App Store)"

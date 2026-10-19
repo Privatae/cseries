@@ -1,0 +1,7 @@
+# The claude-code harness's idle stop kills THAT
+# run's processes and nothing else — found by a per-run CSERIES_HARNESS_RUN marker
+# in the CLI's environment (never cwd), orphans under tini only inside the
+# harness container, behind stop_everything's two guards. Real signals ONLY in a
+# private PID namespace with every capability dropped (as the pod), through a
+# fence built from /proc; exit 2, never the host, where one cannot be made.
+test_claude_code_harness_run_tree.py

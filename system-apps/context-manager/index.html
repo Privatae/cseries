@@ -1,0 +1,342 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Context</title>
+
+    <link rel="stylesheet" href="/css/tokens.css">
+    <link rel="stylesheet" href="/css/motion.css">
+    <link rel="stylesheet" href="/css/cseries-components.css">
+    <link rel="stylesheet" href="/system-apps/context-manager/style.css">
+</head>
+<body class="cseries-scroll">
+<div class="app ctx-app">
+
+    <!-- ── Header ─────────────────────────────────────── -->
+    <header class="app-header">
+        <div class="app-brand">
+            <span class="ctx-brandmark" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="3" width="11" height="14" rx="1.6"/>
+                    <line x1="6" y1="7" x2="11" y2="7"/><line x1="6" y1="10" x2="11" y2="10"/><line x1="6" y1="13" x2="9" y2="13"/>
+                    <circle cx="19" cy="6" r="2"/><circle cx="19" cy="18" r="2"/>
+                    <path d="M14 8.5 17.2 6.4"/><path d="M11.5 14.5 17.2 17.6"/>
+                </svg>
+            </span>
+            <div class="app-brand-text">
+                <div class="app-brand-title">Context</div>
+                <div class="app-brand-sub label-sys" id="brand-sub">your context, organized your way</div>
+            </div>
+        </div>
+        <div class="ctx-health" id="ctx-health" aria-live="polite">
+            <span class="ctx-health-chip skeleton" style="width:120px;height:18px"></span>
+        </div>
+    </header>
+
+    <div class="cseries-seam"></div>
+
+    <!-- ── Ownership banner — the load-bearing doctrine ─── -->
+    <div class="ctx-doctrine slim">
+        <svg class="ctx-doctrine-mark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/>
+        </svg>
+        <div class="ctx-doctrine-text">
+            <p class="ctx-doctrine-lead">This is <strong>your</strong> context — organized your way, stored where you choose.</p>
+            <p>Collections group files without moving them. The bytes stay on the machines you picked — the platform, your S3 bucket, or a bastion you run — and your host reads them on demand, keeping no copy.</p>
+        </div>
+    </div>
+
+    <!-- ── Shell: explorer rail · main · inspector ──────── -->
+    <div class="ctx-shell">
+
+        <nav class="exp-rail cseries-scroll" aria-label="Collections and sources">
+            <div class="exp-search">
+                <input type="search" class="cseries-input" id="exp-search" placeholder="Search everything…" aria-label="Search your documents, your Host's memory, projects, journal, code and skills" title="Your documents, your Host's memory, your projects, its journal, your code and its skills" autocomplete="off">
+            </div>
+
+            <div class="exp-rail-group">
+                <div class="exp-rail-head label-sys">Collections</div>
+                <div id="rail-collections" class="exp-rail-list" role="list">
+                    <div class="skeleton skeleton-card"></div>
+                </div>
+                <button class="cseries-btn ghost exp-newcoll" id="coll-new">＋ New collection</button>
+            </div>
+
+            <div class="exp-rail-group">
+                <div class="exp-rail-head label-sys">Sources</div>
+                <div id="rail-sources" class="exp-rail-list" role="list">
+                    <div class="skeleton skeleton-card"></div>
+                </div>
+            </div>
+
+            <div class="exp-rail-foot">
+                <button class="exp-rail-item gear" id="open-storage" title="Placement, redundancy, and embedding">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                        <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.87l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.7 1.7 0 0 0-1.87-.34 1.7 1.7 0 0 0-1 1.55V21a2 2 0 1 1-4 0v-.09a1.7 1.7 0 0 0-1-1.55 1.7 1.7 0 0 0-1.87.34l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.7 1.7 0 0 0 .34-1.87 1.7 1.7 0 0 0-1.55-1H3a2 2 0 1 1 0-4h.09a1.7 1.7 0 0 0 1.55-1 1.7 1.7 0 0 0-.34-1.87l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.7 1.7 0 0 0 1.87.34h.01a1.7 1.7 0 0 0 1-1.55V3a2 2 0 1 1 4 0v.09a1.7 1.7 0 0 0 1 1.55 1.7 1.7 0 0 0 1.87-.34l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.7 1.7 0 0 0-.34 1.87v.01a1.7 1.7 0 0 0 1.55 1H21a2 2 0 1 1 0 4h-.09a1.7 1.7 0 0 0-1.55 1Z"/>
+                    </svg>
+                    <span>Storage</span>
+                </button>
+            </div>
+        </nav>
+
+        <main class="ctx-main cseries-scroll">
+
+            <!-- ════ FILES (the explorer) ════ -->
+            <section id="view-files" class="ctx-view">
+                <div class="exp-toolbar">
+                    <div class="exp-crumb" id="files-crumb">All items</div>
+                    <div class="exp-toolbar-actions">
+                        <input type="file" id="upload-input" multiple hidden>
+                        <button class="cseries-btn primary" id="upload-btn">Add files</button>
+                        <button class="cseries-btn" id="files-refresh" title="Refresh">Refresh</button>
+                    </div>
+                </div>
+                <div class="ctx-table-wrap">
+                    <div class="exp-files" id="files-table">
+                        <div class="skeleton skeleton-card"></div>
+                        <div class="skeleton skeleton-card"></div>
+                        <div class="skeleton skeleton-card"></div>
+                    </div>
+                </div>
+                <div class="exp-pager" id="files-pager"></div>
+            </section>
+
+            <!-- ════ SEARCH RESULTS ════ -->
+            <section id="view-search" class="ctx-view" hidden>
+                <div class="exp-toolbar">
+                    <div class="exp-crumb" id="search-crumb">Search</div>
+                    <div class="exp-toolbar-actions">
+                        <button class="cseries-btn" id="search-close">Back to files</button>
+                    </div>
+                </div>
+                <div class="exp-coverage label-sys" id="search-coverage"></div>
+                <div id="search-results" class="stack"></div>
+            </section>
+
+            <!-- ════ STORAGE (the 1.x lenses, as settings) ════ -->
+            <section id="view-storage" class="ctx-view" hidden>
+                <div class="exp-toolbar">
+                    <div class="exp-crumb">Storage</div>
+                    <div class="exp-toolbar-actions">
+                        <button class="cseries-btn" id="storage-close">Back to files</button>
+                    </div>
+                </div>
+                <nav class="exp-subnav" role="tablist" aria-label="Storage settings">
+                    <button class="exp-subnav-btn active" data-lens="index" role="tab">Where it lives</button>
+                    <button class="exp-subnav-btn" data-lens="placement" role="tab">Placement</button>
+                    <button class="exp-subnav-btn" data-lens="network" role="tab">Your network</button>
+                    <button class="exp-subnav-btn" data-lens="availability" role="tab">Availability</button>
+                    <button class="exp-subnav-btn" data-lens="embedding" role="tab">Embedding</button>
+                </nav>
+
+                <!-- Where it lives (raw per-piece index) -->
+                <div id="lens-index" class="ctx-lens" role="tabpanel" aria-label="Where it lives">
+                    <div class="view-heading">
+                        <p class="view-sub">Every piece of your context, and the machine that holds its bytes. <strong>platform</strong> = kept for you on the network; an <strong>S3 bucket</strong> or a <strong>bastion</strong> = a machine you own. A bastion-held piece shows offline when its machine isn't checked in.</p>
+                        <div class="view-toolbar">
+                            <input type="text" class="cseries-input" id="idx-filter" placeholder="Filter by path prefix…" aria-label="Filter by path prefix" style="max-width:280px">
+                            <button class="cseries-btn" id="idx-refresh">Refresh</button>
+                        </div>
+                    </div>
+                    <div class="ctx-statstrip" id="idx-stats"></div>
+                    <div class="ctx-table-wrap">
+                        <div class="ctx-table" id="idx-table">
+                            <div class="skeleton skeleton-card"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Placement -->
+                <div id="lens-placement" class="ctx-lens" role="tabpanel" aria-label="Placement" hidden>
+                    <div class="view-heading">
+                        <p class="view-sub">Where new context goes. A <strong>default</strong> covers everything; <strong>routes</strong> send specific paths to specific machines (a longer prefix wins). Changing placement only affects new writes — what's already stored keeps the machine it was written to.</p>
+                    </div>
+                    <div class="ctx-block" id="default-block">
+                        <div class="ctx-block-head">
+                            <div class="label-sys">Host-wide default</div>
+                            <span class="ctx-inline-status" id="default-status"></span>
+                        </div>
+                        <p class="view-sub">Where context lands when no route matches.</p>
+                        <div id="default-card" class="stack"></div>
+                        <div class="view-toolbar">
+                            <button class="cseries-btn primary" id="default-edit">Change default</button>
+                        </div>
+                    </div>
+                    <div class="ctx-block" id="routes-block">
+                        <div class="ctx-block-head">
+                            <div class="label-sys">Routes — path prefix → machine</div>
+                            <span class="ctx-inline-status" id="routes-status"></span>
+                        </div>
+                        <p class="view-sub">Send a specific slice of context to a specific machine. The longest matching prefix wins; anything unmatched uses the default above.</p>
+                        <div id="routes-list" class="stack"></div>
+                        <div class="view-toolbar">
+                            <button class="cseries-btn primary" id="route-add">Add a route</button>
+                        </div>
+                    </div>
+                    <div class="ctx-block" id="machines-block">
+                        <div class="ctx-block-head">
+                            <div class="label-sys">Your machines — choosable context stores</div>
+                            <span class="ctx-inline-status" id="machines-status"></span>
+                        </div>
+                        <p class="view-sub">Bastions you run that are online and advertise context storage. These are the machines a route or the default can target.</p>
+                        <div id="machines-list" class="stack"></div>
+                    </div>
+                </div>
+
+                <!-- Your network — DCN stores (folders on your machines, buckets you own) -->
+                <div id="lens-network" class="ctx-lens" role="tabpanel" aria-label="Your network" hidden>
+                    <div class="view-heading">
+                        <p class="view-sub">Folders on machines you run and buckets you own, networked for your host. <strong>Your files stay where they are</strong> — Privatae Host keeps only the index (a route map of what exists and where), content is read on demand from stores you approve, and every read is logged for you. A folder's index is <strong>locations only</strong>; a bucket you file things in gets <strong>locations + previews</strong>. Approving a store always takes your code. There is no delete here — your host structurally cannot remove your files.</p>
+                    </div>
+                    <div class="ctx-block" id="dcn-stores-block">
+                        <div class="ctx-block-head">
+                            <div class="label-sys">Stores</div>
+                            <span class="ctx-inline-status" id="dcn-stores-status"></span>
+                        </div>
+                        <div id="dcn-stores-list" class="stack">
+                            <div class="skeleton skeleton-card"></div>
+                        </div>
+                        <div class="view-toolbar">
+                            <button class="cseries-btn primary" id="dcn-add-folder">Add a folder</button>
+                            <button class="cseries-btn primary" id="dcn-add-bucket">Add a bucket</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Availability -->
+                <div id="lens-availability" class="ctx-lens" role="tabpanel" aria-label="Availability" hidden>
+                    <div class="view-heading">
+                        <p class="view-sub">How redundantly your context is kept. <strong>Single</strong> = one copy on one machine. <strong>Replicate</strong> = the bytes are fanned out to more machines you run, so a read survives one going offline. Replication applies to bastion-held context (an S3 bucket is already durable on its own).</p>
+                    </div>
+                    <div class="ctx-block">
+                        <div class="ctx-block-head">
+                            <div class="label-sys">Default availability</div>
+                            <span class="ctx-inline-status" id="avail-default-status"></span>
+                        </div>
+                        <div id="avail-default-card" class="stack"></div>
+                    </div>
+                    <div class="ctx-block">
+                        <div class="ctx-block-head"><div class="label-sys">Per-route availability</div></div>
+                        <p class="view-sub">Each route can keep its own redundancy. Edit a route in Placement to change which machines hold copies.</p>
+                        <div id="avail-routes-list" class="stack"></div>
+                    </div>
+                    <div class="ctx-block">
+                        <div class="ctx-block-head"><div class="label-sys">Replicated pieces — copies on the ground</div></div>
+                        <p class="view-sub">Context that currently has more than one physical copy recorded, and how many.</p>
+                        <div id="avail-copies-list" class="stack"></div>
+                    </div>
+                </div>
+
+                <!-- Embedding -->
+                <div id="lens-embedding" class="ctx-lens" role="tabpanel" aria-label="Embedding" hidden>
+                    <div class="view-heading">
+                        <p class="view-sub">Embedding is what makes your context searchable by meaning. This covers the context you've brought in (your intake corpus). Embed unembedded pieces, or re-embed everything after changing your model.</p>
+                    </div>
+                    <div class="ctx-block" id="embed-model-block">
+                        <div class="ctx-block-head">
+                            <div class="label-sys">Embedding model — where it computes</div>
+                            <span class="ctx-inline-status" id="embed-model-status"></span>
+                        </div>
+                        <p class="view-sub">The model your context is embedded with. <strong>Managed</strong> runs on the platform; or serve it on a <strong>bastion you run</strong> (your GPU) — the sovereign lane. Switching lanes keeps your model and existing vectors — nothing is re-embedded.</p>
+                        <div id="embed-model-card" class="stack"></div>
+                        <div class="ctx-block-sub">
+                            <div class="ctx-block-head"><div class="label-sys">Your machines — choosable embedders</div></div>
+                            <div id="embed-bastions-list" class="stack"></div>
+                        </div>
+                    </div>
+                    <div class="ctx-statstrip" id="embed-stats"></div>
+                    <div class="ctx-block">
+                        <div class="ctx-block-head">
+                            <div class="label-sys">Queue — what's embedding right now</div>
+                            <span class="ctx-inline-status" id="embed-queue-status"></span>
+                        </div>
+                        <p class="view-sub">Every embed job, newest first — live while anything runs. A paused job is retrying its embedder; a failed one keeps its error here.</p>
+                        <div id="embed-queue" class="stack"></div>
+                    </div>
+                    <div class="ctx-block">
+                        <div class="ctx-block-head"><div class="label-sys">Embed unembedded context</div></div>
+                        <p class="view-sub" id="embed-note">—</p>
+                        <div class="view-toolbar">
+                            <button class="cseries-btn primary" id="embed-run">Embed now</button>
+                            <button class="cseries-btn" id="embed-force">Re-embed everything</button>
+                            <span class="ctx-inline-status" id="embed-status"></span>
+                        </div>
+                    </div>
+                    <div class="ctx-block ctx-followup">
+                        <div class="ctx-block-head"><div class="label-sys">Per-file embedding control — host files</div></div>
+                        <p class="view-sub">Your host's on-demand context files aren't embedded — their bytes are fetched when needed, not indexed. They show in the explorer as not meaning-searchable; embedding that corpus is a planned follow-up.</p>
+                    </div>
+                </div>
+            </section>
+
+        </main>
+
+        <!-- ── Inspector drawer ─────────────────────────── -->
+        <aside class="exp-inspector cseries-scroll" id="inspector" hidden aria-label="File details">
+            <div class="exp-insp-head">
+                <div class="exp-insp-title" id="insp-title">—</div>
+                <button class="cseries-btn ghost icon-only" id="insp-close" aria-label="Close">✕</button>
+            </div>
+            <div class="exp-insp-meta label-sys" id="insp-meta">—</div>
+            <div class="exp-insp-block">
+                <div class="label-sys">Collections</div>
+                <div class="exp-tagrow" id="insp-tags"></div>
+                <div class="exp-tagadd">
+                    <input type="text" class="cseries-input" id="insp-tag-input" placeholder="Add to collection…" list="tag-suggestions">
+                    <datalist id="tag-suggestions"></datalist>
+                    <button class="cseries-btn" id="insp-tag-add">Add</button>
+                </div>
+            </div>
+            <div class="exp-insp-block">
+                <div class="label-sys">Where it lives</div>
+                <div id="insp-location" class="stack"></div>
+            </div>
+            <div class="exp-insp-block">
+                <div class="exp-insp-blockhead">
+                    <div class="label-sys">Preview</div>
+                    <span class="ctx-inline-status" id="insp-preview-status"></span>
+                </div>
+                <pre class="exp-preview cseries-scroll" id="insp-preview">—</pre>
+            </div>
+            <div class="exp-insp-block" id="insp-chunks-block" hidden>
+                <div class="label-sys">Pieces (<span id="insp-chunk-count">0</span>)</div>
+                <div id="insp-chunks" class="stack"></div>
+            </div>
+            <div class="exp-insp-actions" id="insp-actions"></div>
+        </aside>
+    </div>
+
+    <!-- ── Drag-drop overlay ────────────────────────────── -->
+    <div class="exp-drop" id="drop-overlay" hidden>
+        <div class="exp-drop-card">
+            <div class="exp-drop-title">Drop to add to your context</div>
+            <div class="label-sys" id="drop-hint">.txt, .md, .json (including ChatGPT/Claude exports)</div>
+        </div>
+    </div>
+
+    <!-- ── Editor modal — change default / add-edit route / new collection ── -->
+    <div class="ctx-scrim" id="ctx-scrim" hidden>
+        <div class="ctx-modal" role="dialog" aria-modal="true" aria-labelledby="ctx-modal-title">
+            <div class="ctx-modal-head">
+                <span class="ctx-modal-title" id="ctx-modal-title">Edit</span>
+                <button class="cseries-btn ghost icon-only" id="ctx-modal-close" aria-label="Cancel">✕</button>
+            </div>
+            <div class="ctx-modal-body cseries-scroll" id="ctx-modal-body"></div>
+            <div class="ctx-modal-actions" id="ctx-modal-actions"></div>
+        </div>
+    </div>
+
+    <footer class="app-footer">
+        <span class="label-sys" id="foot-left">context</span>
+        <div class="embed-progress" id="embed-progress" hidden>
+            <span class="label-sys" id="embed-progress-label"></span>
+            <div class="embed-progress-track"><div class="embed-progress-fill" id="embed-progress-fill"></div></div>
+        </div>
+        <span class="label-sys app-footer-right" id="foot-right">—</span>
+    </footer>
+</div>
+
+<script src="/system-apps/context-manager/app.js"></script>
+</body>
+</html>

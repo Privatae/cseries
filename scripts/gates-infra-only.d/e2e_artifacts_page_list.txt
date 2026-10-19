@@ -1,0 +1,1 @@
+e2e_artifacts_page_list.py                # playwright chromium + local port (loopback stub kernel) — the Artifacts window offers an artifact's pages when the render answers 300, opens the one picked, switches from its bar

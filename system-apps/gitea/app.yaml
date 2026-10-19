@@ -1,0 +1,46 @@
+id: gitea
+name: Gitea
+description: "Your code on the configured Gitea forge — four panels. Your repos: browse your own repositories in-app. Host repos: the host's own gitea (its clean room). Permissions: grant or revoke the host's access to your repos (Read / Write) right here — it adds/removes the host as a collaborator. Mirrors: connect GitHub once and pick repositories to keep synced into your gitea automatically. No token to paste; the app makes the gitea calls."
+icon: icon.png
+icon_small: icon-64.png
+entrypoint: index.html
+provenance: standard
+system: true
+# 0.7.5 (2026-10-18): what_it_is is one paragraph under the 900-character cap,
+#   saying what the app is and what lives in it; the how-to it carried lives in
+#   skills and tool descriptions. Manifest-only; bundle repacked.
+# 0.7.6 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
+version: "0.7.6"
+# Host-facing catalog fact (code-true). Four panels over the app's OWN authenticated
+# gitea client (server/routes/gitea.py -> gitea_client) — the same client the Workbench
+# uses for reads and writes. what_it_is/user_path only. Code Approvals (the plain-English
+# pull requests) live in the Workbench (not duplicated). A `repo:<owner>/<name>` view
+# opens that one repository: every Code Repository link on the Host points here, since
+# the forge itself answers only the Hosts (0.7.3).
+prompt_behavior:
+  what_it_is: >-
+    The Gitea app has four panels over the configured Gitea forge. Your repos lists and browses
+    the user's own repositories (files, commits, branches). Host repos is your own
+    gitea identity (entity-<id>), the clean room where you draft, build and open
+    pull requests toward the user. Permissions is where the user grants or revokes
+    your Read or Write access to each of their repos. Mirrors keeps the user's
+    GitHub repositories synced into their gitea: GitHub is connected once (the
+    credential is the 'github' entry in Keys), repos are picked, and the git server
+    itself pulls on a cadence, with no agent or model involved; mirrors are
+    pull-only. Code Approvals are approved in the Workbench, not here. Every link to
+    a Code Repository opens it in this app.
+  user_path: "the Gitea app, in the dock"
+
+# Reads gate on read:review; the Permissions grant/revoke gates on write:review (the
+# same scope the Workbench's Code Approvals use). Declared here so the app token carries it.
+permissions:
+  - read:review
+  - write:review
+
+window:
+  title: Gitea
+  width: 1000
+  height: 720
+  resizable: true
+  min_width: 720
+  min_height: 480

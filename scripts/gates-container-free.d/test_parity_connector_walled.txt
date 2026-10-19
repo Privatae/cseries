@@ -1,0 +1,3 @@
+# Every /api/connector route the connector router registers is in kernel_ops._WALLED_PATHS with its own wall reason, kernel_op refuses each one (a concrete /turns/<id> by its template) with that reason, _AREA_HOST_TOOLS declares the area [] so the routes derive walled rather than unreachable, and the walled area card carries _AREA_PERSON_NOTE (the NAC tools that govern the area) instead of "the user drives it in the app". No DB, no network.
+# Six routes, the sixth the Discord gateway's WebSocket (@router.websocket), walled with the same reason; kernel_op on its path is denied.
+test_parity_connector_walled.py

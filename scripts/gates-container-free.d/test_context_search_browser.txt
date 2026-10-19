@@ -1,0 +1,13 @@
+# The Context app's everything-search in headless Chromium over the REAL search
+# route (body model, read:search against a token minted from the Context
+# manifest, the secret cut), with only the store engine behind it recorded:
+# six stores under six headings (one of them the Host's skills); a password and a key TYPED a key at a time
+# never reach any URL, every search a POST with the words in the body (the
+# Workbench's gate, run against Context); a slow older
+# answer never draws over a newer one; refusals in words. Container-free: no
+# pod, no database; Playwright, Chromium, fastapi and uvicorn on a loopback
+# port. A passage longer than the route's 2,000 characters still searches, on
+# its first 2,000, and says so. Another route's 422 (FastAPI's list of
+# reasons) is said in words, never "[object Object]" and never what was sent.
+# Measured on the build machine: 45 checks, about 12 s wall.
+test_context_search_browser.py

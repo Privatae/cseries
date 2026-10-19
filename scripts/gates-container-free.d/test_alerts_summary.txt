@@ -1,0 +1,21 @@
+
+# The ALERT summary a bastion folds onto its heartbeat (v150). Same defect class
+# as v146 one plane over — the heartbeat writer takes a fixed column list and
+# silently drops what it does not name — so
+# the storage half drives the REAL upsert_heartbeat against a recording pool and
+# reads the statement AND its arguments; a grep would pass with the narrower
+# deleted. The reading half is where the risk actually is: on this plane the
+# blind case is the DEFAULT, because every bastion omits the key until an admin
+# places an endpoints file on that machine, so a host that renders "no summary"
+# as calm reports a whole estate quiet that nobody ever asked. Pins the five
+# states against the ALERTS_STATES constant rather than against literals (a
+# hardcoded dict is how a state goes missing unnoticed), pins the calm phrase to
+# `quiet` alone — including inside a negation,
+# because a paraphrase drops the NOT — and pins critical ahead of firing so an
+# incoherent payload from an untrusted box can never come out the quiet end.
+# Also checks the three observe op names are in the GENERATED block now that the
+# bastion answers them, that a grant must NAME them —
+# the host's gate matches by name, never by the shared `observe:` prefix — and
+# that default-skills/network.md explains every state and every name the code
+# can produce. Stub pool; no bastion, no DB, no network.
+test_alerts_summary.py

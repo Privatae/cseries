@@ -1,0 +1,6 @@
+
+# The machine-offer routes driven as the Circles browser drives
+# them — real router, real requires_permission scope check (proved live by a
+# 403 guard first), real JSON. Stubs stop at the pod boundary: the pool, the
+# mgmt relay to the bastion, the peer lane to the other host.
+test_machine_offer_routes.py

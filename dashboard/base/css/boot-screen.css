@@ -1,0 +1,65 @@
+#boot-screen {
+    position: fixed;
+    inset: 0;
+    z-index: 9999;
+    background: var(--cseries-ink, #050709);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 1;
+    transition: opacity 600ms ease;
+    pointer-events: auto;
+}
+
+/* Blurred Host wallpaper as the backdrop — a soft echo of the desktop
+   that's about to appear. The negative inset keeps the blurred edges
+   outside the viewport so no sharp rim shows. */
+#boot-screen::before {
+    content: '';
+    position: absolute;
+    inset: -48px;
+    background: url("/assets/wallpaper-host.png") center / cover no-repeat;
+    filter: blur(30px) brightness(0.65);
+}
+
+/* Portrait phones blur the mobile variant instead (media query is fine
+   here — the boot screen predates the shell JS that owns CSeriesViewport). */
+@media (orientation: portrait), (max-width: 768px) {
+    #boot-screen::before {
+        background-image: url("/assets/wallpaper-host-mobile.png");
+    }
+}
+
+#boot-screen.hidden {
+    opacity: 0;
+    pointer-events: none;
+}
+
+#boot-screen .boot-brand {
+    position: relative;
+    text-align: center;
+    user-select: none;
+}
+
+#boot-screen .boot-title {
+    font-family: var(--font-display);
+    font-size: 44px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    color: var(--cseries-paper);
+    text-shadow: 0 2px 24px rgba(5, 7, 9, 0.6);
+}
+
+#boot-screen .boot-sub {
+    margin-top: var(--space-2);
+    font-family: var(--font-body);
+    font-size: 15px;
+    letter-spacing: 0.22em;
+    color: var(--cseries-ash);
+    animation: boot-breath var(--dur-breath, 3.2s) ease-in-out infinite;
+}
+
+@keyframes boot-breath {
+    0%, 100% { opacity: 0.45; }
+    50%      { opacity: 1; }
+}

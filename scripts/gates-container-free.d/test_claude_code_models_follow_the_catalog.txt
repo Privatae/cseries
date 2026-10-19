@@ -1,0 +1,7 @@
+# 2026-10-07 (one Host's project): claude-code's model list is the
+# HOST_ENGINE_MODELS floor plus the cached OpenRouter catalog's Claude rows as
+# dashed native ids, without variants, models older than the floor, or models
+# the platform's record (approved_models.json) does not list; the picker and
+# the save validator read the one list. Fails 5 checks before the fix; the
+# record cut fails 10 more without it.
+test_claude_code_models_follow_the_catalog.py

@@ -1,0 +1,4 @@
+# 2026-10-06: the research store (v211, runtime/research_store.py) on a real kernel
+# schema: pages saved whole outside the repo, found by words and meaning, read in
+# order, replaced, scoped, swept.
+test_research_store_pg.py

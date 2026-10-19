@@ -1,0 +1,16 @@
+# 2026-10-02: scripts/kernel_schema.py builds every DB gate's schema by RUNNING
+# entrypoint.sh's own schema section (between its two marker lines) with dash,
+# the image's /bin/sh — no Python copy, no command-by-command pin (every review
+# found a shell shape the pin read differently from dash). Proven with a
+# stand-in psql: init-db.sql in one transaction, the entity id before any
+# migration, v139, each migration once, none of the gate's environment; the
+# escaped-space and escaped-backslash `continue` shapes skip the migrations in
+# the gate exactly as at boot. What the section inherits from the lines above
+# it is held as text, so each of these refuses: an exported PGOPTIONS (however
+# spelled), PATH/HOME/PG*, ENTITY_DB/ENTITY_ID/PG_SOCKET reassigned, shell
+# options other than -eu, a function or alias, the section inside a heredoc /
+# if / function, a marker missing, doubled or reversed, the swap or carry on
+# the wrong side. upto=N reads from git the tree just before vN entered the
+# first-parent history (a merge's first parent), drops vN and later, and
+# refuses without the history. Text, git, dash and temp dirs only.
+test_kernel_schema_steps.py

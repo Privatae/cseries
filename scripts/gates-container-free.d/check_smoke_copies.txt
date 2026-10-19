@@ -1,0 +1,1 @@
+check_smoke_copies.py         # every in-container smoke script is COPY'd, checked before the build (2026-09-22)

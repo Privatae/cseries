@@ -1,0 +1,4 @@
+# Instructions the Host reads name calls it can make: skills name real ops, notes
+# in the Host's turn name calls that turn can make, schema examples match their
+# patterns, so no instruction tells the Host to make a call it cannot make. Source tree only.
+test_instructions_name_real_calls.py

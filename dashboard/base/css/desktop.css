@@ -1,0 +1,1003 @@
+/* ================================================================
+ * C-Series — Desktop chrome (taskbar, windows, icons, context menus)
+ *
+ * All values reference tokens.css. For component primitives
+ * (buttons, pills, cards), see cseries-components.css.
+ * ================================================================ */
+
+/* ════════════════════════════════════════════════════════════════
+ * DESKTOP SURFACE
+ * ════════════════════════════════════════════════════════════════ */
+
+#desktop {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: var(--taskbar-h);
+    /* Privatae Host default wallpaper (1672x941, 16:9 — cover crops
+       nothing on standard monitors) with a slow sage glow rising from
+       the bottom-center to give the space depth without stealing focus
+       from the icons. */
+    background:
+        url("/assets/wallpaper-host.png") center / cover no-repeat,
+        radial-gradient(
+            circle 900px at 50% 115%,
+            rgba(127, 207, 174, 0.07) 0%,
+            rgba(127, 207, 174, 0.025) 40%,
+            transparent 75%
+        ),
+        var(--cseries-ink);
+    overflow: hidden;
+}
+
+/* Phone-mode default: the bundled mobile variant of the Host wallpaper.
+   Toggled from desktop.js via CSeriesViewport (the single phone-mode
+   breakpoint) — never a media query here, so the breakpoint can't drift. */
+#desktop.phone-default {
+    background:
+        url("/assets/wallpaper-host-mobile.png") center / cover no-repeat,
+        radial-gradient(
+            circle 900px at 50% 115%,
+            rgba(127, 207, 174, 0.07) 0%,
+            rgba(127, 207, 174, 0.025) 40%,
+            transparent 75%
+        ),
+        var(--cseries-ink);
+}
+
+/* ── HTML desktop surface (js/desktop-surface.js) ──────────────────
+   A host-authored document as the desktop itself. First child of
+   #desktop with z-index auto, so tree order keeps it UNDER the icon
+   column, the presence line, the window layer and the widget layer.
+   Sandboxed srcdoc — the module comment describes the wall. */
+.desktop-surface {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    border: 0;
+    display: block;
+    background: transparent;
+    opacity: 0;
+    transition: opacity var(--dur-panel) var(--ease-cseries);
+}
+.desktop-surface.is-live {
+    opacity: 1;
+}
+/* desktop mode: the document draws the icons and the presence sentence,
+   so the shell's own step aside. Windows, widgets and the taskbar stay. */
+#desktop.surface-desktop #desktop-icons,
+#desktop.surface-desktop #presence-line {
+    display: none;
+}
+
+#desktop-icons {
+    position: absolute;
+    top: var(--space-6);
+    left: var(--space-6);
+    display: flex;
+    flex-direction: column;
+    flex-wrap: wrap;
+    gap: var(--space-5);
+    max-height: calc(100% - var(--space-12));
+    align-content: flex-start;
+}
+
+.desktop-icon {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-2);
+    width: 104px;
+    cursor: default;
+    padding: var(--space-2);
+    border-radius: var(--radius-md);
+    user-select: none;
+    border: 1px solid transparent;
+    background: transparent;
+    transition: border-color var(--dur-hover) var(--ease-cseries);
+}
+
+/* Hover = glow only. Colors never shift. */
+.desktop-icon:hover .icon-image {
+    box-shadow:
+        0 0 0 1px var(--cseries-ember-ring),
+        0 0 18px 2px var(--cseries-ember-ring);
+}
+
+.desktop-icon.selected {
+    border-color: var(--cseries-ember-ring);
+}
+
+.desktop-icon.selected .icon-image {
+    box-shadow:
+        0 0 0 1px var(--cseries-ember),
+        0 0 24px 4px var(--cseries-ember-ring);
+}
+
+.desktop-icon .icon-image {
+    width: var(--cseries-icon-size);
+    height: var(--cseries-icon-size);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-lg);
+    /* Glass tile: a whisper of the twilight ramp with light falling from
+       the top-left, so icons sit IN the desktop rather than on it. Both
+       stops are tokens so a design can retint or flatten the tile. */
+    background: linear-gradient(160deg, var(--cseries-tile-bg), var(--cseries-tile-bg-2));
+    border: 1px solid var(--cseries-seam-active);
+    box-shadow: inset 0 1px 0 var(--cseries-seam);
+    transition: box-shadow var(--dur-state) var(--ease-cseries),
+                border-color var(--dur-state) var(--ease-cseries);
+}
+
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+    .desktop-icon .icon-image {
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+    }
+}
+
+/* Dragging an icon: the ghost travels with the pointer, the source dims. */
+.desktop-icon.dragging {
+    opacity: 0.35;
+}
+
+/* Glyph color ramp — icons.js draws in currentColor. */
+.cseries-icon {
+    color: var(--cseries-linen);
+    transition: color var(--dur-hover) var(--ease-cseries);
+}
+.desktop-icon:hover .cseries-icon,
+.desktop-icon.selected .cseries-icon,
+.dock-item:hover .cseries-icon,
+.dock-item.active .cseries-icon,
+.dock-tile:hover .cseries-icon {
+    color: var(--cseries-paper);
+}
+
+.desktop-icon .icon-image img {
+    width: 48px;
+    height: 48px;
+    object-fit: contain;
+    display: block;
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.4));
+}
+
+.desktop-icon .icon-image .icon-letter {
+    width: 56px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--cseries-twilight);
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-md);
+    font-family: var(--font-display);
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--cseries-linen);
+}
+
+/* ════════════════════════════════════════════════════════════════
+ * AMBIENT PRESENCE LINE
+ *
+ * Third-person entity activity, bottom-right of the desktop. Signal-
+ * driven, deterministic. No inference per tick — the sentence is a
+ * template fill over the rule engine.
+ * ════════════════════════════════════════════════════════════════ */
+
+.presence-line {
+    position: absolute;
+    bottom: var(--space-5);
+    right: var(--space-6);
+    max-width: 420px;
+    padding: var(--space-2) var(--space-3);
+    font-family: var(--font-body);
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--cseries-linen);
+    text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+    opacity: 0;
+    transition: opacity var(--dur-panel) var(--ease-cseries);
+    pointer-events: none;
+    line-height: 1.4;
+    text-align: right;
+}
+
+.presence-line.visible {
+    opacity: 0.88;
+}
+
+.presence-line.interactive {
+    pointer-events: auto;
+    cursor: pointer;
+}
+
+.presence-line.interactive:hover {
+    color: var(--cseries-paper);
+    opacity: 1;
+}
+
+.presence-line.idle,
+.presence-line.offline {
+    color: var(--cseries-ash);
+    letter-spacing: 0.12em;
+}
+
+.desktop-icon .icon-label {
+    /* Small-caps system label */
+    font-family: var(--font-body);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--cseries-linen);
+    text-align: center;
+    word-break: normal;
+    overflow-wrap: normal;
+    line-height: 1.3;
+    max-width: 100%;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+
+/* ════════════════════════════════════════════════════════════════
+ * WINDOW LAYER
+ * ════════════════════════════════════════════════════════════════ */
+
+#window-layer {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    pointer-events: none;
+}
+
+/* ════════════════════════════════════════════════════════════════
+ * WINDOW
+ * ════════════════════════════════════════════════════════════════ */
+
+.window {
+    position: absolute;
+    display: flex;
+    flex-direction: column;
+    min-width: 320px;
+    min-height: 200px;
+    background: var(--cseries-night);
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--cseries-shadow-window);
+    overflow: hidden;
+    pointer-events: auto;
+    transition: box-shadow var(--dur-hover) var(--ease-cseries),
+                border-color var(--dur-hover) var(--ease-cseries);
+    animation: cseries-window-in var(--dur-panel) var(--ease-cseries);
+}
+
+.window.focused {
+    border-color: var(--cseries-mist-strong);
+    box-shadow: var(--cseries-shadow-window-focus);
+}
+
+.window.minimized {
+    display: none;
+}
+
+.window.maximized {
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    /* 100% of #window-layer, which fills #desktop — and #desktop already
+       stops at the taskbar (bottom: var(--taskbar-h), top of this file).
+       Subtracting the taskbar again here left a taskbar-high strip of
+       wallpaper between a maximized window and the dock. */
+    height: 100% !important;
+    border-radius: 0;
+    border: none;
+}
+
+/* Window header */
+.window-header {
+    display: flex;
+    align-items: center;
+    height: var(--window-head-h);
+    padding: 0 var(--space-3);
+    background: var(--cseries-twilight);
+    cursor: default;
+    flex-shrink: 0;
+    user-select: none;
+    position: relative;
+}
+
+.window-header::after {
+    /* The Threshold Seam under the header */
+    content: '';
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 1px;
+    background: var(--cseries-seam);
+}
+
+.window.focused .window-header::after {
+    background: var(--cseries-seam-active);
+}
+
+.window-header .window-icon {
+    width: 16px;
+    height: 16px;
+    margin-right: var(--space-2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--cseries-linen);
+    flex-shrink: 0;
+}
+.window-header .window-icon img {
+    width: 16px;
+    height: 16px;
+    object-fit: contain;
+}
+
+.window-header .window-title {
+    flex: 1;
+    font-family: var(--font-body);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--cseries-ash);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.window.focused .window-header .window-title {
+    color: var(--cseries-linen);
+}
+
+/* Window controls — restrained glyphs, no traffic lights */
+.window-controls {
+    display: flex;
+    gap: 2px;
+    margin-left: var(--space-2);
+}
+
+.window-controls button {
+    width: 24px;
+    height: 24px;
+    border: none;
+    background: transparent;
+    color: var(--cseries-ash);
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background var(--dur-hover) var(--ease-cseries),
+                color var(--dur-hover) var(--ease-cseries);
+    font-size: 13px;
+    padding: 0;
+    font-family: var(--font-body);
+    font-weight: 500;
+}
+
+.window-controls button:hover {
+    background: var(--cseries-silk);
+    color: var(--cseries-paper);
+}
+
+.window-controls .btn-close:hover {
+    background: rgba(199, 95, 85, 0.2);
+    color: var(--cseries-clay);
+}
+
+/* Window body */
+.window-body {
+    flex: 1;
+    overflow: auto;
+    position: relative;
+    background: var(--cseries-night);
+}
+
+/* Resize handles */
+.window .resize-handle {
+    position: absolute;
+    z-index: 1;
+}
+.resize-handle.top    { top: -3px; left: 8px; right: 8px; height: 6px; cursor: n-resize; }
+.resize-handle.bottom { bottom: -3px; left: 8px; right: 8px; height: 6px; cursor: s-resize; }
+.resize-handle.left   { left: -3px; top: 8px; bottom: 8px; width: 6px; cursor: w-resize; }
+.resize-handle.right  { right: -3px; top: 8px; bottom: 8px; width: 6px; cursor: e-resize; }
+.resize-handle.top-left     { top: -3px; left: -3px; width: 12px; height: 12px; cursor: nw-resize; }
+.resize-handle.top-right    { top: -3px; right: -3px; width: 12px; height: 12px; cursor: ne-resize; }
+.resize-handle.bottom-left  { bottom: -3px; left: -3px; width: 12px; height: 12px; cursor: sw-resize; }
+.resize-handle.bottom-right { bottom: -3px; right: -3px; width: 12px; height: 12px; cursor: se-resize; }
+
+/* ════════════════════════════════════════════════════════════════
+ * TASKBAR
+ * ════════════════════════════════════════════════════════════════ */
+
+#taskbar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: var(--taskbar-h);
+    /* Glass over the wallpaper — the bar reads as part of the desktop,
+       not a slab on top of it. Solid night fallback below for engines
+       without backdrop-filter. */
+    background: var(--cseries-night);
+    display: flex;
+    align-items: center;
+    padding: 0 var(--space-3);
+    z-index: var(--z-taskbar);
+    gap: var(--space-3);
+}
+
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+    #taskbar {
+        background: var(--cseries-glass);
+        backdrop-filter: blur(var(--cseries-glass-blur)) saturate(1.15);
+        -webkit-backdrop-filter: blur(var(--cseries-glass-blur)) saturate(1.15);
+    }
+}
+
+#taskbar::before {
+    /* The Threshold Seam across the top edge */
+    content: '';
+    position: absolute;
+    top: 0; left: 0; right: 0;
+    height: 1px;
+    background: var(--cseries-seam-active);
+}
+
+#taskbar-left {
+    display: flex;
+    gap: var(--space-1);
+    flex-shrink: 0;
+}
+
+#taskbar-center {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: var(--space-1);
+    overflow-x: auto;
+    overflow-y: hidden;
+    min-width: 0;
+}
+
+#taskbar-center::-webkit-scrollbar {
+    height: 0;
+}
+
+#taskbar-right {
+    display: flex;
+    align-items: center;
+    gap: var(--space-4);
+    flex-shrink: 0;
+    padding-right: var(--space-2);
+}
+
+.taskbar-btn {
+    width: 32px;
+    height: 32px;
+    border: none;
+    background: transparent;
+    color: var(--cseries-linen);
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background var(--dur-hover) var(--ease-cseries),
+                color var(--dur-hover) var(--ease-cseries);
+}
+
+.taskbar-btn:hover {
+    background: var(--cseries-silk);
+    color: var(--cseries-paper);
+}
+
+.taskbar-btn:active {
+    background: var(--cseries-veil);
+}
+
+.taskbar-btn.active {
+    background: var(--cseries-ember-soft);
+    color: var(--cseries-ember);
+}
+
+/* ——— The Dock (taskbar-center) ——————————————————
+   Pinned + running apps as icon buttons. Running shows an ember dot;
+   the focused app gets the ember-soft pill. Pinned icons drag to
+   reorder (js/taskbar.js persists via DesktopLayout). */
+.dock-item {
+    position: relative;
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    border: none;
+    background: transparent;
+    border-radius: var(--radius-md);
+    display: grid;
+    place-items: center;
+    padding: 0;
+    cursor: pointer;
+    color: var(--cseries-linen);
+    transition: background var(--dur-hover) var(--ease-cseries),
+                color var(--dur-hover) var(--ease-cseries),
+                transform var(--dur-state) var(--ease-cseries);
+}
+.dock-item:hover {
+    background: var(--cseries-silk);
+    color: var(--cseries-paper);
+    transform: translateY(-2px);
+}
+.dock-item:active {
+    transform: translateY(0);
+}
+.dock-item.active {
+    background: var(--cseries-ember-soft);
+    color: var(--cseries-paper);
+}
+.dock-item.dragging {
+    opacity: 0.35;
+    transform: none;
+}
+.dock-item-icon {
+    display: grid;
+    place-items: center;
+}
+.dock-item-icon img {
+    width: 26px;
+    height: 26px;
+    object-fit: contain;
+}
+.dock-item-icon .dock-tile-letter {
+    font-family: var(--font-display);
+    font-size: 15px;
+    font-weight: 600;
+}
+.dock-item-dot {
+    position: absolute;
+    bottom: 3px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 4px;
+    height: 4px;
+    border-radius: 50%;
+    background: transparent;
+    transition: background var(--dur-state) var(--ease-cseries);
+}
+.dock-item.running .dock-item-dot {
+    background: var(--cseries-dusk);
+    box-shadow: 0 0 6px var(--cseries-glow);
+}
+/* A count on a dock icon (Taskbar.setBadge): what still waits in that app. */
+.dock-item-badge {
+    position: absolute;
+    top: 0;
+    right: 0;
+    box-sizing: border-box;
+    min-width: 16px;
+    height: 16px;
+    padding: 0 4px;
+    border-radius: 8px;
+    background: var(--cseries-ember);
+    color: var(--cseries-ink);
+    font-family: var(--font-body);
+    font-size: 10px;
+    font-weight: 700;
+    line-height: 16px;
+    text-align: center;
+    pointer-events: none;
+}
+.dock-sep {
+    width: 1px;
+    height: 26px;
+    flex-shrink: 0;
+    background: var(--cseries-seam-active);
+    margin: 0 var(--space-2);
+}
+
+/* Entity status — Presence Breath */
+.entity-indicator {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    font-family: var(--font-body);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--cseries-linen);
+}
+
+.status-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--cseries-dusk);
+    animation: cseries-breath var(--dur-breath) var(--ease-cseries) infinite;
+    box-shadow: 0 0 8px var(--cseries-glow);
+}
+
+.status-dot.connected {
+    background: var(--cseries-ember);
+    box-shadow: 0 0 8px var(--cseries-ember-ring);
+}
+
+.status-dot.error {
+    background: var(--cseries-clay);
+    box-shadow: 0 0 8px var(--cseries-clay);
+    animation: none;
+    opacity: 1;
+}
+
+/* ════════════════════════════════════════════════════════════════
+ * CONTEXT MENU
+ * ════════════════════════════════════════════════════════════════ */
+
+.context-menu {
+    position: fixed;
+    background: var(--cseries-twilight);
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-md);
+    box-shadow: var(--cseries-shadow-dropdown);
+    padding: var(--space-1);
+    min-width: 180px;
+    z-index: var(--z-modal);
+    animation: cseries-fade-in var(--dur-state) var(--ease-cseries);
+}
+
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+    .context-menu {
+        background: var(--cseries-glass);
+        backdrop-filter: blur(var(--cseries-glass-blur)) saturate(1.15);
+        -webkit-backdrop-filter: blur(var(--cseries-glass-blur)) saturate(1.15);
+    }
+}
+
+.context-menu-item {
+    display: flex;
+    align-items: center;
+    gap: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border: none;
+    background: none;
+    color: var(--cseries-linen);
+    font-family: var(--font-body);
+    font-size: var(--text-sm);
+    cursor: pointer;
+    border-radius: var(--radius-sm);
+    width: 100%;
+    text-align: left;
+    transition: background var(--dur-hover) var(--ease-cseries);
+}
+.context-menu-item:hover {
+    background: var(--cseries-silk);
+    color: var(--cseries-paper);
+}
+.context-menu-item.danger:hover {
+    background: rgba(199, 95, 85, 0.12);
+    color: var(--cseries-clay);
+}
+.context-menu-separator {
+    height: 1px;
+    background: var(--cseries-seam);
+    margin: var(--space-1) var(--space-2);
+}
+
+/* ════════════════════════════════════════════════════════════════
+ * NOTIFICATIONS (TOAST)
+ * ════════════════════════════════════════════════════════════════ */
+
+#notification-area {
+    position: fixed;
+    top: var(--space-4);
+    right: var(--space-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    z-index: var(--z-toast);
+    pointer-events: none;
+}
+
+.notification {
+    background: var(--cseries-twilight);
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-md);
+    box-shadow: var(--cseries-shadow-dropdown);
+    padding: var(--space-3) var(--space-4);
+    max-width: 360px;
+    pointer-events: auto;
+    animation: cseries-toast-in var(--dur-state) var(--ease-cseries);
+}
+
+.notification.info    { border-left: 3px solid var(--cseries-ember); }
+.notification.success { border-left: 3px solid var(--cseries-moss); }
+.notification.warning { border-left: 3px solid var(--cseries-gold); }
+.notification.error   { border-left: 3px solid var(--cseries-clay); }
+
+.notification-title {
+    font-family: var(--font-display);
+    font-size: var(--text-md);
+    font-weight: 600;
+    color: var(--cseries-paper);
+    margin-bottom: var(--space-1);
+}
+
+.notification-body {
+    font-size: var(--text-sm);
+    color: var(--cseries-linen);
+}
+
+/* ════════════════════════════════════════════════════════════════
+ * DRAG OVERLAY
+ * ════════════════════════════════════════════════════════════════ */
+
+.drag-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: calc(var(--z-taskbar) - 1);
+    cursor: inherit;
+}
+
+/* Support modal — uses design tokens only */
+.support-modal {
+    position: fixed;
+    bottom: var(--space-12, 48px);
+    right: var(--space-3, 12px);
+    z-index: var(--z-modal, 9999);
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-md, 8px);
+    padding: var(--space-4) var(--space-5);
+    width: 280px;
+    font-family: var(--font-body);
+    color: var(--text-primary);
+    box-shadow: var(--shadow-lg, 0 4px 20px rgba(0,0,0,0.4));
+}
+.support-title {
+    font-weight: 600;
+    margin-bottom: var(--space-2);
+    font-size: var(--text-sm);
+}
+.support-links {
+    font-size: var(--text-xs);
+    line-height: 1.6;
+    opacity: 0.85;
+}
+.support-link {
+    color: var(--accent);
+    text-decoration: none;
+    display: block;
+    margin-bottom: var(--space-1);
+}
+.support-link:hover {
+    text-decoration: underline;
+}
+.support-footer {
+    border-top: 1px solid var(--border);
+    padding-top: var(--space-2);
+    margin-top: var(--space-2);
+}
+
+/* Support button in taskbar — moved from inline style on btn-support */
+#btn-support {
+    font-size: 14px;
+    opacity: 0.7;
+}
+
+/* Show desktop — far right of the taskbar. Minimizes every open window so
+   the desktop surface (the wallpaper, the HTML desktop, the widgets) is
+   exposed; a second click brings that same set back. */
+#btn-show-desktop {
+    opacity: 0.7;
+}
+#btn-show-desktop svg {
+    width: 16px;
+    height: 16px;
+    display: block;
+}
+#btn-show-desktop.active {
+    opacity: 1;
+    color: var(--cseries-dusk);
+}
+
+/* ════════════════════════════════════════════════════════════════
+ * TASKBAR START BUTTON — C-Series logo
+ * ════════════════════════════════════════════════════════════════ */
+
+.taskbar-start {
+    width: 44px;
+    height: 40px;
+    display: grid;
+    place-items: center;
+    padding: 0;
+}
+
+.taskbar-start .start-logo {
+    width: 38px;
+    height: 38px;
+    object-fit: contain;
+    /* Accent glow — a token, so a design's accent carries into the mark. */
+    filter: drop-shadow(0 0 6px var(--cseries-glow));
+    transition: filter var(--dur-hover) var(--ease-cseries);
+}
+
+.taskbar-start:hover .start-logo,
+.taskbar-start.active .start-logo {
+    filter: drop-shadow(0 0 8px var(--cseries-ember));
+}
+
+.taskbar-start.active {
+    background: var(--cseries-ember-soft);
+}
+
+/* ════════════════════════════════════════════════════════════════
+ * DESKTOP ICON — SVG glyph tiles
+ * Override icon-image to show SVG glyphs inside dark tiles
+ * ════════════════════════════════════════════════════════════════ */
+
+.desktop-icon .icon-image svg {
+    width: 40px;
+    height: 40px;
+}
+
+.hidden {
+    display: none !important;
+}
+
+/* ── Taskbar tray: the machine (memory / cpu) ────────────────────────
+   (no balance chip — billing is postpaid and lives in the Compute app; no
+   background-agents tray or clock) */
+.tray-chip {
+    width: auto;
+    padding: 0 10px;
+    gap: 6px;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    white-space: nowrap;
+    color: var(--cseries-paper);
+}
+.tray-chip.tray-warn { color: var(--cseries-gold); }
+
+.tray-panel {
+    position: fixed;
+    bottom: calc(var(--taskbar-h) + 8px);
+    right: 8px;
+    width: 400px;
+    max-height: 60vh;
+    background: var(--cseries-twilight);
+    border: 1px solid var(--cseries-seam);
+    border-radius: var(--radius-md);
+    box-shadow: var(--cseries-shadow-dropdown);
+    z-index: var(--z-taskbar);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+.tray-panel.hidden { display: none; }
+.tray-panel-header {
+    padding: var(--space-2) var(--space-3);
+    border-bottom: 1px solid var(--cseries-seam);
+    color: var(--cseries-linen);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+}
+.tray-panel-list {
+    overflow-y: auto;
+    padding: var(--space-2);
+}
+.tray-panel-empty {
+    padding: var(--space-3);
+    color: var(--cseries-ash);
+    font-size: var(--text-xs);
+    text-align: center;
+}
+.tray-row {
+    display: grid;
+    grid-template-columns: 1fr 52px 64px 72px 76px;
+    gap: 6px;
+    padding: 5px 8px;
+    align-items: baseline;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--cseries-paper);
+    border-bottom: 1px solid var(--cseries-seam);
+}
+#tray-resources-detail .tray-row { grid-template-columns: 1fr 64px 84px; }
+.tray-row-head { color: var(--cseries-ash); }
+.tray-row-total { border-bottom: none; color: var(--cseries-linen); }
+.tray-row-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tray-row-num { text-align: right; }
+/* WHERE a piece of the machine runs — the host pod, or its own pod on its own
+   node. Second line under the name so the row still scans as one thing. */
+.tray-unit-where {
+    display: block;
+    color: var(--cseries-ash);
+    font-size: 10px;
+    text-transform: none;
+    letter-spacing: 0;
+}
+.tray-unit-row { align-items: start; }
+.tray-res-label {
+    padding: var(--space-2) var(--space-3) 0;
+    color: var(--cseries-ash);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 10px;
+}
+.tray-res-stats {
+    display: flex;
+    flex-wrap: wrap;   /* four stats per block since the cache line landed */
+    gap: var(--space-3);
+    padding: var(--space-2) var(--space-3);
+    color: var(--cseries-ash);
+    font-size: var(--text-xs);
+}
+.tray-res-stats b { color: var(--cseries-paper); font-weight: 600; }
+/* Why a block has no numbers (older DB image, writer dead) — its own line
+   under the stats, never squeezed in beside them. */
+.tray-res-note { flex-basis: 100%; color: var(--cseries-ash); opacity: 0.8; }
+
+/* ════════════════════════════════════════════════════════════════
+ * THE BAR, DRAWN BY THE DESIGN
+ *
+ * body.design-bar is set by desktop-surface.js while the worn desktop
+ * declares <meta name="cseries-bar" content="<edge> <px>"> (never on a phone).
+ * The shell's taskbar steps aside; the design — full-screen underneath —
+ * draws the bar in the strip it declared, and the window layer keeps out
+ * of that strip so a maximized window never covers it. --design-bar-<edge>
+ * is the declared size on its edge and 0px on the others.
+ * ════════════════════════════════════════════════════════════════ */
+body.design-bar #taskbar {
+    display: none;
+}
+body.design-bar #desktop {
+    bottom: 0;
+}
+body.design-bar #window-layer {
+    top: var(--design-bar-top, 0px);
+    right: var(--design-bar-right, 0px);
+    bottom: var(--design-bar-bottom, 0px);
+    left: var(--design-bar-left, 0px);
+    overflow: hidden;
+}
+/* What the taskbar used to anchor sits beside the design's bar instead. */
+body.design-bar .dock-menu {
+    left: calc(var(--design-bar-left, 0px) + 8px);
+    bottom: calc(var(--design-bar-bottom, 0px) + 8px);
+    max-height: min(620px, calc(100vh - var(--design-bar-top, 0px) - var(--design-bar-bottom, 0px) - 28px));
+}
+body.design-bar-top .dock-menu {
+    top: calc(var(--design-bar-top, 0px) + 8px);
+    bottom: auto;
+}
+body.design-bar .support-modal {
+    right: calc(var(--design-bar-right, 0px) + 12px);
+    bottom: calc(var(--design-bar-bottom, 0px) + 12px);
+}
+body.design-bar-top .support-modal {
+    top: calc(var(--design-bar-top, 0px) + 12px);
+    bottom: auto;
+}
+body.design-bar .tray-panel {
+    right: calc(var(--design-bar-right, 0px) + 8px);
+    bottom: calc(var(--design-bar-bottom, 0px) + 8px);
+    max-height: min(60vh, calc(100vh - var(--design-bar-top, 0px) - var(--design-bar-bottom, 0px) - 16px));
+}
+body.design-bar-top .tray-panel {
+    top: calc(var(--design-bar-top, 0px) + 8px);
+    bottom: auto;
+}

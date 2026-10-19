@@ -1,0 +1,5 @@
+# Bastions update on publish behind a canary ring. Ring 1
+# moves only on general; ring 0 moves on canary, records what it told, and sends
+# a verdict only when the rule says so; the fail rule catches the two update-
+# caused silences and ignores a box that never took the version.
+test_bastion_autoupdate.py

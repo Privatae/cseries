@@ -1,0 +1,3 @@
+# The desktop POINTER as a per-turn fact — which artifact is the desktop, and
+# whether it still passes the floor. Fake pool, no DB, no container, no network.
+test_appearance_block.py

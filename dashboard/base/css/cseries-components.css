@@ -1,0 +1,686 @@
+/* ================================================================
+ * C-Series — Component vocabulary
+ *
+ * Shared primitives used by the dashboard, system apps, and
+ * entity-authored apps. Import this stylesheet in any app.
+ *
+ * All classes are prefixed `cseries-` to avoid collision with app-
+ * specific CSS. Do not redefine these in app stylesheets; add
+ * app-specific variations as a child class instead.
+ *
+ *   ❱ .label-sys          small-caps system label
+ *   ❱ .cseries-seam         1px threshold line
+ *   ❱ .cseries-btn          button (+ .primary .ghost .danger)
+ *   ❱ .cseries-pill         status tag
+ *   ❱ .cseries-card         content container
+ *   ❱ .cseries-input        text input
+ *   ❱ .cseries-select       dropdown
+ *   ❱ .cseries-nav          app internal navigation
+ *   ❱ .cseries-empty        empty state
+ * ================================================================ */
+
+/* Form controls size to their box edge-to-edge. The shell's global
+ * reset (theme.css) never reaches app iframes, so width:100% + padding
+ * overflowed inputs in 24/29 apps (2026-07-03 audit). Scoped to form
+ * controls deliberately; the universal reset lands with the token
+ * migration pass, where full visual QA happens. */
+input, select, textarea, button,
+.cseries-input, .cseries-select, .cseries-textarea {
+    box-sizing: border-box;
+}
+
+
+/* ——— Small-caps system label ——————————————————— */
+.label-sys {
+    font-family: var(--font-body);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--cseries-linen);
+    line-height: 1.3;
+}
+
+/* ——— The Threshold Seam ———————————————————————— */
+.cseries-seam {
+    height: 1px;
+    background: var(--cseries-seam);
+    width: 100%;
+    flex-shrink: 0;
+}
+.cseries-seam.active {
+    background: var(--cseries-seam-active);
+}
+
+/* ——— Button ———————————————————————————————————— */
+.cseries-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-2);
+    height: 30px;
+    padding: 0 var(--space-3);
+    background: var(--cseries-night);
+    color: var(--cseries-linen);
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-md);
+    font-family: var(--font-body);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background var(--dur-hover) var(--ease-cseries),
+                border-color var(--dur-hover) var(--ease-cseries),
+                color var(--dur-hover) var(--ease-cseries);
+    white-space: nowrap;
+}
+.cseries-btn:hover {
+    background: var(--cseries-silk);
+    color: var(--cseries-paper);
+    border-color: var(--cseries-mist-strong);
+}
+.cseries-btn:active {
+    background: var(--cseries-veil);
+}
+.cseries-btn:focus-visible {
+    outline: none;
+    border-color: var(--cseries-ember);
+    box-shadow: 0 0 0 1px var(--cseries-ember-ring);
+}
+.cseries-btn[disabled] {
+    opacity: 0.4;
+    cursor: not-allowed;
+}
+
+.cseries-btn.primary {
+    background: var(--cseries-ember);
+    color: var(--cseries-ink);
+    border-color: var(--cseries-ember);
+}
+.cseries-btn.primary:hover {
+    background: var(--cseries-gold);
+    border-color: var(--cseries-gold);
+    color: var(--cseries-ink);
+}
+
+.cseries-btn.ghost {
+    background: transparent;
+    border-color: transparent;
+}
+.cseries-btn.ghost:hover {
+    background: var(--cseries-silk);
+    border-color: var(--cseries-mist);
+}
+
+.cseries-btn.danger {
+    color: var(--cseries-clay);
+    border-color: rgba(199, 95, 85, 0.35);
+}
+.cseries-btn.danger:hover {
+    background: rgba(199, 95, 85, 0.1);
+    color: var(--cseries-clay);
+    border-color: var(--cseries-clay);
+}
+
+.cseries-btn.icon-only {
+    width: 30px;
+    padding: 0;
+}
+
+/* ——— Pill ————————————————————————————————————— */
+.cseries-pill {
+    display: inline-flex;
+    align-items: center;
+    height: 18px;
+    padding: 0 var(--space-2);
+    background: var(--cseries-silk);
+    color: var(--cseries-linen);
+    border-radius: var(--radius-sm);
+    font-family: var(--font-body);
+    font-size: 9.5px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    white-space: nowrap;
+}
+.cseries-pill.allow {
+    background: rgba(107, 142, 95, 0.15);
+    color: var(--cseries-moss);
+}
+.cseries-pill.deny {
+    background: rgba(199, 95, 85, 0.14);
+    color: var(--cseries-clay);
+}
+.cseries-pill.info {
+    background: var(--cseries-ember-soft);
+    color: var(--cseries-ember);
+}
+.cseries-pill.warn {
+    background: rgba(201, 169, 104, 0.14);
+    color: var(--cseries-gold);
+}
+.cseries-pill.dusk {
+    background: rgba(127, 207, 174, 0.15);
+    color: var(--cseries-dusk);
+}
+
+/* ——— Card ———————————————————————————————————— */
+.cseries-card {
+    background: var(--cseries-twilight);
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-md);
+    padding: var(--space-4);
+    color: var(--cseries-paper);
+    font-size: var(--text-base);
+    line-height: var(--leading-normal);
+}
+.cseries-card.subtle {
+    background: var(--cseries-night);
+    border-color: rgba(55, 65, 81, 0.5);
+}
+.cseries-card .card-title {
+    font-family: var(--font-display);
+    font-size: var(--text-md);
+    font-weight: 600;
+    color: var(--cseries-paper);
+    margin: 0 0 var(--space-2);
+}
+.cseries-card .card-sub {
+    font-size: var(--text-sm);
+    color: var(--cseries-linen);
+}
+
+/* ——— Input / Select ——————————————————————————— */
+.cseries-input,
+.cseries-select {
+    display: block;
+    width: 100%;
+    height: 30px;
+    padding: 0 var(--space-3);
+    background: var(--cseries-night);
+    color: var(--cseries-paper);
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-md);
+    font-family: var(--font-body);
+    font-size: var(--text-base);
+    transition: border-color var(--dur-hover) var(--ease-cseries);
+}
+.cseries-input::placeholder {
+    color: var(--cseries-ash);
+}
+.cseries-input:focus,
+.cseries-select:focus {
+    outline: none;
+    border-color: var(--cseries-ember);
+}
+
+.cseries-input.search {
+    padding-left: var(--space-6);
+    background-image: none; /* apps can swap in an icon */
+}
+
+.cseries-textarea {
+    display: block;
+    width: 100%;
+    min-height: 96px;
+    padding: var(--space-3);
+    background: var(--cseries-night);
+    color: var(--cseries-paper);
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-md);
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    line-height: var(--leading-normal);
+    resize: vertical;
+}
+.cseries-textarea:focus {
+    outline: none;
+    border-color: var(--cseries-ember);
+}
+
+/* ——— App internal nav (pill-style, inside an app window) ——— */
+.cseries-nav {
+    display: flex;
+    gap: var(--space-1);
+    flex-wrap: wrap;
+}
+.cseries-nav-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-2);
+    height: 28px;
+    padding: 0 var(--space-3);
+    background: transparent;
+    color: var(--cseries-linen);
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    font-family: var(--font-body);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: background var(--dur-hover) var(--ease-cseries),
+                color var(--dur-hover) var(--ease-cseries),
+                border-color var(--dur-hover) var(--ease-cseries);
+}
+.cseries-nav-btn:hover {
+    background: var(--cseries-silk);
+    color: var(--cseries-paper);
+}
+.cseries-nav-btn.active {
+    background: var(--cseries-ember-soft);
+    color: var(--cseries-ember);
+    border-color: var(--cseries-ember-ring);
+}
+
+/* ——— Empty state ————————————————————————————— */
+.cseries-empty {
+    padding: var(--space-8) var(--space-5);
+    text-align: center;
+    color: var(--cseries-linen);
+    font-size: var(--text-sm);
+    background: var(--cseries-night);
+    border: 1px dashed rgba(55, 65, 81, 0.5);
+    border-radius: var(--radius-md);
+    line-height: var(--leading-relaxed);
+}
+.cseries-empty .empty-title {
+    display: block;
+    font-family: var(--font-display);
+    font-size: var(--text-md);
+    color: var(--cseries-paper);
+    margin-bottom: var(--space-1);
+}
+
+/* ——— Scrollbar (unified) ———————————————————— */
+.cseries-scroll,
+.cseries-scroll * {
+    scrollbar-color: var(--cseries-silk) transparent;
+    scrollbar-width: thin;
+}
+.cseries-scroll::-webkit-scrollbar,
+.cseries-scroll *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+.cseries-scroll::-webkit-scrollbar-track,
+.cseries-scroll *::-webkit-scrollbar-track {
+    background: transparent;
+}
+.cseries-scroll::-webkit-scrollbar-thumb,
+.cseries-scroll *::-webkit-scrollbar-thumb {
+    background: var(--cseries-silk);
+    border-radius: 4px;
+}
+.cseries-scroll::-webkit-scrollbar-thumb:hover,
+.cseries-scroll *::-webkit-scrollbar-thumb:hover {
+    background: var(--cseries-veil);
+}
+
+/* ——— Row (list item) ————————————————————————— */
+.cseries-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-3) var(--space-4);
+    background: var(--cseries-night);
+    border: 1px solid rgba(55, 65, 81, 0.5);
+    border-radius: var(--radius-md);
+    font-size: var(--text-base);
+    color: var(--cseries-paper);
+}
+.cseries-row .row-meta {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    min-width: 0;
+    flex: 1;
+}
+.cseries-row .row-title {
+    font-weight: 500;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.cseries-row .row-sub {
+    font-size: var(--text-sm);
+    color: var(--cseries-linen);
+}
+.cseries-row .row-actions {
+    display: flex;
+    gap: var(--space-2);
+    flex-shrink: 0;
+}
+
+/* ——— App shell (shared by all system apps) ——— */
+html, body {
+    background: var(--cseries-night);
+    color: var(--cseries-paper);
+    font-family: var(--font-body);
+    font-size: var(--text-base);
+    line-height: var(--leading-normal);
+}
+
+.app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+}
+
+.app-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-5);
+    padding: var(--space-4) var(--space-5) var(--space-3);
+    flex-shrink: 0;
+    background: var(--cseries-twilight);
+    flex-wrap: wrap;
+    row-gap: var(--space-2);
+}
+
+.app-brand { display: flex; align-items: center; gap: var(--space-3); min-width: 0; }
+/* grayscale: legacy icon PNGs carry the old purple/amber palette — neutralize
+   to silver-on-dark until per-app icons are redrawn in the vault palette. */
+.app-brand-icon { width: 34px; height: 34px; object-fit: contain; filter: grayscale(1) brightness(1.15) drop-shadow(0 2px 4px rgba(0,0,0,0.5)); flex-shrink: 0; }
+.app-brand-title { font-family: var(--font-display); font-size: var(--text-lg); font-weight: 700; color: var(--cseries-paper); letter-spacing: 0.02em; line-height: 1.2; }
+.app-brand-sub { color: var(--cseries-ash); margin-top: 2px; }
+
+.app-body {
+    flex: 1;
+    overflow: hidden;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.app-view {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    max-width: 860px;
+    padding: var(--space-5);
+    overflow-y: auto;
+    flex: 1;
+}
+
+.view-heading h2 {
+    font-family: var(--font-display);
+    font-size: var(--text-md);
+    font-weight: 600;
+    color: var(--cseries-paper);
+    margin: 0 0 var(--space-1);
+    letter-spacing: -0.005em;
+}
+.view-sub { font-size: var(--text-sm); color: var(--cseries-linen); margin: 0 0 var(--space-3); line-height: var(--leading-relaxed); }
+.view-toolbar { display: flex; gap: var(--space-2); align-items: center; flex-wrap: wrap; }
+.stack { display: flex; flex-direction: column; gap: var(--space-2); }
+
+.filter-select {
+    width: auto;
+    min-width: 130px;
+    background: var(--cseries-night);
+    color: var(--cseries-paper);
+    border: 1px solid rgba(55, 65, 81, 0.5);
+    border-radius: var(--radius-sm);
+    padding: var(--space-1) var(--space-2);
+    font-family: var(--font-body);
+    font-size: var(--text-sm);
+}
+
+.app-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: var(--space-2) var(--space-5);
+    background: var(--cseries-night);
+    border-top: 1px solid var(--cseries-seam);
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--cseries-ash);
+    flex-shrink: 0;
+}
+.app-footer-right { color: var(--cseries-linen); }
+
+/* ——— Hidden override (ensures [hidden] works on flex/grid children) ——— */
+[hidden] { display: none !important; }
+
+/* ——— Confirmation dialog ————————————————————— */
+.confirm-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(12, 10, 20, 0.7);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 200;
+    animation: confirm-fade-in var(--dur-state) var(--ease-cseries);
+}
+@keyframes confirm-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+.confirm-box {
+    background: var(--cseries-twilight);
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-lg);
+    padding: var(--space-6);
+    max-width: 400px;
+    width: 90%;
+    box-shadow: var(--cseries-shadow-window-focus);
+    animation: confirm-scale-in var(--dur-state) var(--ease-cseries);
+}
+@keyframes confirm-scale-in { from { transform: scale(0.95); opacity: 0; } to { transform: scale(1); opacity: 1; } }
+
+.confirm-title {
+    font-family: var(--font-display);
+    font-size: var(--text-md);
+    font-weight: 600;
+    color: var(--cseries-paper);
+    margin-bottom: var(--space-2);
+}
+.confirm-message {
+    font-size: var(--text-sm);
+    color: var(--cseries-linen);
+    line-height: var(--leading-relaxed);
+    margin-bottom: var(--space-4);
+}
+.confirm-actions {
+    display: flex;
+    gap: var(--space-2);
+    justify-content: flex-end;
+}
+
+/* ——— Slide-in detail panel ——————————————————— */
+.detail-panel {
+    position: fixed;
+    right: 0; top: 0; bottom: 0;
+    width: 420px;
+    max-width: 90vw;
+    background: var(--cseries-twilight);
+    border-left: 1px solid var(--cseries-seam);
+    display: flex;
+    flex-direction: column;
+    z-index: 100;
+    box-shadow: -4px 0 24px rgba(0, 0, 0, 0.4);
+    animation: cseries-slide-left var(--dur-state) var(--ease-cseries);
+}
+@keyframes cseries-slide-left { from { transform: translateX(100%); } to { transform: translateX(0); } }
+
+.detail-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--space-3) var(--space-4);
+    border-bottom: 1px solid var(--cseries-seam);
+    flex-shrink: 0;
+}
+.detail-title {
+    font-family: var(--font-display);
+    font-size: var(--text-md);
+    font-weight: 600;
+}
+.detail-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--space-4);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3);
+}
+.detail-field { display: flex; flex-direction: column; gap: var(--space-1); }
+.detail-label {
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--cseries-ash);
+}
+.detail-value {
+    font-size: var(--text-sm);
+    color: var(--cseries-linen);
+    line-height: var(--leading-relaxed);
+    white-space: pre-wrap;
+    word-break: break-word;
+}
+.detail-actions {
+    display: flex;
+    gap: var(--space-2);
+    padding-top: var(--space-3);
+    margin-top: auto;
+    border-top: 1px solid var(--cseries-seam);
+}
+
+/* ——— Status banner ——————————————————————————— */
+.status-banner {
+    padding: var(--space-3) var(--space-4);
+    border-radius: var(--radius-md);
+    font-size: var(--text-sm);
+    line-height: var(--leading-relaxed);
+}
+.status-banner.info    { background: rgba(217, 171, 72, 0.1); border: 1px solid var(--cseries-gold); color: var(--cseries-gold); }
+.status-banner.success { background: rgba(124, 160, 108, 0.1); border: 1px solid var(--cseries-moss); color: var(--cseries-moss); }
+.status-banner.error   { background: rgba(186, 112, 96, 0.1);  border: 1px solid var(--cseries-clay); color: var(--cseries-clay); }
+
+/* ——— Skeleton loading shimmer ———————————————— */
+.skeleton {
+    background: linear-gradient(90deg, var(--cseries-twilight) 25%, var(--cseries-silk) 50%, var(--cseries-twilight) 75%);
+    background-size: 200% 100%;
+    animation: skeleton-shimmer 1.5s infinite;
+    border-radius: var(--radius-sm);
+}
+.skeleton-line     { height: 12px; margin-bottom: var(--space-2); }
+.skeleton-line.w75 { width: 75%; }
+.skeleton-line.w50 { width: 50%; }
+.skeleton-line.w25 { width: 25%; }
+.skeleton-card {
+    height: 72px;
+    border-radius: var(--radius-md);
+    margin-bottom: var(--space-2);
+}
+@keyframes skeleton-shimmer { to { background-position: -200% 0; } }
+
+/* ——— Pagination ——————————————————————————————— */
+.pager {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-3);
+    padding: var(--space-3) 0;
+}
+
+/* ——— Markdown code blocks (shared /js/markdown.js) ————— */
+/* Emitted by Markdown.render() for fenced code: a head row with the
+   language label + copy button above the pre. Used by Circles and
+   Workbench chat surfaces. */
+.md-code-block {
+    margin: var(--space-2) 0;
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-md);
+    overflow: hidden;
+    background: var(--cseries-night);
+}
+.md-code-head {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: var(--space-2);
+    padding: 2px var(--space-2);
+    background: var(--cseries-twilight);
+    border-bottom: 1px solid var(--cseries-seam);
+}
+.md-code-lang {
+    margin-right: auto;
+    font-family: var(--font-mono);
+    font-size: var(--text-xs);
+    color: var(--cseries-ash);
+}
+.md-code-copy {
+    border: none;
+    background: none;
+    color: var(--cseries-ash);
+    font-size: var(--text-xs);
+    font-family: var(--font-mono);
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: var(--radius-sm);
+}
+.md-code-copy:hover { color: var(--cseries-paper); background: var(--cseries-silk); }
+.md-code-block pre {
+    margin: 0;
+    padding: var(--space-2) var(--space-3);
+    overflow-x: auto;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    line-height: 1.5;
+}
+
+/* ── Scrollbars — dark, everywhere (app iframes default to UA-white) ── */
+* { scrollbar-width: thin; scrollbar-color: var(--cseries-mist-strong) transparent; }
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+    background: var(--cseries-mist-strong);
+    border-radius: 5px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+}
+::-webkit-scrollbar-corner { background: transparent; }
+
+/* ——— Phone (≤768px NATIVE width) ———————————————————————
+   Fires only inside apps that declare window.mobile: responsive — apps
+   under the shell's scale shim render at their desktop design width, so
+   this block is inert for them. Gives every app migrating off the shim
+   the basics for free: finger-sized controls, no-zoom inputs (iOS zooms
+   any focused input under 16px), and a scrollable pill nav. */
+@media (max-width: 768px) {
+    .cseries-btn {
+        min-height: 44px; /* touch-target floor */
+        font-size: 12px;
+    }
+    .cseries-btn.icon-only {
+        min-width: 44px;
+    }
+    .cseries-input,
+    .cseries-select {
+        height: 44px;
+        font-size: 16px;
+    }
+    .cseries-textarea {
+        font-size: 16px;
+    }
+    .cseries-nav {
+        flex-wrap: nowrap;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        scrollbar-width: none;
+    }
+    .cseries-nav::-webkit-scrollbar {
+        display: none;
+    }
+    .cseries-nav-btn {
+        flex-shrink: 0;
+        min-height: 40px;
+    }
+}

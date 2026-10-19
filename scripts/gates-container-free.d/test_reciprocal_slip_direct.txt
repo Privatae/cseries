@@ -1,0 +1,6 @@
+
+# The reciprocal slip after an accept goes over the direct
+# peer lane (contact.slip, slip-gated on `message`), with the bridge relay as
+# the fallback. The handler keeps only a slip issued by the presenting host, to
+# this host, for dm:contact/message, and names the peer from the cert.
+test_reciprocal_slip_direct.py

@@ -1,0 +1,5 @@
+# 2026-10-05: the platform search lane. A Host whose settings name a search
+# backend searches through it on any chat model; every page is screened and
+# fenced as data; an answer that cites none is withheld; a Host with no
+# backend set is unchanged.
+test_web_search_platform_lane.py

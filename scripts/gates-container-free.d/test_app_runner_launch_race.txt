@@ -1,0 +1,2 @@
+# Two launches of one app at once — a double-click on a floating bubble, the Host's open over the websocket racing a click, a restore racing a deep link — mint ONE kernel window id, create one window and run one beat timer, and closing it leaves nothing beating; a window that came up by another route while a launch was minting gets the minted id closed at once. The REAL app-runner.js in node with the browser surface stubbed and a WindowManager whose create behaves as desktop.js's. Needs node.
+test_app_runner_launch_race.py

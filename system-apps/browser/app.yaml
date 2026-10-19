@@ -1,0 +1,181 @@
+id: browser
+name: Browser
+description: A real browser inside your own machine, live on screen — type an address, click, type and sign in as you would on your desk. Record a task once and it becomes an agent that repeats it on a schedule, with no AI involved. Point it at a project and sites that ask for a local folder see your real files. Starts when you open it, sleeps when you're done.
+icon: icon.png
+icon_small: icon-64.png
+entrypoint: index.html
+system: false
+# 0.5.4 (2026-10-18): the product is renamed C-Series (names, paths, env vars).
+# 0.5.5 (2026-10-18): prompt_behavior is one paragraph saying what the app is
+#   and what lives in it; do_when_active is gone from the manifest contract,
+#   and its how-to lines live in skills and tool descriptions the Host reads on
+#   demand. Manifest-only; bundle repacked.
+# 0.5.6 (2026-10-18): the recording name placeholder is a neutral example.
+# 0.5.7 (2026-10-18): changelog rewritten as plain rationale; no behaviour change.
+version: "0.5.7"
+# 0.5.2 (2026-09-05): prompt_behavior only — the card no longer tells the host
+# it cannot look at a page. It used to end "you have no tool that reads the
+# viewport", which was TRUE and was the block: on one Host a user reported a
+# broken app UI, the host opened this browser, had nothing to read it with, and
+# asked the user to hard-refresh four times over a day and a half while the
+# platform owned the capability the whole time. The card now separates the two
+# things — it still cannot read THIS window, which is the user's — and names
+# `check_page`, telling it to load the page itself BEFORE asking the user to
+# refresh, clear the cache or describe the screen again. PATCH bump: no UI, no
+# scopes, no runtime change; but the card is what the host reads, so an
+# unbumped version would leave every installed host still being told it is
+# blind (default_install.py upgrades on strictly-newer only).
+# 0.5.1 (2026-09-04): the viewport opts in to BINARY WebSocket frames
+# ({"t":"binary"} on open; raw JPEG → createImageBitmap, no base64 data: URL
+# round-trip) from cseries-browser v0.5.0, whose stream is paced at 12 fps and
+# quality 60. The {"t":"frame"} JSON shape is still painted, so the app works
+# against a v0.4.x sidecar (which ignores the opt-in) and a v0.5.0 sidecar
+# works with the app inside an older kernel (no opt-in → JSON). Measured cause of "unusably slow":
+# 22 Mbit/s of base64 JSON and a 1-core pod throttled a third of the time
+# (sidecars/browser/control/viewport.py has the numbers). PATCH bump: the
+# app's UI and prompt_behavior are unchanged; strictly-newer-only upgrade.
+# 0.5.0 (2026-09-04): agents. "Create agent" records what the user does in the
+# viewport — every click, field and download, addressed by what a person sees
+# (role + visible name) — and "Save agent" writes it as steps a real browser
+# replays with no model: on demand, on a schedule (calendar op lane), from the
+# host's `browser_agent` tool, or from any app holding execute:agents. Nothing
+# typed is recorded as keystrokes: sign-in entries are read once at submit,
+# previewed with passwords withheld, and sealed in Keys → Sign-ins through the
+# same path "Save these entries" uses; a `type` step names the sealed entry's
+# key and the vault types it at replay. The use case: sign in to a bank and
+# export a ledger every day, with no LLM in the loop.
+# Adds read/write/execute:agents (this app's own agents API) — the MINOR bump
+# is required: a scope added without one 403s at runtime.
+# 0.4.0 (2026-09-04): a browser, not a console for one vendor. The address
+# bar replaces a "Surface" dropdown whose every preset was a claude.ai page,
+# the "Connect Anthropic" flow and its session pill are gone, the sidecar's
+# /auth/anthropic/* routes are removed and its shared page no longer restores
+# a vendor cookie blob on boot, and the host's briefing below stops steering
+# people to claude.ai/design. The 2026-08-25 rewrite replaced the engine and
+# the viewport and carried this front panel forward untouched from the very
+# first commit; the platform's decision that it ships no vendor-login surface
+# never reached the app. MINOR bump: the manifest's prompt_behavior changed and the store
+# upgrade is strictly-newer-only.
+# 0.3.1 (2026-09-03): kill the last blue. style.css painted the page, the
+# stage and the viewport #0B0F14 — the retired navy surface (tokens.css:43,
+# "kill the blue for good") — and index.html never loaded /css/tokens.css,
+# so the app could not inherit the green-black ramp at all. Loads the shared
+# tokens and paints with var(--cseries-ink). Styling only; no scope, route or
+# payload change.
+# 0.3.0 (2026-08-30): "Save these entries". The user fills a signup form in
+# the live viewport and, BEFORE submitting, clicks save; the page's filled
+# fields are read once, previewed with passwords withheld, and the ones they
+# tick are sealed per-field into the vault as form:<host>:<key>. A later
+# authorized run replays them through the broker that already exists
+# (vault authz browser_type), so no model ever holds a value. Adds
+# write:vault + read:vault for that one lane — the MINOR bump is required,
+# not cosmetic: the installer is only-ever-forward and a scope added without
+# one 403s at runtime (the same trap circles 0.8.1 documents).
+# A button, not a keystroke recorder: capture must be an act,
+# not a mode, so this container never becomes a keylogger.
+# 0.2.4 (2026-08-26): declare the machine cost in the manifest. Bumped past
+# 0.2.3 (the links prompt_behavior payload) because the store upgrade is
+# strictly-newer-only — this version carries BOTH payloads. The operator
+# already gates the wake on budget_mi=1024 (its browser harness spec — a wake
+# that doesn't fit 402s naming needs_mi/headroom_mi/upgrade_to); the App Store
+# rebuild renders that same figure BEFORE the user chooses the app, read from
+# resources.baseline_memory_mi below. The two declarations MUST stay equal:
+# showing one number and refusing on another is the dishonesty this field
+# exists to prevent. No behavior change — the manifest states what the
+# controller already enforces.
+#
+# kind=external — the runtime is the cseries-browser OCI container.
+# The kernel proxies HTTP + WebSocket on /system-apps/browser/* to the
+# control API on 8830 (shell HTML is static from the install dir). The
+# live viewport is part of that same surface — a CDP-screencast
+# WebSocket at /system-apps/browser/viewport/ws painted by
+# viewport.js. 0.2.0 replaced the noVNC lane with it; the sister app
+# `browser-novnc`, its 8831 websockify port, and the whole x11vnc
+# stack are gone.
+#
+# 0.2.1 carries a fix to viewport.js (AltGr counts as
+# printable input). It is a separate version because the payload changed
+# AFTER 0.2.0's bump commit, and the store upgrade is strictly-newer-only
+# (default_install.py) — leaving it at 0.2.0 would mean any install that
+# ever landed 0.2.0 could never receive the fix. 0.2.0 was never published,
+# so nothing is skipped by going straight to 0.2.1.
+#
+# 0.2.2 teaches the HOST what this app now is. prompt_behavior is the only
+# channel it has: prompt_schema.py reads this block off the installed
+# manifest and prompt_builder.py puts what_it_is + do_when_active in the
+# host's prompt, and describe_app answers from the same place. The block
+# still described the pre-viewport app and told the host not to navigate an
+# "embedded browser", so a host asked about the viewport would have had
+# nothing true to say. Store-lane app: this reaches entities through the
+# app store, NOT the image (the image carries only native-bundles).
+runtime:
+  kind: external
+  port: 8830
+  # ON-DEMAND: the sidecar is not always on; it runs when the user needs it.
+  # `harness` moves this app off the always-resident in-pod sidecar and onto
+  # the same scale-to-zero lifecycle the coding harnesses use: the kernel proxy
+  # calls harness_backend.ensure_awake on the first request and forwards to the
+  # harness Service, and the operator's idle sweep scales it back to 0. Opening
+  # the app IS the trigger — the vscode editor-open pattern, verbatim.
+  #
+  # Why this app can leave the pod at all: the /v1/sessions lane keeps NOTHING
+  # on disk (control/sessions.py CreateBody.storage_state is the only way a
+  # login is restored — the caller unseals it from the vault and export_state
+  # hands it back), so it needs no entity-apps mount and no co-location.
+  #
+  # The wake is refused when the plan has no room for it, naming the tier that
+  # does — the operator gates it on the browser spec's budget_mi.
+  harness: browser
+
+# What running the browser claims from the plan's machine memory, in MiB.
+# Mirrors the operator's budget_mi=1024 for the browser harness (the enforced
+# number); the App Store shows it so the user sees the cost before choosing
+# the app. Keep in lockstep with the operator spec.
+resources:
+  baseline_memory_mi: 1024
+
+window:
+  title: Browser
+  width: 1100
+  height: 740
+  resizable: true
+  min_width: 720
+  min_height: 480
+
+provenance: standard
+price_usd: 0
+billing: free
+
+permissions:
+  - read:projects
+  - write:projects
+  # "Save these entries" seals the form fields the user ticked into the
+  # identity-scoped vault (POST /api/browser/forms/save), and lists what is
+  # already saved for a site. Same gate the Keys app holds — this writes
+  # credentials. It NEVER reads a stored value back: replaying one is the
+  # broker's job (vault authz browser_type), which returns no bytes.
+  - read:vault
+  - write:vault
+  # Agents (0.5.0): save what the user recorded, list agents and their runs,
+  # run one now or answer a paused one (/api/browser/agents/*). The agent's
+  # credentials never pass through this app — the vault types them.
+  - read:agents
+  - write:agents
+  - execute:agents
+
+prompt_behavior:
+  project_scoped: true
+  what_it_is: >-
+    A real Chromium browser running on the user's own machine, shown live in the
+    window as a video stream. The user clicks, types, scrolls and signs in inside
+    it, and popups (an OAuth sign-in) appear as tabs above the picture. It starts
+    when the app is opened and shuts down when nobody is looking, so it uses no
+    memory while idle and remembers nothing between sessions. A whole browser needs
+    a real slice of the plan's memory: on a small plan starting it can be refused,
+    and the refusal names the plan that fits. It can be pointed at a project, so a
+    site that asks for a local folder sees that project's files. It is a plain
+    browser with an address bar, tied to no site or vendor. It also records browser
+    agents: "Create agent", do a task once by hand, and "Save agent" writes it down
+    as steps a real browser replays exactly, with no AI. Sign-ins are sealed in
+    Keys, under Sign-ins.
+  user_path: "the Browser app, from the dock"

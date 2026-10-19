@@ -1,0 +1,2 @@
+# A Circles send (group_outbox, peer_app_outbox) still undelivered after OUTBOX_TTL_DAYS (7, kept: in line with mail-queue norms) is TOLD to the sender — one inbox notice per tick naming what was given up and to which Host — and enqueue returns when a send will be given up on. Stub pool and inbox; no DB, no peer.
+test_outbox_expiry_told.py

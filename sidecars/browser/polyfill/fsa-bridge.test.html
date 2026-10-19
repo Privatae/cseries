@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>FSA polyfill — round-trip test</title>
+  <style>
+    body { font: 14px/1.4 system-ui, sans-serif; padding: 20px; max-width: 720px; }
+    button { font-size: 14px; padding: 8px 14px; margin: 4px 0; cursor: pointer; }
+    pre { background: #f5f5f5; padding: 10px; overflow-x: auto; }
+    .ok { color: #157f3a; }
+    .err { color: #b00020; }
+    .row { margin: 10px 0; padding: 10px; border: 1px solid #ddd; border-radius: 6px; }
+  </style>
+</head>
+<body>
+  <h1>FSA polyfill — round-trip test</h1>
+  <p>
+    Confirms the polyfill round-trips list/read/write against the
+    sidecar's Python FS API via Playwright expose_binding. Run inside
+    the sidecar's Chromium (POST /navigate with this URL, then watch
+    it in the live viewport) AFTER POST /grant-fs has been called with
+    a writable path.
+  </p>
+
+  <div class="row">
+    <button id="btn-pick">showDirectoryPicker()</button>
+    <pre id="out-pick"></pre>
+  </div>
+
+  <div class="row">
+    <button id="btn-list" disabled>entries() — list root</button>
+    <pre id="out-list"></pre>
+  </div>
+
+  <div class="row">
+    <button id="btn-write" disabled>write fsa-roundtrip-test.txt</button>
+    <pre id="out-write"></pre>
+  </div>
+
+  <div class="row">
+    <button id="btn-read" disabled>read fsa-roundtrip-test.txt</button>
+    <pre id="out-read"></pre>
+  </div>
+
+  <div class="row">
+    <button id="btn-mkdir" disabled>mkdir test-subdir/</button>
+    <pre id="out-mkdir"></pre>
+  </div>
+
+  <div class="row">
+    <button id="btn-cleanup" disabled>cleanup (delete test artifacts)</button>
+    <pre id="out-cleanup"></pre>
+  </div>
+
+  <script>
+    let rootHandle = null;
+
+    function w(id, text, ok) {
+      const el = document.getElementById(id);
+      el.textContent = text;
+      el.className = ok === true ? "ok" : ok === false ? "err" : "";
+    }
+    function enable(...ids) { ids.forEach(i => document.getElementById(i).disabled = false); }
+    function err(e) { return e && e.name ? `[${e.name}] ${e.message}` : String(e); }
+
+    document.getElementById("btn-pick").onclick = async () => {
+      try {
+        rootHandle = await window.showDirectoryPicker();
+        w("out-pick", `granted: name=${rootHandle.name}, kind=${rootHandle.kind}`, true);
+        enable("btn-list", "btn-write", "btn-read", "btn-mkdir", "btn-cleanup");
+      } catch (e) { w("out-pick", err(e), false); }
+    };
+
+    document.getElementById("btn-list").onclick = async () => {
+      try {
+        const lines = [];
+        for await (const [name, handle] of rootHandle.entries()) {
+          lines.push(`  ${handle.kind === "directory" ? "[d]" : "[f]"} ${name}`);
+        }
+        w("out-list", `entries (${lines.length}):\n${lines.join("\n") || "(empty)"}`, true);
+      } catch (e) { w("out-list", err(e), false); }
+    };
+
+    document.getElementById("btn-write").onclick = async () => {
+      try {
+        const fh = await rootHandle.getFileHandle("fsa-roundtrip-test.txt", { create: true });
+        const stream = await fh.createWritable();
+        const payload = `hello from polyfill at ${new Date().toISOString()}\n`;
+        await stream.write(payload);
+        await stream.close();
+        w("out-write", `wrote ${payload.length} bytes to ${fh.name}`, true);
+      } catch (e) { w("out-write", err(e), false); }
+    };
+
+    document.getElementById("btn-read").onclick = async () => {
+      try {
+        const fh = await rootHandle.getFileHandle("fsa-roundtrip-test.txt");
+        const file = await fh.getFile();
+        const text = await file.text();
+        w("out-read", `read ${file.size} bytes (mtime=${new Date(file.lastModified).toISOString()}):\n${text}`, true);
+      } catch (e) { w("out-read", err(e), false); }
+    };
+
+    document.getElementById("btn-mkdir").onclick = async () => {
+      try {
+        const dh = await rootHandle.getDirectoryHandle("test-subdir", { create: true });
+        const f = await dh.getFileHandle("nested.txt", { create: true });
+        const s = await f.createWritable();
+        await s.write("nested write\n");
+        await s.close();
+        w("out-mkdir", `created test-subdir/nested.txt via getDirectoryHandle + getFileHandle`, true);
+      } catch (e) { w("out-mkdir", err(e), false); }
+    };
+
+    document.getElementById("btn-cleanup").onclick = async () => {
+      try {
+        await rootHandle.removeEntry("fsa-roundtrip-test.txt").catch(() => {});
+        await rootHandle.removeEntry("test-subdir", { recursive: true }).catch(() => {});
+        w("out-cleanup", `cleanup ok`, true);
+      } catch (e) { w("out-cleanup", err(e), false); }
+    };
+  </script>
+</body>
+</html>

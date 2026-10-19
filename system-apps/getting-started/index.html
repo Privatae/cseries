@@ -1,0 +1,33 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Getting Started</title>
+
+    <!-- C-Series design system. Always load in this order. -->
+    <link rel="stylesheet" href="/css/tokens.css">
+    <link rel="stylesheet" href="/css/motion.css">
+    <link rel="stylesheet" href="/css/cseries-components.css">
+    <link rel="stylesheet" href="/system-apps/getting-started/style.css">
+</head>
+<body>
+    <main class="slide">
+        <div class="label-sys" id="kicker"></div>
+        <h1 id="title"></h1>
+        <div class="lines" id="lines"></div>
+        <p class="status" id="status" hidden></p>
+        <div class="actions">
+            <button class="cseries-btn primary" id="btn-primary"></button>
+            <button class="cseries-btn ghost" id="btn-again" hidden>Check again</button>
+            <button class="cseries-btn ghost" id="btn-skip" hidden>Skip</button>
+        </div>
+    </main>
+    <footer class="foot">
+        <button class="link" id="btn-leave">Leave the tour</button>
+    </footer>
+
+    <script src="/system-apps/getting-started/steps.js"></script>
+    <script src="/system-apps/getting-started/app.js"></script>
+</body>
+</html>

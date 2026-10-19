@@ -1,0 +1,96 @@
+'use strict';
+
+// release.json: everything this copy of the command installs, pinned. The
+// release workflow writes it before `npm publish`; the committed file holds
+// "dev" placeholders, and a copy with any placeholder refuses to install
+// anything. CSERIES_RELEASE_JSON points at another manifest for local testing.
+
+const fs = require('node:fs');
+const path = require('node:path');
+const { CliError } = require('./errors');
+const { isVersion } = require('./version');
+
+const DIGEST = /^sha256:[0-9a-f]{64}$/;
+const SHA256 = /^[0-9a-f]{64}$/;
+// A registry image name, optionally with a tag; no digest (that is its own field).
+const REF = /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?$/;
+const GUEST_KEYS = ['wsl-x64', 'wsl-arm64'];
+
+function defaultPath() {
+  return path.join(__dirname, '..', 'release.json');
+}
+
+function isPlaceholder(v) {
+  return v === 'dev';
+}
+
+// Validates a parsed manifest. Returns {release, placeholders}: placeholders
+// lists every field still holding "dev"; a field that is neither "dev" nor
+// valid is an error.
+function validate(m) {
+  const problems = [];
+  const placeholders = [];
+  const field = (name, value, ok) => {
+    if (isPlaceholder(value)) placeholders.push(name);
+    else if (typeof value !== 'string' || !ok(value)) problems.push(name);
+  };
+  if (!m || typeof m !== 'object') throw new Error('release.json is not a JSON object');
+  field('version', m.version, isVersion);
+  for (const which of ['host', 'postgres']) {
+    const img = (m.images || {})[which] || {};
+    field(`images.${which}.ref`, img.ref, (v) => REF.test(v));
+    field(`images.${which}.digest`, img.digest, (v) => DIGEST.test(v));
+  }
+  for (const key of GUEST_KEYS) {
+    const g = (m.guest || {})[key] || {};
+    field(`guest.${key}.url`, g.url, (v) => /^https:\/\/[^\s]+$/.test(v));
+    field(`guest.${key}.sha256`, g.sha256, (v) => SHA256.test(v));
+  }
+  const minV = (m.bastion || {}).min_version;
+  if (typeof minV !== 'string' || !isVersion(minV)) problems.push('bastion.min_version');
+  if (problems.length) {
+    throw new Error(`release.json has invalid fields: ${problems.join(', ')}`);
+  }
+  return { release: m, placeholders };
+}
+
+function load(env = process.env) {
+  const file = env.CSERIES_RELEASE_JSON || defaultPath();
+  let text;
+  try {
+    text = fs.readFileSync(file, 'utf8');
+  } catch (err) {
+    throw new CliError(`Cannot read the release manifest ${file}: ${err.message}`,
+      env.CSERIES_RELEASE_JSON ? 'Check the path in CSERIES_RELEASE_JSON.' : 'Reinstall this package: npx cseries@latest');
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(text);
+  } catch (err) {
+    throw new CliError(`The release manifest ${file} is not valid JSON: ${err.message}`, '');
+  }
+  let result;
+  try {
+    result = validate(parsed);
+  } catch (err) {
+    throw new CliError(`The release manifest ${file} is not usable: ${err.message}`, '');
+  }
+  return { ...result, file };
+}
+
+// The image as the guest runs it: name pinned by digest.
+function pinnedImage(release, which) {
+  const img = release.images[which];
+  return `${img.ref}@${img.digest}`;
+}
+
+// Refuses when this copy has no pinned release.
+function requirePinned(loaded) {
+  if (loaded.placeholders.length) {
+    throw new CliError(
+      'This copy of cseries is a development build: it pins no release, so it has nothing to install.',
+      'Install a published release with "npx cseries@latest", or set CSERIES_RELEASE_JSON to a release manifest.');
+  }
+}
+
+module.exports = { load, validate, pinnedImage, requirePinned, defaultPath, GUEST_KEYS };

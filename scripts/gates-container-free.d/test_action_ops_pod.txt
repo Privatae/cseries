@@ -1,0 +1,2 @@
+# 2026-09-29 (Ships phase 3, action ops on the pod side): an action op's manifest is judged in the pod as the bastion judges it (nac_action_ops mirrors ops_action.go) — undeclared verbs, arguments, credentials, parameter-named targets, forbidden destinations, a regex RE2 cannot run — so a Host learns a refusal before the op travels; the machine's gate reports action ops. The bastion-source cross-check runs only when CSERIES_GATEWAY_DIR holds a checkout. No pod, no DB.
+test_action_ops_pod.py

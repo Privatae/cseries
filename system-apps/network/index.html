@@ -1,0 +1,451 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Network</title>
+
+    <link rel="stylesheet" href="/css/tokens.css">
+    <link rel="stylesheet" href="/css/motion.css">
+    <link rel="stylesheet" href="/css/cseries-components.css">
+    <link rel="stylesheet" href="/system-apps/network/style.css">
+</head>
+<body class="cseries-scroll">
+<div class="app net-app">
+
+    <!-- ── Header ─────────────────────────────────────── -->
+    <header class="app-header">
+        <div class="app-brand">
+            <span class="net-brandmark" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="2.5"/>
+                    <circle cx="5" cy="5" r="2"/><circle cx="19" cy="5" r="2"/>
+                    <circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/>
+                    <line x1="10.3" y1="10.3" x2="6.4" y2="6.4"/>
+                    <line x1="13.7" y1="10.3" x2="17.6" y2="6.4"/>
+                    <line x1="10.3" y1="13.7" x2="6.4" y2="17.6"/>
+                    <line x1="13.7" y1="13.7" x2="17.6" y2="17.6"/>
+                </svg>
+            </span>
+            <div class="app-brand-text">
+                <div class="app-brand-title">Network</div>
+                <div class="app-brand-sub label-sys" id="brand-sub">your private network</div>
+            </div>
+        </div>
+        <div class="net-health" id="net-health" aria-live="polite">
+            <span class="net-health-chip skeleton" style="width:120px;height:18px"></span>
+        </div>
+    </header>
+
+    <div class="cseries-seam"></div>
+
+    <!-- ── Shell: rail · main · inspector ─────────────── -->
+    <div class="net-shell">
+
+        <nav class="net-rail" role="tablist" aria-label="Network lenses">
+            <button class="net-rail-btn active" data-lens="topology" role="tab" aria-selected="true" title="Map">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="2.2"/><circle cx="5" cy="6" r="1.8"/><circle cx="19" cy="6" r="1.8"/><circle cx="6" cy="18" r="1.8"/><circle cx="18" cy="18" r="1.8"/>
+                    <path d="M10.3 10.6 6.4 7.2M13.7 10.6 17.6 7.2M10.6 13.4 7.2 16.6M13.4 13.4 16.8 16.6"/>
+                </svg>
+                <span class="net-rail-label">Map</span>
+            </button>
+            <button class="net-rail-btn" data-lens="bastions" role="tab" aria-selected="false" title="Bastions">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/>
+                    <line x1="7" y1="7" x2="7.01" y2="7"/><line x1="7" y1="17" x2="7.01" y2="17"/>
+                </svg>
+                <span class="net-rail-label">Bastions</span>
+            </button>
+            <button class="net-rail-btn" data-lens="nac" role="tab" aria-selected="false" title="NAC — host-local network access control" style="position:relative">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/>
+                    <path d="M9 12l2 2 4-4"/>
+                </svg>
+                <span class="net-rail-label">NAC</span>
+                <span id="nac-badge" hidden style="position:absolute;top:3px;right:6px;min-width:16px;height:16px;padding:0 4px;border-radius:9px;background:#c0492f;color:#fff;font-size:10px;line-height:16px;text-align:center;font-weight:700;box-sizing:border-box"></span>
+            </button>
+            <button class="net-rail-btn" data-lens="agents" role="tab" aria-selected="false" title="Agents — AI activity your bastions observe" style="position:relative">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="2.6"/>
+                </svg>
+                <span class="net-rail-label">Agents</span>
+                <span id="agents-badge" hidden style="position:absolute;top:3px;right:6px;min-width:16px;height:16px;padding:0 4px;border-radius:9px;background:#c0492f;color:#fff;font-size:10px;line-height:16px;text-align:center;font-weight:700;box-sizing:border-box"></span>
+            </button>
+            <button class="net-rail-btn" data-lens="freeagents" role="tab" aria-selected="false" title="Bastion agents — the local agents your bastions run for your folders">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M4 7.5 12 3l8 4.5v9L12 21l-8-4.5v-9Z"/><path d="M4 7.5 12 12l8-4.5M12 12v9"/>
+                </svg>
+                <span class="net-rail-label">Bastion agents</span>
+            </button>
+            <button class="net-rail-btn" data-lens="servers" role="tab" aria-selected="false" title="Servers your hosts built on your machines, and which host may reach each">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="4" y="4" width="16" height="6" rx="1.5"/><rect x="4" y="14" width="16" height="6" rx="1.5"/><path d="M8 7h.01M8 17h.01"/>
+                </svg>
+                <span class="net-rail-label">Servers</span>
+            </button>
+            <button class="net-rail-btn" data-lens="peers" role="tab" aria-selected="false" title="Peers">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/>
+                    <path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+                </svg>
+                <span class="net-rail-label">Peers</span>
+            </button>
+        </nav>
+
+        <main class="net-main cseries-scroll">
+
+            <!-- ════ TOPOLOGY ════ -->
+            <section id="lens-topology" class="net-lens" role="tabpanel" aria-label="Topology">
+                <div class="net-statstrip" id="topo-stats"></div>
+                <div class="net-scene-wrap">
+                    <div class="net-scene-head">
+                        <div class="view-heading">
+                            <h2>Your network</h2>
+                            <p class="view-sub" id="topo-sub">Your Host at the center, the bastions and peers in your mesh around it. Your machines reach it through the relay their tunnels dial — the Physical view draws that path. Live, refreshed automatically.</p>
+                        </div>
+                        <div class="net-scene-controls">
+                            <!-- One rendering of one graph. The renderers register themselves
+                                 in app.js (VIEWS); this strip is filled from that registry, so
+                                 adding a view never touches this markup. -->
+                            <div class="net-viewpick" id="topo-viewpick" role="tablist" aria-label="Map view"></div>
+                            <div class="net-legend" aria-hidden="true">
+                                <span class="net-leg"><i class="dot live"></i>live</span>
+                                <span class="net-leg"><i class="dot stale"></i>stale</span>
+                                <span class="net-leg"><i class="dot down"></i>down</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="net-scene" id="topo-scene">
+                        <div class="net-scene-skeleton skeleton"></div>
+                    </div>
+                </div>
+                <details class="net-a11y" id="topo-table-wrap">
+                    <summary class="label-sys">Node list (text alternative)</summary>
+                    <div id="topo-table" class="stack"></div>
+                </details>
+            </section>
+
+            <!-- ════ BASTIONS ════ -->
+            <section id="lens-bastions" class="net-lens" role="tabpanel" aria-label="Bastions" hidden>
+                <div class="view-heading">
+                    <h2>Bastions</h2>
+                    <p class="view-sub">Your secure doors into your private network. Each bastion is a machine you stand up that joins your mesh — enrolled once, then it talks to your network directly. Shut a door any time. A <strong>networked</strong> machine you anchored waits for your approval before any other Host gets lanes on it — pending pairings show on the card with Approve (asks for your code) and Deny; Revoke removes an admitted host at once. Each card also lists the other Hosts the machine says it serves: message one you are connected with, or send a connection request.</p>
+                    <div class="view-toolbar">
+                        <button class="cseries-btn" id="gw-refresh">Refresh</button>
+                        <!-- Shown only when something is actually out of date, and it
+                             names the count so the button says what it will do. -->
+                        <button class="cseries-btn" id="gw-update-all" hidden></button>
+                        <button class="cseries-btn primary" id="gw-add">Set up a bastion</button>
+                    </div>
+                </div>
+                <div class="net-block" id="egress-status-block">
+                    <div class="net-block-head">
+                        <div class="label-sys">Egress — what your Host reaches</div>
+                    </div>
+                    <div class="net-statstrip" id="egress-stats"></div>
+                    <p class="view-sub">Your Host reaches the internet through your own bastions, over your own connections — you decide what it can reach, host-local, and you sign those rules. The platform meters throughput only; it never sees where your Host goes. (Set limits from your agent — this is a read-only view.)</p>
+                </div>
+                <!-- Automatic updates: the switch, and where the newest
+                     published version stands in the canary ring. -->
+                <div class="net-block" id="autoupdate-block">
+                    <div class="net-block-head">
+                        <div class="label-sys">Automatic updates</div>
+                        <button class="cseries-btn" id="autoupdate-toggle" hidden></button>
+                    </div>
+                    <p class="view-sub" id="autoupdate-line"></p>
+                </div>
+                <!-- Where an update ask reports itself. It replaced a second popup:
+                     the user already sees the card change, so the line is confirmation,
+                     not something to dismiss. -->
+                <div class="status-banner success" id="gw-notice" hidden></div>
+                <div id="gw-list" class="stack"></div>
+            </section>
+
+            <!-- ════ NAC ════ -->
+            <section id="lens-nac" class="net-lens" role="tabpanel" aria-label="NAC" hidden>
+
+                <!-- 1 ▸ Sovereignty banner -->
+                <div class="nac-sov">
+                    <div class="nac-sov-text">
+                        <p class="nac-sov-lead">Your host-local network control</p>
+                        <p>Your agent <strong>proposes</strong>, you <strong>approve here</strong>. The policy lives in your container and is signed with your Host's key — <strong>the platform never sees or controls this</strong>.</p>
+                    </div>
+                    <span class="nac-chip" id="nac-stepup-chip"><span class="nac-chip-dot"></span><span class="label-sys" style="color:var(--cseries-ash)">Second factor</span>&nbsp;<b>—</b></span>
+                </div>
+
+                <div class="view-heading" style="margin-top:var(--space-1)">
+                    <h2>Network access control</h2>
+                    <p class="view-sub">Two layers, opposite defaults. <strong>Egress</strong> (your reach outward) is open by default — you opt in to limit it. <strong>Management</strong> (operating servers in your mesh) is denied by default — no management operation your Host sends there runs without a grant. Posture decides what each bastion is trusted to do.</p>
+                </div>
+
+                <!-- widen / tighten rule, visible -->
+                <div class="nac-rule-note">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>
+                    <span>Anything that <strong>widens your reach</strong> — an allow, a grant — asks for your authenticator code. <strong>Tightening is free.</strong></span>
+                </div>
+
+                <!-- 2 ▸ PENDING PROPOSALS (pinned, distinct) -->
+                <div class="nac-pending" id="nac-pending-block" hidden>
+                    <div class="nac-pending-head">
+                        <span class="label-sys">Proposed by your agent — awaiting your approval</span>
+                        <span class="cseries-pill warn" id="nac-pending-count">0 pending</span>
+                        <span class="nac-pending-sub">Drafts are inert until approved; a widen needs your code.</span>
+                    </div>
+                    <div id="nac-pending-list" class="stack"></div>
+                </div>
+
+                <!-- 3 ▸ THE THREE LANES — Ingress / Egress / Management, each a separate collapsible -->
+                <div class="view-heading" style="margin-top:var(--space-1)">
+                    <h2>Lanes</h2>
+                    <p class="view-sub">Three lanes, each opened on its own. <strong>Ingress</strong> (who reaches in) admits the machines you have paired until a rule says otherwise; <strong>Management</strong> (operating your mesh) is denied by default; <strong>Egress</strong> (your reach outward) is open by default. Pending drafts pin to the top of their lane and the lane opens itself.</p>
+                </div>
+
+                <!-- ░ INGRESS lane (inbound policy: rules → enforcement profile) ░ -->
+                <div class="nac-lane" id="nac-lane-ingress">
+                    <button class="nac-lane-head" data-lane-toggle="ingress" aria-expanded="false" aria-controls="nac-lane-ingress-body">
+                        <svg class="nac-lane-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                        <span class="nac-lane-title">Ingress</span>
+                        <span class="nac-lane-deftag open">Default: PAIRED</span>
+                        <span class="nac-lane-count" id="nac-ingress-count">0</span>
+                    </button>
+                    <div class="nac-lane-body" id="nac-lane-ingress-body">
+                        <div class="nac-default-line">
+                            <span>Inbound policy — rules match a bastion's fingerprint, classification, or posture and assign an <strong style="color:var(--cseries-paper)">enforcement profile</strong>: <strong style="color:var(--cseries-moss)">allow</strong> grants its permits, <strong style="color:var(--cseries-clay)">quarantine</strong> denies. Approving an <strong>allow</strong> profile widens reach (asks for your code); a quarantine is free. Removing an approved rule that keeps machines out — a quarantine, or an allow that admits nothing — can let them back in, so it asks for your code too.</span>
+                        </div>
+                        <div class="stack" id="nac-ingress-list"></div>
+                        <div class="nac-default-line">
+                            <span><strong style="color:var(--cseries-paper)">Messaging connectors</strong> — one account on Telegram, Discord or Slack that can start turns in your chat, through one connector app. For each of them that app is in the App Store. The pairing code is shown here and on its card in your chat, never to your Host: send it to your bot from that account, then let the account in with your authenticator code. Declining and revoking are free.</span>
+                        </div>
+                        <div class="stack" id="nac-connector-list"></div>
+                    </div>
+                </div>
+
+                <!-- ░ EGRESS lane (outbound ACL) ░ -->
+                <div class="nac-lane" id="nac-lane-egress">
+                    <button class="nac-lane-head" data-lane-toggle="egress" aria-expanded="false" aria-controls="nac-lane-egress-body">
+                        <svg class="nac-lane-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                        <span class="nac-lane-title">Egress</span>
+                        <span class="nac-lane-deftag open">Default: OPEN</span>
+                        <span class="nac-lane-count" id="nac-egress-count">0</span>
+                    </button>
+                    <div class="nac-lane-body" id="nac-lane-egress-body">
+                        <div class="nac-default-line">
+                            <span>Your Host reaches the whole internet; you opt in to limit it. <strong style="color:var(--cseries-paper)">The platform never logs where you go.</strong> Approving an <strong>allow</strong> or removing a <strong>deny</strong> widens reach (asks for your code); adding a deny is free.</span>
+                        </div>
+                        <div class="nac-lane-actions">
+                            <button class="cseries-btn" id="nac-egress-add">Add rule</button>
+                        </div>
+                        <div class="stack" id="nac-egress-list"></div>
+                    </div>
+                </div>
+
+                <!-- ░ MANAGEMENT lane (grants) ░ -->
+                <div class="nac-lane" id="nac-lane-mgmt">
+                    <button class="nac-lane-head" data-lane-toggle="mgmt" aria-expanded="false" aria-controls="nac-lane-mgmt-body">
+                        <svg class="nac-lane-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                        <span class="nac-lane-title">Management</span>
+                        <span class="nac-lane-deftag deny">Default: DENY</span>
+                        <span class="nac-lane-count" id="nac-mgmt-count">0</span>
+                    </button>
+                    <div class="nac-lane-body" id="nac-lane-mgmt-body">
+                        <div class="nac-default-line">
+                            <span>No grant, no rights. Every command run under a grant is audited. Granting rights widens reach (asks for your code); revoking is free, except an approved grant that carries your "do NOT" and has not expired, which asks for your code. A grant, and its "do NOT", stops applying when it expires. A <strong style="color:var(--cseries-clay)">suspended</strong> bastion denies even with a grant.</span>
+                        </div>
+                        <div class="stack" id="nac-grants-list"></div>
+                    </div>
+                </div>
+
+                <!-- 4 ▸ POSTURE per bastion — BELOW the lanes and collapsed by default.
+                     The lanes are what matter; per-bastion posture read as noise. It was drawn above the lanes and always open, so the
+                     first thing the page showed was the noisiest thing on it. It is a real
+                     control (Suspend / Quarantine / Release) so it stays — just not first,
+                     and not open. The duplicate and dead cards that made it incoherent were
+                     the route's, and are fixed there (one card per machine, live enrolments
+                     only). -->
+                <div class="nac-lane" id="nac-lane-posture">
+                    <button class="nac-lane-head" data-lane-toggle="posture" aria-expanded="false" aria-controls="nac-lane-posture-body">
+                        <svg class="nac-lane-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                        <span class="nac-lane-title">Posture — per bastion</span>
+                        <span class="nac-lane-deftag">Read-only</span>
+                        <span class="nac-lane-count" id="nac-posture-count">0</span>
+                    </button>
+                    <div class="nac-lane-body" id="nac-lane-posture-body">
+                        <div class="nac-default-line">
+                            <p class="view-sub">The engine's live judgement of each machine, and the access it is trusted with at that posture. A bastion that stops checking in drops to <strong>unknown</strong>. You don't set this by hand. <strong>Suspend</strong> pauses management + harness (grants kept); <strong>Resume</strong> and <strong>Release</strong> ask for your code.</p>
+                            <span class="net-inline-status" id="nac-posture-status"></span>
+                        </div>
+                        <div class="nac-posture-grid" id="nac-posture-grid"></div>
+                    </div>
+                </div>
+
+                <!-- 5 ▸ MANAGEMENT AUDIT (its own block — not one of the 3 lanes) -->
+                <div class="net-block">
+                    <div class="net-block-head">
+                        <div class="label-sys">Management audit</div>
+                        <span class="cseries-pill dusk">always recorded</span>
+                    </div>
+                    <p class="view-sub">Every management action on your machines — where, what, how it was decided, the result. The bright line vs egress, which logs nothing. Most recent first.</p>
+                    <div class="stack" id="nac-audit-list"></div>
+                </div>
+
+            </section>
+
+            <!-- ════ AGENTS ════ -->
+            <section id="lens-agents" class="net-lens" role="tabpanel" aria-label="Agents" hidden>
+                <div class="view-heading">
+                    <h2>Agents</h2>
+                    <p class="view-sub">AI/agent activity your bastions observe on the machines they run on — what's running and whether it's talking to a model. This is <strong>visibility</strong>: detection is soft and evadable, never the wall. The wall is your host-local NAC. Here you reconcile — sanction what you asked for, contain what you didn't.</p>
+                    <div class="view-toolbar">
+                        <button class="cseries-btn" id="agents-refresh">Refresh</button>
+                        <button class="cseries-btn primary" id="del-add">Sanction an agent</button>
+                    </div>
+                </div>
+                <div class="status-banner error" id="agents-alert" hidden></div>
+                <div class="net-statstrip" id="agents-stats"></div>
+                <div class="net-block">
+                    <div class="net-block-head"><div class="label-sys">Agents</div></div>
+                    <p class="view-sub">Reported by your bastions each check-in. <strong>Unrequested</strong> = carries no delegation tag you issued — “agent activity you didn't request.” Each card says how the agent was <strong>started</strong> (a terminal, a remote session, a scheduler, a service, another agent) and opens to the bastion's evidence, one typed line per signal. Contain terminates an agent and every process it started.</p>
+                    <div id="agents-list" class="stack"></div>
+                </div>
+                <div class="net-block">
+                    <div class="net-block-head"><div class="label-sys">Scheduled — jobs that would run an agent</div></div>
+                    <p class="view-sub">Crontabs, timers, launchd jobs and scheduled tasks on your machines whose command runs an agent or an automation. Listed <strong>before they fire</strong> — the “ran every night for months and nobody knew” shape, caught from the schedule.</p>
+                    <div id="scheduled-list" class="stack"></div>
+                </div>
+                <div class="net-block">
+                    <div class="net-block-head"><div class="label-sys">Automations — no model</div></div>
+                    <p class="view-sub">Browser drivers, input injectors, RPA runtimes: things that drive the machine with no model behind them. Inventory, not an alert. The moment one starts talking to a model it is an agent and moves up.</p>
+                    <div id="automations-list" class="stack"></div>
+                </div>
+                <div class="net-block">
+                    <div class="net-block-head"><div class="label-sys">Apps using a model</div></div>
+                    <p class="view-sub">Software you're running that talks to a model — a desktop chat app, an IDE, a browser tab. Shown so you know what's talking to what; never alerted on, never contained.</p>
+                    <div id="apps-list" class="stack"></div>
+                </div>
+                <div class="net-block">
+                    <div class="net-block-head"><div class="label-sys">Delegation tags — what you've sanctioned</div></div>
+                    <p class="view-sub">Launch an agent with a tag's <code>PRIVATAE_AGENT_TOKEN</code> and it reads as <strong>requested</strong>. Soft, expiring, revocable — it sorts sanctioned from casual; it isn't the wall.</p>
+                    <div id="del-list" class="stack"></div>
+                </div>
+            </section>
+
+            <!-- ════ FREEAGENTS ════ -->
+            <section id="lens-freeagents" class="net-lens" role="tabpanel" aria-label="Bastion agents" hidden>
+                <div class="view-heading">
+                    <h2>Bastion agents</h2>
+                    <p class="view-sub">A bastion agent is a small program your bastion runs <strong>on your own machine</strong> for a folder you granted with <em>search</em>: it indexes the folder there, redacts personal data before anything leaves, and answers your host's searches. Your files never move. The bastion installs and updates it from the grant — nothing to configure. If a machine is missing something (Python, openssl), it says so here.</p>
+                    <div class="view-toolbar"><button class="cseries-btn" id="freeagents-refresh">Refresh</button></div>
+                </div>
+                <div class="status-banner error" id="freeagents-alert" hidden></div>
+                <div class="net-block">
+                    <div class="net-block-head"><div class="label-sys">Per folder</div></div>
+                    <div id="freeagents-list" class="stack"></div>
+                </div>
+            </section>
+
+            <!-- ════ SERVERS (service slot reach grants) ════ -->
+            <section id="lens-servers" class="net-lens" role="tabpanel" aria-label="Servers" hidden>
+                <div class="view-heading">
+                    <h2>Servers on your machines</h2>
+                    <p class="view-sub">A server a host built for you — a private code server, say — runs on <strong>your own machine</strong> with no network: it cannot reach your machines, your network or the internet. The only way in is a host's tunnel, and only for a host you let in here: each host needs its own reach grant for each server, and you approve it. Revoking one takes effect at once.</p>
+                    <div class="view-toolbar"><button class="cseries-btn" id="servers-refresh">Refresh</button></div>
+                </div>
+                <div class="status-banner error" id="servers-alert" hidden></div>
+                <div class="net-block">
+                    <div class="net-block-head"><div class="label-sys">Who may reach which server</div></div>
+                    <div id="servers-list" class="stack"></div>
+                </div>
+            </section>
+
+            <!-- ════ PEERS ════ -->
+            <section id="lens-peers" class="net-lens" role="tabpanel" aria-label="Peers" hidden>
+                <div class="view-heading">
+                    <h2>Peers</h2>
+                    <p class="view-sub">Other Hosts you connect to. Reachability is enforced here, in your container — not on the platform.</p>
+                </div>
+
+                <div class="net-block">
+                    <div class="net-block-head">
+                        <div class="label-sys">Who can reach this Host</div>
+                        <span class="net-inline-status" id="peers-posture-status" hidden></span>
+                    </div>
+                    <div class="net-postures" id="peers-postures"></div>
+                </div>
+
+                <!-- Per-peer rules (moved from Circles' Domain policy pane). -->
+                <div class="net-block" id="peers-rules-block">
+                    <div class="net-block-head">
+                        <div class="label-sys">Per-peer rules</div>
+                        <span class="net-inline-status" id="peers-rules-status" role="status" hidden></span>
+                    </div>
+                    <p class="view-sub">Each rule names one sender, by handle or address, and lets what it sends into your inbox or keeps it out, whatever the setting above says. A rule does not stop messages from a Host you gave a permission slip: block that Host in Circles. Connection requests always reach you.</p>
+                    <div id="peers-rules" class="stack"></div>
+                    <form class="net-rule-add" id="peers-rule-add">
+                        <input class="cseries-input" id="peers-rule-peer" maxlength="200" autocomplete="off" placeholder="handle or address, e.g. atlas or name@user.example" aria-label="Handle or address">
+                        <select class="cseries-input" id="peers-rule-allow" aria-label="Allow or deny">
+                            <option value="allow">Allow</option>
+                            <option value="deny">Deny</option>
+                        </select>
+                        <button class="cseries-btn" type="submit" id="peers-rule-submit">Add rule</button>
+                    </form>
+                </div>
+
+                <div class="net-block">
+                    <div class="net-block-head">
+                        <div class="label-sys">Secured channels</div>
+                    </div>
+                    <p class="view-sub">Peers that hold a cryptographic permission slip with you — verified offline, no platform in the path.</p>
+                    <div id="peers-secured" class="stack"></div>
+                </div>
+
+                <div class="net-block">
+                    <div class="net-block-head">
+                        <div class="label-sys">Contacts</div>
+                    </div>
+                    <div id="peers-contacts" class="stack"></div>
+                </div>
+            </section>
+
+        </main>
+
+        <!-- ── Inspector (slide-in) — bastion / agent / peer details ──── -->
+        <aside class="net-inspector" id="inspector" hidden>
+            <div class="net-inspector-head">
+                <span class="net-inspector-title" id="inspector-title">Details</span>
+                <button class="cseries-btn ghost icon-only" id="inspector-close" aria-label="Close details">✕</button>
+            </div>
+            <div class="net-inspector-body cseries-scroll" id="inspector-body"></div>
+            <div class="net-inspector-actions" id="inspector-actions"></div>
+        </aside>
+
+    </div>
+
+    <!-- ── Step-up / enrollment — CENTERED POPUP MODAL over a dimmed scrim ──
+         The TOTP entry (widen approvals + resume) and the enrollment QR live here,
+         centered over the whole app. JS fills #nac-modal-{title,body,actions}. -->
+    <div class="nac-scrim" id="nac-scrim" hidden>
+        <div class="nac-stepup-modal" role="dialog" aria-modal="true" aria-labelledby="nac-modal-title">
+            <div class="nac-modal-head">
+                <span class="nac-modal-title" id="nac-modal-title">Approve widening</span>
+                <button class="cseries-btn ghost icon-only" id="nac-modal-close" aria-label="Cancel">✕</button>
+            </div>
+            <div class="nac-modal-body cseries-scroll" id="nac-modal-body"></div>
+            <div class="nac-modal-actions" id="nac-modal-actions"></div>
+        </div>
+    </div>
+
+    <footer class="app-footer">
+        <span class="label-sys" id="foot-left">network</span>
+        <span class="label-sys app-footer-right" id="foot-right">—</span>
+    </footer>
+</div>
+
+<!-- vendored, dependency-free QR generator (Kazuhiko Arase, MIT) — draws the NAC step-up enrollment QR -->
+<script src="/js/qrcode.js"></script>
+<!-- The CSP every host-authored frame is mounted under (one definition,
+     dashboard/base/js/sandbox-csp.js). Must load before app.js. -->
+<script src="/js/sandbox-csp.js"></script>
+<script src="/system-apps/network/app.js"></script>
+</body>
+</html>

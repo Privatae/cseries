@@ -1,0 +1,10 @@
+
+# 2026-09-12, rationale corrected 2026-09-22: no native content-extractor
+# package (poppler, tesseract, ffmpeg, libreoffice, whisper, pypdf, …) is
+# installed into a platform image without a reviewed PR. The host DOES read
+# uploaded documents — with its own standard-library readers
+# in server/readers, so no native parser runs on arbitrary user bytes inside
+# every host pod. Engines the host does not carry (OCR, speech, video) run on
+# the user's machines. Reads Dockerfiles + requirements.txt; no container, no
+# DB, no network.
+check_no_platform_extractors.py

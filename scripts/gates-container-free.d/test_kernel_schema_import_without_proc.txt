@@ -1,0 +1,2 @@
+# scripts/kernel_schema.py imports on a box without /proc (PIDNS 0, BOOT_ID empty, so the throwaway reap judges nothing) instead of raising at import, which failed every schema gate; and with only /proc/self/ns/pid refused (PIDNS 0, boot id still read) the reap still judges nothing. os.stat/Path.read_text refuse /proc paths during a fresh import; no DB, no pod, no network.
+test_kernel_schema_import_without_proc.py

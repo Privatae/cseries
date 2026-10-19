@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Terminal</title>
+
+    <link rel="stylesheet" href="/css/tokens.css">
+    <link rel="stylesheet" href="/css/motion.css">
+    <link rel="stylesheet" href="/css/cseries-components.css">
+    <link rel="stylesheet" href="/system-apps/terminal/vendor/xterm.css">
+    <link rel="stylesheet" href="/system-apps/terminal/style.css">
+</head>
+<body class="cseries-scroll">
+<div class="app term-app">
+
+    <header class="app-header">
+        <div class="app-brand">
+            <span class="term-brandmark" aria-hidden="true">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="3" y="4" width="18" height="16" rx="2.5"/>
+                    <path d="M7 9l3 3-3 3"/><path d="M12 15h5"/>
+                </svg>
+            </span>
+            <div class="app-brand-text">
+                <div class="app-brand-title">Terminal</div>
+                <div class="app-brand-sub label-sys" id="brand-sub">a shell on your own machines</div>
+            </div>
+        </div>
+        <div class="term-toolbar" role="toolbar" aria-label="Session">
+            <button class="btn btn-primary" id="btn-open" disabled title="Open a shell on the selected machine">Open shell</button>
+            <button class="btn" id="btn-root" disabled title="Open a root shell — you approve it on the machine">Open root shell</button>
+            <button class="btn" id="btn-reconnect" disabled title="Open a fresh shell in this tab">Reconnect</button>
+            <button class="btn btn-danger" id="btn-close" disabled title="End this shell">Close</button>
+        </div>
+    </header>
+
+    <div class="cseries-seam"></div>
+
+    <div class="term-body">
+        <!-- left rail: machines -->
+        <aside class="term-rail" aria-label="Machines">
+            <div class="term-rail-head">
+                <span class="label-sys">Machines</span>
+                <button class="btn btn-ghost btn-sm" id="btn-refresh" title="Reload the machine list">Refresh</button>
+            </div>
+            <div class="term-rail-list" id="rail">
+                <div class="term-rail-empty" id="rail-empty">Loading your machines…</div>
+            </div>
+            <div class="term-rail-head term-live-head">
+                <span class="label-sys">Live sessions</span>
+            </div>
+            <div class="term-live-list" id="live">
+                <div class="term-rail-empty">No open sessions.</div>
+            </div>
+            <div class="term-rail-foot label-sys">
+                Only machines that carry your bastion appear here. There is no host or port to type: a shell always starts on the machine itself.
+            </div>
+        </aside>
+
+        <!-- main: tabs + terminal -->
+        <main class="term-main">
+            <div class="term-tabs" id="tabs" role="tablist"></div>
+            <div class="term-panes" id="panes">
+                <div class="term-welcome" id="welcome">
+                    <h2>Pick a machine, then Open shell.</h2>
+                    <p>The shell runs on that machine as an unprivileged session user and is streamed here.
+                       A root shell needs your approval on the machine itself. Every session is recorded
+                       on the machine.</p>
+                    <p>A shell is your own act and needs no standing grant from this Host: on a machine
+                       anchored to it you approve each session on your device or at that machine; on
+                       your own local machine the pairing is the authorization.</p>
+                    <p class="term-welcome-note" id="welcome-note"></p>
+                </div>
+            </div>
+            <div class="term-status" id="status" aria-live="polite">
+                <span id="status-text">No session.</span>
+            </div>
+        </main>
+    </div>
+</div>
+
+<script src="/system-apps/terminal/vendor/xterm.js"></script>
+<script src="/system-apps/terminal/vendor/addon-fit.js"></script>
+<script src="/system-apps/terminal/app.js"></script>
+</body>
+</html>

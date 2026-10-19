@@ -1,0 +1,7 @@
+# The harness egress routing gate (2026-09-09). Container-free: it stands up a
+# fake gate and fake squid on loopback, drives the real chooser and the real
+# EgressProxy._handle, and authenticates with the production credential parser.
+# Registered here because it was running by hand only, and the defect it guards
+# (an allow rule routing a whole build through the entity pod) is silent in
+# production — both egress proxies run access_log none.
+test_harness_nac_lane.py

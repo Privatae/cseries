@@ -1,0 +1,2 @@
+# An app config value is bounded before its body is read (16 MiB, refused as it streams, Content-Length refused unread), and storage takes Postgres's own jsonb limit instead of 64 KiB. Stub request and pool.
+test_caps_app_config.py

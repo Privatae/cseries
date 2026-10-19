@@ -1,0 +1,13 @@
+# 2026-10-18 (server/mcp_oauth.py, migrations/v239): signing in to an MCP server
+# with OAuth, per the MCP authorization spec revision 2026-07-28. Fake MCP and
+# authorization servers through a stand-in egress gate: discovery (the
+# challenge's resource metadata, then the spec's well-known order, issuer and
+# S256 checked), Dynamic Client Registration as a native loopback client, a
+# client the person enters (client_secret_basic) and a Client ID Metadata
+# Document; the authorization URL (S256, state, resource, scope); the callback
+# through the real middleware with no session (single-use state, RFC 9207 iss
+# checked before the token endpoint); tokens only in the vault under names
+# keys_manage, connect and the broker refuse; refresh before expiry and after a
+# 401, rotation, one refresh for concurrent calls, a refused refresh; step-up on
+# insufficient_scope; sign-out, disconnect and the sweep.
+test_mcp_oauth.py

@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Calendar</title>
+
+    <link rel="stylesheet" href="/css/tokens.css">
+    <link rel="stylesheet" href="/css/motion.css">
+    <link rel="stylesheet" href="/css/cseries-components.css">
+
+    <link rel="stylesheet" href="/system-apps/calendar/style.css">
+</head>
+<body class="cseries-scroll">
+    <div class="app">
+        <header class="app-header">
+            <div class="app-brand">
+                <img src="/system-apps/calendar/icon.svg" alt="" class="app-brand-icon">
+                <div class="app-brand-text">
+                    <div class="app-brand-title">Calendar</div>
+                    <div class="app-brand-sub label-sys">your events and your Host's scheduled work</div>
+                </div>
+            </div>
+            <button id="cal-new" class="cseries-btn primary" type="button">+ Event</button>
+        </header>
+
+        <div class="cseries-seam"></div>
+
+        <main id="cal-body" class="app-body cal-body">
+            <!-- ── The month: six weeks, Sunday first ── -->
+            <section class="cal-month" aria-label="Month">
+                <div class="cal-month-bar">
+                    <h2 id="cal-month-label" class="cal-month-label" aria-live="polite"></h2>
+                    <div class="cal-month-nav">
+                        <button id="cal-prev" class="cseries-btn ghost icon-only" type="button" aria-label="Previous month">
+                            <svg class="cal-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+                        </button>
+                        <button id="cal-today" class="cseries-btn ghost" type="button">Today</button>
+                        <button id="cal-next" class="cseries-btn ghost icon-only" type="button" aria-label="Next month">
+                            <svg class="cal-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6"/></svg>
+                        </button>
+                    </div>
+                </div>
+                <div class="cal-dow" aria-hidden="true">
+                    <span>Sun</span><span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span><span>Sat</span>
+                </div>
+                <div id="cal-grid" class="cal-grid" role="group" aria-labelledby="cal-month-label"></div>
+                <p id="cal-grid-note" class="cal-note" hidden></p>
+            </section>
+
+            <!-- ── The list, or one event in full ── -->
+            <section id="cal-side" class="cal-side" aria-label="Events">
+                <div id="cal-list-view" class="cal-list-view">
+                    <div class="view-toolbar cal-toolbar">
+                        <select id="cal-filter" class="cseries-select" aria-label="Which events">
+                            <option value="upcoming">Coming up</option>
+                            <option value="today">Today</option>
+                            <option value="all">Everything</option>
+                            <option value="tasks">Your Host's tasks</option>
+                            <optgroup label="One kind">
+                                <option value="type:pr_shipped">PRs shipped</option>
+                                <option value="type:app_built">Apps built</option>
+                                <option value="type:app_installed">Apps installed</option>
+                                <option value="type:inference_run">Inference runs</option>
+                                <option value="type:permission_granted">Permissions</option>
+                                <option value="type:daily_summary">Daily reports</option>
+                                <option value="type:research_task">Research</option>
+                                <option value="type:artifact_created">Artifacts</option>
+                            </optgroup>
+                        </select>
+                        <button id="cal-day-clear" class="cseries-btn ghost" type="button" hidden></button>
+                    </div>
+                    <div id="cal-banner" class="status-banner" hidden></div>
+                    <div id="cal-list" class="stack cal-list"></div>
+                    <button id="cal-more" class="cseries-btn ghost cal-more" type="button" hidden>Show more</button>
+                </div>
+
+                <article id="cal-detail" class="cal-detail" hidden>
+                    <div class="cal-detail-bar">
+                        <button id="cal-back" class="cseries-btn ghost" type="button">
+                            <svg class="cal-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m15 18-6-6 6-6"/></svg>
+                            Back
+                        </button>
+                    </div>
+                    <div id="cal-detail-banner" class="status-banner" hidden></div>
+                    <div id="cal-detail-body" class="cal-detail-body"></div>
+                </article>
+            </section>
+        </main>
+
+        <footer class="app-footer">
+            <span class="label-sys">calendar · 0.1.0</span>
+            <span id="cal-updated" class="label-sys app-footer-right">read: …</span>
+        </footer>
+    </div>
+
+    <!-- ── + Event ── -->
+    <div id="cal-compose" class="confirm-overlay" hidden>
+        <form id="cal-compose-form" class="confirm-box cal-form" role="dialog" aria-modal="true" aria-labelledby="cal-compose-title" novalidate>
+            <div id="cal-compose-title" class="confirm-title">Add an event</div>
+            <label class="cal-field">
+                <span class="detail-label">Title</span>
+                <input id="cal-f-title" class="cseries-input" type="text" maxlength="500" autocomplete="off" required>
+            </label>
+            <label class="cal-field">
+                <span class="detail-label">When</span>
+                <input id="cal-f-when" class="cseries-input" type="datetime-local" required>
+            </label>
+            <div class="cal-field-row">
+                <label class="cal-field">
+                    <span class="detail-label">Kind</span>
+                    <select id="cal-f-kind" class="cseries-select">
+                        <option value="event">Event</option>
+                        <option value="research_task">Research</option>
+                        <option value="pr_shipped">PR shipped</option>
+                        <option value="app_built">App built</option>
+                        <option value="app_installed">App installed</option>
+                        <option value="inference_run">Inference run</option>
+                        <option value="permission_granted">Permission granted</option>
+                        <option value="daily_summary">Daily report</option>
+                        <option value="artifact_created">Artifact</option>
+                    </select>
+                </label>
+                <label class="cal-field">
+                    <span class="detail-label">State</span>
+                    <select id="cal-f-status" class="cseries-select">
+                        <option value="scheduled">Scheduled</option>
+                        <option value="completed">Done</option>
+                        <option value="cancelled">Cancelled</option>
+                    </select>
+                </label>
+            </div>
+            <p id="cal-f-error" class="cal-form-error" role="alert" hidden></p>
+            <div class="confirm-actions">
+                <button id="cal-f-cancel" class="cseries-btn ghost" type="button">Cancel</button>
+                <button id="cal-f-save" class="cseries-btn primary" type="submit">Save</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- ── Are you sure ── -->
+    <div id="cal-confirm" class="confirm-overlay" hidden>
+        <div class="confirm-box" role="dialog" aria-modal="true" aria-labelledby="cal-c-title">
+            <div id="cal-c-title" class="confirm-title"></div>
+            <div id="cal-c-message" class="confirm-message"></div>
+            <input id="cal-c-input" class="cseries-input" type="text" maxlength="500" autocomplete="off" hidden>
+            <div class="confirm-actions">
+                <button id="cal-c-cancel" class="cseries-btn ghost" type="button">Keep it</button>
+                <button id="cal-c-ok" class="cseries-btn danger" type="button">OK</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/system-apps/calendar/app.js"></script>
+</body>
+</html>

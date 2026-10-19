@@ -1,0 +1,2 @@
+# 2026-10-15 (owner login review): a burst of wrong sign-ins gets five password checks, not one per request; a sign-out racing a session check is not undone by the cache; a non-ASCII email or setup code is a refusal, not a TypeError; the session cookie survives a neighbour cookie SimpleCookie rejects; an owner WebSocket from another origin, or another port of the same host, is refused. In-process; no database, no network.
+test_owner_login_unit.py

@@ -1,0 +1,8 @@
+# Every srcdoc, blob URL, data:text/html URL and frame document in the frontend is a
+# sealed sink of a registered surface (the run card registered here),
+# and the shared policy and each surface's own sealing code are measured in
+# headless Chromium against a loopback probe on a free port. Needs Playwright,
+# Chromium and node, which this lane already has for tests/ and
+# test_settings_restore_chromium.py; no pod, no DB, no network. Measured:
+# 15 s; six copies at once beside six of test_chat_visuals.py all passed.
+test_sandbox_csp.py

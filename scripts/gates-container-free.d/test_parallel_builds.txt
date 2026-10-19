@@ -1,0 +1,4 @@
+# Parallel builds — the phase scheduler on
+# row shapes, the three-way land on real git worktrees in temp dirs, plan-time
+# refusals, and pins on the door and the chain. No DB, no container.
+test_parallel_builds.py

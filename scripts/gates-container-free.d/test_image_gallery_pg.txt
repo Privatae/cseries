@@ -1,0 +1,6 @@
+# 2026-10-12: the gallery (image_engine._gallery) on the real kernel schema: both stores
+# merged newest first, the bookkeeping rows (last_attachment, analysis_*) never
+# listed and never hiding a stored picture, paging, and the asyncpg parameters as
+# Postgres takes them. Needs a database it creates (TEST_DSN / PEER_TEST_DSN, else a
+# throwaway cseries-postgres through docker).
+test_image_gallery_pg.py

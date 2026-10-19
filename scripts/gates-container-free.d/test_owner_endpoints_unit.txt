@@ -1,0 +1,2 @@
+# 2026-10-15 (local model servers): an owner-named model server address is stored in one normal form and bad ones are refused; a bastion serving the same model is listed and matched first; the owner's servers are still listed when the bastion table cannot be read. In-process; no database, no network.
+test_owner_endpoints_unit.py

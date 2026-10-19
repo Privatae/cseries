@@ -1,0 +1,4 @@
+# The network the two containers share, as compose's default network.
+# Nothing on it is published except the Host's ports in cseries-host.container.
+[Network]
+NetworkName=cseries_default

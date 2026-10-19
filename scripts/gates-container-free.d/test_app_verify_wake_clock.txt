@@ -1,0 +1,2 @@
+# A shipped app's readiness clock starts when its pod is up; a clean read at the deadline gets its settle read; a pod the platform never woke is "not checked", never failed, and spends no paid repair. No pod, no DB.
+test_app_verify_wake_clock.py

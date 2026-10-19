@@ -1,0 +1,12 @@
+# A model pull is an ASYNC JOB and the
+# host drives it the way it already drives backup_fetch. Two sub-ops on ONE op id —
+# a separate model:status would be ungranted in every signed grant already written —
+# so the dispatch budget is per SUB-op: a start keeps the 26-minute ceiling because a
+# published-0.24.0 box still answers it synchronously, a poll keeps 30 s. And a poll
+# for a job the machine has forgotten (a restart) is a question for the LEDGER, never
+# a failure: if the download landed the approval is spent and model:list proves it, so
+# the user is never asked to approve the same download twice; if it did not, nothing
+# was spent and the same approval still funds a retry.
+# Verified red by reverting mgmt_op_budget to the op-only form and dropping
+# _model_pull_restarted — 10 of 29 checks failed. No bastion, no DB, no network.
+test_model_pull_async.py

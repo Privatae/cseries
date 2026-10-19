@@ -1,0 +1,2 @@
+# The tool loop kept a call's result on its record only for `image_generator`, a tool that does not exist; the tool is `image_generate`. The gate reads that condition out of session.py and runs exactly those lines: every tool it names is registered, an image_generate generate call keeps its result (ids and links, no bytes), gallery, understand and every other tool keep nothing, and arguments that are not an object do not raise. Pure.
+test_image_result_on_record.py

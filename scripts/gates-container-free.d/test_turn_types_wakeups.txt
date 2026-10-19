@@ -1,0 +1,2 @@
+# 2026-09-26 (turn types, step 5 — design §4.5/§4.7): wake-ups run side by side in their own lanes, each under the type it was scheduled with; a typed turn schedules only under its own type; the plan is written into the thread before the task exists, and the fired turn is pointed at it; an inactive type runs nothing. Real runner, executor and loop against stubs; no pod, no DB, no model.
+test_turn_types_wakeups.py

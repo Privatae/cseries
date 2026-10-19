@@ -1,0 +1,8 @@
+
+# 2026-09-20 ("generate a picture of a horse"): the image engine's
+# two aiohttp sessions rode no proxy, so every image/vision call died on DNS
+# inside the pod; and the image-role recommender mined an unpublished-capability
+# provider's whole catalog, so the diagnostic offered a TTS model as image_gen's
+# "fix ready". Drives both engine paths against a recording aiohttp stand-in
+# and the cross-provider picker on the measured catalogs. No pod, no network.
+test_image_lane_egress_and_recommendation.py

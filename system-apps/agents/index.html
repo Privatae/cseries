@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agents</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="top">
+  <div class="brand"><span class="glyph">◇</span> Agents</div>
+  <div id="summary" class="summary"></div>
+  <div class="actions">
+    <button id="t-all" class="ghost on">All</button>
+    <button id="t-dispatched" class="ghost">Dispatched</button>
+    <button id="t-pool" class="ghost">On the pool</button>
+    <button id="t-scheduled" class="ghost">Scheduled</button>
+    <button id="refresh" class="ghost" title="Reload">↻</button>
+  </div>
+</header>
+<div id="contrast" class="contrast"></div>
+<div id="banner" class="banner"></div>
+<main class="split">
+  <aside id="list" class="list"></aside>
+  <section class="detail">
+    <header id="dhead" class="dhead"></header>
+    <div id="dscope" class="dscope"></div>
+    <div id="transcript" class="transcript"></div>
+    <footer class="dfoot">
+      <span class="lock">● read-only — the host dispatches and cancels</span>
+      <button id="jump" class="jump">Jump to live ↓</button>
+    </footer>
+  </section>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

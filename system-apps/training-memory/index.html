@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Training Memory</title>
+
+    <link rel="stylesheet" href="/css/tokens.css">
+    <link rel="stylesheet" href="/css/motion.css">
+    <link rel="stylesheet" href="/css/cseries-components.css">
+    <link rel="stylesheet" href="/system-apps/training-memory/style.css">
+</head>
+<body class="cseries-scroll">
+    <div class="app">
+        <header class="app-header">
+            <div class="app-brand">
+                <img src="/system-apps/training-memory/icon-64.png" alt="" class="app-brand-icon">
+                <div class="app-brand-text">
+                    <div class="app-brand-title">Training Memory</div>
+                    <div class="app-brand-sub label-sys">distill sessions into rules</div>
+                </div>
+            </div>
+        </header>
+
+        <div class="cseries-seam"></div>
+
+        <main class="app-body">
+
+            <section id="view-upload" class="app-view">
+                <div class="tm-card">
+                    <div class="tm-row label-sys">step 1 — source</div>
+                    <div class="tm-source-toggle">
+                        <label class="tm-radio">
+                            <input type="radio" name="source" value="upload" checked>
+                            <span>upload a folder or zip of session files</span>
+                        </label>
+                        <label class="tm-radio">
+                            <input type="radio" name="source" value="sdk">
+                            <span>use my recent claude code sessions · zero upload</span>
+                        </label>
+                    </div>
+                    <div class="tm-dropzone" id="dropzone">
+                        <div class="tm-dropzone-title">drop a <code>~/.claude/projects/&lt;workspace&gt;</code> folder or zip</div>
+                        <div class="tm-dropzone-sub label-sys">claude code sessions only · jsonl files</div>
+                        <input type="file" id="file" hidden webkitdirectory directory multiple>
+                        <input type="file" id="zip" hidden accept=".zip">
+                        <div class="tm-dropzone-actions">
+                            <button class="cseries-btn" id="pick-folder">choose folder</button>
+                            <button class="cseries-btn" id="pick-zip">choose zip</button>
+                        </div>
+                    </div>
+                    <label class="tm-field tm-field-conditional" id="sdk-field" hidden>
+                        <span class="label-sys">include sessions since</span>
+                        <input type="datetime-local" id="sdk-since" class="cseries-input">
+                        <span class="label-sys">leave blank for the last 24 hours</span>
+                    </label>
+                </div>
+
+                <div class="tm-card">
+                    <div class="tm-row label-sys">step 2 — role</div>
+                    <label class="tm-field">
+                        <span class="label-sys">role name</span>
+                        <input type="text" id="role" class="cseries-input"
+                               placeholder="coding · research · writing · ..." maxlength="100">
+                    </label>
+                    <div class="tm-suggestions" id="role-suggestions"></div>
+                </div>
+
+                <div class="tm-card">
+                    <div class="tm-row label-sys">step 3 — inference billing</div>
+                    <label class="tm-radio">
+                        <input type="radio" name="billing" value="byo" checked>
+                        <span>your own anthropic key · 50% batch discount on your bill · no markup</span>
+                    </label>
+                    <label class="tm-field tm-field-conditional" id="byo-field">
+                        <span class="label-sys">anthropic api key (optional — falls back to container env)</span>
+                        <input type="password" id="byo-key" class="cseries-input" placeholder="sk-ant-... or leave blank to use container env">
+                    </label>
+                </div>
+
+                <div class="tm-actions">
+                    <button class="cseries-btn primary" id="estimate-btn" disabled>estimate cost</button>
+                </div>
+            </section>
+
+            <section id="view-estimate" class="app-view" hidden>
+                <div class="tm-card">
+                    <div class="tm-row label-sys">estimate</div>
+                    <div class="tm-stats" id="estimate-stats"></div>
+                </div>
+                <div class="tm-actions">
+                    <button class="cseries-btn ghost" id="back-btn">back</button>
+                    <button class="cseries-btn primary" id="confirm-btn">run training</button>
+                </div>
+            </section>
+
+            <section id="view-running" class="app-view" hidden>
+                <div class="tm-card">
+                    <div class="tm-row label-sys">running</div>
+                    <div class="tm-phase" id="phase-line">extracting pairs…</div>
+                    <div class="tm-progress">
+                        <div class="tm-progress-bar" id="progress-bar"></div>
+                    </div>
+                    <div class="tm-counters" id="counters"></div>
+                </div>
+            </section>
+
+            <section id="view-review" class="app-view" hidden>
+                <div class="tm-card">
+                    <div class="tm-row label-sys">filter</div>
+                    <div class="tm-filter-strip">
+                        <label class="tm-field">
+                            <span class="label-sys">confidence ≥ <span id="conf-value">0.70</span></span>
+                            <input type="range" id="conf-slider" min="0.00" max="1.00"
+                                   step="0.05" value="0.70">
+                        </label>
+                        <div class="tm-checkrow">
+                            <span class="label-sys">type</span>
+                            <label><input type="checkbox" value="correction" checked> correction</label>
+                            <label><input type="checkbox" value="frustration" checked> frustration</label>
+                            <label><input type="checkbox" value="rejection" checked> rejection</label>
+                            <label><input type="checkbox" value="unclassified" checked> unclassified</label>
+                        </div>
+                        <div class="tm-checkrow">
+                            <span class="label-sys">kind</span>
+                            <label><input type="checkbox" value="interrupt" checked> interrupt</label>
+                            <label><input type="checkbox" value="tokens" checked> tokens</label>
+                            <label><input type="checkbox" value="short"> short</label>
+                        </div>
+                        <label class="tm-field">
+                            <span class="label-sys">session</span>
+                            <select id="session-filter" class="cseries-input">
+                                <option value="all">all</option>
+                            </select>
+                        </label>
+                        <label class="tm-field">
+                            <span class="label-sys">search</span>
+                            <input type="text" id="search-input" class="cseries-input"
+                                   placeholder="rule or correction text">
+                        </label>
+                        <label class="tm-checkrow">
+                            <input type="checkbox" id="show-no-toggle">
+                            <span>show classifier-rejected pairs (<span id="no-count">0</span>)</span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="tm-card tm-bulk-bar">
+                    <div class="tm-bulk-counts" id="bulk-counts">visible · pending · approved · edited · rejected</div>
+                    <div class="tm-bulk-actions">
+                        <button class="cseries-btn" data-bulk="approve_visible">approve all visible</button>
+                        <button class="cseries-btn" data-bulk="reject_visible">reject all visible</button>
+                        <button class="cseries-btn"
+                                data-bulk="reject_below_conf">reject below conf
+                            <input type="number" id="reject-conf" value="0.70"
+                                   min="0.4" max="1.0" step="0.05" class="tm-inline-input">
+                        </button>
+                        <button class="cseries-btn" data-bulk="set_role">set role
+                            <input type="text" id="bulk-role" class="tm-inline-input"
+                                   placeholder="coding">
+                        </button>
+                        <button class="cseries-btn" data-bulk="set_severity">set severity
+                            <select id="bulk-severity" class="tm-inline-input">
+                                <option value="gentle">gentle</option>
+                                <option value="firm">firm</option>
+                                <option value="hard">hard</option>
+                            </select>
+                        </button>
+                    </div>
+                </div>
+
+                <p id="not-classified-note" class="tm-note" hidden></p>
+
+                <div id="review-list"></div>
+
+                <div class="tm-actions">
+                    <button class="cseries-btn ghost" id="review-back-btn">back</button>
+                    <button class="cseries-btn primary" id="commit-btn" disabled>commit 0 approved →</button>
+                </div>
+            </section>
+
+            <template id="tm-card-template">
+                <div class="tm-pair-card" data-pair-id="">
+                    <div class="tm-pair-head">
+                        <span class="tm-pair-conf"></span>
+                        <span class="tm-pair-type label-sys"></span>
+                        <span class="tm-pair-session label-sys"></span>
+                        <span class="tm-pair-escalate label-sys" hidden>⚠ would escalate #<span></span></span>
+                        <span class="tm-pair-status label-sys"></span>
+                    </div>
+                    <textarea class="tm-pair-rule cseries-textarea" rows="3"></textarea>
+                    <div class="tm-pair-meta">
+                        <label class="label-sys">role
+                            <input type="text" class="tm-pair-role cseries-input" maxlength="100">
+                        </label>
+                        <label class="label-sys">severity
+                            <select class="tm-pair-severity cseries-input">
+                                <option value="gentle">gentle</option>
+                                <option value="firm">firm</option>
+                                <option value="hard">hard</option>
+                            </select>
+                        </label>
+                    </div>
+                    <details class="tm-pair-context">
+                        <summary class="label-sys">context</summary>
+                        <div class="tm-pair-correction"></div>
+                        <div class="tm-pair-rejected"></div>
+                    </details>
+                    <div class="tm-pair-actions">
+                        <button class="cseries-btn" data-action="approve">approve</button>
+                        <button class="cseries-btn" data-action="reject">reject</button>
+                        <button class="cseries-btn ghost" data-action="reset">reset</button>
+                    </div>
+                </div>
+            </template>
+
+            <section id="view-report" class="app-view" hidden>
+                <div class="tm-card">
+                    <div class="tm-row label-sys">complete</div>
+                    <div class="tm-stats" id="report-stats"></div>
+                </div>
+                <div class="tm-card" id="undo-card">
+                    <div class="tm-row label-sys">just changed your mind?</div>
+                    <p>Soft-undo this commit. Window <span id="undo-window">10 min</span>.</p>
+                    <button class="cseries-btn" id="undo-btn">undo commit</button>
+                    <div class="label-sys" id="undo-status"></div>
+                </div>
+                <div class="tm-card">
+                    <div class="tm-row label-sys">sample rules</div>
+                    <ul class="tm-rules" id="sample-rules"></ul>
+                </div>
+                <div class="tm-actions">
+                    <button class="cseries-btn" id="new-run-btn">run another</button>
+                </div>
+            </section>
+        </main>
+
+        <footer class="app-footer">
+            <span class="label-sys">training-memory · <span id="footer-version">—</span></span>
+            <span class="label-sys app-footer-right" id="footer-status" aria-live="polite">ready</span>
+        </footer>
+    </div>
+
+    <script src="/system-apps/training-memory/app.js"></script>
+</body>
+</html>

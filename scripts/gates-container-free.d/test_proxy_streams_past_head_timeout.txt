@@ -1,0 +1,2 @@
+# total=60 kept running while an app's body streamed, so a download, SSE stream or long-poll from the user's own app was cut at 60 s with no error. Both proxy lanes bound only the wait for the HEAD (asyncio.wait_for, 60 s, still a 504 that says so and is never replayed); a body that streams past it arrives whole. A real aiohttp upstream on loopback with every timeout scaled down 100x; no pod, no DB.
+test_proxy_streams_past_head_timeout.py

@@ -1,0 +1,7 @@
+# Peer/owner hardening that needs no DB, so it runs on every merge: a bastion
+# name cannot write markdown into the introduction message, the distinct-peer
+# ceiling is enforced before the inserts, and an owner claim's signature is
+# verified over '<owner>\n<claimed_at>' before it is stored. The peer gates
+# proper are infra-only and SKIP without a Postgres — a skip proves nothing,
+# and these three must not regress quietly.
+test_peer_claim_hardening.py

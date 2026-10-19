@@ -1,0 +1,2 @@
+# The training_memory loader's soft lane matches whole words of four letters or more, scoped by role. Each check fails on the tree before the change. Server: TEST_PG_DSN / PEER_TEST_DSN / TEST_DSN, else a docker throwaway; SKIP-LOUD (exit 2) with neither.
+test_learned_rule_lanes_pg.py

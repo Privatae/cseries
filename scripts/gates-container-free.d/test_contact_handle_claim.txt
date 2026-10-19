@@ -1,0 +1,30 @@
+
+# 2026-09-17 (a handle belongs to the FIRST entity that claimed it). `contacts`
+# is UNIQUE on `handle` alone (v048:28) and BOTH upsert paths wrote
+# peer_entity_id into their ON CONFLICT branch, so a second entity arriving
+# under a handle this host already held RE-POINTED the existing contact at
+# itself. peer_entity_id is what the People send path resolves a person's HOST
+# from — find_human_contact's own docstring says so — so the messages follow the
+# row. Reachable, and the grant path is the sharper one: for a host grant the
+# handle is read straight off the SENDER'S payload
+# (body_payload.from_handle, memory_handlers.py) and an endpoint_grant is
+# admitted by domain_policy._REQUEST_KINDS with no relationship precondition on
+# the bridge leg. The rule applied is roster.pin_key's first-key-wins, and the
+# enforcement is IN THE SQL (both branches carry `WHERE contacts.peer_entity_id
+# IS NULL OR contacts.peer_entity_id = EXCLUDED.peer_entity_id`) because the
+# Python check is check-then-write and two concurrent grants would both pass it.
+# BOTH CALLERS are covered on purpose: this branch is the second caller of
+# accept_request_service and the first is the shipped Circles Accept button —
+# fixing only the new one would leave the busier path wrong, which is the
+# mistake inbox_deliver's own comment records.
+# The ALLOW direction is asserted too: the entity that already holds a handle is
+# still admitted and a handle with no entity bound to it can still be bound. A
+# guard that refuses everyone passes every deny-test and breaks first contact.
+# Verified red by mutation (2026-09-17): removing the SQL guard from both call
+# sites fails 2; removing the Python pre-check from the grant path fails 1 (the
+# data is still protected by the SQL, which is the layering working).
+# Also proven against a real Postgres 18.4: the hijack is refused on both
+# statements (INSERT 0 0, zero rows RETURNING) while the legitimate holder
+# re-accepting and an unbound handle both still write.
+# Recording fake pool, real functions; no DB, no container, no network.
+test_contact_handle_claim.py

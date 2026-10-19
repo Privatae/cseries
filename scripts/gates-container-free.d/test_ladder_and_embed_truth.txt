@@ -1,0 +1,4 @@
+# A migrated ladder's bench step is the REST of the
+# bench (migration + startup repair + runtime); embedding coverage fields say what
+# they mean (your endpoint vs platform catalog; ready = coverage complete).
+test_ladder_and_embed_truth.py

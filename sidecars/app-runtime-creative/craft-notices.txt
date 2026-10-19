@@ -1,0 +1,31 @@
+# The notices each ArtCraft program's source carries at its pinned tag, which
+# its release archive leaves out (sidecars/app-runtime-creative/Dockerfile
+# reads this file): <name> <version> <file> <sha256>. Fetched from
+# raw.githubusercontent.com/storytold/<name>/v<version>/<file>, checked against
+# the sha256 (a tag can be moved; the checksum cannot), and kept beside the
+# program's licence texts in /opt/craft/<name>/doc, because the image
+# redistributes the programs. Every program in crafts.txt has its NOTICE here;
+# the version must be the one crafts.txt pins (2026-10-11).
+photocraft  0.7.0 NOTICE         fb7d6f0e57c396b6c94f6315d3dba13048a296d81e7546d33e2b7c77c71ea147
+photocraft  0.7.0 ATTRIBUTION.md 38a612e93584cb2ff662fde0c5e85ecbe2453a6e2ddd39eda4684e287da9b289
+filmcraft   0.6.0 NOTICE         5761787313b9d6c13dd5f03da2e04209ad7bd08eff8920edfd184141d791195c
+filmcraft   0.6.0 ATTRIBUTION.md 9931c36c9bcc27d36f7f591da26754f30bf4e3be543d7cb53a9dad2950461b26
+vectorcraft 0.9.0 NOTICE         6f7d5ee568de2b9f269af2ca4de11230eaaf1d16d3e6e817a13a17e5a669035f
+vectorcraft 0.9.0 ASSETS.md      e2474c9ebd58fcbe7d02ced83a33fcf91a89ea5d2ee09034025c243d3203e749
+lightcraft  0.6.0 NOTICE         059db090e164729bed5d28bf44be2a5b85c7d285a3a2afc889231efdf1f4a905
+pdfcraft    0.6.0 NOTICE         8df0defad7f2a06fd60a9b3bf439272abfcb90b5ebd0adb177f4479edd313c9e
+pdfcraft    0.6.0 ATTRIBUTION.md 69f395bb24a8fce71b64ff31ff5f50a8fd269e22b6d3ecd903d3548087c14446
+effectcraft 0.8.0 NOTICE         d0bf841555c56b6136745a61ec529c9a558c9dd7404d377d82f86d10e0e9b530
+effectcraft 0.8.0 ATTRIBUTION.md faf991c4a458b5954949537ed3d377bc8b7bde1bb57bc11ff1db4fb99b3909e5
+designcraft 0.6.0 NOTICE         911bdf5edf975c7949dbd56351d3d6c521001be7e44ad56c00bb9075b02b4e47
+designcraft 0.6.0 ASSETS.md      e0ef96525996e350e6d23792658adbabd03847a775e36698f0e93b81cede2952
+soundcraft  0.5.0 NOTICE         977949446409bf907b265d765f024d3194c09251c2a65a4ca418cf5cb2dc84c0
+soundcraft  0.5.0 ATTRIBUTION.md aaf3fa13f18d7bd84d6827b40a5a2added7548ffcef3ecde9aa322ccfaa5698b
+cadcraft    0.5.0 NOTICE         cdfbfa6606bc6c389758cfdc5addeccb47a2a2cc7bfb7fcc4be9a2b783bd1561
+cadcraft    0.5.0 ATTRIBUTION.md f7c53dffd94302510948de78af6b646c2eb355fe6048ed655c60aff45ff51a58
+wordcraft   0.5.0 NOTICE         b5d978d17cdec6a62eaa8cffb46085604650cd9c9eaf8d4f1ed6654e91cdf7fb
+wordcraft   0.5.0 ATTRIBUTION.md 03a7a53f058b769ab1f1ba0d34bff08822a4cf3da2b9461e97503a994f30dba9
+gridcraft   0.5.0 NOTICE         7c948d5b56639a6d53c362ce0b54a79badd6f272c542f0fc0f22e9ec31c61c2b
+gridcraft   0.5.0 ATTRIBUTION.md 56b465eebb50e1b424c33291119529e45c8636b806d4432199ba7d57bc555c50
+deckcraft   0.5.0 NOTICE         77b755b4c3c7c2076076547580001a2ecdefd270dcd6536ed8a7da1b64960a45
+deckcraft   0.5.0 ATTRIBUTION.md 66d91e91286edf2a85a49045df92e8f0f460f4ba9f9a78173dcb66bc089039ae

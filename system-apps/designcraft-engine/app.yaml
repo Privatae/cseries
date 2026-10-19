@@ -1,0 +1,44 @@
+# DesignCraft Engine: the open-source DesignCraft
+# page-layout program (github.com/storytold/designcraft, MIT or Apache-2.0), run headless for the
+# Host. The program is in the creative toolchain image, pinned by sha256
+# (sidecars/app-runtime-creative/crafts.txt); this app is a recipe: the command
+# starts the image's own MCP bridge (creative_mcp.py), and `mcp` makes that
+# server one of the Host's connections when the app is installed
+# (manifest.McpSpec). The whole ArtCraft set, so a person can
+# make everything they need. Memory: 48 to 60 MB for two pages with a picture, 103 to 157 MB for 64
+# pages (measured). vcpus 1: 4 CPUs made no difference.
+# A window is billed at its ceiling.
+id: designcraft-engine
+name: DesignCraft Engine
+description: Your Host lays out pages with DesignCraft, an open-source page-layout program with text frames, columns, paragraph styles and InDesign (IDML) files. It sets flyers, zines, reports and magazines with your pictures, exports them to PDF, and everything it makes appears in this window.
+icon: icon.png
+icon_small: icon-64.png
+# 1.0.1 (2026-10-18): the product is renamed C-Series (names, paths, env vars).
+# 1.0.2 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
+version: "1.0.2"
+provenance: standard
+entrypoint: index.html
+permissions: []
+network: []
+resources:
+  baseline_memory_mi: 512
+  vcpus: 1
+runtime:
+  kind: process
+  image: creative
+  command: ["python3", "/opt/app-runtime/creative_mcp.py", "designcraft"]
+  ready_path: /health
+  ready_timeout_seconds: 120
+mcp:
+  path: /mcp
+window:
+  title: DesignCraft Engine
+  width: 900
+  height: 640
+  resizable: true
+prompt_behavior:
+  what_it_is: |
+    DesignCraft Engine is the person's own page-layout program that you operate: an MCP
+    server named designcraft-engine (skill 'designcraft-engine' says how). Its window shows the files
+    you made there.
+  user_path: "the DesignCraft Engine app (install it from the App Store)"

@@ -1,0 +1,2 @@
+# 2026-09-30 (Ships, the app): the Ships app declares exactly read:ships and write:ships, calls only routes that exist under a scope it declares, writes nothing through innerHTML, is image-baked with a current signed bundle and has a dock glyph; kernel_op exposes /api/ships to the Host and walls clearing a machine's pinned key; the ships platform card is appended after machines and findings and does not take the servers question. No pod, no DB.
+test_ships_app.py

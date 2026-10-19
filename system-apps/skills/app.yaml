@@ -1,0 +1,74 @@
+id: skills
+name: Skills
+description: The steps your Host follows for each kind of job — its own skills, with every version kept, and the ones that ship with it. Read, edit, retire or restore them.
+icon: icon.png
+icon_small: icon-64.png
+entrypoint: index.html
+system: true
+# 0.1.3 (2026-08-25): prompt_behavior called this "a read-only catalog". It
+# writes twice — the skills-folder path (app.js:34-44 -> POST
+# /api/skills/location) and the embedding-model switch (index.html:57-64,
+# app.js:148-160 -> POST /api/embedding/switch), which is exactly why this
+# manifest holds write:inference_routing. Manifest-only change.
+# 0.1.4 (2026-09-23): a model with no price is labelled "free", not "free
+# (local)" — the platform no longer prices embeddings at all (the wallet that
+# charged them was removed), so platform-served models are free too.
+# 0.1.5 (2026-10-01): the /api/skills routes now require a scope. Choosing
+# the folder (POST /api/skills/location) chooses the rules the Host's own skill
+# loader reads, and it had no check at all; it takes write:files, which this
+# manifest now declares. The reads take read:files, already declared.
+# Manifest-only change; bundle repacked.
+# 0.1.6 (2026-10-01): the HTML escape helper escapes both quotes as well, so a
+# value from the Host, a machine or a provider stays inside the attribute it
+# is written into. App-only change.
+# 0.2.0 (2026-10-05): the app shows
+# the Host's own skills (host_skills, migrations/v207) beside the platform's,
+# with each one's versions (author and diff), and the person edits one
+# (checked against the skill standard, author 'person'), retires it or
+# restores any version. The folder picker (POST /api/skills/location) is
+# removed: Host skills live in the Host's database, so a folder choice had
+# nothing left to choose. The embedding-model panel is removed: it was a copy
+# of the Memory app's (both posted /api/embedding/switch), and with it the
+# read:inference_catalog and write:inference_routing scopes it alone needed.
+# The description no longer says these are files "your coding engines
+# follow": no code hands them to a coding engine. Bundle repacked.
+# 0.2.1 (2026-10-06): a Host skill
+# for an MCP server is marked stale when the server's tool list changed after
+# the version written, so it gets revised. App-only change; bundle repacked.
+# 0.2.2 (2026-10-18): a version the Host wrote in a turn that read untrusted
+# content (migrations/v232) shows a "review" mark in the list and its versions,
+# and its page says what that mark does and that saving it (changed or not)
+# clears it. App-only change; bundle repacked.
+# 0.2.3 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
+version: "0.2.3"
+# Environment-catalog facts (host-facing, code-true). Source for the L1
+# topology block + describe_app — NOT a surface_role body (this is a control
+# panel, not a conversational surface): what_it_is/user_path only.
+prompt_behavior:
+  what_it_is: |
+    Skills shows the skills: the steps the Host follows to do one kind of job
+    with what it already has, how it checks the result and what it does when
+    that fails. There are two kinds. The Host's own skills are ones it wrote
+    for itself with context(action='write', path='skills/<name>'); every
+    change is kept as a new version, and the user can read each version's
+    changes, edit a skill, retire it or restore an old version here. An edit
+    is checked against the same skill standard a Host write is, and a refused
+    edit lists every rule it broke. A skill the Host wrote in a turn that read
+    untrusted content is marked for review here; the user's save clears it. The platform's skills ship with the Host
+    and are read-only here. A turn type can name either kind as its skill.
+  user_path: "the Skills app, in the dock"
+
+
+window:
+  title: Skills
+  width: 880
+  height: 620
+  resizable: true
+  min_width: 560
+  min_height: 400
+
+permissions:
+  - read:files
+  # 0.2.0: PUT /api/skills/host/{name} and POST …/retire, …/restore — the
+  # person's edits to the Host's own skills.
+  - write:files

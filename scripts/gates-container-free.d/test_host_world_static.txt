@@ -1,0 +1,2 @@
+# The kernel reads the Host's own schema only through brain/mastercode/world_db.py — no other server/ or brain/ string names an object in `world`, world_db takes no pool but host_world's, and the `data` dispatch branch hands it none. A view or function the Host wrote runs with the reader's rights, so a read as `entity` would run it as the superuser. AST walk, no database.
+test_host_world_static.py

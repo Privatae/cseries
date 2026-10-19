@@ -1,0 +1,115 @@
+# runtime-ddl-allowlist.txt — the runtime-DDL backlog, and the ONLY thing
+# scripts/test_no_runtime_ddl.py will forgive.
+#
+# Every file below still creates or alters its own schema at runtime. Schema
+# belongs in migrations/*.sql and nowhere else; these are the sites not yet
+# moved there.
+#
+# THIS LIST ONLY EVER SHRINKS. Adding a file to it is not a way to land new
+# runtime DDL — it is a reviewer-visible admission that a band went backwards.
+# The gate also FAILS when an entry here no longer carries DDL (or no longer
+# exists), so a migrated band cannot leave a standing exemption behind for the
+# next CREATE to land under. The end state of this file is empty, at which point
+# the kernel needs DDL rights only at boot and the DB role split's strong form
+# becomes available.
+#
+# Seeded: 163 statements across 26 files — 42 CREATE TABLE, 46 CREATE
+# INDEX, 73 ALTER TABLE, 1 CREATE FUNCTION, 1 CREATE TRIGGER.
+#
+# WORKED OFF SINCE:
+#   Band B — 7 files, 28 statements. Now 135 across 19.
+#     applications/storage.py, applications/update_check.py, backup_ship.py,
+#     browser_autofill.py, network/nac_dcn.py, routes/appearance.py,
+#     routes/embed.py. Only two of the seven needed any new SQL: v141 declares
+#     browser_form_grant and v142 declares entity_appearance — the two tables in
+#     that set that no .sql declared anywhere. Everything else those modules
+#     created was already declared in init-db.sql or a shipped migration, so the
+#     runtime DDL was a mirror of it and deleting it was the whole change. That
+#     is the normal case here, not the lucky one: of the 36 tables,
+#     25 are already fully declared. (The delta file buckets 37 rows and counts
+#     26, because it also carries dcn_stores — which the kernel ALTERs at
+#     runtime but never creates, so it is not one of the 36.)
+#
+#   The network/NAC cluster — 8 files, 50 statements. Now
+#     85 across 11. bastion_enroll.py, machine_map.py, machine_offers.py,
+#     nac_agents.py, nac_mgmt.py, pairing_grants.py, peer_discovery.py,
+#     topology.py. Thirteen of the sixteen tables were already declared, so
+#     again the SQL is small: v144 declares nac_agent_audit and
+#     nac_bastion_suspend and adds the four columns four hosts are missing
+#     (nac_agent_activity.family/kind/ppid, network_bastion_heartbeat.models),
+#     v145 declares bastion_pairing_tokens. One thing stayed in Python on
+#     purpose — nac_agents.py keeps its REVOKE of host_recall on
+#     nac_agent_delegations, which is the runtime half of v139's exception for
+#     a plaintext bearer token. That is not schema; deleting it would have
+#     handed the recall role read access to delegation tokens.
+#
+#   Band C — 8 files, 66 statements. Now 19 across 3, and
+#     server/ IS EMPTY. applications/registry.py, applications/tokens.py,
+#     applications/trust_store.py, backup_key.py, routes/compute.py,
+#     routes/context.py, vault/identity.py, vault/store.py. ONE migration
+#     (v147) covers all eight, and it is 15 statements against their 66:
+#     4 CREATE TABLE (kernel_secrets, vault_identity_pubkey, vault_envelope,
+#     vault_audit), 3 INDEX, 6 ALTER TABLE (each ADD COLUMN), 1 backfill UPDATE,
+#     1 REVOKE. (This line once read "1 CREATE TABLE, 6 ADD COLUMN, 1 backfill
+#     UPDATE" — the count from BEFORE the three vault tables moved into v147.
+#     It is the summary whoever works the next
+#     band reads, so it is measured from the file, not carried forward.)
+#     Every other table in the band was already fully declared — context.py's
+#     29 statements and compute.py's 17 needed no new SQL at all, and
+#     compute.py's own comments had named the canonical migration (v079, v080,
+#     v089, v112, v114, v128) beside each statement it mirrored.
+#     Established by BUILDING the declared schema — init-db.sql + all 142
+#     shipped migrations applied under ON_ERROR_STOP=1 to a clean
+#     cseries-postgres — and diffing it column-by-column and index-by-index
+#     against all 8 live hosts, rather than trusting those comments.
+#     Two things stayed in Python, both deliberate, both the nac_agents.py case
+#     above: tokens.py keeps the REVOKE half of _SECRET_SCHEMA (now
+#     to_regclass-guarded, because the CREATE that made the guard unnecessary
+#     is gone), and v147 carries its own matching revoke, because a table
+#     created inside the migration loop is created AFTER v139's ALTER DEFAULT
+#     PRIVILEGES has already armed on that same boot.
+#
+#   brain/ — 3 files, 19 statements. THE LIST IS NOW EMPTY.
+#     context_backends.py, dcn.py, memory_engine.py. NO SQL was needed for any
+#     of it: all six tables (context_backend_meta, context_backend_locations,
+#     dcn_stores, dcn_files, dcn_chunks, dcn_chunk_previews) are declared in
+#     v076, v077 and v091, and so are the dcn_preview_tier_guard function
+#     (v091:143) and its trigger (v091:164). Measured rather than taken from
+#     those modules' own "mirrors the migration exactly" comments: every one of
+#     the 48 host/table pairs is IDENTICAL to the declared schema on columns,
+#     types, nullability, defaults, indexes and constraints, and pg_proc /
+#     pg_trigger carry the function and trigger on all 8 hosts.
+#     memory_engine.ensure_embedding_index was the only interpolated DDL in the
+#     tree. It had no callers at all, the four indexes it could build are
+#     already declared (init-db.sql, v044, v070, v071), and all four are present
+#     on all 8 hosts — so it was dead three times over.
+#
+#   server/  144 across 23 files — the first survey's original set.
+#   brain/    19 across  3 files — added later, worked off the
+#            same day. The DDL in context_backends.py and dcn.py was on a
+#            REQUEST path (both reached from server/routes/context_manager.py),
+#            so opening the Context Manager issued CREATE TABLE as the `entity`
+#            role exactly like a server/ module did.
+#
+# One file under these roots holds DDL and is NOT here, because it is out
+# of scope rather than backlog — there is nothing to migrate. It is named in
+# SQLITE_MODULES / NON_EXECUTED_DDL_MODULES in the gate and re-validated on every
+# run: brain/mastercode/sandbox/test_sql_proxy.py's DDL strings are test inputs
+# to the SQL authorizer, executed by nothing. brain/codesearch/store.py and
+# server/integrations/core/storage.py were once SQLite; their
+# tables are declared in migrations/v200 and v201 now.
+#
+# Docstrings are excluded and SQL comments stripped before matching. When
+# server/applications/registry.py was still on this list that rule is what made
+# it count 7 and not 8 — its `--` comment sat inside a real SQL literal.
+#
+# One repo-relative path per line. Blanks and #-comments ignored.
+#
+# ── EMPTY. ────────────────────────────────────────────────────────────────────
+# Nothing under server/ or brain/ creates or alters its own schema at runtime.
+# Schema lives in init-db.sql and migrations/*.sql, and nowhere else.
+#
+# This file stays, and the gate stays wired into scripts/gates-container-free.txt,
+# because an empty allowlist is what makes the gate a RATCHET: the next CREATE
+# TABLE that lands in a feature module fails the merge instead of being added
+# here. Do not delete it because it looks finished.

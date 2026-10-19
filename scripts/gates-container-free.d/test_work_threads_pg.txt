@@ -1,0 +1,2 @@
+# Parallel work from the chat: one message carrying two tickets runs as two internal threads in a project the Host makes without asking; each owns a work item (v226), writes only its own, and reads its sibling's status and findings at every turn start; the activity panel lists both with their steps; each finish posts one line into the topic the run started from; an internal thread is never a topic-pick candidate. Fresh clone of the KERNEL's schema on TEST_DSN / PEER_TEST_DSN, else a docker throwaway.
+test_work_threads_pg.py

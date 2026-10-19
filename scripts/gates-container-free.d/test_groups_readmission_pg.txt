@@ -1,0 +1,13 @@
+
+# 2026-09-17 (groups, the REAL-engine half of the re-admission fix). The
+# fake-pool gate above pins the decision logic, and for this one property that
+# is not enough: re-admission IS a SQL predicate — `status <> 'revoked'`, a
+# `payload->>'group_id'` extraction and an `interval` comparison — so a stubbed
+# pool can only prove a Python re-implementation of the predicate agrees with
+# itself. This drives the real enqueue / revoke / reconcile functions against a
+# real Postgres over the real v153+v154 migrations, in a scratch schema it
+# creates and drops. SKIPS cleanly when TEST_DATABASE_URL is unset, the same
+# pattern the Go side uses, so it is free in this lane and does the real work
+# wherever a scratch database exists. Verified to FAIL against the original
+# predicate: first pass still grants, re-admission does not.
+test_groups_readmission_pg.py

@@ -1,0 +1,2 @@
+# Dropped design tokens are named in the contract's warning; a bar outside 28-120 px is refused naming its size and the range.
+test_desktop_contract_names_drops.py

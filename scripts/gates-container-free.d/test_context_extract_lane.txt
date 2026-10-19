@@ -1,0 +1,9 @@
+# The context-EXTRACTION lane. Two of its checks
+# guard defects this lane actually hit: list_bastions returns the token as "id"
+# and reading "token_id" dispatches to None (which reads as an offline machine,
+# not as a bug), and the "ctx_" prefix on the op name is what puts it in the dcn
+# caps family on the bastion — opFamily returns "" for an unknown name and
+# capsAllow then ALLOWS it, so a rename on either side of the wire silently
+# ungates an extractor for every member pairing. Static + imports; no bastion,
+# no DB, no network.
+test_context_extract_lane.py

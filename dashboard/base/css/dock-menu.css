@@ -1,0 +1,209 @@
+/* ================================================================
+ * C-Series — Dock Menu (app launcher popup)
+ *
+ * Anchored above the taskbar, bottom-left. Replaces the old
+ * AppLauncher window with a proper start-menu-style popup.
+ * ================================================================ */
+
+/* ——— Backdrop overlay ————————————————————————— */
+.dock-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 900;
+    background: rgba(12, 10, 20, 0.35);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    animation: cseries-fade-in var(--dur-state) var(--ease-cseries);
+}
+
+/* ——— Menu panel ——————————————————————————————— */
+.dock-menu {
+    position: fixed;
+    left: 8px;
+    bottom: calc(var(--taskbar-h) + 8px);
+    width: 560px;
+    max-height: min(620px, calc(100vh - var(--taskbar-h) - 28px));
+    background: var(--cseries-night);
+    border: 1px solid var(--cseries-mist);
+    border-radius: var(--radius-lg);
+    box-shadow: var(--cseries-shadow-window-focus);
+    z-index: 950;
+    display: flex;
+    flex-direction: column;
+    animation: cseries-window-in var(--dur-panel) var(--ease-cseries);
+    overflow: hidden;
+}
+
+@supports (backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px)) {
+    .dock-menu {
+        background: rgba(14, 20, 22, 0.86);
+        backdrop-filter: blur(22px) saturate(1.15);
+        -webkit-backdrop-filter: blur(22px) saturate(1.15);
+    }
+}
+
+/* ——— Head: logo + search ————————————————————— */
+.dock-head {
+    padding: 18px 20px 14px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.dock-brand {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.dock-logo {
+    width: 48px;
+    height: 48px;
+    object-fit: contain;
+    filter: drop-shadow(0 0 8px rgba(127, 207, 174, 0.4));
+}
+
+.dock-brand-text {
+    flex: 1;
+}
+
+.dock-brand-title {
+    font-family: var(--font-display);
+    font-size: 17px;
+    font-weight: 600;
+    color: var(--cseries-paper);
+    letter-spacing: 0.02em;
+}
+
+.dock-brand-sub {
+    color: var(--cseries-ash);
+}
+
+/* ——— Grid area ———————————————————————————————— */
+.dock-grid-wrap {
+    padding: 14px 20px;
+    overflow-y: auto;
+    flex: 1;
+}
+
+.dock-section-label {
+    color: var(--cseries-ash);
+    margin-bottom: 14px;
+}
+
+.dock-grid {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 8px;
+}
+
+/* ——— App tile in dock ————————————————————————— */
+.dock-tile {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 4px 8px;
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: var(--radius-md);
+    cursor: pointer;
+    color: inherit;
+    font-family: inherit;
+    transition: background var(--dur-hover) var(--ease-cseries),
+                border-color var(--dur-hover) var(--ease-cseries);
+}
+
+.dock-tile:hover {
+    background: var(--cseries-twilight);
+    border-color: rgba(55, 65, 81, 0.5);
+}
+
+.dock-tile:hover .dock-tile-icon {
+    border-color: var(--cseries-ember-ring);
+}
+
+.dock-tile-icon {
+    width: 48px;
+    height: 48px;
+    display: grid;
+    place-items: center;
+    background: linear-gradient(160deg, rgba(34, 48, 52, 0.6), rgba(10, 14, 15, 0.9));
+    border: 1px solid rgba(55, 65, 81, 0.5);
+    border-radius: var(--radius-md);
+    transition: border-color var(--dur-hover) var(--ease-cseries);
+}
+
+.dock-tile-icon svg {
+    width: 34px;
+    height: 34px;
+}
+
+.dock-tile-icon img {
+    width: 34px;
+    height: 34px;
+    object-fit: contain;
+}
+
+.dock-tile-icon .dock-tile-letter {
+    font-family: var(--font-display);
+    font-size: 20px;
+    font-weight: 600;
+    color: var(--cseries-linen);
+}
+
+.dock-tile-name {
+    font-family: var(--font-body);
+    font-size: 10.5px;
+    font-weight: 600;
+    /* Tight enough that ORCHESTRATOR / CONNECTIONS fit a tile without
+       breaking mid-word. */
+    letter-spacing: 0.05em;
+    text-transform: uppercase;
+    color: var(--cseries-linen);
+    text-align: center;
+    max-width: 100%;
+    word-break: normal;
+    overflow-wrap: normal;
+    line-height: 1.3;
+}
+
+/* ——— Footer ——————————————————————————————————— */
+.dock-footer {
+    padding: 10px 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.dock-footer-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.dock-footer-left .label-sys {
+    color: var(--cseries-linen);
+}
+
+.dock-footer-right {
+    color: var(--cseries-ash);
+}
+
+/* ——— Empty / no matches ——————————————————————— */
+.dock-empty {
+    grid-column: 1 / -1;
+    padding: 32px 20px;
+    text-align: center;
+    color: var(--cseries-linen);
+    font-size: var(--text-sm);
+    line-height: var(--leading-relaxed);
+}
+
+.dock-empty-title {
+    display: block;
+    font-family: var(--font-display);
+    font-size: var(--text-md);
+    color: var(--cseries-paper);
+    margin-bottom: var(--space-1);
+}

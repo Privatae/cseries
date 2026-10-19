@@ -1,0 +1,7 @@
+# A groups-mode Host
+# sends byte-identical tool lists and runs every gate as before; in search mode
+# find_tools lists only what the permission check admits, read runs read-safe
+# tools through the by-name read path and refuses actions, door calls are
+# checked against the full schema, and every name-keyed check judges
+# read(tool=X) / operate(tool=X) as X — except the ephemeral write block.
+test_tool_search_doors.py

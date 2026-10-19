@@ -1,0 +1,2 @@
+# close_turn, the Host's structured end of turn — strict schema, registered on every turn / surface / type and never an agent's or operate's, terminal only with reply text and as the only call (the loop's exit guards then run on it), the per-model arrival metric on context_ledger, the signal on metadata.close_turn, and the topic/title, preference and goal writes. Stub pool; no pod, no DB, no model.
+test_close_turn.py

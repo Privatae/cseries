@@ -1,0 +1,1 @@
+test_media_fill_finds_frames.py         # real Postgres with pgvector (MEDIA_FILL_TEST_DSN/PEER_TEST_DSN/TEST_DSN, else a throwaway cseries-postgres) on a fresh clone of the KERNEL's schema (scripts/kernel_schema.py) — it used to drop user_context and rebuild it from v090+v135 alone. Exits 2 and says so without docker

@@ -1,0 +1,21 @@
+-- v109_projects_config.sql
+--
+-- projects.config — the per-project settings bag, declared for real (2026-08-22).
+--
+-- This column was ALREADY PRESENT on long-lived entities (verified on one:
+-- `config jsonb`), but nothing in this repo creates it: init-db.sql's CREATE
+-- TABLE projects declares `routing_config`, not `config`, and no migration adds
+-- it. It is historical drift — real on old databases, absent on every fresh one.
+--
+-- That difference was invisible until build(action='stop') started writing the
+-- auto-advance halt flag into it. Checking one live database said the column
+-- existed; a freshly-provisioned entity would have raised UndefinedColumnError
+-- on the halt-clear that runs on EVERY build(action='build'), i.e. new sign-ups
+-- could not build at all. The smoke gate's factory-build test caught it against
+-- a clean init-db.sql schema before the image was pushed.
+--
+-- Idempotent and additive: ADD COLUMN IF NOT EXISTS with a non-null default, so
+-- old databases that already have it are untouched and new ones converge on the
+-- same shape. `routing_config` is left exactly as it is — it is a different
+-- thing (per-domain model routing) and is still read as such.
+ALTER TABLE projects ADD COLUMN IF NOT EXISTS config JSONB NOT NULL DEFAULT '{}'::jsonb;

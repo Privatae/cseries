@@ -1,0 +1,2 @@
+# The browser sidecar honours the requested wait, pages text and snapshots past the first page, checks desktop documents over 4 MiB, reports a page whose load event never fires as navigated, keeps an expired recording's steps (dropping only its typed values), and calls a partial route walk partial. Scripted page fakes; no Chromium.
+test_browser_caps.py

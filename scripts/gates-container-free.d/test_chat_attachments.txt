@@ -1,0 +1,1 @@
+test_chat_attachments.py      # a dropped file reaches every provider wire in its shape and is kept on the Host (2026-09-22)

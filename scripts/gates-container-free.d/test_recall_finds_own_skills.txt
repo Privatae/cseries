@@ -1,0 +1,15 @@
+# Recall finds the Host's own skills. A Host wrote skills/port
+# after one job and, on the next job of that kind, searched recall and never
+# learned the skill existed (recall had no skills store). The skills store:
+# the Host's own active skills and the platform's (find_tools' own entries,
+# discovery_index._skills), ranked by find_tools' own BM25; each hit a name,
+# its line, who wrote it and the call that opens it, never the skill's text.
+# A retired skill is not returned; a typed turn that narrows memory or
+# projects does not read the store; a source that cannot be read is named.
+# A query that is only the word "skill" lists skills, never
+# "no matches"; a turn that could not open a skill (find_tools' own wall,
+# DoorCatalog.admitted_step) is not shown it, and the count is said.
+# Container-free: a stand-in pool answers host_skills.list_skills' query, the
+# platform's skills are the real default-skills/ folder. Measured on the
+# build machine: 33 checks, under 1 s wall.
+test_recall_finds_own_skills.py

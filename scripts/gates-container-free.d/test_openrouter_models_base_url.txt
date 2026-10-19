@@ -1,0 +1,2 @@
+# The OpenRouter model list is fetched from OPENROUTER_BASE_URL with the same default as the chat endpoint (inference_config.OPENROUTER_BASE_URL), never a hardcoded https://openrouter.ai/api/v1/models. Stand-in urllib opener; no DB, no pod, no network.
+test_openrouter_models_base_url.py

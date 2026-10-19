@@ -1,0 +1,12 @@
+{
+  "client_id": "https://privatae.github.io/cseries/oauth/client-metadata.json",
+  "client_name": "C-Series",
+  "client_uri": "https://github.com/Privatae/cseries",
+  "redirect_uris": [
+    "http://127.0.0.1:8800/api/mcp/oauth/callback"
+  ],
+  "grant_types": ["authorization_code", "refresh_token"],
+  "response_types": ["code"],
+  "token_endpoint_auth_method": "none",
+  "application_type": "native"
+}

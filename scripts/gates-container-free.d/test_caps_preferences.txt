@@ -1,0 +1,2 @@
+# The user's stated preferences are kept whole — every note, every stated text, every design token at full length, no count refusal — and a build brief names every like and dislike (most-said, then most recent), quotes whole or counts what it left out with how to read it (preference op='list'), and renders every token. PROFILES_ROOT in a temp dir; no DB.
+test_caps_preferences.py

@@ -1,0 +1,55 @@
+# Pinned model literals in runtime code (file::model), outside the
+# sanctioned homes (inference_config.py's _ANTHROPIC_API_ID alias map +
+# LOCKED_MODEL_DEFAULTS; tool_result_wall.py's harness model list).
+# Each is a caller still to be wired to
+# resolve_role_model(). SHRINK this list as pins are removed; the gate
+# FAILS on any pin NOT listed here (a new hardcoded model).
+#
+# Regenerated for the per-role {provider, model} routing cut
+# (lanes are gone; there is no default model anywhere).
+brain/mastercode/model_backends.py::qwen3  # comment: ollama name equivalence, not a route
+server/routes/mcp.py::llama-3.1-8b-instruct  # UI help-text example, not a route
+system-apps/claude-code-harness/bin/main.py::claude-opus-5  # sanctioned residue: env fallback (CLAUDE_DEFAULT_MODEL) — dispatch carries the Coding-tab model per-run (review.py)
+# All four are PROSE, not routes — the
+# conversation-depth change documents the slug-matching rule by
+# naming both id shapes, and the ratchet cannot tell a comment from a call.
+# Verified: no code path selects gpt-5.2; every occurrence is inside a comment
+# or docstring explaining "gpt-5.2" vs "openai/gpt-5.2" suffix enrichment.
+brain/mastercode/context_budget.py::gpt-5.2  # comment: bare-vs-prefixed id example, not a route
+brain/mastercode/context_budget.py::openai/gpt-5.2  # comment: bare-vs-prefixed id example, not a route
+server/routes/inference.py::gpt-5.2  # docstring: first-party vs OpenRouter id example, not a route
+server/routes/inference.py::openai/gpt-5.2  # docstring: slug-suffix match example, not a route
+# A PICKER CATALOG, not a route —
+# the same class as tool_result_wall.py's HOST_ENGINE_MODELS: the pinned Codex
+# CLI's OWN model table (`codex debug models` on rust-v0.149.0: listed rows +
+# each row's supported_reasoning_levels + the CLI's default model, measured on
+# the binary), mirrored in specs.py (the sidecar, which also reads it live off
+# the binary) and inference.py (the kernel's coding matrix, which renders without
+# a pod). No code path SELECTS one of these for a run: the user's Coding-tab pick
+# rides per run, and with no pick the CLI's own default fires. The list replaced
+# the OpenRouter vendor filter, which still offered openai/gpt-5.3-codex after
+# the CLI had dropped it, and a task was dispatched on that phantom model. The pairing is
+# gated (scripts/test_harness_effort_wiring.py: kernel mirror == specs snapshot),
+# and a CODEX_RELEASE_TAG bump re-reads the table from the new binary.
+# HARNESS_DEFAULT_MODELS["claude-code"] mirrors the claude-code sidecar's own
+# CLAUDE_DEFAULT_MODEL fallback (already baselined above) so the matrix can state
+# it; same gate.
+server/routes/inference.py::claude-opus-5  # HARNESS_DEFAULT_MODELS mirror of the sidecar's env fallback — stated on the matrix row, never selected here
+server/routes/inference.py::gpt-5.5  # CODEX_CLI_MODELS — the pinned Codex CLI's own catalog (picker), not a route
+server/routes/inference.py::gpt-5.6-luna  # CODEX_CLI_MODELS — the pinned Codex CLI's own catalog (picker), not a route
+server/routes/inference.py::gpt-5.6-sol  # CODEX_CLI_MODELS — the pinned Codex CLI's own catalog (picker), not a route (held CODEX_CLI_DEFAULT_MODEL until the 0.154.0 bump)
+server/routes/inference.py::gpt-5.6-terra  # CODEX_CLI_MODELS — the pinned Codex CLI's own catalog (picker), not a route
+server/routes/inference.py::gpt-6-astra  # CODEX_CLI_MODELS + the CODEX_CLI_DEFAULT_EFFORTS key — a platform EFFORT pick, never a model pick (held CODEX_CLI_DEFAULT_MODEL from the 0.154.0 bump until the 0.160.1 bump)
+server/routes/inference.py::gpt-6-luna  # CODEX_CLI_MODELS — the pinned Codex CLI's own catalog (picker), not a route (added by rust-v0.160.1)
+server/routes/inference.py::gpt-6-sol  # CODEX_CLI_MODELS — the pinned Codex CLI's own catalog (picker), not a route (added by rust-v0.160.1)
+server/routes/inference.py::gpt-6.1-sol  # CODEX_CLI_MODELS + CODEX_CLI_DEFAULT_MODEL (the CLI's own no-model default, measured on rust-v0.160.1) + the CODEX_CLI_DEFAULT_EFFORTS key (an EFFORT pick) — never selected here as a model, the CLI picks it when no model is named
+system-apps/_harness_runtime/specs.py::gpt-5.5  # CODEX_MODELS snapshot, not a route
+system-apps/_harness_runtime/specs.py::gpt-5.6-luna  # CODEX_MODELS snapshot, not a route
+system-apps/_harness_runtime/specs.py::gpt-5.6-sol  # CODEX_MODELS snapshot, not a route (held CODEX_DEFAULT_MODEL until the 0.154.0 bump)
+system-apps/_harness_runtime/specs.py::gpt-5.6-terra  # CODEX_MODELS snapshot, not a route
+system-apps/_harness_runtime/specs.py::gpt-6-astra  # CODEX_MODELS snapshot + the CODEX_DEFAULT_EFFORTS key — a platform EFFORT pick, never a model pick (held CODEX_DEFAULT_MODEL from the 0.154.0 bump until the 0.160.1 bump)
+system-apps/_harness_runtime/specs.py::gpt-6-luna  # CODEX_MODELS snapshot of `codex debug models` (fallback when the binary can't be read), not a route (added by rust-v0.160.1)
+system-apps/_harness_runtime/specs.py::gpt-6-sol  # CODEX_MODELS snapshot, not a route (added by rust-v0.160.1)
+system-apps/_harness_runtime/specs.py::gpt-6.1-sol  # CODEX_MODELS snapshot + CODEX_DEFAULT_MODEL (the CLI's own no-model default, measured on rust-v0.160.1) + the CODEX_DEFAULT_EFFORTS key — a platform EFFORT pick, never a model pick, not a route
+brain/mastercode/context_budget.py::moonshotai/kimi-k2.7-code  # OUTPUT_LIMIT_ALIASES — the OpenRouter catalog row whose published output limit a kimi route id reads (kimi lists none); a lookup key, never a route
+brain/mastercode/context_budget.py::moonshotai/kimi-k3  # OUTPUT_LIMIT_ALIASES — the OpenRouter catalog row whose published output limit kimi k3 / k3-256k read (kimi lists none); a lookup key, never a route

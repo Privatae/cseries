@@ -1,0 +1,174 @@
+id: context-manager
+name: Context
+description: Your context, organized your way — every file, wherever it lives, in one explorer.
+icon: icon.svg
+icon_small: icon.svg
+entrypoint: index.html
+provenance: standard
+system: true
+# 1.0.0 (2026-06-26): Part 5 — four admin lenses (Where/Placement/Availability/
+# Embedding) over server/routes/context_manager.py.
+# 1.1.0 (2026-06-28): Embedding lens gained the model + where-it-computes card
+# and the sovereign embed lane (serve on a bastion / use managed).
+# 2.0.0 (2026-07-11): the CONTEXT EXPLORER. The app is
+# now a file explorer over the user's corpus:
+#   Collections (logical) — tags on user_context rows; default libraries derive
+#     from source/status (Documents / Conversations / Staged by host / Promoted);
+#     organizing NEVER moves bytes. Files from any machine group together.
+#   Sources (physical)    — platform / cabinets (S3 buckets) / machines with
+#     online dots: the DCN store-class view (absorbed legacy shared folders
+#     render as machine stores), via GET /sources.
+#   Files pane            — file-level rollup (chunks group by upload_batch /
+#     from_file) with real pagination, via GET /files. No silent caps.
+#   Search                — hybrid (meaning + exact words, RRF-fused), grouped
+#     by file, honest about unembedded coverage.
+#   Inspector             — on-demand preview (bytes fetched only when opened;
+#     offline holders say so), chunk list, tags, promote/dismiss/re-embed.
+#   Storage (gear)        — the 1.x lenses, unchanged, as settings.
+# 2.1.0 (2026-07-13): the BINARY FILE LANE. Upload accepts ANY file type:
+#   text (txt/md/json/…) keeps the chunk+embed path; everything else —
+#   pictures, PDFs, CSVs/spreadsheets (data, not prose — stored byte-exact,
+#   deliberately not chunked into weak embeddings), any binary — lands as
+#   ONE row, bytes stored
+#   as-is on the host's selected backend (platform / S3 / bastion), never
+#   embedded (kind='file' excluded from every embed surface). Inspector shows
+#   image previews inline (GET /{id}/file) and an Open/download affordance for
+#   everything else; "Files & media" library in the rail; /upload now honors
+#   the host's storage backend for text rows too (it silently pinned pg).
+# 2.2.0 (2026-07-15): DCN CN-1 — the "Your network" storage lens: DCN store
+#   cards (folders on your machines / buckets you own) with the grant lifecycle
+#   (draft → approve with your code → granted → revoke); Add-a-folder and
+#   Add-a-bucket flows (the cabinet composite bundles its egress allow — one
+#   code covers both). Sources rail renders the store-class view (2.1.x portal
+#   section absorbed).
+# 2.3.0 (2026-07-20): CSVs join the text lane (reversing 2.1.0's
+#   file-lane call — live test: uploaded statements were invisible to
+#   Documents AND unsearchable). csv/tsv chunk by ROW GROUPS with the header
+#   repeated per chunk (source csv_upload, shown in Documents), and the
+#   footer gains an embed-progress bar: uploads poll their per-file embed
+#   job (metadata.ids-scoped) so "is it searchable yet" is visible instead
+#   of "embedding runs in the background" hand-waving.
+# 2.4.0 (2026-07-21): the embed QUEUE is visible (Storage → Embedding).
+# Every job newest-first with live status/progress/error — paused shows as
+# retrying, failed keeps its error. Answers "is it embedding, what's stuck?"
+# which only a footer bar + counts used to (not) answer.
+# 2.4.1 (2026-08-29): machine-store cards say the managed FreeAgent's state
+# ("FreeAgent serving" / "needs Python 3.8+ on that machine" / installing…)
+# from the bastion's heartbeat (v118), so the one thing to fix is on the card.
+# 2.5.0 (2026-08-29): move plans on a granted machine-store card (v120) — the
+# host's proposed reorganization as a list of moves inside the folder; you
+# approve with your code, dry-run, then apply; the machine verifies and
+# reports. Archive only: "remove" means moved into the archive folder.
+# 2.5.1 (2026-09-02): tool results the host stashed for its own recall
+#   (source 'tool:<name>', thread_consolidator.stash_tool_artifacts) belong to
+#   the "Staged by host" library, not among the user's documents. A fresh
+#   entity's corpus listed "personality_state result" and "model_route result"
+#   as if uploaded. GET /files gains prefix matching for source values
+#   ending in ':' and an exclude_source_prefix param; the library filter is now
+#   'host,tool:'. Server-side the stash itself is narrowed to external-content
+#   tool categories (research / codespace / files / editor) — self-state reads
+#   are never stashed at all. No scope or schema change.
+# 2.5.2 (2026-09-11): the program is called the BASTION AGENT now, not
+# FreeAgent. Card pills and titles only — the fields the bastion
+# sends (freeagent_ok, freeagent_stores) and the ones this app reads out of
+# the API keep their names, because renaming them would break every bastion
+# in the field.
+# 2.6.0 (2026-09-19): the machine's own record. A bastion reports
+#     where it keeps its findings journal and signed accounting, and the host
+#     DRAFTS a machine store there — purpose 'machine_record' (v162) — for the
+#     user to approve with the same one code as any folder they added (a
+#     draft, never an automatic grant). The card says "this machine's own
+#     record" instead of "folder on your machine", because it is not a folder
+#     the user picked and the oversight ingest is the only reader.
+# 2.6.1 (2026-10-01): the HTML escape helper escapes both quotes as well, so a
+# value from the Host, a machine or a provider stays inside the attribute it
+# is written into. App-only change.
+# 2.7.0 (2026-10-10):
+#   the everything-search. The box searched all five stores the Host could see
+#   through POST /api/search (the one index, server/routes/search.py): your
+#   documents first, grouped by file as before, then the Host's memory, your
+#   projects, its journal and your code, each under its own heading with how
+#   it searched and, when a store could not run, why. Documents and memory
+#   pass through the same relevance floor the Host's own recall uses, and the
+#   weak matches it leaves out are counted. The words go in the request
+#   body, never in a URL. Only the newest search draws: an older one that
+#   answers late is dropped. A passage longer than the route's 2,000
+#   characters is searched on its first 2,000, and the line at the top says
+#   so (the documents-only route had no ceiling, and the route's 422 drew as
+#   "[object Object]"). Any route's refusal is said in words: a 422's list
+#   of reasons is read for each item's message (never what was sent), and a
+#   detail that is neither falls back to the status. New scope read:search (app tokens are minted
+#   from this list); Circles gives it up when the cards replace its rail.
+# 2.8.0 (2026-10-18): the search box searches the sixth store, the
+#   Host's skills (its own active ones and the platform's), under its own
+#   heading after your code: each hit is the skill's name, who wrote it and
+#   its one line, never the skill's text; the heading says how many skills
+#   were searched and names a half that could not be read. The Host's own
+#   recall searches the same store. App-only change on top of the route.
+# 2.8.1 (2026-10-18): what_it_is is one paragraph under the 900-character cap,
+#   saying what the app is and what lives in it; the how-to it carried lives in
+#   skills and tool descriptions. Promote files the entry as research; the
+#   memory type "fact" is retired (migrations/v235) and the database refuses
+#   it. Search shows five stores: the Host's journal left with its table
+#   (v237). Bundle repacked.
+# 2.8.2 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
+version: "2.8.2"
+# Context is NOT a conversational surface — the user operates it directly and
+# talks to the host in Circles/the Workbench. So this is the code-true source for the
+# ENVIRONMENT CATALOG (topology block + describe_app), NOT a surface_role
+# "behavior when active" body — hence what_it_is/user_path only, no do_when_active.
+prompt_behavior:
+  what_it_is: >-
+    Context is the user's file explorer for their own context, the corpus they own
+    and control, kept separate from your internalized memory. Files live on machines
+    the user chooses (the platform, an S3 bucket they own, or a bastion they run)
+    and are organized by collections (tags) that never move the bytes, so one file
+    can sit in many collections. The search box searches by meaning and exact words
+    across their documents and, each under its own heading, your memory, their
+    projects, the journal and their code. Any file previews on demand; new files are
+    staged by drag-and-drop (text is embedded for search; pictures, PDFs and other
+    binaries are stored as they are), and a piece can be promoted into your memory.
+    Storage placement, redundancy and the embedding lane are behind the Storage
+    gear. You fetch context on demand and keep no copy.
+  user_path: "the Context app, in the dock"
+
+window:
+  title: Context
+  width: 1240
+  height: 800
+  resizable: true
+  min_width: 1020
+  min_height: 600
+
+# Every scope maps to live routes:
+#   read:context   → GET  /api/context-manager/files|sources|index|placement|embedding
+#   write:context  → POST /route, DELETE /route/{prefix}, POST /default,
+#                    POST /embedding (incl. per-ids re-embed)
+#   read:topology  → GET  /api/context-manager/bastions (choosable context stores)
+#   read:memory    → GET  /api/brain/context (chunk lists), /tags, /{id}/content,
+#                    /{id}/file (binary-lane bytes: image preview / download)
+#   write:memory   → POST /api/brain/context/upload, /tags, PATCH /{id},
+#                    POST /{id}/promote, DELETE /{id}
+#   read:inference_catalog  → GET  /api/embedding/current|bastions (embed model lane)
+#   write:inference_routing → POST /api/embedding/use-bastion|use-managed
+#   read:search    → POST /api/search (the everything-search box, 2.7.0)
+permissions:
+  - read:context
+  - write:context
+  - read:topology
+  - read:memory
+  # The embed Queue view reads /api/embed/jobs (read:brain_memory);
+  # without it the pane errors 'did not declare permission'.
+  - read:brain_memory
+  - write:memory
+  - read:inference_catalog
+  - write:inference_routing
+  # DCN store grants (2.2.0): the "Your network" lens drafts store grants
+  # (write:network) and lets the USER approve them with their step-up code
+  # (resolve:decision) — the decided home surface for DCN stores.
+  - write:network
+  - resolve:decision
+  # 2.7.0: the search box is the everything-search, POST /api/search (the one
+  # index). It reads the whole memory corpus, which is why it is not a
+  # community-app scope; a system app that the owner uses directly holds it.
+  - read:search

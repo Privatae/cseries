@@ -1,0 +1,2 @@
+# Platform notices never read as the Host's words by any reader; the two fixed stall texts in old rows (exact match) read as a stall note; PII mode keeps platform_notice and notice_len and recall still splits the notice; the real session history path keeps a note-only reply's note; history never starts on a note; the summary reads notes; a local route keeps server text only for vLLM's templates. Stand-in pools; no pod, no DB, no model, no network.
+test_platform_notices_never_host_words.py

@@ -1,0 +1,88 @@
+/* Terminal — layout in the SecureCRT shape: machines down the left, one tab
+ * per open shell, a real terminal in the middle, a status line under it.
+ * Colours and type come from the shared tokens; only the arrangement is here. */
+
+.term-app { display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+
+.term-brandmark { display: inline-flex; color: var(--accent, #7dd3fc); }
+
+.term-toolbar { display: flex; gap: 8px; align-items: center; }
+.term-toolbar .btn[disabled] { opacity: .45; cursor: default; }
+
+.term-body { display: flex; flex: 1; min-height: 0; }
+
+/* ── rail ── */
+.term-rail {
+    width: 250px; min-width: 200px; display: flex; flex-direction: column;
+    border-right: 1px solid var(--border, #1f2937); background: var(--surface-1, #0f141b);
+}
+.term-rail-head { display: flex; justify-content: space-between; align-items: center; padding: 10px 12px 6px; }
+.term-rail-list { flex: 1; overflow: auto; padding: 0 6px 8px; }
+.term-rail-empty { padding: 14px 8px; color: var(--text-muted, #9ca3af); font-size: 13px; }
+.term-live-head { border-top: 1px solid var(--border, #1f2937); margin-top: 4px; }
+.term-live-list { max-height: 34%; overflow: auto; padding: 0 6px 8px; }
+.term-live { display: grid; grid-template-columns: 1fr auto; gap: 6px; align-items: center; padding: 6px 8px; border-radius: 8px; }
+.term-live:hover { background: var(--surface-2, #151c25); }
+.term-live-name { font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.term-live-sub { font-size: 11px; color: var(--text-muted, #9ca3af); }
+.term-live .btn { padding: 2px 8px; font-size: 11px; }
+.term-rail-foot { padding: 10px 12px; border-top: 1px solid var(--border, #1f2937); color: var(--text-muted, #9ca3af); font-size: 11px; line-height: 1.4; }
+
+.term-group { margin-top: 8px; }
+.term-group-title { padding: 4px 8px; font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--text-muted, #9ca3af); }
+
+.term-machine {
+    display: grid; grid-template-columns: 12px 1fr; gap: 8px; align-items: start;
+    width: 100%; text-align: left; padding: 7px 8px; border-radius: 8px; border: 1px solid transparent;
+    background: transparent; color: inherit; cursor: pointer; font: inherit;
+}
+.term-machine:hover { background: var(--surface-2, #151c25); }
+.term-machine.selected { background: var(--surface-2, #151c25); border-color: var(--border, #1f2937); }
+.term-machine[disabled] { cursor: default; opacity: .6; }
+.term-dot { width: 9px; height: 9px; border-radius: 50%; margin-top: 5px; background: #6b7280; }
+.term-dot.online { background: #34d399; box-shadow: 0 0 0 3px rgba(52, 211, 153, .15); }
+.term-machine-name { font-size: 13px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.term-machine-sub { font-size: 11px; color: var(--text-muted, #9ca3af); display: flex; flex-wrap: wrap; gap: 4px 8px; margin-top: 2px; }
+.term-pill { padding: 0 6px; border-radius: 999px; border: 1px solid var(--border, #1f2937); font-size: 10px; line-height: 16px; }
+.term-pill.warn { border-color: #b45309; color: #fbbf24; }
+.term-pill.ok { border-color: #065f46; color: #6ee7b7; }
+
+/* ── main ── */
+.term-main { flex: 1; min-width: 0; display: flex; flex-direction: column; background: var(--surface-0, #0b0f14); }
+
+.term-tabs { display: flex; gap: 2px; padding: 6px 8px 0; border-bottom: 1px solid var(--border, #1f2937); overflow-x: auto; min-height: 36px; }
+.term-tab {
+    display: inline-flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 8px 8px 0 0;
+    border: 1px solid var(--border, #1f2937); border-bottom: none; background: var(--surface-1, #0f141b);
+    color: var(--text-muted, #9ca3af); font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap;
+}
+.term-tab.active { color: var(--text, #e5e7eb); background: var(--surface-0, #0b0f14); }
+.term-tab .term-dot { margin-top: 0; }
+.term-tab .term-tab-x { opacity: .6; padding: 0 2px; }
+.term-tab .term-tab-x:hover { opacity: 1; }
+.term-tab.root .term-tab-name::before { content: "# "; color: #fbbf24; }
+
+.term-panes { flex: 1; min-height: 0; position: relative; }
+.term-pane { position: absolute; inset: 0; padding: 6px; display: none; }
+.term-pane.active { display: block; }
+.term-pane .xterm { height: 100%; }
+
+.term-welcome { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 24px; color: var(--text-muted, #9ca3af); }
+.term-welcome h2 { color: var(--text, #e5e7eb); font-size: 18px; margin: 0 0 10px; }
+.term-welcome p { max-width: 520px; font-size: 13px; line-height: 1.5; margin: 0 0 8px; }
+.term-welcome-note { color: #fbbf24; }
+.term-welcome.hidden { display: none; }
+
+.term-status {
+    display: flex; gap: 14px; align-items: center; padding: 6px 12px; min-height: 30px;
+    border-top: 1px solid var(--border, #1f2937); font-size: 12px; color: var(--text-muted, #9ca3af);
+    overflow: hidden; white-space: nowrap; text-overflow: ellipsis;
+}
+.term-status .sep { opacity: .4; }
+.term-status .waiting { color: #fbbf24; }
+.term-status .ended { color: #f87171; }
+.term-status code { font-size: 11px; }
+
+@media (max-width: 820px) {
+    .term-rail { width: 190px; min-width: 160px; }
+}

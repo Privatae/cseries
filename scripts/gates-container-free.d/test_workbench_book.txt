@@ -1,0 +1,11 @@
+# The Workbench's book of pages in the BUILT app (system-apps/workbench/index.html, tracked) in
+# headless Chromium over a loopback mock kernel (fastapi + uvicorn) on a free
+# port; screenshots go to a mkdtemp under $TMPDIR, removed on a pass. Needs
+# Playwright, Chromium and the repo's brain/ on the path (it reads the effort
+# default from mastercode.inference_config); no pod, no DB, no network beyond
+# loopback. Split in three, one group a gate, because all of it in one process
+# spent over the pool's 180 s CPU budget. This file runs the
+# "book" group; test_workbench_book_index.py and test_workbench_book_colours.py
+# run the other two. Measured under hang_watch beside them: 232 checks, 91.3 s
+# of CPU, 261 s wall.
+test_workbench_book.py

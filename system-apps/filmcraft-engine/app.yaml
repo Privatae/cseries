@@ -1,0 +1,41 @@
+# FilmCraft Engine: the open-source FilmCraft video
+# editor (github.com/storytold/filmcraft, MIT or Apache-2.0), run headless for
+# the Host. The program is in the creative toolchain image, pinned by sha256;
+# this app is a recipe that starts the image's MCP bridge (creative_mcp.py),
+# and `mcp` connects it to the Host at install. Memory: a 4-second 1080p H.264
+# export peaked at 850 MB (measured); 1.5 GB for longer timelines.
+# vcpus 4: the encoder uses every core it is given; a window is billed at
+# its ceiling.
+id: filmcraft-engine
+name: FilmCraft Engine
+description: Your Host edits video with FilmCraft, an open-source video editor with a timeline, effects and titles. It cuts, assembles and exports clips, and everything it makes appears in this window.
+icon: icon.png
+icon_small: icon-64.png
+# 1.0.2 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
+version: "1.0.2"
+provenance: standard
+entrypoint: index.html
+permissions: []
+network: []
+resources:
+  baseline_memory_mi: 1536
+  vcpus: 4
+runtime:
+  kind: process
+  image: creative
+  command: ["python3", "/opt/app-runtime/creative_mcp.py", "filmcraft"]
+  ready_path: /health
+  ready_timeout_seconds: 120
+mcp:
+  path: /mcp
+window:
+  title: FilmCraft Engine
+  width: 900
+  height: 640
+  resizable: true
+prompt_behavior:
+  what_it_is: |
+    FilmCraft Engine is the person's own video editor that you operate: an
+    MCP server named filmcraft-engine (skill 'filmcraft-engine' says how).
+    Its window shows the files you made there.
+  user_path: "the FilmCraft Engine app (install it from the App Store)"

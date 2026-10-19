@@ -1,0 +1,70 @@
+/* ================================================================
+ * C-Series — Base reset + body defaults
+ *
+ * Tokens are defined in tokens.css. This file is just body-level
+ * defaults + reset. Keep it small.
+ * ================================================================ */
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    height: 100%;
+    width: 100%;
+    overflow: hidden;
+}
+
+body {
+    font-family: var(--font-body);
+    font-size: var(--text-base);
+    line-height: var(--leading-normal);
+    color: var(--cseries-paper);
+    background: var(--cseries-ink);
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
+}
+
+/* Rich text inside apps can opt back in */
+.user-select-text,
+.user-select-text * {
+    user-select: text;
+    -webkit-user-select: text;
+}
+
+/* Scrollbar defaults (can be overridden per-component) */
+::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+::-webkit-scrollbar-track {
+    background: transparent;
+}
+::-webkit-scrollbar-thumb {
+    background: var(--cseries-silk);
+    border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+    background: var(--cseries-veil);
+}
+
+::selection {
+    background: var(--cseries-ember-soft);
+    color: var(--cseries-paper);
+}
+
+/* Default link look (rare in this UI, but defined) */
+a {
+    color: var(--cseries-dusk);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    transition: border-color var(--dur-hover) var(--ease-cseries);
+}
+a:hover {
+    border-bottom-color: var(--cseries-dusk);
+}

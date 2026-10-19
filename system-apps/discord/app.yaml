@@ -1,0 +1,82 @@
+id: discord
+name: Discord
+description: Talk to your Host from Discord. You pair one Discord account with your own Discord bot; its direct messages start turns in your chat, and the replies come back in Discord. The bot's token stays in Keys.
+icon: icon.png
+icon_small: icon-64.png
+# 1.0.0 (2026-10-05): the Discord connector as a store app, the shape of the
+# Telegram and Slack apps (system-apps/telegram, system-apps/slack): one
+# Discord account, direct messages only. Discord delivers a bot's messages
+# over its Gateway, a WebSocket that carries the bot token inside it, so the
+# HOST holds that connection (/api/connector/gateway) and puts the token from
+# Keys into it; the connector keeps the heartbeat, the session and resuming.
+# Every REST call goes through the Host too.
+# 1.0.1 (2026-10-08): a failure the connector tries again is logged in plain
+# words ("no connection to Discord this time (connection refused); trying
+# again in 5 s"), never Python's or a status line's ("500 Internal Server
+# Error"), so the Host's app proof no longer reads a connector that recovered
+# as a broken one; a message dropped or a reply let go still reads as the
+# error it is.
+# 1.0.2 (2026-10-09): Discord closing the gateway with a code that says not
+# to reconnect (4004, the token is not the bot's; 4010-4014) is no longer
+# retried every 300 s with a line that read as no error: it is logged once as
+# an error, /health answers ok false with it and the app's page says so, and
+# it is checked again every 10 minutes, so a token put right in Keys is
+# picked up without a restart. A message or a picture given up on, and the
+# Host not recording what was sent, read as the errors they are.
+# 1.0.3 (2026-10-09): the report telling the Host what message a reply's part
+# was sent as is tried again when the Host cannot be reached or cannot take
+# it now (429, 5xx), up to 4 times with a growing wait, instead of being lost
+# on the first timeout; given up, it is logged once as an error.
+# 1.0.4 (2026-10-18): the product is renamed C-Series (names, paths, env vars).
+version: "1.0.4"
+provenance: standard
+# No index.html on purpose. A process app whose page has no file on disk is
+# forwarded to its pod (proxy.serve_app), and connector.py answers every path
+# but /health with its status page.
+entrypoint: index.html
+permissions: []
+# Only discord.com. The connector reaches no Discord host itself (REST and the
+# gateway both go through the Host), but the pairing refuses an app that
+# declares no host or any host that is not Discord's
+# (nac_connector.PLATFORMS["discord"]); one is the least that passes.
+network: [discord.com]
+resources:
+  # The pod's memory LIMIT: the burst ceiling of the whole app container
+  # (run.py, the platform's wrapper, and connector.py), which reserves
+  # nothing. Lean: connector.py holds one picture at a time and hands its
+  # base64 to the Host without copying it. Measured by part M of
+  # scripts/test_connector_discord_example.py, which runs the pod's real
+  # shape under this limit and fails on an OOM kill. The container's cgroup
+  # on 2026-10-05, two runs under 96 MiB: idle with the gateway open 39.3-40.0
+  # MiB (peak 41.0-42.0); three replies at once with the largest picture the
+  # Host streams (10 MiB) each, peak 66.3-66.7; one reply with three, peak
+  # 55.6-60.6, and part M passes under 80.
+  # The limit cannot go below 128: the operator gives every process app's
+  # pod a 128 MiB memory REQUEST (rendered with this number as the limit),
+  # and Kubernetes refuses a pod
+  # whose request is above its limit. The reservation, which is what the
+  # person's plan pays for, is that 128 whatever this says; the measured
+  # use above is what the Host-managed allocation work
+  # starts this app's reservation from.
+  baseline_memory_mi: 128
+runtime:
+  kind: process
+  image: python
+  lifecycle: resident
+  command: ["python3", "connector.py"]
+  ready_path: /health
+window:
+  title: Discord
+  width: 520
+  height: 240
+  resizable: true
+prompt_behavior:
+  what_it_is: |
+    The Discord app lets ONE Discord account the person pairs talk to them
+    through their own chat: a direct message to their Discord bot starts a
+    turn in one of their threads, and the reply goes back to Discord. Its
+    window only shows what the connector is doing. Setting it up (the bot in
+    the Discord Developer Portal, its token in Keys, the pairing, the
+    approval) is skill 'connectors-discord'; how messages find their thread
+    is skill 'connectors'.
+  user_path: "the Discord app (install it from the App Store); the pairing and the approval are in the Network app"

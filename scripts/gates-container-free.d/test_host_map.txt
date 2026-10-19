@@ -1,0 +1,4 @@
+# The MAP block (groups + counts, apps,
+# machines, projects, repos, skills) replaces tool_inventory/environment/domain_map/
+# permissions; `orient` is the drill; the catalog carries counts; rule 2 names the lanes.
+test_host_map.py

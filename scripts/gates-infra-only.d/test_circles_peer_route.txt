@@ -1,0 +1,1 @@
+test_circles_peer_route.py               # live DB (asyncpg via PEER_TEST_DSN) — mounts the real circles.router on an ASGI app and issues real DELETE /api/circles/thread/entity/{peer} requests; status codes + the archive UPDATE are only observable against a real Postgres, skips without a DSN, and a skip proves nothing

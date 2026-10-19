@@ -1,0 +1,15 @@
+# The Host's own images (generated_images, /api/images/<id>:
+# image_generate results and app renders) reach its wallpaper and its designs.
+# artifact(op='set_wallpaper') through the tool's own path wears one as the
+# custom wallpaper (the Settings upload's writer), desktop and phone, and
+# refuses another Host's image, a non-image name and a gif with nothing
+# written; artifacts.render puts the Host's own images into the document as
+# data: URLs (another Host's name is left as written; the stored file keeps the
+# short name); the rendered desktop passes the floor; and in headless Chromium
+# under the shell's own frame policy (sandbox-csp.js) the image paints. Real
+# kernel schema. Measured: 13 checks; 9 fail without the change.
+# P1-P2: the pre-edit revision a worn desktop with no pin
+# keeps on screen (desktop_pin.after_write's baseline, which is also what
+# publishing the worn desktop sends) carries the image itself, never the
+# Host's /api/images name; both failed before the fix.
+test_host_images_in_designs_pg.py

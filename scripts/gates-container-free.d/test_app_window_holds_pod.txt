@@ -1,0 +1,2 @@
+# An open window of an app whose server side runs in its own pod holds that pod — the launch route opens a window hold that re-stamps the lease every HARNESS_LEASE_HEARTBEAT_S with no request from the window; a close while another window is open releases nothing; a one-shot caller's close (the delivery proof) never takes a person's window away; the last close releases after the grace; with no desktop tab connected at all the hold ends. Real harness_backend with the operator call, the clock and the release scripted; no pod, no bridge.
+test_app_window_holds_pod.py

@@ -1,0 +1,26 @@
+-- v220: the reading switch on a human contact.
+--
+-- A person's chat is one continuous chat between one operator of this Host and
+-- that person (routes/circles.py _read_people_thread reads it per operator).
+-- Until now no reader the Host's model uses could see any of it: the
+-- host_message tool's readers (routes/messages.py conversations_service,
+-- thread_service) leave out every row where both ends are people.
+--
+-- host_reads holds the operators of this Host who have let their Host read
+-- their chat with this person. It lives on the contact, and
+-- it is a list rather than a flag because contacts are the Host's (one row per
+-- person, ux_contacts_handle in v048) while a chat is one operator's: two
+-- operators of one Host can each talk to the same person, and one of them
+-- turning the switch on must not open the other's chat.
+--
+-- Empty is off, and every contact starts empty, so the default stays closed:
+-- the readers include a person-to-person row only when the operator on it is
+-- in this list on the contact of the person on the other end
+-- (server/circles_reading.py visible_sql). Turned on and off by
+-- PUT /api/circles/thread/dm/{email}/reading, which also writes the notice into
+-- the chat on both sides.
+--
+-- Idempotent and forward-only. contacts is created by migrations alone
+-- (v048); init-db.sql does not declare it, so there is nothing to mirror there.
+
+ALTER TABLE contacts ADD COLUMN IF NOT EXISTS host_reads TEXT[] NOT NULL DEFAULT '{}';

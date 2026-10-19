@@ -1,0 +1,2 @@
+# The claude-code harness counts its run's CPU as life, says a model wait is not a run limit, and its buffered /run drives the stream runner with no total cap. Stand-in SDK; no CLI, no pod.
+test_claude_code_liveness.py

@@ -1,0 +1,1 @@
+test_inbox_app_delivery.py               # real Postgres (a throwaway cseries-postgres, or INBOX_TEST_DSN/PEER_TEST_DSN) on the KERNEL's schema as it stood before v165 (scripts/kernel_schema.py upto=165), v165 applied by the gate, then completed to today's schema — the transition and the delivery lane on real tables, never a copy

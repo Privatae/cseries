@@ -1,0 +1,9 @@
+# The Calendar app declares exactly read:calendar and write:calendar, calls only calendar
+# routes that exist under a scope it declares (every fetch counted), writes
+# nothing through innerHTML, loads only its own files and the desktop's
+# stylesheets, reflows on a phone, carries no price, is image-baked with a
+# current signed bundle in both bundle folders, has a dock glyph and sits right
+# after Circles on a dock nobody has changed; every calendar route takes a
+# calendar scope, and the list's soonest-first read is 'asc' or 'desc'. No pod,
+# no DB.
+test_calendar_app.py

@@ -1,0 +1,5 @@
+# One PR path to the platform source. diagnose's platform_fault and every text the Host
+# reads for a platform fix name gitea op='propose'; the old proposal tool (a
+# branch as the controller's machine user, no PR, agent-only) has no schema,
+# caps row, executor entry or /mcp tool left, and resolves to the retired lane.
+test_host_one_pr_path.py

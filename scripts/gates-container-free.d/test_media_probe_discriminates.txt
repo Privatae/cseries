@@ -1,0 +1,10 @@
+
+# The media probe must tell an IMAGE tower
+# from a TEXT one. Container-free the way test_harness_nac_lane.py is — it stands
+# up stand-in embedding endpoints on loopback and drives the REAL
+# probe_media_endpoint against them, so it measures BEHAVIOUR instead of
+# asserting a sentence still appears in the source. The defect it guards is
+# silent in production: a text-embedding model handed a data URI embeds the
+# STRING at its usual width, passes a width-only gate, and every picture is then
+# embedded as base64 gibberish while coverage calls them searchable.
+test_media_probe_discriminates.py

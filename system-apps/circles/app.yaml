@@ -1,0 +1,843 @@
+id: circles
+name: Circles
+description: Your Host and everyone you know, as a deck of cards — each person's chat on the front and their Host on the back, your own Host's conversation on your card, what waits on you, and who is at the door.
+# One SVG serves both sizes — it scales, so there is no 64px raster to keep in
+# sync. These previously declared icon.png / icon-64.png, neither of which was
+# ever produced, so every surface that loads the FILE (rather than the shared
+# glyph) 404'd. The mark is not new: same geometry as the "linked rings" glyph
+# at dashboard/base/js/icons.js:30, materialised as a standalone file.
+icon: icon.svg
+icon_small: icon.svg
+entrypoint: index.html
+system: false
+# 0.4.1 (2026-06-28): restore the features the React rebuild dropped vs the legacy
+# app — named conversations (read display_name; backend joins the peer's own name),
+# delete/clear a conversation (soft: self-thread -> archived, entity DM -> archived_at),
+# in-chat model picker (per-thread model override), A/B compare, regenerate, nudge,
+# attachment send. Adds read:inference_catalog for the in-chat model picker dropdown.
+# 0.4.2 (2026-06-28): in-chat model picker no longer references the removed `validated`
+# catalog field (validated/benchmark concept ripped out in favor of user favorites).
+# 0.4.3 (2026-06-28): in-chat model picker now shows the host's FAVORITES + default
+# (from the Privatae app) instead of the full ~339 OpenRouter catalog; and after a
+# self-thread reply persists, the thread reloads so Regenerate/Compare appear on it
+# (they key off the entity_memory turn id; the live-streamed bubble only had a
+# synthetic one). Render-verified headless (picker + actions draw).
+# 0.4.4 (2026-06-28): common-sense rebuild of the model affordances. The in-chat
+# picker is now a SEARCHABLE catalog (cmdk dialog) instead of a gated dropdown —
+# favorites surface at the top, the full catalog is searchable below, and every
+# row shows PRICING ($/M in·out + ctx) so a model can actually be judged. Empty
+# favorites no longer hides the picker (the 0.4.3 regression). Regenerate now has
+# an inline model picker ("Regenerate with <model>"); A/B Compare uses the same
+# searchable picker for both sides. Render-verified headless against a real host
+# (340 models, search->19 on "claude", pricing rows).
+# 0.4.5 (2026-06-28): A/B Compare now does what it's for — picking a side SWITCHES
+# the thread to that model and continues the chat on it ("Continue on A/B"), so you
+# can see which model fits a topic and keep going on it (the pick still trains your
+# preference). Bigger default window for the side-by-side real estate.
+# 0.4.6 (2026-06-29): FIX blank-screen-on-send. The app never wrapped itself in a
+# TooltipProvider, so every shadcn <Tooltip> (the compose box send/stop button, message
+# actions, tool cards) threw "`Tooltip` must be used within `TooltipProvider`" on mount —
+# with no error boundary that unmounted the whole desktop. Added one TooltipProvider at
+# the App root. Latent since the 0.4.0 React rebuild.
+# 0.4.7 (2026-07-04): Settings → Coding harnesses is READ-ONLY — the selection and
+# per-harness model/effort are decided in the Orchestrator app (the single
+# orchestration surface, untangled spec); the pane shows what fans out and deep-links
+# there. saveCodingHarnesses removed, closing the last second write surface for
+# behavioral_params.coding_harnesses.
+# 0.4.8 (2026-07-04): thinking-effort knob in the chat composer — the host's chat
+# reasoning depth (default/max/high/medium/low/off) is set HERE at the user's
+# discretion (reads/writes /api/inference/host-engine; takes effect on the
+# host's routed model). Effort is a chat-time choice, not an
+# Orchestrator setting.
+# 0.4.9 (2026-07-07): retry-on-401 for the app-token delivery race (parity
+# with workbench 0.6.3) + surfaces remapped from the old blue-cseries palette
+# to the shared cseries green-black tokens (/css/tokens.css). "kill the blue."
+# 0.4.10 (2026-07-12): relay the host's open_app tool call to the desktop
+# shell (cseries:open-app + deep-link view) — lets the host pop the Artifacts
+# window from chat.
+# 0.4.11 (2026-07-12): artifact doctrine in the briefing — "show,
+# don't describe": visual/structural replies become live artifacts.
+# 0.4.12 (2026-07-12): doctrine hardened from the first live test — the Host
+# DISPATCHED agents to sketch (3 duplicate artifacts, nothing visible in
+# chat, no window). Artifacts are built by the HOST in its own turn, one per
+# design, iterated with op='write'; agents are never dispatched for sketches.
+# 0.4.13 (2026-07-12): artifact-bridge compose lane (slices 3+4) — composer
+# renders tune-mode pills (select refs + applied edits ride the next message)
+# and sends declared acts/variant picks as the user's own message.
+# 0.4.14 (2026-07-12): design-template doctrine — when a template is active
+# (the Design Language prompt block), artifacts get designed IN it, and
+# style requests map to the Designs lanes (the catalog tool /
+# update_project design_system) instead of ad-hoc improvisation.
+# 0.4.15 (2026-07-12): project close-out doctrine — taste signals (template/
+# variant picks and kept artifacts teach the default, out loud) and change
+# history ("go back to before X" = artifact history + revert, never a
+# from-memory rewrite).
+# 0.5.0 (2026-07-13): mood + constitution surfaces (the doctrine:
+# stored weights = CONSTITUTION, user-approved changes only; NT
+# state = MOOD, ephemeral/attributable/decays, never an engagement mechanic).
+# New Constitution rail tab: seed-vs-
+# current 10-dim view, envelope consent sliders (new PUT
+# /api/brain/personality/envelope, Invariant-9-gated + audited), and the
+# recommendation approval queue (approve/reject = the ONLY weight-change
+# path). Adds read:brain_personality + read/write:brain_codebooks scopes.
+# 0.5.1 (2026-07-13): FIX Constitution bar scale. The seed-vs-current bars +
+# seed ticks clamped at 1.0, but dimensions run 0..2 (mastercode dimension_spec,
+# max 2.0, 1.0 = neutral) — so every weight ≥1.0 pegged full and the pane read
+# "maxed on everything". Bars/ticks now scale to 2.0 with a neutral-1.0 center
+# marker + 0/1/2 axis labels; envelope drift sliders share the 0..2 scale.
+# 0.5.2 (2026-07-13): derivation disclaimer (honesty + liability). Shared
+# DerivationNote — persistent one-line frame ("computed by fixed formulas, not
+# written by an AI … not a claim of real emotion or consciousness, not a
+# psychological/medical assessment") + inline-expandable full explanation of the
+# mood (lexicon→fixed-formula NT→fixed-axes, no LLM) and constitution
+# (user-approval-only) derivation. Wired into BOTH the Constitution pane and the
+# mood inner-state panel so the framing travels with the popover.
+# 0.5.3 (2026-07-14): FIX double scrollbar on the chat pane. The Conversation
+# wrapper kept overflow-y-auto from the old use-stick-to-bottom API where the
+# root WAS the scroll element; v1.1+ renders its own internal scroller, so both
+# nested divs painted a scrollbar at the same right edge. Wrapper is now
+# overflow-hidden; the library's scroller is the only one.
+# 0.6.0 (2026-07-14): mobile layout — window.mobile: responsive (opt out of the
+# shell's phone-mode scale shim; at 1600px design width Circles scaled to ~24%
+# on a phone). Below the md breakpoint: the icon rail becomes a bottom bar,
+# every two-column pane becomes master-detail (full-width list, detail slides
+# in with Back), conversations lands directly in the self thread with Back to
+# the list, policy stacks form + rules in one scroll. Desktop unchanged.
+# 0.6.1 (2026-07-16): RENAME the Constitution tab/pane -> Response Shaping.
+# The 0.5.0 note below records "stored weights =
+# CONSTITUTION"; that name was wrong and it spread. The three layers are
+# distinct and the UI now says so:
+#   - RESPONSE SHAPING (this pane) — the 10-dim personality weights, i.e. the
+#     cognition. User-approved changes only. Was mislabelled "Constitution".
+#   - CEIGAS — mathematical governance (capability bits on every crossing).
+#   - CONSTITUTION — the rules the Host lives by, stored as read-only memories:
+#     entity_memory(memory_type='constitutional'), retrieved by
+#     memory_engine.retrieve_constitutional() with NO decay, injected every
+#     rebuild (runtime/prompt_schema.py:665 Block("constitutional", …, always))
+#     at BOTH global scope (entity 0 — platform-protecting rules, e.g. never
+#     impersonate) and entity scope (prompt_schema.py:255-256). They protect
+#     the user and the platform. No pane surfaces them yet.
+# Copy-only + one local component rename (ConstitutionRow -> ShapingRow); no
+# API, route, scope, or schema change.
+# 0.6.2 (2026-07-16): FIX calendar unreachable on phone. The 0.6.0 master-detail put the event LIST in the sidebar and
+# the month GRID in the main panel — below md the main stays hidden until an
+# event is selected, so the actual calendar (grid, month nav, + Event) never
+# rendered on a phone. The month grid + nav + compose now also render as a
+# compact block pinned above the agenda in the phone sidebar (md:hidden);
+# desktop markup unchanged.
+# 0.7.0 (2026-07-19): per-turn metrics on every chat surface (there was no
+# timestamp, duration or token use anywhere). Each turn shows its
+# clock time; assistant turns add "took Ns · N tok (in/out)" — durable from
+# the runtime's turn-row metadata stamp (surfaced by _read_self_thread as
+# msg.metrics), measured client-side for the just-streamed turn (duration =
+# send→done, tokens from the d:/e: finish-frame usage the stream client now
+# parses). Hover the meta line for the model that ran.
+# 0.7.1 (2026-07-20): agent status cards can't go stale (batch-2 caps sweep).
+# The dispatched-agent card's status poll had a silent 120-tick (~6 min) cap —
+# any agent outliving it froze on "Running" forever. Now polls to a real
+# terminal state (3s → 10s backoff, hidden tab skips fetches), and the agents
+# list is fetched with limit=100 (the newest-20 window dropped older
+# still-running agents from the poll entirely — same frozen badge).
+# 0.8.0 (2026-07-20): the experience pass (batch-4, shared with workbench
+# 0.11.0). Agent cards in chat show the live activity feed while running and
+# the real output/failure when done; tool cards render parameters/results as
+# compact key→value prose (raw JSON behind a fold, long text folds); "read"
+# cards title by the inner tool + subject instead of the bare "read".
+# 0.8.7 (2026-08-19): host-tooling cleanup — dead-engine vocabulary out of the
+# briefing; the stream no longer unwraps the retired engine's read() shape.
+# 0.8.8 (2026-08-21): Settings → coding pane reads the Orchestrator's Coding
+# Engines (connected engines, their saved default model/effort, and the
+# Default tick — where an unnamed build runs) instead of the retired
+# Parallel-Builders selection ("every connected harness fans out" is no longer
+# true and no longer said). Read-only, as before; deep-links to the
+# Orchestrator.
+# 0.8.9 (2026-08-25): prompt_behavior described the chat pane only, so a host
+# in this window had nothing true to say about the other eight rail modes it
+# ships (assets/index-DMp3yAbk.js:456 — inbox, calendar, address book, domain
+# policy, reviews, response shaping, activity, settings), all of which are
+# already covered by this manifest's own permission list. Manifest-only change.
+# 0.9.0 (2026-08-28): background-activity ribbon in the strip above the
+# composer (self thread only) — what the Host ran that the user never saw:
+# memory consolidation, research, summarising, and LOUDLY anything that
+# failed. Click opens the last 24h with the provider's own error text and a
+# plain-language cause ("no model is routed for this"). It reads
+# GET /api/inference/activity, which serves both halves of inference_cost_log:
+# completed calls, and — new — FAILED ones. Until now a failed model call
+# wrote nothing anywhere (the gateway's failure paths recorded through
+# _prompt_console, which nothing wires in the pod), so a background role that
+# stopped answering was invisible outside the pod log; that is exactly how
+# fact derivation ran dead for 16 days. Renders nothing at all
+# when there has been no background work and nothing is wrong.
+# 0.9.1 (2026-08-28): pasted keys are caught before they leave the composer.
+#   A send whose text carries a credential shape — a vendor API key (sk-ant-,
+#   sk-, xai-, ghp_, AKIA…), a PEM private key, a JWT, a bearer token, a
+#   password inside a URL — is held behind a strip instead of sent: "Send
+#   redacted" (the value becomes [REDACTED:<kind>]) or "Edit message" (the text
+#   goes back into the box). Soft hits — a `password = …` assignment or a
+#   random-looking 32+ char token — get a gentler strip with "Send as-is" too.
+#   The rules are ONE file, brain/mastercode/secret_shapes.json, shared with
+#   the pod, which redacts the hard shapes at the top of send_message
+#   regardless (text reaches the host from more doors than this composer), so
+#   the hit the user was shown is the hit the pod cuts. Nothing scanned here
+#   leaves the browser. A key or known credential the user pastes is
+#   caught before it goes to inference.
+#   Plus "Store in Keys": one click seals the caught key
+#   into the vault (POST /api/vault/secrets — the Keys app's own call; a
+#   vendor API key lands on its canonical provider name so routing picks it
+#   up, anything else on a plain name) and the message goes out with
+#   (stored in Keys as "…") in its place. Adds write:vault for that one call.
+# 0.10.0 (2026-08-29): Reviews → TICKETS. One queue, two kinds. Decisions
+#   (entity_tickets, unchanged: what the Host is waiting on the user for) and
+#   SUPPORT — platform-help tickets the Host raises for the user, categorized
+#   (bug / question / feature / billing / access) and identified by project.
+#   The Host drafts a four-part card (problem / context / recommendation /
+#   pushback — the same shape the operator reads on their side) and the pod
+#   assembles a shared-context list beside it (C-Series version + apps, recent
+#   errors, recent model-call failures, named files — secrets cut). NOTHING
+#   LEAVES THE POD until the user reads that list in this pane, unticks what
+#   they will not share, and presses Send. Then the platform's answer comes
+#   back into the same card: received → reproducing → pr_open → approved →
+#   fixed, or needs_info (a question, answered from the pane) / rejected.
+#   Replaces the trusted-reporter `report_bug` lane (two hand-enrolled
+#   entities, zero reports ever filed). server/routes/support.py; the Host's
+#   side is the `tickets` tool's support_* ops + default-skills/tickets.md.
+# 0.10.1 (2026-09-02): Personality pane copy tells the truth about drift. The
+#   envelope section said "how far she may drift on her own" / "your consent
+#   slider for autonomous movement" — but no code path moves the weights off
+#   the user's setting (runtime/personality_validate.REGISTERED_WRITER_SOURCES:
+#   sliders + genesis write seed AND current together; the breach path resets
+#   TO seed; the autonomous writer is deleted). A fresh host read
+#   that copy back to a stranger as a hidden learning process. The envelope is
+#   now described as what it is: the tamper check's safety bound. Copy only;
+#   no API, route, scope, or schema change.
+# 0.11.0 (2026-09-02): Hosts | People. The conversation list is now two views
+#   (two separate lists so people know when they are talking to a human).
+#   HOSTS: Your Host / Peers (hosts you've connected) / Circles (rooms of
+#   several hosts). PEOPLE: People (persons you've connected, keyed by their
+#   email) / Circles (group chats between people — listed, not built yet).
+#   Every message from the composer now carries the verified person who typed
+#   it (X-Authentik-Email), so a person → host message shows the person "via"
+#   their host in the other side's Peers thread, and a person → person message
+#   files under People on both sides. Neither host's model reads or answers a
+#   People message. New: /api/contacts/request-by-email (connect with a person;
+#   the answer never says whether the address exists), thread kind 'dm' read +
+#   clear, contacts.peer_entity_id (migration v123). Bridge: circles.send_dm +
+#   contacts.request_by_email, and the person fields are verified against
+#   operator_entities before they travel. Fixes the Peers thread read, which
+#   called /api/messages/thread with a peer id against a uuid column.
+#   Scopes unchanged (read/write:circles, read/write:address_book).
+# 0.11.9 (2026-09-18): the price is on the turn. Every assistant turn's meta
+#   line now ends with its list-price estimate at the served model's rates
+#   ("$0.0031"), or the basis word where there is no per-token price (free /
+#   subscription / unpriced) — never "$0" for "unknown". A regenerated
+#   alternate and each side of an A/B compare print the SAME line (model ·
+#   took Ns · N tok · price), so Regenerate and Compare are a price
+#   comparison against the original, not only a text one.
+#   Backend: session.py stamps est_cost_usd + price_basis on the turn row
+#   (inference.estimate_turn_cost, the cost log's own arithmetic); /replay
+#   and /ab return `metrics` per variant / side; the variant row keeps them.
+#   Old rows carry neither field and print nothing about price. Scopes
+#   unchanged.
+# 0.12.12 (2026-10-01): the ask card follows the answer's turn. When the turn
+#   that asked has ended, deciding the ticket starts a turn with the answer in
+#   this thread on the server (tickets.decide_ticket_service ->
+#   session.answer_after_turn — one path for every surface, the Tickets pane
+#   included); the card reattaches to it instead of sending the answer again.
+#   While a turn HOLDS for what it started the composer stays a Send composer
+#   (Stop beside it) and a send is nudged into that turn; a nudge's saved row
+#   replaces its echo. Scopes unchanged. Bundle rebuilt and repacked.
+# 0.13.0 (2026-10-03): HTML in chat: the Host can reply with HTML when
+#   appropriate (thumbnails for artifacts, in-chat renderings). (1) VISUALS
+#   (the noun is "visual"): a ```visual
+#   fence in the Host's reply is drawn as the page, in the sealed frame every host-authored document gets (sandbox
+#   allow-scripts only + the shared CSP from /js/sandbox-csp.js, now loaded by
+#   index.html; fails closed without it), wearing the desktop's tokens, sized
+#   to its content. Nothing is saved automatically, only the usual
+#   save/export options: Save as artifact, Download, Copy, Full
+#   size, Code. Only the user's own Host's replies run; Peers/People show the
+#   source. (2) An artifact a turn made or changed shows as a live thumbnail
+#   that opens the Artifacts window — live and after reload (the chip's digest
+#   now keeps artifact_id, runtime/tool_trail.py). (3) prompt_behavior: a
+#   one-line VISUALS pointer; when to answer with a visual vs build an
+#   artifact is in skill 'artifacts'. The frame, the block and
+#   the card live in app-web-kit/visuals, shared with the Workbench. Scopes:
+#   + read:projects, write:projects. Bundle rebuilt and repacked.
+# 0.13.1 (2026-10-04): a link can open a thread. The view `thread:<uuid>`
+#   (or `thread:original`) opens Conversations on that thread of the Host's
+#   own conversation. A messaging connector sends this link when part of a
+#   reply (a visual html2pic cannot draw, an image it cannot attach) could
+#   not be shown in the messaging app (server/connectors/reply_parts.py).
+#   The thread is opened
+#   once the conversations have loaded. src/lib/app-view.ts; scopes
+#   unchanged. Bundle rebuilt and repacked.
+# 0.13.2 (2026-10-04): a messaging connector's pairing card takes the
+#   authenticator code in Tickets. The card (kind connector_pairing, filed by
+#   server/network/nac_connector.py) is approved with a code from the
+#   person's authenticator; the code box showed only for a pipeline proposal,
+#   so approving it here was refused with a pointer to Network. The rule is
+#   src/lib/ticket-stepup.ts, read from the payload only the platform writes,
+#   with its own line under the box. Scopes unchanged. Bundle rebuilt and
+#   repacked.
+# 0.13.3 (2026-10-05): create_project no longer carries the conversation into
+#   the new project (brain/mastercode/runtime/tools.py _exec_create_project):
+#   the exchange stays whole in this thread, and the
+#   project's thread opens with a marker linking back to it. The brief told
+#   the Host the conversation "will be carried into the project's chat
+#   history"; it now says it stays here and the project links back.
+#   Manifest-only; bundle repacked.
+# 0.14.0 (2026-10-05): cards come up in the conversation, and Circles reopens
+#   where it was left: no chasing apps in the middle of a conversation,
+#   tickets render in chat, and opening Circles no longer jumps to an old
+#   thread. (1) The open thread's own tickets — every
+#   one the platform filed during a turn there, and a connector's approval
+#   card filed outside one — come up as the ask card on opening the thread
+#   and on the 10 s badge poll (GET /api/tickets?asked_in=); "Not now" is
+#   remembered on the device so a card is never raised twice. (2) A credential
+#   ask is answered on the card: the sealed field and "Store in Keys" (if
+#   absent, never replacing a key; the Host gets the name only). (3) A
+#   connector pairing the Host starts shows its one-time code on a card, read
+#   from the code route by this window (the Host never sees it), with a
+#   countdown; a code lost to a restart (410) or run out says so. (4) The
+#   open thread is kept across rail tabs and stored on the Host (GET/PUT
+#   /api/circles/last-open); a link still wins, a deleted thread falls back
+#   to the original. (5) The composer catches Telegram bot tokens and Slack
+#   app-level tokens (brain/mastercode/secret_shapes.json), Slack refresh,
+#   rotating and workflow tokens, and a Google key or JWT ending in '-'
+#   (those slipped past a trailing \b). The step-up rule
+#   moved from src/lib/ticket-stepup.ts into app-web-kit/ask.ts. (6) A card
+#   answered somewhere else (Network, Tickets, another window) goes on the
+#   next poll: a card whose ticket the thread's open list no longer names is
+#   read back (GET /api/tickets/{id}) and dropped once it is not open, so it
+#   can no longer be clicked into "ticket status is 'decided'"; a card that
+#   reads back open stays. Scopes unchanged. Bundle rebuilt and repacked.
+# 0.14.1 (2026-10-05): manifest-only. The 0.4.14 note below named the asset
+#   catalog's tool, which is removed from the platform with the catalog
+#   (migrations/v206); it
+#   names it in words now. The behaviour notes already said artifacts wear the
+#   desktop (0.12.10). Scopes unchanged; bundle repacked.
+# 0.14.2 (2026-10-07): a support draft can be found. Measured on a live Host: a
+#   draft waited for the person's Send while Tickets opened on Decisions and
+#   the rail showed one number for decisions + drafts + platform questions.
+#   Tickets now opens on Support while a draft is waiting (a link still wins),
+#   the Support entry says how many drafts wait, and the rail's Tickets number
+#   counts what the person must answer (open decisions + the platform's
+#   questions) with a separate "draft" mark beside it. New views `support`
+#   and `support:<id>` (src/lib/app-view.ts) let the Host's open_app land the
+#   person on the support list or one draft. The Host can now rewrite a
+#   draft, so Send names the draft version on screen and the server refuses
+#   an older one: the pane reloads the draft and says why, nothing is sent.
+#   Scopes unchanged; bundle rebuilt and repacked.
+# 0.14.3 (2026-10-07): a reasoning-effort pick beside the model picker,
+#   so a Host on Claude can be run at another effort per thread
+#   (the Anthropic wire now sends output_config.effort). It offers the levels
+#   of the model this thread's turns run on (the picked model, else the Host
+#   model route), from GET /api/inference/effort-options, and its blank reads
+#   as that model's own default ("Default · medium" on Claude Haiku 5.5).
+#   The pick rides each send like the model pick (`effort` on
+#   /api/circles/messages): never stored, reset with the thread, and dropped
+#   back to the default when the model changes to one that does not take it.
+#   The send route checks it by the Orchestrator's own rule and refuses a
+#   level the model would not get. Logic in hooks/use-effort-pick.ts and
+#   lib/effort.ts; the control is a plain select. Scopes unchanged; bundle
+#   rebuilt and repacked.
+# 0.14.4 (2026-10-08): the ask card no longer nudges
+#   its answer into the running turn a second time when the decide already
+#   put it there (answered_into_turn): from there the server delivers it, so
+#   the Host reads it once. Scopes unchanged; bundle rebuilt and repacked.
+# 0.14.5 (2026-10-08): the composer's secret-shape warning matches
+#   what the pod cuts (lib/secret-shapes.ts scanSecrets, the scan of
+#   brain/mastercode/secret_shapes.py): a [REDACTED:<id>] marker already in
+#   the text, and a span one rule claims, read as one opaque run to the rules
+#   after it. A link whose password slot is already a marker no longer warns
+#   as a key, and a Telegram token or a PEM block used as a link's user name
+#   is named together with the link's password. Rules file unchanged; scopes
+#   unchanged; bundle rebuilt and repacked.
+# 0.14.6 (2026-10-10): Block in the Address book means what it says,
+#   and the contact says what it does. The Host now enforces it from the
+#   contact's status on every way in (server/routes/contacts.py
+#   block_refuses): blocking a Host refuses what that Host sends while the
+#   people who use it still reach you; blocking a person refuses them from any
+#   Host and blocks their Host too until they are unblocked. One line under a
+#   contact's name says which (src/lib/block-note.ts), and a Host blocked
+#   because of a person names that person (the list's new blocked_through).
+#   Scopes unchanged; bundle rebuilt and repacked.
+# 0.14.7 (2026-10-10):
+#   Response Shaping's home is now the Settings app (Settings 3.10.0, its
+#   own tab). The Host is told so: the rail line says the same controls are
+#   in Settings, and "how much you explain" points at Settings → Response
+#   Shaping instead of a Personality pane. This pane stays until the cards
+#   replace the rail. Manifest-only change; scopes unchanged; bundle repacked.
+# 0.14.8 (2026-10-10):
+#   the Search pane sends what is typed in a POST body, never in the URL. It
+#   searched as the person typed with GET /api/search?q=, and a URL is kept by
+#   whatever sits in front of the pod, so a password or a key typed a key at a
+#   time reached it a prefix at a time. The route is POST /api/search now and
+#   the GET form is gone (server/routes/search.py); the pane is the kit's
+#   (app-web-kit/search.tsx), changed there. read:search stays: the pane
+#   still calls the route until the cards replace the rail, when
+#   Circles drops the scope and Context holds the everything-search. Bundle
+#   rebuilt and repacked.
+# 0.16.0 (2026-10-11): the
+#   cards are Circles. index.html is the deck of cards; the rail, its eleven
+#   panes, the sidebar and the chat view are gone, and cards.html with them
+#   (it never shipped). Everything they did is on the cards or in another
+#   app: a page's Rename, Close, Clear, Delete, Split and turn type; mood,
+#   context and the background ribbon; the box's pills, file rules, paste,
+#   drop and Store in Keys; notes, Block, Remove and Clear on a contact's
+#   card, All your contacts, your number; Load earlier; the Decisions sheet
+#   and support in full; the platform's notices and your Host's older asks;
+#   Calendar, Response Shaping, the rules and machines in their own apps.
+#   Regenerate and A/B are gone end to end, and the Activity feed.
+#   The Host is told what Circles is now. Scopes: write:calendar (the
+#   Calendar app writes), read:search (Context searches),
+#   write:brain_personality and read/write:brain_codebooks (Settings shapes
+#   replies) are dropped; read:brain_personality stays, and read:inference_log
+#   for the background ribbon (GET /api/inference/activity). Bundle rebuilt,
+#   repacked and re-signed.
+# 0.16.7 (2026-10-12): two topics at once are both seen working. A message
+#   on another topic, sent while your Host works, streams its reply live with
+#   its own working line, and words typed while a turn runs get their topic
+#   picked too. Questions your Host asked on any topic come up as cards, and
+#   "Where this stands" shows the topic you last wrote to and names it. The
+#   activity panel lists the threads your Host runs on its own, each with its
+#   current step (GET /api/circles/work). Bundle rebuilt, repacked and
+#   re-signed.
+# 0.16.6 (2026-10-12): your Host's back is one conversation. Every login opens
+#   on a blank page with a greeting; earlier messages load as you scroll up,
+#   across every topic, newest at the bottom (GET /api/circles/feed). There
+#   are no thread tabs and no "new thread": your Host picks the topic of each
+#   message, joining an earlier one only on a clear match, and a line shows
+#   where the talk turns ("continuing: <topic>, <date>" / "new topic: …").
+#   Words for the topic already being worked on go into that turn; words for
+#   another topic start their own turn at the same time. The Root thread is
+#   written to only through "Write in Root" on its line. last-open stays for
+#   links. Bundle rebuilt, repacked and re-signed.
+# 0.16.5 (2026-10-11): words you type while your Host is working are never
+#   lost. The server keeps them from the moment it gets them, so the page no
+#   longer keeps its own copy to send again: a reload, a closed tab or a
+#   dropped connection cannot lose them. After a reload they show again as
+#   sent and not yet read (GET /api/circles/pending). If the turn ends
+#   before reading them, they start your Host's next turn on that page, and
+#   the page follows it. Bundle rebuilt, repacked and re-signed.
+# 0.16.5 (2026-10-11): in PII mode, where your Host writes nothing down, the
+#   words you type while it works stay on the page until the turn reads them,
+#   and go as your next message if it never does. Bundle rebuilt, repacked
+#   and re-signed.
+# 0.16.3 (2026-10-11): when the platform's crisis check flags your words,
+#   Circles shows the platform's own notice over the page — the 988 Suicide
+#   & Crisis Lifeline (call or text 988, chat at 988lifeline.org), marked as
+#   the platform's, never your Host's — and you can dismiss it. It does not
+#   cover the reply or stop you typing, and it comes back after a reload
+#   until you dismiss it. Your Host answers in its own words, told the check
+#   fired; the check no longer replaces its reply. Bundle rebuilt, repacked
+#   and re-signed.
+# 0.16.4 (2026-10-11): your Host's back, from first use of the cards.
+#   One working line just above the box, outside the scrolled conversation:
+#   "<Host> is working", what it is doing now (the running tool in words,
+#   "Writing" only while words are arriving, "Thinking" in every silence)
+#   and how long it has taken, from the send to the turn's last frame, and
+#   after a reload from the turn's own start (GET /api/circles/turns/active).
+#   It replaces the status line under the streaming reply and the "is
+#   working" line under the conversation; the step used to say "Writing the
+#   reply" for the rest of a turn once any word had arrived. Tapping it lists
+#   what is running: the turn here, a turn on another page, each background
+#   agent (GET /api/agents), and background work that failed. A turn on
+#   another page keeps the line up on this one too ("is working · on
+#   <page>"), also after leaving its page mid-turn. The background
+#   ribbon is gone; a failure shows on the working line until dismissed.
+#   "Where this stands" is one line until tapped, and each page remembers.
+#   "Where did everything go?" is gone. Sending scrolls your words into
+#   view. Scopes unchanged; bundle rebuilt and repacked.
+# 0.16.8 (2026-10-12): there is no original conversation. Every message,
+#   scheduled task report and agent result lands in a topic, so the page
+#   never lists, opens or names "The original conversation": a decision
+#   asked nowhere is listed under your Host's name, and a note asks you to
+#   answer in Circles. A link naming the original conversation, Tell
+#   <Host> on an older ask, and deleting the page on screen all open the
+#   blank page, and the context bar is never drawn for the old scope.
+#   Bundle rebuilt, repacked and re-signed.
+# 0.16.9 (2026-10-18): when your Host's words start arriving after a
+#   silence, the working line says "Writing" as they appear. It used to keep
+#   saying "Thinking" for up to a second, until its clock next ticked, and
+#   after a reload mid-turn that was the first thing it said over the new
+#   words. The same for a reply on another topic in the line's panel. And
+#   when a tool answers after words that came while it ran, the line says
+#   "Thinking" at once; it used to say "Writing" for up to a second first.
+#   Bundle rebuilt, repacked and re-signed.
+# 0.16.10 (2026-10-18): the mood indicator on your card's back is gone with the
+#   simulated psyche: no mood stream frame, no /api/brain/mood, no derivation
+#   panel. The bundle calls no /api/brain route, so read:brain_personality is
+#   dropped from permissions. prompt_behavior is one paragraph saying what the
+#   app is and what lives in it; do_when_active is gone from the manifest
+#   contract, and its how-to lines live in skills and tool descriptions the
+#   Host reads on demand. Bundle rebuilt, repacked and re-signed.
+# 0.16.11 (2026-10-18): rebuilt from sources whose comments were rewritten as plain rationale; no behaviour change.
+version: "0.16.11"
+# 0.15.0 (2026-10-10): the
+#   cards, on their own address. cards.html, beside index.html in this
+#   bundle, draws Circles as a deck of cards: each contact one card, the
+#   person on the front and their Host on the back; your own card with your
+#   Host's threads on its back; At the door, Waiting on you and Coming up.
+#   index.html is still the rail and still opens by default; a card link
+#   (card:<kind>:<id>, as Network's Message sends) or the view `cards` moves
+#   the window to cards.html. A later release makes the cards Circles.
+# 0.14.11 (2026-10-10): a Host's message that named a person this
+#   Host could not verify says so on its author line, "<Host> · host · says
+#   this is from <address>" (claimed_person from GET /api/circles/thread/
+#   entity/<id>; components/chat/chat-message.tsx AuthorLine). Rebuilt on
+#   main's 0.14.10 (the nudge id), which it carries. Scopes unchanged;
+#   bundle rebuilt and repacked.
+# 0.14.10 (2026-10-10): a
+#   nudge is matched to its receipt by an id, not by its words. The
+#   conversation holds each nudge it sends into a running turn until the
+#   turn's nudge_read receipt, and sends it as the next message when none
+#   comes. It matched the receipt by the first 48 characters of the words,
+#   so words whose opening the platform changed (a secret shape cut from it)
+#   never matched and went to the Host a second time. Each nudge now
+#   carries an id (POST /api/circles/nudge client_id, which the receipt
+#   echoes) and is matched on it, by the book's rule in the shared kit
+#   (app-web-kit/book/nudge.ts readIndex), the one the Workbench's page
+#   uses; a receipt with no id is still matched by the words' opening.
+#   Scopes unchanged; bundle rebuilt and repacked.
+# 0.14.9 (2026-10-10): a new
+#   link, card:entity:<id>, which the Network app's Message on a machine's
+#   Host sends. Circles draws no cards yet, so it opens the conversation with
+#   that Host, as the Bastions pane's Message does (src/lib/app-view.ts; slice
+#   10 swaps that one mapping for the Host's card). The Bastions and Domain
+#   policy panes stay until the cards replace the rail. Scopes unchanged;
+#   bundle rebuilt and repacked.
+# 0.12.13 (2026-10-02, batch merge): two branches each shipped a 0.12.12 —
+#   the ask card following the answer's turn (above), and desktop-render-check
+#   (no note of its own): Regenerate and Compare follow the job a slow request
+#   turns into (server/applications/long_request.py) instead of failing at
+#   the router's 30 s. One release carries both, its bundle rebuilt from
+#   npm ci. Scopes unchanged.
+# 0.12.11 (2026-10-01): the agents strip reads GET /api/agents and vetoes with
+#   POST /api/agents/{id}/cancel, and both routes now require a scope — they had
+#   none, so any app on the Host could list and cancel the Host's agents.
+#   Declares read:brain_tasks + write:brain_tasks (the scopes /api/brain/manage/
+#   tasks already takes). Manifest-only change; bundle repacked.
+# 0.12.10 (2026-09-28): no per-project style: all artifacts default to the
+#   current UI.
+#   The design-template doctrine (0.4.14/0.4.15: read the active template's
+#   DESIGN.md, set_default, update_project design_system) is replaced by one
+#   line: artifacts wear the desktop, and a new look is a desktop designed in
+#   this conversation, never a project ("every time a UI is designed ANOTHER
+#   project opens up empty"). Manifest-only; bundle repacked.
+# 0.12.9 (2026-09-27): Delete, for threads and circles (there was no way
+#   to delete a conversation, a thread or a circle).
+#   A thread row carries Delete beside Rename/Close: DELETE
+#   /api/circles/threads/{id} archives the thread's messages AND every row
+#   the Host learned in it (summaries, goals, facts), so a bad test thread
+#   stops steering the Host; the thread leaves the list and the original
+#   conversation is shown if it was open. It also cancels the scheduled tasks
+#   set in the thread, and the confirm dialog names them first (GET
+#   /api/circles/threads/{id}/wakeups). A circle row gets the hover
+#   control Clear already had: the owner deletes the circle for everyone, a
+#   member leaves (bridge circles.leave). The original conversation keeps
+#   Clear only.
+# 0.12.8 (2026-09-25): the approval card for an op on one of the person's
+#   machines. mgmt_run's op door files
+#   the ticket (kind op_ask, locked to the user) and its result carries the
+#   ask, so the card rises over the chat like a pipeline proposal's; the
+#   machine's own dry-run diff rides as an ATTACHMENT the card folds under the
+#   words (app-web-kit/ask.ts `attachment`, read from a platform ask only —
+#   a Host's escalate cannot attach). The Tickets pane shows the same fold,
+#   where the click is bound and what became of it, and every run a "from now
+#   on" answer has covered since.
+# 0.12.7 (2026-09-24): a pipeline change that adds a check running outside the
+#   platform takes a code from the person's authenticator. The ask card shows
+#   a code box on the option the kernel marked (the `pipeline` result's
+#   stepup_option), the Tickets pane on 'apply' of a card whose platform-only
+#   pipeline_proposal metadata asks for it — never from an option a Host
+#   wrote. 'apply' stays disabled until six digits are in; the code rides
+#   that decide only, and a wrong one leaves the card open.
+# 0.12.6 (2026-09-24): the ask card also rises for a pipeline proposal — the
+#   `pipeline` tool's result carries the decision ticket the kernel filed
+#   (app-web-kit/ask.ts RESULT_ASK_TOOLS). Only
+#   that named tool, read from `operate`'s args.tool when the Host runs it as
+#   a registry op: an ask-shaped result from any other tool raises nothing.
+# 0.12.5 (2026-09-24): the ask card — an answer the turn never read is sent
+#   as the next message after EVERY attempt, not only on a status edge: a
+#   send the server rejected left the status unchanged, so the answers
+#   queued behind it waited for the person's next turn. Bounded by the queue; each attempt takes its entry first.
+# 0.12.4 (2026-09-24): the ask card — an overlay over the chat, never a message
+#   in it.
+#   An `escalate` the Host raises on a live turn opens a dialog over the
+#   conversation: the sitrep, the choices with the recommended one marked, a
+#   note, Not now. The click decides the ticket through the same route the
+#   Tickets pane uses, then the Host reads the person's words — nudged into a
+#   running turn, sent as the next message when the turn has ended. Not now
+#   leaves the ticket open in Tickets. One card at a time; a credential ask
+#   points at Tickets, where it is sealed. app-web-kit/ask.ts + ui/ask-overlay.
+# 0.12.3 (2026-09-24): tickets — one system, two shapes. A support
+#   card from another Host (the operator's queue) is refreshed by the Host
+#   while it sits open when that user writes again; the decide now sends the
+#   mark the card was rendered with (`seen_event_max`) and the route applies
+#   it only if the card still shows what the person read — else 409, the pane
+#   reloads the card and says why — inline on the card (the sidebar is hidden
+#   on mobile), as is a decide the platform recorded but could not apply yet.
+# 0.12.2 (2026-09-24): tickets — one system, two shapes (one
+#   ticket system: the Workbench for engineering, Circles for operations). A decision now carries the person's own
+#   note (the route always took one; the pane never sent it). A ticket with one
+#   option reads as something only they can do ("When you have done it"). An
+#   option may ask for a credential (`credential_request` {name, cred_type,
+#   purpose}): the card shows the same sealed "Store in Keys" field the
+#   composer has, seals the pasted value under that name (POST
+#   /api/vault/secrets, write:vault — already declared) and decides the ticket
+#   with the name in the note; the Host never sees the value. A ticket joined
+#   to a Workbench phase (metadata.phase_id) shows the link and what the phase
+#   last reported; a phase gated on the user's approval raises its own ticket
+#   here (metadata.kind=phase_gate) and Approve on it is the Workbench's
+#   approved_at. Kernel: server/routes/tickets.py on_phase_outcome /
+#   raise_phase_gate_ticket / resolve_phase_gate_tickets; the build path and
+#   the Workbench approve route call them. Scopes unchanged.
+# 0.12.1 (2026-09-23): faster streaming replies. The reply text now lands at most
+#   once per animation frame (app-web-kit/stream-batch.ts) instead of one React
+#   update per streamed chunk; tool calls, errors and the end of the turn flush
+#   it first, so what the user sees arrives in the same order. Messages split
+#   into blocks incrementally while they stream (app-web-kit/incremental-
+#   blocks.ts) — only the end of the reply is re-split, not the whole text —
+#   pinned equal to Streamdown's own split by test/incremental-blocks.test.ts.
+#   Streamdown 2.5.0 -> 2.6.0 for remend 1.3.1, whose link repair was measured
+#   at 47 ms per update on a 40 KB reply under 1.3.0 (7.8 ms under 1.3.1).
+#   Build assets are now cached by the browser (server/applications/proxy.py
+#   _asset_cache_control), so reopening the window no longer re-downloads the
+#   app. Scopes unchanged.
+# 0.12.0 (2026-09-23): the Bastions folder (a bastions folder for hosts
+#   and people). A rail pane listing every
+#   machine this Host is paired to: online or not, local or networked, who
+#   anchors it (or that it is too old to say), this Host's own pairing state
+#   there, and the other Hosts the machine announced, pending ones marked.
+#   Each Host carries its contact card and the person behind it; Message opens
+#   the thread when you are connected, and Request connection sends the
+#   peer-gated request (POST /api/contacts/request-peer, which had no button
+#   anywhere until now). "Open in Network" opens that machine's inspector
+#   (Network 1.10.5). Everything is labelled as the machine's own report.
+#   Backend: GET /api/circles/bastions (server/network/bastion_directory.py),
+#   narrowed to that and nothing else — no keys, grants, addresses or folder
+#   stores. Needs read:topology and write:address_book, both already held.
+#   View 'bastions' opens the pane. Scopes unchanged.
+# 0.11.11 (2026-09-23): the Tickets pane reads the bug lane's `validated`
+#   status ("validated, in the operator's queue"). A bug ticket is now filed
+#   as a pull request on the platform's bug repo, never a row in an operator
+#   database (server/routes/support.py); the pane's Reply on a bug row lands
+#   on that report through proposal.reply. Scopes unchanged.
+# 0.11.10 (2026-09-23): a link can open a pane or a decision. The views
+#   `inbox`, `tickets` and `decision:<id>` — on the frame (`#view=`) or as a
+#   `cseries:app-view` message — switch to that pane; a decision opens the
+#   Inbox on the decision's own message (a decision is an inbox kind, and
+#   the user answers it by telling the host). It is what a "decision is
+#   waiting" reach-out links to (server/deep_link.py). The decision is found
+#   by the inbox list's `decision_id` (the list carries no payload); one not
+#   found says so. A view posted before the app mounted is held, not lost
+#   (the listener is installed in main.tsx before render). src/lib/app-view.ts;
+#   scopes unchanged.
+# 0.11.8 (2026-09-17): Rendezvous — the UI half. Settings gains an Interests
+#   section (list, add, remove, withdraw all) over GET/POST/DELETE
+#   /api/groups/rendezvous, and the inbox gains a `rendezvous_intro` card over
+#   /api/groups/rendezvous/introductions[/{id}/accept], plus its filter pill.
+#   Settings, not a rail entry: it is a standing per-user preference like every
+#   other section there, and a rail icon would read as a place to browse tags —
+#   the directory the feature exists to avoid needing.
+#   NO CAP on the number of tags; only one tag's LENGTH (64) and
+#   charset are bounded, shown as guidance because the tag becomes a community
+#   group slug. The POST's `dropped` is rendered by name: a save that succeeds
+#   while discarding one of the user's interests is what that field exists to
+#   prevent. "Saved but not listed yet" is shown as its own state, never as
+#   success — the bridge may be unreachable and the tags are stored either way.
+#   The intro card shows a COUNT of others and nothing that could name them;
+#   "Not now" archives, because there is no decline endpoint and must not be.
+#   Scopes unchanged — read:group / write:group already cover these routes.
+# 0.11.7 (2026-09-17): Search on the rail — the one index. One box over
+#   everything the host can see: its memory and the user's documents (the SAME
+#   recall engine, filters and relevance floor the host's per-turn pre-fire
+#   uses; not its per-model visibility filter, own-words cap or 6-item cut —
+#   a person searching wants every match), plus projects, the journal and the in-pod
+#   code index, each under its own heading and honest when it could not run.
+#   One index surface for finding context, files, etc. Shared
+#   with the Workbench through app-web-kit/search.tsx; the route is GET
+#   /api/search (server/routes/search.py). New scope read:search — declared
+#   here because app tokens are minted from THIS list (the 0.8.1 lesson).
+# 0.11.6 (2026-09-16): the same per-turn spend budget as the workbench —
+#   "Budget for each turn" in dollars beside the depth dial, with the
+#   projected next turn and the last turn's actual cost under it. The tool
+#   loop stops starting rounds it cannot afford rather than stopping at a
+#   per-model round count; a reply is never cut mid-sentence. A model with no
+#   published per-token price says so and is budgeted in tokens.
+# 0.11.5 (2026-09-16): the context panel says WHY it has nothing to show.
+#   A peer thread (dm/entity) is built by the OTHER host, so no prompt is
+#   assembled here and the block list and pre-fired memories are empty
+#   permanently — the panel now says that in a sentence instead of
+#   rendering an empty section that reads as a bug. A thread that simply
+#   has not had a turn yet says that instead. Reads the new
+#   `prefire_state` field on GET thread-context; a backend that does not
+#   send it renders exactly as before. No scope change.
+# 0.11.4 (2026-09-15): the chat agent card reads "unpriced" when the platform
+#   holds no published rate for the model an agent ran on, instead of rendering
+#   nothing. An empty cost reads as $0 to a person, and $0 and "we have no rate
+#   card" are opposite facts — the same distinction cost_method (v113) exists to
+#   keep. Matches the Workbench card; a still-running agent is unchanged.
+# 0.11.3 (2026-09-06): the composer's app pills (the Artifacts window's
+#   tune-mode references) ride the request as `frame.pills` beside the text,
+#   so the host's per-turn "This Turn" block names them as references
+#   instead of parsing them out of the message (host prompt map, phase 4).
+#   The text still carries them in brackets, so the turn row is unchanged.
+#   Scopes unchanged.
+# 0.11.2 (2026-09-06): a tool card is titled by what the host DID, not by
+#   what it typed. "<Tool> <op>" ("Gitea grep", "Artifact write", "Read"),
+#   with the argument as a muted, quoted subject after it. The title used to
+#   be "<Tool> · <first string argument>", so a host grepping for a sentence
+#   headlined the card with that sentence, which read badly.
+#   A reloaded card reads the same as a live one (the persisted chip's `op`,
+#   written by the tool trail). The build card keeps its stage sentence as a
+#   plain, unquoted continuation and never titles "Build build". Bundle
+#   repacked.
+# 0.11.1 (2026-09-04): "How much your Host explains" — a three-position
+#   setting on the Personality pane (explain everything / explain new things /
+#   use the terms), saved on click through PUT /api/brain/personality/
+#   explanation (scope write:brain_personality, already held). The Host reads
+#   it in its identity block and can move it for the user when they ask in
+#   words (the `explanation_level` tool, same route). A setting
+#   the user declares and changes live, never an inferred rating.
+# 0.8.6 (2026-08-18): provenance printed. Every assistant turn's meta line
+# now shows the model and provider that answered (it was a hover title) and
+# flags a provider failover in amber — same stamp the Workbench prints.
+# 0.8.5 (2026-08-13): ship the app's icon as a FILE. app.yaml had declared
+# icon.png + icon-64.png since before either was produced, so every surface that
+# loads the image rather than the shared glyph 404'd — the launcher's icon_url
+# and the floating bubble's probe. The mark itself was never missing: it is the
+# "linked rings" glyph at dashboard/base/js/icons.js:30, and CSeriesIcons.markup()
+# prefers a glyph over icon_url (icons.js:90-93), which is why every other
+# surface always drew it correctly. Same geometry, materialised as icon.svg with
+# concrete colours (an <img> has no CSS context, so currentColor would render
+# black). One SVG serves both declared sizes. Version bumped because the
+# installed copy comes from native-bundles/circles.cseries, not from source — the
+# bundle is repacked in this commit and the installer needs the version to move.
+# 0.8.4 (2026-07-31): chat hardening (the circles-rich-chat WIP intent, rebuilt
+# on current main). (1) Render-error firewall: a reusable ErrorBoundary wraps
+# each pane, the message list, each message, the reply markdown, and each tool
+# card — one hostile/malformed payload costs one card or one bubble, never the
+# whole desktop (the 0.4.6 blank-screen mode, structurally closed). (2) The
+# bare "working · Ns" line is now a tool-aware TurnStatus: phase labels driven
+# by live tool frames ("Searching the web", "Writing the reply", "Calling
+# <model>" when a thread pick is set) + the elapsed clock; model-picker/A-B
+# chrome untouched. (3) Tool payloads serialize through safeStringify
+# (circular-ref-proof, display-clipped at 50k chars) before the curated-shiki
+# raw fold — highlight what it can, degrade to text. (4) A finished turn with
+# no visible reply says so inline ("Finished without a reply — try again")
+# instead of a silent bubble; covers persisted history and tools-ran-but-no-
+# text turns the onDone invariant misses.
+# 0.8.3 (2026-07-25): removed the offline mock fixtures and the ?mock=1 gate.
+# They shipped in the bundle, so anyone could put the LIVE app into a state
+# that rendered invented conversations, contacts and security policy. Safe to
+# drop now that the panes they stood in for are real (routes/contacts.py,
+# migrations/v048_circles_contacts_policy.sql). Also: the per-peer rule input
+# no longer uses real people as its example.
+# 0.8.1 (2026-07-21): declare write:brain_personality — the personality
+# sliders 403'd because the scope addition shipped without a
+# version bump and the only-ever-forward installer correctly skipped it.
+# How the entity is briefed when active in this app. Rendered by
+# runtime/prompt_builder._build_surface_role into the "## Where You Are"
+# section. Replaces the hardcoded "if surface == 'circles'" body.
+prompt_behavior:
+  project_scoped: false
+  what_it_is: >-
+    Circles is the user's open conversational space, tied to no project. The window
+    is a deck of cards. Their own card: its back is their conversation with you, by
+    topic (threads they can rename, close, clear, delete or split), and its front is
+    how people see them. A card for each person they know: the front is that
+    person's chat with them, read only when its reading switch is on, and the back
+    is that person's Host. Cards for Hosts with no person, rooms of Hosts, groups
+    (roster, signed votes) and Support (support tickets and answers). Waiting on
+    you: decisions you are waiting on them for, support drafts awaiting Send, and
+    who is at the door. At the door: requests to connect, knocks, introductions,
+    Hosts found on their machines, requests to use a machine. Coming up: the next
+    events. Calendar, Response Shaping (Settings), who may reach them (Network) and
+    search (Context) are other apps.
+  user_path: "the Circles app, in the dock — a deck of cards: your own card (its back is your conversation with your Host), one for each person and Host you know, Waiting on you, and At the door"
+
+provenance: standard
+price_usd: 1.99
+billing: one_time
+
+window:
+  title: Circles
+  width: 1600
+  height: 1000
+  resizable: true
+  min_width: 1120
+  min_height: 720
+  # Phone mode: render native full-width and reflow (rail -> bottom bar,
+  # panes -> master-detail single column) instead of the shell's scale shim.
+  mobile: responsive
+
+permissions:
+  - read:circles
+  - write:circles
+  - read:address_book
+  - write:address_book
+  - read:domain_policy
+  - write:domain_policy
+  - read:tickets
+  - write:tickets
+  - read:inbox
+  - write:inbox
+  # Coming up reads the next events; the Calendar app writes them (Circles
+  # holds no write:calendar).
+  - read:calendar
+  - read:decision
+  - resolve:decision
+  - read:inference_catalog
+  - write:inference_routing
+  # The background-activity ribbon read GET
+  # /api/inference/activity, which is gated on read:inference_log; since
+  # 0.16.1 the working line above the box reads it for background failures
+  # (server/routes/inference.py). App tokens are minted from THIS list
+  # (server/routes/applications.py), so without the line the fetch
+  # 403s and — being fire-and-forget — renders nothing and re-polls a dead
+  # route forever, with no error anywhere. Read-only: the same scope the
+  # Compute and Workbench apps already hold.
+  - read:inference_log
+  # The door's card (it was the Inbox's) for a `machine_request` reads the offer
+  # row and the user's own machines (GET /api/network/bastions/machine-offers
+  # and /api/network/bastions — both read:topology) and refuses one on
+  # .../machine-offers/decline (write:network). Exactly the failure the note
+  # above records, on a new surface: app tokens are minted from THIS list and
+  # requires_permission has no system-app bypass, so without these two lines
+  # both fetches 403, the offer never resolves, and the Share button stays
+  # disabled with nothing on screen to say why. Accepting is resolve:decision,
+  # already held — it is a widen like every other decision this app resolves.
+  - read:topology
+  - write:network
+  # Groups. The door's card (it was the Inbox's) for a `group_join` reads the group so it
+  # can name it (GET /api/groups/{id}, read:group) and answers it on
+  # .../join-requests/{entity}/accept|deny (write:group). The SAME failure the
+  # two notes above record, on a third surface — app tokens are minted from THIS
+  # list (server/routes/applications.py) and requires_permission has no
+  # system-app bypass (server/applications/middleware.py), so without these two
+  # lines getGroup 403s, the card reads "wants to join grp-a1b2..." with no
+  # group name, and both Accept and Deny fail with a generic error.
+  #
+  # Reach is bounded twice over: every group mutation is refused unless this
+  # host OWNS the group (server/groups/roster.py _require_owner), and an invite
+  # still requires the invitee to be an accepted contact. This is the first
+  # manifest in the tree to declare either scope; they were admitted to the
+  # publish allowlist for exactly this kind of consumer.
+  - read:group
+  - write:group
+  # Shaping how the Host replies is the Settings app's. The bundle built from
+  # circles-web calls no /api/brain route (0.16.10), so no brain scope is held.
+  # 0.9.1: the composer's "Store in Keys" seals a caught credential
+  # (POST /api/vault/secrets). Write only — no read:vault, no reveal.
+  - write:vault
+  # 0.12.11: the agents strip -> GET /api/agents + POST /api/agents/{id}/cancel.
+  - read:brain_tasks
+  - write:brain_tasks
+  # 0.13.0: artifacts in chat. read:projects -> GET /api/artifacts/{id}/render
+  # (the live thumbnail of an artifact a turn made); write:projects -> POST
+  # /api/artifacts (Save as artifact on a visual, a click only).
+  # The same pair the Artifacts window holds. write:projects also covers the
+  # other project writes in server/routes; Circles calls none of them.
+  - read:projects
+  - write:projects

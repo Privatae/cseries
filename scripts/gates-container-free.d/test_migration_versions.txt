@@ -1,0 +1,2 @@
+# 2026-10-01 (migration numbering): the kernel keys an applied migration by its version number alone (entrypoint.sh), so a second file with an existing number would be silently skipped; this fails the build when two migration files share a version. Reads the migrations directory only; no pod, no DB.
+test_migration_versions.py

@@ -1,0 +1,2 @@
+# The licence index counts the files past its hashing bound and logs the app; desktop_from_url reads every linked stylesheet until its CSS budget or 32 fetches and names the rest, keeping the page's own <style>; the build attestation counts every commit and marks a list cut at 500. Temp dirs, a local git repo, stubbed fetches.
+test_caps_app_records.py

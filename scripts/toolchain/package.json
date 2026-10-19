@@ -1,0 +1,8 @@
+{
+  "name": "cseries-gate-toolchain",
+  "private": true,
+  "description": "The gates' own pinned toolchain: the TypeScript compiler the platform-text sweep and the ask.ts card check parse with. Pinned to the version the web apps lock, independent of any app's node_modules.",
+  "dependencies": {
+    "typescript": "5.9.3"
+  }
+}

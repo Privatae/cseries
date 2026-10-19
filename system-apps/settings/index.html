@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Settings</title>
+
+    <link rel="stylesheet" href="/css/tokens.css">
+    <link rel="stylesheet" href="/css/motion.css">
+    <link rel="stylesheet" href="/css/cseries-components.css">
+    <link rel="stylesheet" href="/system-apps/settings/style.css">
+</head>
+<body class="cseries-scroll">
+    <div class="app">
+        <header class="app-header">
+            <div class="app-brand">
+                <img src="/system-apps/settings/icon-64.png" alt="" class="app-brand-icon">
+                <div class="app-brand-text">
+                    <div class="app-brand-title">Settings</div>
+                    <div class="app-brand-sub label-sys">about &middot; updates</div>
+                </div>
+            </div>
+            <nav class="cseries-nav" role="tablist" aria-label="Settings sections">
+                <button class="cseries-nav-btn active" data-view="overview" role="tab" aria-selected="true">About</button>
+                <button class="cseries-nav-btn" data-view="updates" role="tab" aria-selected="false">
+                    <span>Updates</span>
+                    <span class="cseries-pill warn" id="update-badge" hidden>new</span>
+                </button>
+                <button class="cseries-nav-btn" data-view="history" role="tab" aria-selected="false">History</button>
+                <button class="cseries-nav-btn" data-view="synaptive" role="tab" aria-selected="false">Synaptive</button>
+                <button class="cseries-nav-btn" data-view="shaping" role="tab" aria-selected="false">Response Shaping</button>
+                <button class="cseries-nav-btn" data-view="appearance" role="tab" aria-selected="false">Appearance</button>
+                <button class="cseries-nav-btn" data-view="desktop" role="tab" aria-selected="false">Desktop</button>
+                <button class="cseries-nav-btn" data-view="backup" role="tab" aria-selected="false">Backup</button>
+                <button class="cseries-nav-btn" data-view="network" role="tab" aria-selected="false">Network</button>
+            </nav>
+        </header>
+
+        <div class="cseries-seam"></div>
+
+        <main class="app-body">
+            <!-- About -->
+            <section id="view-overview" class="app-view">
+                <div class="about-hero">
+                    <img src="/system-apps/settings/icon.png" alt="Privatae Host" class="about-hero-icon">
+                    <div class="about-hero-text">
+                        <h2 class="about-hero-title">Your Privatae Host desktop</h2>
+                        <p class="about-hero-sub" id="about-entity-name">Loading...</p>
+                    </div>
+                </div>
+                <div id="overview-rows" class="about-details"></div>
+            </section>
+
+            <!-- Updates -->
+            <section id="view-updates" class="app-view" hidden>
+                <div class="view-heading">
+                    <h2>Software Updates</h2>
+                    <p class="view-sub">Check for new versions of Privatae Host. Updates are always installed by you, never in the background.</p>
+                </div>
+
+                <div class="update-state cseries-card" id="update-state">
+                    <div class="update-state-top">
+                        <div class="update-current">
+                            <div class="label-sys">Current version</div>
+                            <div id="current-version" class="update-version">--</div>
+                        </div>
+                        <button id="btn-check" class="cseries-btn">Check for updates</button>
+                    </div>
+                    <div id="update-result" class="update-result" hidden></div>
+                </div>
+
+                <!-- Container deployment — apply rolls in place on the host -->
+                <div id="bundle-block" class="bundle-block" hidden>
+                    <div class="bundle-header">
+                        <h3 class="bundle-title">Update available</h3>
+                        <p class="bundle-sub" id="bundle-sub"></p>
+                    </div>
+
+                    <div class="bundle-steps">
+                        <div class="label-sys">What happens when you apply</div>
+                        <ol>
+                            <li>Your container is recreated at the new image. Volumes, certs, env are preserved.</li>
+                            <li>The dashboard will reconnect on the new version. Boot animation plays during the swap (~30 seconds).</li>
+                            <li>No script to run on your side — the host applies it.</li>
+                        </ol>
+                    </div>
+
+                    <div class="bundle-actions">
+                        <button id="btn-apply-update" class="cseries-btn primary">Apply update</button>
+                        <button id="btn-bundle-clear" class="cseries-btn ghost">Dismiss</button>
+                    </div>
+
+                    <!-- Per-file / zip download of a host-staged bundle, populated by app.js -->
+                    <div id="bundle-download" hidden></div>
+                </div>
+            </section>
+
+            <!-- History -->
+            <section id="view-history" class="app-view" hidden>
+                <div class="view-heading">
+                    <h2>Version History</h2>
+                    <p class="view-sub">A record of every update on this computer.</p>
+                </div>
+                <div id="history-list" class="stack">
+                    <div class="cseries-empty">
+                        <span class="empty-title">No updates yet</span>
+                        When you install your first update, it will appear here.
+                    </div>
+                </div>
+            </section>
+            <!-- Synaptive -->
+            <section id="view-synaptive" class="app-view" hidden>
+                <div class="view-heading">
+                    <h2>Synaptive</h2>
+                    <p class="view-sub">
+                        Your Synaptive identity — your memory, your codebooks, the way you've taught your Host to respond — lives in this container. Synaptive lets that identity show up inside other chats.
+                    </p>
+                    <p class="view-sub">
+                        When something at work, on your phone, or anywhere else calls your Synaptive endpoint, it answers as the same Host. Same Host, different chat.
+                    </p>
+                </div>
+
+                <div class="cseries-card">
+                    <div class="view-heading" style="margin-bottom: var(--space-3);">
+                        <h3 class="bundle-title">Connected chats</h3>
+                    </div>
+                    <div id="synaptive-list" class="stack">
+                        <div class="cseries-empty">
+                            <span class="empty-title">No chats connected yet</span>
+                            Connect a chat to let it shape its responses with your Synaptive identity.
+                        </div>
+                    </div>
+                    <div class="bundle-actions" style="margin-top: var(--space-4);">
+                        <button id="btn-connect-chat" class="cseries-btn primary">Connect a chat</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Response Shaping: how the Host responds. Its own tab; it is not
+                 part of Synaptive. The two controls write through
+                 /api/brain/personality/{explanation,weights}. -->
+            <section id="view-shaping" class="app-view" hidden>
+                <div class="view-heading">
+                    <h2>Response Shaping</h2>
+                    <p class="view-sub">How your Host responds: how much it explains and its ten personality dimensions. Personality shapes voice and manner only. The rules your Host lives by are separate, and nothing here can change them. These settings change only when you change them.</p>
+                </div>
+
+                <div class="cseries-card rs-notice" id="rs-notice" role="status" hidden></div>
+                <div class="label-sys" id="rs-state">Loading…</div>
+
+                <div id="rs-body" class="stack rs-body" hidden>
+                    <div class="view-heading">
+                        <h3>How much your Host explains</h3>
+                        <p class="view-sub">Yours to set, and to change whenever you like. Your Host never guesses this from how you write. You can also ask in conversation, for example "less detail" or "spell it out", and your Host moves this same setting for you.</p>
+                    </div>
+                    <div id="rs-explain" class="rs-explain" role="radiogroup" aria-label="How much your Host explains"></div>
+
+                    <div class="view-heading rs-gap">
+                        <h3>Personality</h3>
+                        <p class="view-sub">Ten dimensions, each from 0 to 2, where 1 is neutral. The line under each slider is the tendency your Host carries at that setting. Saving makes these your Host's new baseline.</p>
+                    </div>
+                    <div id="rs-weights" class="stack"></div>
+                    <div class="bundle-actions">
+                        <button id="rs-weights-save" class="cseries-btn primary" disabled>Save personality</button>
+                        <button id="rs-weights-discard" class="cseries-btn ghost" hidden>Discard changes</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Appearance -->
+            <section id="view-appearance" class="app-view" hidden>
+                <div class="view-heading">
+                    <h2>Appearance</h2>
+                    <p class="view-sub">Choose a wallpaper for your desktop. The change takes effect immediately.</p>
+                </div>
+
+                <div class="wallpaper-grid" id="wallpaper-grid">
+                    <!-- swatches injected by app.js -->
+                </div>
+                <div class="label-sys" id="wallpaper-status" style="margin-top: var(--space-3);"></div>
+
+                <div class="view-heading" style="margin-top: var(--space-5);">
+                    <h3 class="bundle-title">Phone wallpaper</h3>
+                    <p class="view-sub">Shown instead when you open Privatae Host on a phone or other small screen. Leave it on "Same as desktop" to use one wallpaper everywhere.</p>
+                </div>
+                <div class="wallpaper-grid" id="wallpaper-grid-mobile">
+                    <!-- swatches injected by app.js -->
+                </div>
+                <div class="label-sys" id="wallpaper-status-mobile" style="margin-top: var(--space-3);"></div>
+
+                <div class="view-heading" style="margin-top: var(--space-5);">
+                    <h3 class="bundle-title">Time zone</h3>
+                    <p class="view-sub">Your host lives in this time zone — it speaks all times, dates, and "yesterday"s in it. Without one set, everything falls back to UTC.</p>
+                </div>
+                <div class="cseries-card">
+                    <select id="tz-select" class="cseries-input" style="max-width: 340px;">
+                        <option value="">Loading…</option>
+                    </select>
+                    <div class="label-sys" id="tz-status" style="margin-top: var(--space-2);"></div>
+                </div>
+            </section>
+
+            <!-- Backup -->
+            <section id="view-backup" class="app-view" hidden>
+                <div class="view-heading">
+                    <h2>Backup</h2>
+                    <p class="view-sub">When your host backs itself up. Each backup is encrypted on your host before it leaves, to your recovery key and your bastions' keys; Privatae holds no key that opens it. That is not everything: while your host runs, the platform that runs it can reach what is in it, as with any hosted service. Times are in your own time zone.</p>
+                </div>
+
+                <div class="cseries-card">
+                    <label class="label-sys" for="bk-frequency">How often</label>
+                    <select id="bk-frequency" class="cseries-input" style="max-width: 240px;">
+                        <option value="daily">Every day</option>
+                        <option value="weekly">Once a week</option>
+                        <option value="off">Don't back up</option>
+                    </select>
+
+                    <div id="bk-when" style="margin-top: var(--space-3);">
+                        <label class="label-sys" for="bk-weekday">Day</label>
+                        <select id="bk-weekday" class="cseries-input" style="max-width: 200px;">
+                            <option value="0">Monday</option>
+                            <option value="1">Tuesday</option>
+                            <option value="2">Wednesday</option>
+                            <option value="3">Thursday</option>
+                            <option value="4">Friday</option>
+                            <option value="5">Saturday</option>
+                            <option value="6">Sunday</option>
+                        </select>
+                        <label class="label-sys" for="bk-time" style="margin-top: var(--space-2);">Time</label>
+                        <input id="bk-time" type="time" class="cseries-input" style="max-width: 160px;" />
+                        <div class="label-sys" id="bk-tz-note" style="margin-top: var(--space-2);"></div>
+                    </div>
+                </div>
+
+                <div class="view-heading" style="margin-top: var(--space-5);">
+                    <h3 class="bundle-title">Your keys</h3>
+                    <p class="view-sub">Every backup is encrypted to your Host recovery key, and to the key of any bastion you add, and to nothing else. Your recovery key is made in your browser on your account page, and you keep it: Privatae never has it. Without it your host takes no backups, because there would be nobody to encrypt them to.</p>
+                </div>
+                <div class="cseries-card">
+                    <div class="label-sys" id="bk-key-state">Checking…</div>
+                    <div id="bk-key-offer" hidden style="margin-top: var(--space-3);">
+                        <div class="label-sys" id="bk-key-offer-text"></div>
+                        <label class="label-sys" for="bk-key-offer-totp" style="margin-top: var(--space-2);">Your six-digit code</label>
+                        <input id="bk-key-offer-totp" class="cseries-input" style="max-width: 160px;"
+                               inputmode="numeric" autocomplete="one-time-code" placeholder="123456" />
+                        <div class="bundle-actions" style="margin-top: var(--space-2);">
+                            <button id="bk-key-offer-adopt" class="cseries-btn">Use the new recovery key</button>
+                        </div>
+                    </div>
+                    <div id="bk-key-list" style="margin-top: var(--space-2);"></div>
+
+                    <details id="bk-key-own" style="margin-top: var(--space-3);">
+                        <summary class="label-sys">Add a bastion's key</summary>
+                        <p class="view-sub" style="margin-top: var(--space-2);">On that bastion run <code>privatae-bastion backup key init</code>. It keeps the private half on that machine and prints the public one; paste that here.</p>
+                        <label class="label-sys" for="bk-key-label" style="margin-top: var(--space-2);">Which bastion</label>
+                        <input id="bk-key-label" class="cseries-input" style="max-width: 300px;"
+                               placeholder="the bastion's name" />
+                        <label class="label-sys" for="bk-key-pub" style="margin-top: var(--space-2);">Its public key (base64)</label>
+                        <input id="bk-key-pub" class="cseries-input" style="max-width: 460px;"
+                               placeholder="32-byte X25519 public key, base64" />
+                        <label class="label-sys" for="bk-key-own-totp" style="margin-top: var(--space-2);">Your six-digit code</label>
+                        <input id="bk-key-own-totp" class="cseries-input" style="max-width: 160px;"
+                               inputmode="numeric" autocomplete="one-time-code" placeholder="123456" />
+                        <div class="bundle-actions" style="margin-top: var(--space-2);">
+                            <button id="bk-key-register" class="cseries-btn">Add this key</button>
+                        </div>
+                    </details>
+                    <div class="label-sys" id="bk-key-status" style="margin-top: var(--space-3);"></div>
+                </div>
+
+                <div class="view-heading" style="margin-top: var(--space-5);">
+                    <h3 class="bundle-title">Recent backups</h3>
+                    <p class="view-sub">What your host saved each time: its memory and data, its apps and files, and the code in its own Git repositories, and which keys it was encrypted to.</p>
+                </div>
+                <div class="cseries-card">
+                    <div class="label-sys" id="bk-runs">Checking…</div>
+                    <div class="bundle-actions" style="margin-top: var(--space-3);">
+                        <button id="bk-run-now" class="cseries-btn">Back up now</button>
+                    </div>
+                </div>
+
+                <div class="view-heading" style="margin-top: var(--space-5);">
+                    <h3 class="bundle-title">Restore</h3>
+                    <p class="view-sub">Put your host back the way it was at one of its backups: its memory and data, and its apps and files. Your Git repositories stay as they are. Your host cannot open its backups by itself: first you give this page your recovery key, and your browser opens that backup's key file and seals it to this host (your recovery key never leaves your browser), or one of your bastions does it (you approve it on the bastion). Your host backs up how it is now first, so a restore can be undone the same way. Backups a lost host kept in platform storage show here only on a host with the same Host number; copies on your bastions show on any host of yours they are connected to.</p>
+                </div>
+                <div class="cseries-card">
+                    <div class="label-sys" id="bk-restore-state">Checking…</div>
+                    <div id="bk-restore-form" hidden style="margin-top: var(--space-3);">
+                        <label class="label-sys" for="bk-restore-pick">Backup</label>
+                        <select id="bk-restore-pick" class="cseries-input"></select>
+                        <div class="label-sys" id="bk-restore-pick-note" style="margin-top: var(--space-2);"></div>
+
+                        <div id="bk-restore-keyrow" hidden style="margin-top: var(--space-3);">
+                            <label class="label-sys" for="bk-restore-reckey">Your Host recovery key</label>
+                            <input id="bk-restore-reckey" type="password" class="cseries-input" style="max-width: 520px;"
+                                   autocomplete="off" spellcheck="false" placeholder="AGE-SECRET-KEY-1…" />
+                            <div class="bundle-actions" style="margin-top: var(--space-2);">
+                                <button id="bk-restore-scan" class="cseries-btn" hidden>Scan its QR code</button>
+                            </div>
+                            <video id="bk-restore-video" hidden playsinline muted style="max-width: 320px; margin-top: var(--space-2);"></video>
+                            <div class="label-sys" style="margin-top: var(--space-2);">It stays in this page: your browser opens the backup's key file with it and sends this host only the result.</div>
+                            <label class="label-sys" for="bk-restore-bastion" style="margin-top: var(--space-3);">Or have one of your bastions do it</label>
+                            <select id="bk-restore-bastion" class="cseries-input" style="max-width: 300px;"></select>
+                        </div>
+
+                        <label class="label-sys" id="bk-restore-ack-row" style="display: flex; gap: var(--space-2); align-items: flex-start; margin-top: var(--space-2);">
+                            <input id="bk-restore-ack" type="checkbox" style="margin-top: 3px;" />
+                            <span id="bk-restore-ack-text"></span>
+                        </label>
+                        <label class="label-sys" for="bk-restore-totp" style="margin-top: var(--space-2);">Your six-digit code</label>
+                        <input id="bk-restore-totp" class="cseries-input" style="max-width: 160px;"
+                               inputmode="numeric" autocomplete="one-time-code" placeholder="123456" />
+                        <div class="bundle-actions" style="margin-top: var(--space-2);">
+                            <button id="bk-restore-go" class="cseries-btn">Restore</button>
+                        </div>
+                    </div>
+                    <div class="bundle-actions" id="bk-restore-cancel-row" hidden style="margin-top: var(--space-2);">
+                        <button id="bk-restore-cancel" class="cseries-btn">Cancel the restore</button>
+                    </div>
+                    <div class="label-sys" id="bk-restore-status" style="margin-top: var(--space-3);"></div>
+                </div>
+
+                <div class="cseries-card" id="bk-exports-card" hidden style="margin-top: var(--space-5);">
+                    <h3 class="bundle-title">Exports waiting for you</h3>
+                    <p class="view-sub">You asked for an export on your account page. Your host builds it only when you confirm it here, and only if it matches the fingerprint written in your export key file: an export is a full copy of your host, sealed to that key. The account page is served by the platform, so check the fingerprint against your key file, not against the page.</p>
+                    <div id="bk-exports"></div>
+                    <label class="label-sys" for="bk-exports-totp" style="margin-top: var(--space-2);">Your six-digit code</label>
+                    <input id="bk-exports-totp" class="cseries-input" style="max-width: 160px;"
+                           inputmode="numeric" autocomplete="one-time-code" placeholder="123456" />
+                    <div class="label-sys" id="bk-exports-status" style="margin-top: var(--space-2);"></div>
+                </div>
+
+                <div class="view-heading" style="margin-top: var(--space-5);">
+                    <h3 class="bundle-title">Where backups go</h3>
+                    <p class="view-sub">Platform storage keeps your encrypted backups for you; it holds only what your keys open. You can also keep a copy somewhere you control, sent after each backup exactly as encrypted — we never hold the password for your storage; it stays in the Keys app and your host reads it when it sends.</p>
+                </div>
+                <div class="cseries-card">
+                    <label class="label-sys" style="display: flex; gap: var(--space-2); align-items: flex-start;">
+                        <input id="bk-platform" type="checkbox" style="margin-top: 3px;" checked />
+                        <span>Keep my encrypted backups in platform storage</span>
+                    </label>
+                    <label class="label-sys" for="bk-target-kind" style="margin-top: var(--space-3);">Also send a copy to</label>
+                    <select id="bk-target-kind" class="cseries-input" style="max-width: 300px;">
+                        <option value="">Nowhere else</option>
+                        <option value="s3">Storage I rent (S3-compatible)</option>
+                        <option value="machine">My own machine</option>
+                    </select>
+
+                    <div id="bk-target-s3" hidden style="margin-top: var(--space-3);">
+                        <label class="label-sys" for="bk-target-address">Bucket</label>
+                        <input id="bk-target-address" class="cseries-input" style="max-width: 420px;"
+                               placeholder="my-backups" />
+                        <label class="label-sys" for="bk-target-endpoint" style="margin-top: var(--space-2);">Address (leave blank for Amazon S3)</label>
+                        <input id="bk-target-endpoint" class="cseries-input" style="max-width: 420px;"
+                               placeholder="https://s3.example.com" />
+                        <label class="label-sys" for="bk-target-cred" style="margin-top: var(--space-2);">Key name (from the Keys app)</label>
+                        <input id="bk-target-cred" class="cseries-input" style="max-width: 280px;" placeholder="e.g. my-backup-store" />
+                        <p class="view-sub" style="margin-top: var(--space-2);">
+                            Store the access key in the Keys app first, as JSON like
+                            <code>{"access_key_id": "…", "secret_access_key": "…"}</code>, then name it here.
+                            It is never copied into this setting — that would put it in every backup.
+                        </p>
+                    </div>
+
+                    <div id="bk-target-machine" hidden style="margin-top: var(--space-3);">
+                        <label class="label-sys" for="bk-target-address2">Which machine</label>
+                        <input id="bk-target-address2" class="cseries-input" style="max-width: 420px;"
+                               placeholder="the name of a machine you have connected" />
+                        <p class="view-sub" style="margin-top: var(--space-2);">
+                            The machine pulls the copy down itself, over its own internet connection —
+                            nothing large passes through your host. It lands in the backup folder of that
+                            machine's bastion, with its key file beside it; point that folder at a drive or
+                            a network share it has mounted (a NAS, for instance).
+                            One thing to do first: in the Network app, approve a management grant for
+                            this machine covering the operation named <code>backup_fetch</code>. Without
+                            it the machine will refuse the transfer, which is the point of the grant.
+                        </p>
+                    </div>
+                </div>
+
+                <div class="cseries-card" id="bk-ship-card" hidden style="margin-top: var(--space-3);">
+                    <div class="label-sys" id="bk-ship-state">…</div>
+                    <div class="bundle-actions" style="margin-top: var(--space-3);">
+                        <button id="bk-ship-now" class="cseries-btn">Send a copy now</button>
+                    </div>
+                </div>
+
+                <div class="bundle-actions" style="margin-top: var(--space-4);">
+                    <button id="bk-save" class="cseries-btn primary">Save</button>
+                </div>
+                <div class="label-sys" id="bk-status" style="margin-top: var(--space-3);"></div>
+
+                <div class="view-heading" style="margin-top: var(--space-5);">
+                    <h3 class="bundle-title">Your bastion's copy</h3>
+                    <p class="view-sub">A separate copy your own machine makes and keeps encrypted. Only you can open it — this host cannot.</p>
+                </div>
+                <div class="cseries-card">
+                    <div class="label-sys" id="bk-local">Checking…</div>
+                </div>
+
+                <div class="view-heading" style="margin-top: var(--space-5);">
+                    <h3 class="bundle-title">Your memory mirror</h3>
+                    <p class="view-sub">A live copy of your memory on a machine you own, kept up to date as you use your host. Yours to keep, and yours to open.</p>
+                </div>
+                <div class="cseries-card">
+                    <div class="label-sys" id="bk-mirror">Checking…</div>
+                    <div id="bk-mirror-controls" style="margin-top: var(--space-3);"></div>
+                </div>
+            </section>
+
+            <!-- Desktop & Dock -->
+            <section id="view-desktop" class="app-view" hidden>
+                <div class="view-heading">
+                    <h2>Desktop &amp; Dock</h2>
+                    <p class="view-sub">Choose which apps sit in the dock and on the desktop. You can also drag desktop icons to rearrange them, drag dock icons to reorder, and right-click any app for the same controls.</p>
+                </div>
+
+                <div class="cseries-card">
+                    <div id="desktop-app-list" class="stack">
+                        <div class="cseries-empty">Loading apps…</div>
+                    </div>
+                    <div class="bundle-actions" style="margin-top: var(--space-4);">
+                        <button id="btn-reset-layout" class="cseries-btn ghost">Reset layout to defaults</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Network: join or leave the network with a one-time code.
+                 GET /api/network/status, POST /api/network/join and /leave. -->
+            <section id="view-network" class="app-view" hidden>
+                <div class="view-heading">
+                    <h2>Network</h2>
+                    <p class="view-sub">Your Host keeps running here, on your machine. Joining the network lets it use the App Store and the community board. It connects out to the network and nothing the network sends can run on it.</p>
+                </div>
+
+                <div class="cseries-card" id="net-state">
+                    <div class="label-sys">Checking…</div>
+                </div>
+
+                <div class="cseries-card" id="net-join" hidden style="margin-top: var(--space-4);">
+                    <label class="label-sys" for="net-code">Code from your account page</label>
+                    <input id="net-code" class="cseries-input" style="max-width: 220px;"
+                           autocomplete="one-time-code" spellcheck="false" autocapitalize="characters"
+                           placeholder="XXXX-XXXX-XXXX" maxlength="24" />
+                    <p class="view-sub" style="margin-top: var(--space-2);">On your account page, <a href="https://privatae.ai/account/network" target="_blank" rel="noopener noreferrer">https://privatae.ai/account/network</a>, choose Add a Host to get a code. It works once, for 15 minutes.</p>
+                    <div class="bundle-actions" style="margin-top: var(--space-2);">
+                        <button id="net-join-btn" class="cseries-btn primary">Join</button>
+                    </div>
+                </div>
+
+                <div class="bundle-actions" id="net-leave-row" hidden style="margin-top: var(--space-4);">
+                    <button id="net-leave-btn" class="cseries-btn ghost">Leave the network</button>
+                </div>
+
+                <p class="view-sub net-message" id="net-message" role="alert" hidden></p>
+            </section>
+
+            <!-- Connect-a-chat modal -->
+            <div id="syn-modal" class="syn-modal" hidden>
+                <div class="syn-modal-backdrop" data-syn-close></div>
+                <div class="syn-modal-card cseries-card" role="dialog" aria-modal="true" aria-label="Connect a chat">
+                    <div id="syn-modal-step-name">
+                        <h3 class="bundle-title">Connect a chat</h3>
+                        <p class="view-sub">Give this connection a name so you can recognize it later.</p>
+                        <input id="syn-name-input" type="text" class="cseries-input" placeholder="Claude Desktop on laptop" maxlength="80" />
+                        <div class="label-sys" style="margin-top: var(--space-3);">What this connection can do</div>
+                        <div class="syn-scope-picker" id="syn-scope-picker">
+                            <label class="syn-scope-opt">
+                                <input type="checkbox" data-scope="shape" checked>
+                                <span>Shape <span class="label-sys">— respond as your Host</span></span>
+                            </label>
+                            <label class="syn-scope-opt">
+                                <input type="checkbox" data-scope="signal" checked>
+                                <span>Signal <span class="label-sys">— send signals to your Host</span></span>
+                            </label>
+                        </div>
+                        <div class="bundle-actions" style="margin-top: var(--space-4);">
+                            <button class="cseries-btn ghost" data-syn-close>Cancel</button>
+                            <button id="syn-generate-btn" class="cseries-btn primary">Generate</button>
+                        </div>
+                    </div>
+                    <div id="syn-modal-step-show" hidden>
+                        <h3 class="bundle-title">Paste this into your chat client</h3>
+                        <p class="view-sub">The token is shown once and only the hash is kept. If you lose it, revoke this connection and create a new one.</p>
+                        <div class="label-sys" style="margin-top: var(--space-3);">URL</div>
+                        <div class="syn-snippet" id="syn-url"></div>
+                        <div class="label-sys" style="margin-top: var(--space-3);">Token</div>
+                        <div class="syn-snippet" id="syn-token"></div>
+                        <div class="label-sys" style="margin-top: var(--space-3);">Client</div>
+                        <div id="syn-client-picker" class="syn-client-picker">
+                            <button type="button" class="cseries-btn ghost syn-client-tab is-active" data-client="claude">Claude Desktop</button>
+                            <button type="button" class="cseries-btn ghost syn-client-tab" data-client="lmstudio">LM Studio</button>
+                            <button type="button" class="cseries-btn ghost syn-client-tab" data-client="cursor">Cursor</button>
+                            <button type="button" class="cseries-btn ghost syn-client-tab" data-client="generic">Other</button>
+                        </div>
+                        <div class="label-sys" style="margin-top: var(--space-3);" id="syn-config-label">Claude Desktop config</div>
+                        <p class="view-sub" id="syn-config-hint" style="margin-top: var(--space-1);"></p>
+                        <pre class="syn-snippet syn-snippet-pre" id="syn-config"></pre>
+                        <div class="bundle-actions" style="margin-top: var(--space-4);">
+                            <button id="syn-copy-config" class="cseries-btn ghost">Copy config</button>
+                            <button class="cseries-btn primary" data-syn-close>Done</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Response Shaping: confirm a save, listing every change -->
+            <div id="rs-modal" class="rs-modal" hidden>
+                <div class="rs-modal-backdrop" data-rs-close></div>
+                <div class="rs-modal-card cseries-card" role="dialog" aria-modal="true" aria-labelledby="rs-modal-title">
+                    <h3 class="bundle-title" id="rs-modal-title"></h3>
+                    <p class="view-sub" id="rs-modal-text"></p>
+                    <ul id="rs-modal-changes" class="rs-changes"></ul>
+                    <div class="bundle-actions" style="margin-top: var(--space-4);">
+                        <button class="cseries-btn ghost" id="rs-modal-cancel" data-rs-close>Cancel</button>
+                        <button id="rs-modal-save" class="cseries-btn primary">Save</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+
+        <footer class="app-footer">
+            <span class="label-sys" id="footer-uptime">--</span>
+            <span class="label-sys app-footer-right" id="footer-ts">just now</span>
+        </footer>
+    </div>
+
+    <script src="/system-apps/settings/app.js"></script>
+    <script type="module" src="/system-apps/settings/restore.js"></script>
+</body>
+</html>

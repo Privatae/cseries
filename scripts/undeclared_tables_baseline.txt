@@ -1,0 +1,74 @@
+# Tables runtime SQL names that NO *.sql declares (arm 2).
+# Legitimate entries are tables the application CREATEs at runtime
+# (entrypoint.sh, an ensure_*_table() helper) or that live in a
+# non-Postgres store. Anything else here is a write that raises on
+# every host built from the current schema.
+# The linter FAILS on any name NOT listed here.
+
+# Every entry below was classified by hand and
+# checked against all eight running hosts' own DBs. Two are marked OPEN.
+#
+# ── created by application code at runtime ──
+# NOT healthy, and shrinking: each of these is a reason the kernel's database
+# role must keep DDL rights, which the role split removes. browser_form_grant
+# and entity_appearance left this list — migrations/v141 and v142
+# declare them now and the Python that created them is gone.
+# server/network/bastion_enroll.py creates it on first enrollment.
+bastion_pairing_tokens
+
+# server/network/nac_agents.py creates it on first agent observation.
+nac_agent_audit
+
+# server/network/nac_mgmt.py creates it (ensure-table on the suspend path).
+nac_bastion_suspend
+
+# created by the bastion heartbeat writer; read by dcn.py and embed_backends.py.
+network_bastion_heartbeat
+
+# entrypoint.sh:357 CREATEs it before any migration runs. Declaring it in a
+# .sql would be circular — it is the table recording which .sql have run.
+schema_migrations
+
+# ── not Postgres at all ──
+# brain/codesearch/store.py legacy_sqlite_projects — the table of the OLD
+# code-search SQLite file, read once at start for its project list before the
+# file is removed (the index itself is code_chunks in Postgres, v200).
+chunks
+
+
+# ── optional lookup with a designed fallback (not a defect) ──
+# brain/mastercode/runtime/prompt_builder.py:407-421 — handler-identity
+# Priority 2. Absent on all 8 live hosts (checked by hand), so the lookup
+# raises, is caught at :420, and Priority 3 derives the name from the operator
+# email instead. Reachable live (runtime/frame.py:164); degrades by design.
+
+# ── scanner false positive ──
+# `tables` is not a table: arm 2's FROM/JOIN regexes pick it out of a
+# multi-part SQL string in server/routes/brain.py. Listed rather than tuning
+# the regex until it silently drops a real name.
+tables
+
+# ── Two such writes, CLOSED by deletion rather than by a fix. ──
+# code_embeddings (SELECTed at brain/brain.py:971-979) and
+# v4_constitutional_events (INSERTed at brain/monitor.py:87-94) were each
+# reachable only from the UnifiedBrain package. That package was deleted as
+# unreachable, so both statements are gone and no code path names either table.
+# The entries are removed rather than kept: with no reference left there is
+# nothing for the auditor to excuse, and a baseline line for a table nobody
+# mentions is the decoration this file exists to avoid.
+
+# ── not ours: opencode's own database ──
+# system-apps/_harness_runtime/harness_core.py opencode_running_tools reads,
+# read-only, the `part` table of the opencode CLI's own SQLite database in the
+# harness pod (<XDG data>/opencode/opencode.db; opencode v1.17.13
+# packages/core/src/session/sql.ts:82-92). It never touches a Host database.
+# Qualified to that one file, so it can never excuse a Host table named `part`.
+part @ system-apps/_harness_runtime/harness_core.py
+
+# ── the Host's own schema, not a table ──
+# brain/mastercode/world_db.py runs SQL against objects in the schema `world`
+# (world."<name>"), which the Host itself creates at run time through its data
+# tool, as the role host_world.
+# The linter reads `world` in `FROM world."x"` as a table name; it is a schema
+# that migrations/v233 declares, and its tables are the Host's data.
+world

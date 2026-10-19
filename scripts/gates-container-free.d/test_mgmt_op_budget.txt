@@ -1,0 +1,13 @@
+
+# A long management op must not be reported as a missing
+# machine, and one approval must fund exactly one download. run_mgmt_op dispatched
+# EVERY op with a flat 30 s while model:pull is bounded on the box at 20 minutes
+# (the gateway, modelswap.go:217) — so the host raised "no live management worker"
+# about a worker that was connected and working, the box finished the download
+# anyway, and it burned the user's single-use machine-side approval on a pull this
+# host had recorded as failed. Drives the REAL MgmtRelay and the REAL run_mgmt_op
+# with a scripted worker: only the pool and the grant loaders are stubbed, and
+# mgmt_decision is not, so the recovery path's own grant check is exercised.
+# Verified red by restoring the flat 30 s and the single-outcome dispatch — 12 of
+# 19 checks failed. No bastion, no DB, no network.
+test_mgmt_op_budget.py

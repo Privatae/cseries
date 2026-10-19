@@ -1,0 +1,120 @@
+# capability_aliases.txt — user vocabulary → capability card id.
+#
+# WHY THIS FILE EXISTS. Everything else in docs/capabilities.json is DERIVED
+# from the shipped code, because derived text cannot go stale. But derived text
+# can only ever contain words the code actually says, and users do not speak in
+# route paths or tool names. Measured against the shipped corpus:
+# "voice", "screenshot", "email" and "password" each returned ZERO hits, while
+# every one of those capabilities ships — realtime voice mints ephemeral keys at
+# /api/realtime, POST /api/screen/capture takes a screenshot, the inbox lane
+# carries mail, and the vault brokers a credential into a browser field. The
+# host then told users those features did not exist, because the doc is a CLOSED
+# WORLD and absence is read as "not supported".
+#
+# So this file carries ONLY words the derived text cannot rank on: either the
+# code never says them at all, or it says them once, buried in prose, where a
+# match scores as noise. That second case is real and measurable — the card
+# reader (brain/mastercode/runtime/tools.py) scores an exact `when` phrase at
+# 90 and a keyword at 56, but a hit found only in prose at 30, against a
+# weak-answer floor of 50. "voice" and "screenshot" are exactly that: they now
+# appear in a route docstring, so they are findable, but only as prose, and the
+# host would hedge. An alias promotes them to a keyword and a phrasing.
+#
+# It is the smallest hand-maintained surface that fixes a measured false
+# denial. A word a tool description or manifest states plainly, in a field that
+# already ranks (title, purpose, an op clause), must NOT be listed here —
+# improve the code's own words instead and the derivation picks it up.
+#
+# RULES
+#   - format: `alias -> card-id`, one per line. `#` starts a comment.
+#   - every alias MUST resolve to a real card id. A stale alias FAILS the build
+#     (generate_capabilities.py exits non-zero and names it) rather than rotting
+#     silently — the whole point is that this file cannot drift unnoticed.
+#   - card ids: a host op is its bare tool name (`memory_search`); an app is
+#     `app:<id>`; an API area is `area:<prefix>`.
+#   - an alias of SIX characters or more (or any multi-word phrase) is indexed
+#     both as a keyword and as a `when` phrase, so it matches inside a whole
+#     sentence. A shorter one is a keyword only, because the reader matches raw
+#     substrings and short words hide inside unrelated ones — measured,
+#     "invoice" scored 78 on the realtime-voice area purely because "voice" is
+#     inside it. Pair a short alias with a multi-word one, as `email` is here.
+#   - keep it SMALL and high-value. An alias that matches too broadly makes the
+#     host claim capabilities that do not exist, which is the opposite failure
+#     and just as damaging (scripts/test_capability_answers.py §6 guards it).
+#   - sorted by alias.
+#
+# An alias is added to its card's `keywords` and to its `when` phrasings, so it
+# ranks the same way any other user phrasing does in the `capabilities` tool.
+
+# ── the four measured misses ────────────────────────────────────────────
+# `voice`, `email` and `mail` are under six characters, so they are indexed as
+# keywords only (see the note above) — the multi-word entries beside them are
+# what catch a whole sentence.
+dictation -> area:/api/realtime
+email -> area:/api/inbox
+mail -> area:/api/inbox
+microphone -> area:/api/realtime
+password -> area:/api/vault
+read my email -> area:/api/inbox
+screen capture -> area:/api/screen
+screenshot -> area:/api/screen
+send an email -> area:/api/inbox
+speech -> area:/api/realtime
+talk out loud -> area:/api/realtime
+voice -> area:/api/realtime
+# MULTI-WORD forms of the common phrasings. The scorer only treats a
+# single word as an ANSWER when it is essentially the whole query, so
+# "screenshot" alone answers but "take a screenshot of this page" would only
+# be a candidate — and that is the canonical phrasing of one of the four
+# misses this corpus exists to fix. These restore answer-grade for the
+# sentences people actually type. Multi-word by construction, so none of them
+# can re-open the containment hole that made "restore my antique chair" hit
+# the backup area.
+save my password -> area:/api/vault
+set a reminder -> schedule_task
+take a screenshot -> area:/api/screen
+turn on dictation -> area:/api/realtime
+type my password -> area:/api/vault
+use the microphone -> area:/api/realtime
+voice mode -> area:/api/realtime
+
+# ── memory: users say "remember", the code says "memory"/"context" ──────
+forget that -> memory_curate
+remember -> recall
+remember this -> context_ingest
+
+# ── credentials: the vault's own words are "secret" and "credential" ────
+api key -> keys_manage
+credentials -> area:/api/vault
+login details -> app:keys
+passphrase -> area:/api/vault
+
+# ── everyday words for surfaces the code names differently ──────────────
+appointment -> calendar_read
+my files -> area:/api/files
+reminder -> schedule_task
+# "restore" and "snapshot" are BOTH ambiguous as bare words and were measured
+# hijacking unrelated sentences: "restore my antique chair" and "take a
+# snapshot of my screen" both landed on backup. Multi-word forms keep the
+# real backup intent findable without swallowing every sentence containing
+# the word. (The scorer now also refuses to treat a lone word inside a
+# sentence as an answer — belt and braces, since aliases are data.)
+restore a backup -> area:/api/backup
+restore my files -> area:/api/backup
+snapshot backup -> area:/api/backup
+snapshot of my screen -> area:/api/screen
+
+# ── the desktop: users say "wallpaper", "theme", "look", "vibe"; the code says
+# `artifact` + op='set_desktop'. Plain swatches
+# live in Settings → Appearance, so the bare word also points there. Kept
+# narrow on purpose: `new desktop` / `custom desktop` scored 78 on "buy a new
+# desktop computer", so the design intent rides the
+# longer phrasings only.
+change my desktop -> artifact
+desktop look like -> artifact
+desktop theme -> artifact
+desktop vibe -> artifact
+html desktop -> artifact
+live wallpaper -> artifact
+new wallpaper -> artifact
+wallpaper -> app:settings

@@ -1,0 +1,537 @@
+/* ModelPicker shared styles. Loaded once at the dashboard level; applies
+ * inside any iframe that <link>s /css/model-picker.css. Variables come
+ * from cseries tokens so the widget stays in theme regardless of host app. */
+
+.mp-root { display: flex; flex-direction: column; min-height: 0; flex: 1; }
+.mp-nav { margin-bottom: 12px; }
+.mp-view { display: flex; flex-direction: column; gap: 12px; min-height: 0; flex: 1; }
+.mp-view[hidden] { display: none; }
+
+.mp-controls {
+    display: grid;
+    grid-template-columns: 1fr 160px 180px 180px;
+    gap: 8px;
+}
+
+.mp-table-wrap { overflow: auto; border: 1px solid rgba(156, 163, 175,0.10); border-radius: 8px; }
+
+.mp-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    color: var(--cseries-linen);
+}
+
+.mp-table thead {
+    position: sticky; top: 0; z-index: 1;
+    background: rgba(8, 10, 14, 0.95);
+}
+
+.mp-table th {
+    text-align: left;
+    padding: 9px 10px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: rgba(156, 163, 175, 0.55);
+    border-bottom: 1px solid rgba(156, 163, 175, 0.10);
+    user-select: none;
+}
+
+.mp-table th.sortable { cursor: pointer; }
+.mp-table th.sortable:hover { color: var(--cseries-linen); }
+.mp-table th.sorted { color: var(--cseries-ember); }
+.mp-table th.sorted.asc::after  { content: ' ↑'; }
+.mp-table th.sorted.desc::after { content: ' ↓'; }
+.mp-table th.num { text-align: right; }
+
+.mp-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid rgba(156, 163, 175, 0.05);
+    vertical-align: top;
+}
+
+.mp-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+.mp-row { cursor: pointer; transition: background 120ms ease; }
+.mp-row:hover { background: rgba(156, 163, 175, 0.03); }
+
+.mp-name { font-size: 13px; color: var(--cseries-paper); display: flex; align-items: center; gap: 8px; }
+.mp-id { font-size: 11px; color: rgba(156, 163, 175, 0.45); font-family: var(--cseries-font-mono, ui-monospace, "JetBrains Mono", monospace); }
+
+/* ── Favorites (star toggle + browse-all) ───────────────────────────── */
+.mp-star-col { width: 34px; text-align: center; padding-left: 6px; padding-right: 6px; }
+
+.mp-star {
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 2px 4px;
+    color: rgba(156, 163, 175, 0.45);
+    transition: color 120ms ease, transform 120ms ease;
+}
+.mp-star:hover { color: var(--cseries-ember); transform: scale(1.12); }
+.mp-star.on { color: var(--cseries-ember); }
+
+.mp-browse-toggle { white-space: nowrap; }
+.mp-browse-toggle.active {
+    border-color: var(--cseries-ember);
+    color: var(--cseries-ember);
+    background: rgba(79, 127, 106, 0.10);
+}
+.mp-browse-inline { margin: 0 2px; }
+
+.mp-empty {
+    padding: 24px !important;
+    text-align: center;
+    color: rgba(156, 163, 175, 0.4) !important;
+    font-style: italic;
+}
+
+.mp-expand td {
+    background: rgba(156, 163, 175, 0.02);
+    padding: 12px 16px !important;
+}
+
+.mp-desc {
+    color: rgba(156, 163, 175, 0.85);
+    margin-bottom: 10px;
+    font-size: 12px;
+    line-height: 1.5;
+}
+
+.mp-assign { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+
+.mp-assign-btn {
+    padding: 4px 10px;
+    background: rgba(156, 163, 175, 0.06);
+    color: rgba(156, 163, 175, 0.85);
+    border: 1px solid rgba(156, 163, 175, 0.12);
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 140ms ease;
+}
+
+.mp-assign-btn:hover {
+    background: rgba(79, 127, 106, 0.12);
+    color: var(--cseries-ember);
+    border-color: rgba(79, 127, 106, 0.30);
+}
+
+.mp-assign-btn.ok  { background: rgba(80, 160, 100, 0.20); color: var(--cseries-bright); border-color: rgba(80, 160, 100, 0.35); }
+.mp-assign-btn.err { background: rgba(200, 70, 70, 0.18);   color: #f0b9b9; border-color: rgba(200, 70, 70, 0.35); }
+
+.mp-foot {
+    display: flex;
+    justify-content: flex-end;
+    padding: 6px 4px 0;
+    color: rgba(156, 163, 175, 0.45);
+}
+
+.mp-help { color: rgba(156, 163, 175, 0.55); margin: 4px 4px 8px; }
+
+.mp-routing { display: flex; flex-direction: column; gap: 8px; }
+
+.mp-route-card {
+    display: grid;
+    grid-template-columns: 90px 1fr auto;
+    gap: 12px;
+    padding: 10px 12px;
+    background: rgba(156, 163, 175, 0.03);
+    border: 1px solid rgba(156, 163, 175, 0.08);
+    border-radius: 8px;
+    align-items: center;
+}
+
+.mp-route-role {
+    font-family: var(--cseries-font-mono, ui-monospace, monospace);
+    color: var(--cseries-ember);
+    font-size: 12px;
+    text-transform: uppercase;
+}
+
+.mp-route-model {
+    color: var(--cseries-linen);
+    font-size: 12px;
+    font-family: var(--cseries-font-mono, ui-monospace, monospace);
+}
+
+/* ── Routing rows: one row per text role — role label + description on the
+      left, provider / model / fallback selects on the right. ──────────── */
+.mp-role {
+    padding: 10px 12px;
+    background: rgba(156, 163, 175, 0.03);
+    border: 1px solid rgba(156, 163, 175, 0.08);
+    border-radius: 8px;
+}
+.mp-role-head {
+    display: grid;
+    grid-template-columns: minmax(170px, 220px) 1fr;
+    gap: 12px;
+    align-items: start;
+}
+.mp-grid-role {
+    font-family: var(--cseries-font-mono, ui-monospace, monospace);
+    color: var(--cseries-ember);
+    font-size: 12px;
+    text-transform: uppercase;
+}
+.mp-grid-desc {
+    font-size: 11px;
+    color: rgba(156, 163, 175, 0.65);
+    line-height: 1.4;
+    margin-top: 3px;
+}
+.mp-grid-meta { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+.mp-role-controls {
+    display: flex;
+    gap: 10px;
+    align-items: flex-end;
+    flex-wrap: wrap;
+}
+.mp-role-field {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: rgba(156, 163, 175, 0.55);
+}
+.mp-role-field .cseries-select { min-width: 150px; font-size: 12px; }
+.mp-role-field .mp-cell-empty { text-transform: none; letter-spacing: 0; }
+.mp-role-eff { margin-top: 8px; font-size: 11px; }
+.mp-cell-empty { color: rgba(156, 163, 175, 0.4); font-style: italic; font-size: 11px; }
+.mp-cell-note { color: var(--cseries-ember); font-size: 10px; margin-top: 4px; }
+.mp-keys-link { margin-left: 6px; padding: 1px 8px; font-size: 11px; }
+
+/* ── Models tab: provider selector + per-provider panes ────────────────── */
+.mp-models-head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.mp-models-prov-label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: rgba(156, 163, 175, 0.55);
+}
+.mp-models-prov-label .cseries-select { min-width: 170px; }
+.mp-models-prov-note { color: rgba(156, 163, 175, 0.5); }
+.mp-favstrip {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    padding: 6px 2px;
+}
+.mp-prov-empty { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; }
+
+/* Image + Vision picker (image_gen / vision roles route to the user's model) */
+.mp-image-roles { display: flex; flex-direction: column; gap: 8px; }
+.mp-image-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-top: 8px; }
+.mp-image-controls .mp-image-model { min-width: 200px; }
+.mp-image-controls .mp-image-base {
+    flex: 1;
+    min-width: 220px;
+    font-family: var(--cseries-font-mono, ui-monospace, monospace);
+    font-size: 11px;
+}
+.mp-image-status { color: var(--cseries-ember); font-size: 11px; }
+
+/* Balances tab — one row per provider: name left, balance (or the honest
+   reason there is no number) right. */
+.mp-balances-list { display: flex; flex-direction: column; margin-top: 6px; }
+.mp-balance-row {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 14px;
+    padding: 8px 2px; border-bottom: 1px solid rgba(156, 163, 175, 0.08);
+}
+.mp-balance-row:last-child { border-bottom: 0; }
+.mp-balance-prov { font-size: 13px; color: var(--cseries-paper); }
+.mp-balance-num { font-size: 14px; font-weight: 600; color: var(--cseries-paper); font-variant-numeric: tabular-nums; }
+.mp-balance-note { font-size: 12px; color: var(--cseries-ash); }
+
+/* Manual model id entry — the escape hatch when a provider catalog can't load. */
+.mp-manual-model { display: inline-flex; gap: 6px; align-items: center; margin-top: 4px; }
+.mp-manual-model .cseries-input { width: 240px; }
+
+/* ── Routing tab additions (pricing, descriptions, harness) ── */
+.mp-route-card-head {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.mp-route-desc {
+    margin-top: 6px;
+    font-size: 11px;
+    color: rgba(156, 163, 175, 0.55);
+    line-height: 1.4;
+    padding-left: 2px;
+}
+
+/* ── Section heads (Text roles / Coding / Embedding) ────────────────── */
+.mp-section-head {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid rgba(156, 163, 175, 0.10);
+    color: var(--cseries-ember);
+}
+.mp-section-head:first-child { margin-top: 0; padding-top: 0; border-top: none; }
+
+/* ── Coding Engines + Multi-Agent Coding ───────────────── */
+/* NOTE: never `display:flex` on a <td> — a flexed cell drops out of table
+   layout, which collapsed the old ladder controls and made them unclickable.
+   Flex an inner <div> instead. */
+.mp-matrix { margin-top: 8px; }
+.mp-sub-head {
+    margin-top: 18px;
+    margin-bottom: 2px;
+    color: var(--cseries-linen);
+}
+.mp-mx { width: 100%; border-collapse: collapse; }
+.mp-mx-head th {
+    text-align: left;
+    font-size: 11px;
+    padding: 4px 8px;
+    border-bottom: 1px solid rgba(156, 163, 175, 0.15);
+    white-space: nowrap;
+}
+.mp-mx-band td {
+    padding: 10px 8px 4px;
+    border-bottom: 1px solid rgba(156, 163, 175, 0.10);
+}
+.mp-mx-row td {
+    padding: 6px 8px;
+    border-bottom: 1px solid rgba(156, 163, 175, 0.06);
+    vertical-align: middle;
+}
+.mp-mx-row.mp-mx-dim td { opacity: 0.55; }
+.mp-mx-row.mp-mx-is-default td:first-child { box-shadow: inset 3px 0 0 var(--cseries-bright); }
+.mp-mx-cell { display: flex; align-items: center; gap: 8px; }
+.mp-mx-h { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--cseries-linen); white-space: nowrap; }
+.mp-mx-bound { font-size: 13px; color: var(--cseries-paper); }
+.mp-mx-dot { font-size: 12px; }
+.mp-mx-connected { color: var(--cseries-bright); }
+.mp-mx-not_set_up { color: rgba(156, 163, 175, 0.6); }
+.mp-mx-disconnected { color: var(--cseries-ember); }
+.mp-mx-expired { color: var(--cseries-ember); }
+.mp-mx-cell .mp-mx-model { max-width: 260px; font-family: var(--cseries-font-mono, ui-monospace, monospace); font-size: 12px; }
+.mp-mx-provider { max-width: 140px; }
+.mp-mx-selcell { text-align: center; }
+.mp-mx-default { cursor: pointer; }
+.mp-mx-default:disabled { cursor: not-allowed; }
+.mp-mx-action { font-size: 12px; white-space: nowrap; }
+.mp-mx-foot { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-top: 8px; }
+.mp-mx-note { }
+.mp-mx-default-clear { padding: 2px 8px; font-size: 11px; }
+.mp-mx-status { color: var(--cseries-ember); font-size: 11px; }
+
+/* Multi-Agent Coding — the protocol files: a list, an inline JSON editor
+   (edit / import), a grant check per row. */
+.mp-protocols { margin-top: 8px; }
+.mp-proto-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 8px 0; }
+.mp-proto td { vertical-align: top; }
+.mp-proto-name { display: flex; flex-direction: column; gap: 2px; font-size: 13px; color: var(--cseries-linen); }
+.mp-proto-desc { font-size: 11px; }
+.mp-proto-shape {
+    font-family: var(--cseries-font-mono, ui-monospace, monospace);
+    font-size: 12px;
+    color: var(--cseries-paper);
+    white-space: normal;
+    word-break: break-word;
+}
+.mp-proto-stats { font-size: 11px; }
+.mp-proto-acts { white-space: nowrap; text-align: right; }
+.mp-proto-acts .cseries-btn { padding: 2px 8px; font-size: 11px; margin-left: 4px; }
+.mp-proto-sub td { padding: 4px 8px 10px; border-bottom: 1px solid rgba(156, 163, 175, 0.06); }
+.mp-proto-editor { display: flex; flex-direction: column; gap: 8px; }
+.mp-proto-json {
+    width: 100%;
+    min-height: 220px;
+    font-family: var(--cseries-font-mono, ui-monospace, monospace);
+    font-size: 12px;
+    line-height: 1.45;
+    resize: vertical;
+}
+.mp-proto-status { color: var(--cseries-ember); font-size: 11px; }
+.mp-proto-pfrow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; }
+.mp-proto-pf.ok { color: var(--cseries-bright); }
+.mp-proto-pf.no { color: var(--cseries-ember); }
+.mp-proto-check-close { padding: 0 6px; font-size: 11px; }
+
+.mp-harness-logo {
+    width: 22px;
+    height: 22px;
+    border-radius: 5px;
+    object-fit: contain;
+    flex: 0 0 auto;
+}
+
+.mp-route-src { margin-left: 6px; }
+
+/* ── Local models strip ─────────────────────────────────────────────────
+   Not a stub: model-picker.js renders live local models whenever the
+   mesh table (or catalog.local_models) has entries. .mp-local-pending
+   below is the honest EMPTY state for when it doesn't. ─────────────── */
+.mp-local-lane { margin-top: 8px; }
+.mp-local-pending {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 10px 12px;
+    background: rgba(156, 163, 175, 0.03);
+    border: 1px dashed rgba(156, 163, 175, 0.18);
+    border-radius: 8px;
+}
+.mp-local-chips { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+
+/* ── Embedding — one provider→model row, same .mp-role layout as the text
+      roles. ─────────────────────────────────────────────────────── */
+.mp-embed { margin-top: 8px; }
+
+/* ── Simple mode ───────────────────────────────────────────────────────
+   The mode bar, the "what answers when" overlay, and the one-click setup.
+   Advanced reuses everything above unchanged. ─────────────────────── */
+.mp-modebar {
+    display: inline-flex;
+    gap: 2px;
+    padding: 2px;
+    margin-bottom: 12px;
+    border: 1px solid rgba(156, 163, 175, 0.14);
+    border-radius: 8px;
+    align-self: flex-start;
+}
+.mp-modebtn {
+    padding: 5px 14px;
+    font-size: 12px;
+    border: none;
+    border-radius: 6px;
+    background: transparent;
+    color: rgba(156, 163, 175, 0.75);
+    cursor: pointer;
+}
+.mp-modebtn.active {
+    background: rgba(156, 163, 175, 0.12);
+    color: var(--cseries-linen);
+}
+
+.mp-overlay {
+    display: flex;
+    flex-direction: column;
+    border: 1px solid rgba(156, 163, 175, 0.10);
+    border-radius: 8px;
+}
+.mp-ov-row {
+    padding: 9px 12px;
+    border-bottom: 1px solid rgba(156, 163, 175, 0.07);
+}
+.mp-ov-row:last-child { border-bottom: none; }
+.mp-ov-act { font-size: 12px; color: rgba(156, 163, 175, 0.75); }
+.mp-ov-ans { font-size: 13px; margin-top: 2px; color: var(--cseries-linen); }
+.mp-ov-fail { margin-top: 2px; }
+
+.mp-simple-provs { display: flex; gap: 8px; flex-wrap: wrap; }
+.mp-prov-card {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    align-items: flex-start;
+    padding: 9px 14px;
+    border: 1px solid rgba(156, 163, 175, 0.14);
+    border-radius: 8px;
+    background: transparent;
+    color: var(--cseries-linen);
+    cursor: pointer;
+    text-align: left;
+}
+.mp-prov-card.active { border-color: rgba(156, 163, 175, 0.45); background: rgba(156, 163, 175, 0.06); }
+.mp-prov-card.mp-prov-dim { opacity: 0.55; cursor: default; }
+button.mp-prov-card.mp-prov-dim { cursor: pointer; }   /* keyless card opens Keys */
+.mp-prov-name { font-size: 13px; }
+
+.mp-simple-plan-head { margin-top: 4px; }
+.mp-plan-table td { vertical-align: top; }
+.mp-plan-ok td { color: var(--cseries-linen); }
+.mp-plan-ok td:last-child { color: var(--accent-success); }
+.mp-plan-err td:last-child { color: var(--accent-danger); }
+
+.mp-simple-actions {
+    display: flex;
+    align-items: flex-end;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+.mp-simple-note { opacity: 0.8; }
+
+/* ── Simple mode: the setup checklist ──────────────────────────────────────
+   Simple opens as a list of the things a host needs — thinking, memory,
+   seeing, hearing — each a self-contained step with its own state and one
+   action, with "what answers when" as the receipt underneath. Before this
+   Simple was a status table first and a single button second, which gave a
+   first-time user nothing to do about the four rows saying "not set up". */
+.mp-setup-step {
+    padding: 14px 0;
+    border-bottom: 1px solid rgba(156, 163, 175, 0.10);
+}
+.mp-setup-step:last-of-type { border-bottom: none; }
+.mp-setup-head {
+    display: flex;
+    align-items: baseline;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+.mp-setup-name {
+    font-size: 14px;
+    color: var(--cseries-linen);
+    letter-spacing: 0.01em;
+}
+.mp-setup-state { font-size: 12px; }
+.mp-setup-why {
+    margin: 4px 0 10px;
+    font-size: 12px;
+    line-height: 1.55;
+    max-width: 62ch;               /* plain-English prose, not a config label */
+    color: rgba(156, 163, 175, 0.85);
+}
+.mp-setup-why em { font-style: italic; color: var(--cseries-linen); }
+.mp-setup-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* One capability the host either has or doesn't (vision / image gen). */
+.mp-setup-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 0;
+    flex-wrap: wrap;
+}
+.mp-setup-rowname {
+    font-size: 12px;
+    color: rgba(156, 163, 175, 0.75);
+    min-width: 15ch;
+}
+.mp-setup-rowval { font-size: 13px; color: var(--cseries-linen); flex: 1 1 18ch; }
+
+/* The chooser a step reveals in place — never a jump to another screen. */
+.mp-simple-inline {
+    display: flex;
+    align-items: flex-end;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+    padding: 10px;
+    border: 1px solid rgba(156, 163, 175, 0.14);
+    border-radius: 8px;
+    background: rgba(156, 163, 175, 0.04);
+}
+
+/* ── Model servers the owner names by address ──────────────────────────── */
+.mp-local-servers { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
+.mp-local-server { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.mp-local-server code { font-size: 12px; }
+.mp-local-server-add { display: flex; gap: 6px; }
+.mp-local-server-add input { flex: 1 1 auto; min-width: 0; }

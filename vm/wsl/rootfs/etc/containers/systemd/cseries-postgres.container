@@ -37,6 +37,12 @@ Restart=always
 RestartSec=5
 # A first start may pull the image.
 TimeoutStartSec=900
+# The database's ceiling: entrypoint-postgres.sh sizes PostgreSQL's own worst
+# case (about 400 MB) to fit under 512 MB, and like the Host it uses no swap.
+# No CPU limit: throttling a database stalls every query the Host waits on,
+# and the Host's own limit bounds the work it can send here.
+MemoryMax=512M
+MemorySwapMax=0
 
 [Install]
 WantedBy=multi-user.target

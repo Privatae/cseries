@@ -113,7 +113,15 @@ it. A call is the loudest channel there is.
 ### Email is the user's own Gmail
 
 Email goes out through the user's OWN Gmail, to their own address — nobody
-else's. When the user connects Gmail (one Google consent screen), the platform
+else's. The Host has no mail account of its own: no SMTP, IMAP or Outlook,
+only the Gmail the user connects. The one email transport a channel has is
+`gmail_send`, a doorbell mail to the user themself, which takes no address
+and no body you write. So a reach-out never mails another person or a list.
+When the user asks to email someone else, say that a reach-out cannot, and
+offer what can: a mail app they install and that you grant their Gmail
+connection with send (`integrations_manage` op='grant_app', methods that
+include POST; skill 'integrations'), or, to another Host, `host_message`.
+When the user connects Gmail (one Google consent screen), the platform
 builds a channel called "Your Gmail" with three triggers — a decision waiting,
 a build finished, a site published. So for "email me":
 

@@ -81,6 +81,7 @@ for _noisy in ("aiohttp", "httpx", "httpcore", "asyncio"):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 from server.applications import app_origin
+from server import static_paths
 from server.middleware.localhost_only import LocalhostOnlyMiddleware
 from server.middleware.ceigas_gate import CEIGASGateMiddleware
 from server.routes import system, files, screen, input, clipboard, projects, ceigas, update, portal, entity, integrations, brain, security, inference, privatae_status, synaptive, mcp
@@ -2229,13 +2230,15 @@ class OverlayStaticFiles(StaticFiles):
         # follows the desktop (server/routes/appearance.py design_tokens_css).
         # Same interception
         # reason as app-sdk.js above: a plain route loses to this mount. The
-        # custom/ overlay still wins for the base file; no override → the
-        # file is served byte-identical. The same base read feeds the sheet
-        # host-made artifacts wear (appearance.token_sheet).
+        # custom/ overlay still wins for the base file, except on an app's own
+        # origin (overlay_allowed below), where the image's copy is
+        # read; no override → the file is served byte-identical. The same
+        # base read feeds the sheet host-made artifacts wear
+        # (appearance.token_sheet).
         if path == "css/tokens.css":
             from starlette.responses import Response as _Resp
             from server.routes.appearance import base_tokens_css, design_tokens_css
-            base = base_tokens_css()
+            base = base_tokens_css(overlay=app_origin.overlay_allowed(scope))
             if base is None:
                 # Unreadable or not UTF-8 (a hand-written custom overlay):
                 # serve the bytes as before rather than 500 the whole shell
@@ -2250,8 +2253,10 @@ class OverlayStaticFiles(StaticFiles):
         # Check custom overlay first — except on an app's own origin:
         # the shared files an app loads there come from the image only, so
         # nothing the entity writes runs with an app's origin.
-        custom_path = self.custom_dir / path
-        if custom_path.is_file() and app_origin.overlay_allowed(scope):
+        # inside(): the request path can climb out of custom/ ('/%2e%2e/x'),
+        # and only StaticFiles' own directory gets starlette's check.
+        custom_path = static_paths.inside(self.custom_dir, path)
+        if custom_path is not None and custom_path.is_file() and app_origin.overlay_allowed(scope):
             resp = FileResponse(str(custom_path))
         else:
             # Fall back to base

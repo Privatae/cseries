@@ -6,6 +6,7 @@ const fs = require('node:fs');
 const bastion = require('../src/bastion');
 const { bastionCommands } = require('../src/bastion-commands');
 const elevated = require('../src/win/elevated');
+const posixElevated = require('../src/posix/elevated');
 const { makeContext } = require('../src/cli');
 const { CliError } = require('../src/errors');
 const { sha256Hex } = require('../src/verify');
@@ -92,12 +93,14 @@ test('one prompt installs the service, pairs, anchors and enrols; a second run a
   assert.equal(await both(ctx), 'ran');
   assert.equal(m.elevated.length, 1);
   assert.equal(m.serviceInstalls, 1);
-  assert.equal(fs.readFileSync(p.serviceExe, 'utf8'), 'fake bastion 0.53.0\n');
+  assert.equal(fs.readFileSync(p.serviceExe, 'utf8'), 'fake bastion 0.53.2\n');
   assert.equal(m.bastion.mode, 'networked');
   assert.equal(m.bastion.anchor, 'host-a');
   assert.equal(m.bastion.enrolled['host-a'], true);
   assert.deepEqual(m.pairCalls[0].slice(0, 4), ['pair', '--redeem-url', 'https://127.0.0.1:8810/v1/local/redeem', '--host-ca']);
   assert.equal(m.pairCalls[0][4], `${p.serviceDir}/host-ca.pem`, 'pair reads the copy in Program Files, not the user\'s file');
+  assert.deepEqual(m.pairCalls[0].slice(5), ['-'], 'the token is read from standard input, not an argument');
+  assert.deepEqual(m.pairTokens, ['tok-1'], 'pair read the Host\'s token on its standard input');
   assert.equal(m.serviceRestarts, 1);
   assert.deepEqual(ctx.state.get('bastion'),
     { service: true, owner: true, host: 'host-a', hostCa: sha256Hex(Buffer.from(`${CA}\n`)), anchored: true, enrolled: true });
@@ -110,7 +113,7 @@ test('one prompt installs the service, pairs, anchors and enrols; a second run a
   assert.equal(await both(ctx2), 'done');
   assert.equal(m.elevated.length, 1, 'no second prompt');
   assert.equal(m.downloads, 1, 'not downloaded again');
-  assert.match(ctx2.out.text(), /The bastion 0\.53\.0 is installed\./);
+  assert.match(ctx2.out.text(), /The bastion 0\.53\.2 is installed\./);
 });
 
 test('a PrivataeBastion service this command did not install is refused, with what to do', async () => {
@@ -169,25 +172,47 @@ test('a run that stopped at claim-anchor is finished by the next one, which only
 test('the bastion command sequence is the same on macOS and Linux as in the Windows script', () => {
   const plan = { release: 'host-a', pair: { enroll: 'https://127.0.0.1:8810/v1/local/redeem', token: 'tok-9' }, anchor: true, enroll: true };
   const winCmds = bastionCommands(plan, elevated.CA_VAR).map((c) => c.args[0]);
+  assert.deepEqual(winCmds, ['set-mode', 'release-anchor', 'pair', 'claim-anchor', 'stepup-enroll']);
   for (const platform of ['darwin', 'linux']) {
-    const pp = bastion.posixPlan(platform, paths(platform, {}, '/home/someone'), plan, { file: '/tmp/dl/privatae-bastion-0.53.0' });
-    assert.deepEqual(pp.commands.map((c) => c.args[0]), winCmds);
-    assert.deepEqual(winCmds, ['set-mode', 'release-anchor', 'pair', 'claim-anchor', 'stepup-enroll']);
-    assert.ok(pp.commands.find((c) => c.args[0] === 'stepup-enroll').args.includes('--console-only'));
+    const pp = paths(platform, {}, '/home/someone');
+    const script = posixElevated.bastionInstallScript({
+      platform, nonce: 'abcd', program: pp.serviceExe, unit: bastion.linuxUnit(pp.serviceExe),
+      install: { file: '/tmp/dl/privatae-bastion-0.53.0', sha256: 'e'.repeat(64) }, serviceInstall: true,
+      hostCa: { file: '/tmp/ca.pem', sha256: 'f'.repeat(64) }, host: null,
+      commands: bastionCommands(plan, posixElevated.CA_VAR),
+    });
+    const order = [...script.matchAll(/^bastion(?:_in)? \d+ '([^']+)'|^"\$exe" '(stepup-enroll)'/gm)].map((x) => (x[1] || x[2]).split(' ')[0]);
+    assert.deepEqual(order.filter((c) => c !== 'service'), winCmds, platform);
+    assert.match(script, /^bastion_in 16 'pair' 'tok-9' 'pair' '--redeem-url' 'https:\/\/127\.0\.0\.1:8810\/v1\/local\/redeem' '--host-ca' "\$ca" '-'$/m);
+    assert.ok(script.includes(`"$exe" 'stepup-enroll' '--console-only' '--host' "$hostName" </dev/tty >/dev/tty 2>&1`), platform);
+    if (platform === 'darwin') {
+      assert.equal(pp.serviceExe, '/Library/Application Support/privatae/bin/privatae-bastion');
+      assert.match(script, /^HOME=\/var\/root$/m);
+      assert.match(script, /^exe='\/Library\/Application Support\/privatae\/bin\/privatae-bastion'$/m);
+      assert.match(script, /chown root:wheel "\$\(dirname "\$dir"\)" "\$dir"/);
+      assert.match(script, /^bastion 12 'service install' service install$/m);
+      assert.match(script, /launchctl kickstart -k system\/ai\.privatae\.bastion/);
+    } else {
+      assert.equal(pp.serviceExe, '/usr/local/bin/privatae-bastion');
+      assert.match(script, /^HOME=\/root$/m);
+      assert.match(script, /^ExecStart=\/usr\/local\/bin\/privatae-bastion run$/m);
+      assert.match(script, /^Environment=HOME=\/root$/m);
+      assert.match(script, /systemctl restart privatae-bastion/);
+      assert.ok(!/service install/.test(script.replace("say 'step=service install'", '')), 'Linux writes the unit; `service install` does nothing there');
+    }
   }
-  const mac = bastion.posixPlan('darwin', paths('darwin', {}, '/Users/someone'), plan, null);
-  assert.equal(mac.program, '/Library/Application Support/privatae/bin/privatae-bastion');
-  assert.deepEqual(mac.prelude.at(-1), [mac.program, 'service', 'install']);
-  const lin = bastion.posixPlan('linux', paths('linux', {}, '/home/someone'), plan, null);
-  assert.equal(lin.program, '/usr/local/bin/privatae-bastion');
-  assert.match(lin.prelude.find((s) => s[0] === 'write')[2], /ExecStart=\/usr\/local\/bin\/privatae-bastion run/);
 });
 
-test('on macOS and Linux the install says it is not built yet, and runs nothing', async () => {
+test('on macOS and Linux a bastion service this command did not install is refused, as on Windows', async () => {
   for (const platform of ['darwin', 'linux']) {
-    const ops = bastion.osOps({ platform, paths: paths(platform, {}, '/home/someone') });
-    assert.equal(await ops.serviceState(), 'missing');
-    await assert.rejects(ops.elevate({}), /built for Windows so far; macOS and Linux come with their VM drivers/);
+    const dir = require('./helpers').tmpdir();
+    const pp = { ...paths(platform, {}, dir), serviceUnit: `${dir}/unit`, state: `${dir}/state.json` };
+    fs.writeFileSync(pp.serviceUnit, 'someone else\'s');
+    const ctx = makeContext({ platform, arch: 'x64', env: {}, paths: pp, out: captureOutput(),
+      runner: { run: async () => ({ code: 0, stdout: Buffer.from('active\n'), stderr: Buffer.alloc(0) }) } });
+    await assert.rejects(bastion.prepare(ctx), /already runs the bastion as a system service that this command did not install/);
+    fs.rmSync(pp.serviceUnit);
+    assert.equal(await bastion.osOps(ctx).serviceState(), 'missing');
   }
 });
 

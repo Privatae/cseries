@@ -96,6 +96,76 @@ fs.writeFileSync(`${w}/runtime.json`, JSON.stringify(out));
 ' "$work" "$guest_seccomp" "$repo_seccomp"
 node "$here/compare-hardening.js" "$work/compose.json" "$work/inspect.json" "$work/runtime.json"
 
+say "the resource limits, as systemd and the kernel hold them"
+# The Host: the ceiling configure wrote to 10-memory.conf from the MemTotal
+# `status` reports (e2e-guest.js checks its value against host.js), no swap
+# (cseries-host.container), and every processor but one (10-cpu.conf, which
+# configure wrote from the count `status` reports). The database: 512 MB, no
+# swap, no processor limit.
+G sh -c '
+set -eu
+cg=/sys/fs/cgroup/system.slice
+prop() { systemctl show "$1" -p "$2" --value; }
+cpus=$(getconf _NPROCESSORS_ONLN)
+quota=$(( (cpus > 1 ? cpus - 1 : 1) * 100000 ))
+mem=$(( $(sed -n "s/^MemTotal: *\([0-9]*\) kB$/\1/p" /proc/meminfo) * 1024 ))
+hmax=$(prop cseries-host.service MemoryMax)
+echo "processors $cpus, memory $mem; Host MemoryMax $hmax CPUQuota $(prop cseries-host.service CPUQuotaPerSecUSec)"
+echo "cgroup: Host memory.max $(cat $cg/cseries-host.service/memory.max) memory.swap.max $(cat $cg/cseries-host.service/memory.swap.max) cpu.max $(cat $cg/cseries-host.service/cpu.max); database memory.max $(cat $cg/cseries-postgres.service/memory.max) memory.swap.max $(cat $cg/cseries-postgres.service/memory.swap.max) cpu.max $(cat $cg/cseries-postgres.service/cpu.max)"
+near() { [ $(( $1 > $2 ? $1 - $2 : $2 - $1 )) -le 4096 ]; }
+want=$(sed -n "s/^MemoryMax=\([0-9]*\)M$/\1/p" /etc/containers/systemd/cseries-host.container.d/10-memory.conf)
+[ -n "$want" ] || { echo "FAIL: configure wrote no 10-memory.conf"; exit 1; }
+[ "$hmax" = $(( want * 1048576 )) ] || { echo "FAIL: Host MemoryMax $hmax is not the ${want}M in 10-memory.conf"; exit 1; }
+near "$(cat $cg/cseries-host.service/memory.max)" "$hmax" || { echo "FAIL: the kernel does not hold the Host'"'"'s MemoryMax"; exit 1; }
+[ "$(cat $cg/cseries-host.service/memory.high)" = max ] || { echo "FAIL: the Host has a memory.high"; exit 1; }
+[ "$(cat $cg/cseries-host.service/memory.swap.max)" = 0 ] || { echo "FAIL: the Host may swap"; exit 1; }
+[ "$(cat $cg/cseries-host.service/cpu.max)" = "$quota 100000" ] || { echo "FAIL: Host cpu.max is not $quota 100000"; exit 1; }
+[ "$(cat $cg/cseries-postgres.service/memory.max)" = 536870912 ] || { echo "FAIL: database memory.max is not 512 MB"; exit 1; }
+[ "$(cat $cg/cseries-postgres.service/memory.swap.max)" = 0 ] || { echo "FAIL: the database may swap"; exit 1; }
+[ "$(cat $cg/cseries-postgres.service/cpu.max)" = "max 100000" ] || { echo "FAIL: the database has a processor limit"; exit 1; }
+# A drop-in that sorts after the shipped ones replaces every limit, the way
+# a machine-sized drop-in does; taking it away puts them back. systemd writes
+# the limits in a unit file into the cgroup when the unit starts, so each
+# change is a reload and a restart.
+d=/etc/containers/systemd/cseries-host.container.d/zz-boot-test.conf
+printf "[Service]\nMemoryMax=3G\nMemorySwapMax=1G\nCPUQuota=150%%\n" > "$d"
+systemctl daemon-reload
+systemctl restart cseries-host.service
+got="$(cat $cg/cseries-host.service/memory.max) $(cat $cg/cseries-host.service/memory.swap.max) $(cat $cg/cseries-host.service/cpu.max)"
+rm -f "$d"
+systemctl daemon-reload
+systemctl restart cseries-host.service
+[ "$got" = "3221225472 1073741824 150000 100000" ] || { echo "FAIL: the drop-in did not replace the limits: $got"; exit 1; }
+[ "$(cat $cg/cseries-host.service/memory.swap.max)" = 0 ] || { echo "FAIL: no swap did not come back without the drop-in"; exit 1; }
+[ "$(cat $cg/cseries-host.service/cpu.max)" = "$quota 100000" ] || { echo "FAIL: the limits did not come back without the drop-in"; exit 1; }
+near "$(cat $cg/cseries-host.service/memory.max)" "$hmax" || { echo "FAIL: the memory ceiling did not come back without the drop-in"; exit 1; }
+echo "a later drop-in replaced all three ($got) and its removal restored them"
+# A process in the Host that takes more than the Host may have is stopped,
+# and the Host answers after it (it goes on, or systemd brings it back).
+healthy() {
+    for _ in $(seq 1 60); do
+        curl -fsS --max-time 3 -o /dev/null http://127.0.0.1:8800/api/system/health && return 0
+        sleep 3
+    done
+    return 1
+}
+printf "[Service]\nMemoryMax=1500M\n" > "$d"
+systemctl daemon-reload
+systemctl restart cseries-host.service
+healthy || { echo "FAIL: the Host did not start under a 1500 MB ceiling"; exit 1; }
+rc=0
+timeout 120 podman exec cseries-host python3 -c "b = b\"x\" * (3 * 1024**3)" || rc=$?
+kills=$(sed -n "s/^oom_kill //p" $cg/cseries-host.service/memory.events)
+ok=0
+healthy && ok=1
+rm -f "$d"
+systemctl daemon-reload
+systemctl restart cseries-host.service
+[ "$rc" = 137 ] || { echo "FAIL: a 3 GB runaway under a 1500 MB ceiling was not stopped (exit $rc)"; exit 1; }
+[ "$ok" = 1 ] || { echo "FAIL: the Host did not answer after the runaway"; exit 1; }
+echo "a 3 GB runaway under a 1500 MB ceiling was stopped (exit 137, ${kills:-?} OOM kill(s) in the Host) and the Host answered after it"
+'
+
 say "inside the containers"
 for c in cseries-postgres cseries-host; do
     echo "-- $c: $(G podman exec "$c" id)"

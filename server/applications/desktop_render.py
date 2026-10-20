@@ -183,9 +183,12 @@ def _dashboard_dirs() -> list[Path]:
 
 
 def _mount_script(rel: str) -> str:
+    from server.static_paths import inside
     for d in _dashboard_dirs():
-        p = d / rel
-        if p.is_file():
+        # inside(): the overlay's own rule — a custom/ copy that links out of
+        # custom/ is not read (server/main.py OverlayStaticFiles).
+        p = inside(d, rel)
+        if p is not None and p.is_file():
             return p.read_text(encoding="utf-8")
     raise FileNotFoundError(f"/{rel} is not served by this kernel")
 

@@ -9,8 +9,9 @@
 //      {"token", "host_ca_pem", "enroll"};
 //   2. the elevated step (bastion.js installStep) copies the Host CA to where
 //      only an administrator can write, checks it, and runs
-//      `pair --redeem-url <enroll> --host-ca <copy> <token>`, which redeems
-//      the token over TLS checked against that CA alone.
+//      `pair --redeem-url <enroll> --host-ca <copy> -` with the token on its
+//      standard input (never in its arguments), which redeems the token
+//      over TLS checked against that CA alone.
 //
 // A Host whose data was deleted has a new CA. It is not rotated with
 // `pair --replace` (the bastion refuses that across a CA change); the old

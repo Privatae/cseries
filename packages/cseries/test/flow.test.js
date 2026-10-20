@@ -92,10 +92,10 @@ test('a new release restarts the Host on the new images, and only that', async (
 });
 
 test('the bastion refused (min_version) stops the run before anything else is installed', async () => {
-  const { m, run } = machine({ bastionVersion: '0.52.0' });
+  const { m, run } = machine({ bastionVersion: '0.53.1' });
   const r = await run();
   assert.equal(r.code, 1);
-  assert.match(r.err, /needs version 0\.53\.0 or newer/);
+  assert.match(r.err, /needs version 0\.53\.2 or newer/);
   assert.equal(m.elevated.length, 0);
   assert.equal(m.imports.length, 0);
 });
@@ -131,13 +131,4 @@ test('a development build installs nothing', async () => {
   const code = await main([], { platform: 'win32', arch: 'x64', env: {}, out, runner: { run: async () => { throw new Error('ran something'); } } });
   assert.equal(code, 1);
   assert.match(out.errText(), /development build/);
-});
-
-test('macOS and Linux say what is coming, and install nothing', async () => {
-  for (const platform of ['darwin', 'linux']) {
-    const out = captureOutput();
-    const code = await main([], { platform, env: {}, out, runner: { run: async () => { throw new Error('ran something'); } } });
-    assert.equal(code, 1);
-    assert.match(out.errText(), /coming next/);
-  }
 });

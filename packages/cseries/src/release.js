@@ -14,7 +14,9 @@ const DIGEST = /^sha256:[0-9a-f]{64}$/;
 const SHA256 = /^[0-9a-f]{64}$/;
 // A registry image name, optionally with a tag; no digest (that is its own field).
 const REF = /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?(?:\/[a-z0-9]+(?:[._-][a-z0-9]+)*)+(?::[A-Za-z0-9_][A-Za-z0-9_.-]{0,127})?$/;
-const GUEST_KEYS = ['wsl-x64', 'wsl-arm64'];
+// The guest image for each VM driver and CPU: WSL's root filesystem, Lima's
+// qcow2 disk (macOS and Linux).
+const GUEST_KEYS = ['wsl-x64', 'wsl-arm64', 'lima-x64', 'lima-arm64'];
 
 function defaultPath() {
   return path.join(__dirname, '..', 'release.json');

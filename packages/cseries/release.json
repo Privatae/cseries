@@ -6,7 +6,9 @@
   },
   "guest": {
     "wsl-x64": {"url": "dev", "sha256": "dev"},
-    "wsl-arm64": {"url": "dev", "sha256": "dev"}
+    "wsl-arm64": {"url": "dev", "sha256": "dev"},
+    "lima-x64": {"url": "dev", "sha256": "dev"},
+    "lima-arm64": {"url": "dev", "sha256": "dev"}
   },
-  "bastion": {"min_version": "0.53.0"}
+  "bastion": {"min_version": "0.53.2"}
 }

@@ -35,9 +35,10 @@
 //   result=ok              everything, and the service was restarted
 //   error=<words>, exit=<code>  on a failure
 //
-// The pairing token is in the script (the elevated command line) and in
-// `pair`'s argv, never in the log: a bastion command is logged as its name
-// and its output only. stepup-enroll is run attached to this elevated console
+// The pairing token is in the script (the elevated command line) and on
+// `pair -`'s standard input, piped from the script, never in pair's argv and
+// never in the log: a bastion command is logged as its name and its output
+// only. stepup-enroll is run attached to this elevated console
 // with nothing redirected, so the TOTP secret it shows reaches that window and
 // nothing else: no file, no log, no command line.
 
@@ -70,11 +71,18 @@ function preamble(p) {
     // A bastion command: its name and its output go to the log, never its
     // arguments. PowerShell 5.1 turns a native program's stderr into errors
     // under 2>&1, which 'Stop' would throw on; the exit code decides instead.
-    'function Bastion([int]$c, [string]$what, [string[]]$a) {',
+    // With $stdin given, it is piped to the command's standard input (pair's
+    // token), as UTF-8 without a byte order mark, and never in its args.
+    'function Bastion([int]$c, [string]$what, [string[]]$a, [string]$stdin) {',
     '  Say "step=$what"',
     '  Say "> privatae-bastion $what"',
     "  $ErrorActionPreference = 'Continue'",
-    '  $text = (& $exe @a 2>&1 | ForEach-Object { "$_" }) -join "`n"',
+    "  if ($PSBoundParameters.ContainsKey('stdin')) {",
+    '    $OutputEncoding = New-Object System.Text.UTF8Encoding $false',
+    '    $text = ($stdin | & $exe @a 2>&1 | ForEach-Object { "$_" }) -join "`n"',
+    '  } else {',
+    '    $text = (& $exe @a 2>&1 | ForEach-Object { "$_" }) -join "`n"',
+    '  }',
     '  $rc = $LASTEXITCODE',
     "  $ErrorActionPreference = 'Stop'",
     '  if ($text) { Say $text }',
@@ -197,7 +205,8 @@ function commandBlock(c) {
       "Say 'enrolled=yes'",
     ];
   }
-  const lines = [`$code = ${c.code}`, `$text = Bastion ${c.code} ${psQuote(c.what)} ${args(c.args)}`];
+  const stdin = c.stdin === undefined ? '' : ` ${psQuote(c.stdin)}`;
+  const lines = [`$code = ${c.code}`, `$text = Bastion ${c.code} ${psQuote(c.what)} ${args(c.args)}${stdin}`];
   if (c.pair) {
     lines.push(
       'Remove-Item -LiteralPath $ca -Force -ErrorAction SilentlyContinue',

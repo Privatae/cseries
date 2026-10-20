@@ -25,26 +25,27 @@
 //
 // Ports: the guest publishes 8800, 8810 and 8811 on its own 127.0.0.1, and
 // the driver makes them, and only them, reachable on the machine's 127.0.0.1.
+// The VM's memory and CPUs are capped by guestResources (common.js), the same
+// rule for every driver.
 
 const { CliError } = require('../errors');
+const { PORTS, guestResources } = require('./common');
 const wsl = require('./wsl');
 const lima = require('./lima');
 
-const PORTS = [8800, 8810, 8811];
-
 function selectDriver(platform = process.platform) {
   if (platform === 'win32') return wsl.driver;
-  if (platform === 'darwin') return lima.driver('macOS');
-  if (platform === 'linux') return lima.driver('Linux');
+  if (platform === 'darwin') return lima.driver('darwin');
+  if (platform === 'linux') return lima.driver('linux');
   return null;
 }
 
 function requireSupported(driver, platform = process.platform) {
   if (!driver) {
-    throw new CliError(`C-Series does not run on ${platform}.`, 'It runs on Windows, and soon on macOS and Linux.');
+    throw new CliError(`C-Series does not run on ${platform}.`, 'It runs on Windows, macOS and Linux.');
   }
   if (!driver.supported) throw new CliError(driver.unsupportedMessage, driver.unsupportedNext || '');
   return driver;
 }
 
-module.exports = { selectDriver, requireSupported, PORTS };
+module.exports = { selectDriver, requireSupported, PORTS, guestResources };

@@ -1,0 +1,2 @@
+# The root filesystem mkimage.sh labels; the EFI partition is not mounted.
+LABEL=cseries-root / ext4 rw,discard,errors=remount-ro 0 1

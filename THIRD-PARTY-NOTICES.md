@@ -473,7 +473,7 @@ Counts by licence: MIT 365, ISC 37, Apache-2.0 17, BSD-3-Clause 6, (MPL-2.0 OR A
 
 ### 3. Kernel image: Python and other software (94)
 
-- age (FiloSottile/age) binary 1.3.2, built with Go 1.27.0: BSD-3-Clause (age and the Go toolchain and modules compiled in); texts: age-1.3.2.LICENSE, age-1.3.2-go-deps/
+- age (FiloSottile/age) binary 1.3.2, built from its release module with Go 1.27.2: BSD-3-Clause (age and the Go toolchain and modules compiled in); texts: age-1.3.2.LICENSE, age-1.3.2-go-deps/
 - aiohappyeyeballs 2.7.1: PSF-2.0
 - aiohttp 3.14.3: Apache-2.0 AND MIT
 - aiosignal 1.4.0: Apache-2.0

@@ -1,0 +1,7 @@
+# DHCP on the VM's network card when cloud-init has written nothing for it.
+# cloud-init's own file (10-cloud-init-*.network) sorts first and wins.
+[Match]
+Name=eth* en*
+
+[Network]
+DHCP=ipv4

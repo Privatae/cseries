@@ -27,6 +27,48 @@
 #   - the PG client only (psql/pg_isready) — the server is cseries-postgres
 
 # ============================================================
+# age, built from its release module with a patched Go
+# ============================================================
+# age, for the Host's own backups and exports (server/host_backup.py,
+# server/host_export.py): every file is encrypted with age before it leaves
+# the Host, to the owner's Host recovery key and their bastions' keys (an
+# export: to the key the owner confirmed), none of which the platform holds.
+#
+# Built here rather than taken from the release's prebuilt binary: age's
+# newest release, v1.3.2, was linked with Go 1.27.0, and that standard library
+# has three HIGH findings (net/http and crypto/tls) that Go 1.27.2 fixes.
+# `go install filippo.io/age/cmd/age@v1.3.2` builds the release's module, so
+# the binary records age v1.3.2 and every dependency's hash (go version -m),
+# the same ones the release binary records, and a scanner still matches age
+# itself by version. The module is pinned by AGE_MODULE_SUM, the hash
+# sum.golang.org publishes for it; its go.sum pins the dependencies, and the
+# go command checks every download against sum.golang.org. The flags are the
+# ones age's own release workflow uses (.github/workflows/build.yml:
+# CGO_ENABLED=0, -trimpath), cross-compiled for TARGETARCH with this stage's
+# Go (GOTOOLCHAIN=local: never the go1.27.0 that age's go.mod names).
+# The LICENSE is assembled the way that workflow assembles the release's:
+# age's LICENSE with .github/workflows/LICENSE.suffix.txt (the Go Authors'
+# notice) appended, which is byte for byte the file the release archive
+# carries. The runtime stage installs it at /usr/share/doc/age/LICENSE.
+# Bump = AGE_VERSION and AGE_MODULE_SUM together, and the Go image's tag AND
+# digest together (docker buildx imagetools inspect golang:<tag>).
+FROM --platform=$BUILDPLATFORM golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61 AS age-build
+ARG AGE_VERSION=1.3.2
+ARG AGE_MODULE_SUM=h1:r6RSZLFSMm6rzKepZ7ZAYkKCu14f3/Me8c7uKYh7C8c=
+ARG TARGETARCH
+RUN case "$TARGETARCH" in amd64|arm64) ;; *) echo "age: no build for TARGETARCH=$TARGETARCH" >&2; exit 1 ;; esac \
+    && export CGO_ENABLED=0 GOOS=linux GOARCH="$TARGETARCH" GOTOOLCHAIN=local GOFLAGS=-trimpath \
+    && go mod download -json "filippo.io/age@v${AGE_VERSION}" > /tmp/age-module.json \
+    && sum=$(sed -n 's/^\t"Sum": "\(.*\)",$/\1/p' /tmp/age-module.json) \
+    && dir=$(sed -n 's/^\t"Dir": "\(.*\)",$/\1/p' /tmp/age-module.json) \
+    && { [ "$sum" = "$AGE_MODULE_SUM" ] || { echo "age module sum '$sum' != pinned $AGE_MODULE_SUM" >&2; exit 1; }; } \
+    && go install "filippo.io/age/cmd/age@v${AGE_VERSION}" \
+    && bin=$(go env GOPATH)/bin && mkdir -p /out \
+    && if [ -x "$bin/linux_$TARGETARCH/age" ]; then cp "$bin/linux_$TARGETARCH/age" /out/age; else cp "$bin/age" /out/age; fi \
+    && cat "$dir/LICENSE" "$dir/.github/workflows/LICENSE.suffix.txt" > /out/age-LICENSE \
+    && chmod 0755 /out/age && chmod 0644 /out/age-LICENSE
+
+# ============================================================
 # Stage 1: Build (install Python deps + Claude Code CLI)
 # ============================================================
 # Digest-pinned to the EXPLICIT bookworm tag:
@@ -68,33 +110,10 @@ sys.exit(f'tree-sitter parsers not baked: {sorted(missing)}') if missing else pr
     && test -z "$(find /install/share/tree-sitter-language-pack -name '*.tar.zst')" \
     && chmod 0755 /install/share
 
-# age, for the Host's own backups and exports (server/host_backup.py,
-# server/host_export.py): every file is encrypted with age before it leaves
-# the Host, to the owner's Host recovery key and their bastions' keys (an
-# export: to the key the owner confirmed), none of which the platform holds.
-# The official release, pinned by the sha256 of the release archive
-# (github.com/FiloSottile/age releases), unpacked with Python. The release's
-# LICENSE (BSD-3-Clause) is kept beside the binary: redistributing age means
-# carrying its notice, and the runtime stage installs it at
-# /usr/share/doc/age/LICENSE.
-# One archive per architecture, each pinned: AGE_SHA256 is the linux-amd64
-# archive's, AGE_SHA256_ARM64 the linux-arm64 one's (both are the digests the
-# release publishes for its assets). TARGETARCH is set by BuildKit to the
-# platform being built; any other architecture stops the build here.
-ARG AGE_VERSION=1.3.2
-ARG AGE_SHA256=cbe24006683f8eb669266162894b9a522a1af52f2665fbc63a4bb032ed26ac10
-ARG AGE_SHA256_ARM64=6b8dc4333c53a5a57c9e5834e3a48f92605d7154014cd07269ff3327db5d37f4
-ARG TARGETARCH
-RUN python3 -c "import hashlib, io, os, sys, tarfile, urllib.request; \
-v, arch = os.environ['AGE_VERSION'], os.environ.get('TARGETARCH', ''); \
-want = {'amd64': os.environ['AGE_SHA256'], 'arm64': os.environ['AGE_SHA256_ARM64']}.get(arch) or sys.exit(f'age: no pinned archive for TARGETARCH={arch!r}'); \
-raw = urllib.request.urlopen(f'https://github.com/FiloSottile/age/releases/download/v{v}/age-v{v}-linux-{arch}.tar.gz', timeout=120).read(); \
-got = hashlib.sha256(raw).hexdigest(); \
-sys.exit(f'age sha256 {got} != {want}') if got != want else None; \
-tar = tarfile.open(fileobj=io.BytesIO(raw)); \
-open('/install/age', 'wb').write(tar.extractfile('age/age').read()); \
-open('/install/age-LICENSE', 'wb').write(tar.extractfile('age/LICENSE').read())" \
-    && chmod 0755 /install/age && chmod 0644 /install/age-LICENSE
+# age and its LICENSE, from the age-build stage above. The runtime stage moves
+# them to /usr/local/bin/age and /usr/share/doc/age/LICENSE.
+COPY --from=age-build /out/age /install/age
+COPY --from=age-build /out/age-LICENSE /install/age-LICENSE
 
 # The one font the connector picture renderer draws in (server/connectors/
 # picture.py SHIPPED_FONT): InterVariable.ttf from the Inter 4.1 release, with

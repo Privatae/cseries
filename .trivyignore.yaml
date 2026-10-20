@@ -49,6 +49,46 @@ vulnerabilities:
       - "pkg:npm/piscina@4.9.3"
     statement: "Vendor-bundled piscina 4.9.3 is on disk but nothing in cursor-agent refers to it (no bundle file or other package names it; text search of the 2026.10.01-e373342 archive 2026-10-07). Accepted 2026-10-07 to remove 3 fixable perl CRITICALs; remove when cursor ships a fixed piscina (4.9.4, 5.3.2 or 6.0.0-rc.5)."
 
+  # 2026-10-20 — the Host image's Python: msgpack 1.1.2, urllib3 2.7.0 and
+  # setuptools 70.3.0 are not packages of ours. They are the copies pip 26.2.1
+  # vendors, named in pip/_vendor/vendor.txt, which trivy reads as installed
+  # packages. 26.2.1 is the newest pip on PyPI (checked 2026-10-20 with
+  # `pip index versions pip`), so no pip release carries fixed copies, and the
+  # python:3.14-slim-bookworm base the image is built on already has it.
+  # The urllib3 the Host's own code imports is the separate site-packages one,
+  # 2.8.0 (requirements.txt resolves it), which is the fixed version.
+  # These four have `purls` and no `paths`, unlike the rule at the top of this
+  # file, because trivy 0.73 records no file path for a pip-vendored package
+  # (it lists them under pip-26.2.1.dist-info with an empty path), so a `paths`
+  # entry never matches them: measured 2026-10-20 on an extracted pip 26.2.1
+  # wheel, where an entry with id, purl and the dist-info path still reported
+  # the finding. The scope is therefore the exact version anywhere in the
+  # image: the same id in any other version is still reported, but a real
+  # site-packages install of exactly msgpack 1.1.2, setuptools 70.3.0 or
+  # urllib3 2.7.0 would be accepted too (measured: a setuptools-70.3.0
+  # dist-info beside pip is silenced by these entries). The image had none on
+  # 2026-10-20: its only real copy of the three is urllib3 2.8.0. All four
+  # are HIGH, which the release reports and flags but does not fail on
+  # (VULN_FAIL_SEVERITY is CRITICAL). Remove these entries when
+  # a pip release vendors msgpack >= 1.2.1, urllib3 >= 2.8.0 and setuptools
+  # >= 78.1.1.
+  - id: GHSA-6v7p-g79w-8964
+    purls:
+      - "pkg:pypi/msgpack@1.1.2"
+    statement: "msgpack 1.1.2 as vendored by pip 26.2.1 (pip/_vendor/vendor.txt); pip 26.2.1 is the newest pip, fixed in msgpack 1.2.1. Accepted 2026-10-20 until pip vendors a fixed copy."
+  - id: CVE-2025-47273
+    purls:
+      - "pkg:pypi/setuptools@70.3.0"
+    statement: "setuptools 70.3.0 as vendored by pip 26.2.1 (pip/_vendor/vendor.txt); pip 26.2.1 is the newest pip, fixed in setuptools 78.1.1. Accepted 2026-10-20 until pip vendors a fixed copy."
+  - id: CVE-2026-97687
+    purls:
+      - "pkg:pypi/urllib3@2.7.0"
+    statement: "urllib3 2.7.0 as vendored by pip 26.2.1 (pip/_vendor/vendor.txt); pip 26.2.1 is the newest pip, fixed in urllib3 2.8.0, which is the copy the Host itself imports. Accepted 2026-10-20 until pip vendors a fixed copy."
+  - id: CVE-2026-97689
+    purls:
+      - "pkg:pypi/urllib3@2.7.0"
+    statement: "urllib3 2.7.0 as vendored by pip 26.2.1 (pip/_vendor/vendor.txt); pip 26.2.1 is the newest pip, fixed in urllib3 2.8.0, which is the copy the Host itself imports. Accepted 2026-10-20 until pip vendors a fixed copy."
+
 secrets:
   # A placeholder, not a key: the recovery key in this security repro is
   # "AGE-SECRET-KEY-1" followed by Q and 0 only, the shape the page under test

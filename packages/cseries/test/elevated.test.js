@@ -57,7 +57,7 @@ test('the Host CA is copied to where only an administrator writes, and checked, 
   const copy = pos(s, /\$ca = Join-Path \$dir 'host-ca\.pem'/);
   const from = pos(s, /Copy-Item -LiteralPath 'C:\\Users\\someone\\AppData\\Local\\cseries\\host-ca\.pem' -Destination \$ca -Force/);
   const check = pos(s, new RegExp(`if \\(\\$h -ne '${CA_SHA}'\\) \\{ Remove-Item -LiteralPath \\$ca -Force; Quit 14 `));
-  const pair = pos(s, /Bastion 16 'pair' @\('pair','--redeem-url','https:\/\/127\.0\.0\.1:8810\/v1\/local\/redeem','--host-ca',\$ca,'tok-invented-0f3c9a'\)/);
+  const pair = pos(s, /Bastion 16 'pair' @\('pair','--redeem-url','https:\/\/127\.0\.0\.1:8810\/v1\/local\/redeem','--host-ca',\$ca,'-'\) 'tok-invented-0f3c9a'$/m);
   assert.ok(copy < from && from < check && check < pair);
   assert.ok(!/--replace/.test(s), 'a CA change is a release and a fresh pair, never a rotation');
 });
@@ -85,11 +85,15 @@ test('enrolment runs on the elevated console: nothing redirected, nothing of it 
   assert.ok(!/otpauth|secret/i.test(s));
 });
 
-test('the pairing token is in pair\'s arguments only: never in a logged line', () => {
+test('the pairing token goes only to pair\'s standard input: never in its arguments, never in a logged line', () => {
   const s = elevated.bastionInstallScript(plan());
   const withToken = s.split('\n').filter((l) => l.includes(TOKEN));
   assert.equal(withToken.length, 1);
-  assert.match(withToken[0], /^\s*\$text = Bastion 16 'pair' @\(/);
+  assert.match(withToken[0], /^\s*\$text = Bastion 16 'pair' @\([^)]*,'-'\) 'tok-invented-0f3c9a'$/);
+  // The wrapper pipes its fourth parameter to the program, as UTF-8.
+  assert.match(s, /^function Bastion\(\[int\]\$c, \[string\]\$what, \[string\[\]\]\$a, \[string\]\$stdin\) \{$/m);
+  assert.match(s, /\$text = \(\$stdin \| & \$exe @a 2>&1 \| ForEach-Object/);
+  assert.match(s, /\$OutputEncoding = New-Object System\.Text\.UTF8Encoding \$false/);
   // The wrapper logs the command's name and output, not its arguments.
   assert.match(s, /Say "> privatae-bastion \$what"/);
   assert.ok(!/Say[^\n]*\$a\b/.test(s));
@@ -159,14 +163,14 @@ test('psQuote keeps a value holding ANY of PowerShell\'s five single quotes insi
   }
 });
 
-test('a pairing token the Host hands over stays one argument of pair in the elevated script', () => {
+test('a pairing token the Host hands over stays one string, the one piped to pair', () => {
   const token = 'tok’invented‘';
   const p = { release: null, pair: { enroll: 'https://127.0.0.1:8810/v1/local/redeem', token }, anchor: true, enroll: false };
   const s = elevated.bastionInstallScript({ ...plan(), commands: bastionCommands(p, elevated.CA_VAR) });
-  const at = s.indexOf(",$ca,") + ',$ca,'.length;
+  const at = s.indexOf(",$ca,'-') ") + ",$ca,'-') ".length;
   const r = scanSingleQuoted(s, at);
   assert.equal(r.value, token);
-  assert.equal(s[r.end + 1], ')', 'the argument list ends right after the token');
+  assert.equal(s[r.end + 1], '\n', 'the line ends right after the token');
 });
 
 test('the elevated program is Windows\' own PowerShell, by its full path, never found by a search', () => {

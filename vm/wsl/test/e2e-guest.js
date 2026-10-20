@@ -91,6 +91,12 @@ async function pass(n) {
   assert.match(one.result.setup.code || '', /^[0-9a-f]{6}-[0-9a-f]{6}-[0-9a-f]{6}$/, 'the setup code was read from the log');
   const all = execFileSync('sh', ['-c', 'podman logs cseries-host 2>&1']).toString();
   assert.equal(setup.newestSetupCode(all), one.result.setup.code, 'it is the newest code in the log');
+  const cpus = Number(execFileSync('getconf', ['_NPROCESSORS_ONLN']).toString());
+  const dropIn = require('node:fs').readFileSync('/etc/containers/systemd/cseries-host.container.d/10-cpu.conf', 'utf8');
+  assert.match(dropIn, new RegExp(`^CPUQuota=${Math.max(1, cpus - 1) * 100}%$`, 'm'), 'configure wrote the processor ceiling from the guest\'s count');
+  const memKb = /^MemTotal:\s*(\d+) kB$/m.exec(require('node:fs').readFileSync('/proc/meminfo', 'utf8'))[1];
+  const memDropIn = require('node:fs').readFileSync('/etc/containers/systemd/cseries-host.container.d/10-memory.conf', 'utf8');
+  assert.match(memDropIn, new RegExp(`^MemoryMax=${host.memoryMax(memKb)}$`, 'm'), 'configure wrote the memory ceiling from the guest\'s MemTotal');
 
   const two = await pass(2);
   assert.equal(two.result.setup.code, one.result.setup.code, 'same Host run, same code');

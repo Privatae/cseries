@@ -14,7 +14,8 @@ test('the committed release.json loads, holds only placeholders, and refuses to 
   assert.ok(loaded.placeholders.includes('version'));
   assert.ok(loaded.placeholders.includes('images.host.digest'));
   assert.ok(loaded.placeholders.includes('guest.wsl-x64.sha256'));
-  assert.equal(loaded.release.bastion.min_version, '0.53.0');
+  assert.ok(loaded.placeholders.includes('guest.lima-arm64.url'));
+  assert.equal(loaded.release.bastion.min_version, '0.53.2');
   assert.throws(() => release.requirePinned(loaded), (e) => e instanceof CliError && /development build/.test(e.message));
 });
 
@@ -22,7 +23,7 @@ test('the committed release.json has the shape of section 2', () => {
   const m = JSON.parse(fs.readFileSync(release.defaultPath(), 'utf8'));
   assert.deepEqual(Object.keys(m).sort(), ['bastion', 'guest', 'images', 'version']);
   assert.deepEqual(Object.keys(m.images).sort(), ['host', 'postgres']);
-  assert.deepEqual(Object.keys(m.guest).sort(), ['wsl-arm64', 'wsl-x64']);
+  assert.deepEqual(Object.keys(m.guest).sort(), ['lima-arm64', 'lima-x64', 'wsl-arm64', 'wsl-x64']);
 });
 
 test('a fully pinned manifest validates and pins images by digest', () => {
@@ -39,6 +40,8 @@ test('invalid fields are refused, each by name', () => {
     [{ images: { ...validRelease().images, postgres: { ref: 'not a ref', digest: `sha256:${'b'.repeat(64)}` } } }, 'images.postgres.ref'],
     [{ guest: { ...validRelease().guest, 'wsl-x64': { url: 'http://downloads.example/x.tar.gz', sha256: 'c'.repeat(64) } } }, 'guest.wsl-x64.url'],
     [{ guest: { ...validRelease().guest, 'wsl-arm64': { url: 'https://downloads.example/x', sha256: 'D'.repeat(64) } } }, 'guest.wsl-arm64.sha256'],
+    [{ guest: { ...validRelease().guest, 'lima-x64': undefined } }, 'guest.lima-x64.url'],
+    [{ guest: { ...validRelease().guest, 'lima-arm64': { url: 'https://downloads.example/x.qcow2', sha256: 'abc' } } }, 'guest.lima-arm64.sha256'],
     [{ bastion: { min_version: 'dev' } }, 'bastion.min_version'],
   ];
   for (const [over, name] of cases) {

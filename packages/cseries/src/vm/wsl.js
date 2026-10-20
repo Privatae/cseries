@@ -21,6 +21,7 @@ const path = require('node:path');
 const { CliError } = require('../errors');
 const { decodeWslOutput, parseDistroList, parseWslVersion, windowsBuild, explainWslError } = require('./wsl-text');
 const win = require('../win/windows');
+const { vmLimits, decodeWslConfig, mergeWslConfig } = require('./wslconfig');
 
 const DISTRO = 'cseries';
 const GUEST_BIN = '/usr/local/bin/cseries-guest';
@@ -160,6 +161,7 @@ const driver = {
   },
 
   async createGuest(ctx) {
+    await this.limitVm(ctx);
     const key = `wsl-${ctx.arch}`;
     const g = ctx.releaseInfo.release.guest[key];
     if (!g) throw new CliError(`This release has no WSL image for ${ctx.arch} PCs.`, 'Try npx cseries@latest.');
@@ -184,7 +186,47 @@ const driver = {
     fs.rmSync(file, { force: true });
   },
 
+  // Adds the WSL VM's memory and processor limits to the person's own
+  // .wslconfig where they have set none. WSL reads it when its VM starts.
+  // The file is theirs: one we cannot read exactly, or cannot write
+  // (read-only, or held open by another program), is left as it is and the
+  // run goes on, saying which lines they can add themselves.
+  async limitVm(ctx) {
+    const file = ctx.paths.wslConfig;
+    if (!file || !ctx.machine) return;
+    const want = vmLimits(ctx.machine.totalMem, ctx.machine.cpus);
+    const lines = (keys) => keys.map((k) => `${k}=${want[k]}`).join(' and ');
+    const leave = (why) => ctx.out.detail(`${file} was left as it is (${why}). To limit what the Linux system may take from this PC, add ${lines(Object.keys(want))} under [wsl2] there yourself.`);
+    let decoded;
+    try {
+      decoded = decodeWslConfig(fs.existsSync(file) ? fs.readFileSync(file) : Buffer.alloc(0));
+    } catch (e) {
+      if (!e || !e.code) throw e;
+      leave(`it could not be read: ${e.code}`);
+      return;
+    }
+    if (!decoded) {
+      leave('it is not saved as UTF-8, and rewriting it could change what you wrote');
+      return;
+    }
+    const { text, added } = mergeWslConfig(decoded.text, want);
+    if (!added.length) return;
+    try {
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      fs.writeFileSync(file, decoded.bom + text);
+    } catch (e) {
+      if (!e || !e.code) throw e;
+      leave(`it could not be written: ${e.code}`);
+      return;
+    }
+    ctx.out.detail(`Added ${added.map((k) => `${k}=${want[k]}`).join(' and ')} to ${file}, which limits what the Linux system may take from this PC. Your other settings there are as they were.`);
+    if (await this.guestRunning(ctx)) {
+      ctx.out.detail('WSL applies them the next time it stops and starts again ("wsl --shutdown").');
+    }
+  },
+
   async startGuest(ctx) {
+    await this.limitVm(ctx);
     const r = await this.guest(ctx, ['wait-boot']);
     if (r.code !== 0) {
       const state = /system=(\S+)/.exec(r.stdout);

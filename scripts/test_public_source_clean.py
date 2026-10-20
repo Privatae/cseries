@@ -305,7 +305,7 @@ def self_test() -> list[str]:
         "a schema, a lemon, a dozen", "sub" + "li" + "men", "the parallel lane", "an optimistic test", "privatae-bastion",
         "owner/widget", "privatae-apps", "a fable", "reviewed",
         "a@example.com", "x@mail.example.test", "me@acme.com", "user@livestock.org",
-        "+15555550100", "+1 555 010 0003", "(555) 010-0100", "301-555-0142", "4294967295", "584 556 1015",
+        "+15555550100", "+1 555 010 0003", "(555) 010-0100", "301-555-0142", "4294967295", "584 555 0142",
         "2026-10-18", "1.2.3.4", "+44 20 7946 0958", "127-0-0-1",
         "the real rows in Postgres", "copied verbatim from the SQL", "a card taken from a Host we accepted",
         "moved verbatim from session.py", "a project copied from owner/widget", "a live Host's pod",

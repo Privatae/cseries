@@ -37,6 +37,7 @@ from starlette.responses import FileResponse, Response, StreamingResponse
 
 from server import brain_service
 from server import host_names
+from server import static_paths
 from server.applications import registry
 from server.applications.kernel import SDK_MANAGED_APPS
 from server.applications.manifest import IMAGE_BAKED_PROVENANCES
@@ -576,15 +577,23 @@ def _is_static_file(install_dir: Path, path: str) -> bool:
     return target.is_file()
 
 
-def _has_static(install_dir: Path, path: str) -> bool:
+def _static_target(install_dir: Path, path: str) -> Path | None:
+    """install_dir/path, or its index.html when it is a directory; None when
+    either resolves outside install_dir. The index.html is checked on its own:
+    a directory inside the tree can hold an index.html that links out of it."""
+    if static_paths.inside(install_dir, path) is None:
+        return None
     target = install_dir / path
-    try:
-        target.resolve().relative_to(install_dir.resolve())
-    except ValueError:
-        return False
     if target.is_dir():
+        if static_paths.inside(install_dir, posixpath.join(path, "index.html")) is None:
+            return None
         target = target / "index.html"
-    return target.is_file()
+    return target
+
+
+def _has_static(install_dir: Path, path: str) -> bool:
+    target = _static_target(install_dir, path)
+    return target is not None and target.is_file()
 
 
 _BUILD_TAG_CACHE: dict = {"value": None}
@@ -889,14 +898,9 @@ def is_sdk_managed(app_id: str, provenance: str) -> bool:
 
 
 def _serve_static(install_dir: Path, path: str, app_id: str = "") -> Response:
-    target = install_dir / path
-    # Refuse anything that escapes the install dir
-    try:
-        target.resolve().relative_to(install_dir.resolve())
-    except ValueError:
+    target = _static_target(install_dir, path)
+    if target is None:
         raise HTTPException(status.HTTP_403_FORBIDDEN, "path escapes install dir")
-    if target.is_dir():
-        target = target / "index.html"
     if not target.is_file():
         raise HTTPException(status.HTTP_404_NOT_FOUND, f"no such file: {path}")
 

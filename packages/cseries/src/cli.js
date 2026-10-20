@@ -74,6 +74,11 @@ function makeContext(overrides = {}) {
     bastionKeys: overrides.bastionKeys,
     portState: overrides.portState,
     osRelease: overrides.osRelease || os.release(),
+    // os.availableParallelism is Node 18.14 and later; the package takes any 18.
+    machine: overrides.machine || {
+      totalMem: os.totalmem(),
+      cpus: typeof os.availableParallelism === 'function' ? os.availableParallelism() : os.cpus().length,
+    },
   };
   ctx.state = overrides.state || new State(p.state);
   ctx.releaseInfo = overrides.releaseInfo || null;

@@ -32,9 +32,16 @@ function signer() {
 
 // opts: {wsl: bool, uac: 'yes'|'no', distro: bool, bastionVersion,
 //        hostCa, foreignService, failAt: '<bastion command>',
-//        virt: {hypervisor, firmware}}
+//        virt: {hypervisor, firmware},
+//        cpus: the guest's processor count (default 8; null is a guest image
+//        from before `status` reported it, whose configure refuses the key),
+//        memKb: the guest's MemTotal in kB (default 8 GiB; null as for cpus,
+//        and the default when cpus is null),
+//        tokenPrefix (the pairing tokens minted are <it>-1, <it>-2, ...)}
 function fakeMachine(paths, opts = {}) {
   const m = {
+    cpus: opts.cpus === undefined ? 8 : opts.cpus,
+    memKb: opts.memKb !== undefined ? opts.memKb : (opts.cpus === null ? null : 8 * 1024 * 1024),
     wsl: opts.wsl !== false,
     distros: opts.distro ? ['cseries'] : [],
     running: false,
@@ -45,6 +52,8 @@ function fakeMachine(paths, opts = {}) {
     registry: {},
     tasks: new Set(),
     pairCalls: [],
+    // What pair read on its standard input.
+    pairTokens: [],
     // The bastion as the elevated script leaves it.
     service: opts.foreignService ? { running: true } : null,
     serviceInstalls: 0,
@@ -61,7 +70,7 @@ function fakeMachine(paths, opts = {}) {
     imports: [],
     elevated: [],
     shutdowns: 0,
-    bastionVersion: opts.bastionVersion || '0.53.0',
+    bastionVersion: opts.bastionVersion || '0.53.2',
     pulls: 0,
     restarts: 0,
   };
@@ -89,6 +98,8 @@ function fakeMachine(paths, opts = {}) {
     switch (sub[0]) {
       case 'wait-boot': return { stdout: 'system=running\n' };
       case 'configure': {
+        if (m.cpus === null && /^cpu_quota=/m.test(input)) return { code: 1, stderr: 'configure: unknown key cpu_quota\n' };
+        if (m.memKb === null && /^memory_max=/m.test(input)) return { code: 1, stderr: 'configure: unknown key memory_max\n' };
         const changed = input !== m.images;
         m.images = input;
         return { stdout: `changed=${changed ? 1 : 0}\n` };
@@ -98,11 +109,11 @@ function fakeMachine(paths, opts = {}) {
       case 'restart': m.hostStarted = true; m.restarts++; return {};
       case 'stop': m.hostStarted = false; return {};
       case 'health': return { code: m.hostStarted ? 0 : 1 };
-      case 'status': return { stdout: `guest=1.2.3\nrelease=1.2.3\nhost=${m.hostStarted ? 'active' : 'inactive'}\npostgres=active\nhealth=ok\n` };
+      case 'status': return { stdout: `guest=1.2.3\nrelease=1.2.3\nhost=${m.hostStarted ? 'active' : 'inactive'}\npostgres=active\nhealth=ok\n${m.cpus === null ? '' : `cpus=${m.cpus}\n`}${m.memKb === null ? '' : `mem_total_kb=${m.memKb}\n`}` };
       case 'host-log': return { stdout: 'boot\nCSERIES SETUP CODE: 111111-222222-333333 old\nCSERIES SETUP CODE: abc123-def456-0789ab — open /setup\n' };
       case 'pair-token':
         m.tokens++;
-        return { stdout: JSON.stringify({ token: `tok-${m.tokens}`, host_ca_pem: m.hostCa, enroll: 'https://127.0.0.1:8810/v1/local/redeem' }) };
+        return { stdout: JSON.stringify({ token: `${opts.tokenPrefix || 'tok'}-${m.tokens}`, host_ca_pem: m.hostCa, enroll: 'https://127.0.0.1:8810/v1/local/redeem' }) };
       case 'logs': return { stdout: 'log line\n' };
       default: return { code: 1, stderr: `unknown ${sub[0]}` };
     }
@@ -137,7 +148,7 @@ function fakeMachine(paths, opts = {}) {
   const sha = (file) => (fs.existsSync(file) ? sha256Hex(fs.readFileSync(file)) : null);
 
   // One bastion command, as the service's bastion answers it.
-  function bastionCmd(args) {
+  function bastionCmd(args, stdin) {
     m.bastionCommands.push(args);
     if (m.failAt && args[0] === m.failAt) return { code: 1, out: `error: ${args[0]} failed (test)` };
     const b = m.bastion;
@@ -183,7 +194,14 @@ function fakeMachine(paths, opts = {}) {
         return { code: 0, out: `released ${h}` };
       }
       case 'pair': {
+        // As bastion 0.53.2 (pair_stdin.go): `-` reads the token's first line
+        // from standard input. A token as an argument the real one takes;
+        // this one refuses it, since the install must never send one.
         m.pairCalls.push(args);
+        if (args[args.length - 1] !== '-') return { code: 2, out: 'fake: the token must come on standard input, with -' };
+        const token = String(stdin === undefined ? '' : stdin).split('\n')[0].trim();
+        if (!token) return { code: 2, out: 'standard input held no pairing token: give it as the first line, or as the argument; nothing was paired' };
+        m.pairTokens.push(token);
         if (b.pairings[m.hostName]) {
           return { code: 1, out: `error: already paired with ${m.hostName} — run \`privatae-bastion pair --replace <token>\` to rotate its credentials` };
         }
@@ -229,7 +247,7 @@ function fakeMachine(paths, opts = {}) {
       while ((x = re.exec(list))) out.push(x[1] !== undefined ? unq(x[1]) : (x[0] === '$ca' ? caCopy : hostName));
       return out;
     };
-    const re = /Say 'step=install'|Say 'step=old-install'|Bastion (\d+) '([^']*)' @\(([^\n]*)\)|Say 'step=host-ca'|& \$exe ('stepup-enroll'[^\n]*)|Restart-Service/g;
+    const re = /Say 'step=install'|Say 'step=old-install'|Bastion (\d+) '([^']*)' @\(([^\n]*?)\)(?: ('(?:[^']|'')*'))?|Say 'step=host-ca'|& \$exe ('stepup-enroll'[^\n]*)|Restart-Service/g;
     let x;
     while ((x = re.exec(script))) {
       const t = x[0];
@@ -263,7 +281,8 @@ function fakeMachine(paths, opts = {}) {
         const code = Number(x[1]);
         const args = items(x[3]);
         say(`step=${x[2]}`);
-        const r = bastionCmd(args);
+        // PowerShell pipes the string to the program and ends it with a newline.
+        const r = bastionCmd(args, x[4] === undefined ? undefined : `${unq(x[4].slice(1, -1))}\r\n`);
         if (r.out) say(r.out);
         if (r.code !== 0) return quit(code, `privatae-bastion ${x[2]} exited with ${r.code}`);
         if (args[0] === 'service') say('service=yes');
@@ -275,8 +294,8 @@ function fakeMachine(paths, opts = {}) {
           hostName = /Paired with (\S+)/.exec(r.out)[1].replace(/\.$/, '');
           say(`paired_host=${hostName}`);
         }
-      } else if (x[4] !== undefined) {
-        const args = items(x[4]);
+      } else if (x[5] !== undefined) {
+        const args = items(x[5]);
         say('step=stepup-enroll');
         if (!hostName) return quit(18, 'no pairing to enrol an authenticator for');
         const r = bastionCmd(args);

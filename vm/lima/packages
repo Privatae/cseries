@@ -1,0 +1,30 @@
+# What the Lima guest adds to the WSL guest's packages (vm/wsl/packages, read
+# from there so the two guests run the same container stack): what a virtual
+# machine of its own boots with, which WSL provides itself, and what Lima
+# needs inside the guest. The kernel (linux-image-cloud-<arch>) is added by
+# mkimage.sh. Versions come from the same pinned snapshot; Recommends are not
+# installed.
+#
+# Booting: the kernel's initrd and device manager, and systemd-boot.
+udev
+kmod
+initramfs-tools
+zstd
+systemd-boot-efi
+e2fsprogs
+# Networking, DNS and the clock, which WSL sets up from outside.
+systemd-resolved
+systemd-timesyncd
+# Lima: its settings arrive through cloud-init from a small disk it attaches;
+# cloud-init grows the root partition to the VM's disk size (growpart needs
+# sfdisk); Lima reaches the guest over SSH and runs its boot scripts with
+# sudo; it installs rsync at boot when it is missing, so it is here instead.
+cloud-init
+cloud-guest-utils
+fdisk
+openssh-server
+sudo
+# The login session SSH opens for Lima's user, with its systemd user manager.
+libpam-systemd
+rsync
+procps

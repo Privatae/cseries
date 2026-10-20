@@ -6,10 +6,13 @@
 #
 #   wait-boot          wait until systemd has finished starting
 #   configure          read the pinned images from stdin (host=, postgres=,
-#                      release=) and write them where the units read them
+#                      release=, and optionally cpu_quota= and
+#                      memory_max=) and write them
+#                      where the units read them
 #   pull               pull both images, with progress
 #   start | stop | restart
-#   status             key=value lines
+#   status             key=value lines, cpus= and mem_total_kb= among them
+#                      (this system's processor count and MemTotal)
 #   health             exit 0 when the Host answers on 127.0.0.1:8800
 #   logs host|postgres [--follow] [--lines N]
 #   host-log           the current Host container's own output
@@ -73,12 +76,14 @@ write_if_changed() {
 }
 
 configure() {
-    host="" postgres="" release=""
+    host="" postgres="" release="" cpu_quota="" memory_max=""
     while IFS='=' read -r key value || [ -n "$key" ]; do
         case "$key" in
             host) host=$value ;;
             postgres) postgres=$value ;;
             release) release=$value ;;
+            cpu_quota) cpu_quota=$value ;;
+            memory_max) memory_max=$value ;;
             "") ;;
             *) die "configure: unknown key $key" ;;
         esac
@@ -88,12 +93,43 @@ configure() {
     case "$release" in
         *[!0-9A-Za-z.+-]*|"") die "configure: release is not a version: $release" ;;
     esac
+    # cpu_quota (optional): how much processor time the Host may use, as
+    # systemd's CPUQuota= takes it (100% is one processor). The cseries
+    # command sends it from the count `status` reports; without it the file
+    # is left as it is.
+    case "$cpu_quota" in
+        "") ;;
+        [1-9]*%) case "${cpu_quota%\%}" in *[!0-9]*) die "configure: cpu_quota is not a percentage: $cpu_quota" ;; esac ;;
+        *) die "configure: cpu_quota is not a percentage: $cpu_quota" ;;
+    esac
+    # memory_max (optional): the Host's memory ceiling, as systemd's
+    # MemoryMax= takes it, in MiB ("2460M"). The cseries command sends it from
+    # the MemTotal `status` reports, less the system's reserve and the
+    # database's 512 MB; without it the file is left as it is, and the base
+    # unit's share stands.
+    case "$memory_max" in
+        "") ;;
+        [1-9]*M) case "${memory_max%M}" in *[!0-9]*) die "configure: memory_max is not a size in MiB: $memory_max" ;; esac ;;
+        *) die "configure: memory_max is not a size in MiB: $memory_max" ;;
+    esac
     a=$(write_if_changed "$UNITS/cseries-host.container.d/image.conf" "[Container]
 Image=$host")
     b=$(write_if_changed "$UNITS/cseries-postgres.container.d/image.conf" "[Container]
 Image=$postgres")
     c=$(write_if_changed "$STATE/release" "$release")
-    if [ "$a$b" != 00 ]; then
+    d=0
+    if [ -n "$cpu_quota" ]; then
+        d=$(write_if_changed "$UNITS/cseries-host.container.d/10-cpu.conf" "# Written by cseries-guest configure from this system's processor count.
+[Service]
+CPUQuota=$cpu_quota")
+    fi
+    e=0
+    if [ -n "$memory_max" ]; then
+        e=$(write_if_changed "$UNITS/cseries-host.container.d/10-memory.conf" "# Written by cseries-guest configure from this system's memory.
+[Service]
+MemoryMax=$memory_max")
+    fi
+    if [ "$a$b$d$e" != 0000 ]; then
         systemctl daemon-reload
         echo changed=1
     else
@@ -177,6 +213,8 @@ case "$cmd" in
         echo "postgres_image=$(image_of postgres)"
         echo "host=$(unit_state cseries-host.service)"
         echo "postgres=$(unit_state cseries-postgres.service)"
+        echo "cpus=$(getconf _NPROCESSORS_ONLN)"
+        echo "mem_total_kb=$(sed -n 's/^MemTotal: *\([0-9]*\) kB$/\1/p' /proc/meminfo)"
         if curl -fsS --max-time 3 -o /dev/null http://127.0.0.1:8800/api/system/health 2>/dev/null; then
             echo "health=ok"
         else

@@ -24,14 +24,21 @@
 //                               live anchor. Never --force. 0.53 refuses
 //                               `pair --replace` across a CA change, so a
 //                               rotation is no longer used.
-//   pair --redeem-url --host-ca the Host CA from the copy only an
-//                               administrator can write
+//   pair --redeem-url --host-ca <copy> -
+//                               the Host CA from the copy only an
+//                               administrator can write; the token on pair's
+//                               standard input (`-`, bastion 0.53.1 and
+//                               later), never in its arguments, where any
+//                               account could read it from the process list
 //   claim-anchor                no token: the box has exactly one pairing
 //   stepup-enroll --console-only --host <h>
 //                               the person's authenticator, enrolled on the
 //                               elevated console and nowhere else
 
 const HOST = '{host}';
+
+// In place of pair's token: read it from standard input.
+const PAIR_STDIN = '-';
 
 const EXIT = {
   binaryHash: 10,
@@ -65,7 +72,9 @@ const EXIT_WORDS = {
 
 // plan: {owner: SID|undefined, release: host|null, pair: {enroll, token}|null,
 // anchor, enroll}. caFile is where the elevated step keeps its copy of the
-// Host CA.
+// Host CA. An entry's args are its command line; stdin, when present, is what
+// the elevated step writes to the command's standard input, and the only
+// place the pairing token goes.
 function bastionCommands(plan, caFile) {
   const out = [];
   if (plan.owner) out.push({ code: EXIT.owner, what: 'approvals-owner', args: ['approvals-owner', '--sid', plan.owner] });
@@ -74,7 +83,7 @@ function bastionCommands(plan, caFile) {
     out.push({ code: EXIT.release, what: 'release-anchor', args: ['release-anchor', '--host', plan.release, '--host-ca', caFile] });
   }
   if (plan.pair) {
-    out.push({ code: EXIT.pair, what: 'pair', args: ['pair', '--redeem-url', plan.pair.enroll, '--host-ca', caFile, plan.pair.token], pair: true });
+    out.push({ code: EXIT.pair, what: 'pair', args: ['pair', '--redeem-url', plan.pair.enroll, '--host-ca', caFile, PAIR_STDIN], stdin: plan.pair.token, pair: true });
   }
   if (plan.anchor) out.push({ code: EXIT.anchor, what: 'claim-anchor', args: ['claim-anchor'] });
   if (plan.enroll) {
@@ -83,4 +92,4 @@ function bastionCommands(plan, caFile) {
   return out;
 }
 
-module.exports = { bastionCommands, EXIT, EXIT_WORDS, HOST };
+module.exports = { bastionCommands, EXIT, EXIT_WORDS, HOST, PAIR_STDIN };

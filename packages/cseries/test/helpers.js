@@ -71,6 +71,7 @@ function testPaths(dir = tmpdir()) {
     state: path.join(dir, 'state.json'),
     downloads: path.join(dir, 'downloads'),
     wsl: path.join(dir, 'wsl'),
+    wslConfig: path.join(dir, 'home', '.wslconfig'),
     hostCa: path.join(dir, 'host-ca.pem'),
     installLog: path.join(dir, 'bastion-install.log'),
     bastionDir: path.join(dir, 'b'),
@@ -92,8 +93,10 @@ function validRelease(overrides = {}) {
     guest: {
       'wsl-x64': { url: 'https://github.com/Privatae/cseries/releases/download/v1.2.3/cseries-wsl-rootfs-1.2.3-x64.tar.gz', sha256: hex('c') },
       'wsl-arm64': { url: 'https://github.com/Privatae/cseries/releases/download/v1.2.3/cseries-wsl-rootfs-1.2.3-arm64.tar.gz', sha256: hex('d') },
+      'lima-x64': { url: 'https://github.com/Privatae/cseries/releases/download/v1.2.3/cseries-guest-1.2.3-x64.qcow2', sha256: hex('e') },
+      'lima-arm64': { url: 'https://github.com/Privatae/cseries/releases/download/v1.2.3/cseries-guest-1.2.3-arm64.qcow2', sha256: hex('f') },
     },
-    bastion: { min_version: '0.53.0' },
+    bastion: { min_version: '0.53.2' },
     ...overrides,
   };
 }

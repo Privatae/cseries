@@ -1086,14 +1086,19 @@ async def design_tokens_css() -> str:
         return ""
 
 
-def base_tokens_css() -> Optional[str]:
+def base_tokens_css(overlay: bool = True) -> Optional[str]:
     """The base /css/tokens.css text: the custom overlay's copy when there is
-    one, else the stock file. None when it cannot be read as UTF-8 — main.py
-    then serves the raw bytes and skips the override, and an artifact gets no
-    style block rather than a broken one."""
+    one and `overlay` allows it, else the stock file. main.py passes
+    app_origin.overlay_allowed(scope), so an app's own origin gets the image's
+    copy. None when it cannot be read as UTF-8 — main.py then serves
+    the raw bytes and skips the override, and an artifact gets no style block
+    rather than a broken one."""
     from server.main import DASHBOARD_BASE, DASHBOARD_CUSTOM
-    path = DASHBOARD_CUSTOM / "css/tokens.css"
-    if not path.is_file():
+    from server.static_paths import inside
+    # inside(): the overlay's own rule — a custom copy that links out of
+    # custom/ is not served (server/main.py OverlayStaticFiles).
+    path = inside(DASHBOARD_CUSTOM, "css/tokens.css") if overlay else None
+    if path is None or not path.is_file():
         path = DASHBOARD_BASE / "css/tokens.css"
     try:
         return path.read_text(encoding="utf-8")

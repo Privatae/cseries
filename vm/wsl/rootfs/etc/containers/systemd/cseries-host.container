@@ -57,6 +57,27 @@ Pull=missing
 Restart=always
 RestartSec=5
 TimeoutStartSec=900
+# How much of this Linux system the Host may take, so nothing it runs can
+# starve the system, or the machine under it. `cseries-guest configure`
+# writes the ceiling to cseries-host.container.d/10-memory.conf from the
+# memory this system has (on Windows, what WSL gives it): that memory less
+# GKE's node reserve for the system (25% of the first 4 GB, 20% of the next
+# 4, 10% of the next 8, 6% of the next 112, 2% above, and 100 MB for
+# eviction) and the database's 512 MB, and never under 512 MB (the cseries
+# command's host.js computes it). The 70% here stands only until configure
+# has written that file, as with a cseries command from before it did; it
+# fits that rule from 8 GB up and not below. At the ceiling the kernel stops
+# the largest process inside the Host, and nothing outside it; if that is the
+# Host itself, systemd starts it again. No swap, and no MemoryHigh, as
+# Kubernetes runs containers by default: WSL's swap is a file on the PC's
+# disk that a Host at its ceiling would thrash, and past a MemoryHigh the
+# kernel throttles every allocation in the Host, which held a whole test Host
+# for over two minutes behind one runaway process.
+# CPU: `cseries-guest configure` writes cseries-host.container.d/10-cpu.conf
+# from this system's processor count. A drop-in in cseries-host.container.d
+# that sorts after these overrides any of them.
+MemoryMax=70%
+MemorySwapMax=0
 
 [Install]
 WantedBy=multi-user.target

@@ -6,7 +6,7 @@ order: 10
 app: claude-code
 questions:
   - How do I connect my Claude subscription to my Host?
-  - Can I use my Claude Pro or Max plan for coding on Privatae?
+  - Can I use my Claude Pro or Max plan for coding with my Host?
   - Where do Claude Code builds run?
   - Does Privatae bill me for Claude Code tokens?
   - How do I disconnect Claude Code from my Host?
@@ -16,7 +16,7 @@ Claude Code is Anthropic's coding agent and one of the [coding engines](wiki:cod
 
 ## How do I connect my Claude subscription?
 
-Through Anthropic's own sign-in; Privatae hosts no login page for Claude. Ask your Host to connect Claude Code and it starts Anthropic's own login inside the Claude Code container. You sign in on Anthropic's page and give your Host the code that page shows you, and your Host passes it straight to the login. The sign-in is then kept with your Host, in the cluster we run, and handed to the Claude Code container whenever a build runs.
+Through Anthropic's own sign-in; C-Series has no login page of its own for Claude. Ask your Host to connect Claude Code and it starts Anthropic's own login inside the Claude Code container. You sign in on Anthropic's page and give your Host the code that page shows you, and your Host passes it straight to the login. The sign-in is then kept with your Host and handed to the Claude Code container whenever a build runs.
 
 ## Whose plan pays for it?
 
@@ -24,7 +24,7 @@ Yours. Claude Code builds run on your own Claude subscription, Pro or Max. The e
 
 ## Where do the builds run?
 
-In their own container beside your Host, never inside it, and the container's workspace is thrown away when the build is done. You start a build by asking your Host, usually in the [Workbench](wiki:workbench-app), and you watch it there, on the project's page.
+In their own container beside your Host, never inside it, and the container's workspace is thrown away when the build is done. Starting that container on your own machine needs the local container runtime, which is not finished in this pre-release. You start a build by asking your Host, usually in the [Workbench](wiki:workbench-app), and you watch it there, on the project's page.
 
 ## How do I get the app, and how do I disconnect?
 

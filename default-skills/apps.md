@@ -136,8 +136,8 @@ fails the run stops and reports which step and why. When a run returns
 'waiting', tell the user exactly what the site asked and pass their reply
 with op='resume' (name + answer — a one-time code, usually). To run one on a
 schedule use schedule_task with op_tool='browser_agent' and op_args={op:'run',
-name:'<agent>'}. A run wakes the browser for about a minute and costs that
-much of the plan's memory while it runs.
+name:'<agent>'}. A run wakes the browser for about a minute and uses that
+much of the machine's memory while it runs.
 
 The agents are the user's: you list and run them, and a change to one is the
 user re-recording it or editing its file. A password never goes through the

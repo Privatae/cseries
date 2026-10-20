@@ -5,6 +5,9 @@
 > own build tools (`build`, `ladder.run`, `review.fan_out`); everything else the host delegates
 > goes to a **dispatched agent** (`runtime/scoped_agent.py`, which exists and is live).
 
+> In this document "the platform" means the C-Series kernel inside the Host: the code outside
+> the Host's own `world` schema. It does not mean a hosted service; C-Series has no hosted Host.
+
 The chat turn was built agent-era: `Grok triage → LLM-jury veto → main call` — a pipeline
 wrapped *around* the model. The host is not an agent; it is the **orchestrator**. It works the
 way Claude Code works when it runs a workflow:
@@ -59,31 +62,31 @@ resolution.
 
 ## Two kinds of delegation — DO NOT conflate
 - **The harness pool — external coding harnesses** (`build`, `ladder.run`, `review.fan_out`;
-  claude-code/codex/cursor/…): run **outside** the entity container, in their own
-  pods, for **code/build only**. Governed by the pod/OCI boundary + signed grant. Only the
+  claude-code/codex/cursor/…): run **outside** the Host container, in their own
+  containers, for **code/build only**. Governed by the container/OCI boundary + signed grant. Only the
   host's OWN build tools reach them; the host hands off to them for code, nothing more.
 - **Dispatched agents — in-container scoped agents** (`runtime/scoped_agent.py`, live):
-  ephemeral agents that run **inside** the entity pod,
+  ephemeral agents that run **inside** the Host container,
   doing the host's own domain work (calendar, inbox, network, memory) with a **scoped slice of
   the host's tools + its identity/context/memory, under a slip**. This is what `dispatch`
   spawns for the host's own work. Reuses the tool-loop **engine** (`_call_entity_model` + the
   loop) with a scoped tool subset + task prompt; ephemeral; returns to the host.
 
 `dispatch` always spawns an in-container agent. The host stays light; the dispatched agent holds
-the domain tools for its one task. Latency note: a dispatched agent is in-process (no pod
-cold-start), so "check my calendar" stays fast; the harness pool's pod cost is paid only for
+the domain tools for its one task. Latency note: a dispatched agent is in-process (no container
+cold-start), so "check my calendar" stays fast; the harness pool's container cost is paid only for
 code/build.
 
 ## Safety model — the pool/agent separation IS the security boundary
 Dispatched agents are **the host's hands inside its own container**: they operate the container +
 network (domain tools) but **CANNOT execute or build code**. A dispatched agent can make a mistake
 (misconfigure, send the wrong message) but cannot *break* anything — there is no code execution
-in its reach. **All executable code goes through the harness pool** (disposable harness pod, OCI
+in its reach. **All executable code goes through the harness pool** (disposable harness container, OCI
 boundary + signed grant), via the host's own build tools. Enforcement: a dispatch `tool_scope`
 may NEVER contain a code-exec/build tool (`build`, `ladder.run`, `review.fan_out`,
 `review.compare`, `review.propose_commit`, `mesh_harness_run`, `bash`, …) — the runner
 hard-strips/refuses them. Capability-limited hands in-container +
-isolated code execution in a pod = the thing that keeps it safe.
+isolated code execution in a container = the thing that keeps it safe.
 
 ## Background + non-blocking — the chat never blocks
 `dispatch` is **fire-and-forget**: it spawns the agent as a background task, registers it,
@@ -414,7 +417,7 @@ SELECT metadata->'go_ahead'->'fired'->-1->>'outcome' AS last_outcome,
  GROUP BY 1, 2 ORDER BY 3 DESC;
 ```
 
-The rows live in each Host's own pod database. In PII mode the row's metadata keeps structural
+The rows live in each Host's own database. In PII mode the row's metadata keeps structural
 keys only, so `go_ahead` (it quotes the Host's sentence) is not kept there.
 
 ## Framing

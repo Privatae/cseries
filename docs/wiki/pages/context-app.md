@@ -1,6 +1,6 @@
 ---
 title: The Context app
-summary: Context is the file explorer for your own material, wherever it sits, on the platform, in a bucket you own or on your own machines, kept separate from what your Host remembers. It comes with every Host.
+summary: Context is the file explorer for your own material, wherever it sits, in your Host's own database, in a bucket you own or on your own machines, kept separate from what your Host remembers. It comes with every Host.
 section: apps
 order: 10
 questions:
@@ -18,7 +18,7 @@ Context is the file explorer for your own material: the documents and files you 
 
 ## Where can my files live?
 
-In three kinds of place, listed under Sources: the platform itself, a bucket you own (S3, or anything that speaks like it), and folders on machines of yours that run a [bastion](wiki:the-bastion). Each machine shows whether it is online, and a file held on a machine that is offline says so rather than looking empty.
+In three kinds of place, listed under Sources: your Host's own database (the app labels it Platform), a bucket you own (S3, or anything that speaks like it), and folders on machines of yours that run a [bastion](wiki:the-bastion). Each machine shows whether it is online, and a file held on a machine that is offline says so rather than looking empty.
 
 ## Does organising files move them?
 

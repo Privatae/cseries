@@ -4,6 +4,9 @@ What the platform keeps for a Host, what the Host keeps for itself, every writer
 `entity_memory`, and the blocks of the system prompt. Every `file:line` was read on 2026-10-17
 and may have moved since.
 
+> In this document "the platform" means the C-Series kernel inside the Host: the code outside
+> the Host's own `world` schema. It does not mean a hosted service; C-Series has no hosted Host.
+
 ## 1. What the platform owns and what the Host owns
 
 The platform owns four things:

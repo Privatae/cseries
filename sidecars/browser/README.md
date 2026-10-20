@@ -1,10 +1,12 @@
 # cseries-browser sidecar
 
-First OCI-image sidecar in the cseries platform. Runs Chromium under
-Xvfb + Playwright + a FastAPI control API. Ships on the on-demand
-harness lane (its own scale-to-zero Deployment, reached through the
-kernel proxy); the legacy in-pod placement beside the cseries container
-still works.
+The browser container for a C-Series Host. Runs Chromium under
+Xvfb + Playwright + a FastAPI control API, in its own container beside
+the Host and never inside it. Starting it on demand is the job of the
+harness lane, which today goes through a platform bridge that a
+standalone Host does not have; the local runtime that will start it on
+the person's own machine is not finished (see Status in the top-level
+README). The sections below describe the container itself.
 
 ## The first cut's scope (historical)
 
@@ -338,23 +340,10 @@ Chromium. The in-page JavaScript IS executed by the test suite —
 against a synthetic DOM — but the Playwright calls around it are stubbed,
 so nothing here has driven a real browser yet.
 
-## Run (in entity pod)
+## Run
 
-`Entity.spec.browserSidecar: true`. The operator appends the container,
-its emptyDirs (`$HOME`, `/tmp`, a Memory-medium `/dev/shm`) and the
-`entity-apps` mount at `/var/lib/cseries`; setting the flag back to false
-removes it. Default is false, so no entity runs it unless asked.
-
-For a one-off Ship-1-style check without the operator, patch the pod
-spec by hand:
-
-```yaml
-- name: browser
-  image: cseries-browser:v0.3.0
-  ports:
-    - containerPort: 8830
-      name: control
-```
-
-The cseries container reaches the sidecar on `127.0.0.1:8830` because
-they share the pod network namespace.
+Build the image from this directory (`Dockerfile`). The Host reaches
+the control API on port 8830 of the container, which is started
+beside the Host. Nothing in this repository starts it yet on a standalone
+machine, so run it by hand only to exercise the API, for example
+`docker run --rm -p 127.0.0.1:8830:8830 <image>`.

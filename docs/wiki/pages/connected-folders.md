@@ -36,7 +36,7 @@ Search needs an embedding model running in Ollama on that machine. The agent kee
 
 Email addresses, phone numbers, US Social Security numbers, card numbers, IBANs and US routing numbers, legacy Bitcoin addresses, IP and MAC addresses, API keys and tokens from common services, and private keys. Names, dates and street addresses are not caught; the rules do not look for them.
 
-## What crosses the tunnel to my Host?
+## What crosses to my Host?
 
 - **The map.** Cards for each folder (how many files and bytes, the newest change, the mix of types, keywords, how many details were redacted) and for each file (a title, the first 300 characters of its redacted text, and keywords).
 - **A listing.** File names, sizes and modification times.
@@ -47,6 +47,6 @@ Every answer comes back as one of four states: the content, offline (the machine
 
 ## Who checks each request?
 
-Both ends. Your Host's pod refuses any operation without a signed grant that lists it. Your machine checks again, on your hardware, before a byte is read: the signature against the key it pinned, the operation, and whether the path is inside the folder and not excluded. The machine writes each request, allowed or refused, as a line in a log in the bastion's state folder: the operation, the folder, the path and the decision.
+Both ends. Your Host refuses any operation without a signed grant that lists it. Your machine checks again, on your hardware, before a byte is read: the signature against the key it pinned, the operation, and whether the path is inside the folder and not excluded. The machine writes each request, allowed or refused, as a line in a log in the bastion's state folder: the operation, the folder, the path and the decision.
 
-The [Context app](wiki:context-app) shows your connected folders beside everything else your Host can reach, and sorting files into collections there never moves a byte. How a machine joins your network is on [the bastion](wiki:the-bastion) page.
+The [Context app](wiki:context-app) shows your connected folders beside everything else your Host can reach, and sorting files into collections there never moves a byte. How a machine is paired is on [the bastion](wiki:the-bastion) page.

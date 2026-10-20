@@ -9,15 +9,15 @@ questions:
   - Does the browser use memory when I'm not using it?
   - Can I automate a website task without an AI model?
   - Will the browser remember my logins?
-  - Why won't the Browser open on my plan?
+  - Why won't the Browser open?
   - How do I get the Browser app?
 ---
 
-Browser is a full web browser that runs for your Host, shown live in the app window. You type an address, click, scroll, type and sign in as you would in a browser on your desk, and the pages it opens appear as tabs above the picture. It is not tied to any site. It is not built into the Host: you install it from the [App Store](wiki:app-store-app).
+Browser is a full web browser that runs in a container for your Host, shown live in the app window. You type an address, click, scroll, type and sign in as you would in a browser on your desk, and the pages it opens appear as tabs above the picture. It is not tied to any site. It is not built into the Host: you install it from the [App Store](wiki:app-store-app), which needs a [network membership](wiki:the-privatae-network).
 
 ## Does it use memory when I am not using it?
 
-No. It runs in its own container beside your Host, starts when you open the app, and shuts down on its own once you stop using it. While it runs it takes up to 1 GiB of your plan's memory. If your plan cannot hold that, starting it is refused. [Pricing](https://privatae.ai/pricing) shows the plan sizes.
+No. It runs in its own container beside your Host, starts when you open the app, and shuts down on its own once you stop using it. While it runs it takes up to 1 GiB of the machine's memory. The container runtime that starts it on your own machine is not finished in this pre-release, so on a standalone Host it cannot start yet.
 
 ## Will it remember my sign-ins?
 

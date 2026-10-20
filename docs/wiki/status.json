@@ -1,212 +1,200 @@
 {
  "pages": {
   "agents": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "agents-app": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "app-store-app": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "approvals": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "apps-overview": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "artifacts-and-designs": {
-   "checked": "2026-10-11",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "artifacts-app": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "browser-app": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "building-apps": {
-   "checked": "2026-10-11",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "calendar-app": {
-   "checked": "2026-10-11",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "circles-app": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "claude-code-app": {
-   "checked": "2026-10-11",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "code-repositories": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "coding-agents": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "community-app": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "compute-app": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "connected-folders": {
-   "checked": "2026-10-11",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "context-app": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "designs-app": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "getting-help": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "getting-started-app": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "gitea-app": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "glossary": {
-   "checked": "2026-10-12",
-   "status": "changed"
-  },
-  "handing-over-a-host": {
-   "checked": "2026-10-11",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "how-a-host-handles-a-request": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "how-your-host-is-protected": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "keys-app": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "local-models": {
-   "checked": "2026-10-11",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "memory": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "memory-app": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "models-and-keys": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "network-app": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "orchestrator-app": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "oversight-app": {
-   "checked": "2026-10-12",
-   "status": "changed"
-  },
-  "plans-and-billing": {
-   "checked": "2026-10-11",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "publisher-app": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "publishing-sites": {
-   "checked": "2026-10-11",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "settings-app": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "sites-app": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "skills-app": {
-   "checked": "2026-10-12",
-   "status": "changed"
-  },
-  "talking-to-other-hosts": {
-   "checked": "2026-10-11",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "the-bastion": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
+  },
+  "the-privatae-network": {
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "updates-and-versions": {
-   "checked": "2026-10-11",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "what-a-host-cannot-do": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "what-a-host-is": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "what-is-privatae": {
-   "checked": "2026-10-12",
-   "status": "changed"
-  },
-  "what-the-platform-can-see": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "where-your-data-lives": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "workbench": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "workbench-app": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "your-machines": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   },
   "your-private-network": {
-   "checked": "2026-10-12",
-   "status": "changed"
+   "checked": "2026-10-20",
+   "status": "current"
   }
  },
  "schema": 1

@@ -42,10 +42,10 @@ Yes. When your Host puts a new desktop on, your phone wears it too. Your Host gi
 
 ## What is the Designs app?
 
-The [Designs app](wiki:designs-app) is a shelf of complete desktops, each shown live. Ours holds designs the platform publishes for everyone. Yours holds designs your account has shared and every desktop made on this Host.
+The [Designs app](wiki:designs-app) is a shelf of complete desktops, each shown live. Ours holds designs published to a shared library, which a Host reaches only through a platform connection that a standalone Host does not have. Yours holds every desktop made on this Host.
 
 "Try it" puts a design on your screen at once, as your own copy: whoever made the original cannot change your screen afterwards. "Go back" restores the desktop you had before, and what your phone showed before, and throws the trial copy away.
 
 ## Can I share a design?
 
-Yes. Ask your Host to send a desktop you like to the Designs app and it appears on your own shelf, where every Host on your account can use it. Your desktop is private until you share it; sharing it is the deliberate exception, and the same standard is checked when a design is shared and when it is worn.
+Yes. Ask your Host to send a desktop you like to the Designs app and it appears on your own shelf. Your desktop is private until you share it; sharing it is the deliberate exception, and the same standard is checked when a design is shared and when it is worn.

@@ -67,9 +67,7 @@ that failed — relay that; it has nothing to do with Claude Code.
 ## Costs
 
 Inference on these runs rides the user's Claude subscription (Pro/Max)
-— Privatae Host doesn't add a per-token charge. The pool pod's compute window
-(wake → release) is metered and billed as compute, the same as every
-harness run — that is the platform's compute-only billing model. If
+— C-Series adds no per-token charge, and Privatae bills nothing for the run. If
 the user is on the BYOK path (API key not subscription), inference
 bills against their Anthropic account directly.
 

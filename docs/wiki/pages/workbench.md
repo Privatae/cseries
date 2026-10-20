@@ -31,11 +31,11 @@ A phase can be marked as needing your sign-off. That phase cannot start until yo
 
 ## Where does the code get written?
 
-Not inside your Host. Each build runs on a coding engine you connected, in its own disposable machine beside your Host, under your own account or key. See [Coding agents](wiki:coding-agents).
+Not inside your Host. Each build runs on a coding engine you connected, in a container of its own beside your Host, under your own account or key. Starting those containers on your own machine needs the local container runtime, which is not finished in this pre-release. See [Coding agents](wiki:coding-agents).
 
 ## Who merges the code?
 
-You do. Every phase that lands is saved as a commit on one rolling Code Approval for the project, written in plain English: what changed, why, what was checked, and the engine and model each change was built with. When you press Approve, a window opens on privatae.ai, and confirming there merges the change as you, with your own git account. Approval happens in that window, outside your Host's pages, so your Host cannot press Approve for you.
+You do. Every phase that lands is saved as a commit on one rolling Code Approval for the project, written in plain English: what changed, why, what was checked, and the engine and model each change was built with. When you press Approve, a separate approval page opens, and confirming there merges the change as you, with your own git account. Approval happens there, outside your Host's pages, so your Host cannot press Approve for you. Code Approvals are pull requests on a git forge, which a Host from the standard installer does not have configured; see [Code repositories and approvals](wiki:code-repositories).
 
 ## What is Auto-Approve?
 
@@ -45,7 +45,7 @@ With it on, the Host merges when the last phase of the plan lands, or when a fol
 
 ## What happens if a phase fails?
 
-When the plan is advancing on its own and a phase fails, it gets one retry on the same engine with the failure passed back to it. If that also fails, the chain stops and says so. A failure on the platform's side, such as a coding engine that could not be started or a connection that dropped, does not use up that retry; if the platform fails the same phase twice, the chain stops and says the cause was the platform, not your project. A run you or your Host killed is never retried. A build your Host started outside the plan goes back to it when it fails, with what the run was doing when it stopped, so the Host can run it again or ask you what only you can decide. After three failures in a row in one conversation, the next one is only reported.
+When the plan is advancing on its own and a phase fails, it gets one retry on the same engine with the failure passed back to it. If that also fails, the chain stops and says so. A failure on the infrastructure's side, such as a coding engine that could not be started or a connection that dropped, does not use up that retry; if the infrastructure fails the same phase twice, the chain stops and says the cause was not your project. A run you or your Host killed is never retried. A build your Host started outside the plan goes back to it when it fails, with what the run was doing when it stopped, so the Host can run it again or ask you what only you can decide. After three failures in a row in one conversation, the next one is only reported.
 
 ## Can I stop a build?
 

@@ -33,7 +33,7 @@ Archive it from This page, on the right side of its page. It leaves the book's t
 
 ## How do I approve a change?
 
-Each change arrives as a Code Approval: a plain-English description of what it changes, with the full change folded underneath. Approve opens a window on the Privatae site that puts the change in place as you, not as your Host. Ask for changes sends your words back to your Host as your next message.
+Each change arrives as a Code Approval: a plain-English description of what it changes, with the full change folded underneath. Approve opens a separate approval page that puts the change in place as you, not as your Host. Code Approvals need a git forge, which a Host from the standard installer does not have configured. Ask for changes sends your words back to your Host as your next message.
 
 Auto-Approve, beside the chat input, lets your Host approve its own changes in that project. It is offered only where your Host is able to merge, it is off unless you turn it on, and it holds back a change that has build-contract problems or a conflict. Each change it approves is noted in the chat.
 

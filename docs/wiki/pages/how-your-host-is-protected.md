@@ -1,42 +1,38 @@
 ---
 title: How your Host is protected
-summary: A Host has no open port on the public internet, its own certificate and its own disks, and runs in a zone kept apart from the platform's own services. What it may do is limited by checks in code rather than by instructions to a model.
+summary: A Host runs sandboxed in a virtual machine on your machine, publishes its ports on your own machine only, runs with no extra privileges, and is limited by checks in code rather than by instructions to a model. A separate program, the bastion, decides what it may touch on the machine.
 section: security
 order: 10
 questions:
-  - Is my Privatae Host exposed to the internet?
-  - How is my Host isolated from other customers?
-  - Does my Host have its own certificate?
+  - Is my Host exposed to the internet?
+  - How is a Host isolated from the rest of my machine?
   - What stops my Host from doing something I did not approve?
-  - What is an AI DMZ?
+  - How does the bastion connect to the Host?
+  - Who can sign in to my Host?
 ---
 
-A Host has no public address and no open port on the public internet. You come in through the front door you sign in at, your machines through a tunnel each, and other Hosts only on the line kept for Host-to-Host traffic. It has its own certificate and its own disks, it runs in a zone kept apart from the platform's own services, and what it may do is limited by checks in code, not by instructions to a model.
+A Host runs in a Linux virtual machine on your machine and publishes its ports on your machine only. Its containers run with no extra privileges, and what it may do is limited by checks in code, not by instructions to a model. The bastion, a separate program on your machine, decides what the Host may reach there.
 
 ## Is my Host exposed to the internet?
 
-No port on your Host can be reached from the public internet. Inside the cluster it has a private address only. There are three ways in, and each one is a door rather than an open port:
+Not by default. The dashboard and the two bastion ports are published on 127.0.0.1, so only programs on your own machine can connect to them. The installer's virtual machine sees none of your folders. The database container has no network port at all: it listens on a Unix socket shared with the Host. To reach the dashboard from other machines you put a reverse proxy that ends TLS in front of it, as the README describes; that is your choice and your proxy's configuration.
 
-- **The front door** you sign in at, which checks who you are and opens connections to your Host for your browser.
-- **A tunnel from each machine you paired**, which your machine dials out and which reaches your Host's one address and nothing else. See [the bastion](wiki:the-bastion).
-- **The Host-to-Host line**, where only a Host with a certificate from the platform's own authority can connect, and a message needs a permission slip your Host issued. See [talking to other Hosts](wiki:talking-to-other-hosts).
+## What makes a Host contained?
 
-The cluster's network rules refuse traffic from other customers' Hosts on every other port.
+Both containers run as an ordinary user with every Linux capability dropped and a read-only root filesystem, and they cannot gain privileges. The Host's container also runs under a restricted set of system calls. Everything the Host writes goes to named volumes, and the database's data directory is never mounted into the Host.
 
-## What makes a Host its own machine?
+## Who can sign in?
 
-A Host is one pod, in a namespace of its own. Its database runs in a container of its own, reached over a socket inside the pod, with no network port and no certificates or secrets mounted. Its disks, one for the database and one for its apps and files, survive when the pod is replaced. Its certificate is issued by the platform's own authority, with a key of its own. The Host's own container runs as a non-root user, with every Linux capability dropped, a read-only root filesystem and a restricted set of system calls, and no credential for the cluster's own API is mounted into the pod.
+The owner. The first time, you enter the setup code the Host prints at start and choose an email and a password of at least 12 characters. Until that account exists the code changes every time the Host restarts. Things that matter more than a click, such as revealing a saved key or widening the Host's reach, wait for a code from your authenticator. The code guards against a request from outside the Host, not against code already running inside it.
 
-## What is the zone?
+## How does the bastion connect?
 
-The category is an AI DMZ: the pattern businesses and governments use to keep what faces the outside apart from what they cannot afford to lose. Hosts run in a cluster of their own, separate from the cluster that runs the platform's own services, such as sign-in.
-
-## How does outbound traffic leave?
-
-Your Host's own model calls and web reads go out through the exit of the node your Host runs on. Traffic from coding engines and some of your Host's tools passes a gate inside your Host's pod that checks the egress rules you sign, and a rule can send that traffic out through one of your own machines, so it leaves from your own connection. That exit keeps no log of destinations, strips the headers that would say where a request came from, carries web traffic only, and refuses destinations inside the platform. [Your private network](wiki:your-private-network) has the rules in full.
+The bastion pairs with a one-time token and then connects to the Host over mutual TLS under a certificate authority the Host makes for itself. The Host trusts only certificates it issued at pairing and has not revoked. The bastion trusts only that authority. [The bastion](wiki:the-bastion) covers what it checks on every operation.
 
 ## What stops my Host doing something I did not approve?
 
-Walls in code. An agent your Host dispatches starts with no capabilities at all. Nothing it dispatches can run code; code runs on a coding harness, in a disposable pod of its own. A rule that widens your network waits for your authenticator code. And each of your machines checks every grant itself before it acts. [What a Host cannot do](wiki:what-a-host-cannot-do) covers each wall.
+Walls in code. An agent your Host dispatches starts with no capabilities at all. Nothing it dispatches can run code; code runs on a coding engine, in a container of its own. A rule that widens what your Host may reach waits for your authenticator code. And the bastion checks every grant itself before it acts. [What a Host cannot do](wiki:what-a-host-cannot-do) covers each wall.
 
-The authenticator code guards against a request from outside your Host, not against code running inside it. None of this guards against us: we run the cluster your Host lives in, and we can reach into it. [What the platform can see](wiki:what-the-platform-can-see) says exactly what that means.
+## What is not covered?
+
+A Host is software running on your machine, so whoever controls that machine controls the Host. The walls above limit what the model and its agents can do; they do not protect a Host from a person or a program with administrator rights on the machine it runs on.

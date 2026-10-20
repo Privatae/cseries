@@ -21,7 +21,7 @@ Seven slides, one action each:
 1. **Welcome.**
 2. **Keys**: add one API key from a model provider in the [Keys app](wiki:keys-app). This step asks for a key you paste yourself.
 3. **Orchestrator**: apply the recommended setup in the [Orchestrator's](wiki:orchestrator-app) Simple mode, so every job has a model.
-4. **Network**, optional: give your Host a machine of your own, a [bastion](wiki:the-bastion), and turn on "Serve my embeddings here" so the model that lets your Host recall by meaning runs on your own hardware. Skip it if you would rather use a provider for that.
+4. **Network**, optional: pair a [bastion](wiki:the-bastion) with your Host, and turn on "Serve my embeddings here" so the model that lets your Host recall by meaning runs on your own hardware. Skip it if you would rather use a provider for that.
 5. **Circles**: send your Host one message and get an answer in [Circles](wiki:circles-app).
 6. **Workbench**: start a project in the [Workbench](wiki:workbench-app).
 7. **Done.**

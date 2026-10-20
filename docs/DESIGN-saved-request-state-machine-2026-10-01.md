@@ -11,6 +11,8 @@ of the table has a scenario in `scripts/test_tools_before_first_turn.py`
 (`SM_SCENARIOS`) that starts a saved request in that state, makes the event
 happen, and checks the invariant.
 
+In this document "platform" means the C-Series kernel inside the Host, not a hosted service.
+
 ## The invariant
 
 **A saved request that leaves `running` or "taken over" without a recorded

@@ -14,12 +14,11 @@ agents:
   - brain/mastercode/runtime/host_changelog.py::ensure_weekly_changelog_task
   - server/routes/agents.py
   - system-apps/agents/app.js
-  - external:hosted-platform
   - brain/mastercode/runtime/host_changelog.py::run_changelog
   - brain/mastercode/agent_work.py
   verified:
-    date: '2026-10-12'
-    digest: sha256:8724f653c01091381ddbd92839424468a46b20e1d152cd3f410e51841474b0d8
+    date: '2026-10-20'
+    digest: sha256:1384cf46c72a0c96094c8f9e2e3bc8400f98fdba4ca3e9fb8a5dacd33049f53a
 agents-app:
   sources:
   - system-apps/agents/app.yaml
@@ -30,8 +29,8 @@ agents-app:
   - scripts/image_baked_apps.txt
   - brain/mastercode/agent_work.py
   verified:
-    date: '2026-10-12'
-    digest: sha256:89466489ecfce5ad3a8048e58a0c57634ce2cbf010ecb7f329f30f9304ba49c3
+    date: '2026-10-20'
+    digest: sha256:8d1ea4b5bded69ae6fab1e0620c00a10e27764205446a27370c446264503930c
 app-store-app:
   sources:
   - system-apps/app-store/app.yaml
@@ -44,8 +43,8 @@ app-store-app:
   - scripts/image_baked_apps.txt
   - server/mcp_connections.py::sync_app
   verified:
-    date: '2026-10-12'
-    digest: sha256:50decaba4bde8329ea591683f7c7fc38a2067096da7de4fceddf6ae82793282a
+    date: '2026-10-20'
+    digest: sha256:de2c24ca031a0a44bfd1697384a2de77cc44f78e00c96b1fbd04c828124b1d6d
 approvals:
   sources:
   - server/network/nac_commit.py
@@ -58,12 +57,11 @@ approvals:
   - server/routes/project_git.py::merge_project_pr
   - app-web-kit/ui/ask-overlay.tsx
   - brain/mastercode/runtime/kernel_ops.py
-  - external:hosted-platform
   - circles-web/src/cards/deck.tsx
   - circles-web/src/cards/tickets.tsx
   verified:
-    date: '2026-10-12'
-    digest: sha256:7ead2230895f2f65b1ef572dbf23ae50f98c98bcf0df6060a6e495ea2f3314a1
+    date: '2026-10-20'
+    digest: sha256:5bcd5462d0e3e76e5fbdd34454e345a799fa2685cf23193fab77ab2eccc4a7c3
 apps-overview:
   sources:
   - scripts/image_baked_apps.txt
@@ -72,10 +70,9 @@ apps-overview:
   - server/applications/default_install.py::_install_default_set
   - server/applications/default_install.py::run_once
   - server/applications/platform_tools.py
-  - external:hosted-platform
   verified:
-    date: '2026-10-12'
-    digest: sha256:1ff888bb00515455a114dce07e5d9a1eabbd95d9507933dd004096e3a15240be
+    date: '2026-10-20'
+    digest: sha256:993f4487ccf7d9985caa86bb20bdd11a6d937d5517024844f188e681a8b48299
 artifacts-and-designs:
   sources:
   - system-apps/artifacts/app.yaml
@@ -89,8 +86,8 @@ artifacts-and-designs:
   - server/applications/desktop_tokens.py::extract_tokens
   - server/routes/designs.py
   verified:
-    date: '2026-10-11'
-    digest: sha256:c7a4c2031bb802ec9b4d98649ff6ea68983906a7c2cdb435ab22a9340bfe936f
+    date: '2026-10-20'
+    digest: sha256:4d6fa652b599ebc1b1e9bf77bdbf25f3071df886fcf2fa587d3dfc2622ee04df
 artifacts-app:
   sources:
   - system-apps/artifacts/app.yaml
@@ -100,8 +97,8 @@ artifacts-app:
   - server/routes/artifacts.py::revert_artifact
   - scripts/image_baked_apps.txt
   verified:
-    date: '2026-10-12'
-    digest: sha256:ce7e379e1c37d309b7de95efd97d56d2d4c5bd522af81e5e3fbc5827a2dbe81e
+    date: '2026-10-20'
+    digest: sha256:2adac5f1d714c7a96b78d3b11ea70e07d1761b315b4579228d761328b33e9e38
 browser-app:
   sources:
   - system-apps/browser/app.yaml
@@ -109,10 +106,9 @@ browser-app:
   - system-apps/browser/app.js
   - server/applications/harness_backend.py
   - sidecars/browser/control/sessions.py
-  - external:hosted-platform
   verified:
-    date: '2026-10-12'
-    digest: sha256:87ecb6ee9133919e60fab82060482e7907565e49f87e011f40720c5a5179542b
+    date: '2026-10-20'
+    digest: sha256:a51f260cad82ce511e5b650311578f60226067a867383de9760c3a72e282254a
 building-apps:
   sources:
   - server/applications/manifest.py::AppManifest
@@ -123,12 +119,11 @@ building-apps:
   - brain/mastercode/runtime/app_verify.py
   - system-apps/app-store/app.js
   - system-apps/publisher/app.yaml
-  - external:hosted-platform
   - server/applications/manifest.py::mcp_spec
   - server/mcp_connections.py::sync_app
   verified:
-    date: '2026-10-11'
-    digest: sha256:aaac05cc75344d76cb50af8b0377548814796aae140a41e37d2a0441f1348474
+    date: '2026-10-20'
+    digest: sha256:c83a42949a922769be62e185b05fc084faad11f2ccd72570555841993bb0f828
 calendar-app:
   sources:
   - system-apps/calendar/app.yaml
@@ -143,8 +138,8 @@ calendar-app:
   - dashboard/base/js/floating-apps.js
   - scripts/image_baked_apps.txt
   verified:
-    date: '2026-10-11'
-    digest: sha256:578ea17de8bb1043c08a227a946b8932dc6d1b80d63648c9c446024476862b22
+    date: '2026-10-20'
+    digest: sha256:49ccce319de9851568581a97d4832ca278b2d1fc05b0842e9f738ba6ebe5f729
 circles-app:
   sources:
   - system-apps/circles/app.yaml
@@ -158,8 +153,8 @@ circles-app:
   - brain/mastercode/runtime/tools.py::_exec_create_project
   - scripts/image_baked_apps.txt
   verified:
-    date: '2026-10-12'
-    digest: sha256:81c943142030c9df4c685c7c3c439e5875dc946ca866dfd0b8834f344364236d
+    date: '2026-10-20'
+    digest: sha256:baffd3456c403c5e0a4bbb4364e1de15aba7628b081c26b43aa172181e95d33a
 claude-code-app:
   sources:
   - system-apps/claude-code/app.yaml
@@ -168,11 +163,10 @@ claude-code-app:
   - system-apps/claude-code-harness/bin/main.py
   - server/routes/inference.py::_harness_has_login
   - server/applications/harness_health.py::_check_once
-  - external:hosted-platform
   - server/network/nac_harness.py::materialize_agent_creds
   verified:
-    date: '2026-10-11'
-    digest: sha256:688cb8bdb48faa5edfa71da027ea650f68b9209852645c1accf130d6203b3da8
+    date: '2026-10-20'
+    digest: sha256:bbe182c364fa4787f0866841c9380b1978c3a130b52d37303cb6c20f56b2808a
 code-repositories:
   sources:
   - server/routes/code_approvals.py::build_body
@@ -185,7 +179,6 @@ code-repositories:
   - server/routes/gitea.py::grant_host_access
   - server/network/git_relay.py
   - server/routes/github_mirror.py::create_mirror
-  - external:hosted-platform
   - server/routes/gitea.py::_ensure_user_token
   - server/routes/network.py::bastion_git_credential
   - server/routes/code_approvals.py::refresh_waiting
@@ -193,8 +186,8 @@ code-repositories:
   - app-web-kit/book/rules.ts
   - brain/codesearch/repo_sync.py
   verified:
-    date: '2026-10-12'
-    digest: sha256:508c0a26834c43efb4a1dd276b8f535b01e5ace2464855e0f57ba49ec6153b80
+    date: '2026-10-20'
+    digest: sha256:f1f2823242cddf21b0a6fa314574d3e5c124d5c80d96c4b01d9cbbcf52a06f78
 coding-agents:
   sources:
   - system-apps/orchestrator/app.yaml
@@ -206,11 +199,10 @@ coding-agents:
   - server/routes/review.py::adopt_run_service
   - server/routes/coding_protocols.py
   - system-apps/_harness_runtime/harness_core.py::make_login
-  - external:hosted-platform
   - system-apps/_harness_runtime/harness_core.py
   verified:
-    date: '2026-10-12'
-    digest: sha256:942acd1a0c7d00ca6d2f95468431e776284467f93c91993e884c6fff22b8c021
+    date: '2026-10-20'
+    digest: sha256:7a14d1c20661d9a748abb0e6968065f208c880ac6ee84d511c45731cfc3af622
 community-app:
   sources:
   - system-apps/community/app.yaml
@@ -223,8 +215,8 @@ community-app:
   - scripts/image_baked_apps.txt
   - community-web/src/App.tsx
   verified:
-    date: '2026-10-12'
-    digest: sha256:e0c964a3a0371021b374844bc6aa0bc14b20dac71ca8da18583be2ad66e104b9
+    date: '2026-10-20'
+    digest: sha256:eef8bfb4a66044f273252116054619189ec0e64c2158dc66cfd08e4a091d303b
 compute-app:
   sources:
   - system-apps/compute/app.yaml
@@ -233,20 +225,20 @@ compute-app:
   - server/routes/compute.py::by_harness
   - server/routes/compute.py::billables
   - server/routes/compute.py::run_detail
+  - server/routes/compute.py::charge_harness_compute
   - scripts/image_baked_apps.txt
   verified:
-    date: '2026-10-12'
-    digest: sha256:f127cae21976056b5a72ed5c8c4c94ddacd1df3b81fa00854b10d3f30a9a1a86
+    date: '2026-10-20'
+    digest: sha256:cfd2aff4d4c493995616a68a415cff0f3b68a64fb6daf81e54c554575afca0f3
 connected-folders:
   sources:
   - server/network/nac_propose.py::propose_dcn_store
   - server/network/nac_commit.py::revoke_dcn_store
   - server/network/nac_dcn.py::dcn_decision
   - migrations/v091_dcn_route_map.sql
-  - external:hosted-platform
   verified:
-    date: '2026-10-11'
-    digest: sha256:f76366118ec1ebba78cbdf69ec28aea8e0029693baccfe3bdb480fc72516b204
+    date: '2026-10-20'
+    digest: sha256:76199bd6fb95a9835d4e9d5e9e8c373f1479743dff45089eea2e46ca29598c95
 context-app:
   sources:
   - system-apps/context-manager/app.yaml
@@ -259,8 +251,8 @@ context-app:
   - server/network/nac_commit.py::revoke_dcn_store
   - scripts/image_baked_apps.txt
   verified:
-    date: '2026-10-12'
-    digest: sha256:527f78bb4468bc71f8603034c432e0dbee0bb2af917ee80d65298813dcfe6ab2
+    date: '2026-10-20'
+    digest: sha256:cac5a32cd25fa7d33fb7d18b66b0bf7eb5749778fca9710553a35f99aa414ec7
 designs-app:
   sources:
   - system-apps/designs/app.yaml
@@ -272,13 +264,12 @@ designs-app:
   - server/applications/desktop_render.py::judge
   - server/routes/designs.py::restore
   - server/routes/designs.py::remove_design
-  - external:hosted-platform
   - scripts/image_baked_apps.txt
   - server/routes/designs.py::_restore
   - server/applications/desktop_render.py::with_phone
   verified:
-    date: '2026-10-12'
-    digest: sha256:8f1739248dfbd81899611563d968528ffaae0dd026031b45c9e7bb244ab20ee0
+    date: '2026-10-20'
+    digest: sha256:ff92ecb992cd0fc00f54f092e5a2476fcb119d0a2ee9f31e08345c5100355616
 getting-help:
   sources:
   - server/routes/support.py::_assemble_context
@@ -292,8 +283,8 @@ getting-help:
   - system-apps/community/app.yaml
   - brain/mastercode/runtime/capability_propose.py::propose_feature_request
   verified:
-    date: '2026-10-12'
-    digest: sha256:d8cd0107c68daaf41f257f86e00155f3335c46006abfb9d70f089b772079e1c1
+    date: '2026-10-20'
+    digest: sha256:4aab7ac282a987a36da008379364632d6311e910c161afcdc8f5e203aba67d2d
 getting-started-app:
   sources:
   - system-apps/getting-started/app.yaml
@@ -302,8 +293,8 @@ getting-started-app:
   - dashboard/base/js/walkthrough-autolaunch.js
   - scripts/image_baked_apps.txt
   verified:
-    date: '2026-10-12'
-    digest: sha256:3b0f23c7c9013294b46ef3115a3448783be6eb966b5789e0de4d2e154b7d323b
+    date: '2026-10-20'
+    digest: sha256:fa143c501b6b49f5db3aa65f5b0b5da68e6da71614b0e4b52b65ded00fa081c2
 gitea-app:
   sources:
   - system-apps/gitea/app.yaml
@@ -317,11 +308,10 @@ gitea-app:
   - scripts/image_baked_apps.txt
   - brain/codesearch/repo_sync.py
   verified:
-    date: '2026-10-12'
-    digest: sha256:281099fe54df6d1fc9e09062b3cf79120c61bc732b88cf10e66b6260d08ec7bb
+    date: '2026-10-20'
+    digest: sha256:9ce3f2586a7b5c0d533cce4b48f87f3ac09cb2752c449f1a69284c89d0b3f50f
 glossary:
   sources:
-  - external:hosted-platform
   - brain/mastercode/runtime/agent_grant.py::parse_grant
   - brain/mastercode/runtime/scoped_agent.py::run_scoped_agent
   - server/network/nac_approval.py
@@ -332,14 +322,8 @@ glossary:
   - server/applications/kernel.py
   - brain/mastercode/runtime/tools.py::_exec_publish_site
   verified:
-    date: '2026-10-12'
-    digest: sha256:cd534908688598059c03b7a1aa9d0d11d0850068fb25dc0c7dd78e4871a0ec67
-handing-over-a-host:
-  sources:
-  - external:hosted-platform
-  verified:
-    date: '2026-10-11'
-    digest: sha256:a77ff3e1fa3437874c43eaea3b755bb070703128aade798e03692b77748990ce
+    date: '2026-10-20'
+    digest: sha256:b6a58916f8f208d2608b48f574c7ebcf492b549f404afc15167dd37b47cb3332
 how-a-host-handles-a-request:
   sources:
   - brain/mastercode/runtime/session.py::EntityRuntime
@@ -354,21 +338,20 @@ how-a-host-handles-a-request:
   - brain/mastercode/memory_engine.py::MemoryEngine.build_memory_context
   - brain/mastercode/runtime/root_turn.py
   verified:
-    date: '2026-10-12'
-    digest: sha256:70c51ad00fbb693d9a586bea0423c50f7772ccb6acb71ae20e73eebcdbace03a
+    date: '2026-10-20'
+    digest: sha256:0925527da613ad957d9aab96ad61f1502444ce43f9ee9c0e7f627485302b020a
 how-your-host-is-protected:
   sources:
-  - external:hosted-platform
-  - server/peer/peer_server.py
-  - server/network/nac_egress.py::EgressProxy._handle
+  - compose.yaml
+  - seccomp-personal.json
+  - entrypoint-postgres.sh
+  - server/network/local_bastion.py
   - server/network/nac_stepup.py::verify_stepup
   - brain/mastercode/runtime/scoped_agent.py
-  - brain/mastercode/runtime/url_reader.py
-  - brain/mastercode/provider_gateway.py::_call_remote
-  - system-apps/_harness_runtime/egress_chooser.py
+  - server/owner_login.py
   verified:
-    date: '2026-10-12'
-    digest: sha256:0f8de23223c831af99856c573d66e4154624f0df328bb957d824459a9ba194d1
+    date: '2026-10-20'
+    digest: sha256:b60aacf1e602e0da1efe3c907f77c288cfab94b59b8ca5a3646072ad17c48842
 keys-app:
   sources:
   - system-apps/keys/app.yaml
@@ -386,18 +369,17 @@ keys-app:
   - server/routes/vault.py::_keys_signin_button
   - server/vault/providers.py::signin_harness
   verified:
-    date: '2026-10-12'
-    digest: sha256:b6a3e6bbf244b7d395bd523dbd76de53c184d6303521e4e61b96dae4ca87eaa0
+    date: '2026-10-20'
+    digest: sha256:b494527563da33b56f442ddafd8587ef1ad3920b764dbbb438935b2d66367766
 local-models:
   sources:
-  - external:hosted-platform
   - server/routes/embedding.py
   - server/network/grant_vocab.py
   - brain/mastercode/memory_engine.py::_embed_text_config_driven
   - brain/mastercode/memory_engine.py::_embed_one_config_driven
   verified:
-    date: '2026-10-11'
-    digest: sha256:469187c31e54c172865b0bcd20029d698e0ef6f01ee461ee84e4910d5dea8c0d
+    date: '2026-10-20'
+    digest: sha256:c75693b74199517ccce195007c57cc3b221732b9e63c04a9ebf8ec99d5d84ebc
 memory:
   sources:
   - brain/mastercode/memory_engine.py::write_turn_row
@@ -410,13 +392,12 @@ memory:
   - server/routes/brain.py::delete_single_memory
   - server/routes/embedding.py::apply_embedding_switch
   - system-apps/oracle/index.html
-  - external:hosted-platform
   - brain/mastercode/runtime/task_record.py::recheck_source
   - brain/mastercode/runtime/task_record.py::cited_fact_text
   - server/host_backup.py::run_host_backup_loop
   verified:
-    date: '2026-10-12'
-    digest: sha256:63556b55176c27e08bb5edb132426d54877ba68b199fb81da97a8d97297928c8
+    date: '2026-10-20'
+    digest: sha256:ae3fdaba7e487b897ec63999572880a5b78c4ce28ac37d0fc494e0f93245e8c1
 memory-app:
   sources:
   - system-apps/oracle/app.yaml
@@ -435,8 +416,8 @@ memory-app:
   - scripts/image_baked_apps.txt
   - server/secret_cut.py::redact_words
   verified:
-    date: '2026-10-12'
-    digest: sha256:df2ad41d2730b311e217138941278902c489cde04d9dc5c996a8972195965596
+    date: '2026-10-20'
+    digest: sha256:7ad1c9fe584c9c1170da3edbe07290f038bda753bb4902fb0a21fea5bf23ff2c
 models-and-keys:
   sources:
   - brain/mastercode/inference_config.py::normalize_provider
@@ -448,14 +429,13 @@ models-and-keys:
   - server/routes/review.py::harness_login
   - brain/mastercode/runtime/scoped_agent.py::run_scoped_agent
   - dashboard/base/js/model-picker.js
-  - external:hosted-platform
   - server/vault/authz.py::use_credential
   - brain/mastercode/runtime/tools.py::_exec_keys_manage
   - server/routes/vault.py::_route_chat_if_unrouted
   - brain/mastercode/attachment_parts.py::model_reads_images
   verified:
-    date: '2026-10-12'
-    digest: sha256:79829d333135191a7df1d9e85202ff9a8be7fd0b71602eb918540dcfdd7ee046
+    date: '2026-10-20'
+    digest: sha256:96be5de95c1429980e34257ede792850128133909b7e93a69270329f12562143
 network-app:
   sources:
   - system-apps/network/app.yaml
@@ -476,8 +456,8 @@ network-app:
   - server/network/nac_connector.py::revoke_connector
   - server/mcp_connections.py::revoke_for_rule
   verified:
-    date: '2026-10-12'
-    digest: sha256:0c767f97911a6fa29fa503701b11eb233bbd1ee97dc7147222aa9ff170d67720
+    date: '2026-10-20'
+    digest: sha256:c3d348f21cb5bc2db6b7c643c3b21349703cdaf1672d4860bc3feac459911b73
 orchestrator-app:
   sources:
   - system-apps/orchestrator/app.yaml
@@ -494,8 +474,8 @@ orchestrator-app:
   - server/routes/inference.py::_provider_status
   - brain/mastercode/attachment_parts.py::model_reads_images
   verified:
-    date: '2026-10-12'
-    digest: sha256:c064c9d4f5cf3616d22a50f842c635a74afdf50df197451d241acf42bcb31ffd
+    date: '2026-10-20'
+    digest: sha256:63ca09215a50d9d0d59e9b411cd707b74fcc33d41b5f4f617be6db58d02501f8
 oversight-app:
   sources:
   - system-apps/oversight/app.yaml
@@ -509,37 +489,27 @@ oversight-app:
   - brain/mastercode/runtime/kernel_ops.py
   - scripts/image_baked_apps.txt
   verified:
-    date: '2026-10-12'
-    digest: sha256:74ead5bf263e73f6bcd7e35de2bbe2358e3e4800d5015fa7ff5aed366497964a
-plans-and-billing:
-  sources:
-  - external:hosted-platform
-  verified:
-    date: '2026-10-11'
-    digest: sha256:56fb7a95757f2340986d5d1b243b61f19399ab730b54ae0324f5536fa3753bd0
+    date: '2026-10-20'
+    digest: sha256:6502c5d92bd18fb1142080d5af282f9ce384ea69315241033db99d2bda321bd8
 publisher-app:
   sources:
   - system-apps/publisher/app.yaml
   - system-apps/publisher/index.html
   - system-apps/publisher/app.js
   - server/routes/applications.py::publish_project_service
-  - external:hosted-platform
   - scripts/image_baked_apps.txt
   verified:
-    date: '2026-10-12'
-    digest: sha256:78ee8fff23efc7f9c986fab1a311858520c93e2a5889b9d890b010aaf2211548
+    date: '2026-10-20'
+    digest: sha256:860cde6be38020f7a8c59148ca68a9ac1672c0ce16a5199b16984694fd9079b4
 publishing-sites:
   sources:
-  - system-apps/sites/app.yaml
+  - brain/mastercode/runtime/tools.py::_exec_publish_site
   - server/routes/applications.py::publish_site_service
-  - server/routes/applications.py::_license_gate_site
-  - sites-web/src/components/Visibility.tsx
-  - sites-web/src/components/Domains.tsx
-  - sites-web/src/components/Payments.tsx
-  - external:hosted-platform
+  - server/bridge/member_client.py
+  - compose.yaml
   verified:
-    date: '2026-10-11'
-    digest: sha256:c2adfc2fb2b293bba92bf2eb73a804bf8e71f7b653f1bba77f1065571699fcf5
+    date: '2026-10-20'
+    digest: sha256:69530b3de314d182418832de36bde7a10ff19cbeffea944b1431ef0d511a36f5
 settings-app:
   sources:
   - system-apps/settings/app.yaml
@@ -553,11 +523,10 @@ settings-app:
   - server/applications/kernel.py
   - server/applications/installer.py::uninstall_app
   - scripts/image_baked_apps.txt
-  - external:hosted-platform
   - server/host_backup.py
   verified:
-    date: '2026-10-12'
-    digest: sha256:7ec8150f212048ce8a2b897cbbe62044ab1baf49a05931d2b87e77b603908e3f
+    date: '2026-10-20'
+    digest: sha256:f16b72aff9ad974af3a1875320777587d7b332f1bffd4c2808c0466065bfcfcd
 sites-app:
   sources:
   - system-apps/sites/app.yaml
@@ -570,10 +539,9 @@ sites-app:
   - sites-web/src/components/Catalog.tsx
   - server/routes/applications.py::publish_site_service
   - scripts/image_baked_apps.txt
-  - external:hosted-platform
   verified:
-    date: '2026-10-12'
-    digest: sha256:89a0e36c786b1daad63d406b201773a7bceb766371d8330d9b4400242d1f928a
+    date: '2026-10-20'
+    digest: sha256:7901602807a4bb04282d69449eeb026f4bd9ca5660fad935795e26e8dd6febc8
 skills-app:
   sources:
   - system-apps/skills/app.yaml
@@ -588,44 +556,35 @@ skills-app:
   - system-apps/oracle/app.js
   - scripts/image_baked_apps.txt
   verified:
-    date: '2026-10-12'
-    digest: sha256:447ae4f4f89d473733eb7601f09acf1804e82cabdd12df34fd21065451e7d164
-talking-to-other-hosts:
-  sources:
-  - server/peer/peer_server.py
-  - server/peer/slip_verify.py
-  - server/peer/peer_trust.py
-  - server/peer/deliver.py::deliver_message
-  - server/bridge/memory_handlers.py::handle_inbox_append
-  - server/routes/contacts.py::accept_request_service
-  - server/routes/contacts.py::deny_request_service
-  - external:hosted-platform
-  - server/routes/contacts.py::block_refuses
-  - server/bridge/memory_handlers.py::_slip_admits
-  verified:
-    date: '2026-10-11'
-    digest: sha256:54dccf080eba4141a67f690f43a97fb2aa35b7c26fdac2839e013cadf33eacee
+    date: '2026-10-20'
+    digest: sha256:c667da0f67469c0895e7b0f537436f3e8283c724853f5c75ec7aa33ca39b66e9
 the-bastion:
   sources:
   - server/network/bastion_enroll.py::mint_pairing_token
-  - external:hosted-platform
   verified:
-    date: '2026-10-12'
-    digest: sha256:98b9377d2b591932cf7fb6fafb2e20734d54eaaee59d82c3eeee99f4f876b8aa
+    date: '2026-10-20'
+    digest: sha256:ba0d978672a8193c7de7fd305227800b88d940ef259b43a67775605103d20dec
+the-privatae-network:
+  sources:
+  - server/bridge/membership.py
+  - server/bridge/member_client.py
+  - server/routes/network_membership.py
+  - system-apps/settings/index.html
+  verified:
+    date: '2026-10-20'
+    digest: sha256:9e06619cb53bfbab12f944d3e20dfc7377621fd94ebf370227d1eb5fdf911be4
 updates-and-versions:
   sources:
-  - server/routes/update.py
-  - system-apps/settings/app.js
-  - server/routes/system.py
+  - packages/cseries/src/cli.js
+  - system-apps/settings/index.html
   - server/applications/default_install.py
   - server/applications/update_check.py
   - server/network/bastion_autoupdate.py
-  - external:hosted-platform
   - circles-web/src/cards/inbox-notes.tsx
   - brain/mastercode/runtime/host_changelog.py::ensure_weekly_changelog_task
   verified:
-    date: '2026-10-11'
-    digest: sha256:4c743ee0b8d469a573f3ec57233102c88aabd13185e730a67611614015970fd0
+    date: '2026-10-20'
+    digest: sha256:44e54228dfe377f792e79c243f776995e7eefd84f9ee14d15f723d488f46f66b
 what-a-host-cannot-do:
   sources:
   - brain/mastercode/runtime/agent_grant.py::parse_grant
@@ -651,57 +610,41 @@ what-a-host-cannot-do:
   - server/network/nac_harness.py::run_harness_op
   - brain/mastercode/runtime/root_turn.py
   - server/network/session_lane.py::run_root_exec
-  - external:hosted-platform
   verified:
-    date: '2026-10-12'
-    digest: sha256:5ecda06871e2310770c16125dd38b419a605a1efea9ce83308542a76eae18ef8
+    date: '2026-10-20'
+    digest: sha256:2f5a554cd4a53c712335d57d1ca2e4c0b04c90639d3718bf7c99eceb94b1306a
 what-a-host-is:
   sources:
-  - external:hosted-platform
-  - brain/mastercode/provider_gateway.py::call_model
-  - server/integrations/core/egress.py::session
-  - brain/mastercode/inference_config.py::normalize_provider
-  - server/host_backup.py::run_host_backup_loop
+  - compose.yaml
+  - entrypoint-postgres.sh
+  - server/bridge/no_platform.py
+  - server/bridge/member_client.py
+  - server/network/local_bastion.py
   verified:
-    date: '2026-10-12'
-    digest: sha256:f1b304acd72c5cba5c04b26b0d64dba093404b08f137bf6916353b7ed9682bd8
+    date: '2026-10-20'
+    digest: sha256:0ad9097def2033c91c930cdb0a03214f4c22818dc6a652f6e9ac0290edf042b3
 what-is-privatae:
   sources:
-  - external:hosted-platform
-  - server/network/nac_commit.py
-  - brain/mastercode/inference_config.py::normalize_provider
-  - brain/mastercode/runtime/agent_grant.py::parse_grant
+  - compose.yaml
+  - brain/mastercode/provider_gateway.py
+  - brain/mastercode/runtime/agent_grant.py
   - brain/mastercode/runtime/scoped_agent.py::run_scoped_agent
-  - server/network/nac_dcn.py
-  - server/routes/project_git.py::merge_project_pr
-  - brain/mastercode/runtime/tools.py::_exec_publish_site
-  - server/vault/providers.py::signin_serves_inference
+  - server/bridge/no_platform.py
+  - server/bridge/membership.py
   verified:
-    date: '2026-10-12'
-    digest: sha256:276e5a40bb25e454697e1a46506705643868054626654bfa56544b4bf5315a17
-what-the-platform-can-see:
-  sources:
-  - external:hosted-platform
-  - server/network/nac_stepup.py
-  - server/network/hub_identity.py
-  - server/routes/circles.py
-  - server/host_backup.py::run_host_backup_loop
-  - server/vault/providers.py::signin_serves_inference
-  verified:
-    date: '2026-10-12'
-    digest: sha256:f2bd03bbb062e50e172c8a5131c6842e85669c63e173fb20c3d088e75df396e9
+    date: '2026-10-20'
+    digest: sha256:6991d49937800ae4a628229eacbb984543d793eaeba43fafdddeb0a27d300e2f
 where-your-data-lives:
   sources:
+  - compose.yaml
   - init-db.sql
   - brain/mastercode/provider_gateway.py
-  - server/network/nac_dcn.py::run_dcn_op
-  - external:hosted-platform
+  - server/bridge/member_client.py
   - server/host_backup.py::run_host_backup_loop
-  - server/routes/backup.py::set_backup_escrow
-  - brain/codesearch/repo_sync.py
+  - packages/cseries/src/cli.js
   verified:
-    date: '2026-10-12'
-    digest: sha256:0f034693de5abe6617bbd32d0760cbda4566a7b5f43cc3709339eb70f52adf32
+    date: '2026-10-20'
+    digest: sha256:257c045d93b9450b8256380f06f79aafb1beb07c3c7fd05e887a439785cb2ec8
 workbench:
   sources:
   - system-apps/workbench/app.yaml
@@ -720,8 +663,8 @@ workbench:
   - workbench-web/src/components/workbench/chat-pane.tsx
   - app-web-kit/book/page-top.tsx
   verified:
-    date: '2026-10-12'
-    digest: sha256:c726fe399af802ef5dfc1d9eaa90d19653eb37cddd7378bbb04a1e08cc3c05d1
+    date: '2026-10-20'
+    digest: sha256:a086bab1ed359f86d5012be545f5070a5da83c89f9d844c53becd8f278255dbc
 workbench-app:
   sources:
   - system-apps/workbench/app.yaml
@@ -741,18 +684,17 @@ workbench-app:
   - app-web-kit/book/hold-to-think.ts
   - server/routes/workbench_index.py::index_send_service
   verified:
-    date: '2026-10-12'
-    digest: sha256:e93be667b021540f0255b16a2d566a05b6fe0a66efcd10a0cba140a2730a6116
+    date: '2026-10-20'
+    digest: sha256:f79d5d976d26d8adbf36208b04dd6713a7cd26aca3a8e2725111f3f43ca753fd
 your-machines:
   sources:
   - system-apps/oversight/app.yaml
   - brain/mastercode/runtime/oversight.py
   - server/network/nac_mgmt.py::mgmt_decision
-  - external:hosted-platform
   - server/network/nac_ops.py::card_words
   verified:
-    date: '2026-10-12'
-    digest: sha256:8fb7c070ff541e2bb7cbe382b2b310d5ae158169314c2673f4e3f1e621b55ac7
+    date: '2026-10-20'
+    digest: sha256:6939789ff23fc30c6cc8991b52e81773430726a835c82081b79c12a936221916
 your-private-network:
   sources:
   - server/network/nac_egress.py::egress_decision
@@ -762,7 +704,6 @@ your-private-network:
   - server/network/nac_commit.py::approve_mgmt_grant
   - server/network/nac_controller.py::NACController.decide
   - server/network/nac_mgmt.py::mgmt_decision
-  - external:hosted-platform
   - brain/mastercode/runtime/url_reader.py
   - brain/mastercode/provider_gateway.py::_call_remote
   - sidecars/app-egress/egress.py
@@ -771,5 +712,5 @@ your-private-network:
   - server/mcp_connections.py::verify
   - server/network/session_lane.py::run_root_exec
   verified:
-    date: '2026-10-12'
-    digest: sha256:78d3ecab04e266e4ff878cf475ac20c125dd15555e81de392301a72b071f214d
+    date: '2026-10-20'
+    digest: sha256:2c45676f8f9a964fc0dcf03200e532606f83a3c7a3b4430a7bbf25d0d30cc43c

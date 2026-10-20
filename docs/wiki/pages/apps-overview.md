@@ -11,7 +11,7 @@ questions:
   - Which app do I open to change what my Host can do?
 ---
 
-A Host is a desktop of apps, not a single chat window. Twenty apps are built into every Host and are there the first time it starts. A few more come from the App Store, and Claude Code your Host installs when you ask.
+A Host is a desktop of apps, not a single chat window. Twenty apps are built into every Host and are there the first time it starts. A few more come from the App Store, which needs a network membership, and Claude Code your Host installs when you ask.
 
 ## What apps are there?
 
@@ -27,7 +27,7 @@ A Host is a desktop of apps, not a single chat window. Twenty apps are built int
 - [Artifacts](wiki:artifacts-app): the live pages, mockups and reports your Host designs in conversation.
 - [Designs](wiki:designs-app): complete desktops you can try on, and switch back from.
 - [Gitea](wiki:gitea-app): your code repositories, your Host's own, and what your Host may touch.
-- [Sites](wiki:sites-app): your public websites.
+- [Sites](wiki:sites-app): the control panel for public websites (needs a public web service a Host cannot reach in this release).
 - [Publisher](wiki:publisher-app): publish apps you built to the store.
 - [Claude Code](wiki:claude-code-app): the connection to your Claude subscription for Claude Code builds.
 - [Skills](wiki:skills-app): the steps your Host follows for each kind of job, including the skills it wrote for itself, with every version kept.
@@ -41,7 +41,7 @@ A Host is a desktop of apps, not a single chat window. Twenty apps are built int
 
 **Your machines and network**
 
-- [Network](wiki:network-app): your bastions, the Hosts you talk to, and the rules for what may reach what.
+- [Network](wiki:network-app): your bastions, and the rules for what may reach what.
 - [Oversight](wiki:oversight-app): the problems your machines report, worst first.
 - Ships: your pipelines and every run of them, each step on its own machine, approved once for the whole ship.
 - [Browser](wiki:browser-app): a real web browser that runs for your Host, live on screen.
@@ -50,7 +50,7 @@ A Host is a desktop of apps, not a single chat window. Twenty apps are built int
 
 - [Keys](wiki:keys-app): your keys, tokens and sign-ins, sealed.
 - [Settings](wiki:settings-app): version and updates, appearance, your desktop and backups.
-- [Compute](wiki:compute-app): what your Host's work has cost and used.
+- [Compute](wiki:compute-app): what your Host's work has used, and what it is estimated to have cost.
 - [App Store](wiki:app-store-app): find and add apps.
 - [Getting Started](wiki:getting-started-app): the first-run walkthrough.
 
@@ -60,7 +60,7 @@ Agents, Artifacts, Calendar, Circles, Community, Compute, Context, Designs, Gett
 
 ## Which apps come from the App Store?
 
-The App Store app and Publisher are installed from the store automatically when a new Host first starts. Browser you add from the [App Store](wiki:app-store-app) when you want it. When your Host starts, it checks the store and updates the apps it installed from there to their newest version.
+The App Store and Publisher apps, and Browser, come from the store. The store is reached through the [Privatae network](wiki:the-privatae-network), so a Host that has not joined it cannot add them. When a member Host starts, it checks the store and updates the apps it installed from there to their newest version.
 
 ## What about the rest?
 

@@ -12,7 +12,7 @@ questions:
 app: publisher
 ---
 
-Publisher is where an app you built on your Host goes to the App Store, and where you look after it once it is there. Nothing you submit appears in the store until a person has reviewed it.
+Publisher is where an app you built on your Host goes to the App Store, and where you look after it once it is there. Publishing goes through the [Privatae network](wiki:the-privatae-network), so it needs a network membership. Nothing you submit appears in the store until a person has reviewed it.
 
 ## How do I publish an app?
 

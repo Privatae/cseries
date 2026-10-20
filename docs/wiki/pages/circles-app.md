@@ -1,6 +1,6 @@
 ---
 title: Circles
-summary: Circles is where you talk with your Host day to day, and with everyone you know, as a deck of cards. It holds the decisions your Host is waiting on, your support tickets, and who wants to connect. It comes with every Host.
+summary: Circles is where you talk with your Host day to day, and with everyone you know, as a deck of cards. It holds the decisions your Host is waiting on, your support drafts, and who wants to connect. It comes with every Host.
 section: apps
 order: 10
 app: circles
@@ -9,8 +9,8 @@ questions:
   - Where did the inbox, calendar and address book go?
   - How do I control who can message me?
   - Where do I see what my Host is waiting for me to decide?
-  - Can I message other people and other Hosts from my Host?
-  - How do I report a problem with Privatae?
+  - Can I message other people from my Host?
+  - How do I report a problem?
 ---
 
 Circles is your everyday conversation with your Host: catching up, thinking out loud, asking questions, with no project attached. It comes with every Host. The window is a deck of cards, one for each contact.
@@ -28,15 +28,15 @@ Circles is your everyday conversation with your Host: catching up, thinking out 
 
 ## Where did the inbox, calendar and address book go?
 
-The address book is the cards themselves, and the inbox is At the door and Waiting on you; the platform's notices are on the Support card. The calendar is its own app, [Calendar](wiki:calendar-app). How your Host thinks and replies is in [Settings](wiki:settings-app), under Response Shaping. Who may reach you, its rules, and your machines are in the [Network app](wiki:network-app). Searching everything your Host can see is in the [Context app](wiki:context-app).
+The address book is the cards themselves, and the inbox is At the door and Waiting on you; notices to you are on the Support card. The calendar is its own app, [Calendar](wiki:calendar-app). How your Host thinks and replies is in [Settings](wiki:settings-app), under Response Shaping. Who may reach you, its rules, and your machines are in the [Network app](wiki:network-app). Searching everything your Host can see is in the [Context app](wiki:context-app).
 
 ## How do I control who can message me?
 
-In the [Network app](wiki:network-app). **Open** lets anyone on the network message you, and per-sender rules can still block someone. **Contacts only** lets through only your contacts and senders you have allowed. **Closed** keeps messages from other Hosts out entirely. Your card's front says which you chose. To block one person or one Host, use Block on their card. [Talking to other Hosts](wiki:talking-to-other-hosts) explains how those messages travel.
+In the [Network app](wiki:network-app), which has a setting for who may message you. **Open** lets anyone message you, and per-sender rules can still block someone. **Contacts only** lets through only your contacts and senders you have allowed. **Closed** keeps messages from other Hosts out entirely. Your card's front says which you chose. To block one person or one Host, use Block on their card. Messages between Hosts need a platform connection that a Host on its own does not have, so in this release the setting matters only once such messages can arrive.
 
 ## What happens when I report a problem?
 
-Your Host drafts a support ticket on the Support card that shows exactly what would be shared. Nothing is sent until you untick anything you do not want shared and press **Send**, and the platform's answer comes back to the same ticket. [Getting help](wiki:getting-help) has more.
+Your Host drafts a support ticket on the Support card that shows exactly what would be shared. Nothing is shared until you untick anything you do not want shared and press **Send**. [Getting help](wiki:getting-help) says what Send needs.
 
 ## When should I use the Workbench instead?
 

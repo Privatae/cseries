@@ -1,6 +1,6 @@
 ---
 title: Agents
-summary: An agent on a Host is a narrow, throwaway worker your Host sends to do one piece of untrusted work outside the platform, such as reading the open web or someone else's code. It starts with no permissions, gets only what the task needs, runs in the background and shows in the Agents app. Your Host also runs standing jobs on a schedule, many of them with no model at all.
+summary: An agent on a Host is a narrow, throwaway worker your Host sends to do one piece of untrusted work outside your Host, such as reading the open web or someone else's code. It starts with no permissions, gets only what the task needs, runs in the background and shows in the Agents app. Your Host also runs standing jobs on a schedule, many of them with no model at all.
 section: host
 order: 30
 questions:
@@ -13,13 +13,13 @@ questions:
   - Do agents use up tokens?
 ---
 
-On a Host, an agent is a worker your Host sends out to do one piece of work for you. You never build one and you never talk to one. You tell your Host what you want, and it writes the agent's brief, decides what the agent may touch, runs it, and reads what comes back. There are dispatched agents, for untrusted work outside the platform: the open web, someone else's code, or a message from another Host or person. Everything inside the platform your Host does itself. And there is scheduled work, which runs on a clock and often needs no model at all.
+On a Host, an agent is a worker your Host sends out to do one piece of work for you. You never build one and you never talk to one. You tell your Host what you want, and it writes the agent's brief, decides what the agent may touch, runs it, and reads what comes back. There are dispatched agents, for untrusted work outside your Host: the open web, someone else's code, or a message from another Host or person. Everything inside your Host, such as your projects, apps and settings, your Host does itself. And there is scheduled work, which runs on a clock and often needs no model at all.
 
 ## What is a dispatched agent?
 
-It is for untrusted work outside the platform: reading the open web, working through someone else's code, or handling a message from another Host or person. An agent reads that content so your Host does not have to act on it directly. For each one the Host writes the task in plain words, the list of tools the agent may use, and the capabilities it grants. The agent keeps no memory of its own and is gone when the task is done. It runs on the model the Host names for that task, or else the one you or your Host prefer for that kind of work (the web, someone else's code, or a message from another Host or person), or else your Host's own model. A named or preferred model you have ruled out is refused, and no agent starts.
+It is for untrusted work outside your Host: reading the open web, working through someone else's code, or handling a message from another Host or person. An agent reads that content so your Host does not have to act on it directly. For each one the Host writes the task in plain words, the list of tools the agent may use, and the capabilities it grants. The agent keeps no memory of its own and is gone when the task is done. It runs on the model the Host names for that task, or else the one you or your Host prefer for that kind of work (the web, someone else's code, or a message from another Host or person), or else your Host's own model. A named or preferred model you have ruled out is refused, and no agent starts.
 
-Work inside the platform is never a job for an agent, however many steps it takes: your projects, your repositories, the platform's code, your apps, settings and network. The Host does that itself. A dispatch that reads nothing from outside the platform is refused, and so is one that gives the agent any tool for work inside the platform, even beside the tools that read from outside; the Host then makes those calls directly, so a model is not paid to retype arguments the Host already holds.
+Work inside your Host is never a job for an agent, however many steps it takes: your projects, your repositories, its own code, your apps, settings and network. The Host does that itself. A dispatch that reads nothing from outside your Host is refused, and so is one that gives the agent any tool for work inside your Host, even beside the tools that read from outside; the Host then makes those calls directly, so a model is not paid to retype arguments the Host already holds.
 
 ## What is an agent allowed to do?
 
@@ -46,4 +46,4 @@ Jobs can run once or repeat hourly, daily, weekly, monthly or at a set interval,
 
 ## Do agents cost tokens?
 
-Dispatched agents and scheduled turns run on your models and your keys, so they use your provider account. Standing jobs run no model, so the Agents app shows them as "no model" rather than as a cost. Privatae never bills you for tokens; [plans and billing](wiki:plans-and-billing) covers what we do bill for.
+Dispatched agents and scheduled turns run on your models and your keys, so they use your provider account. Standing jobs run no model, so the Agents app shows them as "no model" rather than as a cost. Privatae does not bill for tokens.

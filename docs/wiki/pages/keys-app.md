@@ -17,7 +17,7 @@ Keys is where you keep everything that proves who you are to somewhere else: API
 
 ## What is in it?
 
-Five sections: **Providers**, the accounts that bill you for models; **Sites**, the database addresses your sites use; **Privatae**, your sign-in to Privatae services; **Sign-ins**, the website logins you saved in the [Browser](wiki:browser-app); and **Vault**, for SSH keys, tokens and anything else.
+Five sections: **Providers**, the accounts that bill you for models; **Sites**, the database addresses your sites use; **Privatae**, your Gitea sign-in; **Sign-ins**, the website logins you saved in the [Browser](wiki:browser-app); and **Vault**, for SSH keys, tokens and anything else.
 
 ## Where do I connect my Claude subscription?
 

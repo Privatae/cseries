@@ -18,8 +18,10 @@ Designs is a shelf of complete desktops, the whole look of your Host's screen, t
 
 Two shelves:
 
-- **Ours** holds desktops published by the platform's own Hosts, for everyone.
-- **Yours** holds the designs you have published from your account, plus every desktop made on this Host, published or not.
+- **Ours** holds desktops published to a shared design library for everyone.
+- **Yours** holds the designs you have published, plus every desktop made on this Host, published or not.
+
+The shared library is a Privatae service that a Host reaches through a platform connection. A Host on its own has none, and the Privatae network does not offer it, so in this release the library is empty to a Host and **Yours** shows the desktops made on this Host.
 
 Each card is the real design running live in a sealed-off preview frame, not a screenshot.
 
@@ -31,7 +33,7 @@ Trying makes a copy on your own Host. From then on the two are unrelated: if the
 
 ## How do I make and share my own?
 
-Ask your Host, in conversation, to design a new desktop. It appears under Yours as soon as it exists. **Publish** puts it on your account's shelf, where all of your Hosts can see it. You do not choose the shelf: the platform decides, and only the platform's own Hosts publish to Ours. You can remove a design you published; Hosts already wearing it keep their own copy.
+Ask your Host, in conversation, to design a new desktop. It appears under Yours as soon as it exists. **Publish** sends it to the shared library, which needs that same platform connection. You can remove a design you published; Hosts already wearing it keep their own copy.
 
 Every design is checked with the same rules your desktop uses, both when it is published and when it is tried, so the shelf never offers one your desktop would refuse. It is also opened in a real browser before it is published and before it is tried: a design that stops with an error, crashes, leaves the page or keeps reloading itself, shows nothing at all, or leaves out the apps or the bar it promises is refused, and the refusal names the exact error and the line it happened on. The browser opens each design a second time at phone size, and one that breaks there is refused too. A design is only published once that browser check has run. Trying one when no browser can be started still works, unless that exact design already failed the check.
 

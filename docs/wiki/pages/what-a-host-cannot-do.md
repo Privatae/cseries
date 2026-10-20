@@ -32,9 +32,9 @@ The dispatch is refused at the door, before any task exists. If the Host gives a
 
 ## What can the Host not do even with every capability?
 
-Widen your network without your code. A rule that lets more in or more out commits only with a code from your authenticator, and so do removing a rule that blocks something and releasing a quarantined machine. Tightening needs no code. With no authenticator enrolled, no widening can be committed at all. Each code works once, and repeated wrong codes make you wait before trying again.
+Widen what it can reach without your code. A rule that lets more in or more out commits only with a code from your authenticator, and so do removing a rule that blocks something and releasing a quarantined machine. Tightening needs no code. With no authenticator enrolled, no widening can be committed at all. Each code works once, and repeated wrong codes make you wait before trying again.
 
-Once you approve a rule, its terms are signed with your Host's key, and the gate enforces only signed terms. On your private network, a rule changed after approval puts traffic into quarantine. On traffic that passes the gate, which is open until you narrow it, a changed or unsigned rule is ignored, which can only ever widen reach and never cut your Host off. The authenticator's secret is kept in your Host's own database, so this guards against requests from outside your Host, not against code running inside it or against us.
+Once you approve a rule, its terms are signed with your Host's key, and the gate enforces only signed terms. On ingress, a rule changed after approval puts traffic into quarantine. On traffic that passes the gate, which is open until you narrow it, a changed or unsigned rule is ignored, which can only ever widen reach and never cut your Host off. The authenticator's secret is kept in your Host's own database, so this guards against requests from outside your Host, not against code running inside it.
 
 ## Why can nothing it dispatches run code?
 
@@ -46,7 +46,7 @@ Code runs only through the Host's own build tools, in a separate coding sandbox 
 
 - **Deleting files in a connected folder.** There is no delete operation for them, and a folder grant cannot include one.
 - **Revealing your keys.** Showing a key in clear text takes your code, in the Keys app only, and the Host cannot call it.
-- **Your backups and exports.** Restoring, confirming an export, and switching the live copy of your memory on or off are all walled from the Host.
+- **Your backups.** Restoring a backup and switching the live copy of your memory on or off are all walled from the Host.
 - **A shell on your machines.** The Host cannot open a shell on one of your machines, and cannot even draft a grant for one.
 - **Merging as you.** Your Host holds nothing that can merge code under your account. [Approvals](wiki:approvals) covers what else waits for you.
 

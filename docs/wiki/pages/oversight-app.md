@@ -34,4 +34,4 @@ Findings are almost never closed on their own. When a machine stops reporting a 
 
 No. The list only ever holds problems, so an empty list means nothing has been filed, not that every machine was checked. The Machines view shows who is actually being watched: a machine counts only when it is online and its alert source is answering. A machine whose alert source is not set up, has gone quiet, or is offline is one nobody is watching at the moment.
 
-See [Your machines](wiki:your-machines) for how machines join your network.
+See [Your machines](wiki:your-machines) for how a machine is paired with your Host.

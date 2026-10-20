@@ -20,23 +20,25 @@ anything on the site can reveal.
 Never on a page:
 
 - the internal product name (legal), a person's name, internal agent names
-- host names, addresses, regions, providers or counts of the fleet
+- host names, addresses or providers of any Privatae service
 - source paths, module or service names, tool names, API routes, config keys,
   environment variables, tool-call syntax, prompt text or skill text
 - ticket, finding or design-doc references; dated decision notes
 - security findings, open weaknesses, or which component holds which secret
   beyond what the blog already says
-- prices and plan numbers — link to https://privatae.ai/pricing instead, so
-  there is one place to change them
-- anything on the platform's "Do not claim these" list (kept in the platform
-  repo, not in this one)
+- prices and plan numbers: C-Series has no plans, so a page that states one
+  is out of date
+- anything on the "Do not claim these" list (kept outside this repo)
 
 `scripts/wiki_pages.py` has the leak scan that enforces the mechanical part of
 this; the build fails on a hit. The rest is judgement, and review.
 
-Keep the honest parts the blog keeps: we run the cluster the Host lives in, and
-we can reach into it; a Host's memory lives in its own database in the cloud;
-output comes from third-party models.
+Keep the honest parts: a Host runs on the person's own machine and Privatae
+does not run it; its memory lives in its own database on that machine; output
+comes from third-party models the person chooses. A feature that needs a
+service a standalone Host cannot reach (the App Store and community board
+need a network membership; support tickets, site publishing and the shared
+design library need a platform connection) says so on its page.
 
 ## How a page reads
 
@@ -45,8 +47,8 @@ output comes from third-party models.
   questions people ask ("## Can I use my own models?"): that is what search
   and answer engines match.
 - Vocabulary: **Host** is the product noun (capital H). A computer is a
-  **machine**, never "compute". The category is **an AI DMZ**. The **bastion**
-  is the program on your own machine. App names as the dock shows them.
+  **machine**, never "compute". The **bastion** is the program on your own
+  machine. App names as the dock shows them.
 - Say what is true in this release. No roadmap, no "soon", no "planned".
 - Link another page as `[text](wiki:slug)`; the check refuses a link to a page
   that does not exist. Link the site with full `https://privatae.ai/...` URLs.
@@ -76,7 +78,7 @@ what-a-host-is:
   sources:
     - server/network/nac_egress.py::resolve_exit
     - system-apps/network/app.yaml
-    - external:hosted-platform
+    - external:<repo>/<path>        # only for code in another repository
   verified:                          # written by --verify; never by hand
     date: '2026-09-30'
     digest: sha256:…

@@ -1,11 +1,12 @@
 ---
 title: Settings
-summary: Settings holds your Host's version and updates, its appearance and time zone, how it responds, the layout of your desktop and dock, and its backups. It comes with every Host and cannot be removed.
+summary: Settings holds your Host's version, its appearance and time zone, how it responds, the layout of your desktop and dock, its backups, and the optional Privatae network membership. It comes with every Host and cannot be removed.
 section: apps
 order: 10
 questions:
   - What can I change in the Settings app?
   - How do I update my Host?
+  - How do I join the Privatae network?
   - How do I change my desktop wallpaper or time zone?
   - How do I change how much my Host explains, or its personality?
   - Where do I set up backups for my Host?
@@ -13,11 +14,11 @@ questions:
 app: settings
 ---
 
-Settings is where you look after the Host itself: its version and updates, how the desktop looks, which apps sit in the dock, and its backups. It comes with every Host, and it is one of the few apps that cannot be uninstalled.
+Settings is where you look after the Host itself: its version, how the desktop looks, which apps sit in the dock, and its backups. It comes with every Host, and it is one of the few apps that cannot be uninstalled.
 
 ## How do I update my Host?
 
-The Updates tab shows the version your Host is running and checks for a newer one. When one is available you apply it from there, and History keeps a record of every update, including any that failed and why. [Updates and versions](wiki:updates-and-versions) explains how releases reach a Host.
+The Settings app shows the version your Host is running under About. Updating is done on the machine with `npx cseries update`; see [updates and versions](wiki:updates-and-versions). The Updates tab asks a Privatae service which version is published, and a Host on its own has no connection to it, so that tab cannot check for or apply an update.
 
 ## What can I change about how it looks?
 
@@ -31,9 +32,11 @@ Response Shaping has two settings. **How much your Host explains** has three pos
 
 ## How do backups work?
 
-Your Host backs itself up once a day unless you change the schedule in the Backup tab: its memory and data, its apps and files, and the code in its own Git repositories. Each backup is encrypted on your Host before it leaves, to your Host recovery key and to the key of any bastion you add, and to nothing else, so Privatae holds no key that opens it. You make your recovery key in your browser on your account page and keep it yourself; without one your Host takes no backups of its own, because there is nobody to encrypt them to.
+The Backup tab sets a schedule (every day, once a week, or off) and holds your keys. A backup is meant to be encrypted on your Host before it leaves, to a recovery key you keep and to the key of any bastion you add, so nobody else can open it. In this release a standalone Host cannot yet write or restore its own backups, so until that is finished the Host's volumes on your machine are the only copy.
 
-Separately, the platform also keeps its own copy of every Host on the same schedule, under a key the platform holds. [What the platform can see](wiki:what-the-platform-can-see) covers what that key means.
+## How do I join the Privatae network?
+
+The Network tab takes the one-time code from your account page. It is optional; see [joining the Privatae network](wiki:the-privatae-network).
 
 ## Can my Host change these for me?
 

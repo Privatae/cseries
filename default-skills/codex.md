@@ -80,8 +80,8 @@ tools (there is no `codex.run` tool):
 ## Costs
 
 Codex calls bill against the user's ChatGPT subscription (the OAuth
-token IS the subscription). Privatae Host doesn't add a per-call charge;
-its side is the harness's compute time, recorded for the monthly bill.
+token IS the subscription). C-Series adds no per-call charge, and Privatae
+bills nothing for the run.
 
 If the user is on the BYOK path (OPENAI_API_KEY instead of OAuth),
 each call bills their OpenAI account directly.

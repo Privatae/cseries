@@ -1,11 +1,10 @@
 ---
 title: The Network app
-summary: Network is the control panel for your private network, showing the machines joined to it, who may reach in, what your Host may reach out to, and what it may do on your machines. Nothing that widens access happens without your code. It comes with every Host.
+summary: Network is the control panel for the machines paired with your Host, showing who may reach in, what your Host may reach out to, and what it may do on your machines. Nothing that widens access happens without your code. It comes with every Host.
 section: apps
 order: 10
 questions:
-  - How do I add my computer to my Host's network?
-  - Where does my data actually go?
+  - How do I pair a bastion with my Host?
   - How do I block or allow what my Host can reach on the internet?
   - Can my Host change my network rules without asking me?
   - How do I cut off a machine I no longer trust?
@@ -15,11 +14,11 @@ questions:
 app: network
 ---
 
-Network is the control panel for your private network: the machines joined to it, who may reach in, what your Host may reach out to, and what it may do on your machines. It comes with every Host.
+Network is the control panel for the machines paired with your Host: who may reach in, what your Host may reach out to, and what it may do on your machines. It comes with every Host.
 
 ## What are the views?
 
-- **Map**: how everything connects, drawn two ways. **Logical** puts your Host in the middle with everything around it. **Physical** draws the path from your machine through the relay its tunnel dials to your Host: the one to use when you want to know where your data actually goes.
+- **Map**: how everything connects, drawn two ways. **Logical** puts your Host in the middle with everything around it. **Physical** draws the path as a tunnel through a relay, which a Host with no platform connection does not have, so use Logical.
 - **Bastions**: every machine running a [bastion](wiki:the-bastion). **Set up a bastion** gives you a one-time pairing token that lasts 15 minutes. Each machine shows its version; **Update all** asks every out-of-date machine to update in one step, and automatic updates are on unless you turn them off. Each machine also lists the other Hosts it says it serves: tap a Host's name for its card, **Message** one you are connected with (it opens Circles), or **Request connection** to one you are not.
 - **NAC** (network access control): your network access rules.
 - **Agents**: AI agents and automations your bastions see running on your machines, split into the ones you asked for and the ones you did not. You can acknowledge one or stop it.
@@ -33,8 +32,8 @@ You. Rules sit in three lanes, each with a default. **Ingress**, who may reach i
 
 ## Can I message my Host from Telegram, Slack or Discord?
 
-Yes, from one account, through that platform's app from the [App Store](wiki:app-store-app). When your Host starts the pairing, the Ingress lane in NAC shows a one-time code with a countdown: send it to your bot in a direct message from the account you want to let in. That account then waits for you here. **Let this account in** asks for your authenticator code, and **Don't pair** is free. Messages from it start turns in your chat with your full chat permissions, but it cannot approve anything. **Revoke** is free and refuses its next message.
+Yes, from one account, through that service's app from the [App Store](wiki:app-store-app), which needs a [network membership](wiki:the-privatae-network). The connector runs in a container of its own, and starting it on your own machine needs the local container runtime, which is not finished in this pre-release. When your Host starts the pairing, the Ingress lane in NAC shows a one-time code with a countdown: send it to your bot in a direct message from the account you want to let in. That account then waits for you here. **Let this account in** asks for your authenticator code, and **Don't pair** needs no code. Messages from it start turns in your chat with your full chat permissions, but it cannot approve anything. **Revoke** needs no code and refuses its next message.
 
 ## What can I do about a machine?
 
-**Suspend** pauses management and build work on it while keeping its grants. **Quarantine** cuts its tunnel completely, and releasing it brings it back without pairing again. **Revoke** removes it. Resuming and releasing both ask for your code. On a machine you have anchored, a new Host's pairing waits here until you choose what it may do and approve with your code, or deny it.
+**Suspend** pauses management and build work on it while keeping its grants. **Quarantine** cuts its connection completely, and releasing it brings it back without pairing again. **Revoke** removes it. Resuming and releasing both ask for your code. On a machine you have anchored, a new Host's pairing waits here until you choose what it may do and approve with your code, or deny it.

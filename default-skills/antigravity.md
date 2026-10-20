@@ -93,8 +93,8 @@ it; there is no "forget" button — tell the user plainly).
 
 Signed-in runs draw on the user's Google AI plan quota (Pro / Ultra; the plan
 decides the rate limit and refresh). Key runs bill the user's Google API
-account per token. Privatae Host adds no per-call charge; its side is the
-harness's compute time, recorded for the monthly bill.
+account per token. C-Series adds no per-call charge, and Privatae bills
+nothing for the run.
 
 ## A vendor quirk you will see in the run feed
 

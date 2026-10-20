@@ -1,49 +1,52 @@
 ---
-title: What is Privatae?
-summary: Privatae is an AI DMZ. You get a Host, a machine of your own in the cloud where your AI lives and remembers you, on a private network you own, working on models and keys you choose, behind limits that are enforced in code rather than asked for in a prompt.
+title: What is C-Series?
+summary: C-Series is an open-source AI agent that runs on your own machine. Each running copy is a Host, with its own memory, database, apps and rules, used from a browser, on model keys you bring, behind limits that are enforced in code rather than asked for in a prompt.
 section: start
 order: 10
 questions:
-  - What is Privatae?
-  - What does "an AI DMZ" mean?
-  - How is Privatae different from a chatbot?
+  - What is C-Series?
+  - How is it different from a chatbot?
+  - Where does a Host run?
+  - Do I need a Privatae account?
   - Do my files have to be uploaded to use it?
-  - Which AI models does Privatae use?
-  - What can I build with Privatae?
+  - Which AI models does it use?
+  - What can I build with it?
 ---
 
-Privatae is an AI DMZ: a network you own, with a machine on it that is yours. The machine is called a Host. Your AI lives there, remembers you and does its work. Your own computers join the same private network, and the models you choose reach your work through the Host, on your own keys, one request at a time.
+C-Series is an open-source AI agent (AGPL-3.0-only) that runs on your own machine. Each running instance is called a Host: one AI with its own memory, its own PostgreSQL database, its own apps and its own rules. You use it from a browser on the same machine. It runs sandboxed in a small Linux virtual machine as two containers, the Host and its database, and a separate program on the machine, the [bastion](wiki:the-bastion), decides what the Host may touch there.
 
-## What is a Host?
+## Where does a Host run?
 
-A Host is one machine in the cloud that belongs to you: its own database, its own disks, its own certificate, and its own address on your private network. It has no public address and no open port. You reach it from any browser, through the front door you sign in at, with nothing to install. [What a Host is](wiki:what-a-host-is) opens it up.
+On your machine, inside a Linux virtual machine. The installer sets the machine up and starts the Host; its dashboard answers only on your own machine, on 127.0.0.1. There is no hosted Host: Privatae does not run your Host, and there is no trial or per-use charge for one. [What a Host is](wiki:what-a-host-is) opens it up.
+
+## Do I need a Privatae account?
+
+No. A Host works without one. If you want to, you can join the Privatae network with a membership code, which adds the App Store and the community board. [Joining the Privatae network](wiki:the-privatae-network) says what that connects and what it does not.
 
 ## How is it different from a chatbot?
 
-A chatbot is a conversation. A Host is a machine you talk to, and it acts. It reads what you asked and picks a path: it answers, runs one known operation with no model involved, hands code to a coding engine in a sandbox of its own, or, for untrusted work outside the platform such as the open web, sends out a narrow agent that starts with no permissions at all. [How a Host handles a request](wiki:how-a-host-handles-a-request) follows each path, and [agents](wiki:agents) explains why an agent here is a worker the Host sends, not something you chat with.
+A chatbot is a conversation. A Host acts. It reads what you asked and picks a path: it answers, runs one known operation with no model involved, hands code to a coding engine, or, for untrusted work such as the open web, sends out a narrow agent that starts with no permissions at all. [How a Host handles a request](wiki:how-a-host-handles-a-request) follows each path, and [agents](wiki:agents) explains why an agent here is a worker the Host sends, not something you chat with.
 
 It also remembers. Every conversation is written down in its own database, and what is worth keeping is drawn out, corrected and replaced over time, never quietly rewritten. [How a Host remembers](wiki:memory) covers it.
 
-## What does "an AI DMZ" mean?
+## What stops a Host doing what I did not approve?
 
-A DMZ is how businesses and governments isolate what they cannot afford to lose: a separate zone, with rules enforced by the network rather than by anyone's good behaviour. Most of what an AI system does is network traffic, so Privatae is built that way. Your Host has no open port. Each of your machines reaches it through a tunnel that goes nowhere else. An agent it dispatches holds only what it was granted, and the grant is checked in code at every call. Anything that widens your network waits for a code from your authenticator. [What a Host cannot do](wiki:what-a-host-cannot-do) lists the walls.
+Checks in code, not requests in a prompt. An agent it dispatches holds only what it was granted, and the grant is checked at every call. Anything that widens what the Host may reach waits for a code from your authenticator. [What a Host cannot do](wiki:what-a-host-cannot-do) lists the walls.
 
-We run the cluster your Host lives in, and we can reach into it. [What the platform can see](wiki:what-the-platform-can-see) is plain about what that means.
+## What is the bastion?
 
-## What is the network?
-
-Each computer you add, whether a laptop, a machine at home or a server, runs a small program called the [bastion](wiki:the-bastion). It dials out to your Host and holds a private tunnel open, and that tunnel reaches your Host and nothing else. Nothing dials in to your machine. Once the tunnel is up, your Host can use what the machine offers and you allow: a folder, a model running on it, its internet connection. [Your private network](wiki:your-private-network) covers the whole of it.
+A separate program, licensed GPL-3.0-or-later, that runs on the machine itself rather than inside the virtual machine. Once it is paired with the Host, the Host can use what the machine offers and you allow: a folder, a model server running there. Nothing is reachable without a grant. [The bastion](wiki:the-bastion) covers the whole of it.
 
 ## Do my files have to be uploaded?
 
-No. A folder on one of your machines joins your network by a grant you approve. Your Host gets a map of what is there and reads what it needs, one file at a time, only as far as the grant allows. Nothing is uploaded or synced, and there is no way to delete through it. [Connected folders](wiki:connected-folders) explains how. Your Host's own memory is a different thing: it lives in the Host's database, in the cloud.
+No. A folder on your machine joins by a grant you approve. Your Host gets a map of what is there and reads what it needs, one file at a time, only as far as the grant allows. Nothing is synced, and there is no way to delete through it. [Connected folders](wiki:connected-folders) explains how. The Host's own memory is a different thing: it lives in the Host's database, on your machine.
 
 ## Whose models does it use?
 
-Yours. For each role your Host has you choose a provider and a model, on your own key or sign-in. Privatae does not make the models and never bills you for tokens. [Models and keys](wiki:models-and-keys) has the details.
+Yours. You add a key from a provider such as OpenRouter, Anthropic or OpenAI, or point the Host at a model server running on your machine, and choose a provider and model for each role the Host has. Privatae does not sell, proxy or bill model usage, and is not an inference provider. [Models and keys](wiki:models-and-keys) has the details.
 
 ## What can I build?
 
-You build by talking to your Host in the [Workbench](wiki:workbench). Coding engines you connect write the code, and each change comes back to you as a Code Approval that is merged only when you approve it, unless you have switched on Auto-Approve for that project. A finished project can be published as a site on the public web or as an app. See [publishing sites](wiki:publishing-sites) and [building apps](wiki:building-apps).
+You build by talking to your Host in the [Workbench](wiki:workbench). Coding engines you connect write the code, and each change comes back to you as a Code Approval that is merged only when you approve it, unless you have switched on Auto-Approve for that project. A finished project can be installed as an app on your Host. See [building apps](wiki:building-apps).
 
 New to the words? The [glossary](wiki:glossary) defines each one.

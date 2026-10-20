@@ -1,6 +1,6 @@
 ---
 title: Local models
-summary: Model servers running on your own machine can serve your Host through the bastion's tunnel. Point your Host's memory at an embedding model on a machine of yours and the text is turned into vectors on your hardware; your Host can also manage which models sit on that machine, with each download approved there.
+summary: Model servers running on your own machine can serve your Host through the bastion. Point your Host's memory at an embedding model on a machine of yours and the text is turned into vectors on your hardware; your Host can also manage which models sit on that machine, with each download approved there.
 section: network
 order: 40
 questions:
@@ -11,7 +11,7 @@ questions:
   - Can another Host use the models on my machine?
 ---
 
-A machine of yours that runs a model server can serve your Host. The [bastion](wiki:the-bastion) connects your Host to the model servers already running on that machine, over the tunnel the machine dials. Use one for embeddings and the vectors for your Host's memory are worked out on your own hardware: the text goes to your machine, not to a model provider, and the vectors come back to be stored in your Host's database.
+A machine of yours that runs a model server can serve your Host. The [bastion](wiki:the-bastion) connects your Host to the model servers already running on that machine, over the connection the bastion makes. Use one for embeddings and the vectors for your Host's memory are worked out on your own hardware: the text goes to your machine's model server, not to a model provider, and the vectors come back to be stored in your Host's database.
 
 ## Which model servers can a machine offer?
 
@@ -21,7 +21,7 @@ Using a model that is already loaded and choosing which models are on the disk a
 
 ## How do I run embeddings on my own machine?
 
-Embeddings turn text into numbers so your Host's memory can be searched by meaning. In the Network app, a machine that can serve embeddings shows **Serve my embeddings here**. Choose it and your Host sends the text it indexes to that machine's embedding model over the tunnel, and only the numbers come back.
+Embeddings turn text into numbers so your Host's memory can be searched by meaning. In the Network app, a machine that can serve embeddings shows **Serve my embeddings here**. Choose it and your Host sends the text it indexes to that machine's embedding model over the bastion's connection, and only the numbers come back.
 
 A switch is tested before it is saved: the machine has to answer with a real vector first. Switching never deletes or rewrites the vectors your Host already has. Each model's vectors are kept side by side, so switching back is instant. Entries that only the previous model embedded are not found by meaning under the new one until they are embedded again.
 

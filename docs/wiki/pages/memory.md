@@ -51,7 +51,7 @@ Yes. The Memory app has a picker with three settings: **Canonical** for what you
 
 ## Where is my Host's memory stored?
 
-In your Host's own database, which runs in a container of its own inside your Host's pod, on a disk that only that container mounts. That database is in the cloud, in the cluster we run, and we can reach it: [what the platform can see](wiki:what-the-platform-can-see) is plain about that. Your Host backs it up itself, encrypted only to keys you hold, once you have made a recovery key; separately, a platform job also backs it up once a day unless you change the schedule, encrypted under a key we hold. You can also keep a live copy on a machine of your own.
+In your Host's own database, which runs in a container of its own on your machine, on a volume that only that container mounts. A Host on its own sends none of it to Privatae. In this release a standalone Host cannot yet write its own backups, so keep a copy of the volume yourself if the memory matters to you; you can also keep a live copy of the database on a machine of your own through the bastion.
 
 ## Does memory need an embedding model?
 

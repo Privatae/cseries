@@ -11,7 +11,7 @@ questions:
   - Is there an SSH server or open port involved?
 ---
 
-Once a machine runs a [bastion](wiki:the-bastion), your Host can watch it and work on it within what you allow. Oversight shows the problems your machines report. Your Host changes a machine only through programs it writes and you approve, or through other narrow lanes you granted, each checked on the machine. Your Host cannot open a shell on your machine, and none of this needs an SSH server or an open port: every lane runs over the tunnel the machine dials out.
+Once a machine runs a [bastion](wiki:the-bastion), your Host can watch it and work on it within what you allow. Oversight shows the problems your machines report. Your Host changes a machine only through programs it writes and you approve, or through other narrow lanes you granted, each checked on the machine. Your Host cannot open a shell on your machine, and none of this needs an SSH server or an open port: every lane runs over the connection the bastion opens to your Host.
 
 ## What is Oversight?
 
@@ -29,4 +29,4 @@ The other lanes are narrower: a fixed list of built-in operations with fixed com
 
 What the grant lets it read: the machine's state, and in the Network app's Agents view, the AI agents and automations running on it and the scheduled jobs that would start one. Observing reads and reports. It changes nothing on the machine, and nothing in the bastion types or clicks for your Host.
 
-The rules for who may do what on your machines are on [your private network](wiki:your-private-network). The [Oversight app](wiki:oversight-app) page describes the window where machine problems show up.
+The rules for who may do what on your machines are on [network rules](wiki:your-private-network). The [Oversight app](wiki:oversight-app) page describes the window where machine problems show up.

@@ -59,7 +59,7 @@
         if (j.cpu && j.cpu.percent != null) parts.push(j.cpu.percent + '%');
         chip.textContent = parts.length ? parts.join(' · ') : '—';
         chip.title = agg.limit
-            ? 'Your machine — memory in use, out of your plan'
+            ? 'Your machine — memory in use, out of the memory limit set for this Host'
               + (agg.partial ? ' (something is not reporting)' : '')
             : 'Your machine — memory in use';
         // Hub sidecar down or policy-tampered is a warn state the user should
@@ -127,9 +127,9 @@
         const machineHead =
             '<div class="tray-res-label label-sys">your machine</div>' +
             '<div class="tray-res-stats">' +
-            `<div>memory <b>${fmtBytes(agg.used)}</b>${agg.limit ? ' of ' + fmtBytes(agg.limit) + ' plan' : ''}${agg.partial ? ' (partial)' : ''}</div>` +
+            `<div>memory <b>${fmtBytes(agg.used)}</b>${agg.limit ? ' of ' + fmtBytes(agg.limit) + ' limit' : ''}${agg.partial ? ' (partial)' : ''}</div>` +
             (agg.ceiling ? `<div>can burst to <b>${fmtBytes(agg.ceiling)}</b> when the machine has room</div>` : '') +
-            '<div class="tray-res-note">Everything below runs on your plan — the host, its database, networking, ' +
+            '<div class="tray-res-note">Everything below counts toward the memory total — the host, its database, networking, ' +
             'and any app in its own pod. The arrow is how far each can spike; nothing is held in reserve.</div>' +
             '</div>' + unitRows;
         // Cache is shown as a separate, explicitly reclaimable line. It is not

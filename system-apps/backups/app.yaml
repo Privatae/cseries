@@ -9,7 +9,9 @@ provenance: standard
 # value from the Host, a machine or a provider stays inside the attribute it
 # is written into. App-only change.
 # 3.0.6 (2026-10-18): the product is renamed C-Series (names, paths, env vars).
-version: "3.0.6"
+# 3.0.7 (2026-10-20): text only. The status line says where the encrypted copy is
+#   kept (this Host's database); the note no longer describes Privatae backups.
+version: "3.0.7"
 # Environment-catalog facts (host-facing, code-true). Source for the L1
 # topology block + describe_app — NOT a surface_role body (this is a control
 # panel, not a conversational surface): what_it_is/user_path only.

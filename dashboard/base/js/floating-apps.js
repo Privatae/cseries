@@ -210,7 +210,7 @@ const FloatingApps = (() => {
                     },
                 },
                 {
-                    label: 'Host Manager',
+                    label: 'Privatae account (optional)',
                     // Opens on privatae.ai, where the roster, the folders and
                     // the capacity pool already live. It is NOT framed into a
                     // desktop window: the entity server sets X-Frame-Options

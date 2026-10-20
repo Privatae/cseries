@@ -28,7 +28,9 @@ system: false
 # visible" and the rest) sends the pairs on screen and acts on those alone,
 # so a pair hidden by the search or the show-no toggle is never touched.
 # 0.2.8 (2026-10-18): the product is renamed C-Series (names, paths, env vars).
-version: "0.2.8"
+# 0.2.9 (2026-10-20): text only. Step 3 is headed "model key" and says the run is
+#   billed by Anthropic to the person's own account.
+version: "0.2.9"
 # Environment-catalog facts (host-facing, code-true). Source for the L1
 # topology block + describe_app — NOT a surface_role body (this is a control
 # panel, not a conversational surface): what_it_is/user_path only.

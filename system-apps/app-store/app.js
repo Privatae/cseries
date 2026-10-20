@@ -971,7 +971,7 @@
             if (r.status === 503 && info.checkout_unavailable) {
                 setFooter(info.reason === 'publisher_not_connected'
                     ? 'Purchase unavailable — this publisher has not connected payouts yet.'
-                    : 'Purchase unavailable — payments are not configured on this platform yet.');
+                    : 'Purchase unavailable — payments are not set up on this Host.');
                 return;
             }
             if (!r.ok) {
@@ -1292,8 +1292,7 @@
         }
         var costVal;
         if (mi != null && mi > 0) {
-            costVal = 'Up to ' + fmtMi(mi) + ' of this machine’s memory while it runs. ' +
-                'If your plan doesn’t have room, opening it will say so and name a plan that fits.';
+            costVal = 'Up to ' + fmtMi(mi) + ' of this machine’s memory while it runs.';
         } else if (kind === 'static') {
             costVal = 'None while closed; a window’s worth while open.';
         } else {

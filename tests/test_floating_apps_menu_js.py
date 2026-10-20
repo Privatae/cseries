@@ -88,13 +88,13 @@ def _open(pg):
 
 
 def test_bubble_offers_a_choice_instead_of_launching(page):
-    """The ask: two options pop up, Circles and Hostmanager."""
+    """The ask: two options pop up, Circles and the optional Privatae account."""
     assert page.evaluate("window.__launched") == []
     _open(page)
     items = page.locator(".floating-bubble-menu-item")
     assert [items.nth(i).inner_text() for i in range(items.count())] == [
         "Circles",
-        "Host Manager",
+        "Privatae account (optional)",
     ]
     # The click that opens the chooser must NOT also launch the app.
     assert page.evaluate("window.__launched") == []

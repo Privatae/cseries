@@ -36,7 +36,7 @@ The Backup tab sets a schedule (every day, once a week, or off) and holds your k
 
 ## How do I join the Privatae network?
 
-The Network tab takes the one-time code from your account page. It is optional; see [joining the Privatae network](wiki:the-privatae-network).
+The Network tab takes the one-time code from your Privatae account page. It is optional; see [joining the Privatae network](wiki:the-privatae-network).
 
 ## Can my Host change these for me?
 

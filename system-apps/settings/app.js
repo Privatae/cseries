@@ -680,7 +680,7 @@
 
     // What a host with no saved recovery key is told, everywhere it matters.
     var NO_KEY = 'Not backed up until you save your recovery key and confirm it here: make it on your '
-        + 'account page (Hosts, this host), save it, then check its fingerprint below against the one on '
+        + 'Privatae account page (Hosts, this host; this needs the optional Privatae network), save it, then check its fingerprint below against the one on '
         + 'the key you saved and use it, with a code from your second factor. Your host backs up from then on.';
 
     // Using a recovery key takes a code from the second factor; the owner
@@ -1109,11 +1109,11 @@
             // Nothing the platform sends is used on its word, the first key
             // included (server/host_backup.py pin_recovery_key).
             document.getElementById('bk-key-offer-text').textContent = rec
-                ? 'Your account page now holds a different recovery key for this host: ' + offer.fingerprint
+                ? 'Your Privatae account page now holds a different recovery key for this host: ' + offer.fingerprint
                   + ' (this host uses ' + rec.fingerprint + '). If you made a new recovery key and its '
                   + 'fingerprint is this one, use it here. If you did not, do not: a key you did not make '
                   + 'should never receive your backups. Backups taken before stay encrypted to the old key.'
-                : 'Your account page holds a recovery key for this host with the fingerprint ' + offer.fingerprint
+                : 'Your Privatae account page holds a recovery key for this host with the fingerprint ' + offer.fingerprint
                   + '. Compare it with the fingerprint on the recovery key you saved (the file and the '
                   + 'printout carry it). Use it here only if they match: a key you did not make should never '
                   + 'receive your backups. Until you do, this host takes no backups. Using it asks for a '
@@ -2746,7 +2746,7 @@
         var btn = document.getElementById('net-join-btn');
         var code = input ? input.value.trim() : '';
         if (!code) {
-            netSay('Enter the code from your account page, https://privatae.ai/account/network.');
+            netSay('Enter the code from your Privatae account, https://privatae.ai/account/network. Joining the network is optional.');
             return;
         }
         if (net.busy) return;

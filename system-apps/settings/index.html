@@ -204,7 +204,7 @@
             <section id="view-backup" class="app-view" hidden>
                 <div class="view-heading">
                     <h2>Backup</h2>
-                    <p class="view-sub">When your host backs itself up. Each backup is encrypted on your host before it leaves, to your recovery key and your bastions' keys; Privatae holds no key that opens it. That is not everything: while your host runs, the platform that runs it can reach what is in it, as with any hosted service. Times are in your own time zone.</p>
+                    <p class="view-sub">When your host backs itself up. Each backup is encrypted on your host before it leaves, to your recovery key and your bastions' keys; Privatae holds no key that opens it. Backups taken here use the optional Privatae network: the recovery key comes from your Privatae account, and the encrypted file is stored on Privatae storage by default. Times are in your own time zone.</p>
                 </div>
 
                 <div class="cseries-card">
@@ -234,7 +234,7 @@
 
                 <div class="view-heading" style="margin-top: var(--space-5);">
                     <h3 class="bundle-title">Your keys</h3>
-                    <p class="view-sub">Every backup is encrypted to your Host recovery key, and to the key of any bastion you add, and to nothing else. Your recovery key is made in your browser on your account page, and you keep it: Privatae never has it. Without it your host takes no backups, because there would be nobody to encrypt them to.</p>
+                    <p class="view-sub">Every backup is encrypted to your Host recovery key, and to the key of any bastion you add, and to nothing else. If you use the optional Privatae network, your recovery key is made in your browser on your Privatae account page, and you keep it: Privatae never has it. Without it your host takes no backups, because there would be nobody to encrypt them to.</p>
                 </div>
                 <div class="cseries-card">
                     <div class="label-sys" id="bk-key-state">Checking…</div>
@@ -322,7 +322,7 @@
 
                 <div class="cseries-card" id="bk-exports-card" hidden style="margin-top: var(--space-5);">
                     <h3 class="bundle-title">Exports waiting for you</h3>
-                    <p class="view-sub">You asked for an export on your account page. Your host builds it only when you confirm it here, and only if it matches the fingerprint written in your export key file: an export is a full copy of your host, sealed to that key. The account page is served by the platform, so check the fingerprint against your key file, not against the page.</p>
+                    <p class="view-sub">You asked for an export on your Privatae account page. Your host builds it only when you confirm it here, and only if it matches the fingerprint written in your export key file: an export is a full copy of your host, sealed to that key. The account page is served by Privatae, so check the fingerprint against your key file, not against the page.</p>
                     <div id="bk-exports"></div>
                     <label class="label-sys" for="bk-exports-totp" style="margin-top: var(--space-2);">Your six-digit code</label>
                     <input id="bk-exports-totp" class="cseries-input" style="max-width: 160px;"
@@ -438,11 +438,11 @@
                 </div>
 
                 <div class="cseries-card" id="net-join" hidden style="margin-top: var(--space-4);">
-                    <label class="label-sys" for="net-code">Code from your account page</label>
+                    <label class="label-sys" for="net-code">Code from your Privatae account</label>
                     <input id="net-code" class="cseries-input" style="max-width: 220px;"
                            autocomplete="one-time-code" spellcheck="false" autocapitalize="characters"
                            placeholder="XXXX-XXXX-XXXX" maxlength="24" />
-                    <p class="view-sub" style="margin-top: var(--space-2);">On your account page, <a href="https://privatae.ai/account/network" target="_blank" rel="noopener noreferrer">https://privatae.ai/account/network</a>, choose Add a Host to get a code. It works once, for 15 minutes.</p>
+                    <p class="view-sub" style="margin-top: var(--space-2);">Joining the Privatae network is optional, and this Host works without it. To join, open your Privatae account page, <a href="https://privatae.ai/account/network" target="_blank" rel="noopener noreferrer">https://privatae.ai/account/network</a>, choose Add a Host to get a code. It works once, for 15 minutes.</p>
                     <div class="bundle-actions" style="margin-top: var(--space-2);">
                         <button id="net-join-btn" class="cseries-btn primary">Join</button>
                     </div>

@@ -44,7 +44,7 @@ app-store-app:
   - server/mcp_connections.py::sync_app
   verified:
     date: '2026-10-20'
-    digest: sha256:de2c24ca031a0a44bfd1697384a2de77cc44f78e00c96b1fbd04c828124b1d6d
+    digest: sha256:400f0ff6bdce547d64c9019ebdc8012e039250e97627a59e32ea858529877a1e
 approvals:
   sources:
   - server/network/nac_commit.py
@@ -123,7 +123,7 @@ building-apps:
   - server/mcp_connections.py::sync_app
   verified:
     date: '2026-10-20'
-    digest: sha256:c83a42949a922769be62e185b05fc084faad11f2ccd72570555841993bb0f828
+    digest: sha256:8fab730e62cc7f73a279f237de51b5e09934dbd57666e3ca21735e67ed01e623
 calendar-app:
   sources:
   - system-apps/calendar/app.yaml
@@ -139,7 +139,7 @@ calendar-app:
   - scripts/image_baked_apps.txt
   verified:
     date: '2026-10-20'
-    digest: sha256:49ccce319de9851568581a97d4832ca278b2d1fc05b0842e9f738ba6ebe5f729
+    digest: sha256:c28481d9541fb00586312f188a64a6eaef0389ff767763d4ac14a45e2b7a7d7e
 circles-app:
   sources:
   - system-apps/circles/app.yaml
@@ -229,7 +229,7 @@ compute-app:
   - scripts/image_baked_apps.txt
   verified:
     date: '2026-10-20'
-    digest: sha256:cfd2aff4d4c493995616a68a415cff0f3b68a64fb6daf81e54c554575afca0f3
+    digest: sha256:95aab114053585e7b0aeb6a00b0e6116fbb91de8c18c96e2a680ddbdac00fe2c
 connected-folders:
   sources:
   - server/network/nac_propose.py::propose_dcn_store
@@ -526,7 +526,7 @@ settings-app:
   - server/host_backup.py
   verified:
     date: '2026-10-20'
-    digest: sha256:f16b72aff9ad974af3a1875320777587d7b332f1bffd4c2808c0466065bfcfcd
+    digest: sha256:9314dea2a36a5e1a19fbbb2068098d9cf6d301069512281e9bf3f1bf219d4385
 sites-app:
   sources:
   - system-apps/sites/app.yaml
@@ -572,7 +572,7 @@ the-privatae-network:
   - system-apps/settings/index.html
   verified:
     date: '2026-10-20'
-    digest: sha256:9e06619cb53bfbab12f944d3e20dfc7377621fd94ebf370227d1eb5fdf911be4
+    digest: sha256:fb7f00347e6fa607aec99fea2e629305c68fa1b8be891debd12bc3aa6d06ba03
 updates-and-versions:
   sources:
   - packages/cseries/src/cli.js
@@ -584,7 +584,7 @@ updates-and-versions:
   - brain/mastercode/runtime/host_changelog.py::ensure_weekly_changelog_task
   verified:
     date: '2026-10-20'
-    digest: sha256:44e54228dfe377f792e79c243f776995e7eefd84f9ee14d15f723d488f46f66b
+    digest: sha256:b45cb2c143e10f2b4150c941f80329d7a33a5552b2482c09572cf5ef109ddbb6
 what-a-host-cannot-do:
   sources:
   - brain/mastercode/runtime/agent_grant.py::parse_grant

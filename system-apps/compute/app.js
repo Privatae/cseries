@@ -2,7 +2,8 @@
 /* Compute — full cost-and-usage analytics.
  *
  * Three money lanes, never merged (each figure carries its lane):
- *   billed   — Privatae billables: what the platform actually charged.
+ *   billed   — compute fee recorded by this Host; billing is not part of
+ *              this release, so nothing is charged.
  *   estimate — vendor/inference spend: the vendor bill is never visible to
  *              Privatae, so these are ESTIMATES, labeled everywhere.
  *   usage    — resources (seconds, tokens, bytes): metered, not money.
@@ -58,7 +59,7 @@ const fmtPct = (f) => isUnknown(f) ? UNKNOWN : Math.round(100 * Number(f)) + "%"
 const fmtDay = (d) => (d || "").slice(5); // MM-DD
 
 const LANE_BADGE = {
-    billed: `<span class="ca-badge ca-badge-billed" title="Privatae billable — actually charged">billed</span>`,
+    billed: `<span class="ca-badge ca-badge-billed" title="Compute fee recorded by this Host — billing is not part of this release, so nothing is charged">fee</span>`,
     est: `<span class="ca-badge ca-badge-est" title="Estimate — the vendor bill is never visible to Privatae; never billed by Privatae">estimate</span>`,
     usage: `<span class="ca-badge ca-badge-usage" title="Resource usage — metered, not money">usage</span>`,
 };
@@ -184,7 +185,7 @@ const root = () => document.getElementById("view-root");
 
 function unbilledWarn(n) {
     if (!n) return "";
-    return ` <span class="ca-warn" title="${n} run${n === 1 ? "" : "s"} metered compute but the charge never reached the platform ledger (billing_ref missing) — an auditable gap, not a discount.">⚠ ${n} unbilled</span>`;
+    return ` <span class="ca-warn" title="${n} run${n === 1 ? "" : "s"} metered compute with no fee record. Billing is not part of this release, so none were charged.">⚠ ${n} no fee record</span>`;
 }
 
 // The vendor estimate sums only the runs that reported a vendor cost
@@ -258,11 +259,11 @@ async function renderProjects() {
     root().innerHTML = `
       <section class="ca-cards">
         <div class="ca-card">
-          <div class="ca-card-label">Privatae compute fee ${LANE_BADGE.billed}${totEst > 0 ? " " + LANE_BADGE.est : ""}</div>
+          <div class="ca-card-label">Compute fee ${LANE_BADGE.billed}${totEst > 0 ? " " + LANE_BADGE.est : ""}</div>
           <div class="ca-card-value">${fmtUsd(totBilled)}</div>
-          <div class="ca-card-sub">${totBilled === 0 && totRuns > 0 ? "usage metered — rate not set / charges pending"
-            : totEst > 0 ? fmtUsd(totBilled - totEst) + " charged + " + fmtUsd(totEst) + " locally estimated"
-            : "actually charged"}</div>
+          <div class="ca-card-sub">${totBilled === 0 && totRuns > 0 ? "usage metered — billing is not part of this release"
+            : totEst > 0 ? fmtUsd(totBilled - totEst) + " recorded + " + fmtUsd(totEst) + " locally estimated"
+            : "recorded; nothing is charged in this release"}</div>
         </div>
         <div class="ca-card">
           <div class="ca-card-label">Vendor spend ${LANE_BADGE.est}</div>
@@ -287,8 +288,8 @@ async function renderProjects() {
 
       <section class="ca-chartrow">
         <div class="ca-chartbox">
-          <div class="ca-chart-title">Privatae fee / day ${LANE_BADGE.billed}</div>
-          ${chartSVG(hd.map(r => ({ day: r.day, v: r.billed_usd + r.est_compute_usd })), { color: "var(--viz-s1)", fmt: fmtUsd, fmtKind: "usd", ariaLabel: "Daily Privatae billed compute in dollars" })}
+          <div class="ca-chart-title">Compute fee / day ${LANE_BADGE.billed}</div>
+          ${chartSVG(hd.map(r => ({ day: r.day, v: r.billed_usd + r.est_compute_usd })), { color: "var(--viz-s1)", fmt: fmtUsd, fmtKind: "usd", ariaLabel: "Daily compute fee in dollars" })}
         </div>
         <div class="ca-chartbox">
           <div class="ca-chart-title">Vendor + inference / day ${LANE_BADGE.est}</div>
@@ -309,7 +310,7 @@ async function renderProjects() {
         <table class="ca-table">
           <thead><tr>
             <th>project</th><th class="num">runs</th><th class="num">accepted</th>
-            <th class="num">privatae fee ${LANE_BADGE.billed}</th>
+            <th class="num">compute fee ${LANE_BADGE.billed}</th>
             <th class="num">vendor ${LANE_BADGE.est}</th>
             <th class="num">tokens</th><th class="num">compute</th>
             <th class="num">chat context</th><th class="num">cache&nbsp;hit</th>
@@ -346,25 +347,40 @@ async function renderProjects() {
 }
 
 // -- Billables --------------------------------------------------------------
+// What each Billing row says on this Host. The server's own wording for the
+// compute, site-traffic, storage and inference rows describes a hosted
+// service, so the page shows these instead.
+const METER_TEXT = {
+    harness_compute: "per-run compute time × vCPUs",
+    egress_public: "bytes served by published sites",
+};
+const NOTE_TEXT = {
+    harness_compute: "Compute time of harness runs on this Host. Billing is not part of this release, so nothing is charged.",
+    egress_public: "Not available in this release.",
+    egress_host: "Not measured by this Host.",
+    storage: "Storage use is not measured, so no number is shown.",
+    inference: "Calls to your own model providers, with your own keys. Privatae does not sell models or bill for them. Everything in the Inference view is an estimate: the provider's bill is never visible here.",
+};
+
 async function renderBillables() {
-    root().innerHTML = `<div class="ca-loading">Loading billables…</div>`;
+    root().innerHTML = `<div class="ca-loading">Loading billing…</div>`;
     let data;
     try { data = await load("billables"); }
     catch (e) { root().innerHTML = errorCard(e, "billables"); return; }
     const rows = data.billables || [];
     const statusChip = (r) => {
         if (r.status === "live") return r.charged
-            ? `<span class="ca-chip ca-chip-charged">charged</span>`
+            ? `<span class="ca-chip ca-chip-charged">fee recorded</span>`
             : `<span class="ca-chip">visibility only</span>`;
-        if (r.status === "not_exposed") return `<span class="ca-chip ca-chip-dim" title="${esc(r.note)}">metered platform-side — not visible here yet</span>`;
+        if (r.status === "not_exposed") return `<span class="ca-chip ca-chip-dim" title="${esc(r.note)}">not measured by this Host</span>`;
         if (r.status === "not_metered") return `<span class="ca-chip ca-chip-dim" title="${esc(r.note)}">not metered yet</span>`;
         if (r.status === "not_billed") return `<span class="ca-chip">never billed</span>`;
         return "";
     };
     root().innerHTML = `
       <section class="ca-section">
-        <div class="ca-section-head"><span class="ca-section-title">Every Privatae billable and meter</span>
-          <span class="ca-section-hint">what is charged, what is only measured, and what isn't measured at all — honestly</span></div>
+        <div class="ca-section-head"><span class="ca-section-title">Billing is not part of this release</span>
+          <span class="ca-section-hint">Nothing here is charged by Privatae. These are the meters this Host records, shown for your information.</span></div>
         <div class="ca-billables">
         ${rows.map(r => `
           <div class="ca-billable">
@@ -373,16 +389,16 @@ async function renderBillables() {
               ${LANE_BADGE[r.lane === "billed" ? "billed" : r.lane === "estimate" ? "est" : "usage"]}
               ${statusChip(r)}
             </div>
-            <div class="ca-billable-meter">${r.meter ? esc(r.meter) : "no meter exists for this yet"}</div>
+            <div class="ca-billable-meter">${METER_TEXT[r.id] || (r.meter ? esc(r.meter) : "no meter exists for this yet")}</div>
             ${r.id === "harness_compute" ? `
               <div class="ca-billable-stats">
-                <span><strong>${fmtUsd(r.billed_usd)}</strong> billed (${fmtNum(r.billed_runs)} run${r.billed_runs === 1 ? "" : "s"})</span>
+                <span><strong>${fmtUsd(r.billed_usd)}</strong> fee recorded (${fmtNum(r.billed_runs)} run${r.billed_runs === 1 ? "" : "s"})</span>
                 ${r.est_compute_usd > 0 ? `<span>${fmtUsd(r.est_compute_usd)} locally estimated ${LANE_BADGE.est}</span>` : ""}
                 <span>${fmtSecs(r.compute_s)} metered</span>
-                ${r.unpriced_runs > 0 ? `<span>${fmtNum(r.unpriced_runs)} run${r.unpriced_runs === 1 ? "" : "s"} captured unpriced (rate pending)</span>` : ""}
-                ${r.unbilled_runs > 0 ? `<span class="ca-warn">⚠ ${fmtNum(r.unbilled_runs)} run${r.unbilled_runs === 1 ? "" : "s"} unbilled — metered compute whose charge never reached the ledger</span>` : ""}
+                ${r.unpriced_runs > 0 ? `<span>${fmtNum(r.unpriced_runs)} run${r.unpriced_runs === 1 ? "" : "s"} captured unpriced</span>` : ""}
+                ${r.unbilled_runs > 0 ? `<span class="ca-warn">⚠ ${fmtNum(r.unbilled_runs)} run${r.unbilled_runs === 1 ? "" : "s"} with no fee record — billing is not part of this release</span>` : ""}
               </div>` : ""}
-            <div class="ca-billable-note">${esc(r.note || "")}</div>
+            <div class="ca-billable-note">${esc(NOTE_TEXT[r.id] || r.note || "")}</div>
           </div>`).join("")}
         </div>
       </section>`;
@@ -411,7 +427,7 @@ function harnessTable(rows, withModel) {
         <th class="num">runs</th><th class="num">ok</th><th class="num">accepted</th>
         <th class="num">tokens</th>
         <th class="num">wall p50 / p95</th>
-        <th class="num">privatae fee ${LANE_BADGE.billed}</th>
+        <th class="num">compute fee ${LANE_BADGE.billed}</th>
         <th class="num">vendor ${LANE_BADGE.est}</th>
         <th class="num ca-hero">cost / accepted</th>
       </tr></thead>
@@ -480,7 +496,7 @@ async function renderRuns() {
           <thead><tr>
             <th>when</th><th>project</th><th>harness</th><th>model</th><th>status</th>
             <th class="num">tokens</th><th class="num">compute</th>
-            <th class="num">privatae fee ${LANE_BADGE.billed}</th>
+            <th class="num">compute fee ${LANE_BADGE.billed}</th>
             <th class="num">vendor ${LANE_BADGE.est}</th><th></th>
           </tr></thead>
           <tbody>${runs.map(r => `
@@ -535,11 +551,11 @@ async function toggleRunDetail(runId) {
           <span>elapsed</span><span>${fmtSecs(d.elapsed_s)}</span>
           ${d.metadata && d.metadata.retries ? `<span>retries</span><span>${esc(d.metadata.retries)}</span>` : ""}
           ${u ? `
-            <span>billing</span><span>${u.cost_method === "billed"
-                ? `${fmtUsd(u.billed_usd)} billed (ref ${esc(u.billing_ref || "?")})`
+            <span>fee</span><span>${u.cost_method === "billed"
+                ? `${fmtUsd(u.billed_usd)} recorded (ref ${esc(u.billing_ref || "?")})`
                 : u.cost_method === "compute"
                 ? `${fmtUsd(u.est_compute_usd)} locally estimated — not charged`
-                : "captured unpriced — rate pending"}${(d.compute_s > 0 && !u.billing_ref) ? ` <span class="ca-warn">⚠ charge never reached the ledger</span>` : ""}</span>
+                : "captured unpriced"}${(d.compute_s > 0 && !u.billing_ref) ? ` <span class="ca-warn">⚠ no fee record</span>` : ""}</span>
             <span>vendor</span><span title="estimate — never billed by Privatae">${
                 isUnknown(u.vendor_est_usd)
                     ? `${UNKNOWN} <span class="ca-chip ca-chip-dim">not reported by the harness</span>`
@@ -579,7 +595,7 @@ async function renderInference() {
             return `<td class="num" title="estimate — computed from token counts; the vendor bill is never visible">${fmtUsd(r.est_cost_usd)}${partial}</td>`;
         }
         if (sub > 0 && unpriced === 0) {
-            return `<td class="num"><span class="ca-chip" title="covered by a flat plan — no per-token cost to estimate">flat plan</span></td>`;
+            return `<td class="num"><span class="ca-chip" title="covered by your provider subscription — no per-token cost to estimate">subscription</span></td>`;
         }
         return `<td class="num"><span class="ca-chip ca-chip-dim" title="no published rate card for this model, so no dollar figure can be honestly given — the tokens are real">unpriced</span></td>`;
     };

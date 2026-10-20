@@ -25,7 +25,7 @@ Your providers bill you under your own key, and the Host never sees that bill, s
 ## What are the views?
 
 - **Projects**: what each project has used, its tokens, and how much of its context was served from a provider's cache.
-- **Billables**: the meters Compute knows about, one row each, with how each is measured and whether it is charged. They are the meters of the hosted service Compute was first built for: a Host with no platform connection has nothing charged on them, and a meter that is not measured on your Host says so instead of showing a guessed number.
+- **Billing**: the meters Compute knows about, one row each, with how each is measured. Billing is not part of this release, so nothing on this tab is charged. A meter that is not measured on your Host says so instead of showing a guessed number.
 - **Harnesses**: each coding engine, and each engine-and-model pair, with runs that succeeded and failed, median and 95th-percentile run times, and cost per accepted run. A run counts as accepted when you shipped it, never because a model judged it good.
 - **Runs**: one project, one engine, one run, down to the tail of its transcript.
 - **Inference**: estimated model spend by background job and by model, including tokens read from and written to a provider's cache.

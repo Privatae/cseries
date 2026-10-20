@@ -13,13 +13,13 @@
   <header class="ca-header">
     <div class="ca-brand">
       <h1 class="ca-title">Compute</h1>
-      <div class="ca-subtitle">Where your compute and inference go — by project, billable, harness, and run.</div>
+      <div class="ca-subtitle">Where your compute and inference go — by project, harness, and run. Billing is not part of this release.</div>
     </div>
     <div class="ca-header-controls">
       <div class="ca-lanes" aria-label="The three money lanes">
-        <span class="ca-lane ca-lane-billed" title="Privatae billables — the amounts the platform actually charged. Real, metered money.">Billed</span>
+        <span class="ca-lane ca-lane-billed" title="Compute fee — billing is not part of this release, so nothing is charged. A figure appears here only if this Host recorded one.">Fee</span>
         <span class="ca-lane ca-lane-est" title="Vendor / inference spend — an ESTIMATE. Your provider's bill is never visible to Privatae, and none of this is billed by Privatae.">Estimate</span>
-        <span class="ca-lane ca-lane-usage" title="Resource usage — seconds, tokens, bytes. Some metered and charged, some metered for visibility only; the Billables view says which, per row.">Usage</span>
+        <span class="ca-lane ca-lane-usage" title="Resource usage — seconds, tokens, bytes. Metered for visibility only; nothing here is charged. The Billing view lists each meter.">Usage</span>
       </div>
       <div class="ca-window-picker" id="window-picker" role="group" aria-label="Time window">
         <button type="button" data-window="7d" aria-pressed="false">7d</button>
@@ -32,7 +32,7 @@
 
   <nav class="ca-tabs" role="tablist" aria-label="Compute views">
     <button class="ca-tab active" role="tab" aria-selected="true" data-view="projects">Projects</button>
-    <button class="ca-tab" role="tab" aria-selected="false" data-view="billables">Billables</button>
+    <button class="ca-tab" role="tab" aria-selected="false" data-view="billables">Billing</button>
     <button class="ca-tab" role="tab" aria-selected="false" data-view="harnesses">Harnesses</button>
     <button class="ca-tab" role="tab" aria-selected="false" data-view="runs">Runs</button>
     <button class="ca-tab" role="tab" aria-selected="false" data-view="inference">Inference <span class="ca-tab-est">est</span></button>

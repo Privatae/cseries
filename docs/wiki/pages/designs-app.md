@@ -18,10 +18,10 @@ Designs is a shelf of complete desktops, the whole look of your Host's screen, t
 
 Two shelves:
 
-- **Ours** holds desktops published to a shared design library for everyone.
+- **Ours** holds the house designs. Two come with every Host, **First Light** and **Garnet Silk**, and are there with no connection to anything. A Host with a platform connection also sees the desktops published to the shared design library for everyone.
 - **Yours** holds the designs you have published, plus every desktop made on this Host, published or not.
 
-The shared library is a Privatae service that a Host reaches through a platform connection. A Host on its own has none, and the Privatae network does not offer it, so in this release the library is empty to a Host and **Yours** shows the desktops made on this Host.
+The shared library is a Privatae service that a Host reaches through a platform connection. A Host on its own has none, and the Privatae network does not offer it, so on such a Host **Ours** shows the two built-in designs and **Yours** shows the desktops made on this Host.
 
 Each card is the real design running live in a sealed-off preview frame, not a screenshot.
 

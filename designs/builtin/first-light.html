@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="cseries-desktop" content="desktop">
+<meta name="cseries-bar" content="bottom 56">
+<meta name="cseries-tokens" content="--cseries-ink:#04060a; --cseries-night:#0a0e15; --cseries-twilight:#10161f; --cseries-silk:#18202c; --cseries-veil:#232d3b; --cseries-mist:rgba(180,205,255,0.12); --cseries-mist-strong:rgba(190,215,255,0.24); --cseries-paper:#eef2f8; --cseries-linen:#b3bdcc; --cseries-ash:#7c8798; --cseries-ember:#b5612a; --cseries-dusk:#ffb877; --cseries-bright:#ffd6a6; --cseries-moss:#7fcfa4; --cseries-clay:#e0705c; --cseries-gold:#e9c46a; --cseries-ember-soft:rgba(255,170,100,0.14); --cseries-ember-ring:rgba(255,184,119,0.45); --cseries-seam:rgba(180,205,255,0.08); --cseries-seam-active:rgba(255,184,119,0.38); --cseries-glass:rgba(8,12,19,0.62); --cseries-glass-blur:22px; --cseries-glow:rgba(255,184,119,0.55); --cseries-tile-bg:#1a2230; --cseries-tile-bg-2:#0e131b; --cseries-icon-size:52px; --cseries-taskbar-h:56px; --cseries-window-head-h:38px; --cseries-radius-sm:6px; --cseries-radius-md:10px; --cseries-radius-lg:14px; --cseries-radius-xl:20px; --cseries-font-body:system-ui, 'Segoe UI Variable Text', 'Segoe UI', Inter, Roboto, sans-serif; --cseries-font-display:system-ui, 'SF Pro Display', 'Segoe UI Variable Display', 'Segoe UI', Inter, sans-serif; --cseries-font-mono:ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>First Light</title>
+<style>
+:root{
+  --cseries-ink:#04060a; --cseries-night:#0a0e15; --cseries-twilight:#10161f; --cseries-silk:#18202c; --cseries-veil:#232d3b;
+  --cseries-mist:rgba(180,205,255,0.12); --cseries-mist-strong:rgba(190,215,255,0.24);
+  --cseries-paper:#eef2f8; --cseries-linen:#b3bdcc; --cseries-ash:#7c8798;
+  --cseries-ember:#b5612a; --cseries-dusk:#ffb877; --cseries-bright:#ffd6a6;
+  --cseries-ember-ring:rgba(255,184,119,0.45); --cseries-glow:rgba(255,184,119,0.55);
+  --cseries-font-body:system-ui, 'Segoe UI Variable Text', 'Segoe UI', Inter, Roboto, sans-serif;
+  --cseries-font-display:system-ui, 'SF Pro Display', 'Segoe UI Variable Display', 'Segoe UI', Inter, sans-serif;
+  --cseries-font-mono:ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, Consolas, monospace;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;background:var(--cseries-ink);color:var(--cseries-paper);font-family:var(--cseries-font-body);-webkit-font-smoothing:antialiased}
+button{font:inherit;color:inherit;background:none;border:0;cursor:pointer;-webkit-tap-highlight-color:transparent}
+#sky,#fallback{position:fixed;inset:0;width:100%;height:100%;display:block;z-index:0}
+#fallback{display:none}
+
+#hud{position:fixed;left:0;right:0;top:0;z-index:2;display:flex;flex-direction:column;align-items:center;text-align:center;padding:clamp(48px,12vh,132px) 24px 0;pointer-events:none;animation:arrive 2.4s cubic-bezier(.2,.7,.2,1) both}
+#clock{display:flex;align-items:flex-start;font-family:var(--cseries-font-display);font-weight:200;font-size:clamp(64px,8.4vw,136px);letter-spacing:-0.035em;line-height:1;font-variant-numeric:tabular-nums;text-shadow:0 2px 34px rgba(0,0,0,.6)}
+#per{font-size:14px;font-weight:400;letter-spacing:.22em;margin:clamp(12px,1.25vw,21px) 0 0 12px;color:var(--cseries-linen);text-transform:uppercase}
+#date{margin-top:16px;font-size:12px;letter-spacing:.34em;text-transform:uppercase;color:var(--cseries-linen);text-shadow:0 1px 12px #000}
+#presence{margin-top:18px;max-width:min(64ch,80vw);font-size:14px;line-height:1.45;color:var(--cseries-ash);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;text-shadow:0 1px 10px #000}
+
+#apps{position:fixed;inset:0;z-index:3;pointer-events:none;animation:arrive 3s .4s cubic-bezier(.2,.7,.2,1) both}
+.tile{position:absolute;width:72px;height:74px;display:flex;flex-direction:column;align-items:center;pointer-events:auto;outline:none;border-radius:18px}
+.tile .ic{width:48px;height:48px;display:grid;place-items:center;border-radius:50%;color:var(--cseries-paper);opacity:.84;background:radial-gradient(closest-side,rgba(0,0,0,.45),rgba(0,0,0,0));transition:opacity .3s,transform .5s cubic-bezier(.2,.7,.2,1),filter .3s}
+.tile .ic svg,.tile .ic img{width:28px;height:28px;display:block}
+.tile .ic .sk-app-letter{font-size:19px;font-weight:300;line-height:1}
+.tile .dot{position:absolute;top:49px;left:50%;width:3px;height:3px;margin-left:-1.5px;border-radius:50%;background:var(--cseries-paper);opacity:0;transition:opacity .3s}
+.tile.is-running .dot{opacity:.7}
+.tile.is-focused .dot{background:var(--cseries-dusk);box-shadow:0 0 8px var(--cseries-glow);opacity:1}
+.tile .nm{margin-top:8px;font-size:11.5px;letter-spacing:.03em;color:var(--cseries-paper);white-space:nowrap;opacity:0;transform:translateY(-3px);transition:opacity .25s,transform .25s;text-shadow:0 1px 8px #000,0 0 3px #000}
+.tile:hover .ic,.tile:focus-visible .ic{opacity:1;transform:translateY(-3px) scale(1.08);filter:drop-shadow(0 0 10px rgba(255,214,166,.35))}
+.tile:focus-visible .ic{box-shadow:0 0 0 1px var(--cseries-ember-ring)}
+.tile:hover .nm,.tile:focus-visible .nm{opacity:1;transform:none}
+
+#bar{position:fixed;left:0;right:0;bottom:0;height:56px;z-index:4;display:none;align-items:center;gap:6px;padding:0 0 0 12px;background:linear-gradient(to top,rgba(2,4,8,.72),rgba(2,4,8,0))}
+body.owns-bar #bar{display:flex}
+.bar-l,.bar-r{display:flex;align-items:center;min-width:0}
+.bar-r{margin-left:auto;gap:10px}
+.gl{width:40px;height:40px;display:grid;place-items:center;border-radius:12px;color:var(--cseries-linen);opacity:.8;transition:opacity .2s,color .2s}
+.gl:hover,.gl:focus-visible{opacity:1;color:var(--cseries-paper)}
+.gl svg{width:20px;height:20px;display:block}
+#dock{display:flex;align-items:center;gap:2px;margin-left:8px}
+#dock button{width:40px;height:40px;display:grid;place-items:center;position:relative;color:var(--cseries-paper);opacity:.42;transition:opacity .2s}
+#dock button.on{opacity:.88}
+#dock button.focus,#dock button:hover{opacity:1}
+#dock .ic svg,#dock .ic img{width:20px;height:20px;display:block}
+#dock .ic .sk-app-letter{font-size:14px}
+#dock button::after{content:"";position:absolute;bottom:3px;left:50%;width:3px;height:3px;margin-left:-1.5px;border-radius:50%;background:var(--cseries-paper);opacity:0;transition:all .25s}
+#dock button.on::after{opacity:.6}
+#dock button.focus::after{width:12px;margin-left:-6px;border-radius:2px;background:var(--cseries-dusk);box-shadow:0 0 8px var(--cseries-glow);opacity:1}
+#wins{display:flex;gap:4px;margin-left:8px;min-width:0}
+#wins button{max-width:180px;height:30px;padding:0 10px;font-size:12px;color:var(--cseries-linen);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;border-radius:8px}
+#wins button:hover{color:var(--cseries-paper)}
+#wins button.min{opacity:.5}
+#who{display:flex;align-items:center;gap:8px;font-size:11px;letter-spacing:.28em;text-transform:uppercase;color:var(--cseries-linen)}
+#who i{width:5px;height:5px;border-radius:50%;background:var(--cseries-dusk);box-shadow:0 0 10px var(--cseries-glow);animation:breathe 4.5s ease-in-out infinite}
+#machine{font-family:var(--cseries-font-mono);font-size:11px;color:var(--cseries-ash);padding:8px 4px;border-radius:6px}
+#machine:hover{color:var(--cseries-paper)}
+#showdesk{width:36px;height:56px;display:grid;place-items:center}
+#showdesk span{width:1px;height:20px;background:var(--cseries-mist-strong);transition:background .2s,height .2s}
+#showdesk:hover span,#showdesk.on span{background:var(--cseries-dusk);height:30px}
+
+@keyframes arrive{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
+@keyframes breathe{50%{opacity:.35}}
+@media (prefers-reduced-motion: reduce){#hud,#apps{animation:none}#who i{animation:none}}
+
+/* phone: the same scene, horizon lifted, apps in a grid over the night side */
+body.phone{display:flex;flex-direction:column}
+body.phone #bar{display:none!important}
+body.phone #hud{position:relative;flex:none;padding:34px 20px 0}
+body.phone #clock{font-size:60px}
+body.phone #per{font-size:11px;margin:9px 0 0 8px}
+body.phone #date{margin-top:8px;font-size:11px;letter-spacing:.26em}
+body.phone #presence{margin-top:10px;font-size:13px;max-width:100%}
+body.phone #apps{position:relative;inset:auto;flex:1 1 auto;min-height:0;overflow-y:auto;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));align-content:start;gap:4px 4px;padding:16px 10px 24px;pointer-events:auto}
+body.phone .tile{position:relative;width:auto;height:88px;min-width:0}
+body.phone .tile .ic{width:54px;height:54px;opacity:.95}
+body.phone .tile .dot{top:56px}
+body.phone .tile .nm{opacity:1;transform:none;max-width:100%;overflow:hidden;text-overflow:ellipsis;font-size:11px;padding:0 2px}
+body.phone .tile:hover .ic{transform:none;filter:none}
+@media (orientation: landscape){
+  body.phone{flex-direction:row}
+  body.phone #hud{width:40%;justify-content:center;padding:16px}
+  body.phone #clock{font-size:48px}
+}
+</style>
+</head>
+<body>
+<canvas id="sky" aria-hidden="true"></canvas>
+<canvas id="fallback" aria-hidden="true"></canvas>
+
+<header id="hud">
+  <div id="clock"><span id="hm"></span><span id="per"></span></div>
+  <div id="date"></div>
+  <div id="presence"></div>
+</header>
+
+<div id="apps" role="list" aria-label="Apps"></div>
+
+<nav id="bar" aria-label="Taskbar">
+  <div class="bar-l">
+    <button class="gl" type="button" data-cseries-launcher title="All apps" aria-label="All apps"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="12" cy="12" r="4.3"/><path d="M5.2 9.6C2.9 10.9 1.8 12.3 2.3 13.4c.9 2 6.2 1.6 11.8-.9s9.4-6.1 8.5-8.1c-.5-1.1-2.3-1.3-4.8-.8"/></svg></button>
+    <div id="dock" role="list" aria-label="Dock"></div>
+    <div id="wins"></div>
+  </div>
+  <div class="bar-r">
+    <span id="who"><i></i><span id="who-name"></span></span>
+    <button id="machine" type="button" data-cseries-machine title="Machine"></button>
+    <button class="gl" type="button" data-cseries-help title="Help" aria-label="Help"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><path d="M9.7 9.4a2.4 2.4 0 1 1 3.4 2.2c-.7.4-1.1.9-1.1 1.7v.3"/><circle cx="12" cy="16.7" r=".5" fill="currentColor"/></svg></button>
+    <button id="showdesk" type="button" data-cseries-show-desktop title="Show desktop" aria-label="Show desktop"><span></span></button>
+  </div>
+</nav>
+
+<script id="fs" type="x-shader/x-fragment">
+#ifdef GL_FRAGMENT_PRECISION_HIGH
+precision highp float;
+#else
+precision mediump float;
+#endif
+uniform vec2 uRes;
+uniform float uPitch;
+uniform float uTan;
+uniform vec3 uSun;
+uniform float uSpin;
+uniform float uCloud;
+
+const float PR = 1.0;
+const float HR = 0.0036;
+const float HM = 0.0009;
+const float ALT = 1.12;
+const vec3 BR = vec3(14.0, 32.0, 78.0);
+const float BM = 28.0;
+const vec3 SUNE = vec3(20.0, 19.6, 18.8);
+
+float hash12(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+float hash13(vec3 p3){ p3 = fract(p3 * 0.1031); p3 += dot(p3, p3.zyx + 31.32); return fract((p3.x + p3.y) * p3.z); }
+
+float noise(vec3 x){
+  vec3 i = floor(x);
+  vec3 f = fract(x);
+  f = f * f * (3.0 - 2.0 * f);
+  float a = hash13(i);
+  float b = hash13(i + vec3(1.0, 0.0, 0.0));
+  float c = hash13(i + vec3(0.0, 1.0, 0.0));
+  float d = hash13(i + vec3(1.0, 1.0, 0.0));
+  float e = hash13(i + vec3(0.0, 0.0, 1.0));
+  float g = hash13(i + vec3(1.0, 0.0, 1.0));
+  float h = hash13(i + vec3(0.0, 1.0, 1.0));
+  float k = hash13(i + vec3(1.0, 1.0, 1.0));
+  return mix(mix(mix(a, b, f.x), mix(c, d, f.x), f.y), mix(mix(e, g, f.x), mix(h, k, f.x), f.y), f.z);
+}
+
+// fbm that fades octaves smaller than a pixel (fp = world size of one pixel)
+float fbm(vec3 p, float freq, float fp, int oct){
+  float a = 0.5;
+  float s = 0.0;
+  float tot = 0.0;
+  float f = freq;
+  for (int i = 0; i < 7; i++){
+    if (i >= oct) break;
+    float k = clamp(1.0 / (f * fp * 2.5) - 0.5, 0.0, 1.0);
+    s += a * mix(0.5, noise(p * f), k);
+    tot += a;
+    f *= 2.03;
+    a *= 0.5;
+    p = p.yzx + vec3(1.7, 9.2, 3.1) / f;
+  }
+  return s / tot;
+}
+
+// Chapman grazing-incidence approximation: column density (in scale heights) from radius x (in scale heights) toward cos-zenith mu
+float chap(float x, float mu, float X){
+  float c = sqrt(1.5707963 * x);
+  if (mu >= 0.0) return exp(X - x) * c / ((c - 1.0) * mu + 1.0);
+  float xt = x * sqrt(max(1.0 - mu * mu, 0.0));
+  float ct = sqrt(1.5707963 * xt);
+  return 2.0 * ct * exp(min(X - xt, 60.0)) - exp(X - x) * c / ((c - 1.0) * (-mu) + 1.0);
+}
+vec2 column(vec3 P, vec3 dir){
+  float r = length(P);
+  float mu = dot(P, dir) / r;
+  return vec2(HR * chap(r / HR, mu, PR / HR), HM * chap(r / HM, mu, PR / HM));
+}
+vec2 limbColumn(float hh){
+  float r = PR + hh;
+  return vec2(2.0 * HR * sqrt(1.5707963 * r / HR) * exp(-hh / HR), 2.0 * HM * sqrt(1.5707963 * r / HM) * exp(-hh / HM));
+}
+vec3 trans(vec2 col){ return exp(-(BR * col.x + vec3(BM * 1.11 * col.y))); }
+float phaseR(float mu){ return 0.0596831 * (1.0 + mu * mu); }
+float phaseM(float mu){
+  const float g = 0.76;
+  float g2 = g * g;
+  float d = max(1.0 + g2 - 2.0 * g * mu, 1e-4);
+  return 0.1193662 * (1.0 - g2) * (1.0 + mu * mu) / ((2.0 + g2) * d * sqrt(d));
+}
+vec3 inscatter(vec2 col, vec3 Tsun, float nu){
+  vec3 tR = BR * col.x;
+  float tM = BM * col.y;
+  vec3 ext = tR + vec3(tM * 1.11);
+  vec3 sc = phaseR(nu) * tR + vec3(phaseM(nu) * tM);
+  return SUNE * Tsun * sc / max(ext, vec3(1e-5)) * (1.0 - exp(-ext));
+}
+
+vec3 stars(vec3 d, float pa){
+  float lon = atan(d.x, -d.z);
+  float lat = asin(clamp(d.y, -1.0, 1.0));
+  const float CELL = 0.0042;
+  vec2 g = vec2(lon, lat) / CELL;
+  vec2 id = floor(g);
+  if (hash12(id) > 0.09) return vec3(0.0);
+  vec2 pos = vec2(hash12(id + 17.31), hash12(id + 59.17)) * 0.8 + 0.1;
+  float dpx = length((fract(g) - pos) * CELL) / pa;
+  float m = hash12(id + 3.71);
+  float b = 0.015 + 2.2 * pow(m, 10.0);
+  vec3 tint = mix(vec3(0.72, 0.82, 1.0), vec3(1.0, 0.86, 0.72), hash12(id + 91.3));
+  return tint * b * exp(-dpx * dpx * 1.8);
+}
+
+vec3 rotX(vec3 p, float a){ float s = sin(a); float c = cos(a); return vec3(p.x, c * p.y - s * p.z, s * p.y + c * p.z); }
+
+vec3 surface(vec3 n, vec3 d, float th, float pa, vec3 L){
+  float fp = th * pa / max(dot(n, -d), 0.03);
+  vec3 p = rotX(n, -uSpin);
+  float hgt = fbm(p, 1.6, fp, 6);
+  float land = smoothstep(0.515, 0.545, hgt);
+  float detail = fbm(p + 3.7, 9.0, fp, 4);
+  vec3 soil = mix(vec3(0.05, 0.06, 0.035), vec3(0.15, 0.12, 0.08), smoothstep(0.35, 0.7, detail));
+  vec3 ground = mix(vec3(0.010, 0.022, 0.045), soil, land);
+  vec3 pc = rotX(n, -uCloud);
+  vec3 wp = vec3(noise(pc * 2.2), noise(pc * 2.2 + 7.1), noise(pc * 2.2 + 13.7)) - 0.5;
+  float cl = fbm(pc + wp * 0.35, 3.2, fp, 7);
+  float cloud = smoothstep(0.48, 0.68, cl);
+  float ndl = dot(n, L);
+  vec3 Ts = trans(column(n * (PR + 0.0004), L));
+  vec3 Tc = trans(column(n * (PR + 0.0025), L));
+  vec3 sunG = SUNE * Ts * max(ndl, 0.0);
+  vec3 sunC = SUNE * Tc * clamp(ndl + 0.03, 0.0, 1.0);
+  vec3 moon = vec3(0.020, 0.025, 0.034) * (0.35 + 0.65 * max(dot(n, normalize(vec3(0.35, 0.75, 0.55))), 0.0));
+  vec3 col = ground * (sunG + moon);
+  col = mix(col, vec3(0.72, 0.74, 0.78) * (sunC + moon), cloud * 0.92);
+  float night = 1.0 - smoothstep(-0.12, 0.02, ndl);
+  float region = smoothstep(0.55, 0.78, noise(p * 34.0));
+  float k1 = clamp(1.0 / (210.0 * fp * 2.5) - 0.5, 0.0, 1.0);
+  float k2 = clamp(1.0 / (530.0 * fp * 2.5) - 0.5, 0.0, 1.0);
+  float c2 = mix(0.5, noise(p * 210.0), k1);
+  float c3 = mix(0.5, noise(p * 530.0), k2);
+  float lights = land * region * pow(c2 * c3 * 1.7, 4.0);
+  col += vec3(1.0, 0.62, 0.30) * 0.18 * lights * night * (1.0 - 0.85 * cloud);
+  return col;
+}
+
+vec3 aces(vec3 x){ return clamp((x * (2.51 * x + 0.03)) / (x * (2.43 * x + 0.59) + 0.14), 0.0, 1.0); }
+
+void main(){
+  vec2 q = (gl_FragCoord.xy - 0.5 * uRes) / uRes.y * 2.0;
+  float sp = sin(uPitch);
+  float cp = cos(uPitch);
+  vec3 fw = vec3(0.0, sp, -cp);
+  vec3 up = vec3(0.0, cp, sp);
+  vec3 rt = vec3(1.0, 0.0, 0.0);
+  vec3 d = normalize(fw + (rt * q.x + up * q.y) * uTan);
+  float pa = 2.0 * uTan / uRes.y;
+  vec3 C = vec3(0.0, ALT, 0.0);
+  vec3 L = normalize(uSun);
+  float nu = dot(d, L);
+
+  float b = dot(C, d);
+  float tc = -b;
+  vec3 P = C + d * max(tc, 0.0);
+  float hc = length(P) - PR;
+  float pw = max(tc, 0.05) * pa * 0.8;
+  float wMiss = smoothstep(-pw, pw, hc);
+  vec3 col = vec3(0.0);
+
+  if (wMiss > 0.0){
+    float hh = max(hc, 0.0);
+    vec3 Pc = normalize(P) * (PR + hh);
+    vec2 colv = tc > 0.0 ? limbColumn(hh) : column(C, d);
+    vec3 Tv = trans(colv);
+    vec3 sky = inscatter(colv, trans(column(Pc, L)), nu);
+    sky += stars(d, pa) * Tv;
+    float ang = length(d - L);
+    sky += SUNE * 28.0 * Tv * (1.0 - smoothstep(0.0050, 0.0062, ang));
+    float z = (hh - 0.0125) / 0.0011;
+    sky += vec3(0.30, 0.85, 0.42) * 0.045 * (exp(-z * z) + 0.12 * (1.0 - smoothstep(0.0, 0.0125, hh))) * step(0.0, tc);
+    col += wMiss * sky;
+  }
+  if (wMiss < 1.0){
+    float disc = b * b - (dot(C, C) - PR * PR);
+    float th = -b - sqrt(max(disc, 0.0));
+    vec3 n = normalize(C + d * th);
+    vec2 colv = column(n * PR, -d);
+    vec3 Tv = trans(colv);
+    vec3 Tq = trans(column(n * (PR + 0.6 * HR), L));
+    vec3 g = surface(n, d, th, pa, L) * Tv + inscatter(colv, Tq, nu);
+    col += (1.0 - wMiss) * g;
+  }
+
+  // the sun's own glow, only once it clears the limb
+  float tcL = max(-dot(C, L), 0.05);
+  float hcL = length(C + L * tcL) - PR;
+  vec3 TL = trans(limbColumn(max(hcL, 0.0)));
+  float occ = smoothstep(-0.0062 * tcL, 0.0062 * tcL, hcL);
+  float ang2 = length(d - L);
+  float halo = 0.6 * exp(-ang2 / 0.006) + 0.05 * exp(-ang2 / 0.035) + 0.006 * exp(-ang2 / 0.25);
+  col += SUNE * TL * occ * halo;
+
+  vec2 uvn = gl_FragCoord.xy / uRes - 0.5;
+  col *= 1.0 - 0.33 * dot(uvn, uvn);
+  col = aces(col * 0.9);
+  col = pow(col, vec3(1.0 / 2.2));
+  col += (hash12(gl_FragCoord.xy) - 0.5) / 255.0;
+  gl_FragColor = vec4(col, 1.0);
+}
+</script>
+
+<script>
+(function () {
+  "use strict";
+  var $ = function (id) { return document.getElementById(id); };
+  var SD = window.CSeriesDesktop || null;
+
+  function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+
+  // Clock
+  var fmtT = null;
+  try { fmtT = new Intl.DateTimeFormat([], { hour: "numeric", minute: "2-digit" }); } catch (e) { fmtT = null; }
+  function tick() {
+    var d = new Date(), hm = "", per = "";
+    if (fmtT && fmtT.formatToParts) {
+      fmtT.formatToParts(d).forEach(function (p) { if (p.type === "dayPeriod") per = p.value; else hm += p.value; });
+    } else {
+      hm = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    }
+    $("hm").textContent = hm.trim();
+    $("per").textContent = per;
+    $("date").textContent = d.toLocaleDateString([], { weekday: "long", month: "long", day: "numeric" });
+  }
+  tick(); setInterval(tick, 2000);
+
+  // Camera: the same numbers the shader uses
+  var TAN = Math.tan(25 * Math.PI / 180);
+  var K = Math.sqrt(1 - 1 / (1.12 * 1.12));
+  var DIP = Math.asin(K);
+  var view = { phone: null, pitch: -DIP + Math.atan(0.15 * TAN), az: -0.6 };
+  function setView(phone) {
+    if (view.phone === phone) return false;
+    view.phone = phone;
+    view.pitch = -DIP - Math.atan((phone ? 0.3 : -0.15) * TAN);
+    view.az = phone ? -0.2 : -0.6;
+    return true;
+  }
+  // screen y (css px) of the planet's limb at screen x
+  function horizonY(x, W, H) {
+    var a = ((x - W / 2) / (H / 2)) * TAN, p = view.pitch, s = Math.sin(p), c = Math.cos(p), k2 = K * K;
+    var A = c * c - k2, B = 2 * s * c, Cq = s * s - k2 * (1 + a * a), disc = B * B - 4 * A * Cq;
+    if (disc < 0 || Math.abs(A) < 1e-6) return H * 0.6;
+    var sq = Math.sqrt(disc), b1 = (-B + sq) / (2 * A), b2 = (-B - sq) / (2 * A);
+    var b = (s + b1 * c < 0) ? b1 : b2;
+    return H / 2 - (b / TAN) * H / 2;
+  }
+  function sunX(W, H) {
+    var el = -DIP + 0.01, az = view.az, s = Math.sin(view.pitch), c = Math.cos(view.pitch);
+    var Lx = Math.sin(az) * Math.cos(el), Ly = Math.sin(el), Lz = -Math.cos(az) * Math.cos(el);
+    var df = s * Ly - c * Lz;
+    return W / 2 + (Lx / df / TAN) * H / 2;
+  }
+
+  // Apps: on the night side, following the curve of the limb
+  function layout() {
+    var W = innerWidth, H = innerHeight, box = $("apps"), tiles = box.children, n = tiles.length, i;
+    if (document.body.classList.contains("phone")) {
+      for (i = 0; i < n; i++) { tiles[i].style.left = ""; tiles[i].style.top = ""; tiles[i].style.width = ""; }
+      var land = W > H, hudB = land ? 0 : $("hud").getBoundingClientRect().bottom;
+      var hy = horizonY(land ? W * 0.7 : W * 0.5, W, H);
+      box.style.paddingTop = Math.max(14, Math.round(hy + 26 - hudB)) + "px";
+      return;
+    }
+    box.style.paddingTop = "";
+    if (!n) return;
+    var barH = document.body.classList.contains("owns-bar") ? 56 : 0;
+    var maxW = W * 0.6, sp = Math.min(78, maxW / n), rows = 1;
+    if (sp < 54) { rows = Math.ceil((n * 54) / maxW); sp = Math.min(78, maxW / Math.ceil(n / rows)); }
+    var per = Math.ceil(n / rows), off = Math.max(58, Math.min(92, H * 0.082)), tw = Math.round(Math.min(72, sp));
+    for (i = 0; i < n; i++) {
+      var row = Math.floor(i / per), k = i % per, cnt = Math.min(per, n - row * per);
+      var x = W / 2 + (k - (cnt - 1) / 2) * sp;
+      var y = horizonY(x, W, H) + off + row * 82;
+      y = Math.min(y, H - barH - 66 - (rows - 1 - row) * 82);
+      tiles[i].style.width = tw + "px";
+      tiles[i].style.left = Math.round(x - tw / 2) + "px";
+      tiles[i].style.top = Math.round(y - 24) + "px";
+    }
+  }
+
+  // Draw from the shell's state
+  var drawn = {};
+  function put(id, html) { if (drawn[id] !== html) { drawn[id] = html; $(id).innerHTML = html; } }
+  function draw(S) {
+    S = S || {};
+    var phone = !!S.phone, owns = !!(SD && SD.ownsBar) && !phone;
+    document.body.classList.toggle("phone", phone);
+    document.body.classList.toggle("owns-bar", owns);
+    var pres = S.presence || "";
+    $("presence").textContent = pres;
+    $("presence").hidden = !pres;
+    put("apps", (S.apps || []).map(function (a) {
+      return '<button class="tile' + (a.running ? " is-running" : "") + (a.focused ? " is-focused" : "") +
+        '" type="button" role="listitem" data-cseries-app="' + esc(a.id) + '" title="' + esc(a.description || a.name) +
+        '" aria-label="' + esc(a.name) + '"><span class="ic">' + (a.icon || "") + '</span><span class="dot"></span><span class="nm">' +
+        esc(a.name) + "</span></button>";
+    }).join(""));
+    if (owns) {
+      put("dock", (S.dock || []).map(function (a) {
+        return '<button type="button" role="listitem" class="' + (a.running ? "on" : "") + (a.focused ? " focus" : "") +
+          '" data-cseries-activate="' + esc(a.id) + '" title="' + esc(a.name) + '" aria-label="' + esc(a.name) + '"><span class="ic">' + (a.icon || "") + "</span></button>";
+      }).join(""));
+      put("wins", (S.windows || []).filter(function (w) { return !w.app_id; }).map(function (w) {
+        return '<button type="button" class="' + (w.minimized ? "min" : "") + '" data-cseries-window="' + esc(w.id) +
+          '" title="' + esc(w.title) + '">' + esc(w.title) + "</button>";
+      }).join(""));
+      $("who-name").textContent = (SD && SD.host) || "";
+      $("machine").textContent = S.machine || "";
+      $("machine").hidden = !S.machine;
+      $("showdesk").classList.toggle("on", !!(SD && SD.desktopShown));
+    } else {
+      put("dock", "");
+      put("wins", "");
+    }
+    if (setView(phone)) { sizeCanvas(); repaint(); }
+    layout();
+    tick();
+  }
+
+  // The sky: one WebGL canvas, one loop at 15 fps, stopped when still or hidden
+  var cv = $("sky"), fb = $("fallback"), gl = null, U = {}, glOk = false, glErr = "";
+  var rafId = 0, still = false, last = 0, lastFrame = 0, slow = 0, scale = 1.0, t0 = performance.now();
+  var VS = "attribute vec2 a; void main(){ gl_Position = vec4(a, 0.0, 1.0); }";
+
+  function sizeCanvas() {
+    var w = Math.max(2, Math.round(innerWidth * scale)), h = Math.max(2, Math.round(innerHeight * scale));
+    if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  }
+  function compile(type, src) {
+    var s = gl.createShader(type);
+    gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { glErr = gl.getShaderInfoLog(s) || "compile failed"; return null; }
+    return s;
+  }
+  function initGL() {
+    try {
+      gl = cv.getContext("webgl", { antialias: false, alpha: false, depth: false, stencil: false, preserveDrawingBuffer: false, powerPreference: "low-power" }) ||
+           cv.getContext("experimental-webgl");
+      if (!gl) return false;
+      var vs = compile(gl.VERTEX_SHADER, VS), fs = compile(gl.FRAGMENT_SHADER, $("fs").textContent);
+      if (!vs || !fs) return false;
+      var prog = gl.createProgram();
+      gl.attachShader(prog, vs); gl.attachShader(prog, fs);
+      gl.bindAttribLocation(prog, 0, "a");
+      gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) { glErr = gl.getProgramInfoLog(prog) || "link failed"; return false; }
+      gl.useProgram(prog);
+      var buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+      gl.enableVertexAttribArray(0);
+      gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+      ["uRes", "uPitch", "uTan", "uSun", "uSpin", "uCloud"].forEach(function (k) { U[k] = gl.getUniformLocation(prog, k); });
+      cv.style.display = "block"; fb.style.display = "none";
+      return true;
+    } catch (e) { glErr = ""; return false; }
+  }
+  function frame(now) {
+    if (!glOk) return;
+    var t = (now - t0) / 1000;
+    var del = still ? 0.01 : 0.002 + 0.016 * Math.sin(0.3 + 2 * Math.PI * t / 480);
+    var el = -DIP + del, az = view.az, TWO = 2 * Math.PI;
+    gl.viewport(0, 0, cv.width, cv.height);
+    gl.uniform2f(U.uRes, cv.width, cv.height);
+    gl.uniform1f(U.uPitch, view.pitch);
+    gl.uniform1f(U.uTan, TAN);
+    gl.uniform3f(U.uSun, Math.sin(az) * Math.cos(el), Math.sin(el), -Math.cos(az) * Math.cos(el));
+    gl.uniform1f(U.uSpin, (1.7 + t * 0.0009) % TWO);
+    gl.uniform1f(U.uCloud, (0.4 + t * 0.00105) % TWO);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  }
+  function adapt(now) {
+    if (lastFrame) {
+      if (now - lastFrame > 100) slow++; else slow = Math.max(0, slow - 1);
+      if (slow > 10 && scale > 0.46) { scale *= 0.82; slow = 0; sizeCanvas(); }
+    }
+    lastFrame = now;
+  }
+  function loop(now) {
+    rafId = 0;
+    if (now - last >= 64) { last = now; frame(now); adapt(now); }
+    if (!still && !document.hidden) rafId = requestAnimationFrame(loop);
+  }
+  function motion() {
+    still = !!(SD && SD.reducedMotion) || !!(window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
+    if (!glOk) return;
+    if (still || document.hidden) {
+      if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
+      lastFrame = 0;
+      frame(performance.now());
+    } else if (!rafId) { lastFrame = 0; rafId = requestAnimationFrame(loop); }
+  }
+  function repaint() {
+    if (!glOk) { drawFallback(); return; }
+    if (still || document.hidden || !rafId) frame(performance.now());
+  }
+
+  // Without WebGL: the same limb, drawn flat
+  function drawFallback() {
+    cv.style.display = "none"; fb.style.display = "block";
+    var dpr = Math.min(window.devicePixelRatio || 1, 2), W = innerWidth, H = innerHeight;
+    fb.width = Math.round(W * dpr); fb.height = Math.round(H * dpr);
+    var x = fb.getContext("2d");
+    if (!x) return;
+    x.setTransform(dpr, 0, 0, dpr, 0, 0);
+    var g = x.createLinearGradient(0, 0, 0, H); g.addColorStop(0, "#020306"); g.addColorStop(1, "#05080e");
+    x.fillStyle = g; x.fillRect(0, 0, W, H);
+    var seed = 7; function rnd() { seed = (seed * 16807) % 2147483647; return seed / 2147483647; }
+    for (var i = 0; i < 360; i++) {
+      var sx = rnd() * W, sy = rnd() * H, m = Math.pow(rnd(), 6);
+      x.fillStyle = "rgba(220,230,255," + (0.12 + 0.8 * m).toFixed(3) + ")";
+      x.fillRect(sx, sy, m > 0.5 ? 1.6 : 1, m > 0.5 ? 1.6 : 1);
+    }
+    var px;
+    x.beginPath(); x.moveTo(0, H);
+    for (px = 0; px <= W + 8; px += 8) x.lineTo(px, horizonY(px, W, H));
+    x.lineTo(W, H); x.closePath();
+    var pg = x.createLinearGradient(0, H * 0.5, 0, H); pg.addColorStop(0, "#0b1220"); pg.addColorStop(1, "#03050a");
+    x.fillStyle = pg; x.fill();
+    var sxp = sunX(W, H), stop = Math.max(0, Math.min(1, sxp / W + 0.2));
+    [[14, 0.05], [7, 0.1], [3, 0.24], [1.2, 0.7]].forEach(function (s) {
+      var lg = x.createLinearGradient(0, 0, W, 0);
+      lg.addColorStop(0, "rgba(255,170,90," + s[1] + ")");
+      lg.addColorStop(stop, "rgba(120,180,255," + s[1] + ")");
+      lg.addColorStop(1, "rgba(60,110,220," + (s[1] * 0.5) + ")");
+      x.strokeStyle = lg; x.lineWidth = s[0]; x.beginPath();
+      for (var qx = 0; qx <= W + 8; qx += 8) { var y = horizonY(qx, W, H) - s[0] * 0.3; if (qx) x.lineTo(qx, y); else x.moveTo(qx, y); }
+      x.stroke();
+    });
+    var syp = horizonY(sxp, W, H), rg = x.createRadialGradient(sxp, syp, 0, sxp, syp, H * 0.35);
+    rg.addColorStop(0, "rgba(255,220,170,0.55)"); rg.addColorStop(0.08, "rgba(255,170,90,0.18)"); rg.addColorStop(1, "rgba(255,140,60,0)");
+    x.globalCompositeOperation = "lighter"; x.fillStyle = rg; x.fillRect(0, 0, W, H); x.globalCompositeOperation = "source-over";
+  }
+
+  // Start
+  setView(false);
+  sizeCanvas();
+  glOk = initGL();
+  if (!glOk) {
+    drawFallback();
+    if (glErr) { var msg = glErr; setTimeout(function () { throw new Error("First Light sky shader: " + msg); }, 0); }
+  }
+  cv.addEventListener("webglcontextlost", function (e) { e.preventDefault(); glOk = false; if (rafId) { cancelAnimationFrame(rafId); rafId = 0; } drawFallback(); });
+  cv.addEventListener("webglcontextrestored", function () { glOk = initGL(); if (glOk) { sizeCanvas(); motion(); } });
+  addEventListener("resize", function () { sizeCanvas(); layout(); repaint(); });
+  document.addEventListener("visibilitychange", motion);
+  if (SD && SD.on) { SD.on(draw); SD.on(motion); } else { draw({}); motion(); }
+})();
+</script>
+</body>
+</html>

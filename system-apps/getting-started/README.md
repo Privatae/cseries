@@ -12,7 +12,10 @@ from the dock at any time; a step already done on the Host passes on its own.
 
 ## Files
 
-- `steps.js` — `GS_SLIDES`: every slide's words and its check.
+- `steps.js` — `GS_SLIDES`: every slide's words and its check. A slide can
+  name the view its app opens at (`appView`): the Name slide opens Settings
+  at About, where the name is saved, and the network slide opens it at
+  Network.
 - `app.js` — the engine: render a slide → open the app → on the shell's
   `window:closed` event (which carries `appId`, `dashboard/base/js/desktop.js`)
   or window focus, run the check → a pass advances, "not yet" keeps the slide.

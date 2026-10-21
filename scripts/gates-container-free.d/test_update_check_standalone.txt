@@ -1,0 +1,2 @@
+# A standalone Host's update check asks npm's latest for cseries (stubbed here) and says to run npx cseries update; a failed check shows its error in Settings, never "up to date"; platform Hosts still ask the bridge. Needs node for the Settings half.
+test_update_check_standalone.py

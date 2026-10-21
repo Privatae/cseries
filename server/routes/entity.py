@@ -38,6 +38,28 @@ def _entity_name() -> str:
     return display_name_or_host(None, host_id)
 
 
+async def host_name() -> str:
+    """The Host's name as it is shown: the name chosen for it in
+    entity_registry (set at first boot, renamed through POST /api/system/name)
+    when that row holds one, else what _entity_name finds. The row comes first
+    because a rename writes only the row; a standalone Host has no relay.json
+    at all, and on a platform Host the file would keep showing the name the
+    Host was provisioned with."""
+    from server import brain_service
+    from server.host_display import is_placeholder_name
+    try:
+        pool = brain_service.get_pool()
+        if pool is not None:
+            name = await pool.fetchval(
+                "SELECT display_name FROM entity_registry WHERE id = $1",
+                brain_service._entity_id)
+            if not is_placeholder_name(name):
+                return str(name).strip()
+    except Exception:  # noqa: BLE001 — the file's answer is still a name
+        pass
+    return _entity_name()
+
+
 @router.get("/state", dependencies=[Depends(requires_permission("read:session"))])
 async def entity_state():
     """Current entity state — deterministic, derived from recent signals.
@@ -45,8 +67,9 @@ async def entity_state():
     Zero model tokens. The sentence is a template fill over matched
     signals; C-Series's design principle is software-first, inference-last.
     """
-    state = rules_engine.evaluate(entity_name=_entity_name())
-    state["entity_name"] = _entity_name()
+    name = await host_name()
+    state = rules_engine.evaluate(entity_name=name)
+    state["entity_name"] = name
     return state
 
 

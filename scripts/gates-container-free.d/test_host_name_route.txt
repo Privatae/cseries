@@ -1,0 +1,2 @@
+# POST /api/system/name renames the Host for the owner alone (Settings or Getting Started, with a live owner sign-in), refuses bad names, writes this Host's row, and the readers show that name ahead of relay.json. Fake pool and requests; no database.
+test_host_name_route.py

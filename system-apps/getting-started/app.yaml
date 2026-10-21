@@ -50,7 +50,19 @@ system: true
 #   and its how-to lines live in skills and tool descriptions the Host reads on
 #   demand. Manifest-only; bundle repacked.
 # 0.3.4 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
-version: "0.3.4"
+# 0.4.0 (2026-10-21): a NAME step right after Welcome. Its button opens
+#   Settings at About, where the name is typed and saved (POST
+#   /api/system/name takes Settings' own token, which this app, served on
+#   the desktop's origin, cannot hold: server/routes/host_name.py). It passes
+#   once the Host is called something other than the default "C-Series"
+#   (GET /api/system/status, no scope). The NETWORK step is gone:
+#   the installer already sets up and pairs the bastion on the machine. In its
+#   place an optional step says the App Store needs no account and that a
+#   membership code, entered in Settings -> Network, adds the Privatae
+#   network; its button opens Settings at that view, and its check reads GET
+#   /api/network/status (read:network_membership). A slide may now name the
+#   view its app opens at (appView).
+version: "0.4.0"
 window:
   title: Getting Started
   width: 560
@@ -66,16 +78,17 @@ permissions:
   - read:vault              # Keys — GET /api/vault/providers
   - read:inference_catalog  # Orchestrator — GET /api/inference/routing
   - read:circles            # Circles — GET /api/circles/thread/self/self
+  - read:network_membership # Privatae network — GET /api/network/status
   - read:projects           # Workbench — GET /api/projects
   - write:appearance        # the walkthrough's place — PUT /api/appearance/layout
 
 prompt_behavior:
   what_it_is: >-
-    The Getting Started app is the first-run walkthrough. Seven slides, one action
-    each: add a provider key (Keys), apply the recommended setup (Orchestrator,
-    Simple mode), optionally give the host a machine of its own to run embeddings on
-    (Network, which explains a bastion), send one message and get an answer
-    (Circles), and start a project (Workbench). Each slide opens the real app;
+    The Getting Started app is the first-run walkthrough. Eight slides, one action
+    each: name the Host (Settings -> About), add a provider key (Keys), apply the recommended setup
+    (Orchestrator, Simple mode), optionally join the Privatae network with a
+    membership code in Settings -> Network (the App Store needs no account), send
+    one message and get an answer (Circles), and start a project (Workbench). Each slide opens the real app;
     closing it runs a live check, and a pass moves on, while 'not yet' means the
     check came back false. Every slide can be skipped. The app owns its progress and
     auto-opens on boot until the user finishes or leaves the tour, so "the tour",

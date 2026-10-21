@@ -1,0 +1,325 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="cseries-desktop" content="desktop">
+<meta name="cseries-bar" content="bottom 56">
+<meta name="cseries-tokens" content="--cseries-ink:#120b0e; --cseries-night:#181013; --cseries-twilight:#21161a; --cseries-silk:#2b1d22; --cseries-veil:#36262c; --cseries-mist:#3a2a30; --cseries-mist-strong:#5a4148; --cseries-paper:#f0e6dc; --cseries-linen:#c9b6a8; --cseries-ash:#8f7b74; --cseries-ember:#c9803c; --cseries-dusk:#e0a35c; --cseries-glass:rgba(24,16,19,0.82); --cseries-glass-blur:18px; --cseries-glow:rgba(201,128,60,0.35); --cseries-font-body:'Iowan Old Style','Palatino Linotype',Palatino,Georgia,serif; --cseries-font-display:'Iowan Old Style','Palatino Linotype',Palatino,Georgia,serif;">
+<title>Garnet Silk</title>
+<style>
+  :root { color-scheme: dark; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html, body { height:100%; overflow:hidden; background:#120b0e; }
+  body { font-family:var(--cseries-font-body); color:#f0e6dc; -webkit-font-smoothing:antialiased; }
+
+  #silk { position:fixed; inset:0; width:100%; height:100%; display:block; opacity:0; transition:opacity 1.4s ease; }
+  #silk.on { opacity:1; }
+
+  /* clock */
+  #clock { position:fixed; left:50%; top:40%; transform:translate(-50%,-50%); font-family:var(--cseries-font-display); font-size:clamp(64px, 12vw, 156px); line-height:1; letter-spacing:0.02em; color:#f0e6dc; text-shadow:0 2px 40px rgba(18,11,14,0.6); user-select:none; pointer-events:none; }
+  #clock .c { color:#c9803c; animation:pulse 2s ease-in-out infinite; }
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.25; } }
+
+  /* date */
+  #date { position:fixed; left:50%; top:calc(40% + clamp(48px, 8vw, 108px)); transform:translateX(-50%); font-size:12px; letter-spacing:0.42em; text-transform:uppercase; color:#c9b6a8; user-select:none; pointer-events:none; white-space:nowrap; }
+  #date::before, #date::after { content:""; display:inline-block; vertical-align:middle; width:34px; height:1px; background:#c9803c; opacity:0.55; margin:0 14px; }
+
+  /* dock */
+  .dock { position:fixed; left:50%; bottom:74px; transform:translateX(-50%); display:flex; gap:10px; z-index:5; }
+  .app { --i:0; appearance:none; border:0; background:transparent; cursor:pointer; width:52px; height:52px; display:flex; align-items:center; justify-content:center; color:#c9b6a8; border-radius:14px; position:relative; transition:transform .22s cubic-bezier(.2,.8,.2,1), color .2s; animation:rise .5s cubic-bezier(.2,.8,.2,1) both; animation-delay:calc(var(--i) * 45ms); }
+  .app svg { width:26px; height:26px; display:block; }
+  .app:hover, .app:focus-visible { transform:translateY(-6px); outline:none; color:#f0e6dc; }
+  .app .tip { position:absolute; bottom:calc(100% + 10px); left:50%; transform:translate(-50%, 6px); background:#21161a; color:#f0e6dc; font-size:11px; letter-spacing:0.08em; padding:5px 11px; border-radius:8px; border:1px solid #3a2a30; white-space:nowrap; opacity:0; pointer-events:none; transition:opacity .18s, transform .18s; }
+  .app:hover .tip, .app:focus-visible .tip { opacity:1; transform:translate(-50%, 0); }
+  @keyframes rise { from { opacity:0; transform:translateY(14px); } to { opacity:1; transform:none; } }
+
+  /* ---- bottom bar ---- */
+  #bar { position:fixed; left:0; right:0; bottom:0; height:56px; display:none; align-items:center; gap:14px; padding:0 18px; background:rgba(18,11,14,0.55); backdrop-filter:blur(18px); -webkit-backdrop-filter:blur(18px); border-top:1px solid rgba(58,42,48,0.6); z-index:20; }
+  body.ownbar #bar { display:flex; }
+  #bar .spacer { flex:1; }
+
+  /* all-apps button (far left) */
+  #launch { appearance:none; border:1px solid transparent; background:transparent; color:#8f7b74; width:44px; height:36px; border-radius:9px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:color .2s, background .2s, border-color .2s; flex:0 0 auto; }
+  #launch:hover { color:#f0e6dc; background:rgba(201,128,60,0.08); border-color:#3a2a30; }
+  #launch svg { width:19px; height:19px; display:block; }
+
+  /* running windows strip (left, next to launcher) */
+  #wins { display:flex; align-items:center; gap:6px; min-width:0; overflow:hidden; }
+  .win { appearance:none; border:1px solid transparent; background:transparent; color:#8f7b74; height:36px; max-width:160px; padding:0 11px; border-radius:9px; cursor:pointer; display:flex; align-items:center; gap:8px; transition:color .2s, background .2s, border-color .2s; flex:0 1 auto; min-width:0; }
+  .win svg { width:16px; height:16px; flex:0 0 auto; }
+  .win .wt { font-size:12px; letter-spacing:0.03em; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .win:hover { color:#f0e6dc; background:rgba(201,128,60,0.07); }
+  .win.focused { color:#f0e6dc; border-color:#3a2a30; background:rgba(43,29,34,0.6); }
+  .win.focused::after { content:""; width:5px; height:5px; border-radius:50%; background:#c9803c; flex:0 0 auto; }
+  .win.min { opacity:0.45; }
+
+  /* memory gauge (right) */
+  #gauge { display:flex; align-items:center; gap:10px; }
+  #gauge .glabel { font-size:10px; letter-spacing:0.3em; text-transform:uppercase; color:#8f7b74; user-select:none; }
+  #gauge svg { display:block; overflow:visible; }
+  #gval { font-size:12px; letter-spacing:0.06em; color:#c9b6a8; min-width:74px; user-select:none; font-variant-numeric:tabular-nums; }
+
+  /* show desktop (far right) */
+  #showdesk { appearance:none; border:1px solid #3a2a30; background:transparent; color:#8f7b74; width:44px; height:34px; border-radius:9px; cursor:pointer; display:flex; align-items:center; justify-content:center; transition:color .2s, border-color .2s, background .2s; }
+  #showdesk:hover { color:#f0e6dc; border-color:#c9803c; background:rgba(201,128,60,0.08); }
+  #showdesk[aria-pressed="true"] { color:#e0a35c; border-color:#c9803c; }
+  #showdesk svg { width:18px; height:18px; }
+
+  @media (max-width:640px) { .dock { bottom:70px; } #gval, .win .wt { display:none; } .win { max-width:44px; padding:0 10px; } }
+</style>
+</head>
+<body>
+<canvas id="silk" aria-hidden="true"></canvas>
+
+<div id="clock"><span id="hh">--</span><span class="c">:</span><span id="mm">--</span></div>
+<div id="date"></div>
+
+<nav class="dock" id="apps" aria-label="Apps"></nav>
+
+<div id="bar" role="contentinfo">
+  <button id="launch" type="button" title="All apps" aria-label="All apps" data-cseries-launcher>
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><circle cx="5" cy="5" r="1.7"/><circle cx="12" cy="5" r="1.7"/><circle cx="19" cy="5" r="1.7"/><circle cx="5" cy="12" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="19" cy="12" r="1.7"/><circle cx="5" cy="19" r="1.7"/><circle cx="12" cy="19" r="1.7"/><circle cx="19" cy="19" r="1.7"/></svg>
+  </button>
+  <div id="wins" role="group" aria-label="Open windows"></div>
+  <div class="spacer"></div>
+  <div id="gauge" title="Memory use">
+    <span class="glabel">mem</span>
+    <svg id="gsvg" width="92" height="46" viewBox="0 0 92 46" aria-hidden="true">
+      <defs>
+        <linearGradient id="ggrad" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0%"  stop-color="#7fb069"/>
+          <stop offset="50%" stop-color="#e0a35c"/>
+          <stop offset="100%" stop-color="#c0392b"/>
+        </linearGradient>
+      </defs>
+      <path d="M6 40 A 40 40 0 0 1 86 40" fill="none" stroke="rgba(58,42,48,0.7)" stroke-width="6" stroke-linecap="round"/>
+      <path id="garc" d="M6 40 A 40 40 0 0 1 86 40" fill="none" stroke="url(#ggrad)" stroke-width="6" stroke-linecap="round" stroke-dasharray="126" stroke-dashoffset="126"/>
+      <line id="gneedle" x1="46" y1="40" x2="46" y2="10" stroke="#f0e6dc" stroke-width="2" stroke-linecap="round" transform="rotate(-90 46 40)"/>
+      <circle cx="46" cy="40" r="3.2" fill="#f0e6dc"/>
+    </svg>
+    <span id="gval">—</span>
+  </div>
+  <button id="showdesk" type="button" title="Show desktop" aria-label="Show desktop" data-cseries-show-desktop>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="3" y="4" width="18" height="13" rx="2"/><line x1="9" y1="21" x2="15" y2="21"/></svg>
+  </button>
+</div>
+
+<script>
+(function () {
+  "use strict";
+  var D = window.CSeriesDesktop || {};
+  function esc(s) { return String(s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
+
+  /* ---- clock + date ---- */
+  var hh = document.getElementById("hh"), mm = document.getElementById("mm"), dateEl = document.getElementById("date");
+  function tickClock() {
+    var d = new Date();
+    var h = d.getHours() % 12; if (h === 0) h = 12;
+    hh.textContent = String(h);
+    mm.textContent = ("0" + d.getMinutes()).slice(-2);
+    dateEl.textContent = d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" });
+  }
+  tickClock(); setInterval(tickClock, 1000);
+
+  /* ---- app dock (wallpaper) ---- */
+  var dock = document.getElementById("apps");
+  var dockHtml = "";
+  function draw(S) {
+    var apps = (S && S.apps) || (D.apps) || [];
+    var n = apps.length;
+    var html = apps.map(function (a, i) {
+      return '<button class="app" type="button" style="--i:' + i + '" data-cseries-app="' + esc(a.id) + '">' +
+             (a.icon || "") + '<span class="tip">' + esc(a.name) + "</span></button>";
+    }).join("");
+    if (html !== dockHtml) { dockHtml = html; dock.innerHTML = html; }
+  }
+  if (D.on) D.on(draw); else draw();
+
+  /* ---- silk ---- */
+  var c = document.getElementById("silk");
+  var gl = null;
+  try { gl = c.getContext("webgl", { antialias: false, alpha: false, powerPreference: "low-power" }); } catch (e) { gl = null; }
+
+  var FALLBACK_BG = "radial-gradient(120% 90% at 20% 10%, #36262c 0%, #2b1d22 34%, #21161a 62%, #120b0e 100%)";
+
+  if (!gl) {
+    c.style.background = FALLBACK_BG;
+    c.classList.add("on");
+  } else {
+    var VS = "attribute vec2 a; void main(){ gl_Position = vec4(a, 0.0, 1.0); }";
+    var FS = [
+      "precision mediump float;",
+      "uniform vec2 R; uniform float T; uniform vec2 M; uniform float K;",
+      "float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }",
+      "float noise(vec2 p){ vec2 i = floor(p), f = fract(p); f = f*f*(3.0-2.0*f);",
+      "  return mix(mix(hash(i), hash(i+vec2(1,0)), f.x), mix(hash(i+vec2(0,1)), hash(i+vec2(1,1)), f.x), f.y); }",
+      "float fbm(vec2 p){ float v = 0.0, a = 0.5; for(int i=0;i<4;i++){ v += a*noise(p); p = p*2.03 + 11.5; a *= 0.5; } return v; }",
+      "void main(){",
+      "  vec2 uv = gl_FragCoord.xy / R;",
+      "  vec2 p = uv; p.x *= R.x / R.y;",
+      "  vec2 m = M; m.x *= R.x / R.y;",
+      "  float t = T * 0.05;",
+      "  vec2 dm = p - m; float md = exp(-dot(dm, dm) * 5.0) * K;",
+      "  vec2 warp = vec2(fbm(p*1.4 + t), fbm(p*1.4 - t + 5.2));",
+      "  warp += normalize(dm + 0.0001) * md * 0.55;",
+      "  float folds = fbm(p*2.1 + warp*1.6 + vec2(t*0.7, -t*0.4));",
+      "  float sheen = smoothstep(0.35, 0.75, folds);",
+      "  vec3 deep = vec3(0.070, 0.043, 0.055);",
+      "  vec3 plum = vec3(0.130, 0.078, 0.098);",
+      "  vec3 wine = vec3(0.212, 0.114, 0.133);",
+      "  vec3 ember = vec3(0.475, 0.274, 0.133);",
+      "  vec3 col = mix(deep, plum, smoothstep(0.15, 0.55, folds));",
+      "  col = mix(col, wine, smoothstep(0.5, 0.9, folds));",
+      "  col += ember * sheen * 0.32 * (0.4 + md);",
+      "  col += ember * md * 0.35;",
+      "  float vig = smoothstep(1.25, 0.35, length(uv - 0.5) * 1.6);",
+      "  col *= mix(0.55, 1.0, vig);",
+      "  gl_FragColor = vec4(col, 1.0);",
+      "}"
+    ].join("\n");
+
+    function sh(type, src) { var s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+      if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) { throw new Error(gl.getShaderInfoLog(s)); } return s; }
+
+    var prog;
+    try {
+      prog = gl.createProgram();
+      gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS));
+      gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
+      gl.linkProgram(prog);
+      if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+    } catch (e) {
+      c.style.background = FALLBACK_BG;
+      c.classList.add("on");
+      gl = null;
+    }
+
+    if (gl) {
+      gl.useProgram(prog);
+      var buf = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+      gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+      var loc = gl.getAttribLocation(prog, "a");
+      gl.enableVertexAttribArray(loc);
+      gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+      var uR = gl.getUniformLocation(prog, "R"), uT = gl.getUniformLocation(prog, "T"),
+          uM = gl.getUniformLocation(prog, "M"), uK = gl.getUniformLocation(prog, "K");
+
+      var mx = 0.5, my = 0.5, tx = 0.5, ty = 0.5, k = 0, tk = 0;
+      addEventListener("pointermove", function (e) {
+        tx = e.clientX / innerWidth; ty = 1 - e.clientY / innerHeight; tk = 1;
+      }, { passive: true });
+      addEventListener("blur", function () { tk = 0; });
+
+      var reduced = !!D.reducedMotion ||
+        (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches);
+
+      var SCALE = 0.5;
+      var t0 = -1, last = 0, acc = 40;
+      function frame(t) {
+        var w = Math.max(1, Math.round(c.clientWidth * SCALE));
+        var h = Math.max(1, Math.round(c.clientHeight * SCALE));
+        if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+        mx += (tx - mx) * 0.06; my += (ty - my) * 0.06;
+        k += (tk - k) * 0.04;
+        gl.viewport(0, 0, w, h);
+        gl.uniform2f(uR, w, h);
+        gl.uniform1f(uT, t);
+        gl.uniform2f(uM, mx, my);
+        gl.uniform1f(uK, k);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+      }
+      function loop(now) {
+        if (t0 < 0) { t0 = now; last = now; }
+        var dt = Math.min(0.1, (now - last) / 1000); last = now;
+        if (!document.hidden) { acc += dt; frame(acc); }
+        if (!reduced) requestAnimationFrame(loop);
+      }
+      if (reduced) {
+        requestAnimationFrame(function () { frame(40); c.classList.add("on"); });
+        addEventListener("resize", function () { frame(40); });
+      } else {
+        requestAnimationFrame(loop);
+        requestAnimationFrame(function () { c.classList.add("on"); });
+      }
+    }
+  }
+
+  /* ---- bar ownership ---- */
+  function ownBar() {
+    var own = !!D.ownsBar;
+    document.body.classList.toggle("ownbar", own);
+    return own;
+  }
+
+  /* ---- running windows strip ---- */
+  var winsEl = document.getElementById("wins");
+  var winsHtml = "";
+  function drawWins() {
+    if (!ownBar()) { if (winsHtml) { winsHtml = ""; winsEl.innerHTML = ""; } return; }
+    var parts = [];
+    var seen = {};
+    var winList = D.windows || [];
+    winList.forEach(function (w) {
+      seen[w.id] = true;
+      parts.push('<button class="win' + (w.focused ? " focused" : "") + (w.minimized ? " min" : "") + '" type="button" data-cseries-window="' + esc(w.id) + '" title="' + esc(w.title || w.name || "Window") + '">' +
+                 (w.icon || "") + '<span class="wt">' + esc(w.title || w.name || "Window") + "</span></button>");
+    });
+    var dockList = D.dock || [];
+    dockList.forEach(function (a) {
+      if (!a.running) return;
+      if (a.id && seen[a.id]) return;
+      var hasWin = winList.some(function (w) { return w.app_id && w.app_id === a.id; });
+      if (hasWin) return;
+      parts.push('<button class="win' + (a.focused ? " focused" : "") + '" type="button" data-cseries-activate="' + esc(a.id) + '" title="' + esc(a.name) + '">' +
+                 (a.icon || "") + '<span class="wt">' + esc(a.name) + "</span></button>");
+    });
+    var html = parts.join("");
+    if (html !== winsHtml) { winsHtml = html; winsEl.innerHTML = html; }
+  }
+  if (D.on) D.on(drawWins);
+
+  /* ---- memory gauge ---- */
+  var garc = document.getElementById("garc"), gneedle = document.getElementById("gneedle"),
+      gval = document.getElementById("gval");
+  var ARC = 126;
+  function setGauge(frac, label) {
+    frac = Math.max(0, Math.min(1, frac));
+    garc.style.strokeDashoffset = String(ARC * (1 - frac));
+    gneedle.setAttribute("transform", "rotate(" + (-90 + frac * 180).toFixed(1) + " 46 40)");
+    gval.textContent = label;
+  }
+  function parseMachine(s) {
+    if (!s) return null;
+    var m = String(s).match(/([\d.]+)\s*([GMK]?)\s*of\s*([\d.]+)\s*([GMK]?)/i);
+    if (!m) return null;
+    function n(v, u) { var x = parseFloat(v); u = (u || "").toUpperCase();
+      if (u === "G") x *= 1024; else if (u === "K") x /= 1024; return x; }
+    var used = n(m[1], m[2]), tot = n(m[3], m[4]);
+    if (!tot) return null;
+    return { frac: used / tot, label: (m[1] + m[2] + " / " + m[3] + m[4]).replace(/\s+/g, "") };
+  }
+  function refreshGauge() {
+    if (!ownBar()) return;
+    var info = parseMachine(D.machine);
+    if (info) setGauge(info.frac, info.label);
+    else setGauge(0, "—");
+  }
+  refreshGauge();
+  if (D.on) D.on(refreshGauge);
+  setInterval(refreshGauge, 5000);
+
+  /* ---- show desktop ---- */
+  function syncSD() {
+    var sd = document.getElementById("showdesk");
+    sd.setAttribute("aria-pressed", D.desktopShown ? "true" : "false");
+  }
+  if (D.on) D.on(syncSD);
+  syncSD();
+
+  ownBar();
+})();
+</script>
+</body>
+</html>

@@ -337,28 +337,28 @@ async def status():
     """
     entity_id = int(os.environ.get("ENTITY_ID", "0"))
 
-    # Display name comes from the provisioned relay.json if present.
-    # Existing containers provisioned before v0.2.7 don't have it;
-    # fall back to "Entity N" so the UI never says CONNECTING forever.
+    # The name chosen for the Host lives in its entity_registry row (first
+    # boot writes it, POST /api/system/name renames it), so the row comes
+    # first. A platform Host's provisioned relay.json is the fallback for a
+    # row that still holds a placeholder; without either, "Host #N", so the UI
+    # never says CONNECTING forever.
+    from server.host_display import display_name_or_host, is_placeholder_name
     display_name = f"Host #{entity_id}" if entity_id else "—"
+    try:
+        from server import brain_service
+        pool = brain_service.get_pool()
+        if pool:
+            eid = brain_service._entity_id or entity_id
+            row = await pool.fetchrow("SELECT display_name FROM entity_registry WHERE id = $1", eid)
+            if row and not is_placeholder_name(row["display_name"]):
+                display_name = row["display_name"]
+    except Exception:
+        pass
     relay_cfg = Path("/etc/privatae/certs/relay.json")
-    if relay_cfg.exists():
+    if is_placeholder_name(display_name) and relay_cfg.exists():
         try:
             cfg = json.loads(relay_cfg.read_text())
             display_name = cfg.get("display_name") or cfg.get("entity_display_name") or display_name
-        except Exception:
-            pass
-
-    from server.host_display import display_name_or_host, is_placeholder_name
-    if is_placeholder_name(display_name):
-        try:
-            from server import brain_service
-            pool = brain_service.get_pool()
-            if pool:
-                eid = brain_service._entity_id or entity_id
-                row = await pool.fetchrow("SELECT display_name FROM entity_registry WHERE id = $1", eid)
-                if row and row["display_name"]:
-                    display_name = row["display_name"]
         except Exception:
             pass
 

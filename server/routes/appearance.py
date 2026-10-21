@@ -1174,10 +1174,10 @@ async def _compose_tile_document(pool, wallpaper_html: str | None) -> str | None
     wallpaper underneath. ONE definition, used by both the publisher and the
     change-detector, so the thing we hash is always the thing we publish."""
     from server.applications.shell_snapshot import compose_clean_shell
-    from server.routes.entity import _entity_name
+    from server.routes.entity import host_name
     return await compose_clean_shell(
         pool, brain_service._entity_id,
-        host_name=_entity_name(),
+        host_name=await host_name(),
         wallpaper_html=wallpaper_html,
     )
 

@@ -5,8 +5,10 @@ platform the real identity arrived over the bridge; a standalone Host has no
 one to ask, so it writes this bundle through the same guarded seeder
 (server/bridge/identity_seed._seed -> routes.genesis._seed_codebook).
 
-Everything here is a starting point the owner changes afterwards: the name,
-the personality sliders and the response style all have settings.
+Everything here is a starting point the owner changes afterwards in
+Settings: the name under About (POST /api/system/name,
+server/routes/host_name.py; the first step of Getting Started opens it), the
+personality sliders and the response style.
 """
 
 from __future__ import annotations

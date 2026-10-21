@@ -808,8 +808,8 @@ async def _stand_in(pool) -> tuple[list[dict], str]:
         log.info("render check: installed apps unreadable (%s) — tile check skipped", e)
     host = ""
     try:
-        from server.routes.entity import _entity_name
-        host = _entity_name()
+        from server.routes.entity import host_name
+        host = await host_name()
     except Exception:  # noqa: BLE001 — a greeting without a name still renders
         pass
     return apps, host

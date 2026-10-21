@@ -12,7 +12,13 @@
  *               can prove the manifest covers it.
  *   evaluate  — true means the slide is done.
  *   notYet    — the one line shown when the check comes back false.
+ *
+ * appView (optional) opens the slide's app at that view, through the
+ * shell's deep-link lane.
  * ================================================================ */
+
+// The name a new Host gives itself (server/local_identity.py DEFAULT_NAME).
+const GS_DEFAULT_HOST_NAME = 'C-Series';
 
 window.GS_SLIDES = [
     {
@@ -23,6 +29,30 @@ window.GS_SLIDES = [
             'A few short steps get it working. Each one opens the real app; close the app when you\'re done and the tour moves on. Anything you\'d rather not do now, skip — nothing here locks you in.',
         ],
         button: 'Start',
+    },
+    {
+        // The name is saved in Settings, not here: renaming the Host takes
+        // Settings' own token, which only Settings' own origin can hold
+        // (server/routes/host_name.py says why this app cannot hold it).
+        id: 'name',
+        appId: 'settings',
+        appName: 'Settings',
+        appView: 'overview',
+        title: 'Name your Host',
+        lines: [
+            'Your Host answers to a name. It starts as "C-Series"; call it whatever you like.',
+            'Open Settings, type the name under About and press Save. Skip this to keep "C-Series"; you can change it in Settings any time.',
+        ],
+        button: 'Open Settings',
+        check: {
+            // Done once the Host has a name of its own.
+            endpoint: '/api/system/status',
+            evaluate: (d) => {
+                const n = String((d && d.entity_display_name) || '').trim();
+                return !!n && n !== GS_DEFAULT_HOST_NAME && !/^Host #\d+$/.test(n);
+            },
+            notYet: 'Still called "C-Series". Type a name under About in Settings and save it, or skip to keep it.',
+        },
     },
     {
         id: 'keys',
@@ -64,28 +94,24 @@ window.GS_SLIDES = [
         },
     },
     {
-        // Reached two ways: in order after the Orchestrator, and jumped to
-        // directly from the Orchestrator's Memory step ("Run it free on your
-        // machine" → AppRunner.launch('getting-started', {view:'network'})).
-        // That button is why this slide exists: it promised a walkthrough of
-        // the bastion and there was nowhere for it to land.
-        id: 'network',
-        appId: 'network',
-        appName: 'Network',
-        title: 'Give your host a machine of its own (optional)',
+        // Optional. Nothing on a Host needs the network: the App Store works
+        // without any account. The check reads membership, so a Host that
+        // already joined passes quietly.
+        id: 'privatae-network',
+        appId: 'settings',
+        appName: 'Settings',
+        appView: 'network',
+        title: 'Join the Privatae network (optional)',
         lines: [
-            'A bastion is just a computer you own — a spare laptop, a desktop, a box in a cupboard — that your host is allowed to use. It joins your private network and offers up whatever it can run.',
-            'The useful thing it runs first is an embeddings model: the thing that lets your host recall what you meant, not just what you typed. On your own machine that costs nothing and the text never leaves your network.',
-            'Open Network, follow "Bastions" to add a machine, and turn on "Serve my embeddings here". Skip this if you\'d rather use a provider — the Orchestrator can do that instead.',
+            'Apps install from the App Store without any account.',
+            'A membership adds the Privatae network: the community board, and a place to keep your Host\'s encrypted backups in the network\'s storage. Get a membership code at privatae.ai/account/network and enter it in Settings, under Network.',
+            'Skip this if you don\'t want it; you can join later.',
         ],
-        button: 'Open Network',
+        button: 'Open Settings',
         check: {
-            // An embed-capable machine is ONLINE and reporting. This is the
-            // slide's actual goal; a bastion enrolled but serving nothing
-            // hasn't got the user anywhere, so it must not pass.
-            endpoint: '/api/embedding/bastions',
-            evaluate: (d) => ((d && d.bastions) || []).length > 0,
-            notYet: 'No machine reporting yet. Open Network again and finish adding one — or skip; a provider works too.',
+            endpoint: '/api/network/status',
+            evaluate: (d) => !!(d && d.member),
+            notYet: 'Not joined yet. Enter your code in Settings → Network, or skip; everything else works without it.',
         },
     },
     {

@@ -1,0 +1,2 @@
+# First Light and Garnet Silk ship in the image, pass the desktop floor, fetch nothing outside the document, and are listed, previewed and tried with no bridge. Stub pool and bridge.
+test_builtin_designs.py

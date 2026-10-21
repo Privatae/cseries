@@ -587,6 +587,9 @@ COPY --chown=privatae:privatae native-bundles/ /app/native-bundles/
 # App SDK floor — the image-baked, Privatae-signed SDK installed on first boot. Built by scripts/build_sdk_bundle.py before docker build.
 COPY --chown=privatae:privatae native-sdk/ /app/native-sdk/
 COPY --chown=privatae:privatae default-skills/ /app/default-skills/
+# The house designs every Host has on the Designs shelf, with or without a
+# platform (server/routes/designs.py BUILTIN_DIR).
+COPY --chown=privatae:privatae designs/builtin/ /app/designs/builtin/
 COPY --chown=privatae:privatae init-db.sql /app/init-db.sql
 COPY --chown=privatae:privatae migrations/ /app/migrations/
 # Smoke gate for the SDK transcript JSONL format

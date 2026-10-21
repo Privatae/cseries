@@ -163,13 +163,19 @@ system: true
 #   something; the person sets one or puts the default back (GET/PUT
 #   /api/limits, read:session / write:session, both already declared). Only
 #   this app and the person's chats may write one (server/routes/limits.py).
-version: "3.14.0"
+# 3.15.0 (2026-10-21): About has a Name field with Save, which renames the
+#   Host (POST /api/system/name, write:host_name, owner's sign-in) and shows
+#   the server's reason when it refuses. Updates: on a standalone Host the
+#   check answers from npm (channel "installer") and says to run npx cseries
+#   update on the machine; a check that failed shows its error, never
+#   "You're up to date".
+version: "3.15.0"
 # Environment-catalog facts (host-facing, code-true). Source for the L1
 # topology block + describe_app — NOT a surface_role body (this is a control
 # panel, not a conversational surface): what_it_is/user_path only.
 prompt_behavior:
   what_it_is: >-
-    Settings is system and desktop configuration: the Host's version and software
+    Settings is system and desktop configuration: the Host's name, version and software
     updates, connection tokens for external chat clients, Appearance (wallpaper
     swatches, a custom image, the time zone, and a 'Host design' swatch once you
     have built an HTML desktop), the desktop layout (dock pins, desktop icons),
@@ -216,3 +222,6 @@ permissions:
   # write:network_membership and the owner's session.
   - read:network_membership
   - write:network_membership
+  # Renaming the Host from About: POST /api/system/name, which also needs the
+  # owner's session.
+  - write:host_name

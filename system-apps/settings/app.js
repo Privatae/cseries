@@ -16,6 +16,7 @@
         available: null,
         bundle: null,
         history: [],
+        nameEditing: false,   // the person is typing in the name field
     };
 
     // ── Navigation ───────────────────────────────────────
@@ -1875,9 +1876,9 @@
         // Update badge on nav
         var badge = document.getElementById('update-badge');
         if (badge) {
-            var has = state.available && state.available.available &&
-                      state.available.tag && state.version &&
-                      state.available.tag !== state.version.tag;
+            var av = state.available;
+            var has = !!(av && av.available && !av.error && (av.channel === 'installer' ||
+                      (av.tag && state.version && av.tag !== state.version.tag)));
             badge.hidden = !has;
         }
 
@@ -1954,6 +1955,17 @@
             }
         }
 
+        // The name field, unless the person is typing in it (the 20 s
+        // refresh re-renders this tab).
+        var nameInput = document.getElementById('host-name');
+        if (nameInput) {
+            if (!state.nameEditing) nameInput.value = s.entity_display_name || '';
+            nameInput.oninput = function () { state.nameEditing = true; };
+            nameInput.onkeydown = function (e) { if (e.key === 'Enter') saveName(); };
+        }
+        var saveBtn = document.getElementById('btn-save-name');
+        if (saveBtn) saveBtn.onclick = saveName;
+
         var rows = [
             { label: 'Host', value: friendlyEntityName(s) },
             { label: 'System', value: friendlyPlatform(v.platform) },
@@ -1968,6 +1980,34 @@
                 '<div class="about-row-value">' + esc(row.value) + '</div>' +
                 '</div>';
         }).join('');
+    }
+
+    // POST /api/system/name: the owner renames the Host. The server's reason
+    // is shown when it refuses (a bad name, not signed in).
+    async function saveName() {
+        var input = document.getElementById('host-name');
+        var btn = document.getElementById('btn-save-name');
+        var out = document.getElementById('host-name-status');
+        if (!input || !btn || !out) return;
+        btn.disabled = true;
+        out.hidden = false;
+        out.className = 'about-name-status';
+        out.textContent = 'Saving…';
+        try {
+            await fetchJSON('/api/system/name', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: input.value }),
+            });
+            state.nameEditing = false;
+            out.textContent = 'Saved.';
+            await loadAll();
+        } catch (err) {
+            out.className = 'about-name-status warn';
+            out.textContent = 'Not saved: ' + (typeof err.detail === 'string' && err.detail ? err.detail : err.message);
+        } finally {
+            btn.disabled = false;
+        }
     }
 
     // A display name nobody chose: EXACTLY the generated defaults — the init-db
@@ -2011,7 +2051,22 @@
             resultEl.hidden = false;
             var a = state.available;
 
-            if (!a.available) {
+            if (a.error) {
+                // A check that failed says so; it is never "up to date".
+                resultEl.className = 'update-result info';
+                resultEl.textContent = 'Could not check for updates: ' + a.error;
+            } else if (a.channel === 'installer') {
+                // A standalone Host: the installer on the machine updates it.
+                if (a.available) {
+                    resultEl.className = 'update-result available';
+                    resultEl.textContent = 'Version ' + a.latest + ' is available. Run npx cseries update '
+                        + 'on the machine C-Series is installed on.';
+                } else {
+                    resultEl.className = 'update-result uptodate';
+                    resultEl.innerHTML = '<span class="update-result-icon">&#10003;</span> You\'re up to date ('
+                        + esc(a.current || a.latest || '') + ').';
+                }
+            } else if (!a.available) {
                 // No update, or native-only
                 if (a.channel === 'native') {
                     resultEl.className = 'update-result info';
@@ -2238,7 +2293,7 @@
         try {
             state.available = await fetchJSON('/api/update/check');
         } catch (err) {
-            state.available = { error: err.message };
+            state.available = { error: typeof err.detail === 'string' && err.detail ? err.detail : err.message };
         } finally {
             btn.disabled = false;
             btn.textContent = 'Check for updates';
@@ -3139,4 +3194,8 @@
         loadAll();
         setInterval(loadAll, 20000);
     });
+
+    // For the gates (scripts/test_update_check_standalone.py): the Updates
+    // words and the name's Save are checked by calling these.
+    window.SettingsApp = { state: state, renderUpdates: renderUpdates, saveName: saveName };
 })();

@@ -188,6 +188,12 @@ PERMISSIONS: Final[frozenset[str]] = frozenset({
     # owner's decision, and join and leave also need the owner's session.
     "read:network_membership",
     "write:network_membership",
+    # Renaming the Host (server/routes/host_name.py): Settings declares it,
+    # and the route admits Settings' token only. Absent from meta_tool_caps and from
+    # build_contract.COMMUNITY_ALLOWED_SCOPES for the same reason as
+    # membership: the name is the owner's choice, and the route also needs the
+    # owner's session.
+    "write:host_name",
     # The oversight ledger: the findings
     # the host folded from what its machines reported — one row per thing, with
     # a first_seen that never moves. `read` is the whole ledger; `write` is the

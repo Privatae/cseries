@@ -36,6 +36,7 @@ app-store-app:
   - system-apps/app-store/app.yaml
   - system-apps/app-store/app.js
   - server/routes/applications.py::store_catalog
+  - server/applications/public_store.py
   - server/routes/applications.py::install_app
   - server/applications/installer.py::install_bundle
   - server/applications/installer.py::uninstall_app
@@ -43,8 +44,8 @@ app-store-app:
   - scripts/image_baked_apps.txt
   - server/mcp_connections.py::sync_app
   verified:
-    date: '2026-10-20'
-    digest: sha256:400f0ff6bdce547d64c9019ebdc8012e039250e97627a59e32ea858529877a1e
+    date: '2026-10-21'
+    digest: sha256:87c9009469064b87d33242018fe498187e375b0d8e2acaf2eceb3bdc713fb65d
 approvals:
   sources:
   - server/network/nac_commit.py
@@ -261,6 +262,8 @@ designs-app:
   - server/routes/designs.py::publish_document
   - server/routes/designs.py::local_desktops
   - server/routes/designs.py::install_design
+  - server/routes/designs.py::builtin_designs
+  - designs/builtin/index.json
   - server/applications/desktop_render.py::judge
   - server/routes/designs.py::restore
   - server/routes/designs.py::remove_design
@@ -268,8 +271,8 @@ designs-app:
   - server/routes/designs.py::_restore
   - server/applications/desktop_render.py::with_phone
   verified:
-    date: '2026-10-20'
-    digest: sha256:ff92ecb992cd0fc00f54f092e5a2476fcb119d0a2ee9f31e08345c5100355616
+    date: '2026-10-21'
+    digest: sha256:cd1c38d1e11be2cc12c8ba3f7dea61f2794bcfb4ea18e8844d1c2e2475b47238
 getting-help:
   sources:
   - server/routes/support.py::_assemble_context
@@ -291,10 +294,11 @@ getting-started-app:
   - system-apps/getting-started/steps.js
   - system-apps/getting-started/app.js
   - dashboard/base/js/walkthrough-autolaunch.js
+  - server/routes/host_name.py
   - scripts/image_baked_apps.txt
   verified:
-    date: '2026-10-20'
-    digest: sha256:fa143c501b6b49f5db3aa65f5b0b5da68e6da71614b0e4b52b65ded00fa081c2
+    date: '2026-10-21'
+    digest: sha256:d2f9e55b3e3fa245c5b28b169b7e11ab6858703ffb5c9593ddd8508113bfd1b2
 gitea-app:
   sources:
   - system-apps/gitea/app.yaml
@@ -519,6 +523,8 @@ settings-app:
   - server/routes/brain.py::put_explanation_level
   - server/routes/brain.py::put_personality_weights
   - server/routes/update.py::check_updates
+  - server/routes/update.py::_installer_check
+  - server/routes/host_name.py
   - server/routes/update.py::apply_update
   - server/routes/update.py::get_history
   - brain/mastercode/runtime/kernel_ops.py
@@ -527,8 +533,8 @@ settings-app:
   - scripts/image_baked_apps.txt
   - server/host_backup.py
   verified:
-    date: '2026-10-20'
-    digest: sha256:9314dea2a36a5e1a19fbbb2068098d9cf6d301069512281e9bf3f1bf219d4385
+    date: '2026-10-21'
+    digest: sha256:b5546d95d9778435a28d37415a6ed087b79f3dcb2861c17168217ae51d166523
 sites-app:
   sources:
   - system-apps/sites/app.yaml
@@ -571,13 +577,16 @@ the-privatae-network:
   - server/bridge/membership.py
   - server/bridge/member_client.py
   - server/routes/network_membership.py
+  - server/host_backup.py
+  - server/applications/public_store.py
   - system-apps/settings/index.html
   verified:
-    date: '2026-10-20'
-    digest: sha256:fb7f00347e6fa607aec99fea2e629305c68fa1b8be891debd12bc3aa6d06ba03
+    date: '2026-10-21'
+    digest: sha256:3b8cb1f869c93cec646de1589a24fecfce49984360e0f32fa2a28c353f22ee2b
 updates-and-versions:
   sources:
   - packages/cseries/src/cli.js
+  - server/routes/update.py::_installer_check
   - system-apps/settings/index.html
   - server/applications/default_install.py
   - server/applications/update_check.py
@@ -585,8 +594,8 @@ updates-and-versions:
   - circles-web/src/cards/inbox-notes.tsx
   - brain/mastercode/runtime/host_changelog.py::ensure_weekly_changelog_task
   verified:
-    date: '2026-10-20'
-    digest: sha256:b45cb2c143e10f2b4150c941f80329d7a33a5552b2482c09572cf5ef109ddbb6
+    date: '2026-10-21'
+    digest: sha256:f1977b445fb813e568505759053542308665bead48c6718d35a78ba2356fdc8a
 what-a-host-cannot-do:
   sources:
   - brain/mastercode/runtime/agent_grant.py::parse_grant

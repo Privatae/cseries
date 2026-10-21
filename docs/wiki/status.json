@@ -9,8 +9,8 @@
    "status": "changed"
   },
   "app-store-app": {
-   "checked": "2026-10-20",
-   "status": "changed"
+   "checked": "2026-10-21",
+   "status": "current"
   },
   "approvals": {
    "checked": "2026-10-20",
@@ -22,7 +22,7 @@
   },
   "artifacts-and-designs": {
    "checked": "2026-10-20",
-   "status": "current"
+   "status": "changed"
   },
   "artifacts-app": {
    "checked": "2026-10-20",
@@ -73,16 +73,16 @@
    "status": "changed"
   },
   "designs-app": {
-   "checked": "2026-10-20",
-   "status": "changed"
+   "checked": "2026-10-21",
+   "status": "current"
   },
   "getting-help": {
    "checked": "2026-10-20",
    "status": "current"
   },
   "getting-started-app": {
-   "checked": "2026-10-20",
-   "status": "changed"
+   "checked": "2026-10-21",
+   "status": "current"
   },
   "gitea-app": {
    "checked": "2026-10-20",
@@ -141,8 +141,8 @@
    "status": "changed"
   },
   "settings-app": {
-   "checked": "2026-10-20",
-   "status": "changed"
+   "checked": "2026-10-21",
+   "status": "current"
   },
   "sites-app": {
    "checked": "2026-10-20",
@@ -157,12 +157,12 @@
    "status": "current"
   },
   "the-privatae-network": {
-   "checked": "2026-10-20",
-   "status": "changed"
+   "checked": "2026-10-21",
+   "status": "current"
   },
   "updates-and-versions": {
-   "checked": "2026-10-20",
-   "status": "changed"
+   "checked": "2026-10-21",
+   "status": "current"
   },
   "what-a-host-cannot-do": {
    "checked": "2026-10-20",

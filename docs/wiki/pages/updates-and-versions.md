@@ -32,13 +32,17 @@ If you built the images yourself from the source, rebuild them and run `docker c
 
 In the Settings app, the About tab shows the version your Host is running and when that version was built.
 
+## How do I know a new version is out?
+
+In the Settings app, open Updates and choose **Check for updates**. On a Host on its own it looks up the newest release of the installer and compares it with the version you run: it says "You're up to date" with your version, or names the new version and tells you to run `npx cseries update` on the machine the Host is installed on. If the check cannot reach the release, it shows the reason instead.
+
 ## Can I pick a version or roll back?
 
 The installer's update always moves to the release it publishes. It has no command to go back to an earlier one.
 
 ## Do apps update separately?
 
-The apps built into the Host change only when the Host itself updates. Apps you installed from the App Store come through the Privatae network, so they need a [network membership](wiki:the-privatae-network); the App Store shows an Update button when a newer version is waiting.
+The apps built into the Host change only when the Host itself updates. Apps you installed from the [App Store](wiki:app-store-app) update separately, with no membership needed; the App Store shows an Update button when a newer version is waiting.
 
 ## Does my Host tell me what changed?
 

@@ -1119,10 +1119,11 @@
             // ── Memory ──
             const localBtn = q('[data-mp-simple-embed-local]');
             if (localBtn) localBtn.addEventListener('click', () => {
-                // The walkthrough's Network step explains what a bastion is and
-                // walks the user through standing one up — that is where "free
-                // on your machine" has to land, not a bare settings pane.
-                this._openAppView('getting-started', 'network');
+                // The bastion on the machine is where "free on your machine"
+                // runs: the Network app shows it, and its "Serve my embeddings
+                // here" turns that on. The installer already set it up and
+                // paired it, so there is nothing to walk through first.
+                this._openAppView('network', 'logical');
             });
             const provBtn = q('[data-mp-simple-embed-provider]');
             if (provBtn) provBtn.addEventListener('click', () => {
@@ -2490,8 +2491,7 @@
         // AppRunner.launch(appId, {view}) — app-runner.js turns it into
         // '#view=<v>' on a fresh iframe and a 'cseries:app-view' postMessage into
         // an already-open window. Used by "Run it free on your machine", which
-        // must land on the walkthrough's Network step, not wherever the tour
-        // was last left.
+        // opens the Network app on the view that draws the Host's bastions.
         _openAppView(appId, view) {
             try {
                 if (window.parent && window.parent.AppRunner) {

@@ -1,0 +1,2 @@
+# Getting Started: Name your Host right after Welcome (pre-filled, saves, shows the server's reason), no bastion slide, and an optional Privatae network slide that opens Settings at Network. Loads the real steps.js and app.js in node.
+test_getting_started_slides.py

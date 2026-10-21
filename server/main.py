@@ -1914,6 +1914,9 @@ app.include_router(network.router)
 # code from the owner's account page (server/bridge/membership.py).
 from server.routes import network_membership as network_membership_routes
 app.include_router(network_membership_routes.router)
+# The owner names the Host, in Settings -> About.
+from server.routes import host_name as host_name_routes
+app.include_router(host_name_routes.router)
 # The oversight ledger: read the findings
 # the host folded from what its machines reported, and resolve one. Separate
 # from network.router because the scopes are separate — read:topology opens the

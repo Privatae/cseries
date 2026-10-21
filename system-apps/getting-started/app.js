@@ -171,9 +171,10 @@
     function openApp(s) {
         state.waiting = true;
         setStatus(`${s.appName} is open — close it when you're done and this will move on.`);
+        const msg = { type: 'cseries:open-app', app_id: s.appId };
+        if (s.appView) msg.view = s.appView;
         try {
-            (window.parent || window).postMessage(
-                { type: 'cseries:open-app', app_id: s.appId }, window.location.origin);
+            (window.parent || window).postMessage(msg, window.location.origin);
         } catch (e) { /* the relay lives in the shell; nowhere else to go */ }
     }
 
@@ -278,9 +279,9 @@
             if (i >= 0 && saved.done !== true) state.idx = i;
         }
         // A deep link WINS over the saved position: the caller asked for a
-        // specific step (the Orchestrator's "Run it free on your machine"
-        // sends view=network), and dropping them wherever they left off
-        // instead would silently ignore the request. Unknown id = ignored.
+        // specific step (view=<slide id>), and dropping them wherever they
+        // left off instead would silently ignore the request. Unknown id =
+        // ignored.
         const deep = deepLinkStep();
         if (deep >= 0) state.idx = deep;
         render();

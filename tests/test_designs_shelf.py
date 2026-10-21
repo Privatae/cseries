@@ -100,7 +100,9 @@ def test_an_unreachable_library_still_lists_what_the_host_made(root, monkeypatch
     monkeypatch.setattr(D, "_bridge", down)
     monkeypatch.setattr(D, "_wearing", wearing)
     out = asyncio.run(D.list_designs())
-    assert out["designs"] == [] and out["library_error"]
+    # Only the house designs built into the image are left on the shelf.
+    assert [d["id"] for d in out["designs"]] == [d["id"] for d in D.builtin_designs()]
+    assert all(d.get("builtin") for d in out["designs"]) and out["library_error"]
     assert [d["artifact_id"] for d in out["local"]] == [249]
     assert out["host"] == "Sage"
 

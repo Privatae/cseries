@@ -5,7 +5,9 @@ Uses the tunnel (not REST to the platform) for actual communication. This
 route just surfaces container-local state. The Settings app calls:
 
   GET  /api/update/check       — ask the relay to query pc_version_query;
-                                 return the latest-version info it saw.
+                                 return the latest-version info it saw. A
+                                 standalone Host asks npm for the
+                                 installer's latest version instead.
   POST /api/update/request     — record a user-initiated update; writes
                                  /app/ceigas/update-request.json so the
                                  running container's pc-updater notices,
@@ -21,6 +23,10 @@ import asyncio
 import json
 import logging
 import os
+import re
+import urllib.error
+import urllib.parse
+import urllib.request
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -106,17 +112,114 @@ def _reconcile_applied_request() -> None:
         pass
 
 
+# Where a standalone Host learns the newest release: the installer it was set
+# up with (`npx cseries`) is published to npm with the same version as the
+# images it pulls, and `npx cseries update` moves to exactly that release.
+NPM_HOST = "registry.npmjs.org"
+NPM_LATEST_URL = f"https://{NPM_HOST}/cseries/latest"
+NPM_TIMEOUT_S = 5
+# The whole check, from asking to answer. NPM_TIMEOUT_S bounds each wait on
+# the socket, not their sum, so a registry that sent a byte every few seconds
+# could otherwise keep the person waiting for minutes.
+NPM_DEADLINE_S = 15
+NPM_MAX_BYTES = 256 * 1024
+INSTALLER_MESSAGE = "Run npx cseries update on this machine"
+
+_VERSION_RE = re.compile(r"^v?(\d+)\.(\d+)\.(\d+)")
+
+
+def _version_tuple(v: str) -> Optional[tuple[int, int, int]]:
+    m = _VERSION_RE.match(str(v or "").strip())
+    return (int(m.group(1)), int(m.group(2)), int(m.group(3))) if m else None
+
+
+class _RegistryRedirectsOnly(urllib.request.HTTPRedirectHandler):
+    """Follows a redirect only to https on the registry's own host. urllib's
+    own handler follows one to plain http or to any other host, so the check
+    could otherwise leave https after the first answer."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        u = urllib.parse.urlsplit(newurl)
+        if u.scheme != "https" or (u.hostname or "").lower() != NPM_HOST:
+            raise urllib.error.HTTPError(
+                req.full_url, code,
+                f"the npm registry sent the check to {u.scheme}://{u.hostname or ''}, "
+                f"which is not https://{NPM_HOST}", headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _npm_latest() -> str:
+    """The version npm publishes as cseries' latest. Raises on any failure."""
+    req = urllib.request.Request(NPM_LATEST_URL, headers={"Accept": "application/json",
+                                                          "User-Agent": "cseries-update-check/1"})
+    opener = urllib.request.build_opener(_RegistryRedirectsOnly)
+    with opener.open(req, timeout=NPM_TIMEOUT_S) as r:
+        data = json.loads(r.read(NPM_MAX_BYTES))
+    version = data.get("version") if isinstance(data, dict) else None
+    if not isinstance(version, str) or not version.strip():
+        raise ValueError("the npm registry answered without a version")
+    return version.strip()
+
+
+def _is_standalone(bridge) -> bool:
+    """True when nothing but the installer can say what is published: a Host
+    with no platform (NoPlatform), or one with no live bridge that is not a
+    member of the network either."""
+    from server.bridge.no_platform import NoPlatform
+    if bridge is None or isinstance(bridge, NoPlatform):
+        return True
+    if getattr(bridge, "connected", False):
+        return False
+    try:
+        from server.bridge import membership
+        return not membership.current().status().get("member")
+    except Exception:  # noqa: BLE001 — unknown membership reads as not a member
+        return True
+
+
+async def _installer_check() -> dict:
+    """The update check of a standalone Host: npm's latest against the running
+    version. An unreachable registry comes back as `error`, which Settings
+    shows as it is; it is never reported as up to date."""
+    current = _read_local_tag()
+    out = {"available": False, "latest": None, "current": current or None,
+           "channel": "installer", "message": INSTALLER_MESSAGE, "checked_at": _now()}
+    try:
+        latest = await asyncio.wait_for(asyncio.to_thread(_npm_latest), NPM_DEADLINE_S)
+    except asyncio.TimeoutError:
+        # The thread is left to finish on its own socket timeout; the person
+        # gets an answer now.
+        logger.warning("update check: npm registry: no answer within %ss", NPM_DEADLINE_S)
+        out["error"] = "the npm registry did not answer in time"
+        return out
+    except Exception as e:  # noqa: BLE001 — every failure is reported, not hidden
+        logger.warning("update check: npm registry: %s", e)
+        out["error"] = f"could not ask the npm registry for the newest release: {e}"
+        return out
+    out["latest"] = latest
+    have, want = _version_tuple(current), _version_tuple(latest)
+    if have is None or want is None:
+        # A build from source ("dev") has no release number to compare.
+        out["error"] = (f"this Host's version ({current or 'unknown'}) cannot be compared "
+                        f"with the newest release ({latest})")
+        return out
+    out["available"] = want > have
+    return out
+
+
 @router.get("/check", dependencies=[Depends(requires_permission("read:update_state"))])
 async def check_updates():
-    """Ask the governance bridge what version is currently published for
-    this container's platform. The legacy WSS relay path is retired —
-    we use the same bridge_client the rest of the container uses.
+    """Ask what version is currently published for this container's platform.
 
-    Falls back to the on-disk cache if the bridge isn't reachable so the
-    Settings app still shows the last-known state.
+    A Host on the platform asks the governance bridge (pc.version_query), and
+    falls back to the on-disk cache if the bridge isn't reachable so the
+    Settings app still shows the last-known state. A standalone Host has no
+    bridge to ask, so it asks npm what the installer would update to.
     """
+    from server.main import get_bridge_client
+    if _is_standalone(get_bridge_client()):
+        return await _installer_check()
     try:
-        from server.main import get_bridge_client
         bridge = get_bridge_client()
         if bridge is None or not getattr(bridge, "connected", False):
             raise RuntimeError("bridge not connected")

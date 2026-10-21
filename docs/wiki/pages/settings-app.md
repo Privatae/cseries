@@ -1,10 +1,11 @@
 ---
 title: Settings
-summary: Settings holds your Host's version, its appearance and time zone, how it responds, the limits on what it may spend and how long its work may run, the layout of your desktop and dock, its backups, and the optional Privatae network membership. It comes with every Host and cannot be removed.
+summary: Settings holds your Host's name and version, its appearance and time zone, how it responds, the limits on what it may spend and how long its work may run, the layout of your desktop and dock, its backups, and the optional Privatae network membership. It comes with every Host and cannot be removed.
 section: apps
 order: 10
 questions:
   - What can I change in the Settings app?
+  - How do I rename my Host?
   - How do I update my Host?
   - How do I join the Privatae network?
   - How do I change my desktop wallpaper or time zone?
@@ -15,11 +16,15 @@ questions:
 app: settings
 ---
 
-Settings is where you look after the Host itself: its version, how the desktop looks, which apps sit in the dock, and its backups. It comes with every Host, and it is one of the few apps that cannot be uninstalled.
+Settings is where you look after the Host itself: its name and version, how the desktop looks, which apps sit in the dock, and its backups. It comes with every Host, and it is one of the few apps that cannot be uninstalled.
+
+## How do I rename my Host?
+
+About has a **Name** field: type the name and choose Save. Only the owner, signed in, can change it.
 
 ## How do I update my Host?
 
-The Settings app shows the version your Host is running under About. Updating is done on the machine with `npx cseries update`; see [updates and versions](wiki:updates-and-versions). The Updates tab asks a Privatae service which version is published, and a Host on its own has no connection to it, so that tab cannot check for or apply an update.
+The Settings app shows the version your Host is running under About. Updating is done on the machine with `npx cseries update`; see [updates and versions](wiki:updates-and-versions). On a Host on its own, **Check for updates** in the Updates tab looks up the newest published release of the installer and either says you are up to date or tells you to run `npx cseries update` on the machine. If it cannot find out, it says why.
 
 ## What can I change about how it looks?
 

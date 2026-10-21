@@ -9,7 +9,9 @@ and applied instead of sitting unseen among artifacts.
 What the Designs app shows, and where each comes from:
 
 - OURS — the house shelf: designs published by the platform's own hosts,
-  readable by every host (bridge design.* ops, shelf='house').
+  readable by every host (bridge design.* ops, shelf='house'), plus the
+  house designs built into the image (designs/builtin/), which every Host
+  has whether or not anything answers on the bridge.
 - YOURS — designs this account published (shelf='account', every host on the
   account reads them), plus the desktops made ON THIS HOST that were never
   published (`/local`): a desktop the Host designed used to be findable only as
@@ -48,7 +50,9 @@ its author host, never a person's address.
 """
 from __future__ import annotations
 
+import json
 import logging
+from pathlib import Path
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -486,6 +490,85 @@ def _is_discardable_trial(artifact_id: int, worn_before: Optional[int]) -> bool:
     return _fingerprint(artifact_id) == mark[1]
 
 
+# ── House designs built into the image ───────────────────────────────────────
+#
+# designs/builtin/ holds complete desktop documents and an index.json naming
+# them ({"designs": [{"id", "name", "file"}]}). Their ids are the ids the same
+# designs have on the platform's house shelf, so on a Host whose bridge also
+# lists them the two are one card, and preview and try read the local copy
+# either way. They are read from disk on each call: two small files.
+
+BUILTIN_DIR = Path(__file__).resolve().parents[2] / "designs" / "builtin"
+BUILTIN_AUTHOR = "C-Series"
+
+
+def _builtin_index() -> list[dict]:
+    try:
+        rows = json.loads((BUILTIN_DIR / "index.json").read_text()).get("designs") or []
+    except (OSError, ValueError, AttributeError) as e:
+        log.warning("built-in designs unreadable: %s", e)
+        return []
+    out = []
+    for r in rows:
+        if not isinstance(r, dict):
+            continue
+        try:
+            did, name, fname = int(r["id"]), str(r["name"]), str(r["file"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        # A file name, never a path: the index cannot point outside the folder.
+        if Path(fname).name != fname:
+            continue
+        out.append({"id": did, "name": name, "file": fname})
+    return out
+
+
+def builtin_html(design_id: int) -> Optional[dict]:
+    """{name, html, author_name} for a built-in design, or None."""
+    for r in _builtin_index():
+        if r["id"] == int(design_id):
+            try:
+                html = (BUILTIN_DIR / r["file"]).read_text(encoding="utf-8")
+            except OSError as e:
+                log.warning("built-in design %s unreadable: %s", design_id, e)
+                return None
+            return {"name": r["name"], "html": html, "author_name": BUILTIN_AUTHOR}
+    return None
+
+
+def builtin_designs() -> list[dict]:
+    """The built-in designs as shelf rows, in the shape the bridge's
+    design.list returns them."""
+    rows = []
+    for r in _builtin_index():
+        doc = builtin_html(r["id"])
+        if doc is None:
+            continue
+        rows.append({"id": r["id"], "name": r["name"], "shelf": "house",
+                     "author_name": BUILTIN_AUTHOR, "mine": False, "builtin": True,
+                     "tokens": extract_tokens(doc["html"][:_HEAD_BYTES]) or None})
+    return rows
+
+
+async def _design_doc(design_id: int) -> dict:
+    """A shelf design's {name, html, author_name}: the built-in copy when there
+    is one, else the library's over the bridge."""
+    local = builtin_html(design_id)
+    if local is not None:
+        return local
+    return await _bridge("design.get", {"design_id": int(design_id)})
+
+
+def _standalone() -> bool:
+    """Whether this Host has no platform at all (a NoPlatform bridge)."""
+    from server.bridge.no_platform import NoPlatform
+    try:
+        from server.main import get_bridge_client
+        return isinstance(get_bridge_client(), NoPlatform)
+    except Exception:  # noqa: BLE001 — unknown reads as "has a platform"
+        return False
+
+
 # ── Desktops made on this host ───────────────────────────────────────────────
 
 def _head(artifact_id: int) -> str:
@@ -547,7 +630,11 @@ async def list_designs() -> dict:
     try:
         shelf = (await _bridge("design.list", {})).get("designs") or []
     except HTTPException as e:
-        library_error = e.detail
+        # A standalone Host has no library to reach: its house shelf is the
+        # built-in designs, and saying it "can't be reached" would be untrue.
+        library_error = None if _standalone() else e.detail
+    listed = {d.get("id") for d in shelf if isinstance(d, dict)}
+    shelf = list(shelf) + [b for b in builtin_designs() if b["id"] not in listed]
     return {
         "designs": shelf,
         "local": await local_desktops(pool),
@@ -565,7 +652,7 @@ async def design_document(design_id: int) -> dict:
     """One shelf design's complete document, for its live preview. JSON, never
     a page: host-authored HTML is only ever mounted by the app's sandboxed
     frame, never served as a navigable document on this origin."""
-    data = await _bridge("design.get", {"design_id": int(design_id)})
+    data = await _design_doc(int(design_id))
     return {"design_id": int(design_id), "name": data.get("name"), "html": data.get("html") or ""}
 
 
@@ -695,7 +782,7 @@ async def install_design(design_id: int, request: Request) -> dict:
 
 
 async def _install(design_id: int, body: dict) -> dict:
-    data = await _bridge("design.get", {"design_id": int(design_id)})
+    data = await _design_doc(int(design_id))
     html = data.get("html")
     if not isinstance(html, str) or not html.strip():
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "that design has no document")

@@ -103,6 +103,24 @@ html, body {
     line-height: var(--leading-relaxed);
 }
 
+/* ——— The Host's name ——————————————————————————————— */
+.about-name {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    margin-bottom: var(--space-3);
+}
+.about-name .cseries-input {
+    flex: 1;
+    min-width: 0;
+}
+.about-name-status {
+    margin: 0 0 var(--space-3);
+    font-size: var(--text-sm);
+    color: var(--cseries-linen);
+}
+.about-name-status.warn { color: var(--cseries-gold); }
+
 /* ——— About detail rows ———————————————————————————— */
 .about-details {
     display: flex;

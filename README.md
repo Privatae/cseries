@@ -12,6 +12,40 @@ The person brings the models: a key from OpenRouter, Anthropic, OpenAI or
 another provider, or a local model server. C-Series does not sell or proxy
 model usage.
 
+## Memory and learning
+
+A Host remembers in its own PostgreSQL database, and learns in its own turns:
+
+- **The transcript.** Every message and reply is stored as it happens.
+- **Notes.** In its own turns, the Host writes notes about what it learns:
+  the person's preferences, rules they teach it, notes about people, the
+  goal of a conversation, cited facts and research. A note can carry a
+  topic; a newer note on the same topic becomes the live one, and the older
+  one is kept on record. The person can read and correct notes in the
+  Memory app.
+- **Recall.** Matching preferences and notes about people ride each turn.
+  One `recall` tool searches the notes, documents, projects, code, skills
+  and the Host's own tables together.
+- **Its own app data.** When it needs to keep structured data, such as a
+  list it maintains or records it tracks over time, the Host designs the
+  tables itself in its own schema, `world`, and works with them through the
+  `data` tool, without building an app. Every table carries a line saying
+  what it is for, which is how `recall` finds it later. Before a change that
+  could remove or reshape data, the schema is backed up. It runs under a
+  database role that can write nowhere else.
+- **Skills it writes.** When a kind of job is worth repeating, the Host
+  writes a skill: the steps, the tools, how to check the result and what to
+  do when it fails. Each skill is checked against a standard in code before
+  it is saved. Every version is kept, and the person can restore one in the
+  Skills app. A skill written after reading the web is marked untrusted
+  until the person saves it. A message that matches a skill gets a line
+  pointing to it in that turn.
+- **Looking back.** Nothing reads past conversations in the background. If
+  the person asks for it ("review our work every day"), the Host sets up a
+  daily review that revises its skills, corrects memory and closes its own
+  finished tickets. It runs only after the person approves it, within their
+  limits.
+
 ## For reviewers: where to look
 
 | Area | Where | What it shows |
@@ -19,7 +53,9 @@ model usage.
 | The turn | `brain/mastercode/runtime/session.py`, `turn_types.py`, `root_turn.py` | How one message becomes model calls, tool calls and a reply, and which turn types exist |
 | Tools and the capability gate | `brain/mastercode/runtime/tools.py`, `brain/mastercode/ceigas_capabilities.py`, `runtime/turn_type_approval.py` | What the model may call, and which calls need the person's approval first |
 | The person's limits | `brain/mastercode/runtime/user_limits.py`, `server/routes/limits.py`, `runtime/scheduled_approval.py` | Each limit that can stop work has a coded default that only the person changes (Settings, Limits); a recurring scheduled task that runs a model is set only after the person approves it |
-| The Host's own data | `brain/mastercode/world_db.py` | The `data` tool: the Host designs and queries its own tables in a schema of its own, under a restricted database role |
+| Memory | `brain/mastercode/memory_engine.py`, `memory_slots.py`, `memory_retrieval.py`, `runtime/close_turn.py`; `docs/HOST-MEMORY-AND-PROMPT.md` | Every writer and reader of the Host's memory, topics where the newest note is live, and what `recall` searches |
+| Skills the Host writes | `brain/mastercode/runtime/host_skills.py`, `runtime/skill_standard.py`, `default-skills/housekeeping.md` | The standard a skill must pass, versions, the untrusted mark, and the daily review the person can turn on |
+| The Host's own app data | `brain/mastercode/world_db.py`, `migrations/v233_host_world.sql` | The `data` tool: the Host keeps structured data in tables it designs in its own schema, without building an app, under a database role that can write only there |
 | Safety floor | `brain/mastercode/runtime/crisis.py` | The crisis floor: a deterministic phrase check plus an embedding-based check on the incoming message |
 | HTTP API | `server/` (FastAPI), `server/route_table.py` | The dashboard API; the route table is read through FastAPI's public route API so contract checks survive framework upgrades |
 | Apps | `system-apps/` (each app with an `app.yaml` manifest) | Chat (Circles), Workbench, Orchestrator, Keys, Settings, connectors, creative engines |

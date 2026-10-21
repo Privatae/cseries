@@ -15,15 +15,16 @@ starts beside them. The bastion, a separate GPL program on the same machine, run
 service paired with the Host. In this file "the platform" means the kernel inside the Host, not a hosted service. The kernel owns four things: the walls (capability gate, turn types, the root
 turn, approvals, the `host_world` role), the transcript, the person's standing instructions (their
 preferences and rules, their personality sliders and explanation level, the platform's five
-values) and the facts it measures about each turn. The Host owns everything else in its own
-schema, `world`: the tables, views and functions it designs to hold what it learns, through the
-`data` tool.
+values) and the facts it measures about each turn. The Host keeps what it learns as notes it
+writes in its own turns, writes its own skills, and keeps its own app data: structured data it
+maintains without building an app, in tables, views and functions it designs in its own schema,
+`world`, through the `data` tool.
 
 ## Core Thesis
 
 The model uses its full capability and the person keeps control. Control lives in code (walls
-the model cannot talk its way past); capability lives in the model and in what it builds in
-`world`. `docs/HOST-MEMORY-AND-PROMPT.md` describes the memory and the prompt as they are.
+the model cannot talk its way past); capability lives in the model, in what it remembers, in the
+skills it writes and in what it builds in `world`. `docs/HOST-MEMORY-AND-PROMPT.md` describes the memory and the prompt as they are.
 
 ---
 
@@ -104,8 +105,23 @@ the model cannot talk its way past); capability lives in the model and in what i
 types `migrations/v235_one_memory.sql` keeps, and the prompt's blocks in render order. In short:
 
 - Every turn is a row, written as it happens. What the Host keeps beyond the transcript it writes
-  in its own turn: the reply's closing note (`runtime/close_turn.py`), the `memory_curate` tool,
-  a "Remember this:" message, a promoted research finding. A shaped fact lives in a `world` table.
+  in its own turn, as notes in `entity_memory`: the person's preferences and the conversation's
+  goal from the reply's closing note (`runtime/close_turn.py`), preferences and notes about people
+  through the `memory_curate` tool, rules the person teaches ("Remember this:"), facts promoted
+  from a task's findings, and research. No background pass reads conversations afterwards.
+- A note can carry a topic. A write to a topic that already has a live note retires the older one
+  in the same transaction and keeps it on record, so the newest note is the live one
+  (`memory_slots.py`, `migrations/v241_memory_slots.sql`).
+- Matching preferences and notes about people ride each turn (`memory_engine.py`,
+  `PROMPT_MEMORY_TYPES`). The `recall` tool searches notes, documents, projects, code, skills and
+  `world` together, each store answering under its own section (`memory_retrieval.py`,
+  `SEARCH_STORES`). A shaped fact lives in a `world` table.
+- The Host writes its own skills (`skills/<name>` through `runtime/host_skills.py`). Each write
+  is checked against `runtime/skill_standard.py` before it is saved and becomes a new version; the
+  person can restore any version in the Skills app. A skill written in a turn that read untrusted
+  content is marked untrusted until the person saves it. The daily review the person can ask for
+  (`default-skills/housekeeping.md`) is one recurring scheduled task, set only after they approve
+  it.
 - The ten personality sliders are the person's and never move on their own. They render as
   tendency lines, one graded line per slider (`runtime/prompt_builder.py:26-40`).
 - The person's rules reach a turn by meaning when the turn has an embedding and by importance

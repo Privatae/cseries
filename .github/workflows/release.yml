@@ -1,7 +1,8 @@
 # A pushed tag vX.Y.Z releases version X.Y.Z: the two images (multi-arch,
-# each architecture built, scanned and smoke-tested natively before anything
-# is pushed), the four runtime images a machine starts its app, browser and
-# creative containers from (built, scanned and smoke-tested the same way), the
+# each architecture built and scanned natively before anything is pushed; the
+# full smoke test runs on the build machine before the tag, docs/RELEASING.md),
+# the four runtime images a machine starts its app, browser and creative
+# containers from (built, scanned and given a short smoke test), the
 # guest images (WSL's and Lima's), the coding engines' source tarball, the Blender source and
 # the C-Series Cloud overlay with its cloud-release.json on the GitHub
 # release, the free App Store's catalog and bundles, and the npm packages with
@@ -105,15 +106,10 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       ARCH: ${{ matrix.arch }}
     steps:
-      # The whole history: the schema gates build the database as the tree
-      # stood before a migration was added, read from git (kernel_schema.py
-      # rev_before), and a shallow clone has no such commit. Measured: on a
-      # depth-1 clone test_one_memory_migration_pg.py fails for exactly that.
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 0
 
       - name: Check the runner is ${{ matrix.machine }}
         env:
@@ -124,18 +120,11 @@ jobs:
             exit 1
           fi
 
-      # The versions the gates pass with on a build machine
-      # (scripts/requirements-gates.txt lists the packages).
-      - name: Python for the host-side gates
+      # For .github/scripts/release.py and the public-source gate.
+      - name: Python for the release checks
         uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.14.4"
-
-      - name: Node for the smoke test's browser-module gates
-        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
-        with:
-          node-version: "22.22.2"
-          package-manager-cache: false
 
       - name: Install trivy and crane, pinned by sha256
         env:
@@ -160,8 +149,8 @@ jobs:
           echo "$bin" >> "$GITHUB_PATH"
 
       # One build per image, written to an archive that is both a Docker load
-      # tarball (for the smoke test) and an OCI layout (what is pushed), so
-      # the bytes pushed are the bytes tested. Rebuilding for the push would
+      # tarball (for the checks below) and an OCI layout (what is pushed), so
+      # the bytes pushed are the bytes checked. Rebuilding for the push would
       # not be: the apt-indexes stage re-reads the Debian and PostgreSQL
       # archives on every build. A fresh builder, so nothing comes from a
       # cache.
@@ -186,8 +175,7 @@ jobs:
             --build-arg PC_TAG="$VERSION" --build-arg PC_IMAGE="$HOST_IMAGE" \
             --build-arg PC_DIGEST= --build-arg PC_BUILT_AT="$built_at" \
             --output "type=docker,dest=$out/host.tar,name=cseries:release,oci-mediatypes=true" .
-          # Nothing below builds. Its cache (2.6 GB for amd64, measured) is
-          # room the smoke test needs on a hosted runner.
+          # Nothing below builds.
           docker buildx rm release
 
       - name: Load the images and check they are the ones that will be pushed
@@ -241,47 +229,6 @@ jobs:
               exit "$rc"
             fi
           done
-
-      # What smoke_test.sh needs from the machine beyond Docker: the gates'
-      # Python packages, node, headless Chromium, and an age binary on PATH
-      # (the one the image ships).
-      - name: Smoke test prerequisites
-        env:
-          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/ms-playwright
-        run: |
-          set -euo pipefail
-          python -m pip install -r scripts/requirements-gates.txt
-          python -m playwright install --with-deps chromium
-          id="$(docker create cseries:release)"
-          docker cp "$id:/usr/local/bin/age" "$RUNNER_TEMP/bin/age"
-          docker rm "$id"
-          "$RUNNER_TEMP/bin/age" --version
-          # The backups gate also reads the saved key file with age-keygen, a
-          # second implementation of the key format. The image ships no
-          # age-keygen, so the distribution's age package provides it.
-          sudo apt-get install -y --no-install-recommends age
-          age-keygen --version
-
-      # As root, as the suite runs on a build machine: the connector gates
-      # start their children in their own user and PID namespaces, which
-      # Ubuntu 24.04 refuses an unprivileged user. Its own HOME, so nothing
-      # root-owned lands in the runner user's.
-      #
-      # From a copy of the tree in /srv, as on a build machine. The checkout
-      # is under /home, which the picture renderer's sandbox refuses to read
-      # (picture.HOST_DATA_PATHS), and its gate reads the tree's fonts:
-      # measured, read roots under /home/runner/work fail its check and the
-      # same roots under /srv pass.
-      - name: Smoke test
-        env:
-          PLAYWRIGHT_BROWSERS_PATH: ${{ runner.temp }}/ms-playwright
-        run: |
-          set -euo pipefail
-          mkdir -p "$RUNNER_TEMP/smoke-home"
-          sudo cp -R --preserve=mode,timestamps "$GITHUB_WORKSPACE" /srv/cseries
-          sudo -E env "PATH=$PATH" "HOME=$RUNNER_TEMP/smoke-home" \
-            IMAGE=cseries:release PG_IMAGE=cseries-postgres:release \
-            bash /srv/cseries/scripts/smoke_test.sh
 
       - name: Push by digest
         env:

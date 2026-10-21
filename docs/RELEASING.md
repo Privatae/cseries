@@ -10,9 +10,10 @@ github.com/Privatae/cseries. Pushing the tag runs
   that architecture, then checked before anything is pushed: trivy's secret
   scan, the vulnerability gate (`trivy.yaml`, with the accepted findings in
   `.trivyignore.yaml`), `scripts/test_public_source_clean.py` over the image's
-  `/app`, and `scripts/smoke_test.sh`. The tested image is pushed by digest
-  with a provenance attestation, and the index is made from exactly those
-  digests.
+  `/app`. The full smoke test (`scripts/smoke_test.sh`) is not run here: it
+  runs on the build machine before the tag, in the full gate below. The
+  checked image is pushed by digest with a provenance attestation, and the
+  index is made from exactly those digests.
 - **The runtime images**, which a machine's local runtime starts the Host's
   app, browser and creative containers from, each built from this tree at
   the tag, checked the same way as the two images above (trivy's secret

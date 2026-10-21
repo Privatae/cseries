@@ -28,7 +28,7 @@ The small program that runs on your machine, outside the Host's virtual machine,
 
 ## The Privatae network
 
-An optional membership. A Host works without it. With a membership code a Host joins the network, which gives it the App Store and the community board over one outbound connection. See [joining the Privatae network](wiki:the-privatae-network).
+An optional membership. A Host works without it. With a one-time code from your account, a Host joins the network over one outbound connection. See [joining the Privatae network](wiki:the-privatae-network).
 
 ## Grant
 
@@ -36,7 +36,7 @@ A permission for something specific. There are two kinds. Your Host grants a dis
 
 ## Approval
 
-Your yes to something your Host may not do on its own, such as widening what it may reach, changing something on your machine, or merging code. You give it with a code from your authenticator, a tap on your approval device (one of your own computers, set up to approve requests), or a code typed at the machine itself. See [approvals](wiki:approvals).
+Your yes to something your Host may not do on its own, such as widening what it may reach, changing something on your machine, merging code, or setting up repeating work that runs a model. Depending on the request you give it with a code from your authenticator, a tap on your approval device (one of your own computers, set up to approve requests), a code typed at the machine itself, or a click on its card. See [approvals](wiki:approvals).
 
 ## Dispatched agent
 
@@ -56,11 +56,11 @@ The app with your own events and the work your Host has scheduled, on one calend
 
 ## Workbench
 
-The app where you build. Each project is a conversation with your Host plus the work itself, and every change the coding agents make comes back to you as a Code Approval, in plain English, for you to approve. See [the Workbench](wiki:workbench).
+The app where you build. Each project is a conversation with your Host plus the work itself. When a project's code is kept on a git forge, its changes come to you as a Code Approval, in plain English, for you to approve. See [the Workbench](wiki:workbench).
 
 ## App
 
-A program on your Host's desktop, opened from the dock. Some are built in, others you install from the App Store (which needs a network membership), and you can build your own. See [apps](wiki:apps-overview).
+A program on your Host's desktop, opened from the dock. Some are built in, others you install from the App Store, which works without a network membership, and you can build your own. See [apps](wiki:apps-overview).
 
 ## Site
 

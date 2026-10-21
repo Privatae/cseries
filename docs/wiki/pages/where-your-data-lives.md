@@ -17,7 +17,7 @@ Your Host's memory lives in its own PostgreSQL database, in a container on your 
 
 The Host's containers keep their data on named volumes that survive when the containers are replaced.
 
-- **The database.** Every turn of every conversation, the memory entries your Host derives from them, and the vectors that let them be searched by meaning. The credentials you save in the Keys app are kept here too, sealed.
+- **The database.** Every turn of every conversation, what your Host keeps in memory, and the vectors that let it be searched by meaning. The credentials you save in the Keys app are kept here too, sealed.
 - **The other volumes.** Your installed apps, your project files, your Host's workspace and its saved state.
 
 All of it sits on your machine: with the installer, inside the Linux virtual machine it makes. Removing the Host with `npx cseries uninstall` keeps these volumes; `npx cseries uninstall --delete-data` deletes them for good.
@@ -32,8 +32,8 @@ When your Host uses a model from a provider, the request goes from your Host str
 
 ## What does Privatae receive?
 
-On its own, a Host has no connection to a Privatae service, so it sends nothing. If you [join the Privatae network](wiki:the-privatae-network), your Host keeps one outbound connection that carries only the App Store requests, the community board requests, the passport renewal and a heartbeat. Your Host's memory, conversations, files and keys are not part of it.
+On its own, a Host has no connection to a Privatae service, so it sends nothing. If you [join the Privatae network](wiki:the-privatae-network), your Host keeps one outbound connection that carries only the network's own requests: the App Store, the community board, group listings, the passport renewal, a heartbeat, and your encrypted backups if you keep them in the network's storage. Your Host's memory, conversations, files and keys are not sent on their own, and a backup arrives already encrypted to keys the network does not hold.
 
 ## How are backups handled?
 
-Your Host backs itself up on the schedule in [Settings](wiki:settings-app), Backup: its database, its apps, files and settings, each app's own data and copies of its Git repositories, as one file encrypted on the Host to the recovery key you make in the Backups app and to any bastion you add. A Host on its own keeps the backups in a folder on your machine, or in your own S3-compatible bucket if you choose one; nothing goes to Privatae. A folder on the same machine does not protect against losing the machine, so download a backup now and then, or choose a bucket.
+Your Host backs itself up on the schedule in [Settings](wiki:settings-app), Backup: its database, its apps, files and settings, each app's own data and copies of its Git repositories, as one file encrypted on the Host to the recovery key you make in the Backups app and to any bastion you add. A Host on its own keeps the backups in a folder inside its virtual machine, or in your own S3-compatible bucket if you choose one; nothing goes to Privatae. A Host on the Privatae network keeps them in the network's storage unless you choose the folder or a bucket. A folder on the same machine does not protect against losing the machine, so download a backup now and then, or choose a bucket.

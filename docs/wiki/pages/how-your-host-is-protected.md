@@ -1,6 +1,6 @@
 ---
 title: How your Host is protected
-summary: A Host runs sandboxed in a virtual machine on your machine, publishes its ports on your own machine only, runs with no extra privileges, and is limited by checks in code rather than by instructions to a model. A separate program, the bastion, decides what it may touch on the machine.
+summary: A Host runs sandboxed in a virtual machine on your machine, publishes its ports on your own machine only, runs with no extra privileges, and is limited by checks in code rather than by instructions to a model. The virtual machine mounts none of your folders; the bastion, a separate program the installer sets up, is how the Host reaches your machine.
 section: security
 order: 10
 questions:
@@ -11,15 +11,15 @@ questions:
   - Who can sign in to my Host?
 ---
 
-A Host runs in a Linux virtual machine on your machine and publishes its ports on your machine only. Its containers run with no extra privileges, and what it may do is limited by checks in code, not by instructions to a model. The bastion, a separate program on your machine, decides what the Host may reach there.
+A Host runs in a Linux virtual machine on your machine and publishes its ports on your machine only. Its containers run with no extra privileges, and what it may do is limited by checks in code, not by instructions to a model. The bastion, a separate program the installer sets up on your machine, is how the Host reaches anything there.
 
 ## Is my Host exposed to the internet?
 
-Not by default. The dashboard and the two bastion ports are published on 127.0.0.1, so only programs on your own machine can connect to them. The installer's virtual machine sees none of your folders. The database container has no network port at all: it listens on a Unix socket shared with the Host. To reach the dashboard from other machines you put a reverse proxy that ends TLS in front of it, as the README describes; that is your choice and your proxy's configuration.
+Not by default. The dashboard and the two bastion ports are published on 127.0.0.1 inside the virtual machine and forwarded only to 127.0.0.1 on your machine, so only programs on your own machine can connect to them. The installer's virtual machine mounts none of your folders. The database container has no network port at all: it listens on a Unix socket shared with the Host. To reach the dashboard from other machines you put a reverse proxy that ends TLS in front of it, as the README describes; that is your choice and your proxy's configuration.
 
 ## What makes a Host contained?
 
-Both containers run as an ordinary user with every Linux capability dropped and a read-only root filesystem, and they cannot gain privileges. The Host's container also runs under a restricted set of system calls. Everything the Host writes goes to named volumes, and the database's data directory is never mounted into the Host.
+Both containers run as an ordinary user with every Linux capability dropped and a read-only root filesystem, and they cannot gain privileges. The Host's container also runs under a restricted set of system calls. What the Host keeps goes to named volumes, its /tmp is in memory, and the database's data directory is never mounted into the Host.
 
 ## Who can sign in?
 
@@ -27,11 +27,11 @@ The owner. The first time, you enter the setup code the Host prints at start and
 
 ## How does the bastion connect?
 
-The bastion pairs with a one-time token and then connects to the Host over mutual TLS under a certificate authority the Host makes for itself. The Host trusts only certificates it issued at pairing and has not revoked. The bastion trusts only that authority. [The bastion](wiki:the-bastion) covers what it checks on every operation.
+The bastion pairs with a one-time token and then connects to the Host over mutual TLS under a certificate authority the Host makes for itself. The Host accepts only certificates it issued at pairing and has not revoked, and drops the open connections of a bastion it revokes. [The bastion](wiki:the-bastion) covers what it checks on every operation.
 
 ## What stops my Host doing something I did not approve?
 
-Walls in code. An agent your Host dispatches starts with no capabilities at all. Nothing it dispatches can run code; code runs on a coding engine, in a container of its own. A rule that widens what your Host may reach waits for your authenticator code. And the bastion checks every grant itself before it acts. [What a Host cannot do](wiki:what-a-host-cannot-do) covers each wall.
+Walls in code. An agent your Host dispatches starts with no capabilities at all. Nothing it dispatches can run code; code runs on a coding engine, in a container of its own. A rule that widens what your Host may reach waits for your approval with your authenticator code. [What a Host cannot do](wiki:what-a-host-cannot-do) covers each wall.
 
 ## What is not covered?
 

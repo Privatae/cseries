@@ -19,7 +19,7 @@ On the configured forge, in repositories that belong either to your Host's own a
 
 ## What is a Code Approval?
 
-It is the plain-English face of a pull request. Each one says what it changes (one line per save point, in the plan's own words), why (the request you made), what was checked, and who wrote each change: the coding engine and model, the Host itself, or a person working in the editor. The file details are folded underneath for anyone who wants them. The format is written from records, not by a model.
+It is the plain-English face of a pull request. Each one says what it changes (one line per save point, in the plan's own words), why (the request you made), what was checked, and who wrote each change: the coding engine and model, the Host itself, or a person. The file details are folded underneath for anyone who wants them. The format is written from records, not by a model.
 
 A Workbench project keeps one Code Approval open and adds each landed phase to it as a commit. See [the Workbench](wiki:workbench).
 

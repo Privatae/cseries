@@ -11,13 +11,13 @@ questions:
   - Which app do I open to change what my Host can do?
 ---
 
-A Host is a desktop of apps, not a single chat window. Twenty apps are built into every Host and are there the first time it starts. A few more come from the App Store, which needs a network membership, and Claude Code your Host installs when you ask.
+A Host is a desktop of apps, not a single chat window. Twenty-one apps are built into every Host and are there the first time it starts. More are added from the App Store.
 
 ## What apps are there?
 
 **Talking and people**
 
-- [Circles](wiki:circles-app): everyday conversation with your Host and everyone you know, as a deck of cards, with what waits on you and who is at the door.
+- [Circles](wiki:circles-app): everyday conversation with your Host, as a deck of cards, with what waits on you and who is at the door.
 - [Calendar](wiki:calendar-app): your own events and your Host's scheduled work on one calendar, with every run of each task.
 - [Community](wiki:community-app): the members' discussion board.
 
@@ -50,20 +50,19 @@ A Host is a desktop of apps, not a single chat window. Twenty apps are built int
 
 - [Keys](wiki:keys-app): your keys, tokens and sign-ins, sealed.
 - [Settings](wiki:settings-app): version and updates, appearance, your desktop and backups.
+- Backups: your recovery key, your Host's backups, an export of the whole Host, and a restore from a file.
 - [Compute](wiki:compute-app): what your Host's work has used, and what it is estimated to have cost.
 - [App Store](wiki:app-store-app): find and add apps.
 - [Getting Started](wiki:getting-started-app): the first-run walkthrough.
 
 ## Which apps come with every Host?
 
-Agents, Artifacts, Calendar, Circles, Community, Compute, Context, Designs, Getting Started, Gitea, Keys, Memory, Network, Orchestrator, Oversight, Settings, Ships, Sites, Skills and Workbench. They ship inside the Host's own software, are installed when it first starts, and are updated whenever it is. Settings, Memory and Orchestrator cannot be uninstalled, because the Host depends on them. Remove any other built-in app and it comes back the next time your Host starts; an app you added from the App Store stays removed.
+Agents, Artifacts, Backups, Calendar, Circles, Community, Compute, Context, Designs, Getting Started, Gitea, Keys, Memory, Network, Orchestrator, Oversight, Settings, Ships, Sites, Skills and Workbench. They ship inside the Host's own software, are installed when it first starts, and are updated whenever it is. Settings, Memory and Orchestrator cannot be uninstalled, because the Host depends on them. Remove any other built-in app and it comes back the next time your Host starts; an app you added from the App Store stays removed.
 
 ## Which apps come from the App Store?
 
-The App Store and Publisher apps, and Browser, come from the store. The store is reached through the [Privatae network](wiki:the-privatae-network), so a Host that has not joined it cannot add them. When a member Host starts, it checks the store and updates the apps it installed from there to their newest version.
+Other apps, including the App Store app itself, Publisher, Browser, Claude Code, Security and Terminal, comes from the store, and your Host installs any of them when you ask. The store is a signed catalog published with each C-Series release, so any Host can read it without joining the [Privatae network](wiki:the-privatae-network); a Host that has joined also sees the apps the network offers.
 
-## What about the rest?
-
-Claude Code is not built in and is not listed in the App Store; your Host installs it when you ask. Security, Terminal and Training Memory are not available to members in this release.
+## What about apps I build?
 
 Apps you build yourself can run on your Host too. [Building apps](wiki:building-apps) covers that.

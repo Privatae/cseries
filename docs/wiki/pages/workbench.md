@@ -31,7 +31,7 @@ A phase can be marked as needing your sign-off. That phase cannot start until yo
 
 ## Where does the code get written?
 
-Not inside your Host. Each build runs on a coding engine you connected, in a container of its own beside your Host, under your own account or key. Starting those containers on your own machine needs the local container runtime, which is not finished in this pre-release. See [Coding agents](wiki:coding-agents).
+Not inside your Host. Each build runs on a coding engine you connected, in a container of its own that the local runtime starts beside your Host, inside the same virtual machine, under your own account or key. See [Coding agents](wiki:coding-agents).
 
 ## Who merges the code?
 
@@ -45,7 +45,7 @@ With it on, the Host merges when the last phase of the plan lands, or when a fol
 
 ## What happens if a phase fails?
 
-When the plan is advancing on its own and a phase fails, it gets one retry on the same engine with the failure passed back to it. If that also fails, the chain stops and says so. A failure on the infrastructure's side, such as a coding engine that could not be started or a connection that dropped, does not use up that retry; if the infrastructure fails the same phase twice, the chain stops and says the cause was not your project. A run you or your Host killed is never retried. A build your Host started outside the plan goes back to it when it fails, with what the run was doing when it stopped, so the Host can run it again or ask you what only you can decide. After three failures in a row in one conversation, the next one is only reported.
+When the plan is advancing on its own and a phase fails, it gets one retry on the same engine with the failure passed back to it. If that also fails, the chain stops and says so. A failure on the infrastructure's side, such as a coding engine that could not be started or a connection that dropped, does not use up that retry; if the infrastructure fails the same phase twice, the chain stops and says the cause was not your project. A run you or your Host killed is never retried. A build your Host started outside the plan goes back to it when it fails, with what the run was doing when it stopped, so the Host can run it again or ask you what only you can decide. By default, after three failed runs in a row in one conversation, further failures are written there but wake your Host no more until you write; that number is one of your limits, which you can change.
 
 ## Can I stop a build?
 
@@ -59,4 +59,4 @@ The bench is on the right side of each page. It shows the page's run as it happe
 
 ## What can I do with a finished project?
 
-Publish it as a website ([Publishing sites](wiki:publishing-sites)) or install it on your Host as an app ([Building apps](wiki:building-apps)). Both are under Ship this project, on the right side of the project's page.
+Install it on your Host as an app ([Building apps](wiki:building-apps)), under Ship this project on the right side of the project's page. Publish as site sits there too, but in this release it cannot complete; [Publishing a website](wiki:publishing-sites) says why.

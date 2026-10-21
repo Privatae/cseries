@@ -19,7 +19,7 @@ The Orchestrator decides which AI model does which job for your Host, on provide
 
 It opens in **Simple** mode, a checklist of four things:
 
-- **Thinking**: pick a provider you hold a key or sign-in for, and one click routes both text jobs to a recommended model on it, with an optional backup provider. Recommendations are checked against the provider's live model list when applied, and every route stays visible and editable.
+- **Thinking**: pick a provider you hold a key or sign-in for, and one click routes the Host model to a recommended model on it, with an optional backup provider. Recommendations are checked against the provider's live model list when applied, and every route stays visible and editable.
 - **Memory**: an embeddings model, so your Host can recall by meaning. Run it free on a machine of your own, or use a provider.
 - **Seeing**: a model for making images, offered only where the model catalog says the model can make one. Your Host looks at pictures you share with its own Host model, so pick a Host model that reads images.
 - **Hearing**: the provider for live voice.
@@ -28,7 +28,7 @@ Below the checklist, **What answers when** says which provider and model handles
 
 ## What is in Advanced mode?
 
-- **Routing**: the **Host model**, with a provider, model, optional backup and, where the provider accepts one, reasoning effort. It talks, plans, researches, runs agents, reviews what its builds changed and keeps what it learns in memory as it answers. For a second opinion on a build, ask your Host to have a coding engine review it.
+- **Routing**: the **Host model**, with a provider, model, optional backup and, where the provider accepts one, reasoning effort. It is the one text model: it talks, plans, runs agents and keeps what it learns in memory as it answers. There is no separate research or review model. When the Host model cannot search the web, a connected coding engine that can, Claude Code or Antigravity CLI, runs the search on its own vendor's key or sign-in. For a second opinion on a build, ask your Host to have a coding engine review it.
 - **Coding Engines**: Claude Code, Codex, Cursor, Grok, Kimi Code and Antigravity CLI each run on their own vendor's key or sign-in, and show as not connected without it; none is ever substituted for another. opencode, which has no vendor of its own, runs on your OpenRouter key. A build that names no engine runs on the one you tick as Default; with several connected and none ticked, it stops and asks.
 - **Multi-Agent Coding**: protocol files, plain instructions naming which engines run, in turn or at once, and what to do on pass or fail. Your Host can write one; you can edit, check, export and import them. A protocol cannot carry a credential.
 - **Embedding**: switching models never re-embeds or deletes what is stored, but entries embedded by the old model are not found by the new one until embedded again.

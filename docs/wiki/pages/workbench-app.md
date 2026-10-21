@@ -9,7 +9,7 @@ questions:
   - Where can I watch my Host's builds running?
   - How do I approve the changes my Host made?
   - What is Auto-Approve?
-  - How do I turn a finished project into a website or an app?
+  - How do I turn a finished project into an app?
 app: workbench
 ---
 
@@ -39,4 +39,4 @@ Auto-Approve, beside the chat input, lets your Host approve its own changes in t
 
 ## What can a finished project become?
 
-A website, with Publish as site: a new site is public as soon as it is live, and you choose who else can see it in the [Sites app](wiki:sites-app). Or an app on your own Host, with Install as my app. [Publishing sites](wiki:publishing-sites) and [Building apps](wiki:building-apps) go further.
+An app on your own Host, with Install as my app; [Building apps](wiki:building-apps) goes further. Publish as site is offered too, but in this release it cannot complete; [Publishing a website](wiki:publishing-sites) says why.

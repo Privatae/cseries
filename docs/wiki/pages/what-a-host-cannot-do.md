@@ -5,7 +5,7 @@ section: host
 order: 70
 questions:
   - What is my Host not allowed to do?
-  - Can an AI agent on Privatae go rogue and delete my files?
+  - Can an AI agent my Host sends out go rogue and delete my files?
   - Can my Host give itself more permissions?
   - Can my Host change my firewall rules without asking me?
   - Can my Host run code on its own?
@@ -16,7 +16,7 @@ questions:
 
 ## Why does an agent start with nothing?
 
-An agent your Host dispatches holds no capability at all when it starts. It cannot read your memory, write anything or reach the network until the Host grants it something, by name, for that one task. There are seven names to choose from. Two more capabilities exist, administering the Host and running a shell, and the grant itself refuses both, so no agent can ever hold them. A misspelt name is refused with the list of valid ones, never matched to something close.
+An agent your Host dispatches holds no capability at all when it starts. An agent is for reading untrusted content, such as the open web, and reporting back, so it can be granted only reading, by name, for that one task: there are three names to choose from. A grant that names a capability to write, run tools or start other agents is refused at the dispatch, and so is one naming administering the Host or running a shell, so no agent can ever hold them. Acting on what an agent found is the Host's own work. A misspelt name is refused with the list of valid ones, never matched to something close.
 
 The capabilities are never worked out from the tools the agent was given. The agent acts under the overlap of the Host's own permissions and the grant, so it can never exceed the Host that made it or the task it was made for, and it cannot raise its own grant.
 
@@ -24,11 +24,11 @@ The capabilities are never worked out from the tools the agent was given. The ag
 
 Because one tool often does two things. The tool that searches memory can also add to it, so the gate looks at the operation being called rather than the tool as a whole. An agent granted read access can search and is refused when it tries to add. An operation nobody has classified yet falls back to the tool's full requirement, so a gap in that table can only narrow what an agent may do, never widen it.
 
-A tool the agent was never given is refused at the moment it is called, with a message telling it that widening the grant is the Host's decision, not its own. Each refused call shows up in the Agents app as a red entry naming the tool, so a wall is never silent.
+A tool the agent was never given is refused at the moment it is called, with a message telling it that widening the grant is the Host's decision, not its own. Each refused call shows up in the Agents app as a failed entry naming the tool, so a wall is never silent.
 
 ## What happens when the Host gets a grant wrong?
 
-The dispatch is refused at the door, before any task exists. If the Host gives an agent a tool without the capability that tool needs, the refusal names each tool and what it is missing, and spells out the grant that would work. No worker starts, so you never hear about a job that failed, because none began. A dispatch whose every tool is a single known operation is refused too, and the Host has to make those calls itself.
+The dispatch is refused at the door, before any task exists. If the Host gives an agent a tool without the capability that tool needs, the refusal names each tool and what it is missing, and spells out the grant that would work. No worker starts, so you never hear about a job that failed, because none began. A dispatch for anything other than reading untrusted content is refused too, with the reason, and the Host does that work itself.
 
 ## What can the Host not do even with every capability?
 
@@ -46,7 +46,7 @@ Code runs only through the Host's own build tools, in a separate coding sandbox 
 
 - **Deleting files in a connected folder.** There is no delete operation for them, and a folder grant cannot include one.
 - **Revealing your keys.** Showing a key in clear text takes your code, in the Keys app only, and the Host cannot call it.
-- **Your backups.** Restoring a backup and switching the live copy of your memory on or off are all walled from the Host.
+- **Your backups.** Restoring a backup is walled from the Host, and switching the live copy of your memory on or off takes your code.
 - **A shell on your machines.** The Host cannot open a shell on one of your machines, and cannot even draft a grant for one.
 - **Merging as you.** Your Host holds nothing that can merge code under your account. [Approvals](wiki:approvals) covers what else waits for you.
 

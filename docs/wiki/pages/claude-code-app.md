@@ -24,8 +24,8 @@ Yours. Claude Code builds run on your own Claude subscription, Pro or Max. The e
 
 ## Where do the builds run?
 
-In their own container beside your Host, never inside it, and the container's workspace is thrown away when the build is done. Starting that container on your own machine needs the local container runtime, which is not finished in this pre-release. You start a build by asking your Host, usually in the [Workbench](wiki:workbench-app), and you watch it there, on the project's page.
+In their own container beside your Host, never inside it. On a Host installed with `npx cseries`, the local runtime in the Host's Linux system starts that container, and its working files are removed when it is released. You start a build by asking your Host, usually in the [Workbench](wiki:workbench-app), and you watch it there, on the project's page.
 
 ## How do I get the app, and how do I disconnect?
 
-The app is not built into the Host and is not listed in the App Store; your Host installs it when you ask. While it is installed, your Host tells you with a Notice on the Support card in Circles when the Claude sign-in has expired or is close to expiring; to connect again, ask your Host to connect Claude Code, which runs Anthropic's own sign-in. To disconnect Claude Code, revoke its sign-in in the Vault section of [Keys](wiki:keys-app).
+The app is not built into the Host; your Host installs it when you ask. To connect again after the sign-in expires, ask your Host to connect Claude Code, which runs Anthropic's own sign-in. **Disconnect** in the app removes the copy of the sign-in the app reads. The sign-in your Host keeps for builds is in the Vault section of [Keys](wiki:keys-app), where you can switch it off.

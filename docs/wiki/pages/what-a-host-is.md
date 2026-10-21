@@ -25,6 +25,8 @@ Two containers run together:
 - **The Host itself.** The program that thinks, works and serves your dashboard. Its root filesystem is read-only, it runs as an ordinary user, and every Linux capability is dropped.
 - **Its database.** PostgreSQL, in a container of its own. It listens on a Unix socket shared with the Host and on no network port.
 
+When the Host needs its browser, a coding engine or an app that runs in a container of its own, the virtual machine starts that container beside it, within the memory the Host leaves free.
+
 Beside them are volumes that survive when the containers are replaced. One holds the database: every conversation and everything the Host remembers. Others hold what the Host installs and makes: your apps, your projects, your files and its secrets. When a new version is installed, the containers are recreated and the same volumes are attached again. [Updates and versions](wiki:updates-and-versions) covers what changes and what stays.
 
 ## What does the network see of it?

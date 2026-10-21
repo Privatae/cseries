@@ -24,15 +24,14 @@ github.com/Privatae/cseries. Pushing the tag runs
   --predicate-type https://spdx.dev/Document/v2.3 --format json`), and tagged
   X.Y.Z from exactly the tested digests:
 
-  | Image | Built from | Architectures | Size, compressed |
-  |---|---|---|---|
-  | `ghcr.io/privatae/cseries-app-runtime-python` | `sidecars/app-runtime-python/Dockerfile` | amd64, arm64 | about 188 MB |
-  | `ghcr.io/privatae/cseries-browser` | `sidecars/browser/Dockerfile` | amd64, arm64 | about 513 MB |
-  | `ghcr.io/privatae/cseries-app-helper` | `sidecars/app-helper/Dockerfile` | amd64, arm64 | about 3 MB |
-  | `ghcr.io/privatae/cseries-app-runtime-creative` | `sidecars/app-runtime-creative/Dockerfile` | amd64 only | about 1.1 GB |
+  | Image | Built from | Architectures |
+  |---|---|---|
+  | `ghcr.io/privatae/cseries-app-runtime-python` | `sidecars/app-runtime-python/Dockerfile` | amd64, arm64 |
+  | `ghcr.io/privatae/cseries-browser` | `sidecars/browser/Dockerfile` | amd64, arm64 |
+  | `ghcr.io/privatae/cseries-app-helper` | `sidecars/app-helper/Dockerfile` | amd64, arm64 |
+  | `ghcr.io/privatae/cseries-app-runtime-creative` | `sidecars/app-runtime-creative/Dockerfile` | amd64 only |
 
-  The sizes were measured on earlier builds of the same Dockerfiles, not on
-  these. The creative image is amd64 only because Blender and the ArtCraft
+  The creative image is amd64 only because Blender and the ArtCraft
   programs it carries are downloaded as x86-64 builds. The coding engines'
   images are not published at all: each machine builds the ones its owner
   turns on, from the harness source tarball below.
@@ -55,10 +54,7 @@ github.com/Privatae/cseries. Pushing the tag runs
   - one `<image>-X.Y.Z-<arch>-notices.txt` per runtime image and
     architecture: every Debian package in the image with its source
     package and the licences its copyright file names, every Python
-    distribution with its licence, and what the image adds. Whether a
-    pointer to Debian's own archive meets the source obligation for the
-    GPL-licensed Debian packages inside the published images is an open
-    legal question for the owner.
+    distribution with its licence, and what the image adds.
 - **The C-Series Cloud release**, on the same GitHub release:
   `cseries-cloud-overlay-X.Y.Z.tar.gz` (every file a cloud box installs, built
   by `vm/cloud/build-overlay.sh`) with its `.sha256`, and `cloud-release.json`,
@@ -72,8 +68,8 @@ github.com/Privatae/cseries. Pushing the tag runs
   `scripts/build_store_catalog.py` from `factory-bundles/`. A Host takes the
   catalog only once its signature is beside it, which the maintainer adds
   by hand (section 3).
-- **The npm packages** under `packages/`, at X.Y.Z, with trusted publishing
-  and provenance. First the workflow writes `packages/cseries/release.json`
+- **The npm package** `cseries` (`packages/cseries`), at X.Y.Z, with trusted
+  publishing and provenance. First the workflow writes `packages/cseries/release.json`
   with the images' digests, the runtime images' digests, the harness source
   tarball's URL and sha256, and the guest images' URLs and sha256s, and
   checks that anyone can fetch all of them without logging in.
@@ -106,7 +102,7 @@ From a clean checkout of the commit you will tag:
 2. The release term check must exit 0:
 
    ```sh
-   python3 scripts/release_term_check.py --digests /srv/work/plans/denylist-src/cseries-digests.txt
+   python3 scripts/release_term_check.py --digests <digests file>
    ```
 
    It needs the maintainers' HMAC key (`--key`, else
@@ -181,8 +177,10 @@ release shows on every Host until the next one.
 
 ## 4. One-time owner steps
 
-These are done once, by the owner of the Privatae accounts on GitHub and npm.
-After them, a tag releases everything with no further steps.
+These were done once for Privatae/cseries before its first public release,
+by the owner of the Privatae accounts on GitHub and npm, and are kept here for
+a new account. After them, a tag releases everything, and the only steps by
+hand are the two signatures in section 3.
 
 The repository has to be public before the first release anyone installs.
 The overlay, the harness source tarball, the store catalog and its bundles,
@@ -191,7 +189,7 @@ release's download URLs, which a private repository answers only to a
 signed-in account. The npm job checks that the guest images and the harness
 source tarball can be fetched without a login, and stops if they cannot.
 
-When the repository goes public:
+With the repository public:
 
 - **Turn on GitHub Pages.** In the repository's Settings, open Pages and set
   Source to "GitHub Actions". Without it `.github/workflows/pages.yml` never
@@ -218,13 +216,11 @@ On the first release, in this order:
    settings, then Change visibility, and choose Public. Then re-run the failed
    jobs.
 
-2. **Publish each npm package once by hand.** Trusted publishing cannot
+2. **Publish the npm package once by hand.** Trusted publishing cannot
    create a package, so on the first run the npm job stops at "Publish" and
    names the package. Download that run's `npm-packages` artifact (the run's
-   summary page, under Artifacts). It holds the exact tarballs the workflow
-   packed, `release.json` included. Publish them from your own machine,
-   signing in with your passkey, per-platform packages first and `cseries`
-   last:
+   summary page, under Artifacts). It holds the exact tarball the workflow
+   packed, `release.json` included. Publish it from your own machine:
 
    ```sh
    npm login
@@ -234,7 +230,7 @@ On the first release, in this order:
    A version published this way has no provenance statement, because only a
    publish from the workflow can carry one. Every later version has one.
 
-3. **Add the trusted publisher for each package.** On npmjs.com open the
+3. **Add the trusted publisher for the package.** On npmjs.com open the
    package's Settings, then Trusted publishing, and choose GitHub Actions with
    user `Privatae`, repository `cseries` and workflow `release.yml`, and no
    environment. Then set Publishing access to require two-factor

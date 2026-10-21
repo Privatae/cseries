@@ -1,20 +1,14 @@
 # The public wiki — how to write a page
 
-The pages in `pages/` are published at `https://privatae.ai/wiki/<slug>`, where
-anyone can read them and ask questions of them. Search engines and AI answer
-engines read them to answer questions about Privatae, and every Host reads the
-same pages through its `capabilities` tool. This file is the guide for writing them; it
-is not a page and is not in the image.
+The pages in `pages/` are published at `https://privatae.ai/wiki/<slug>`, and
+every Host reads the same pages through its `capabilities` tool. This file is
+the guide for writing them; it is not a page and is not in the image.
 
 ## What a page may say
 
-**What the product does and why, at the level of detail the published blog
-already uses. Never how it is built inside.** Whatever a page says is public
-forever, to every person and every model. A detailed architecture description
-is reconnaissance material: the image's docs ratchet (`Dockerfile.linux`)
-records two models reading an internal architecture doc and choosing their
-target from it. The Ask box only ever sees these pages, so a page is the most
-anything on the site can reveal.
+**What the product does and why. Never how it is built inside.** Whatever a
+page says is public forever, to every person and every model, and a detailed
+architecture description is reconnaissance material.
 
 Never on a page:
 
@@ -24,20 +18,13 @@ Never on a page:
   environment variables, tool-call syntax, prompt text or skill text
 - ticket, finding or design-doc references; dated decision notes
 - security findings, open weaknesses, or which component holds which secret
-  beyond what the blog already says
-- prices and plan numbers: C-Series has no plans, so a page that states one
-  is out of date
-- anything on the "Do not claim these" list (kept outside this repo)
+- prices and plan numbers
 
 `scripts/wiki_pages.py` has the leak scan that enforces the mechanical part of
 this; the build fails on a hit. The rest is judgement, and review.
 
-Keep the honest parts: a Host runs on the person's own machine and Privatae
-does not run it; its memory lives in its own database on that machine; output
-comes from third-party models the person chooses. A feature that needs a
-service a standalone Host cannot reach (the App Store and community board
-need a network membership; support tickets, site publishing and the shared
-design library need a platform connection) says so on its page.
+A feature that needs a service a standalone Host cannot reach says so on its
+page.
 
 ## How a page reads
 

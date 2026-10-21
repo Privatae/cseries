@@ -16,7 +16,7 @@ Compute is your Host's cost-and-usage view. It answers what a project has cost, 
 
 ## Does Privatae charge for model usage?
 
-No. Model calls run on your own keys, and your providers bill you directly. Privatae does not sell, proxy or bill model usage. A Host with no platform connection has no one to charge: a coding run's compute charge is skipped when there is no platform connection, and Compute shows no charged amount for it.
+No. Model calls run on your own keys or sign-ins, and your providers bill you for them directly. Billing is not part of this release, so nothing in Compute is charged. A coding run that ran on your own machine carries no compute fee.
 
 ## Why are some amounts labelled as estimates?
 

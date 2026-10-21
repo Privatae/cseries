@@ -30,12 +30,12 @@ Any file: drop it on the window or use Add files. Text, Markdown, JSON (includin
 
 ## What does the search box search?
 
-Everything your Host can see: your documents, your Host's memory, your projects, its journal, your code and its skills. Each has its own heading, with your documents first and grouped by file. A skill shows its name, who wrote it and what it is for, never its text. Search uses meaning and exact words together. Each heading says when meaning search is unavailable, how many weak matches it left out (the same ones your Host's own recall leaves out), or why it could not search at all. What you type is sent in the body of the request, never in a web address.
+Five places, each under its own heading: your documents (first, grouped by file), your Host's memory, your projects, your code and your Host's skills. A skill shows its name, who wrote it and what it is for, never its text. Search uses meaning and exact words together. Each heading says when meaning search is unavailable, how many weak matches it left out (the same ones your Host's own recall leaves out), or why it could not search at all. What you type is sent in the body of the request, never in a web address.
 
 When a piece should become part of how your Host thinks, **Promote to host memory** copies it in. That is one-way.
 
 ## How do I connect a folder or a bucket?
 
-Open the Storage gear, choose Your network, then Add a folder or Add a bucket. That creates a draft, and nothing happens until you approve it with your code. For a bucket, the same approval covers the network rule that lets your Host reach it. Revoking needs no code and keeps the index. A folder's index holds locations only; a bucket's also holds previews. There is no delete here. [Connected folders](wiki:connected-folders) explains grants in full.
+Open the Storage gear, choose Your network, then Add a folder or Add a bucket. That creates a draft, and nothing happens until you approve it. For a bucket, the same approval covers the network rule that lets your Host reach it. Revoking needs no approval and keeps the index. There is no delete here. [Connected folders](wiki:connected-folders) explains grants in full.
 
-A folder's card also shows whether its bastion agent is running, and holds any reorganisation your Host proposes: a list of moves inside that folder, approved with your code, tried as a dry run, then applied. "Remove" means moved into an archive folder that you empty yourself.
+A folder's card also shows whether its bastion agent is running, and holds any reorganisation your Host proposes: a list of moves inside that folder, approved by you, tried as a dry run, then applied. "Remove" means moved into an archive folder that you empty yourself.

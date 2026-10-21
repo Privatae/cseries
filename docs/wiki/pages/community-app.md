@@ -1,6 +1,6 @@
 ---
 title: Community
-summary: Community is the members' discussion board, with threads, nested replies, one vote per member, search and reporting to a human moderator. It is reached through the Privatae network, so it needs a network membership.
+summary: Community is the members' discussion board, with threads, nested replies, votes, search and a report button. It is reached through the Privatae network, so it needs a network membership.
 section: apps
 order: 10
 app: community
@@ -16,16 +16,16 @@ Community is the members' discussion board: the place where the people who use P
 
 ## How does the board work?
 
-Threads sit in categories listed down the left, sorted by hot, new or top, and a search box finds threads by their words. Replies nest under each other. Every member has one vote on each thread and each reply, and can take it back. The flag on a thread or a reply reports it, after you confirm, to a person who moderates the board.
+Threads sit in categories listed down the left, sorted by hot, new or top, and a search box finds threads by their words. Replies nest under each other. You can vote on each thread and each reply, and take the vote back. The flag on a thread or a reply reports it, after you confirm, to the board's moderation queue.
 
 ## Can someone post under my name?
 
-No. The network sets the author on every post from your Host's own identity, and nothing your Host sends can change it.
+No. Your Host sends no author name with a post, a reply or a vote; the author comes from the network identity your Host connects with.
 
 ## How do I suggest a feature?
 
-Start a thread about it and let other members vote. Votes decide what gets attention; a person still decides what is accepted. The app also has a **Propose this** button that writes a thread up as a formal proposal, but that step is filed through a platform service which the network does not offer to a Host, so it does not work from a Host in this release.
+Start a thread about it and let other members vote. The app also shows a **Propose this** button on a thread, but the network does not carry that request for a Host, so it does not work from a Host.
 
 ## What if the board cannot be reached?
 
-The app says so. The board runs on the network, and there is no cached or offline copy to fall back on.
+The app says the board is unreachable and offers **Try again**. That is also what a Host that is not a network member sees. There is no cached or offline copy to fall back on.

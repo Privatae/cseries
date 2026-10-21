@@ -1,6 +1,6 @@
 ---
 title: Building apps
-summary: An app you build is described by a manifest that says what it is, how it runs, what it may reach and what permissions it asks for. You can install it on your own Host with one click, and publish it to other members through the Publisher, where every submission is checked and then read by a person before it appears.
+summary: An app you build is described by a manifest that says what it is, how it runs, what it may reach and what permissions it asks for. You can install it on your own Host with one click and, as a member of the Privatae network, publish it to other members through the Publisher, where every submission is checked and must be approved before it appears.
 section: building
 order: 50
 questions:
@@ -10,7 +10,6 @@ questions:
   - How do I install an app I built on my Host?
   - Can I publish my app for other people to use?
   - Is my app reviewed before others can install it?
-  - Can I charge for an app I publish?
 ---
 
 You build an app the same way you build anything else: by describing it to your Host in the [Workbench](wiki:workbench). What makes it an app is its manifest, a short file that says what the app is, how it runs, what it may reach and which permissions it asks for. You can install it on your own Host with one click, or publish it so other members can install it on theirs.
@@ -28,7 +27,7 @@ In plain words, a manifest declares:
 - for data-bearing apps, which tables hold its records and who owns each row;
 - for a process app in a machine of its own, an MCP server it runs for the Host it is installed on, which installing the app connects to that Host.
 
-Your Host checks the manifest when the app is built, and the store checks it again when it is published, and refuses any entry it does not recognise, by name. A manifest the Host writes for a project is validated as it is written and rolled back if it is invalid, so a broken one is never kept.
+Your Host checks the manifest when the app is built and refuses any entry it does not recognise, by name. A manifest the Host writes for a project is validated as it is written and rolled back if it is invalid, so a broken one is never kept.
 
 ## What kinds of app can I build?
 
@@ -44,17 +43,13 @@ Permissions come from a fixed list the Host defines, such as reading projects or
 
 ## How do I install my app on my Host?
 
-Choose Install as my app on the finished project in the Workbench, or ask your Host. The project is packed into a bundle signed by your Host, checked, and installed. An app with a container of its own (a helper or a process) needs the local container runtime, which is not finished in this pre-release, so it cannot start on a standalone Host yet.
+Choose Install as my app on the finished project in the Workbench, or ask your Host. The project is packed into a bundle signed by your Host, checked, and installed. An app with a container of its own (a helper or a process) runs in a container that the local runtime starts on your own machine.
 
 ## How do I publish an app to other members?
 
 Publishing goes through the [Privatae network](wiki:the-privatae-network), so you need a network membership. Ask your Host to publish the project, or use the [Publisher app](wiki:publisher-app), where you also manage what you have published. You accept the publishing agreement, and the store runs its automatic checks. For the App Store, an app may only ask for permissions from a smaller list suited to apps that run on other people's Hosts; a helper or process app must state the memory it needs; a helper must list the addresses it reaches, and a process app must list any it reaches, including the package index it installs its pinned dependencies from; a process app must pin every dependency it installs; and the bundle must be one your Host packed from a committed project, so a hand-assembled zip is refused.
 
-Every submission that passes is then read by a person before it appears. Only after that approval is the reviewed bundle signed, so what was reviewed is exactly what members install. You can publish to every member, or only to the members of a group you run.
-
-## Can I charge for my app?
-
-No. The App Store is free: a price above zero is refused, both when you publish and afterwards.
+A submission that passes is a request until the network's store approves it; the Publisher shows each request and, if one is turned down, the reason. You can publish to every member, or only to the members of a group you run.
 
 ## Can someone copy my app?
 

@@ -1,6 +1,6 @@
 ---
 title: Circles
-summary: Circles is where you talk with your Host day to day, and with everyone you know, as a deck of cards. It holds the decisions your Host is waiting on, your support drafts, and who wants to connect. It comes with every Host.
+summary: Circles is where you talk with your Host day to day, as a deck of cards. It holds the decisions your Host is waiting on, your support drafts, and who wants to connect. It comes with every Host.
 section: apps
 order: 10
 app: circles
@@ -32,7 +32,7 @@ The address book is the cards themselves, and the inbox is At the door and Waiti
 
 ## How do I control who can message me?
 
-In the [Network app](wiki:network-app), which has a setting for who may message you. **Open** lets anyone message you, and per-sender rules can still block someone. **Contacts only** lets through only your contacts and senders you have allowed. **Closed** keeps messages from other Hosts out entirely. Your card's front says which you chose. To block one person or one Host, use Block on their card. Messages between Hosts need a platform connection that a Host on its own does not have, so in this release the setting matters only once such messages can arrive.
+In the [Network app](wiki:network-app), which has a setting for who may message you. **Open** lets anyone message you, and per-sender rules can still block someone. **Contacts only** lets through only your contacts and senders you have allowed. **Closed** keeps messages from other Hosts out entirely. Your card's front says which you chose. To block one person or one Host, use Block on their card. Messages between Hosts need a platform connection that a C-Series Host does not have, on its own or on the Privatae network, so a C-Series Host receives none.
 
 ## What happens when I report a problem?
 

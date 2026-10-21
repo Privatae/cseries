@@ -18,10 +18,11 @@ Memory is your window into what your Host remembers about you. It is built into 
 
 ## What can I see?
 
-Five views:
+Six views:
 
 - **Ledger**: the entries your Host keeps, such as your preferences, notes about people in your life, the goal of each conversation, cited facts and research, which you can filter and search. A rule you taught, or one your Host learned, is a preference marked as a taught rule or a learned rule, and nothing automatic retires it. Search tells you when it could match only on words because meaning search was unavailable.
 - **Threads**: memory grouped by where it happened, such as a project, an app or another Host. A thread splits into separate conversations wherever it went quiet for half an hour.
+- **Slots**: your preferences and notes about people, grouped by topic and place. Each slot holds one live entry. A newer entry replaces the older one, except that a preference your Host inferred never replaces a rule you taught, and the slot keeps what it replaced.
 - **Corrections**: every entry your Host changed its mind about, showing what it held, when that stopped being true, and what replaced it.
 - **Health**: how memory is forming. Your Host writes what it learns as it answers, so there is no background pass to wait on.
 - **Data**: what your Host keeps in its own database. When you tell it something with a shape of its own, such as the tools in your kitchen or a habit you are building, it can keep that in tables it designs for you. Each table, view and function says what it is for. You can read any table's rows here, and nothing you look at can change them.

@@ -27,7 +27,7 @@ No. A Host works without one. If you want to, you can join the Privatae network 
 
 A chatbot is a conversation. A Host acts. It reads what you asked and picks a path: it answers, runs one known operation with no model involved, hands code to a coding engine, or, for untrusted work such as the open web, sends out a narrow agent that starts with no permissions at all. [How a Host handles a request](wiki:how-a-host-handles-a-request) follows each path, and [agents](wiki:agents) explains why an agent here is a worker the Host sends, not something you chat with.
 
-It also remembers. Every conversation is written down in its own database, and what is worth keeping is drawn out, corrected and replaced over time, never quietly rewritten. [How a Host remembers](wiki:memory) covers it.
+It also remembers. Every conversation is written down in its own database, and the Host notes what is worth keeping in its own turns. A newer note replaces the one it corrects, and the old one is kept on record rather than rewritten. [How a Host remembers](wiki:memory) covers it.
 
 ## What stops a Host doing what I did not approve?
 

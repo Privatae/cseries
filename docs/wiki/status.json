@@ -50,7 +50,7 @@
   },
   "code-repositories": {
    "checked": "2026-10-20",
-   "status": "current"
+   "status": "changed"
   },
   "coding-agents": {
    "checked": "2026-10-20",
@@ -66,7 +66,7 @@
   },
   "connected-folders": {
    "checked": "2026-10-20",
-   "status": "current"
+   "status": "changed"
   },
   "context-app": {
    "checked": "2026-10-20",
@@ -78,7 +78,7 @@
   },
   "getting-help": {
    "checked": "2026-10-20",
-   "status": "current"
+   "status": "changed"
   },
   "getting-started-app": {
    "checked": "2026-10-21",
@@ -90,7 +90,7 @@
   },
   "glossary": {
    "checked": "2026-10-20",
-   "status": "current"
+   "status": "changed"
   },
   "how-a-host-handles-a-request": {
    "checked": "2026-10-20",
@@ -154,7 +154,7 @@
   },
   "the-bastion": {
    "checked": "2026-10-20",
-   "status": "current"
+   "status": "changed"
   },
   "the-privatae-network": {
    "checked": "2026-10-21",
@@ -174,7 +174,7 @@
   },
   "what-is-privatae": {
    "checked": "2026-10-20",
-   "status": "current"
+   "status": "changed"
   },
   "where-your-data-lives": {
    "checked": "2026-10-20",

@@ -1,31 +1,26 @@
-# Host Orchestrator Turn — rewrite spec
+# The Host's orchestrator turn
 
-> Vocabulary: the "Lane A / Lane B" names and the Claude-subscription
-> host engine are gone. Code runs only on the **harness pool**, reached only through the host's
-> own build tools (`build`, `ladder.run`, `review.fan_out`); everything else the host delegates
-> goes to a **dispatched agent** (`runtime/scoped_agent.py`, which exists and is live).
+Code runs only on the **harness pool**, reached only through the host's own build tools
+(`build`, `ladder.run`); everything else the host delegates goes to a
+**dispatched agent** (`runtime/scoped_agent.py`).
 
 > In this document "the platform" means the C-Series kernel inside the Host: the code outside
 > the Host's own `world` schema. It does not mean a hosted service; C-Series has no hosted Host.
 
-The chat turn was built agent-era: `Grok triage → LLM-jury veto → main call` — a pipeline
-wrapped *around* the model. The host is not an agent; it is the **orchestrator**. It works the
-way Claude Code works when it runs a workflow:
+The host is the **orchestrator** of its turn:
 
 > build context → think it through → pick tools → write the agent's prompt → dispatch a
 > scoped agent → monitor it → integrate the result.
 
 The host holds **only orchestration primitives**. Domain tools (calendar, inbox, files,
-network, code, …) live on the **agents it dispatches**, scoped per task — exactly as the
-Agent/Workflow tools spawn subagents that hold Read/Edit/etc.
+network, code, …) live on the **agents it dispatches**, scoped per task.
 
 ## The turn
 
 1. **Screen + record** — `input_guard.sanitize` (structural injection screen); write the user
    turn to memory (async embed). No inference.
 2. **Build context** — deterministic: system prompt (host identity/surface) + a fixed recent
-   recall window + relevant memory. The host gathers context itself (cheap, like me reading a
-   few files). No triage deciding limits.
+   recall window + relevant memory. The host gathers context itself.
 3. **Govern (structural, no LLM)** — the CEIGAS inference-crossing gate; permission slips scope
    any dispatched agent. Replaces the per-turn LLM veto entirely. The crisis check (SB 243 floor,
    `spike_classifier.detect_crisis`, on the person's words: the turn's message — not the brief of a
@@ -43,25 +38,13 @@ Agent/Workflow tools spawn subagents that hold Read/Edit/etc.
    - `build(action, …)` — the **harness-pool handoff**: building/changing/continuing CODE on a
      coding harness (claude-code/codex/cursor/…). Code work goes here, NEVER through
      `dispatch` — a dispatched agent can never execute code.
-   - `run_runbook(name, args)` — run a proven SOP (the cheap path; the flywheel).
    - `escalate(...)` — hand a decision to the user.
-   Trivial conversational turns are answered directly — no dispatch — like I answer simple
-   things without spawning anyone. **The host's own reasoning IS the classifier.**
+   Trivial conversational turns are answered directly, with no dispatch.
 5. **Stream + record** — existing AI-SDK frames; write the assistant turn (async).
 6. **Async post** — consolidation/memory derivation, fire-and-forget.
 
-## Host toolset (light, permanent)
-`recall`, `dispatch`, `run_runbook`, `escalate`. **No domain tools on the host.**
-
-## Keep (load-bearing — reuse, don't rewrite)
-transient session build (`_build_chat_context_transient`), `input_guard.sanitize`, the CEIGAS
-gate, memory turn-writes + source-context threading (`write_turn_row`, `derive_source_context`),
-recall (`recall_recent_turns`), the tool-loop + meta-tool permission gate, multimodal/attachments,
-AI-SDK streaming (`progress_cb`), the Anthropic coercion (`coerce_anthropic_route`), model
-resolution.
-
 ## Two kinds of delegation — DO NOT conflate
-- **The harness pool — external coding harnesses** (`build`, `ladder.run`, `review.fan_out`;
+- **The harness pool — external coding harnesses** (`build`, `ladder.run`;
   claude-code/codex/cursor/…): run **outside** the Host container, in their own
   containers, for **code/build only**. Governed by the container/OCI boundary + signed grant. Only the
   host's OWN build tools reach them; the host hands off to them for code, nothing more.
@@ -83,7 +66,7 @@ network (domain tools) but **CANNOT execute or build code**. A dispatched agent 
 (misconfigure, send the wrong message) but cannot *break* anything — there is no code execution
 in its reach. **All executable code goes through the harness pool** (disposable harness container, OCI
 boundary + signed grant), via the host's own build tools. Enforcement: a dispatch `tool_scope`
-may NEVER contain a code-exec/build tool (`build`, `ladder.run`, `review.fan_out`,
+may NEVER contain a code-exec/build tool (`build`, `ladder.run`,
 `review.compare`, `review.propose_commit`, `mesh_harness_run`, `bash`, …) — the runner
 hard-strips/refuses them. Capability-limited hands in-container +
 isolated code execution in a container = the thing that keeps it safe.
@@ -95,23 +78,9 @@ async lifecycle below). "Constant chat, no waiting" still holds for the person: 
 holding for work it started takes their words at once (they reach it as a nudge), and they can
 stop it at any time.
 
-## Agent UI — surface the background agents (the months-old gap)
-There has been a background agent sitting invisibly in a Host's taskbar for months because there's
-no UI. Every dispatched agent must be **visible**: live status (running/success/failure), its
-output, its **cost**, and a **user veto** (cancel an op before/while it runs). User-as-governor over
-the host's hands.
-
-## Capability flywheel — how new capability is built
-User needs something → host checks what's available vs not → **proposes an app/skill** → **user
-approves** → host builds it on the **harness pool** → host spawns **dispatched agents** to
-test/operate it → distills a runbook. Code is built on the pool, operated by dispatched agents.
-
 ## Async lifecycle — the turn holds for what it started
-An earlier version of this section said "the host NEVER waits": dispatch, say what was started, end the
-turn, and when the work finished a separate, TOOL-LESS model call phrased the result into the
-thread and proposed a next step. That call could only describe; it could not act. Once a build
-landed and the four phases the Host had promised never started. The turn should hold open until
-the work is done, which also preserves the cache. The lifecycle now:
+The turn holds open until the work it started is done, so the Host acts on the result with its
+tools and a warm cache:
 
 1. **Request → start → hold.** The Host starts the work in the turn — `build` on the harness pool,
    `dispatch` for an agent, or `escalate` for a question only the person can answer (the ask
@@ -133,9 +102,9 @@ the work is done, which also preserves the cache. The lifecycle now:
    answers 409 (the client sends it as the next message), and Circles' nudge starts that turn in
    the room the registry recorded for the session (`answer_after_turn`). The
    wire stays alive on its own (`brain_service._never_silent` keepalives).
-2. **One background budget, live chat always has a slot.** Holding turns and woken turns share
-   `max_holding_turns()` (the ceiling less the half kept for scheduled tasks less one for live
-   chat; 8 → 3). A turn that finds it full ends instead of holding; a wake waits for a slot.
+2. **One background budget, live chat always has a slot.** Holding turns and woken turns are
+   counted against `session.max_holding_turns()`, how many more turns the Host's memory holds
+   now (`host_memory.turns_that_fit`). A person's message never needs a slot.
 3. **What arrives enters the running turn.** A finished build or agent is handed to the turn that
    started it (`hand_result_to_turn`) as a platform brief with the run's facts; the person's answer
    to a ticket is spoken into the turn that asked it by the decide itself
@@ -160,24 +129,22 @@ the work is done, which also preserves the cache. The lifecycle now:
    answered where that wake-up reports, never on its hidden lane.
 5. **Bounded with nobody watching.** A plan carries itself on (auto-advance; a woken turn may build
    the next phase whose dependencies landed). Rebuilding the SAME phase after it landed without
-   completing is a repair: two automatic repairs per phase (`tools.PHASE_AUTO_REPAIRS`, counted
-   from the phase's build rows), then the build door refuses it from a turn nobody is in and the
+   completing is a repair: automatic repairs per phase are bounded by the person's limit
+   `build.auto_repairs` (default 2, `runtime/user_limits.py`), then the build door refuses it from a turn nobody is in and the
    Host asks in the question box with the findings. Any other chain of woken turns is bounded per
-   thread since the person last wrote (`WOKEN_TURNS_MAX` = 40, env `CSERIES_WOKEN_TURNS_MAX`, <= 0
-   off — a runaway backstop far above the longest real chain, 3; a plan's phase landing and the
+   thread since the person last wrote (the person's limit `thread.woken_turns`, default 40, 0 for
+   no limit; a plan's phase landing and the
    continuation of a research round that brought at least one result back are the plan advancing
    and do not count; a round where every agent failed does count; the bound is read when the
    woken turn starts): past it the turn still reports, and starts no work — the next step goes in
-   the question box. Research rounds have their own backstop, `RESEARCH_ROUNDS_MAX` = 15 rounds
-   (env `CSERIES_RESEARCH_ROUNDS_MAX`, <= 0 off)
-   since the person last wrote, counting EVERY round whatever its agents' status (an agent that
-   answers "I couldn't access the docs" is `completed`): research takes one to three rounds, so
-   fifteen never limits a real request; the continuation after the last starts no work and puts what
+   the question box. Research rounds have their own bound, the person's limit
+   `thread.research_rounds` (default 15) since the person last wrote, counting EVERY round
+   whatever its agents' status; the continuation after the last starts no work and puts what
    came back in the question box. These bounds are the high backstop; what steers first is the
    outcome fed back: a round continuation's brief says which research round it was, names the
    agents that failed (their errors fenced as data in their reports) and, when nothing came back,
-   how many turns have carried on by themselves so far. After three failed runs in a row in one thread, a failure is only
-   written.
+   how many turns have carried on by themselves so far. After `thread.failed_wakes` failed runs in a row in one thread (default 3), a
+   failure is only written.
 6. **Never lost.** A result handed to a turn that ends before reading it goes back through the one
    delivery door (`AgentDispatch.redeliver_unread`: released, re-delivered under the thread's
    lock, delivered only once written); a turn is woken for it unless the end was the person's Stop
@@ -198,8 +165,8 @@ the work is done, which also preserves the cache. The lifecycle now:
    `direct_ops.run_mcp_tool`'s gates every time, a call at most every `EVERY_S`), and the answer
    that differs comes back like a build's: into the holding turn, else a woken turn in the thread
    (`_deliver_watch_result`), with no row, inbox note or toast per answer. A watch's wake is the
-   work advancing (`chain=False`); its own backstop is `WATCH_WAKES_MAX` = 500 per thread since the
-   person last wrote (env `CSERIES_WATCH_WAKES_MAX`). A refusal ends a watch at once, `TRANSIENT_MAX`
+   work advancing (`chain=False`); its own bound is the person's limit `thread.watch_wakes` (default 500) per
+   thread since the person last wrote. A refusal ends a watch at once, `TRANSIENT_MAX`
    failures in a row end it, `RENEW_S` (a day) of waiting ends it, and the boot reap and the
    monitor cover it like an agent; `op='unwatch'` and the person's Kill stop it.
 
@@ -210,10 +177,8 @@ model call: the fixed deliveries (a proof, a compare's candidates, a verdict, a 
 pointer) are platform sentences, and everything the Host acts on goes to the Host.
 
 ### The go-ahead guard and how it is measured
-The guard (`runtime/go_ahead_guard.py`) reads a reply's ending with the end-to-end test's
-deterministic rule (ported verbatim). Measured on fresh real text that rule catches about 97% of
-asks and also flags 8–16% of finished reports, so it is a high-recall PREFILTER and the Host makes
-the call on the quoted sentence — within the rule's LEVELS, which nest: `core` ⊂ `explicit` ⊂ any
+The guard (`runtime/go_ahead_guard.py`) reads a reply's ending with a deterministic rule. It
+is a high-recall PREFILTER, and the Host makes the call on the quoted sentence — within the rule's LEVELS, which nest: `core` ⊂ `explicit` ⊂ any
 ask. CORE is the named pattern: a word to say, type or reply asked of the user, an option to
 reply with, a direct question offering or awaiting the Host's step ("Want me to …?", "Should I
 …?"). EXPLICIT adds the other explicit forms: a reply request with the Host's step on it, the
@@ -267,8 +232,7 @@ and the empty-reply retry run (two calls, neither cut mid-stream); the exits' re
 when the allowance's projection still has room for it, and the continue card is no model call.
 
 Every Host turn's row carries `metadata.go_ahead`: three readings of the reply by the detector —
-`stored_asks` / `stored_level` (the STORED reply, every piece, never cleared — what the
-whole-reply baseline, 18 of 97, counted), `final_asks` / `final_level` (every ask since the
+`stored_asks` / `stored_level` (the STORED reply, every piece, never cleared), `final_asks` / `final_level` (every ask since the
 person last spoke that is still unresolved, each judged on its own — below) and
 `ending_asks` / `ending_level` (the last piece of the Host's that has text) — plus `asked_in_box`
 and `fired` —
@@ -373,14 +337,7 @@ SELECT date_trunc('day', created_at) AS day,
  GROUP BY 1 ORDER BY 1;
 ```
 
-Before this change that prose was in no store (the turn row, the session transcript,
-`tool_call_log`, `inference_log`, the context ledger and the end-to-end test's stored runs were all
-checked), so its size could not be measured backwards. What was measured on one Host's recent
-turns: most turns used tools; a tool turn makes about three model calls at the median, so about
-two rounds where prose can appear; a stored reply runs to about 900 characters at the median, and
-the history replayed per turn to about 14,000. History is filled newest-first within
-the context budget, so stored prose makes older turns fall out of the window sooner rather than
-overflowing it. The record is
+The record is
 written on the held row too, before a hold, so a Stop, the
 turn ceiling or a restart mid-hold leaves the record so far. The success measure, from rows —
 the final text's ask is counted whatever the outcome, split by level the way the sets nest
@@ -420,26 +377,7 @@ SELECT metadata->'go_ahead'->'fired'->-1->>'outcome' AS last_outcome,
 The rows live in each Host's own database. In PII mode the row's metadata keeps structural
 keys only, so `go_ahead` (it quotes the Host's sentence) is not kept there.
 
-## Framing
-This is a **C-Series Agent SDK**: `run_scoped_agent` is the engine; `dispatch` + registry + the async
-lifecycle (start → hold → result into the turn, or a woken turn → monitor) + veto + cost is the SDK surface;
-the host is its first consumer.
-
-## Shed (delete — agent-era)
-Done: the Grok classifier inside `_triage_message` (removed; triage is now
-pure Python); the unified-brain veto / lenses and the `skip_brain` gate (deleted — the whole `mastercode/brain/` UnifiedBrain package had no caller).
-
-Still to shed: the `skip_rag` / `skip_drill` / `reasoning_tier` gate scaffolding
-(`skip_rag` and `skip_drill` are now written by triage and read by nobody), and the
-remaining dead branches — v3-brain temp regulation, brain_v4, dormant fast/voice.
-
 ## Governance after the veto
 Structural only: input_guard (screen) + CEIGAS (trust/math gate) + slips on dispatched agents,
 and the crisis check's notice beside the turn, never in it (step 3 above).
 No LLM judging an LLM. Matches "govern by math, not surveillance."
-
-## Staging
-Build in this worktree, reuse the building blocks above, roll to one Host only,
-verify: conversational turn (no dispatch), a real dispatched task, memory recall, governance
-still gates. Then it becomes the path. Spine first (turn + recall + direct answer), dispatch +
-runbook layered next.

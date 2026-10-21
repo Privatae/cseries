@@ -18,7 +18,7 @@ Network is the control panel for the machines paired with your Host: who may rea
 
 ## What are the views?
 
-- **Map**: how everything connects, drawn two ways. **Logical** puts your Host in the middle with everything around it. **Physical** draws the path as a tunnel through a relay, which a Host with no platform connection does not have, so use Logical.
+- **Map**: how everything connects. **Logical** puts your Host in the middle with everything around it. **Physical** draws the path as a tunnel through a relay, which a Host with no platform connection does not have, so use Logical.
 - **Bastions**: every machine running a [bastion](wiki:the-bastion). **Set up a bastion** gives you a one-time pairing token that lasts 15 minutes. Each machine shows its version; **Update all** asks every out-of-date machine to update in one step, and automatic updates are on unless you turn them off. Each machine also lists the other Hosts it says it serves: tap a Host's name for its card, **Message** one you are connected with (it opens Circles), or **Request connection** to one you are not.
 - **NAC** (network access control): your network access rules.
 - **Agents**: AI agents and automations your bastions see running on your machines, split into the ones you asked for and the ones you did not. You can acknowledge one or stop it.
@@ -32,7 +32,7 @@ You. Rules sit in three lanes, each with a default. **Ingress**, who may reach i
 
 ## Can I message my Host from Telegram, Slack or Discord?
 
-Yes, from one account, through that service's app from the [App Store](wiki:app-store-app), which needs a [network membership](wiki:the-privatae-network). The connector runs in a container of its own, and starting it on your own machine needs the local container runtime, which is not finished in this pre-release. When your Host starts the pairing, the Ingress lane in NAC shows a one-time code with a countdown: send it to your bot in a direct message from the account you want to let in. That account then waits for you here. **Let this account in** asks for your authenticator code, and **Don't pair** needs no code. Messages from it start turns in your chat with your full chat permissions, but it cannot approve anything. **Revoke** needs no code and refuses its next message.
+Yes, from one account, through that service's app from the [App Store](wiki:app-store-app). The connector runs in a container of its own on your machine. When your Host starts the pairing, the Ingress lane in NAC shows a one-time code with a countdown: send it to your bot in a direct message from the account you want to let in. That account then waits for you here. **Let this account in** asks for your authenticator code, and **Don't pair** needs no code. Messages from it start turns in your chat with your full chat permissions, but it cannot approve anything. **Revoke** needs no code and refuses its next message.
 
 ## What can I do about a machine?
 

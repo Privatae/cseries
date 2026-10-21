@@ -26,7 +26,7 @@ To install the bastion on its own, open the Network app, go to Bastions and choo
 
 ## How do I pair it with my Host?
 
-The installer pairs the bastion for you. To pair by hand, the Bastions card in the Network app gives you a pairing token. It works once and expires after 15 minutes, and the card shows the command to run on the machine: `privatae-bastion pair` followed by the token and the Host's local address, then `privatae-bastion run`.
+The installer pairs the bastion for you. To pair by hand, the Bastions card in the Network app gives you a pairing token. It works once and expires after 15 minutes, and the card shows the `privatae-bastion pair` command to run on the machine.
 
 During pairing the bastion makes its own keys and sends your Host only their public halves. It gets back a certificate signed by a certificate authority the Host made for itself, and trusts that authority alone. The private keys never leave the machine.
 
@@ -55,7 +55,7 @@ What your Host may do arrives as signed grants that the bastion verifies itself,
 
 ## What is an anchored machine?
 
-In networked mode one Host is the machine's anchor. Every Host that pairs after that waits with no lane open for it until the anchor's owner approves it and chooses what it may do. Switching to networked mode and claiming the anchor need root, or an administrator on Windows. A bastion installed as networked runs as the machine's own system service, on Linux, macOS and Windows alike: it starts when the machine boots, before anyone signs in, and comes back if it stops. An existing install switched to networked mode keeps running the way it did; install it again as networked to make it a service. The anchor moves to another Host only with the current anchor's signed consent, or after 14 days of silence from it.
+In networked mode one Host is the machine's anchor. Every Host that pairs after that waits with no lane open for it until the anchor's owner approves it and chooses what it may do. Switching to networked mode and claiming the anchor need root, or an administrator on Windows. A bastion installed as networked runs as the machine's own system service, on Linux, macOS and Windows alike: it starts when the machine boots, before anyone signs in, and comes back if it stops. The anchor moves to another Host only with the current anchor's signed consent, or after 14 days of silence from it.
 
 On an anchored machine, anything that changes the machine, such as removing a model or running a program your Host wrote, runs only on an approval you give for that one request, used once, apart from standing work you set up there and taking access away. You give it with the second factor enrolled on that machine or from your approval device, a machine of yours set up to sign approvals. A Host whose changes are refused five times in ten minutes has its changes held on that machine for a while. An update to a newer, signed bastion release needs no approval.
 
@@ -65,7 +65,7 @@ Only on a machine it anchors, and only after you grant it there. On the machine,
 
 ## How do approvals on the machine work?
 
-`privatae-bastion stepup-enroll` puts an authenticator on the machine. From then on, a new folder grant, a plan to reorganize a folder or a model download waits for your approval on that machine, with a code your Host never sees. A folder grant can also be approved from your approval device. Without an enrolled factor, model downloads are refused outright.
+`privatae-bastion stepup-enroll` puts an authenticator on the machine. From then on, a new folder grant or a plan to reorganize a folder waits for your approval, given on that machine with a code your Host never sees, or from your approval device. A model download always needs such an approval: with no factor enrolled on the machine and no approval device, it is refused outright.
 
 ## Can I check what I am running?
 

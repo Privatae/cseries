@@ -13,17 +13,17 @@ internet and the Host.
 | 8811/tcp | the Host's bastion lane, mutual TLS against the Host's own CA | anyone; the Host completes a handshake only for certificates it issued |
 | 8810/tcp | the Host's enroll port | only an address in the pairing window: the Host asks `cseries-door-helper` to open it for the requester's address, for 15 minutes |
 
-Everything else is dropped by `etc/cseries-cloud/nftables/door.nft`, which is
-also where new connections are metered per source (20 a second after a burst
-of 100), with one shared limit for sources the meter has no room left to
-track (100 a second after a burst of 200). There is no SSH after the
+Every other inbound connection is dropped by `etc/cseries-cloud/nftables/door.nft`, which is
+also where new connections are metered per source address, per /64 for IPv6
+(20 a second after a burst of 100), with one shared limit for sources the
+meter has no room left to track (100 a second after a burst of 200). There is no SSH after the
 box is sealed. IPv4 8810/8811 reach the container by DNAT to its fixed address
 (the quadlet's own publish holds 127.0.0.1 on those ports); IPv6 8810/8811 go
 through `cseries-enroll6`/`cseries-lane6`, v6-only relays.
 
-Outbound, the containers and the bastion reach the internet and no private
-range or metadata address, and of the box itself only its DNS resolver (and,
-for the coding engines, the plain proxy described below). The
+Outbound, the Host and database containers and the bastion reach the internet
+and no private range or metadata address, and of the box itself only its DNS
+resolver. The local runtime's containers are more limited (below). The
 bastion is paired with the Host over the unix sockets in `/run/privatae-host`,
 with its `ops`, `dcn`, `services`, `observe`, `session`, `models` and
 `directives` families switched off (`FAMILIES_OFF` in
@@ -98,8 +98,8 @@ would never reach the Host.
   a template; `@NAME@` in it is filled at install time.
 - `build-overlay.sh`: the overlay tarball, the same bytes from the same tree.
   It adds the parts of the WSL guest a cloud box runs unchanged (both quadlets,
-  `cseries.network`, `cseries-guest`), the local runtime from `vm/runtime`,
-  and both seccomp profiles.
+  `cseries.network`, the containers.conf drop-in, `cseries-guest`), the local
+  runtime from `vm/runtime`, and both seccomp profiles.
 - `cloud-release.json`: the release manifest the release workflow fills and
   the maintainer signs (`docs/RELEASING.md`).
 - `test/`: the end-to-end test in a VM.

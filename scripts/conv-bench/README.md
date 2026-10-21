@@ -39,22 +39,7 @@ any OpenAI-compatible chat-completions endpoint works, with the key in
 
 ## Methodology rules
 
-Same conversation, same frozen question set, same model on every arm; only
-the context strategy differs. F1 rather than an LLM judge, so scoring is free
-and deterministic. With about 20 questions, differences under ~0.1 F1 are
-noise. Run a small batch first.
-
-## One recorded run (conv 0, n=20, `kimi-for-coding`)
-
-| arm | F1 | total tokens |
-|---|---|---|
-| truncated (8k chars) | 0.253 | 37k |
-| curated 8k / cadence 60 | 0.268 | 79k |
-| curated 4k / cadence 60 | 0.357 | 69k |
-| curated 16k / cadence 60 | 0.300 | 121k |
-| curated 8k / cadence 30 | 0.296 | 100k |
-| full (~16k tokens) | 0.577 | 271k |
-
-The test conversation is about 16k tokens, so `full` fits the window. This
-does not measure the 100k+ token regime, where curation is the only option
-and the curated arms' shape decides quality.
+Same conversation, same question sample, same model on every arm; only the
+context strategy differs. The question sample is deterministic (equal shares
+per category, evenly spaced). F1 rather than an LLM judge, so scoring makes no
+model calls.

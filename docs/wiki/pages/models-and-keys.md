@@ -25,9 +25,9 @@ There is no model built into your Host and none supplied by Privatae. Until you 
 
 One text role:
 
-- **Host model**: the Host itself, in conversation and in its work, including what it keeps in memory as it answers, reviewing what its builds changed, and the agents it dispatches, which run on the same model unless the Host picks another for a particular task.
+- **Host model**: the Host itself, in conversation and in its work, including what it keeps in memory as it answers, and the agents it dispatches, which run on the same model unless the Host picks another for a particular task.
 
-There is no separate review model. For a second opinion on a build, ask your Host to have a coding engine review it.
+There is no separate review or research model. For a second opinion on a build, ask your Host to have a coding engine review it. When the Host model cannot search the web, a connected coding engine that can (Antigravity or Claude Code) runs the search instead, on that engine's own key or sign-in.
 
 Alongside those you choose where embeddings come from (for search by meaning) and which model makes images. Pictures you share are read by the Host model itself, so choose one that reads images; if it does not, it is told a picture was there that it cannot see, and the turn goes on without it.
 

@@ -15,7 +15,7 @@ Each machine joins by running a [bastion](wiki:the-bastion). You run the rules f
 
 ## How does the bastion reach the Host?
 
-In this release the bastion runs on the same machine as the Host. A Host on its own has no tunnel and no relay. It publishes two ports on the machine's own loopback address: one where the bastion pairs and one where it connects in over mutual TLS, under a certificate authority the Host made for itself. Nothing on another machine can reach those ports. Pairing uses a one-time token that expires after 15 minutes.
+With a Host installed by `npx cseries`, the bastion runs on the same machine as the Host. A Host on its own has no tunnel and no relay. It publishes two ports on the machine's own loopback address: one where the bastion pairs and one where it connects in over mutual TLS, under a certificate authority the Host made for itself. Nothing on another machine can reach those ports. Pairing uses a one-time token that expires after 15 minutes.
 
 When you revoke a machine, its credential is revoked at once and its connection is refused from then on.
 
@@ -27,7 +27,7 @@ Map, Bastions, NAC, Agents, Bastion agents, Servers and Peers. The [Network app]
 
 - **Ingress**, who may reach in: the machines you have paired are admitted until a rule says otherwise.
 - **Management**, what may be run on your machines: denied. Nothing runs without a grant, and a grant made here lasts at most 30 days. Running commands as root is the one exception to where the grant lives: you give it at the machine itself, as [the bastion](wiki:the-bastion) page describes.
-- **Egress**, what may leave your Host: open, and yours to close. Egress rules apply to your coding engines and the Browser, and to some of your Host's own calls. Your apps, your Host's model requests and its reading of web pages are not checked against them.
+- **Egress**, what may leave your Host: open, and yours to close. Egress rules apply to your coding engines, the Browser and your apps, and to some of your Host's own calls. Your Host's model requests and its reading of web pages are not checked against them.
 
 ## Who approves a change?
 
@@ -45,7 +45,7 @@ The rules are checked by a gate inside your Host. It records that it refused a r
 
 ## Can traffic leave from my own connection?
 
-Yes. An egress rule can also name the way out: the usual exit, or one of your machines by name. Traffic pinned to one of your machines leaves through that machine's internet connection, under its address, or not at all: if the machine is offline, the request fails and says so rather than going out another way. That is the answer for a site that refuses datacentre addresses, such as a bank. A rule that pins traffic to a machine can only be approved in the Network app, on the card that names the machine. A bastion runs on the machine your Host runs on, so a rule naming it sends the traffic out from that machine's connection.
+Yes. An egress rule can also name the way out: the usual exit, or one of your machines by name. Traffic pinned to one of your machines leaves through that machine's internet connection, under its address, or not at all: if the machine is offline, the request fails and says so rather than going out another way. A rule that pins traffic to a machine can only be approved in the Network app, on the card that names the machine.
 
 ## Is my network default-deny?
 

@@ -12,7 +12,7 @@ questions:
   - What happens if my default coding agent is not connected?
 ---
 
-Your Host writes code by handing the work to a coding engine you connected: Claude Code, Codex, Cursor, Grok, Kimi Code, Antigravity CLI or opencode. Each is that tool's own program, running in a container beside your Host, on your own account or key. Privatae does not bill for the tokens. Starting those containers on your own machine needs the local container runtime, which is not finished in this pre-release, so on a standalone Host they do not start yet.
+Your Host writes code by handing the work to a coding engine you connected: Claude Code, Codex, Cursor, Grok, Kimi Code, Antigravity CLI or opencode. Each is that tool's own program, running in a container beside your Host, on your own account or key. Privatae does not bill for the tokens. On a Host installed with `npx cseries`, the local runtime in the Host's Linux system starts those containers.
 
 ## Which coding engines are there?
 
@@ -22,7 +22,7 @@ Seven: Claude Code, Codex, Cursor, Grok, Kimi Code and Antigravity CLI each run 
 
 Not in your Host. Each engine has its own container beside your Host, which is started when a build needs it and stopped when the build releases it or it sits idle. The container's working files go with it when it stops. Your Host holds the conversation, the plan and the memory; the engine does the coding.
 
-A build has no time limit. An engine is stopped only when it shows no sign of life: no output, no processor use and no data moving for ten minutes, or one call to its model with nothing coming back for an hour. A quiet test suite or a long download is work, and is never stopped. Whatever the engine had written is kept.
+A build has no time limit. By default an engine is stopped only when it shows no sign of life: no output, no processor use and no data moving for ten minutes, or one call to its model with nothing coming back for an hour. A quiet test suite or a long download is work, and is never stopped. Whatever the engine had written is kept.
 
 ## Whose account pays for it?
 

@@ -1,20 +1,19 @@
 ---
 title: Getting help
-summary: Ask your Host and it drafts a support ticket for you, showing exactly what it would share. Nothing is shared until you choose what to include and press Send. A Host with no platform connection cannot send the ticket yet, and the Community board is the place members help each other.
+summary: Ask your Host and it drafts a support ticket for you, showing exactly what it would share. Nothing is shared until you choose what to include and press Send. A C-Series Host cannot send the ticket, and the Community board is the place network members help each other.
 section: account
 order: 30
 questions:
   - How do I get support?
   - What information is shared when I report a problem?
   - Is there a community forum?
-  - Can my Host suggest a feature it does not have?
 ---
 
 The quickest way to get help is to tell your Host what is wrong. It drafts a support ticket for you, and the draft shows exactly what would be shared. Nothing leaves your Host until you have unticked anything you would rather not share and pressed Send.
 
 ## Can I send the ticket?
 
-Sending needs a connection to Privatae's support service. A Host on its own has no such connection, and the Privatae network offers its members only the App Store, the community board and its own passport requests, so in this release a draft cannot be sent from a Host. The draft is still useful: it is a plain write-up of the problem and of what your Host found, which you can read and copy.
+Not from a C-Series Host. Sending needs a connection to Privatae's support service. A standalone Host has no such connection, and the Privatae network does not carry support tickets for its members, so a draft cannot be sent from a Host. The draft is still useful: it is a plain write-up of the problem and of what your Host found, which you can read and copy.
 
 ## How do I open a support ticket?
 
@@ -40,4 +39,4 @@ A ticket carries up to 8,000 characters in each part and up to 12 shared items. 
 
 ## Is there a community?
 
-Yes, for members of the [Privatae network](wiki:the-privatae-network). The [Community app](wiki:community-app) opens the discussion board every member shares: threads with nested replies, one vote per member on each thread or reply, search, and a button to report a post to a person who moderates the board. Every post is published under the author's own identity as the network records it, so nobody can post as somebody else. Your Host can also read and search the board, post under its own name (never as you), and send you a summary of new activity.
+Yes, for members of the [Privatae network](wiki:the-privatae-network). The [Community app](wiki:community-app) opens the discussion board every member shares: threads with nested replies, votes on each thread or reply, search, and a button to report a post to the board's moderation queue. Your Host can also read and search the board, post to it, and send you a summary of new activity.

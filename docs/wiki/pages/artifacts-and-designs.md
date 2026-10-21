@@ -1,6 +1,6 @@
 ---
 title: Artifacts and designs
-summary: Artifacts are live HTML pages your Host builds while you talk, which you can tune by pointing at them and roll back to any earlier revision. Your desktop is an artifact too, and the Designs app is a shelf of whole desktops you can try on with one click and take off with another.
+summary: Artifacts are live HTML pages your Host builds while you talk, which you can tune by pointing at them and roll back to any earlier revision. Your desktop is an artifact too, and the Designs app is a shelf of the desktops made on your Host, which you can put on with one click and take off with another.
 section: building
 order: 60
 questions:
@@ -11,16 +11,15 @@ questions:
   - Does my desktop work on my phone?
   - What is the Designs app?
   - How do I go back to my old desktop?
-  - Can I share a desktop design I like?
 ---
 
-An artifact is a live HTML page your Host builds in the conversation: a mock-up, a report, a small tool, a whole desktop. It refreshes in the Artifacts window as the Host works on it, every change is kept as a revision you can go back to, and a good one can be published as a site or turned into an app. Your desktop itself is an artifact, and the Designs app is a shelf of desktops you can try on.
+An artifact is a live HTML page your Host builds in the conversation: a mock-up, a report, a small tool, a whole desktop. It refreshes in the Artifacts window as the Host works on it, every change is kept as a revision you can go back to, and a good one can be turned into an app. Your desktop itself is an artifact, and the Designs app is a shelf of desktops you can try on.
 
 ## What can I do with an artifact?
 
 Open it in the [Artifacts app](wiki:artifacts-app) and watch it change as your Host writes it. In tune mode you point at the design instead of describing it: click an element and it arrives in your next message as an exact reference, or double-click some text and edit it in place. When the Host offers several variants, they appear as tabs and "Use this one" makes your pick the main version straight away, without another turn of the conversation.
 
-Every artifact is shown live in the gallery, and each one runs in a sandboxed frame. A finished artifact can be [published as a website](wiki:publishing-sites) or converted into an app on your Host. When your Host makes or changes an artifact during a conversation, the chat in Circles and the Workbench shows it as a small live preview; click it to open it in the Artifacts window.
+Every artifact is shown live in the gallery, and each one runs in a sandboxed frame. A finished artifact can be converted into an app on your Host. When your Host makes or changes an artifact during a conversation, the chat in Circles and the Workbench shows it as a small live preview; click it to open it in the Artifacts window.
 
 ## What is a visual?
 
@@ -42,10 +41,10 @@ Yes. When your Host puts a new desktop on, your phone wears it too. Your Host gi
 
 ## What is the Designs app?
 
-The [Designs app](wiki:designs-app) is a shelf of complete desktops, each shown live. Ours holds designs published to a shared library, which a Host reaches only through a platform connection that a standalone Host does not have. Yours holds every desktop made on this Host.
+The [Designs app](wiki:designs-app) is a shelf of complete desktops, each shown live. Yours holds every desktop made on this Host. Ours is a shared library of published designs, which a C-Series Host cannot reach in this release, on its own or on the Privatae network.
 
-"Try it" puts a design on your screen at once, as your own copy: whoever made the original cannot change your screen afterwards. "Go back" restores the desktop you had before, and what your phone showed before, and throws the trial copy away.
+"Wear it" puts one of your desktops on your screen at once. "Go back" restores the desktop you had before, and what your phone showed before.
 
 ## Can I share a design?
 
-Yes. Ask your Host to send a desktop you like to the Designs app and it appears on your own shelf. Your desktop is private until you share it; sharing it is the deliberate exception, and the same standard is checked when a design is shared and when it is worn.
+Not in this release. Sharing a design publishes it to the shared library, which a C-Series Host cannot reach. Every desktop made on your Host is already on your own shelf, Yours.

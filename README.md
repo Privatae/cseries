@@ -5,8 +5,8 @@ each running instance a Host: one AI with its own memory, its own PostgreSQL
 database, its own apps and its own rules, used from a browser. It runs
 sandboxed in a small Linux virtual machine, in containers: the Host, its
 database, and the apps that need a container of their own. A separate
-program, the bastion, runs on the machine itself and decides what the Host
-may touch there.
+program, the bastion, runs on the machine itself as a system service and is
+paired with the Host.
 
 The person brings the models: a key from OpenRouter, Anthropic, OpenAI or
 another provider, or a local model server. C-Series does not sell or proxy
@@ -18,6 +18,7 @@ model usage.
 |---|---|---|
 | The turn | `brain/mastercode/runtime/session.py`, `turn_types.py`, `root_turn.py` | How one message becomes model calls, tool calls and a reply, and which turn types exist |
 | Tools and the capability gate | `brain/mastercode/runtime/tools.py`, `brain/mastercode/ceigas_capabilities.py`, `runtime/turn_type_approval.py` | What the model may call, and which calls need the person's approval first |
+| The person's limits | `brain/mastercode/runtime/user_limits.py`, `server/routes/limits.py`, `runtime/scheduled_approval.py` | Each limit that can stop work has a coded default that only the person changes (Settings, Limits); a recurring scheduled task that runs a model is set only after the person approves it |
 | The Host's own data | `brain/mastercode/world_db.py` | The `data` tool: the Host designs and queries its own tables in a schema of its own, under a restricted database role |
 | Safety floor | `brain/mastercode/runtime/crisis.py` | The crisis floor: a deterministic phrase check plus an embedding-based check on the incoming message |
 | HTTP API | `server/` (FastAPI), `server/route_table.py` | The dashboard API; the route table is read through FastAPI's public route API so contract checks survive framework upgrades |
@@ -64,17 +65,21 @@ IMAGE=cseries:dev PG_IMAGE=cseries-postgres:dev bash scripts/smoke_test.sh
 npx cseries
 ```
 
-It checks the machine, installs the bastion as this machine's system service
-(one administrator prompt), sets up a Linux virtual machine named `cseries`
-(in WSL on Windows, in Lima on macOS and Linux), pulls the published Host
-images into it, starts the Host, pairs the bastion with it, and opens the
-setup page with a one-time setup code. On Windows without WSL it asks for
-administrator rights once and for a restart, then carries on after the
-restart by itself.
+It checks the machine, downloads the bastion, sets up a Linux virtual machine
+named `cseries` (in WSL on Windows, in Lima on macOS and Linux), pulls the
+published Host images into it and starts the Host. It then installs the
+bastion as this machine's system service and pairs it with the Host, in one
+administrator prompt, and opens the setup page with a one-time setup code.
+The virtual machine starts again each time you log in.
 
-The virtual machine sees none of your folders. Only the Host's own ports
-(8800 for the dashboard, 8810 and 8811 for the bastion) reach your machine,
-on 127.0.0.1.
+On Windows without WSL, it first asks for administrator rights to install
+WSL and for a restart, then carries on by itself after the restart. On Linux
+without QEMU, or without access to `/dev/kvm`, it asks for your sudo password
+once to install QEMU from the distribution's packages or to add you to the
+`/dev/kvm` group. Run it as yourself, not as root.
+
+The virtual machine mounts none of your folders. The Host publishes its ports
+(8800 for the dashboard, 8810 and 8811 for the bastion) on 127.0.0.1 only.
 
 ## First sign-in
 

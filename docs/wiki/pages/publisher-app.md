@@ -1,26 +1,26 @@
 ---
 title: Publisher
-summary: Publisher is where you submit apps you built on your Host to the App Store and look after the ones you have published. Every submission is reviewed by a person before it appears in the store.
+summary: Publisher is where you submit apps you built on your Host to the App Store and follow each submission. It works through the Privatae network, so it needs a network membership.
 section: apps
 order: 10
 questions:
   - What is the Publisher app?
   - How do I publish an app I built?
-  - Who reviews apps before they go in the store?
+  - What happens after I submit an app?
   - Can I publish an app only to my group?
   - How do I take a version of my app out of the store?
 app: publisher
 ---
 
-Publisher is where an app you built on your Host goes to the App Store, and where you look after it once it is there. Publishing goes through the [Privatae network](wiki:the-privatae-network), so it needs a network membership. Nothing you submit appears in the store until a person has reviewed it.
+Publisher is where an app you built on your Host goes to the App Store, and where you look after it once it is there. Publishing goes through the [Privatae network](wiki:the-privatae-network), so it needs a network membership.
 
 ## How do I publish an app?
 
-Build it in the [Workbench](wiki:workbench-app). When it is ready, your Host packs the project and submits it. Your Host is set up to show you the Publishing Agreement and ask before it submits, and the store refuses a submission that does not carry an accepted agreement. Every submission is then listed in Publisher under Publish requests, with its status.
+Build it in the [Workbench](wiki:workbench-app). When it is ready, your Host packs and signs the project and submits it. The Publish tab in Publisher shows the Publishing Agreement, and its submit button stays off until you accept it. Every submission is then listed under Publish requests, with its status.
 
 ## What happens after I submit?
 
-The request is held for human review, which looks at safety, quality and duplicates. Publish requests shows the decision, and the reason when a request is declined. Only an approved request is signed and added to the store, and the bundle that is signed is the one that was reviewed.
+The request waits for the store's decision. Publish requests shows that decision, and the reason when a request is declined.
 
 ## Who can see my app?
 
@@ -30,7 +30,7 @@ You also choose whether other people may publish their own versions of your app,
 
 ## Can I take a version back?
 
-Yes. My Apps lists everything you have published, and you can yank a version, which pulls it from the catalog.
+Not from your Host in this release. My Apps lists everything you have published and shows a Yank button, but the Privatae network does not yet carry that request, so it is refused.
 
 ## Is Publisher on every Host?
 

@@ -1,6 +1,6 @@
 ---
 title: Agents
-summary: An agent on a Host is a narrow, throwaway worker your Host sends to do one piece of untrusted work outside your Host, such as reading the open web or someone else's code. It starts with no permissions, gets only what the task needs, runs in the background and shows in the Agents app. Your Host also runs standing jobs on a schedule, many of them with no model at all.
+summary: An agent on a Host is a narrow, throwaway worker your Host sends to do one piece of untrusted work outside your Host, such as reading the open web or someone else's code. It starts with no permissions, gets only what the task needs, runs in the background and shows in the Agents app. Your Host also runs work on a schedule. Standing jobs run no model at all, and a repeating scheduled turn, which runs a model each time, needs your approval first.
 section: host
 order: 30
 questions:
@@ -39,11 +39,11 @@ The Agents app only watches. To stop a running agent, press **Kill** on its card
 
 Yes, in two ways on the same clock:
 
-- **A scheduled turn.** At the set time, or as soon as your Host is back if it was down then, the Host runs a prompt through the same governed steps as a live conversation, then reports back into the thread where the job was set. It uses your model each time, and each task has a daily limit on how many turns it may fire.
+- **A scheduled turn.** At the set time, or as soon as your Host is back if it was down then, the Host runs a prompt through the same governed steps as a live conversation, then reports back into the thread where the job was set. It uses your model each time. A scheduled turn that repeats is set only after you approve it: your Host files a card saying what it will run, how many model turns each run takes and any spending cap, and nothing is set until you choose **Let it run**. Your Host cannot decide that card. A one-time scheduled turn is set without a card. Each task may run at most the number of model turns a day set in your limits (200 unless you change it in [Settings](wiki:settings-app)); a run past that is skipped and spends nothing.
 - **A standing job.** One known operation each time it fires, with no model and no tokens. Only operations that finish with nobody present can be scheduled this way.
 
-Jobs can run once or repeat hourly, daily, weekly, monthly or at a set interval, and a repeating job catches up if it was missed. Because standing jobs are deterministic and stay inside what you already asked for, your Host sets them up without asking you first. That is why every one appears in the Agents app with a **Stop** button, and a job you stop stays stopped. Every Host starts with one: a weekly note about what changed in how it works, which arrives as a Notice on the Support card in Circles.
+Jobs can run once or repeat hourly, daily, weekly, monthly or at a set interval. A repeating job that was missed while your Host was down runs once when it is back, then waits for its next time. Because standing jobs are deterministic and run no model, your Host sets them up without asking you first; a standing job whose operation itself sets up a scheduled turn counts as model work and needs your approval like one. That is why every one appears in the Agents app with a **Stop** button, and a job you stop stays stopped. Every Host starts with one: a weekly note about what changed in how it works, which arrives as a Notice on the Support card in Circles.
 
 ## Do agents cost tokens?
 
-Dispatched agents and scheduled turns run on your models and your keys, so they use your provider account. Standing jobs run no model, so the Agents app shows them as "no model" rather than as a cost. Privatae does not bill for tokens.
+Dispatched agents and scheduled turns run on your models and your keys, so they use your provider account. Each scheduled run's report says what it cost when it had a price, and the Agents app shows what each scheduled task spent in the last 24 hours. Standing jobs run no model, so the Agents app shows them as "no model" rather than as a cost.

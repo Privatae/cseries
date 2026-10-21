@@ -49,4 +49,4 @@ The skills that come with your Host can be read here but not changed.
 
 ## Where do I change the embedding model?
 
-In the [Memory app](wiki:memory-app). [Models and keys](wiki:models-and-keys) covers where your Host's models come from.
+In the [Orchestrator app](wiki:orchestrator-app), under Embedding, or in the Health view of the [Memory app](wiki:memory-app). [Models and keys](wiki:models-and-keys) covers where your Host's models come from.

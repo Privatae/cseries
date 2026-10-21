@@ -12,6 +12,25 @@ The person brings the models: a key from OpenRouter, Anthropic, OpenAI or
 another provider, or a local model server. C-Series does not sell or proxy
 model usage.
 
+Install is one command, `npx cseries`, on Windows, macOS or Linux (see
+[Install](#install)). To run a Host on a server instead, Privatae offers
+C-Series Cloud: the same Host on a server of its own, with its own front door
+built into the machine and nothing of Privatae's in front of it. Availability
+and prices are at [privatae.ai/cloud](https://privatae.ai/cloud); how the
+server is set up is in [`vm/cloud/README.md`](vm/cloud/README.md).
+
+## Messaging
+
+Besides the browser, a Host can be reached from Telegram, Discord and Slack,
+through connector apps in its App Store. Each connector links one of the
+person's own accounts, after a pairing they approve: a message to their bot
+starts a turn in one of their threads, and the reply goes back the same way.
+Every connector connects out (Telegram by long polling, Slack through Socket
+Mode, Discord through a gateway connection the Host holds), so the Host needs
+no port open to the internet. The bot token stays in the Host's Keys; the
+connector's container never holds it. A message from chat approves nothing:
+approval cards still wait for the person.
+
 ## Memory and learning
 
 A Host remembers in its own PostgreSQL database, and learns in its own turns:

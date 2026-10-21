@@ -7,7 +7,6 @@
 #
 # Booting: the kernel's initrd and device manager, and systemd-boot.
 udev
-kmod
 initramfs-tools
 zstd
 systemd-boot-efi

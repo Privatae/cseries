@@ -12,6 +12,11 @@ netavark
 aardvark-dns
 nftables
 iptables
+# modprobe: WSL mounts its kernel's modules at /usr/lib/modules, but the
+# kernel loads one (nf_tables' ct, fib, reject...) only by running modprobe.
+# Without it netavark's rules fail with "Could not process rule: No such file
+# or directory" and no container starts (measured on WSL 6.6.87.2, 2026-10-21).
+kmod
 ca-certificates
 curl
 iproute2

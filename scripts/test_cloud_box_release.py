@@ -231,7 +231,7 @@ class Box:
             f.write(FAKE_GUEST)
         os.chmod(guest, 0o755)
         os.environ["FAKE_ROOT"] = tmp
-        self.cfg = {"name": "demo", "zone": "cloud.example.test", "reboot_window": "04:00",
+        self.cfg = {"name": "demo", "address_id": "k7x2m9", "zone": "cloud.example.test", "reboot_window": "04:00",
                     "release_base": "https://example.test/rel"}
         self.u = up.Updater(self.paths, self.cfg, keys=[key_b64(self.key)], fetch=self.fetch,
                             fetch_to_file=self.fetch_to_file, guest=guest,
@@ -352,7 +352,7 @@ with tempfile.TemporaryDirectory() as tmp:
           "its images and overlay are in place")
     with open(box.paths.p("etc/demo-name.conf")) as f:
         rendered = f.read()
-    check(rendered == "name=home.demo.cloud.example.test\n" and
+    check(rendered == "name=demo.k7x2m9.cloud.example.test\n" and
           not os.path.exists(box.paths.p("etc/demo-name.conf.in")),
           "a template installs rendered and without .in", rendered)
     check((st.get("bastion") or {}).get("changed") is False, "a bastion at or above min_version is left alone",

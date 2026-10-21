@@ -5,8 +5,8 @@ each running instance a Host: one AI with its own memory, its own PostgreSQL
 database, its own apps and its own rules, used from a browser. It runs
 sandboxed in a small Linux virtual machine, in containers: the Host, its
 database, and the apps that need a container of their own. A separate
-program, the bastion, runs on the machine itself as a system service and is
-paired with the Host.
+program, the bastion ([source](https://github.com/Privatae/bastion)),
+runs on the machine itself as a system service and is paired with the Host.
 
 The person brings the models: a key from OpenRouter, Anthropic, OpenAI or
 another provider, or a local model server. C-Series does not sell or proxy
@@ -85,8 +85,12 @@ A Host remembers in its own PostgreSQL database, and learns in its own turns:
 | Release pipeline | `.github/workflows/release.yml` | Multi-arch images, vulnerability scan gate, npm publish with provenance |
 | Personal-data and term gates | `scripts/test_public_source_clean.py`, `scripts/release_term_check.py` | Checks that keep real people's data and private names out of public source |
 
-The bastion is a separate Go program with its own repository, licensed
-GPL-3.0-or-later.
+The bastion is a separate Go program, licensed GPL-3.0-or-later. Its source
+is at [github.com/Privatae/bastion](https://github.com/Privatae/bastion),
+with its own security model and release notes. `npx cseries` installs it only
+after checking its release manifest's signature against the bastion's pinned
+release keys, and the downloaded binary's sha256 against that manifest
+(`packages/cseries/src/bastion.js`).
 
 ## Running the tests
 

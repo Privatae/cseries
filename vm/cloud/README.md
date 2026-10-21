@@ -112,6 +112,7 @@ would never reach the Host.
 ```json
 {
   "name": "orchard",
+  "address_id": "k7x2m9",
   "machine_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
   "acme_dns": {"api_base": "https://acme.example.test",
                "credential": {"username": "...", "password": "...", "fulldomain": "...",
@@ -121,7 +122,17 @@ would never reach the Host.
 }
 ```
 
-`name` and `machine_id` (a UUID) are required. Optional: `setup_code`,
+`name`, `address_id` and `machine_id` (a UUID) are required. `address_id` is
+the machine's own 6 characters from `abcdefghijkmnpqrstuvwxyz23456789` (no `l`,
+`o`, `0` or `1`), a letter first and at least one digit, which the provisioner
+generates once and never reuses; a bootstrap.json without one is refused. The
+Host answers at `<name>.<address_id>.<zone>` (`orchard.k7x2m9.cloud.privatae.ai`
+here), which is its `CSERIES_URL` and the name the bastion pairs at, and each
+isolated app at `apps-<key>-<name>.<address_id>.<zone>`. Both sit in the
+machine's zone, `<address_id>.<zone>`: the wildcard certificate is for
+`*.<address_id>.<zone>`, and the acme-dns credential is for
+`_acme-challenge.<address_id>.<zone>`. The name alone need not be unique.
+Optional: `setup_code`,
 `zone`, `heartbeat_url`, `release_base`, `reboot_window` (HH:MM UTC),
 `acme_email`, `acme_server`;
 `acme_dns` (without it the box serves a self-signed certificate); `images`
@@ -159,7 +170,7 @@ through Caddy, it claims the Host with the setup code bootstrap mounted, signs
 in with the password, follows an app origin's join, opens a WebSocket, sees
 the door key's refusals and rotates the key; an outside bastion (a container
 on Docker's bridge, the Host's name mapped to the VM) pairs at
-`https://home.<name>.<zone>:8810` inside the window, holds its lane on 8811,
+`https://<name>.<address_id>.<zone>:8810` inside the window, holds its lane on 8811,
 and a later one is refused once the window has closed. Sign-in and the door
 run again after the reboot, with the platform blocked, and after the seal.
 The local runtime is checked too: the runtime images pinned, apps and a

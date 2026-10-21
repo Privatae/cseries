@@ -54,7 +54,9 @@ KEEP=""
 [ "${1:-}" = --keep ] && KEEP=1
 
 NAME=boxtest
-HOSTNAME=home.$NAME.cloud.privatae.ai
+# An invented address ID in the provisioner's shape (machines.address_id).
+ADDRESS_ID=k7x2m9
+HOSTNAME=$NAME.$ADDRESS_ID.cloud.privatae.ai
 VM4=192.0.2.2
 OUT4=192.0.2.1
 VM6=2001:db8:c5::2
@@ -413,6 +415,7 @@ EOF
 cat > "$F/bootstrap.json" <<EOF
 {
   "name": "$NAME",
+  "address_id": "$ADDRESS_ID",
   "zone": "cloud.privatae.ai",
   "machine_id": "6f1d3c2a-9b8e-4a7d-8c5f-0e1d2c3b4a59",
   "heartbeat_url": "https://127.0.0.1:8443/api/machines/heartbeat",
@@ -874,10 +877,10 @@ say "the bastion on the box"
 list=$(vm 'sudo -H privatae-bastion switch --list')
 echo "$list"
 for fam in ops dcn services observe session models directives; do
-    check "switch: $fam off" grep -qE "^home\.$NAME\.cloud\.privatae\.ai $fam off" <<< "$list"
+    check "switch: $fam off" grep -qE "^${HOSTNAME//./\\.} $fam off" <<< "$list"
 done
 for fam in harness egress inference; do
-    check "switch: $fam on" grep -qE "^home\.$NAME\.cloud\.privatae\.ai $fam on" <<< "$list"
+    check "switch: $fam on" grep -qE "^${HOSTNAME//./\\.} $fam on" <<< "$list"
 done
 bstatus=$(vm 'sudo -H privatae-bastion status 2>&1')
 echo "$bstatus"
@@ -1049,6 +1052,7 @@ check "Host stopped: a sign-in gets 503 and the error the sign-in page shows" \
     sh -c "test '${r%% *}' = 503 && grep -q '\"error\": \"This Host is starting' '$WORK/body'"
 vm 'sudo systemctl start cseries-host.service'
 for _ in $(seq 1 100); do vm 'sudo cseries-guest health' >/dev/null 2>&1 && break; sleep 3; done
+for _ in $(seq 1 40); do login_ok && break; sleep 3; done
 check "Host started again: healthy, and /login answers 200 through Caddy" sh -c "$V ssh 'sudo cseries-guest health' && curl -sk -o /dev/null -w '%{http_code}' --resolve $HOSTNAME:443:$VM4 https://$HOSTNAME/login | grep -qx 200"
 
 say "a reboot"

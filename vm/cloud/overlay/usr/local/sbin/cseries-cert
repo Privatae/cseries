@@ -1,6 +1,9 @@
 #!/usr/bin/python3 -I
-"""The box's wildcard certificate for *.<name>.<zone>, by lego with the
-acme-dns provider (cseries-cert.service, daily).
+"""The box's wildcard certificate for *.<address_id>.<zone>, the machine's
+zone (cseries_cloud.zone_host), by lego with the acme-dns provider
+(cseries-cert.service, daily). It covers the Host at
+<name>.<address_id>.<zone> and each isolated app at
+apps-<key>-<name>.<address_id>.<zone>.
 
 With no certificate from lego yet, it asks for one (`lego run`); after that it
 renews within 30 days of expiry (`lego renew --days 30`). When lego's
@@ -8,7 +11,7 @@ certificate differs from the one Caddy serves, it is copied to
 /etc/caddy/tls (root:caddy 0640) and Caddy reloads.
 
 /etc/cseries-cloud/acme-dns.json (0600) is the provisioner's acme-dns
-credential, keyed by <name>.<zone>; it can change that one name's
+credential, keyed by <address_id>.<zone>; it can change that one name's
 _acme-challenge record and nothing else. Without it the box keeps the
 certificate it has (bootstrap's self-signed one) and this exits 0.
 

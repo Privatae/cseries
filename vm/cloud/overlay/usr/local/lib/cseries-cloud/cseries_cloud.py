@@ -85,6 +85,14 @@ HOST_UID = 1000
 
 NAME_RE = re.compile(r"^[a-z][a-z0-9]{2,19}$")
 HEX16_RE = re.compile(r"^[0-9a-f]{16}$")
+# The machine's address ID (machines.address_id): six characters the
+# provisioner generates once per machine and never reuses or changes, so two
+# machines whose buyers chose the same name still have different addresses.
+# The alphabet leaves out l, o, 0 and 1, so it can be read aloud and typed; the
+# first character is a letter and at least one is a digit, so it is never a word.
+ADDRESS_ID_ALPHABET = "abcdefghijkmnpqrstuvwxyz23456789"
+ADDRESS_ID_RE = re.compile(r"^[a-km-np-z][a-km-np-z2-9]{5}$")
+_ADDRESS_ID_DIGIT_RE = re.compile(r"[2-9]")
 RESERVED_NAMES = frozenset({
     "acme", "api", "app", "apps", "auth", "admin", "cloud", "dl", "git", "host", "mail",
     "net", "enrol", "ns", "ns1", "ns2", "root", "status", "support", "test", "www",
@@ -105,7 +113,9 @@ class CloudError(Exception):
 
 
 def validate_name(name):
-    if not isinstance(name, str) or not NAME_RE.match(name):
+    # fullmatch: re's $ also matches before a final newline, and the name is
+    # written into the Caddyfile and the Host's unit.
+    if not isinstance(name, str) or not NAME_RE.fullmatch(name):
         raise CloudError("name must be 3 to 20 characters, a lowercase letter first, then "
                          "lowercase letters and digits")
     if HEX16_RE.match(name):
@@ -115,11 +125,19 @@ def validate_name(name):
     return name
 
 
+def validate_address_id(value):
+    if not isinstance(value, str) or not ADDRESS_ID_RE.fullmatch(value) or \
+            not _ADDRESS_ID_DIGIT_RE.search(value):
+        raise CloudError("address_id must be 6 characters of a-z and 2-9 without l, o, 0 or 1, "
+                         "a letter first and at least one digit")
+    return value
+
+
 def validate_dns_name(value, what):
     if not isinstance(value, str) or len(value) > 253:
         raise CloudError(f"{what} is not a DNS name")
     labels = value.split(".")
-    if len(labels) < 2 or not all(_LABEL_RE.match(lab) for lab in labels):
+    if len(labels) < 2 or not all(_LABEL_RE.fullmatch(lab) for lab in labels):
         raise CloudError(f"{what} is not a DNS name: {value!r}")
     return value
 
@@ -134,19 +152,25 @@ def validate_https_url(value, what):
 
 
 def host_name(cfg):
-    """The Host's own name, home.<name>.<zone>: handle home, zone .<name>.<zone>."""
-    return f"home.{cfg['name']}.{cfg['zone']}"
+    """The Host's own address, <name>.<address_id>.<zone>: the buyer's name is
+    the Host's handle (the first label of CSERIES_URL), the machine's zone
+    (zone_host) the rest."""
+    return f"{cfg['name']}.{zone_host(cfg)}"
 
 
 def zone_host(cfg):
-    """The DNS name under which every name the Host serves lives: <name>.<zone>."""
-    return f"{cfg['name']}.{cfg['zone']}"
+    """The machine's zone, <address_id>.<zone>: the base of its wildcard
+    certificate and its acme-dns registration. The Host and each of its
+    isolated apps (apps-<key>-<name>.<address_id>.<zone>) live one label
+    under it. A settings file without a valid address_id is refused here, so
+    no template is rendered with the address left out."""
+    return f"{validate_address_id(cfg.get('address_id'))}.{cfg['zone']}"
 
 
 # ── bootstrap.json ──────────────────────────────────────────────────────────
 
 BOOTSTRAP_KEYS = frozenset({
-    "name", "zone", "machine_id", "acme_dns", "acme_email", "acme_server", "heartbeat_url",
+    "name", "address_id", "zone", "machine_id", "acme_dns", "acme_email", "acme_server", "heartbeat_url",
     "release_base", "images", "image_archive", "overlay_archive", "bastion_binary",
     "reboot_window", "setup_code",
 })
@@ -175,6 +199,7 @@ def validate_bootstrap(raw):
         raise CloudError(f"bootstrap.json has keys this bootstrap does not know: {', '.join(unknown)}")
     cfg = {}
     cfg["name"] = validate_name(raw.get("name"))
+    cfg["address_id"] = validate_address_id(raw.get("address_id"))
     cfg["zone"] = validate_dns_name(raw.get("zone", DEFAULT_ZONE), "zone")
     mid = raw.get("machine_id")
     try:
@@ -256,7 +281,7 @@ def validate_bootstrap(raw):
 # What the box keeps of bootstrap.json after bootstrap, in cloud.json: no
 # acme-dns password (that is in acme-dns.json, 0600) and no setup code (that is
 # in setup-code, 0640 root:cseries).
-CLOUD_JSON_KEYS = ("name", "zone", "machine_id", "acme_email", "acme_server",
+CLOUD_JSON_KEYS = ("name", "address_id", "zone", "machine_id", "acme_email", "acme_server",
                    "heartbeat_url", "release_base", "reboot_window")
 
 

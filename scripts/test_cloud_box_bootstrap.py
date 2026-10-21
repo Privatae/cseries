@@ -3,10 +3,14 @@
 
   1. bootstrap.json is checked before anything runs: the name rules (3 to 20
      characters, a letter first, not 16 hex characters, not reserved, never
-     apps...), a UUID machine_id, an acme-dns credential of the shape acme-dns
-     issues, https URLs only, images or image_archive but not both, a setup
-     code in the Host's format, and no key the bootstrap does not know.
-     Defaults are filled; cloud.json keeps no secret.
+     apps...), the machine's address_id (required: 6 of
+     abcdefghijkmnpqrstuvwxyz23456789, a letter first, a digit somewhere), a
+     UUID machine_id, an acme-dns credential of the shape acme-dns issues,
+     https URLs only, images or image_archive but not both, a setup code in
+     the Host's format, and no key the bootstrap does not know. Defaults are
+     filled; cloud.json keeps no secret. The Host's address is
+     <name>.<address_id>.<zone> and the machine's zone (wildcard, acme-dns)
+     <address_id>.<zone>, read by the Host itself the same way.
   2. build-overlay.sh gives the same bytes twice, carries the WSL guest's
      reusable files unchanged, and only files and directories.
   3. Every template renders with the values the box has, and a token without
@@ -72,6 +76,7 @@ def refused(raw):
 D = "sha256:" + "e" * 64
 GOOD = {
     "name": "orchard",
+    "address_id": "k7x2m9",
     "machine_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
     "acme_dns": {"api_base": "https://acme.example.test",
                  "credential": {"username": "c36f50e8-4632-44f0-83fe-e070fef28a10",
@@ -91,13 +96,45 @@ check(cfg["zone"] == "cloud.privatae.ai" and cfg["reboot_window"] == "04:00" and
       cfg["release_base"] == cc.DEFAULT_RELEASE_BASE and cfg["heartbeat_url"] == cc.DEFAULT_HEARTBEAT_URL and
       cfg["acme_server"] == cc.DEFAULT_ACME_SERVER,
       "defaults: zone cloud.privatae.ai, reboot 04:00 UTC, the release, heartbeat and ACME URLs")
-check(cc.host_name(cfg) == "home.orchard.cloud.privatae.ai" and cc.zone_host(cfg) == "orchard.cloud.privatae.ai",
-      "the Host's name is home.<name>.<zone>")
+check(cc.host_name(cfg) == "orchard.k7x2m9.cloud.privatae.ai" and cc.zone_host(cfg) == "k7x2m9.cloud.privatae.ai",
+      "the Host's address is <name>.<address_id>.<zone>, the machine's zone <address_id>.<zone>",
+      (cc.host_name(cfg), cc.zone_host(cfg)))
 kept = cc.cloud_json(cfg)
 check("acme_dns" not in kept and "setup_code" not in kept and GOOD["acme_dns"]["credential"]["password"]
       not in json.dumps(kept), "cloud.json keeps neither the acme-dns password nor the setup code")
+check(kept.get("address_id") == "k7x2m9" and cc.host_name(kept) == cc.host_name(cfg),
+      "cloud.json keeps the address_id, so the updater and cseries-cert build the same address", kept)
 
-for name in ["ab", "a" * 21, "1abc", "Orchard", "or-chard", "or.chard", "", None, 7]:
+# The address ID (the spec's shape): 6 of abcdefghijkmnpqrstuvwxyz23456789, a
+# letter first, at least one digit. Required: the new image refuses a
+# bootstrap.json from a provisioner that does not send one.
+check("address_id" in (refused({k: v for k, v in GOOD.items() if k != "address_id"}) or ""),
+      "a bootstrap.json without address_id is refused")
+for aid, why in [("k7x2ml", "an l"), ("k7x2mo", "an o"), ("k7x2m0", "a 0"), ("k7x2m1", "a 1"),
+                 ("7kx2m9", "a digit first"), ("kxqmzv", "no digit"), ("k7x2m", "5 characters"),
+                 ("k7x2m9a", "7 characters"), ("K7X2M9", "capitals"), ("k7x-m9", "a hyphen"),
+                 ("k7x2m9\n", "a final newline"), ("", "empty"), (None, "null"), (729, "a number")]:
+    check("address_id" in (refused({**GOOD, "address_id": aid}) or ""), f"address_id {aid!r} ({why}) is refused")
+for aid in ["k7x2m9", "a2bcde", "zzzzz9", "abcde2", "p3qr4s"]:
+    check(refused({**GOOD, "address_id": aid}) is None, f"address_id {aid} is accepted")
+second = {c for c in "abcdefghijklmnopqrstuvwxyz0123456789"
+          if refused({**GOOD, "address_id": "k" + c + "x2m9"}) is None}
+check(second == set(cc.ADDRESS_ID_ALPHABET) and len(cc.ADDRESS_ID_ALPHABET) == 32 and
+      not set("lo01") & second, "the address ID's alphabet is the spec's 32 characters", sorted(second))
+check(refused({**GOOD, "address-id": "k7x2m9"}) is not None and refused({**GOOD, "unknown": 1}) is not None,
+      "with address_id known, a key the bootstrap does not know is still refused")
+twin = cc.validate_bootstrap({**GOOD, "address_id": "p3qr4s"})
+check(cc.host_name(twin) == "orchard.p3qr4s.cloud.privatae.ai" and cc.host_name(twin) != cc.host_name(cfg),
+      "two machines with the same name get different addresses through their address IDs", cc.host_name(twin))
+try:
+    cc.host_name({"name": "orchard", "zone": "cloud.privatae.ai"})
+    check(False, "a settings file without address_id builds no address")
+except cc.CloudError:
+    check(True, "a settings file without address_id builds no address (a refusal the updater catches)")
+check(cc.host_name(cc.validate_bootstrap({**GOOD, "zone": "cloud.example.test"})) ==
+      "orchard.k7x2m9.cloud.example.test", "the zone in bootstrap.json is the one the address is under")
+
+for name in ["ab", "a" * 21, "1abc", "Orchard", "or-chard", "or.chard", "orchard\n", "", None, 7]:
     check(refused({**GOOD, "name": name}) is not None, f"name {name!r} is refused")
 for name in ["deadbeefcafe0123", "abcdef0123456789"]:
     check("handle" in (refused({**GOOD, "name": name}) or ""), f"name {name} (16 hex) is refused")
@@ -112,6 +149,7 @@ check(refused({**GOOD, "machine_id": "7C9E6679-7425-40DE-944B-E07FC1F90AE7"}) is
       "7c9e6679-7425-40de-944b-e07fc1f90ae7", "a machine_id is kept lower-cased")
 for k in ["heartbeat_url", "release_base", "acme_server"]:
     check(refused({**GOOD, k: "http://example.test/x"}) is not None, f"{k} over http is refused")
+check(refused({**GOOD, "zone": "cloud.privatae.ai\n"}) is not None, "a zone with a final newline is refused")
 check(refused({**GOOD, "unknown": 1}) is not None, "a key the bootstrap does not know is refused")
 check(refused({**GOOD, "image_archive": {"path": "/var/tmp/i.tar", "host": "cseries:t",
                                          "postgres": "cseries-postgres:t"}}) is not None,
@@ -162,6 +200,48 @@ with tempfile.TemporaryDirectory() as tmp:
     check(rc == 1 and res.get("step") == "bootstrap.json", "a refused bootstrap.json stops the run there", res)
     check((os.stat(bj).st_mode & 0o777) == 0o600,
           "bootstrap.json is 0600 after a run, whatever mode the provisioner wrote", oct(os.stat(bj).st_mode))
+
+# lego's acme-dns storage is keyed by the name the certificate is for (the
+# wildcard's base), which is the machine's zone: the provisioner registers
+# the acme-dns account and its CNAME for _acme-challenge.<address_id>.<zone>.
+with tempfile.TemporaryDirectory() as tmp:
+    paths = cc.Paths(tmp)
+    boot.write_config(paths, {**cfg, "setup_code": None}, {"cseries": os.getgid()})
+    with open(paths.acme_dns_json()) as f:
+        store = json.load(f)
+    check(list(store) == ["k7x2m9.cloud.privatae.ai"] and
+          store["k7x2m9.cloud.privatae.ai"]["subdomain"] == GOOD["acme_dns"]["credential"]["subdomain"],
+          "acme-dns.json is keyed by the machine's zone, <address_id>.<zone>", list(store))
+    check(cc.load_cloud(paths)["address_id"] == "k7x2m9", "the box's cloud.json carries the address_id")
+src_boot = open(os.path.join(OVERLAY, "usr/local/sbin/cseries-cloud-bootstrap")).read()
+src_cert = open(os.path.join(OVERLAY, "usr/local/sbin/cseries-cert")).read()
+check('name = "*." + cc.zone_host(cfg)' in src_boot and '"--domains", "*." + zone' in src_cert and
+      "zone = cc.zone_host(cfg)" in src_cert,
+      "the placeholder certificate and lego's request are both for *.<the machine's zone>")
+
+# The Host learns its handle and its apps' zone from CSERIES_URL alone
+# (server/home_origin.py: the first label is the handle, the rest the zone),
+# so the rendered CSERIES_URL puts the handle at the buyer's name and each
+# isolated app one label under the machine's zone, inside its wildcard.
+if os.path.exists(os.path.join(ROOT, "server/applications/app_origin.py")):
+    probe = subprocess.run(
+        [sys.executable, "-I", "-c",
+         "import json, sys; sys.path.insert(0, sys.argv[1])\n"
+         "from server.home_origin import HOME\n"
+         "from server.applications import app_origin\n"
+         "print(json.dumps([HOME.handle, HOME.zone, app_origin.app_host('settings', HOME.host)]))",
+         ROOT], capture_output=True, text=True, check=False,
+        env={"PATH": os.environ.get("PATH", ""), "CSERIES_URL": "https://" + cc.host_name(cfg)})
+    try:
+        handle, zone, app = json.loads(probe.stdout)
+    except ValueError:
+        handle = zone = app = None
+    check(handle == "orchard" and zone == ".k7x2m9.cloud.privatae.ai" and app is not None and
+          re.fullmatch(r"apps-[a-z2-7]{20}-orchard\.k7x2m9\.cloud\.privatae\.ai", app) is not None and
+          app.split(".", 1)[1] == cc.zone_host(cfg),
+          "the Host reads handle orchard and zone .k7x2m9.cloud.privatae.ai from CSERIES_URL; its apps "
+          "answer at apps-<key>-orchard.k7x2m9.cloud.privatae.ai, inside the machine's wildcard",
+          (handle, zone, app, probe.stderr[-300:]))
 
 # ── 2. the overlay tarball ──────────────────────────────────────────────────
 
@@ -243,9 +323,9 @@ with tempfile.TemporaryDirectory() as tmp:
           (len(first), second))
     with open(paths.p("etc/containers/systemd/cseries-host.container.d/cloud.conf")) as f:
         dropin = f.read()
-    for line in ["Environment=CSERIES_URL=https://home.orchard.cloud.privatae.ai",
+    for line in ["Environment=CSERIES_URL=https://orchard.k7x2m9.cloud.privatae.ai",
                  "Environment=CSERIES_TRUSTED_PROXIES=10.89.77.1",
-                 "Environment=CSERIES_LANE_HOST=home.orchard.cloud.privatae.ai",
+                 "Environment=CSERIES_LANE_HOST=orchard.k7x2m9.cloud.privatae.ai",
                  "Environment=CSERIES_DOOR_HELPER=/run/cseries-door/helper.sock",
                  "Volume=/run/privatae-host:/run/privatae-host", "Volume=/run/cseries-door:/run/cseries-door",
                  "Volume=/etc/cseries-cloud/door-secret:/run/cseries-cloud/door-secret:ro",
@@ -260,10 +340,14 @@ with tempfile.TemporaryDirectory() as tmp:
           "the Host's fixed address is set on its network", netconf)
     with open(paths.p("etc/caddy/Caddyfile")) as f:
         caddy = f.read()
-    check("https://*.orchard.cloud.privatae.ai {" in caddy and "forward_auth 10.89.77.2:8800" in caddy and
+    check("https://*.k7x2m9.cloud.privatae.ai {" in caddy and "forward_auth 10.89.77.2:8800" in caddy and
           "uri /__host/door" in caddy and "reverse_proxy 10.89.77.2:8800" in caddy and
           "protocols tls1.3" in caddy and "admin unix//run/caddy/admin.sock" in caddy,
-          "the Caddyfile: the box's zone, forward_auth to /__host/door, TLS 1.3, admin on a unix socket")
+          "the Caddyfile: the machine's zone, forward_auth to /__host/door, TLS 1.3, admin on a unix socket")
+    check(re.findall(r"^https://\S+ \{$", caddy, re.M) == ["https://*.k7x2m9.cloud.privatae.ai {"] and
+          "home." not in caddy + dropin and "orchard.cloud" not in caddy + dropin,
+          "one site, the machine's wildcard; no home. label and no address without the ID",
+          re.findall(r"^https://\S+ \{$", caddy, re.M))
     check(caddy.index("forward_auth") < caddy.index("reverse_proxy"), "forward_auth comes before reverse_proxy")
 
     def block(text, opener):

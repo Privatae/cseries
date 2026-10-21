@@ -189,7 +189,9 @@ GROUPS = (("spend", "Spending"), ("turns", "One turn"),
 # a caller with no behavioral_params in hand reads it. A caller that has the
 # Host's behavioral_params passes them, and those win.
 _SNAPSHOT: dict[str, Any] = {}
-_LOADED_AT = 0.0
+# monotonic() of the last load; None until the first. monotonic() counts from
+# boot, so a 0.0 start read as fresh for the first 30 s after a machine booted.
+_LOADED_AT: Optional[float] = None
 _STALE_S = 30.0
 
 
@@ -409,7 +411,7 @@ async def load(pool, entity_id: Optional[int]) -> dict:
 async def fresh(pool, entity_id: Optional[int]) -> None:
     """load() when the held values are older than _STALE_S, for loops that run
     outside a turn and have no behavioral_params of their own."""
-    if time.monotonic() - _LOADED_AT > _STALE_S:
+    if _LOADED_AT is None or time.monotonic() - _LOADED_AT > _STALE_S:
         await load(pool, entity_id)
 
 

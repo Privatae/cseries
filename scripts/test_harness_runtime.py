@@ -810,8 +810,11 @@ def main() -> int:
         "os.makedirs(os.path.dirname(p), exist_ok=True)\n"
         "open(p, 'w').write('{\"access_token\":\"tok-' + code + '\"}')\n"
         "time.sleep(20)\n")
+    # The login starts in the spec's workspace; the real one exists only on a
+    # machine that has run a Host, so the fake gets a folder of its own.
+    (tmp / "login-workspace").mkdir(exist_ok=True)
     ag_login = dataclasses.replace(
-        ag, binary=Path(sys.executable),
+        ag, binary=Path(sys.executable), workspace=tmp / "login-workspace",
         login_argv=lambda s: [sys.executable, str(fake)])
     hc._clear_login()
     res, code_ = hc.make_login(ag_login)(FakeRequest(b'{"wait_seconds": 10}'))

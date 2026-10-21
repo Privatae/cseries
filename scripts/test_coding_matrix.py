@@ -349,6 +349,28 @@ def main() -> int:
           second is False and n == 1, f"{second} n={n}")
     check("kick: a harness with no CLI catalog is never woken for one",
           grok is False)
+
+    # The cooldown's clock is monotonic(), which counts from boot. A harness
+    # never tried must still kick on a machine up five minutes (a Host's VM
+    # boots fresh; so does a CI runner), not wait out the cooldown from 0.
+    async def _young_clock_kick():
+        async def _ok_refresh(h, *, force=False):
+            return {"ok": True, "models": ["m"], "fresh": True}
+        orig_refresh, orig_time = rv.refresh_model_catalog, rv.time
+        rv.refresh_model_catalog = _ok_refresh
+        rv.time = type("_Clock", (), {"monotonic": staticmethod(lambda: 300.0)})
+        rv._catalog_refresh_tasks.clear(); rv._catalog_last_attempt.clear(); rv._catalog_last_error.clear()
+        try:
+            started = rv.kick_model_catalog_refresh("cursor")
+            t = rv._catalog_refresh_tasks.get("cursor")
+            if t is not None:
+                await t
+            return started
+        finally:
+            rv.refresh_model_catalog, rv.time = orig_refresh, orig_time
+            rv._catalog_refresh_tasks.clear(); rv._catalog_last_attempt.clear(); rv._catalog_last_error.clear()
+    check("kick: the first kick starts on a machine booted five minutes ago",
+          run(_young_clock_kick()) is True)
     check("the matrix row carries models_loading (the screen polls on it)",
           '"models_loading": models_loading' in _src_inf)
 

@@ -2369,8 +2369,11 @@ def kick_model_catalog_refresh(harness_id: str) -> bool:
     # kick is a real pod wake (35-60 s cold). With a key the vendor rejects,
     # that would be a wake storm paced by the user's clicks. Hold off for a
     # cooldown after any attempt; the failure text stays on the row meanwhile.
-    last = float(_catalog_last_attempt.get(harness_id) or 0.0)
-    if time.monotonic() - last < _CATALOG_RETRY_COOLDOWN_S:
+    # A harness never tried has no attempt to cool down from. Counting it as
+    # tried at 0 refused every first kick for ten minutes after the machine
+    # booted, since monotonic() counts from boot, and a Host's VM boots fresh.
+    last = _catalog_last_attempt.get(harness_id)
+    if last is not None and time.monotonic() - last < _CATALOG_RETRY_COOLDOWN_S:
         return False
     try:
         loop = asyncio.get_running_loop()

@@ -38,6 +38,10 @@ IMAGE="${IMAGE:-cseries:$TAG}"
 # a kernel ship must not silently demand a same-tagged DB image that was
 # never built. Absent locally, it is built from this tree below.
 PG_IMAGE="${PG_IMAGE:-cseries-postgres:smoke}"
+# The gates that start a throwaway database (scripts/peer_test_db.sh) start
+# this same image. Unset, they ask for cseries-postgres:smoke, which exists
+# only on a machine that built one under that name.
+export PEER_TEST_PG_IMAGE="${PEER_TEST_PG_IMAGE:-$PG_IMAGE}"
 # Repo root = the checkout this script lives in, on whatever machine builds.
 # Override only for cross-tree checks.
 SMOKE_REPO="${SMOKE_REPO:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
@@ -3250,8 +3254,10 @@ docker exec "$CNAME" sh -c "! grep -qE 'def (read|cat|hash)_dump' /app/server/cr
 # scripts/test_crash_surface.py runs on the HOST against the build context, not
 # in the image (Dockerfile.linux does not COPY scripts/). Run it here so the
 # ship gate covers it, rather than claiming an in-image run that cannot happen.
-python3 "$SMOKE_REPO/scripts/test_crash_surface.py" >/dev/null 2>&1 \
-    || rat_fail="$rat_fail crash-surface-tests"
+if ! python3 "$SMOKE_REPO/scripts/test_crash_surface.py" >"$SMOKE_SCRATCH/crash-out" 2>&1; then
+    rat_fail="$rat_fail crash-surface-tests"
+    tail -n 25 "$SMOKE_SCRATCH/crash-out" | sed 's/^/      | /'
+fi
 # The heap ceiling + the transcript wall live in tool_result_wall.py since
 # 2026-08-19 (host_sdk_engine.py / skill_harness.py — the SDK lanes — are gone).
 docker exec "$CNAME" grep -q "max-old-space-size" /app/brain/mastercode/runtime/tool_result_wall.py \
@@ -4783,7 +4789,10 @@ elif [[ -d "$GATE_DIR" ]]; then
         _gt="$(awk -v g="$_g" '$1 == g && $2 ~ /^[0-9]+$/ {print $2; exit}' \
                    "$SMOKE_REPO/scripts/gate-timeouts.txt" 2>/dev/null || true)"
         [[ -n "$_gt" ]] && (( _gt > _to )) && _to="$_gt"
-        if APP_ROOT="$SMOKE_REPO" timeout "$_to" python3 "$SMOKE_REPO/scripts/$_g" >/dev/null 2>&1; then
+        # Its output is kept so a failure shows why. On a release runner the
+        # log is all there is: nobody can rerun the gate there.
+        _gate_out="$SMOKE_SCRATCH/gate-out"
+        if APP_ROOT="$SMOKE_REPO" timeout "$_to" python3 "$SMOKE_REPO/scripts/$_g" >"$_gate_out" 2>&1; then
             _gate_n=$((_gate_n + 1))
         else
             _rc=$?
@@ -4792,9 +4801,10 @@ elif [[ -d "$GATE_DIR" ]]; then
                 red "      not take this long; if it reaches the network or a DB it"
                 red "      belongs in gates-infra-only.d/, not this list."
             else
-                red "FAIL  $_g — rerun it directly to see why:"
+                red "FAIL  $_g — its last lines; rerun it directly for the rest:"
                 red "      APP_ROOT=\"$SMOKE_REPO\" python3 scripts/$_g"
             fi
+            tail -n 25 "$_gate_out" | sed 's/^/      | /'
             failed=1
         fi
     # Read exactly as pre_merge_gates.sh reads it; tests/test_gate_list_readers_agree.py

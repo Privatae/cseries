@@ -256,6 +256,11 @@ jobs:
           docker cp "$id:/usr/local/bin/age" "$RUNNER_TEMP/bin/age"
           docker rm "$id"
           "$RUNNER_TEMP/bin/age" --version
+          # The backups gate also reads the saved key file with age-keygen, a
+          # second implementation of the key format. The image ships no
+          # age-keygen, so the distribution's age package provides it.
+          sudo apt-get install -y --no-install-recommends age
+          age-keygen --version
 
       # As root, as the suite runs on a build machine: the connector gates
       # start their children in their own user and PID namespaces, which

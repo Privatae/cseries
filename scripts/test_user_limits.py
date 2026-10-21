@@ -295,6 +295,25 @@ def unit_checks() -> None:
                   f"{label}: a community app cannot set a thread's allowance", repr(e))
 
 
+def young_clock_check() -> None:
+    """fresh() loads the person's limits on a machine booted seconds ago.
+    monotonic() counts from boot; a never-loaded snapshot counted as loaded at
+    0 read as fresh for the first 30 s, and loops ran on the defaults."""
+    calls = []
+
+    async def _load(pool, entity_id):
+        calls.append(entity_id)
+        return {}
+    orig = (UL.load, UL.time)
+    UL.load = _load
+    UL.time = type("_Clock", (), {"monotonic": staticmethod(lambda: 10.0)})
+    try:
+        asyncio.run(UL.fresh(object(), 1))
+    finally:
+        UL.load, UL.time = orig
+    check(calls == [1], "fresh() loads the limits on a machine up ten seconds", calls)
+
+
 def registry_checks() -> None:
     from mastercode import public_tool_registry as reg
     from mastercode.runtime import meta_tool_caps as caps
@@ -410,6 +429,7 @@ async def pg_checks(dsn: str) -> None:
 
 
 def main() -> int:
+    young_clock_check()   # first: it reads the module's state before any load
     unit_checks()
     registry_checks()
     server = os.environ.get("TEST_PG_DSN") or os.environ.get("PEER_TEST_DSN") or os.environ.get("TEST_DSN")

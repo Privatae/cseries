@@ -47,6 +47,6 @@ For a change on an anchored machine, the request goes to your approval device if
 
 ## Can my Host approve its own requests?
 
-Not the ones reserved for you. A request marked for you alone, such as a change on one of your machines, repeating work that runs a model, or a change to one of your limits, can only be answered by you from Circles or the Workbench; your Host's attempt is refused, and "And similar going forward" cannot settle the next one for you. A change on an anchored machine is checked on the machine itself, against an approval from your device or its console. And your Host holds nothing that can merge code as you.
+Not the ones reserved for you. A request marked for you alone, such as a change on one of your machines, repeating work that runs a model, or a change to one of your limits, can only be answered by you from Circles or the Workbench; your Host's attempt is refused, and "And similar going forward" cannot settle the next one for you. A change on an anchored machine is checked on the machine itself, against an approval from your device or its console. And the Workbench has no route that merges a change.
 
 [What a Host cannot do](wiki:what-a-host-cannot-do) covers the walls that hold whether or not anyone asks, and [the bastion](wiki:the-bastion) covers the program on your machines.

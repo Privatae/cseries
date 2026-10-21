@@ -33,7 +33,7 @@ Map, Bastions, NAC, Agents, Bastion agents, Servers and Peers. The [Network app]
 
 You do. Your Host can draft rules, and you can add egress rules yourself. A change that widens access waits for a six-digit code from your authenticator: an allow rule, a management grant that allows something, removing a deny or a quarantine, or letting a suspended or quarantined machine back in. A change that tightens access needs no code, and your Host can make it itself. A code works once, and with no authenticator enrolled, nothing that widens access can be approved.
 
-Once approved, a rule's terms are signed with your Host's own key, and what is enforced is the signed terms, so a rule edited afterwards is not trusted. On ingress, a rule that fails that check shuts your paired machines out until you remove it. On egress, where the default is open, a rule that fails the check is skipped. The authenticator's secret and the signing key are kept in your Host's own database, so they guard against a request from outside your Host, not against code running inside it.
+Once approved, a rule's terms are signed with your Host's own key, and a signed rule is enforced from its signed terms, so a rule edited afterwards is not trusted. On ingress, a rule that fails that check shuts your paired machines out until you remove it. An approved ingress rule that carries no signature, such as one approved before rules were signed, is still enforced, read from its stored settings. On egress, where the default is open, a rule that fails the check is skipped. The authenticator's secret and the signing key are kept in your Host's own database, so they guard against a request from outside your Host, not against code running inside it.
 
 ## What do egress rules do?
 

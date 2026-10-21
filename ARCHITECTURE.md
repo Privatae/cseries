@@ -230,4 +230,4 @@ backup storage requests.
 - **Path checks**: a build's files are resolved and kept inside their project (`server/routes/review.py`);
   the code browser lists a symlink without following it (`server/routes/codespace.py`)
 - **Security headers** (`server/main.py`): X-Content-Type-Options, X-XSS-Protection, Referrer-Policy, X-Frame-Options: SAMEORIGIN
-- **Entity_id validation**: numeric check in entrypoint prevents SQL injection
+- **Entity id from a relay identity**: on the relay identity path, where the id is read from `relay.json`, `entrypoint.sh` refuses an id that is not a number. A standalone Host does not take that path; it is entity 1

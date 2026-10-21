@@ -1,0 +1,4 @@
+# docs/ai/claims.md cites, for every security claim, a test file and test name
+# (or a code file) that exists in this tree, so a renamed or deleted test fails
+# here instead of leaving the table pointing at nothing. Reads files only.
+test_ai_claims.py

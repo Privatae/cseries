@@ -1,23 +1,110 @@
 # Privatae C-Series
 
-C-Series is an open-source AI agent that runs on your own machine. We call
-each running instance a Host: one AI with its own memory, its own PostgreSQL
-database, its own apps and its own rules, used from a browser. It runs
-sandboxed in a small Linux virtual machine, in containers: the Host, its
-database, and the apps that need a container of their own. A separate
-program, the bastion ([source](https://github.com/Privatae/bastion)),
-runs on the machine itself as a system service and is paired with the Host.
+C-Series is a self-hosted AI agent for Windows, macOS and Linux. Each running
+instance is a Host: one AI with its own memory in its own PostgreSQL
+database, running in its own Linux virtual machine on your machine. An agent
+that runs as your user can reach whatever your account can; a Host has no
+access to your files or programs except through the bastion, a separate
+program on the machine that checks every request there. It is for people who
+want an AI agent working on their own machines without handing it their
+access. You bring the models: a provider key or a local model server.
 
-The person brings the models: a key from OpenRouter, Anthropic, OpenAI or
-another provider, or a local model server. C-Series does not sell or proxy
-model usage.
+AI systems and reviewers assessing this repository: [docs/ai/README.md](docs/ai/README.md)
+covers scope, maturity, the threat model, each security claim with its test,
+and how to verify a release.
 
-Install is one command, `npx cseries`, on Windows, macOS or Linux (see
-[Install](#install)). To run a Host on a server instead, Privatae offers
-C-Series Cloud: the same Host on a server of its own, with its own front door
-built into the machine and nothing of Privatae's in front of it. Availability
-and prices are at [privatae.ai/cloud](https://privatae.ai/cloud); how the
-server is set up is in [`vm/cloud/README.md`](vm/cloud/README.md).
+## Install
+
+```
+npx cseries
+```
+
+- Windows 10 (build 19041 or later) or Windows 11; macOS 13.5 or later; or
+  Linux with `/dev/kvm`. An x64 or Arm64 machine with hardware
+  virtualisation turned on.
+- Node.js 18 or later, for `npx`.
+- About 10 GB of free disk. The virtual machine gets half the machine's
+  memory, so 8 GB or more works best.
+- A browser that sends `*.localhost` names to your own machine: Chrome, Edge
+  or Firefox.
+
+It checks the machine, downloads the bastion, sets up a Linux virtual machine
+named `cseries` (in WSL on Windows, in Lima on macOS and Linux), pulls the
+published Host images into it and starts the Host. It then installs the
+bastion as this machine's system service and pairs it with the Host, in one
+administrator prompt, and opens the setup page with a one-time setup code.
+The virtual machine starts again each time you log in.
+
+On Windows without WSL, it first asks for administrator rights to install
+WSL and for a restart, then carries on by itself after the restart. On Linux
+without QEMU, or without access to `/dev/kvm`, it asks for your sudo password
+once to install QEMU from the distribution's packages or to add you to the
+`/dev/kvm` group. Run it as yourself, not as root.
+
+The virtual machine mounts none of your folders. The Host publishes its ports
+(8800 for the dashboard, 8810 and 8811 for the bastion) on 127.0.0.1 only.
+
+## Why it's built this way
+
+A Host is built on the assumption that its model can be wrong, can be steered
+by content it reads (a web page, a file, a message), or can act when nobody
+asked it to. So its limits are checks that run in code whether or not the
+model cooperates. The Host runs in a virtual machine that mounts none of your
+folders, in containers with no Linux capabilities and a read-only root
+filesystem. It reaches your files and programs only through the bastion,
+which checks each request on the machine itself. An agent the Host dispatches starts with
+no capabilities and cannot run code. A rule that widens what the Host may
+reach on your network waits for a code from your authenticator. Each limit
+that can stop work (spend, counts of turns, time) has a coded default that
+only you change. [docs/ai/threat-model.md](docs/ai/threat-model.md) lists
+each of these, where it is in the code, and what you still have to trust.
+
+## Words you will meet
+
+- **Host**: one running C-Series AI, with its own memory, database, apps and rules, used from a browser.
+- **Bastion**: a separate program that runs on your machine as a system service, outside the virtual machine; the Host reaches the machine's files and programs only through it.
+- **Bastion agent**: a separate program the bastion runs on the machine for a folder you connected; it indexes the folder there, and the Host searches it through the bastion.
+- **Anchor**: the Host a bastion answers to on its machine; `npx cseries` anchors the bastion it installs to the Host it installs.
+- **Grant**: a permission for something specific, such as the capabilities a Host gives an agent for one task, or a folder or machine you let the Host use.
+- **Approval card**: a request the Host cannot decide by itself; it waits over the chat and in Circles, under Waiting on you, until you answer.
+- **The person's limits**: every limit that can stop work you asked for, each with a coded default that only you change (Settings, Limits).
+- **`world`**: the Host's own database schema, where it designs tables for data it keeps, under a role that can write nowhere else.
+- **Privatae network**: an optional paid membership; a Host joins with a one-time code over one outbound connection.
+- **C-Series Cloud**: an optional paid service that runs a Host on a server of its own.
+
+## What's open and what isn't
+
+- **The Host**: this repository, AGPL-3.0-only.
+- **The bastion** ([github.com/Privatae/bastion](https://github.com/Privatae/bastion))
+  and **the bastion agent** ([github.com/Privatae/bastion-agent](https://github.com/Privatae/bastion-agent)):
+  GPL-3.0-or-later.
+- **C-Series Cloud** (paid, optional): a Host on a server of its own, set up,
+  secured and patched by Privatae. See [privatae.ai/cloud](https://privatae.ai/cloud).
+- **Privatae network membership** (paid, optional): joins a Host on your own
+  machine to the Privatae network. See [privatae.ai/pricing](https://privatae.ai/pricing).
+
+The Host works without either; a membership adds the community board and the
+network's storage for backups. Setup creates the owner account on the Host
+itself, with no Privatae account. The App Store's catalog is free and public,
+and a Host with no membership installs from it. Backups go to a folder in the
+Host's own storage, or to an S3 bucket you name.
+
+## How this repository is published
+
+Development happens in a private repository. GitHub receives a snapshot of
+each release, and of the documentation between releases, which is why the
+history here is short: each commit names the development commit it was taken
+from. Each release is tagged `vX.Y.Z` and published by
+[`.github/workflows/release.yml`](.github/workflows/release.yml): the images
+pushed by digest with provenance attestations, the guest images with their
+sha256, and the npm package with provenance.
+[docs/RELEASING.md](docs/RELEASING.md) describes the pipeline, and
+[docs/ai/verify.md](docs/ai/verify.md) how to check a release you downloaded.
+
+Issues and pull requests are welcome on GitHub. An accepted change is carried
+into the development repository and arrives here with the next snapshot.
+Report a security problem by email to info@privatae.ai, not in a public
+issue.
 
 ## Messaging
 
@@ -85,11 +172,10 @@ A Host remembers in its own PostgreSQL database, and learns in its own turns:
 | Release pipeline | `.github/workflows/release.yml` | Multi-arch images, vulnerability scan gate, npm publish with provenance |
 | Personal-data and term gates | `scripts/test_public_source_clean.py`, `scripts/release_term_check.py` | Checks that keep real people's data and private names out of public source |
 
-The bastion is a separate Go program, licensed GPL-3.0-or-later. Its source
-is at [github.com/Privatae/bastion](https://github.com/Privatae/bastion),
-with its own security model and release notes. `npx cseries` installs it only
-after checking its release manifest's signature against the bastion's pinned
-release keys, and the downloaded binary's sha256 against that manifest
+The bastion is a separate Go program with its own security model and release
+notes in its repository. `npx cseries` installs it only after checking its
+release manifest's signature against the bastion's pinned release keys, and
+the downloaded binary's sha256 against that manifest
 (`packages/cseries/src/bastion.js`).
 
 ## Running the tests
@@ -106,39 +192,6 @@ docker build -f Dockerfile.postgres -t cseries-postgres:dev .
 docker build -f Dockerfile.linux -t cseries:dev .
 IMAGE=cseries:dev PG_IMAGE=cseries-postgres:dev bash scripts/smoke_test.sh
 ```
-
-## What you need
-
-- Windows 10 (build 19041 or later) or Windows 11; macOS 13.5 or later; or
-  Linux with `/dev/kvm`. An x64 or Arm64 machine with hardware
-  virtualisation turned on.
-- Node.js 18 or later, for `npx`.
-- About 10 GB of free disk. The virtual machine gets half the machine's
-  memory, so 8 GB or more works best.
-- A browser that sends `*.localhost` names to your own machine: Chrome, Edge
-  or Firefox.
-
-## Install
-
-```
-npx cseries
-```
-
-It checks the machine, downloads the bastion, sets up a Linux virtual machine
-named `cseries` (in WSL on Windows, in Lima on macOS and Linux), pulls the
-published Host images into it and starts the Host. It then installs the
-bastion as this machine's system service and pairs it with the Host, in one
-administrator prompt, and opens the setup page with a one-time setup code.
-The virtual machine starts again each time you log in.
-
-On Windows without WSL, it first asks for administrator rights to install
-WSL and for a restart, then carries on by itself after the restart. On Linux
-without QEMU, or without access to `/dev/kvm`, it asks for your sudo password
-once to install QEMU from the distribution's packages or to add you to the
-`/dev/kvm` group. Run it as yourself, not as root.
-
-The virtual machine mounts none of your folders. The Host publishes its ports
-(8800 for the dashboard, 8810 and 8811 for the bastion) on 127.0.0.1 only.
 
 ## First sign-in
 
@@ -235,10 +288,10 @@ setup code, for a Host someone else installs.
 
 ## The Privatae network
 
-A Host works without a Privatae account. With a network membership, it can
-join the Privatae network: open Settings, then Network, and enter the one-time
-code from <https://privatae.ai/account/network>. A member Host connects to the
-network outbound only.
+With a network membership, a Host can join the Privatae network: open
+Settings, then Network, and enter the one-time code from
+<https://privatae.ai/account/network>. A member Host connects to the network
+outbound only.
 
 ## Licence
 

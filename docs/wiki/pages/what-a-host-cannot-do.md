@@ -34,7 +34,7 @@ The dispatch is refused at the door, before any task exists. If the Host gives a
 
 Widen what it can reach without your code. A rule that lets more in or more out commits only with a code from your authenticator, and so do removing a rule that blocks something and releasing a quarantined machine. Tightening needs no code. With no authenticator enrolled, no widening can be committed at all. Each code works once, and repeated wrong codes make you wait before trying again.
 
-Once you approve a rule, its terms are signed with your Host's key, and the gate enforces only signed terms. On ingress, a rule changed after approval puts traffic into quarantine. On traffic that passes the gate, which is open until you narrow it, a changed or unsigned rule is ignored, which can only ever widen reach and never cut your Host off. The authenticator's secret is kept in your Host's own database, so this guards against requests from outside your Host, not against code running inside it.
+Once you approve a rule, its terms are signed with your Host's key. On ingress, a signed rule is read only from its signed terms, and if those terms are changed after approval, the gate quarantines every machine it checks until the rule is removed. That check needs your Host's key, which the gate loads when it starts; if the key cannot be read, signed rules are enforced without the check. An approved rule that carries no signature, such as one approved before rules were signed, is still enforced, read from its stored settings and its profile. On outbound traffic, which is open until you narrow it, a changed or unsigned rule is ignored, which can only ever widen reach and never cut your Host off. The authenticator's secret is kept in your Host's own database, so this guards against requests from outside your Host, not against code running inside it.
 
 ## Why can nothing it dispatches run code?
 
@@ -48,7 +48,7 @@ Code runs only through the Host's own build tools, in a separate coding sandbox 
 - **Revealing your keys.** Showing a key in clear text takes your code, in the Keys app only, and the Host cannot call it.
 - **Your backups.** Restoring a backup is walled from the Host, and switching the live copy of your memory on or off takes your code.
 - **A shell on your machines.** The Host cannot open a shell on one of your machines, and cannot even draft a grant for one.
-- **Merging as you.** Your Host holds nothing that can merge code under your account. [Approvals](wiki:approvals) covers what else waits for you.
+- **A merge route in the Workbench.** The Workbench has no route that merges a change. [The Workbench](wiki:workbench) describes when your Host approves its own changes, and [Approvals](wiki:approvals) covers what else waits for you.
 
 ## Why is the rest allowed?
 

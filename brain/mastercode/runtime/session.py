@@ -496,6 +496,46 @@ RESEARCH_ROUNDS_MAX = _backstop_env("CSERIES_RESEARCH_ROUNDS_MAX", 15)
 # failing calls observed (7), and it stops well before the 200-round
 # backstop. env CSERIES_ALL_FAIL_ROUNDS_MAX, <= 0 disables it.
 ALL_FAIL_BACKSTOP_ROUNDS = _backstop_env("CSERIES_ALL_FAIL_ROUNDS_MAX", 25)
+
+# The constants above are the DEFAULTS (with the operator's env). Each is one
+# of the person's limits (runtime/user_limits, 2026-10-20): their value, when
+# they set one, wins, and is read at the moment it is enforced.
+def _woken_max() -> int:
+    from mastercode.runtime import user_limits
+    return user_limits.person_or("thread.woken_turns", WOKEN_TURNS_MAX)
+
+
+def _research_max() -> int:
+    from mastercode.runtime import user_limits
+    return user_limits.person_or("thread.research_rounds", RESEARCH_ROUNDS_MAX)
+
+
+def _watch_max() -> int:
+    from mastercode.runtime import user_limits
+    return user_limits.person_or("thread.watch_wakes", WATCH_WAKES_MAX)
+
+
+def _all_fail_max() -> int:
+    from mastercode.runtime import user_limits
+    return user_limits.person_or("turn.all_fail_rounds", ALL_FAIL_BACKSTOP_ROUNDS)
+
+
+def _failed_wakes_max() -> int:
+    from mastercode.runtime import user_limits
+    return user_limits.person_or("thread.failed_wakes", FAILED_WAKES_MAX)
+
+
+def _limit_line(name: str, thread_key=None, what: str = "") -> str:
+    """user_limits.hit_line for `name`, noting the hit for Settings > Limits."""
+    from mastercode.runtime import user_limits
+    try:
+        from server import brain_service as _bs
+        user_limits.note_hit(_bs._entity_id, name, what or name, thread_key)
+    except Exception:  # noqa: BLE001
+        pass
+    return user_limits.hit_line(name)
+
+
 _research_rounds: dict[str, int] = {}
 
 
@@ -2962,13 +3002,6 @@ class EntityRuntime:
                 # from the pod's verdict, never inferred.
                 _facts += _acceptance_facts(record)
                 _facts += _desktop_render_facts(record)
-                # The scoped reviewer's verdict on the landed diff
-                # — stated from the typed envelope, the same way the checks are.
-                try:
-                    from mastercode.runtime.diff_review import review_facts as _review_facts
-                    _facts += _review_facts(record)
-                except Exception as _re:  # noqa: BLE001 — never block delivery
-                    log.debug("deliver: review line unavailable: %s", _re)
                 # The auto-advance chain stopped after this phase. Stated
                 # UNCONDITIONALLY: a chain that stops without saying so is the
                 # precise failure auto-advance was built to remove.
@@ -3198,11 +3231,13 @@ class EntityRuntime:
                     _handed_anyway = True     # handed; the row below is still written
             _wake = ((not _redelivery) or bool(_unread_wake)) and not _handed_anyway
             if status != "completed" and _wake:
-                if _failed_wakes.get(_fkey, 0) >= FAILED_WAKES_MAX:
+                if _failed_wakes.get(_fkey, 0) >= _failed_wakes_max():
                     _wake = False
-                    content += (f" {FAILED_WAKES_MAX} runs in a row have failed here, so "
+                    content += (f" {_failed_wakes_max()} runs in a row have failed here, so "
                                 "this one is not picked up automatically; the details "
-                                "are on the bench.")
+                                "are on the bench. "
+                                + _limit_line("thread.failed_wakes", _fkey,
+                                              "a failed run that woke no turn"))
         elif not _in_round:
             hand_result_to_turn(
                 record.get("task_id"),
@@ -3603,7 +3638,7 @@ class EntityRuntime:
                 "give or decide, put it in the question box. "
                 f"{_carried} turn(s) have carried on by themselves in this thread since the "
                 f"user last wrote; a round that brings nothing back counts toward the "
-                f"{WOKEN_TURNS_MAX} after which a turn like this one starts no new work.")
+                f"{_woken_max()} after which a turn like this one starts no new work.")
         await self._wake_host_turn(
             entity_id=entity_id, app_id=app_id, project_id=project_id,
             thread_id=None, brief=brief,
@@ -3718,34 +3753,37 @@ class EntityRuntime:
             # The research round this continuation follows (RESEARCH_ROUNDS_MAX),
             # read when it starts like the chain above.
             _n_research = _research_rounds.get(_tkey, 0) + 1 if research else 0
-            _research_hit = _n_research >= RESEARCH_ROUNDS_MAX
+            _research_hit = _n_research >= _research_max()
             # A watched call's answer (WATCH_WAKES_MAX), read when it starts too.
             _n_watch = _watch_wakes.get(_tkey, 0) if watch else 0
-            _watch_hit = _n_watch >= WATCH_WAKES_MAX
-            _may_work = _n_woken < WOKEN_TURNS_MAX and not _research_hit and not _watch_hit
+            _watch_hit = _n_watch >= _watch_max()
+            _may_work = _n_woken < _woken_max() and not _research_hit and not _watch_hit
             brief = _base_brief
             if research and not _research_hit:
                 brief += (f"\n\nThat was research round {_n_research} since the user last "
-                          f"wrote; after {RESEARCH_ROUNDS_MAX}, what came back goes to the "
+                          f"wrote; after {_research_max()}, what came back goes to the "
                           "user in the question box.")
             if _research_hit:
                 brief += "\n\n" + (
                     f"That was research round {_n_research} since the user last wrote, the "
                     "most a request runs on its own, so this turn starts no new work: put "
                     "what came back so far in the question box (escalate) — what was found, "
-                    "what was not, and the options for what to do next.")
+                    "what was not, and the options for what to do next. "
+                    + _limit_line("thread.research_rounds", _tkey, "a research continuation"))
             elif _watch_hit:
                 brief += "\n\n" + (
                     f"{_n_watch} turns have been woken by watched calls in this thread since "
                     "the user last wrote, so this one starts no new work: report what came "
                     "back, and whether to carry on is the user's call — put it in the question "
-                    "box (escalate), with what came back.")
+                    "box (escalate), with what came back. "
+                    + _limit_line("thread.watch_wakes", _tkey, "a turn woken by a watched call"))
             elif not _may_work:
                 brief += "\n\n" + (
                     f"{_n_woken} turns have already carried on by themselves in this thread "
                     "since the user last wrote, so this one starts no new work: report "
                     "what came back, and if more work should start, that is the user's "
-                    "call — put it in the question box (escalate), with what came back.")
+                    "call — put it in the question box (escalate), with what came back. "
+                    + _limit_line("thread.woken_turns", _tkey, "a turn that carried on by itself"))
             text_parts, err = [], None
             try:
                 async for frame in brain_service.send_message(
@@ -9427,20 +9465,23 @@ class EntityRuntime:
                         tool_result = unseen_lane_refusal(
                             func_name, getattr(sess, "write_app_id", None)
                             or getattr(sess, "interaction_context", None) or "an evaluation lane")
-                    elif (not may_start_work and not _person_in_turn and func_name != "escalate"
+                    elif (not may_start_work and not _person_in_turn
+                          and func_name not in ("escalate", "limits")
                           and not unseen_lane_may_run(
                               _eff_name, _eff_args, _lane_reads,
                               getattr(sess, "_read_safe_ops", {}))):
                         # A woken turn past the thread's chain of woken turns
                         # reports and may ask, and starts nothing.
                         tool_result = {"status": "blocked", "reason": "blocked", "result": (
-                            f"Not run: {WOKEN_TURNS_MAX} turns have already carried on by "
-                            f"themselves in this thread (or {RESEARCH_ROUNDS_MAX} research "
-                            f"rounds have run, or {WATCH_WAKES_MAX} turns were woken by "
+                            f"Not run: {_woken_max()} turns have already carried on by "
+                            f"themselves in this thread (or {_research_max()} research "
+                            f"rounds have run, or {_watch_max()} turns were woken by "
                             "watched calls) since the user last wrote, so this one starts "
                             "no new work. Report what came back; whether more work starts "
                             "is the user's call — put it in the question box (escalate), "
-                            "with what came back.")}
+                            "with what came back. These are the person's limits "
+                            "(thread.woken_turns, thread.research_rounds, thread.watch_wakes); "
+                            "if the work needed more, propose a value with limits(op='propose').")}
                     elif _root_turn and not _root_mod.admits(func_name, func_args):
                         # A root turn holds root_turn's tools and nothing else:
                         # dispatch, recall, operate, find_tools, any read or
@@ -10449,10 +10490,10 @@ class EntityRuntime:
             else:
                 _consecutive_all_fail = 0
 
-            if _consecutive_all_fail >= ALL_FAIL_BACKSTOP_ROUNDS:
+            if _consecutive_all_fail >= _all_fail_max():
                 _failed_desc = _describe_failed_tools(tool_actions[_round_start:])
                 log.warning("Breaking tool loop: %d consecutive all-fail rounds (backstop "
-                            "%d) — %s", _consecutive_all_fail, ALL_FAIL_BACKSTOP_ROUNDS,
+                            "%d) — %s", _consecutive_all_fail, _all_fail_max(),
                             _failed_desc)
                 # The real errors, quoted. This
                 # used to say the tools were "currently unavailable" whatever
@@ -10462,10 +10503,11 @@ class EntityRuntime:
                     "role": "user",
                     "content": (
                         f"[platform] Tool calls are stopped for this turn: in each of the "
-                        f"last {_consecutive_all_fail} rounds every call failed (the runaway "
-                        f"backstop is {ALL_FAIL_BACKSTOP_ROUNDS} rounds). The latest "
+                        f"last {_consecutive_all_fail} rounds every call failed. The latest "
                         f"failures: {_failed_desc}. Tell the person what failed, quoting "
-                        f"these errors, and answer with what you already have."
+                        f"these errors, and answer with what you already have. "
+                        + _limit_line("turn.all_fail_rounds", None,
+                                      "a turn whose tool calls all kept failing")
                     ),
                 })
                 _drop_used_results(grok_messages)
@@ -10708,7 +10750,8 @@ class EntityRuntime:
                 _stop_text = (
                     "STOP. You have used all available tool rounds. "
                     "Do NOT call any more tools. Respond to the user NOW with what you have learned so far. "
-                    "Summarize your findings in a natural response."
+                    "Summarize your findings in a natural response. "
+                    + _limit_line("turn.tool_rounds", None, "a turn that reached its tool rounds")
                 )
                 _exit_name = "backstop"
             if _spend_stopped:

@@ -31,15 +31,32 @@ def child_env():
 
 
 class Podman:
-    def __init__(self, binary="podman"):
+    """podman as root, or, given `wrap` (a command that runs the rest as
+    another user, build.podman_as_build_user), as that user against a store of its own
+    (`global_args`), with `env` and `cwd` for the process."""
+
+    def __init__(self, binary="podman", wrap=(), global_args=(), env=None, cwd=None):
         self.binary = binary
+        self.wrap = list(wrap)
+        self.global_args = list(global_args)
+        self.env = env
+        self.cwd = cwd
+
+    def argv(self, argv):
+        """The full command for a podman argument list starting with "podman"."""
+        rest = argv[1:] if argv and argv[0] == "podman" else argv
+        return [*self.wrap, self.binary, *self.global_args, *rest]
+
+    def proc_env(self):
+        return dict(self.env) if self.env is not None else child_env()
 
     async def run(self, argv, timeout=120, check=True):
         """argv is a full list starting with "podman"; (rc, stdout, stderr)."""
-        argv = [self.binary, *argv[1:]] if argv and argv[0] == "podman" else [self.binary, *argv]
+        # The error names the podman subcommand, never the wrapper's.
+        argv = ["podman", *(argv[1:] if argv and argv[0] == "podman" else argv)]
         proc = await asyncio.create_subprocess_exec(
-            *argv, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE, env=child_env())
+            *self.argv(argv), stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE, env=self.proc_env(), cwd=self.cwd)
         try:
             out, err = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except asyncio.TimeoutError:

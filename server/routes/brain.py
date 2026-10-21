@@ -645,8 +645,15 @@ async def put_thread_context(request: Request):
     that the two dials would clobber each other — the panel saves them
     independently, and either save would wipe the other's value.
 
-    No migration: behavioral_params is JSONB, so a new key is a write."""
+    No migration: behavioral_params is JSONB, so a new key is a write.
+
+    The allowance is the person's limit for that thread (runtime/user_limits):
+    write:session is a scope any community app may declare, so a body that
+    sets it is taken only from the person's surfaces (routes/limits._person)."""
     body = await request.json()
+    from server.routes.limits import _person
+    if isinstance(body, dict) and "turn_allowance_usd" in body and not _person(request):
+        raise HTTPException(403, "only the person sets what a turn may spend")
     budget = body.get("budget", None)
     if budget is not None:
         try:
@@ -751,7 +758,14 @@ async def get_turn_defaults():
 async def put_turn_defaults(request: Request):
     """Set (or clear with null) the Host's bounded defaults. Keyed on
     presence, like the per-thread dial: a body naming one key leaves the
-    others as they are."""
+    others as they are.
+
+    The two allowances are the person's limits (runtime/user_limits), so only
+    the person's surfaces write here: write:session alone is a scope any
+    community app may declare."""
+    from server.routes.limits import _person
+    if not _person(request):
+        raise HTTPException(403, "only the person changes these, from Settings > Limits")
     body = await request.json()
     if not isinstance(body, dict):
         raise HTTPException(400, "body must be an object")
@@ -792,6 +806,8 @@ async def put_turn_defaults(request: Request):
     await pool.execute("UPDATE entity_registry SET behavioral_params=$2::jsonb WHERE id=$1",
                        eid, json.dumps(bp))
     from mastercode.context_budget import read_turn_defaults
+    from mastercode.runtime import user_limits
+    await user_limits.load(pool, eid)
     return {"ok": True, "in_force": await read_turn_defaults(pool, eid)}
 
 

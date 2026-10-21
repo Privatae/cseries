@@ -266,6 +266,9 @@ META_TOOL_CAPS: dict[str, dict] = {
     # decision ticket locked to the user — the setting changes only on their
     # 'apply' (tickets.decide_ticket_service), never through this tool.
     "pipeline":        {"required_bits": 1 | 4,      "domain": "core.entity",       "desc": "read a project's build pipeline (status) or propose a change the user approves on a ticket (propose); never writes the setting itself"},
+    # The person's limits (2026-10-20): status is a read; propose files a card
+    # locked to the person — the limit changes only on their 'apply'.
+    "limits":          {"required_bits": 1,          "domain": "core.entity",       "desc": "read the person's limits (status) or ask them to change one on a card they decide (propose); never writes a limit itself"},
     "turn_type":       {"required_bits": 1,          "domain": "core.entity",       "desc": "list / show the host's turn types, or draft / ask to change / ask to retire one on a card the user decides; never activates or widens one itself"},
     # The Host's end of turn: writes the thread's
     # topic/title (WRITE_CONTEXT, the circles_threads row) and the user's
@@ -716,6 +719,7 @@ READ_SAFE_OPS: dict[str, dict[str, int]] = {
     "coding_protocol":      {"list": 1, "get": 1, "status": 1},
     "pipeline":             {"status": 1},
     "turn_type":            {"list": 1, "show": 1},
+    "limits":               {"status": 1},
     "preference":           {"list": 1, "tokens_get": 1},
     "artifact":             {"list": 1, "history": 1},
     "keys_manage":          {"list": 1},

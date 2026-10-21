@@ -39,7 +39,7 @@ function freeBytes(dir) {
 }
 
 async function checkDisk(ctx, installed) {
-  const free = freeBytes(ctx.paths.base);
+  const free = (ctx.freeBytes || freeBytes)(ctx.paths.base);
   if (free === null) return;
   if (!installed && free < NEED_BYTES) {
     throw new CliError(

@@ -266,6 +266,14 @@
         sub.appendChild(el('span', null, (r.runs || 0) + ' run' +
                                          (r.runs === 1 ? '' : 's')));
         sub.appendChild(el('span', null, 'last ' + ago(r.last_ran_at)));
+        // What it spent in the last day, only from runs that carried a price;
+        // runs with none are counted, never shown as $0.
+        if (r.lane !== 'op' && r.cost_24h_usd != null) {
+            sub.appendChild(el('span', 'model', '$' + Number(r.cost_24h_usd).toFixed(2) + ' in 24h'));
+        }
+        if (r.lane !== 'op' && r.unpriced_runs_24h) {
+            sub.appendChild(el('span', null, r.unpriced_runs_24h + ' unpriced in 24h'));
+        }
         row.appendChild(sub);
 
         if (r.last_ok === false && r.last_error) {

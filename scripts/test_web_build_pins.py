@@ -202,6 +202,17 @@ check("stamp: editing secret_shapes.json changes circles' stamp (Python gate and
       repr((py0, py1)))
 check("stamp: ...and leaves an app whose build does not read it (sites) alone",
       py1["sites"] == py0["sites"] and js1["sites"] == js0["sites"], repr((py0, py1)))
+(st / "app-web-kit" / "README.md").write_text("# The kit, reworded\n")
+(st / "app-web-kit" / "ui" / "notes.md").write_text("notes\n")
+py2 = {a: bf.web_src_rev(st, f"{a}-web", a) for a in ("circles", "sites")}
+js2 = {a: js_rev(st, f"{a}-web", a) for a in ("circles", "sites")}
+check("stamp: the kit's Markdown (its documentation, which no build reads) moves no stamp",
+      py2 == py1 and js2 == js1, repr((py1, py2, js2)))
+(st / "app-web-kit" / "ui" / "button.tsx").write_text("// kit, changed\n")
+py3 = {a: bf.web_src_rev(st, f"{a}-web", a) for a in ("circles", "sites")}
+js3 = {a: js_rev(st, f"{a}-web", a) for a in ("circles", "sites")}
+check("stamp: ...while an edit to the kit's code moves every app's (Python gate and place.mjs)",
+      all(py3[a] != py2[a] for a in py3) and py3 == js3, repr((py2, py3, js3)))
 check("stamp: the rules file is in the table for both apps whose src imports it",
       bf.WEB_EXTRA_INPUTS == {"circles": ["brain/mastercode/secret_shapes.json"],
                               "workbench": ["brain/mastercode/secret_shapes.json"]}

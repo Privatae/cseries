@@ -121,6 +121,8 @@ def session_fixture() -> dict:
                                  for v in vids}},
         "diffs": {v: _diff(n, v) for v, _m, n in VARIANTS},
         "picks": {},
+        # A session stored before 2026-10-20 can still carry the removed diff
+        # reviewer's verdicts; nothing reads them any more.
         "review": {"codex": {"ran": True, "ok": True, "score": 8, "non_blocking": ["a"], "blocking": [],
                              "model": "claude-opus-5"}},
         "per_harness": {v: {"state": "failed" if v == "claude-code" else "done", "model": m,
@@ -158,10 +160,11 @@ def part_review_session():
                                       "outcome"} <= set(x) and "diff" not in x for x in rows)
               and rows[2]["diff_bytes"] == 89_000 and rows[2]["files"][0].startswith("src/antigravity/"),
               repr(rows[:1])[:300])
-        check("review_session default: the failed run says why, the reviewed one carries its verdict line, "
-              "the rest the end of what the harness said",
+        check("review_session default: the failed run says why, the rest the end of what the harness said "
+              "(a stored reviewer verdict is not read: the reviewer is gone)",
               len(rows) == 7 and rows[3]["state"] == "failed" and rows[3]["outcome"] == "stdout buffer exceeded"
-              and "passed" in str(rows[4]["outcome"]) and str(rows[0]["outcome"]).endswith("cursor done.")
+              and str(rows[4]["outcome"]).endswith("codex done.")
+              and str(rows[0]["outcome"]).endswith("cursor done.")
               and len(str(rows[0]["outcome"])) <= 301, [x.get("outcome") for x in rows])
         man = res.get("manifest") or {}
         check("review_session default: the manifest rides without its per-variant results, the brief cut "
@@ -177,6 +180,10 @@ def part_review_session():
               one.get("variant") == "grok" and one.get("diff") == fx["diffs"]["grok"]
               and one.get("state") == fx["per_harness"]["grok"]
               and one.get("result") == fx["manifest"]["results"]["grok"], repr(r)[:300])
+        r = run(T._exec_review_session({"session_id": fx["session_id"], "variant": "codex"}))
+        check("review_session(variant='codex'): a stored reviewer verdict does not ride the variant view",
+              (r.get("result") or {}).get("variant") == "codex" and "review" not in (r.get("result") or {}),
+              repr(r)[:300])
         r = run(T._exec_review_session({"session_id": fx["session_id"], "variant": "nope"}))
         check("review_session(variant=<unknown>): refused as the model's own error, naming the variants",
               r.get("status") == "error" and r.get("input_refused") is True and "kimi" in str(r.get("result")),

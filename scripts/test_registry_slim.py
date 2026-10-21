@@ -257,7 +257,12 @@ PURPOSE_MAX = 160
 #   with one clause each saying the newest in a topic replaces the older; the
 #   "a duplicate is kept once" clause was cut to pay part of it. No new tool.
 #   Measured 162,793 -> 163,056, +263.
-WIRE_MAX = 163_056
+#   `limits`, the person's limits (runtime/user_limits.py): one new tool,
+#   read and propose only; schedule_task's max_runs_per_day and budget_usd,
+#   and data's timeout_s now say the most is the person's limit; the review
+#   role's words left model_routing and model_route. Measured
+#   163,056 -> 163,737, +681.
+WIRE_MAX = 163_737
 OPERATOR_WIRE_MAX = 4_693
 # CORE_MAX: what a
 # search-mode Host sends on every call, per surface — the six verbs in search

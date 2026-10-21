@@ -3,8 +3,8 @@
 
     // Orchestrator — the single orchestration surface. Every model and
     // harness decision is made HERE, and every decision is independent:
-    //   1. Text roles — two of them (chat / review, shown as Host model /
-    //      Review) each pick PROVIDER → MODEL from
+    //   1. Text roles — one now (chat, shown as Host model; review went
+    //      2026-10-20 with the diff reviewer) — picks PROVIDER → MODEL from
     //      the user's per-provider favorites, plus an optional FALLBACK
     //      PROVIDER that answers when the primary provider errors or doesn't
     //      host the model. Down from eight: plan, research,

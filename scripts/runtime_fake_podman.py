@@ -98,12 +98,28 @@ def _leaves(dest, m):
     return not to.startswith(dest)
 
 
+# podman's global flags a caller may put before the subcommand (the build
+# user's podman names its own store with them).
+GLOBAL_FLAGS = ("--root", "--runroot", "--cgroup-manager")
+
+
 def main(argv):
     path = os.environ["FAKE_PODMAN_STATE"]
+    glob = {}
+    while len(argv) >= 2 and argv[0] in GLOBAL_FLAGS:
+        glob[argv[0]] = argv[1]
+        argv = argv[2:]
+    # podman load reads the archive podman save writes into a pipe: read it
+    # before taking the lock the saving process holds while it runs.
+    loaded = sys.stdin.read() if argv[:1] == ["load"] else ""
     lock = open(path + ".lock", "a+")
     fcntl.flock(lock, fcntl.LOCK_EX)
     st = _load(path)
     st["calls"].append(argv)
+    # Which store each call used: the --root it named, or root's own (None).
+    st.setdefault("roots", []).append(glob.get("--root"))
+    st.setdefault("cwds", []).append(os.getcwd())
+    st.setdefault("homes", []).append(os.environ.get("HOME"))
     # What a socket-activated parent could leak into podman's environment.
     st.setdefault("env", []).append({k: os.environ.get(k) for k in
                                      ("LISTEN_FDS", "LISTEN_PID", "LISTEN_FDNAMES", "NOTIFY_SOCKET")})
@@ -294,6 +310,21 @@ def main(argv):
                     except (tarfile.TarError, OSError) as e:
                         rc = 125
                         sys.stderr.write(f"Error: extracting the tar: {e}\n")
+        elif cmd == "save":
+            # Stands in for the archive: the tag and the id it carries.
+            tag = _positional(argv, 1)[-1]
+            if tag in st["images"]:
+                out = json.dumps({"tag": tag, "id": st["images"][tag]})
+            else:
+                rc = 125
+                sys.stderr.write(f"Error: {tag}: image not known\n")
+        elif cmd == "load":
+            try:
+                got = json.loads(loaded)
+                st["images"][got["tag"]] = os.environ.get("FAKE_LOAD_ID") or got["id"]
+            except (ValueError, KeyError, TypeError):
+                rc = 125
+                sys.stderr.write("Error: payload does not match any of the supported image formats\n")
         elif cmd == "build":
             rc = int(os.environ.get("FAKE_BUILD_RC", "0"))
             if rc == 0:

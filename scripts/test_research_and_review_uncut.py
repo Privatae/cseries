@@ -8,9 +8,8 @@ No pod, no DB, no network (stand-in HTTP and model).
      evidence for the synthesis is never sliced through its JSON (it was
      `json.dumps(...)[:12000]`); over half the model's window, only the web
      answer is shortened, with a marker saying how much was left out
-  X2 diff_review: a call is given up for SILENCE, not elapsed time (a call that
-     keeps showing life past the idle window completes); the call cap is a
-     runaway backstop far above the old 4, and hitting it is said
+  X2 diff_review: removed with the diff reviewer itself (the Host reviews in
+     its own turn), so its rows went with it
   W  web search: a Responses-API search is streamed and keeps its sources
      (response.completed, or the annotation events), with no 180 s total; an
      OpenRouter `:online` call stays buffered (its sources ride the message)
@@ -42,7 +41,6 @@ def check(name, cond, extra=""):
 
 
 from mastercode.skills import deep_research as DR  # noqa: E402
-from mastercode.runtime import diff_review as DV  # noqa: E402
 from mastercode.runtime import web_research as WR  # noqa: E402
 from mastercode import provider_gateway as PG  # noqa: E402
 from mastercode import context_budget as CB  # noqa: E402
@@ -68,46 +66,6 @@ if callable(_ev):
     check("X1d over half the window: still valid JSON, the web answer shortened with a marker",
           len(out) <= 8000 and "more characters of the web answer left out" in obj["web_answer"], len(out))
     check("X1e under it: whole", json.loads(small)["web_answer"] == "short answer")
-
-# ── X2 diff_review ────────────────────────────────────────────────────────
-GOOD = json.dumps({"ok": True, "score": 90, "summary": "Does what the brief asks.",
-                   "blocking": [], "non_blocking": []})
-DIFF = "diff --git a/app.py b/app.py\n--- a/app.py\n+++ b/app.py\n@@ -1 +1 @@\n-a\n+b\n"
-
-
-async def _alive_but_slow(messages, **kw):
-    alive = kw.get("on_alive")
-    for _ in range(6):                 # 0.3 s total, a sign of life every 0.05 s
-        await asyncio.sleep(0.05)
-        if alive:
-            alive()
-    return {"content": GOOD}
-
-env = asyncio.run(DV.review_diff(diff=DIFF, brief="b", model_fn=_alive_but_slow, call_timeout_s=0.15))
-check("X2a a call that keeps showing life runs past the idle window and completes",
-      env.get("ran") is True and env.get("ok") is True, env)
-
-
-async def _silent(messages, **kw):
-    await asyncio.sleep(0.5)
-    return {"content": GOOD}
-
-env = asyncio.run(DV.review_diff(diff=DIFF, brief="b", model_fn=_silent, call_timeout_s=0.1))
-check("X2b a silent call is given up, and the reason says no sign of life",
-      env.get("ran") is False and "no sign of life" in (env.get("reason") or ""), env.get("reason"))
-check("X2c the call cap is a runaway backstop (>= 40, was 4)", DV.MAX_CALLS >= 40, DV.MAX_CALLS)
-check("X2d the idle window is minutes, not the old 120 s total", DV.CALL_TIMEOUT_S >= 300, DV.CALL_TIMEOUT_S)
-
-
-async def _good(messages, **kw):
-    return {"content": GOOD}
-
-_two = DIFF + "diff --git a/b.py b/b.py\n--- a/b.py\n+++ b/b.py\n@@ -1 +1 @@\n-x\n+y\n"
-env = asyncio.run(DV.review_diff(diff=_two, brief="b", model_fn=_good, max_call_chars=60, max_calls=1))
-check("X2e hitting the backstop is said (backstop_hit + a note), and the skipped file is named",
-      env.get("backstop_hit", {}).get("max_calls") == 1 and env.get("files_skipped")
-      and "backstop" in (env.get("note") or ""), env)
-check("X2f the reviewer asks for the model's own output limit", DV.MAX_OUTPUT_TOKENS is None)
 
 # ── W web search ──────────────────────────────────────────────────────────
 SENT: list = []

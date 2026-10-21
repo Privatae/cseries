@@ -1,7 +1,7 @@
 
 # 2026-09-19 (three text roles; two since 2026-09-30, when consolidation went
-# with the background memory loop): the Orchestrator carries chat and review,
-# and nothing else. plan, research, agents, tutor and journal went
+# with the background memory loop; one since 2026-10-20, when review went with
+# the diff reviewer): the Orchestrator carries chat, and nothing else. plan, research, agents, tutor and journal went
 # 2026-09-19 — four of them never fired once in the 14 days measured on
 # a live Host and every one was a seat the user had to fill before a feature would work.
 # The failure this pins is silent in both directions. resolve_role_route does
@@ -14,7 +14,7 @@
 # places the role list lives and cannot cross-import — inference.ROLES,
 # model-picker.js and recommended-routes.json — which renders a row that
 # cannot be saved, or a saved route with no row. Also exercises the real
-# routing read against behavioral_params that still carry plan/agents, since
+# routing read against behavioral_params that still carry plan/agents/review, since
 # nothing migrates those and the reader has to drop them or the picker
 # round-trips one into every save. Reads the packed .cseries, not just the
 # source tree. No container, no DB, no network.

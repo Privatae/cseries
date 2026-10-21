@@ -138,8 +138,10 @@ def web_src_rev(root: Path, web_dir: str, app_id: str) -> str:
     entries = [(str(p.relative_to(web)).replace("\\", "/"), p)
                for p in (web / "src").rglob("*") if _keep(p, web)]
     entries.append(("package-lock.json", web / "package-lock.json"))
+    # The kit's Markdown is its documentation, which no build reads: a README
+    # edit once marked all four apps stale with no output changed.
     entries += [("../app-web-kit/" + str(p.relative_to(kit)).replace("\\", "/"), p)
-                for p in kit.rglob("*") if _keep(p, kit)] if kit.exists() else []
+                for p in kit.rglob("*") if _keep(p, kit) and p.suffix != ".md"] if kit.exists() else []
     entries += [("../" + rel, root / rel) for rel in WEB_EXTRA_INPUTS.get(app_id, [])]
     entries.sort(key=lambda t: t[0])
     h = hashlib.sha256()

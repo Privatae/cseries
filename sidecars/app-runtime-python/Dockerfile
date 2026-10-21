@@ -40,7 +40,7 @@
 # pip installs the abi3 wheel — a binary wheel, no rust toolchain needed, but
 # NOT a cp314-tagged one. Do not restate this as "cryptography ships cp314".
 #
-# Note what the version is and is not. NOTHING is pip-installed in this
+# Note what the version is and is not. Nothing but pip itself is installed in this
 # Dockerfile, so the base version is never a build risk for this image — it is
 # a RUNTIME contract for the user's app, which resolves its own wheels at
 # first boot against whatever interpreter is here. That is also why the
@@ -56,6 +56,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
+
+# pip 26.2.1, the one the base image carries, vendors certifi 2026.6.17, whose
+# CA bundle trusts the emSign root behind eight intermediates with compromised
+# keys (GHSA-6q48-6c7w-9gw2, CRITICAL). pip 26.2.2 vendors the fixed 2026.10.19.
+# Pinned by hash; drop this once the base image ships 26.2.2 or later.
+RUN printf '%s\n' 'pip==26.2.2 --hash=sha256:fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70' > /tmp/pip.txt \
+ && python -m pip install --no-cache-dir --require-hashes -r /tmp/pip.txt \
+ && rm /tmp/pip.txt
 
 # The toolchain: compiler + headers for native wheels (TA-Lib, cffi,
 # cryptography), git for `pip install git+…` / clones, curl for the probe

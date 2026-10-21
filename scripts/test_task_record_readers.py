@@ -135,7 +135,7 @@ try:
     ASKED: list = []
 
     async def _search(query, *, pool=None, entity_id=None, system=None, max_tokens=None,
-                      keep_pages=False):
+                      keep_pages=False, on_engine=False):
         ASKED.append(keep_pages)
         res = {"query": query, "answer": "a", "sources": [{"title": "One", "url": "https://a.example/one"},
                                                           {"title": "Two", "url": "https://b.example/two"}]}

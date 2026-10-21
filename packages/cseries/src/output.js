@@ -15,6 +15,11 @@ function formatBytes(n) {
   return `${v.toFixed(1)} ${units[i]}`;
 }
 
+function formatElapsed(ms) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  return s < 60 ? `${s}s` : `${Math.floor(s / 60)}m ${String(s % 60).padStart(2, '0')}s`;
+}
+
 class Output {
   constructor(stream = process.stdout, errStream = process.stderr) {
     this.stream = stream;
@@ -22,6 +27,55 @@ class Output {
     this.tty = Boolean(stream.isTTY);
     this._progressOpen = false;
     this._lastPlain = -1;
+    this.now = () => Date.now();
+  }
+
+  // One line that says what is happening while a long step runs, in place of
+  // the output of the program doing it (that goes to the install log). On a
+  // terminal it redraws in place and counts the seconds, so it moves even
+  // while the program prints nothing; in a log it prints a line only when its
+  // key changes (the text, unless the caller names a coarser one, such as
+  // the image being pulled). -> {update(text, key?), end(finalText?)}
+  status(text, key = text) {
+    const started = this.now();
+    let current = text;
+    let currentKey = key;
+    let printed = null;
+    let timer = null;
+    const draw = () => {
+      if (this.tty) {
+        this.stream.write(`\r      ${current} (${formatElapsed(this.now() - started)})\x1b[K`);
+        this._progressOpen = true;
+      } else if (currentKey !== printed) {
+        printed = currentKey;
+        this.stream.write(`      ${current}\n`);
+      }
+    };
+    draw();
+    if (this.tty) {
+      timer = setInterval(draw, 1000);
+      if (timer.unref) timer.unref();
+    }
+    return {
+      update: (t, k = t) => {
+        if (t === current && k === currentKey) return;
+        current = t;
+        currentKey = k;
+        draw();
+      },
+      // With finalText the status line is replaced by it; without, the
+      // status line stays as it last read (a failure is said under it).
+      end: (finalText) => {
+        if (timer) clearInterval(timer);
+        timer = null;
+        if (finalText && this.tty && this._progressOpen) {
+          this.stream.write('\r\x1b[K');
+          this._progressOpen = false;
+        }
+        if (finalText) this.detail(finalText);
+        else this._endProgress();
+      },
+    };
   }
 
   line(text = '') {
@@ -81,4 +135,4 @@ class Output {
   }
 }
 
-module.exports = { Output, formatBytes };
+module.exports = { Output, formatBytes, formatElapsed };

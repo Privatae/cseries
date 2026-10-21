@@ -88,6 +88,7 @@ hc._pod_strays = lambda *a, **k: set()
 hc._pids_now = lambda *a, **k: set()
 hc._kill_pids = lambda *a, **k: None
 hc.requested_step_seconds = lambda *a, **k: 0.0
+hc.step_limit_name = lambda *a, **k: None
 # Module-level CONSTANTS are lifted from the real harness_core source instead of
 # being mirrored here. A change once added
 # `RUN_RETRY_LIMIT, RUN_RETRY_MIN_BUDGET_S, _RETRYABLE_STDERR` to the sidecar's

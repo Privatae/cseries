@@ -48,15 +48,17 @@
     // the other two had one obvious home — and consolidation ("Memory") went
     // when every memory op became a tool call in the host's own
     // turn. Those consumers now name chat at their own call sites, so the
-    // feature works without the user filling a seat first. This list must match
-    // server/routes/inference.py ROLES; scripts/test_three_text_roles.py
+    // feature works without the user filling a seat first. Review went
+    // 2026-10-20: the Host reviews a build in its own turn, or has a coding
+    // engine review it when the person wants a second opinion. This list must
+    // match server/routes/inference.py ROLES; scripts/test_three_text_roles.py
     // checks that it does.
-    const ROLES = ['chat', 'review'];
+    const ROLES = ['chat'];
 
     // Display labels — the backend role id 'chat' is the host's conversational /
     // orchestration model, surfaced to the user as "Host model".
     const ROLE_LABELS = {
-        chat: 'Host model', review: 'Review',
+        chat: 'Host model',
     };
 
     // Escapes all five, so the result is safe as text and inside a quoted
@@ -632,7 +634,6 @@
             // agents all resolve the chat route (three-role cut).
             const ACT = {
                 chat: 'You talk to your host — and it plans, researches and runs agents',
-                review: 'Your host judges a build it just landed',
             };
             const rows = ROLES.map((role) => {
                 const e = eff[role] || {};
@@ -1074,8 +1075,8 @@
                 <div class="mp-setup-step" data-mp-step="thinking">
                     <div class="mp-setup-head"><span class="mp-setup-name">Thinking</span></div>
                     <p class="mp-setup-why">Your host needs a model to think with. Pick a provider
-                        you hold a key for and one click routes both jobs — talking and
-                        reviewing builds — to a researched recommendation on it.</p>
+                        you hold a key for and one click routes it to a researched
+                        recommendation on it.</p>
                     ${setup}
                 </div>
 

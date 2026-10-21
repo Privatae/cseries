@@ -39,17 +39,20 @@ directory the Host container mounts with the `cseries-runtime` group, and
 answers only uid 1000 inside the Host's own service.
 Its containers are on `cseries-apps` (10.89.78.0/24, bridge `cseries-apps0`,
 no default route), with the Host beside them at 10.89.78.2. door.nft lets
-them reach the box only for DNS and, for the coding engines and their builds
-alone, the plain proxy (`cseries-squid.service` on 10.89.78.1:3128); it
+them reach the box only for DNS and, for the coding engines alone, the plain
+proxy (`cseries-squid.service` on 10.89.78.1:3128); it
 drops IPv6 from that bridge, routes nothing out of or into
 that network, and its bridge table lets a frame between two of its ports
 through only to or from the Host. The images are the release's, pinned by
 digest in `/etc/cseries-runtime/images.json` (`cseries-guest configure`
 writes it from the signed manifest); the coding engines are built on the box
-from the release's pinned sources. At each start the runtime removes the
-containers it left, and the images and unpacked sources an earlier release
-left: an image of a runtime family that images.json no longer pins, and an
-engine built from other sources. Its containers log to the journal.
+from the release's pinned sources, as the unprivileged user `cseries-build`
+(uid 199999) with rootless podman in a network namespace of its own, and
+door.nft lets that user reach the plain proxy and nothing else. At each start
+the runtime removes the containers it left, and the images and unpacked
+sources an earlier release left: an image of a runtime family that
+images.json no longer pins, and an engine built from other sources or the
+way an earlier release built engines. Its containers log to the journal.
 
 ## The door key
 

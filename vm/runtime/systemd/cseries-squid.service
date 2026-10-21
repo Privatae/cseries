@@ -3,7 +3,8 @@
 # the Host's own event loop. Its own squid on its own config, so Debian's
 # default squid (masked) never listens. Only the coding engines and their
 # builds may use it, never an app or the browser (squid's ACL and the
-# firewall both name their addresses, cseries_runtime/common.py PROXY_CLIENTS).
+# firewall both name the engines' addresses, cseries_runtime/common.py
+# PROXY_CLIENTS, and admit a build only from the machine itself).
 [Unit]
 Description=C-Series plain proxy for the coding engines
 After=network.target

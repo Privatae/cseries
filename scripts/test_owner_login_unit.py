@@ -33,6 +33,8 @@ races, and inputs that used to raise instead of refusing.
      hash, the right password included; the wait doubles to 15 minutes and is
      forgotten an hour after it ends. Before there is an owner nothing counts
      there.
+ 14. The setup page names npx cseries open (which prints the setup code on a
+     machine installed with npx) before docker compose logs host.
 
 No database or container: the pool is a stand-in.
 
@@ -518,7 +520,25 @@ async def password_budget():
         L._password_failures = (0, 0.0, 0.0)
 
 
+async def setup_page_names_npx_first():
+    """The setup page says where the setup code is: npx cseries open for a
+    machine installed with npx (the command that prints it), before the
+    compose log, which stays for compose installs."""
+    from server.routes import owner as O
+    saved = L._owner_email
+    L._owner_email = None
+    try:
+        page = (await O.setup_page()).body.decode()
+    finally:
+        L._owner_email = saved
+    npx, compose = page.find("<code>npx cseries open</code>"), page.find("<code>docker compose logs host</code>")
+    check(npx >= 0, "the setup page names npx cseries open")
+    check(compose >= 0, "and still names docker compose logs host")
+    check(0 <= npx < compose, "npx first, compose after", f"(npx at {npx}, compose at {compose})")
+
+
 async def main():
+    await setup_page_names_npx_first()
     await burst()
     await password_budget()
     await sign_out_race()

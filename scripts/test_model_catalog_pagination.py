@@ -62,7 +62,7 @@ def _fake_catalog(n: int = 400) -> dict:
     local = [{"id": "qwen3:8b", "name": "qwen3:8b", "provider": "local",
               "available": True, "bastion": "home-gpu"}]
     return {"openrouter_models": rows, "local_models": local,
-            "total_openrouter": n, "degraded": False, "roles": ["chat", "review"]}
+            "total_openrouter": n, "degraded": False, "roles": ["chat", "embedding", "image", "image_gen"]}
 
 
 def main() -> int:
@@ -100,7 +100,7 @@ def main() -> int:
           all("description" not in r and "input_modalities" not in r for r in out["models"]))
     check("rows carry the pricing + context a pick needs",
           all(r.get("context_length") and r.get("input_per_token") for r in out["models"]))
-    check("roles pass through", out.get("roles") == ["chat", "review"])
+    check("roles pass through", out.get("roles") == ["chat", "embedding", "image", "image_gen"])
     check("note tells the model how to narrow and page",
           "search=" in out["note"] and "next_offset" in out["note"])
 

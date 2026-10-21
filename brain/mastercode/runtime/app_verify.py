@@ -68,6 +68,13 @@ TASK_TYPE = "app_verify"
 # first repair fixes the thing the log names; a second failure with the same
 # evidence is a person's decision, not a third harness run at their expense.
 MAX_AUTO_REPAIRS = 2
+
+
+def max_auto_repairs() -> int:
+    """The person's limit `app.auto_repairs` (runtime/user_limits), else
+    MAX_AUTO_REPAIRS."""
+    from mastercode.runtime import user_limits
+    return user_limits.person_or("app.auto_repairs", MAX_AUTO_REPAIRS)
 POLL_S = 5.0
 # Two clean reads this far apart before "delivered": a UI server that
 # answers ready and dies ten seconds later is not delivered.
@@ -175,7 +182,7 @@ def _seed_text(app_id: str, version: str | None, verdict: str, reason: str,
     if len(tail) > 6000:
         tail = "…\n" + tail[-6000:]
     lines = [
-        f"REPAIR ROUND {round_no} of {MAX_AUTO_REPAIRS}: the shipped app '{app_id}'"
+        f"REPAIR ROUND {round_no} of {max_auto_repairs()}: the shipped app '{app_id}'"
         + (f" v{version}" if version else "")
         + " was installed and started by the platform but did NOT come up.",
         f"Platform verdict: {verdict} — {reason}.",
@@ -254,7 +261,7 @@ async def start_verify(*, pool, entity_id: int, project_id: int | None,
     origin.setdefault("origin_request", f"prove the shipped app '{app_id}' runs")
     result = {"app_id": app_id, "project_id": project_id,
               "repair_round": int(repair_round), "reason": reason,
-              "max_repairs": MAX_AUTO_REPAIRS,
+              "max_repairs": max_auto_repairs(),
               # The monitor's stuck horizon scales off this (2x); refined
               # once the manifest's ready_timeout is known (_run_verify).
               "timeout_s": MAX_WINDOW_S,
@@ -1024,7 +1031,7 @@ async def _run_verify(*, pool, entity_id: int, project_id: int | None,
         try:
             line = f"{app_id}: {verdict} — {reason}"
             merge = {"verify": verify, "result": line, "summary": line,
-                     "max_repairs": MAX_AUTO_REPAIRS}
+                     "max_repairs": max_auto_repairs()}
             if repair is not None:
                 merge["repair"] = repair
             if ok:
@@ -1096,9 +1103,13 @@ async def _decide_repair(*, pool, entity_id: int, project_id: int, app_id: str,
             out["why"] = ("auto-delivery is off for this project (the Workbench's "
                           "auto-deliver switch) — the host dispatches the repair")
             return out
-        if next_round > MAX_AUTO_REPAIRS:
-            out["why"] = (f"the automatic repair budget ({MAX_AUTO_REPAIRS} rounds) is "
-                          "spent — a person decides the next step")
+        if next_round > max_auto_repairs():
+            from mastercode.runtime import user_limits
+            out["why"] = (f"the automatic repair budget ({max_auto_repairs()} rounds) is "
+                          "spent — a person decides the next step. "
+                          + user_limits.hit_line("app.auto_repairs"))
+            await user_limits.record_hit(pool, entity_id, "app.auto_repairs",
+                                         f"a repair of project {project_id}'s app")
             return out
         running = await _in_flight(pool, entity_id, project_id)
         if running is not None:
@@ -1130,7 +1141,7 @@ async def _start_repair(*, pool, entity_id: int, project_id: int, app_id: str,
         if running is not None:
             log.info("app-verify %s: repair not started — build %s in flight", app_id, running)
             return
-        title = f"repair {repair['round']}/{MAX_AUTO_REPAIRS}: {app_id}"
+        title = f"repair {repair['round']}/{max_auto_repairs()}: {app_id}"
         r_origin = {
             "entity_id": entity_id,
             "session_id": origin.get("session_id"),

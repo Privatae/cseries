@@ -146,6 +146,19 @@ async def list_scheduled(limit: int = 100) -> dict:
         SELECT e.event_id, e.id AS pk, e.title, e.start_time, e.recurrence,
                e.status, e.payload, e.related_project_id,
                r.ran_at AS last_ran_at, r.ok AS last_ok, r.error AS last_error,
+               r.cost_usd AS last_cost_usd,
+               -- What the task spent in the last 24 hours (v251), over the
+               -- runs that carry a price; how many runs had none is beside it.
+               (SELECT sum(c.cost_usd) FROM calendar_event_runs c
+                 WHERE c.event_id = e.id AND c.entity_id = e.entity_id
+                   AND c.ran_at > now() - interval '1 day') AS cost_24h_usd,
+               (SELECT count(*) FROM calendar_event_runs c
+                 WHERE c.event_id = e.id AND c.entity_id = e.entity_id
+                   AND c.ran_at > now() - interval '1 day'
+                   AND c.cost_usd IS NULL
+                   -- a run that ran (a skip, a refusal or a crash before any
+                   -- turn is not "unpriced": nothing was spent)
+                   AND c.ok IS TRUE) AS unpriced_24h,
                (SELECT count(*) FROM calendar_event_runs c
                  WHERE c.event_id = e.id AND c.entity_id = e.entity_id) AS runs,
                -- A ceiling SKIP is not a failure. The offline runner writes a
@@ -165,7 +178,7 @@ async def list_scheduled(limit: int = 100) -> dict:
                    AND c.error LIKE 'ScheduledTurnCeiling:%') AS skipped
           FROM calendar_events e
           LEFT JOIN LATERAL (
-               SELECT ran_at, ok, error FROM calendar_event_runs c
+               SELECT ran_at, ok, error, cost_usd FROM calendar_event_runs c
                 WHERE c.event_id = e.id AND c.entity_id = e.entity_id
                 ORDER BY ran_at DESC LIMIT 1
           ) r ON TRUE
@@ -206,6 +219,12 @@ async def list_scheduled(limit: int = 100) -> dict:
             # 'none' = no model ran, so no inference row exists. NEVER a dollar
             # amount: see the cost-honesty note above.
             "cost_state": "none" if lane == "op" else "model",
+            # Dollars only where a run carried a price (v251); null otherwise,
+            # with the unpriced runs counted, so nothing reads as a $0 it is not.
+            "last_cost_usd": r["last_cost_usd"],
+            "cost_24h_usd": (round(float(r["cost_24h_usd"]), 4)
+                             if r["cost_24h_usd"] is not None else None),
+            "unpriced_runs_24h": int(r["unpriced_24h"] or 0),
         })
     return {"scheduled": out}
 

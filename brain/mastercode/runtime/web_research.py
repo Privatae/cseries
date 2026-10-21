@@ -125,7 +125,7 @@ def provider_can_search(provider: Optional[str], model: Optional[str]) -> bool:
 
 # The text roles. A provider is borrowable only if one of these already
 # routes to it — see routed_providers.
-_TEXT_ROLES: tuple[str, ...] = ("chat", "review")
+_TEXT_ROLES: tuple[str, ...] = ("chat",)
 
 
 async def routed_providers(pool, entity_id: int) -> list[str]:
@@ -265,8 +265,10 @@ async def research_routes(pool, entity_id: int) -> list[dict]:
     because the model comes from the shipped recommendation data rather than
     from code.
 
-    The borrow is NARROW by design (routed_providers): only a provider one of
-    the text roles (host model, review) already runs on. A stored key alone
+    The borrow is NARROW by design (routed_providers): only a provider the
+    text role (the host model, since review went 2026-10-20) already runs on,
+    so in practice it serves a chat model the catalog marks as unable to
+    search (MODEL_WEBSEARCH_OVERRIDES) on a provider that can. A stored key alone
     would have been enough to open a bill on a provider the user never chose
     to run this host on; requiring a routed one means whatever answers is already being paid
     for. Among those, sorted and first-that-can-search — the same rule
@@ -1310,7 +1312,7 @@ async def search_on_route(query: str, route: dict, *, system: str = QUICK_SYSTEM
 
 async def search(query: str, *, pool=None, entity_id: Optional[int] = None,
                  system: str = QUICK_SYSTEM, max_tokens: Optional[int] = None,
-                 keep_pages: bool = False) -> dict:
+                 keep_pages: bool = False, on_engine: bool = False) -> dict:
     """Search on the host's own route, or on a borrowed one.
 
     `max_tokens` None (the default) is the
@@ -1328,7 +1330,14 @@ async def search(query: str, *, pool=None, entity_id: Optional[int] = None,
     not — `route_note` in the result dict, appended to the sentence when the
     result is a bare string. Attaching it only to the dict shapes meant a
     borrowed call that failed read as the host's own model failing, and sent
-    the user off to re-route a host model that was never asked."""
+    the user off to re-route a host model that was never asked.
+
+    `on_engine` (2026-10-20): when nothing routed can search, run the query on
+    one of the person's connected coding engines (runtime/engine_research).
+    Only the Host's own search calls pass it (web_search, research): an engine
+    run takes minutes and spends on that engine's key or sign-in, so a search
+    the platform starts by itself (deep_research's web leg on a build plan)
+    never starts one."""
     query = (query or "").strip()
     if not query:
         return {"status": "error", "result": "query required"}
@@ -1345,15 +1354,29 @@ async def search(query: str, *, pool=None, entity_id: Optional[int] = None,
                                         keep_pages=keep_pages)
     routes = await research_routes(pool, entity_id) if pool is not None else []
     if not routes:
+        # Nothing routed can search: when the Host itself asked, one of the
+        # person's connected coding engines that can does it instead
+        # (runtime/engine_research), in this same envelope,
+        # naming the engine.
+        if on_engine:
+            from mastercode.runtime.engine_research import search_on_engine
+            engine_res = await search_on_engine(query)
+            if engine_res is not None:
+                return engine_res
         return {
             "status": "unavailable",
             "result": (
-                "Your host model cannot search the web, and none of the "
-                "models you have routed can either. In the Orchestrator, "
-                "point the host model — or review — at OpenRouter "
+                ("Your host model cannot search the web, and no coding engine that can "
+                 "search (Antigravity or Claude Code) is connected. Connect one in "
+                 "the Orchestrator's Coding Engines, or, in the Orchestrator, "
+                 if on_engine else
+                 "Your host model cannot search the web, and this search does not run on a "
+                 "coding engine (only your Host's own web_search and research do). In the "
+                 "Orchestrator, ") +
+                "point the host model at OpenRouter "
                 "(any model, via its web plugin), Anthropic, OpenAI, xAI or "
                 "Kimi, and searching works again. A key alone is not enough: "
-                "the search borrows a provider you already run on, so it "
+                "the search only uses a provider you already run on, so it "
                 "never opens a bill on one you have not chosen."
             ),
         }
@@ -1385,7 +1408,7 @@ RESEARCH_LINKS = 10      # links one research run finds by itself; the Host pass
 
 
 async def research_links(query: str, *, pool=None, entity_id: Optional[int] = None,
-                         limit: int = RESEARCH_LINKS) -> dict:
+                         limit: int = RESEARCH_LINKS, on_engine: bool = False) -> dict:
     """The links `research` fetches and saves whole — never an answer written
     from pages. A Host with a
     search backend gets its results; any other Host gets the links its routed
@@ -1409,7 +1432,8 @@ async def research_links(query: str, *, pool=None, entity_id: Optional[int] = No
         return {"status": "ok", "result": {
             "links": [{"url": r["url"], "title": r.get("title") or r["url"]} for r in results],
             "via": f"search backend {name}"}}
-    res = await search(query, pool=pool, entity_id=entity_id, system=RESEARCH_SYSTEM, max_tokens=None)
+    res = await search(query, pool=pool, entity_id=entity_id, system=RESEARCH_SYSTEM, max_tokens=None,
+                       on_engine=on_engine)
     if res.get("status") != "ok":
         return res
     r = res["result"]

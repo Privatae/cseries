@@ -147,7 +147,6 @@ def part_a_contracts():
 def part_b_single_build():
     from server.routes import review as rv
     from server.routes import _preference_profile as pp
-    from mastercode.runtime import diff_review as dr
     from mastercode.runtime import tools as T
 
     task = "Fix the taskbar clock in the shell's dock: brain/mastercode/clock.py rounds wrong"
@@ -160,9 +159,6 @@ def part_b_single_build():
         return {"ok": True, "harness": "stub", "exit_code": 0, "model": "stub",
                 "elapsed_seconds": 0.0, "transcript_full": "edited brain/clock.py"}
 
-    async def _review(pool, entity_id, **kw):
-        return {"ran": False}
-
     async def _target(h, model=None):
         return "claude-code", None, None
 
@@ -172,7 +168,7 @@ def part_b_single_build():
     with tempfile.TemporaryDirectory() as td:
         saved = (rv.PROJECTS_ROOT, rv.SESSIONS_ROOT, rv._stub_harness_build,
                  pp.summarize_for_prompt, rv.resolve_build_target, rv._coding_harness_settings,
-                 dr.review_landed_run, os.environ.get("FACTORY_ENGINE"), os.environ.get("CSERIES_SMOKE"))
+                 os.environ.get("FACTORY_ENGINE"), os.environ.get("CSERIES_SMOKE"))
         try:
             rv.PROJECTS_ROOT = Path(td) / "projects"
             rv.SESSIONS_ROOT = Path(td) / "sessions"
@@ -181,7 +177,6 @@ def part_b_single_build():
             pp.summarize_for_prompt = lambda pid: ""
             rv.resolve_build_target = _target
             rv._coding_harness_settings = _no_settings
-            dr.review_landed_run = _review
             (rv.PROJECTS_ROOT / "501").mkdir(parents=True)
             out = run(rv.run_single_harness_build(project_id=501, prompt=task, harness="claude-code",
                                                   billing_key="factory-build-s7a",
@@ -190,6 +185,8 @@ def part_b_single_build():
             check("B1 a repo_change build with no index.html lands",
                   out.get("ok") is True and (rv.PROJECTS_ROOT / "501" / "brain" / "clock.py").is_file(),
                   out.get("error"))
+            check("B1b ...and carries no reviewer verdict (the diff reviewer is gone, 2026-10-20)",
+                  "review" not in out, sorted(out))
             check("B2 it is briefed with the repository-change contract only",
                   "REPOSITORY CHANGE" in p and "PLATFORM DEPLOYMENT CONTRACT" not in p
                   and "APP SDK CONTRACT" not in p, p[:300])
@@ -207,7 +204,7 @@ def part_b_single_build():
                   out2.get("error"))
         finally:
             (rv.PROJECTS_ROOT, rv.SESSIONS_ROOT, rv._stub_harness_build, pp.summarize_for_prompt,
-             rv.resolve_build_target, rv._coding_harness_settings, dr.review_landed_run, fe, sm) = saved
+             rv.resolve_build_target, rv._coding_harness_settings, fe, sm) = saved
             for k, v in (("FACTORY_ENGINE", fe), ("CSERIES_SMOKE", sm)):
                 if v is None:
                     os.environ.pop(k, None)

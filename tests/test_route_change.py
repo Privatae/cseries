@@ -216,7 +216,7 @@ def door(monkeypatch):
     async def _get_current_routing():
         if state["boom"]:
             raise RuntimeError("db down")
-        return {"effective": {"review": state["effective"]}, "routing": {"review": state["stored"]},
+        return {"effective": {"chat": state["effective"]}, "routing": {"chat": state["stored"]},
                 "providers": []}
 
     async def _previous_approved_route(pool, eid, role, cp, cm):
@@ -249,19 +249,29 @@ def _set(T, **kw):
     return asyncio.run(T._exec_model_routing({"op": "set", **kw}))
 
 
+def test_door_refuses_the_retired_review_role(door):
+    # `review` went 2026-10-20 with the diff reviewer: nothing resolves it, so
+    # a route written under it would be a setting nothing reads.
+    T, calls, state = door
+    state["effective"] = {"provider": "", "model": "", "unconfigured": "no route"}
+    out = _set(T, role="review", provider="kimi", model="k3")
+    assert out["status"] != "ok" and "invalid role" in str(out.get("result")), out
+    assert calls["applied"] == [] and calls["tickets"] == []
+
+
 def test_door_applies_for_an_unrouted_role(door):
     T, calls, state = door
-    state["effective"] = {"provider": "", "model": "", "unconfigured": "no review route"}
-    out = _set(T, role="review", provider="kimi", model="k3")
+    state["effective"] = {"provider": "", "model": "", "unconfigured": "no chat route"}
+    out = _set(T, role="chat", provider="kimi", model="k3")
     assert out["status"] == "ok" and out["result"]["set"] is True
-    assert calls["applied"] == [("review", "kimi", "k3", "host", None)]
+    assert calls["applied"] == [("chat", "kimi", "k3", "host", None)]
     assert "no route" in out["result"]["why_applied"] and calls["tickets"] == []
 
 
 def test_door_is_a_noop_on_the_route_in_force(door):
     T, calls, state = door
     state["effective"] = {"provider": "kimi", "model": "k3", "effort": "high"}
-    out = _set(T, role="review", provider="kimi", model="k3")
+    out = _set(T, role="chat", provider="kimi", model="k3")
     assert out["result"]["unchanged"] is True and out["result"]["set"] is False
     assert calls["applied"] == [] and calls["tickets"] == []
 
@@ -270,19 +280,19 @@ def test_door_reverts_free_only_to_the_previous_approved_route(door):
     T, calls, state = door
     state["effective"] = {"provider": "kimi", "model": "k3"}
     state["prev"] = {"provider": "anthropic", "model": "claude-opus-5"}
-    out = _set(T, role="review", provider="anthropic", model="claude-opus-5")
+    out = _set(T, role="chat", provider="anthropic", model="claude-opus-5")
     assert out["result"]["set"] is True
-    assert calls["applied"] == [("review", "anthropic", "claude-opus-5", "host_revert", None)]
+    assert calls["applied"] == [("chat", "anthropic", "claude-opus-5", "host_revert", None)]
     assert "approved before" in out["result"]["why_applied"]
     # A different approved-once route is not a revert: it proposes.
-    out2 = _set(T, role="review", provider="openai", model="gpt-x")
+    out2 = _set(T, role="chat", provider="openai", model="gpt-x")
     assert out2["result"]["proposed"] is True and len(calls["applied"]) == 1
 
 
 def test_door_proposes_a_user_only_no_pattern_ticket_for_a_working_role(door):
     T, calls, state = door
     state["effective"] = {"provider": "kimi", "model": "k3"}
-    out = _set(T, role="review", provider="anthropic", model="claude-opus-5",
+    out = _set(T, role="chat", provider="anthropic", model="claude-opus-5",
                reason="review invented 3 tools in 40 calls this week")
     r = out["result"]
     assert r["proposed"] is True and r["set"] is False and r["ticket_id"] == 41
@@ -295,7 +305,7 @@ def test_door_proposes_a_user_only_no_pattern_ticket_for_a_working_role(door):
     md = tk["metadata"]
     assert md["user_only"] is True and md["no_pattern"] is True
     prop = md["route_change_proposal"]
-    assert prop["route"] == {"role": "review", "provider": "anthropic", "model": "claude-opus-5",
+    assert prop["route"] == {"role": "chat", "provider": "anthropic", "model": "claude-opus-5",
                              "effort": None, "fallback_provider": None}
     assert prop["current"]["model"] == "k3" and prop["reason"].startswith("review invented")
     assert "Your host's reason" in tk["sitrep"]
@@ -305,7 +315,7 @@ def test_door_proposes_a_user_only_no_pattern_ticket_for_a_working_role(door):
 def test_door_fails_closed_when_the_table_cannot_be_read(door):
     T, calls, state = door
     state["boom"] = True
-    out = _set(T, role="review", provider="anthropic", model="claude-opus-5")
+    out = _set(T, role="chat", provider="anthropic", model="claude-opus-5")
     assert out["status"] == "error" and "could not read the routing table" in out["result"]
     assert calls["applied"] == [] and calls["tickets"] == []
 
@@ -316,20 +326,20 @@ def test_door_trusts_the_stored_entry_when_the_resolver_hiccups(door):
     # treat that as unrouted and overwrite it.
     state["effective"] = {"source": "unconfigured"}
     state["stored"] = {"provider": "kimi", "model": "k3"}
-    out = _set(T, role="review", provider="anthropic", model="claude-opus-5")
+    out = _set(T, role="chat", provider="anthropic", model="claude-opus-5")
     assert out["result"]["proposed"] is True and calls["applied"] == []
 
 
 def test_model_route_switch_takes_the_same_door(door):
     T, calls, state = door
     state["effective"] = {"provider": "kimi", "model": "k3"}
-    out = asyncio.run(T._exec_model_route({"op": "switch", "role": "review",
+    out = asyncio.run(T._exec_model_route({"op": "switch", "role": "chat",
                                            "provider": "anthropic", "model_id": "claude-opus-5"}))
     assert out["result"]["proposed"] is True and calls["applied"] == []
     state["effective"] = {"provider": "", "model": ""}
-    out = asyncio.run(T._exec_model_route({"op": "switch", "role": "review",
+    out = asyncio.run(T._exec_model_route({"op": "switch", "role": "chat",
                                            "provider": "kimi", "model_id": "k3"}))
-    assert calls["applied"] == [("review", "kimi", "k3", "host", None)]
+    assert calls["applied"] == [("chat", "kimi", "k3", "host", None)]
 
 
 # ── 5. deciding the ticket ──────────────────────────────────────────────────
@@ -373,8 +383,8 @@ def decide_env(monkeypatch):
 
 _PROPOSAL_MD = {
     "user_only": True, "no_pattern": True,
-    "route_change_proposal": {"role": "review", "route": {
-        "role": "review", "provider": "anthropic", "model": "claude-opus-5",
+    "route_change_proposal": {"role": "chat", "route": {
+        "role": "chat", "provider": "anthropic", "model": "claude-opus-5",
         "effort": "high", "fallback_provider": None}},
 }
 
@@ -384,7 +394,7 @@ def test_user_apply_writes_the_route_as_decision(decide_env):
     pool = _TicketPool(_PROPOSAL_MD)
     res = asyncio.run(tk.decide_ticket_service(pool, 7, 41, option_id="apply", actor="user"))
     assert res["route_apply"] == {"applied": True}
-    assert applied == [("review", "anthropic", "claude-opus-5", "high", "decision", 41)]
+    assert applied == [("chat", "anthropic", "claude-opus-5", "high", "decision", 41)]
     assert any("UPDATE entity_tickets" in s for s, _ in pool.executed)
 
 

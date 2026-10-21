@@ -11,6 +11,8 @@ Wants=cseries-squid.service cseries-runtime-firewall.service
 
 [Service]
 Type=simple
+# The user engine builds run as (a machine updated in place gets it here).
+ExecStartPre=/usr/local/sbin/cseries-build-user
 ExecStart=/usr/local/sbin/cseries-runtime
 SyslogIdentifier=cseries-runtime
 Restart=on-failure

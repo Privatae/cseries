@@ -352,6 +352,19 @@ def main() -> int:
     check("list_running includes it", [r.app_id for r in sup.list_running()] == ["trading-bot"])
     check("window-lifecycle open takes no resident hold",
           not (hb._state["trading-bot"].get("resident")))
+    # The uninstall route and shutdown_all stop a running app with
+    # _terminate. A pod app has no child here: the lane releases it. (It
+    # raised AttributeError on .send_signal, so uninstalling a running
+    # connector on a C-Series box answered 500.)
+    calls.clear()
+    try:
+        run(sup._terminate(view))
+        err = None
+    except Exception as e:  # noqa: BLE001 — the check reports it
+        err = repr(e)
+    check("terminating a running pod app releases it through the lane, raising nothing",
+          err is None and any(op == "harness.release" for op, _p in calls)
+          and hb.app_runtime_state("trading-bot")["running"] is False, str((err, calls)))
 
     # runtime route semantics: start (resident) → hold; stop → release + bill
     class PoolWithRow:

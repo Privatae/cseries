@@ -5,16 +5,16 @@ that limit cuts off is reported as cut — never as a parse failure.
 Every one of these callers asked for a fixed figure the platform picked, and
 every figure was reached in production:
 
-  diff review   diff_review: MAX_OUTPUT_TOKENS = 8000 (hit exactly).
   research      web research 4,096 / 8,192, deep_research 4,096 / 2,048.
   summaries     classifier 800, patterns 400, relationship 400, thread summary and
                 batch 8,000. (The relationship model and its session-close call were
                 retired with the simulation; its rows here went with it.)
 
-The memory_graph extraction and the batch, classifier and pattern callers went
-with their code: the memory graph, the batch consolidator and the second model
-deciding what to remember are gone, so the thread summary is the one summary
-caller left.
+The diff reviewer (MAX_OUTPUT_TOKENS = 8000, hit exactly) is gone; section 4
+pins that it does not come back as a caller. The memory_graph extraction and
+the batch, classifier and pattern callers went with their code: the memory
+graph, the batch consolidator and the second model deciding what to remember
+are gone, so the thread summary is the one summary caller left.
 
 The rule: each model's own published limit; read the stop
 reason; a cut-off write is reported as cut. `max_tokens=None` is the gateway
@@ -73,7 +73,6 @@ def _cut(content: str, limit: int = 128000) -> dict:
 # ── 0. no fixed figure left at any of these call sites (static sweep) ───────
 print("== 0. every max_tokens at these call sites is the model's own limit ==")
 _SITES = {
-    "brain/mastercode/runtime/diff_review.py": "diff review",
     "brain/mastercode/runtime/web_research.py": "research",
     "brain/mastercode/skills/deep_research.py": "research",
     "brain/mastercode/memory_consolidation.py": "summaries",
@@ -128,24 +127,6 @@ def _fn(reply):
         CALLS.append({"messages": messages, **kw})
         return reply(messages) if callable(reply) else dict(reply)
     return f
-
-
-# ── 2. diff review ───────────────────────────────────────────────────────────
-print("\n== 2. diff_review: the model's limit, a cut review says it was cut ==")
-from mastercode.runtime import diff_review as dr  # noqa: E402
-
-DIFF = ("diff --git a/app.js b/app.js\n--- a/app.js\n+++ b/app.js\n"
-        "@@ -1 +1 @@\n-const x = 1;\n+export const y = x;\n")
-CALLS.clear()
-env = asyncio.run(dr.review_diff(diff=DIFF, brief="b", model_fn=_fn(_cut('{"ok": true, "sco'))))
-check("the review call asks for the model's own limit",
-      bool(CALLS) and "max_tokens" in CALLS[0] and CALLS[0]["max_tokens"] is None,
-      str({k: v for k, v in (CALLS[0] if CALLS else {}).items() if k != "messages"}))
-check("a cut review is not reviewed (ran=False), never ok",
-      env.get("ran") is False and env.get("ok") is None, str(env))
-check("...and its reason says it was CUT at the output limit, not 'unparseable'",
-      "cut off" in (env.get("reason") or "") and "128000" in (env.get("reason") or "")
-      and "unparseable" not in (env.get("reason") or ""), env.get("reason") or "")
 
 
 # ── 3. web research and deep research ────────────────────────────────────────
@@ -211,13 +192,17 @@ check("search()'s default is the model's own limit",
       inspect.signature(wr.search).parameters["max_tokens"].default is None)
 
 
-# ── 4. no thread summary call remains ───────────────────────────────────────
+# ── 4. no thread summary or diff review call remains ────────────────────────
 # The rolling summary was a model call outside the Host's turn; it is retired
 # (migrations/v241), and what falls out of a window rides as the Host's own
 # close_turn notes (evicted_record), which no model writes.
-print("\n== 4. no thread summary call remains ==")
+print("\n== 4. no thread summary or diff review call remains ==")
 check("no thread summary module ships",
       not os.path.exists(os.path.join(_root, "brain/mastercode/thread_consolidator.py")))
+# The diff reviewer (T-6) was a model call on every landed build; removed
+# 2026-10-20 (the Host reviews in its own turn).
+check("no diff review module ships",
+      not os.path.exists(os.path.join(_root, "brain/mastercode/runtime/diff_review.py")))
 
 print()
 print("FAIL" if FAILS else "PASS", f"({FAILS} failing checks)")

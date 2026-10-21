@@ -41,5 +41,7 @@ allowed-tools: data, memory_curate
 
 - `no_purpose`: add the `COMMENT ON ...` line the answer gives, in the same call, and run it again.
 - `sql_error` with SQLSTATE 42501: you tried to write outside `world`. Your records in `public` are read-only. Memory changes go through `memory_curate`.
-- `timeout`: pass `timeout_s` (up to 900) for a long job, or narrow the query.
+- `timeout`: pass `timeout_s` for a long job (up to the person's limit
+  `host_data.query_max_minutes`, 15 minutes unless they changed it; skill
+  'limits'), or narrow the query.
 - You changed or dropped something by mistake: `operate(tool='data', args={op:'history'}, intent='...')` lists snapshots, taken before any change that can remove data. `operate(tool='data', args={op:'restore', snapshot:'<id>'}, intent='...')` puts `world` back, and gives you an undo snapshot.

@@ -5,6 +5,8 @@
 // when it pins them, let it pull them, and start or restart its units.
 
 const { CliError } = require('./errors');
+const { formatBytes } = require('./output');
+const { NO_LOG } = require('./log');
 const { pinnedImage, runtimeLines } = require('./release');
 
 // The Host's processor ceiling, as systemd's CPUQuota= takes it (100% is one
@@ -135,12 +137,131 @@ async function configure(ctx, limits = {}) {
   return /changed=1/.test(r.stdout);
 }
 
+// What each pinned image is called on the status line, by its digest: the
+// guest pulls by digest, and podman's "Trying to pull <ref>" names it.
+const IMAGE_WORDS = {
+  host: 'the Host\'s image',
+  postgres: 'the database image',
+  python: 'the apps\' Python image',
+  creative: 'the creative engines\' image',
+  helper: 'the helper image',
+  browser: 'the browser\'s image',
+};
+
+function imagesByDigest(release) {
+  const m = new Map();
+  for (const [which, img] of Object.entries(release.images || {})) {
+    if (img && img.digest) m.set(img.digest, IMAGE_WORDS[which] || which);
+  }
+  for (const [which, img] of Object.entries(release.runtime || {})) {
+    if (img && img.digest) m.set(img.digest, IMAGE_WORDS[which] || which);
+  }
+  return m;
+}
+
+const SIZE_UNITS = { B: 1, KB: 1e3, MB: 1e6, GB: 1e9, KIB: 1024, MIB: 1024 ** 2, GIB: 1024 ** 3 };
+
+function sizeBytes(n, unit) {
+  return Number(n) * (SIZE_UNITS[String(unit).toUpperCase()] || 1);
+}
+
+// Reads podman pull's output (its lines, or its progress bars, either way)
+// and keeps one status line: which image, how many of its layers are done,
+// and the bytes when podman says them. Nothing is shown until podman starts
+// pulling something, so a run with every image already here prints nothing.
+// Without a terminal podman says only when each layer starts, so until a
+// layer is said to be done the line counts the layers started; the config
+// comes once every layer is in.
+function pullProgress(ctx) {
+  const names = imagesByDigest(ctx.releaseInfo.release);
+  let status = null;
+  let label = null;
+  let layers = new Map(); // id -> {done, got, size}
+  let pulled = 0;
+  let rest = '';
+  const text = () => {
+    const ls = [...layers.values()];
+    let s = `Downloading ${label}`;
+    if (ls.length && !ls.some((l) => l.done || l.size)) {
+      s += `: ${ls.length} layer${ls.length === 1 ? '' : 's'} so far`;
+    } else if (ls.length) s += `: ${ls.filter((l) => l.done).length} of ${ls.length} layers`;
+    const size = ls.reduce((a, l) => a + (l.size || 0), 0);
+    if (size) s += `, ${formatBytes(ls.reduce((a, l) => a + (l.done ? l.size || 0 : l.got || 0), 0))} of ${formatBytes(size)}`;
+    return s;
+  };
+  // Keyed by the image, so a log gets one line per image pulled.
+  const show = () => {
+    if (!status) status = ctx.out.status(text(), label);
+    else status.update(text(), label);
+  };
+  const line = (raw) => {
+    // eslint-disable-next-line no-control-regex
+    const l = raw.replace(/\x1b\[[0-9;?]*[A-Za-z]/g, '').replace(/\0/g, '').trim();
+    if (!l) return;
+    const pulling = /Trying to pull (\S+?)(?:\.\.\.)?$/.exec(l);
+    if (pulling) {
+      const d = /sha256:[0-9a-f]{64}/.exec(pulling[1]);
+      label = (d && names.get(d[0])) || pulling[1].replace(/@sha256:.*/, '');
+      layers = new Map();
+      pulled++;
+      show();
+      return;
+    }
+    if (!label) return;
+    if (/^Copying config\b/.test(l)) {
+      for (const layer of layers.values()) layer.done = true;
+      if (layers.size) show();
+      return;
+    }
+    const blob = /Copying blob (?:sha256:)?([0-9a-f]{6,64})/.exec(l);
+    if (blob) {
+      const id = blob[1].slice(0, 12);
+      const layer = layers.get(id) || { done: false, got: 0, size: 0 };
+      if (/\b(done|skipped)\b|already exists/i.test(l)) layer.done = true;
+      const bytes = /([\d.]+)\s*([KMG]i?B|B)\s*\/\s*([\d.]+)\s*([KMG]i?B|B)/i.exec(l);
+      if (bytes) {
+        layer.got = sizeBytes(bytes[1], bytes[2]);
+        layer.size = sizeBytes(bytes[3], bytes[4]);
+      }
+      layers.set(id, layer);
+      show();
+    }
+  };
+  return {
+    feed(chunk) {
+      const s = rest + chunk.toString('utf8');
+      const parts = s.split(/[\r\n]/);
+      rest = parts.pop();
+      for (const p of parts) line(p);
+    },
+    end(ok) {
+      if (rest) line(rest);
+      rest = '';
+      if (!status) return;
+      status.end(ok ? `Downloaded ${pulled === 1 ? label : `the Host's ${pulled} images`}.` : undefined);
+    },
+  };
+}
+
+function tail(s, n = 12) {
+  return String(s).trim().split('\n').slice(-n).join('\n');
+}
+
 async function pull(ctx) {
-  ctx.out.detail('Downloading the Host\'s images if they are not here yet (about 2 GB the first time)...');
-  const r = await ctx.driver.guest(ctx, ['pull'], { inherit: true });
+  const progress = pullProgress(ctx);
+  const log = ctx.log || NO_LOG;
+  log.section('cseries-guest pull');
+  const r = await ctx.driver.guest(ctx, ['pull'], {
+    onOutput: (c) => {
+      log.write(c);
+      progress.feed(c);
+    },
+  });
+  progress.end(r.code === 0);
   if (r.code !== 0) {
-    throw new CliError('The Host\'s images could not be downloaded.',
-      'Check this machine\'s internet connection and run npx cseries again; what was already downloaded is kept.');
+    const why = tail(`${r.stderr}\n${r.stdout}`, 6);
+    throw new CliError(`The Host's images could not be downloaded${why ? `:\n${why}` : '.'}`,
+      `Check this machine's internet connection and run npx cseries again; what was already downloaded is kept. The whole output is in ${ctx.paths.log}.`);
   }
 }
 
@@ -191,4 +312,4 @@ const step = {
   },
 };
 
-module.exports = { step, configure, configInput, cpuQuota, memoryMax, containersMax, hasRuntime, systemReserve, pull, start, guestStatus };
+module.exports = { step, configure, configInput, cpuQuota, memoryMax, containersMax, hasRuntime, systemReserve, pull, pullProgress, start, guestStatus };

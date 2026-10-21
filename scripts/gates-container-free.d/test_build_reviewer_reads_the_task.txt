@@ -1,5 +1,0 @@
-# 2026-10-07 (one Host's project): the build's reviewer is handed the task
-# as asked (review.run_single_harness_build's _task), never the composed prompt
-# with the SDK and deployment contracts, learned preferences and harness
-# notes. Fails 4 checks on the tree before the fix.
-test_build_reviewer_reads_the_task.py

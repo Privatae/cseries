@@ -387,7 +387,7 @@ async def scenario_harness():
         cap = a["data"]["cap"] if a["ok"] else None
         check(a["ok"] and a["data"]["image"] == "e" * 64 and isinstance(cap, str) and len(cap) >= 40 and
               a["data"]["slots"] == 2, "a built engine wakes with a fresh control capability", a)
-        # The plain proxy admits only the engines' and the builds' addresses
+        # The plain proxy admits only the engines' addresses on the network
         # (common.PROXY_CLIENTS): an engine is placed there, the browser and
         # every app outside.
         check(a["ok"] and a["data"]["url"] == f"http://{C.IP_PREFIX}{C.ENGINE_IP_FIRST}:8840",
@@ -544,7 +544,7 @@ async def scenario_guard():
 
     # Startup also removes the images a release left behind: a family's image
     # under another digest than images.json pins, a family no longer pinned,
-    # an engine built from other sources or never recorded, and the unpacked
+    # an engine built from other sources, another way or never recorded, and the unpacked
     # sources of other releases. The Host's and Postgres's images, the build
     # bases and everything pinned or recorded stay.
     with tempfile.TemporaryDirectory() as tmp:
@@ -562,15 +562,22 @@ async def scenario_guard():
             f"localhost/cseries-harness-opencode:{cur[:12]}": "c" * 64,
             f"localhost/cseries-harness-codex:{old[:12]}": "d" * 64,
             f"localhost/cseries-harness-kimi:{cur[:12]}": "f0" * 32,
+            f"localhost/cseries-harness-grok:{cur[:12]}": "a1" * 32,
         })
         st["image_labels"] = {"c" * 64: {C.LABEL + ".build": "opencode"},
                               "d" * 64: {C.LABEL + ".build": "codex"},
-                              "f0" * 32: {C.LABEL + ".build": "kimi"}}
+                              "f0" * 32: {C.LABEL + ".build": "kimi"},
+                              "a1" * 32: {C.LABEL + ".build": "grok"}}
         fake.write_state(w.state_file, st)
         os.makedirs(w.paths.state, exist_ok=True)
         with open(w.paths.built_json(), "w") as f:
-            json.dump({"opencode": {"image": "c" * 64, "src_sha256": cur, "built_at": "x"},
-                       "codex": {"image": "d" * 64, "src_sha256": old, "built_at": "x"}}, f)
+            # grok's record is from before builds ran as the build user (no
+            # build key): its image counts as not built, and goes.
+            json.dump({"opencode": {"image": "c" * 64, "src_sha256": cur, "built_at": "x",
+                                    "build_key": C.BUILD_KEY},
+                       "codex": {"image": "d" * 64, "src_sha256": old, "built_at": "x",
+                                 "build_key": C.BUILD_KEY},
+                       "grok": {"image": "a1" * 32, "src_sha256": cur, "built_at": "x"}}, f)
         w.rt.state.load()
         bd = w.paths.build_dir()
         for d in (cur, old):

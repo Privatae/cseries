@@ -40,7 +40,11 @@ mss==10.0.0
 # image to python:3.14-slim-bookworm while this stayed at 11.1.0, which
 # predates 3.14 — pip found no wheel, fell back to a source build, and the slim
 # image has no compilers, so `pip install` died and main was unshippable.
-Pillow==12.3.0
+# 13.0.0: fixes the JPEG decoder buffer overflow (CVE-2026-112403, CRITICAL)
+# and the rest of its security list; none of the APIs it removed or changed is
+# used here (attachment_parts and the screen captures open, convert, resize
+# and save).
+Pillow==13.0.0
 
 # Database (CEIGAS domain controller)
 # 0.31.0: cp314 wheels — see the Pillow note above.

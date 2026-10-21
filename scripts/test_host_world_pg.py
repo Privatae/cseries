@@ -133,6 +133,7 @@ SAFE_COLUMNS = {
     ("oversight_findings", "key"): "a finding's (machine, kind, fingerprint) id (v156:69)",
     ("pending_words", "thread_key"): "a thread's id",
     ("research_pages", "thread_key"): "a thread's id",
+    ("limit_hits", "thread_key"): "the conversation a limit stopped work in (v250), a thread's id",
     ("service_reach_grants", "signing_key_id"): "which key signed, not the key",
     ("ship_machine_keys", "encryption_key"): "a machine's public key, pinned (server/ships/seal.py:63-81)",
     ("ship_machine_keys", "machine_key"): "a machine's public key, pinned (server/ships/seal.py:63-81)",

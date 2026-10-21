@@ -1409,6 +1409,9 @@ async def _execute_meta_tool(name: str, args: dict, entity_id: int, pool,
     # read and the draft the user approves; never a direct write.
     elif name == "turn_type":
         return await _exec_turn_type(args, entity_id, pool, thread_id=thread_id)
+    # The person's limits (runtime/user_limits): a read and a card, never a write.
+    elif name == "limits":
+        return await _exec_limits(args, entity_id, pool)
     # The Host's end of turn. session.py decides
     # whether the call ends the turn and stores the signal on the turn row;
     # this runs the writes it drives, against the calling turn's own thread.
@@ -6509,7 +6512,7 @@ async def _exec_reachout(args: dict, *, turn_type: dict | None = None) -> dict:
             # The transport dispatches on action.type (server/reachout/
             # transports.py TRANSPORTS), so that is what makes it a runbook —
             # not the channel's kind label.
-            if _crow is not None and str(_act.get("type") or "") == "runbook":
+            if _crow is not None and str(_act.get("type") or "").strip() == "runbook":
                 # The type the fired task runs under, decided the same way
                 # _send_runbook decides it: the channel's, else its template's.
                 _act_type = str(_act.get("type_id") or "")
@@ -6533,6 +6536,43 @@ async def _exec_reachout(args: dict, *, turn_type: dict | None = None) -> dict:
             if ch in (None, ""):
                 return _refused("channel is required for op='add_trigger' "
                                   "(its name, or its id from op='list')")
+            # A trigger on a RUNBOOK channel runs a model turn each time it
+            # fires, with nobody watching: the person's card adds it
+            # (runtime/scheduled_approval). Other channels
+            # (email, a webhook, the log) send a notice and run no model.
+            # The channel is found exactly as add_trigger finds it
+            # (service._resolve_channel), so the one checked here is the one
+            # the trigger would be added to; an unknown channel falls through
+            # to add_trigger's own refusal.
+            try:
+                _rch = await _ro._resolve_channel(pool, int(eid), ch)
+            except _ro.ReachoutError:
+                _rch = None
+            _trow = (await pool.fetchrow(
+                "SELECT action FROM reachout_channels WHERE id=$1 AND entity_id=$2",
+                int(_rch["id"]), int(eid)) if _rch is not None else None)
+            _tact = _trow["action"] if _trow is not None else None
+            if isinstance(_tact, str):
+                try:
+                    _tact = json.loads(_tact)
+                except ValueError:
+                    _tact = {}
+            # Stripped as the dispatcher strips it (service.fire: TRANSPORTS
+            # is keyed on action.type.strip()), and validate_action stores the
+            # type unstripped, so " runbook" runs a runbook too.
+            if isinstance(_tact, dict) and str(_tact.get("type") or "").strip() == "runbook":
+                _label = (a.get("label") or "").strip()
+                _mkind = (a.get("match_kind") or "").strip()
+                if not _label or not _mkind:
+                    # add_trigger's own refusals, said now rather than on the
+                    # person's click.
+                    return _refused("label and match_kind are required for op='add_trigger'")
+                from mastercode.runtime import scheduled_approval as _sa
+                return await _sa.propose_trigger(
+                    pool, int(eid), channel=_rch.get("name") or ch,
+                    channel_id=int(_rch["id"]), label=_label, match_kind=_mkind,
+                    match_event=(a.get("match_event") or None),
+                    match_jsonb=(a.get("match_jsonb") or None))
             row = await _ro.add_trigger(
                 pool, int(eid), channel=ch, label=a.get("label") or "",
                 match_kind=a.get("match_kind") or "",
@@ -6633,7 +6673,7 @@ async def _exec_reachout_channel(args: dict, *, turn_type: dict | None = None) -
                 except ValueError:
                     _act = {}
             _act = _act if isinstance(_act, dict) else {}
-            if str(_act.get("type") or "") == "runbook":
+            if str(_act.get("type") or "").strip() == "runbook":
                 try:
                     _tpl_type = await pool.fetchval(
                         "SELECT type_id FROM entity_task_templates "
@@ -6853,6 +6893,21 @@ async def _exec_schedule_task(args: dict, *, session_id: str | None = None,
             # rather than accepted-and-dropped — it was validated here and then
             # silently not written to the payload, so the host would have been
             # told a limit was set that nothing anywhere would ever enforce.
+            # The job's own budget, in dollars, when the person named one
+            # ("spend up to $5 on this"): the runner stops the task once its
+            # priced runs reach it (offline_task_runner.budget_state). It can
+            # only narrow what runs; the person's limits still apply on top.
+            _budget = a.get("budget_usd")
+            if _budget is not None:
+                if op_tool:
+                    return _refused("budget_usd does not apply to op_tool: the op lane runs no "
+                        "model and spends nothing.")
+                try:
+                    _budget = round(float(_budget), 4)
+                except (TypeError, ValueError):
+                    return _refused("budget_usd must be a number of dollars")
+                if not _budget > 0:
+                    return _refused("budget_usd must be more than $0; leave it out for no budget")
             _max_runs = a.get("max_runs_per_day")
             if _max_runs is not None:
                 if op_tool:
@@ -6864,16 +6919,25 @@ async def _exec_schedule_task(args: dict, *, session_id: str | None = None,
                     return _refused("max_runs_per_day must be a whole number of model turns a day")
                 if _max_runs < 1:
                     return _refused("max_runs_per_day must be at least 1 model turn a day")
+                # The person's limit is the most a task may carry (runtime/
+                # user_limits, 2026-10-20): the Host can ask for less, and asks
+                # the person for more.
+                from mastercode.brain.offline_task_runner import person_turns_per_day
+                if not op_tool and _max_runs > person_turns_per_day():
+                    from mastercode.runtime import user_limits as _ul
+                    return _refused(
+                        f"max_runs_per_day {_max_runs} is above the person's limit of "
+                        f"{person_turns_per_day()} model turns a day for one scheduled task. "
+                        + _ul.hit_line("scheduled.turns_per_day"))
 
             if not op_tool:
                 # The budget is in TURNS. The steps lane runs ONE GOVERNED TURN
                 # PER STEP, so a fire of a 20-step task costs 20 turns, not 1 —
                 # counting fires here would wave through 20x what the ceiling
                 # says while every text the host reads calls them model turns.
-                from mastercode.brain.offline_task_runner import (
-                    DEFAULT_MAX_RUNS_PER_DAY,
-                )
-                _ceiling = _max_runs or DEFAULT_MAX_RUNS_PER_DAY
+                from mastercode.brain.offline_task_runner import person_turns_per_day
+                _ceiling = _max_runs or person_turns_per_day()
+                _limit = person_turns_per_day()
                 _per_fire = len([s for s in (t_steps or []) if str(s).strip()]) or 1
                 _step_note = (f" This task has {_per_fire} steps, and each step is a "
                               f"separate turn, so one fire costs {_per_fire} turns."
@@ -6884,8 +6948,12 @@ async def _exec_schedule_task(args: dict, *, session_id: str | None = None,
                 if _per_fire > _ceiling:
                     return _refused(f"One fire of this task runs {_per_fire} model turns (one per "
                         f"step), which is more than its ceiling of {_ceiling} turns a "
-                        f"day — so it would never run at all. Raise max_runs_per_day to "
-                        f"at least {_per_fire}, or use fewer steps.")
+                        f"day — so it would never run at all. "
+                        + (f"Raise max_runs_per_day to at least {_per_fire}, or use fewer steps."
+                           if _per_fire <= _limit else
+                           f"Use fewer steps, or ask the person to raise their limit "
+                           f"scheduled.turns_per_day (now {_limit}, the most max_runs_per_day "
+                           f"may be) with limits(op='propose')."))
                 if recurrence:
                     from mastercode.brain.entity_clock import _recurrence_seconds
                     if _recurrence_seconds(recurrence) is None:
@@ -6899,8 +6967,13 @@ async def _exec_schedule_task(args: dict, *, session_id: str | None = None,
                             f"{_implied} model turns, and this task's ceiling is "
                             f"{_ceiling} turns a day.{_step_note} Turns past the ceiling "
                             f"are skipped, so this schedule would stop partway through "
-                            f"every day. Either raise max_runs_per_day to at least "
-                            f"{_implied}, or space the schedule out to at least "
+                            f"every day. Either "
+                            + (f"raise max_runs_per_day to at least {_implied}"
+                               if _implied <= _limit else
+                               f"ask the person to raise their limit scheduled.turns_per_day "
+                               f"(now {_limit}, the most max_runs_per_day may be) to at least "
+                               f"{_implied} with limits(op='propose')")
+                            + f", or space the schedule out to at least "
                             f"every:{_slowest} seconds. If the work is identical each "
                             f"time, op_tool runs it with no model at all and has no "
                             f"ceiling.")
@@ -6944,6 +7017,8 @@ async def _exec_schedule_task(args: dict, *, session_id: str | None = None,
             # payload would suggest the op lane is capped, and it is not.
             if _max_runs is not None and not op_tool:
                 _body["max_runs_per_day"] = _max_runs
+            if _budget is not None:
+                _body["budget_usd"] = _budget
             # ── The task's turn type ─────
             # A typed turn schedules under its OWN type only, never another
             # and never none: a wake-up is the same chain of thought
@@ -7006,6 +7081,35 @@ async def _exec_schedule_task(args: dict, *, session_id: str | None = None,
                          + f"{_from_tpl}. When it fires "
                          + ("it will " if op_tool else "I'll pick up from here:\n")
                          + _plan)
+            _append = {
+                "event_id": _event_uuid,
+                "event_type": "scheduled_task",
+                "summary": title,
+                "event_at": fire_at,
+                "status": "scheduled",
+                "source": "entity",
+                "recurrence": recurrence,
+                "related_project_id": _origin_project,
+                "payload": _body,
+            }
+            # A RECURRING task that runs a model is the person's to start
+            # (runtime/scheduled_approval): validated as
+            # above, then a card instead of the row. Their click writes this
+            # same plan and row. One-time tasks and the op lane are set as before.
+            from mastercode.runtime import scheduled_approval as _sa
+            if _sa.needs_approval(recurrence=recurrence, op_tool=op_tool, op_args=op_args):
+                from mastercode.brain.offline_task_runner import person_turns_per_day
+                # An op that sets a model task on every fire is counted by the
+                # steps of the task it sets (scheduled_approval.model_turn).
+                _turn_steps = ((_sa.model_turn(op_tool, op_args) or {}).get("steps")
+                               if op_tool else t_steps)
+                return await _sa.propose(
+                    pool, int(eid), title=title, recurrence=recurrence, fire_at=fire_at,
+                    plan_msg=_plan_msg, append=_append, origin=_origin or None,
+                    turns_per_fire=len([x for x in (_turn_steps if isinstance(_turn_steps, list)
+                                                     else []) if str(x).strip()]) or 1,
+                    turns_per_day=(_max_runs or person_turns_per_day()),
+                    budget_usd=_budget)
             from mastercode.brain.offline_task_runner import post_to_origin_thread
             _posted = await post_to_origin_thread(
                 pool, int(eid), _origin or None, _plan_msg,
@@ -7019,17 +7123,7 @@ async def _exec_schedule_task(args: dict, *, session_id: str | None = None,
                     "the task was not set: its plan could not be written into this "
                     "thread, and a task runs only what the thread shows.")}
             from server.bridge.memory_handlers import handle_calendar_append
-            env = await handle_calendar_append({
-                "event_id": _event_uuid,
-                "event_type": "scheduled_task",
-                "summary": title,
-                "event_at": fire_at,
-                "status": "scheduled",
-                "source": "entity",
-                "recurrence": recurrence,
-                "related_project_id": _origin_project,
-                "payload": _body,
-            })
+            env = await handle_calendar_append(_append)
             if not env.get("ok"):
                 _why = env.get("error") or "schedule_task create failed"
                 # The plan is already in the thread; say plainly it was not set.
@@ -9233,20 +9327,13 @@ _REVIEW_OUTCOME_CHARS = 300
 _REVIEW_FILES_MAX = 60
 
 
-def _review_variant_line(vid: str, rq: dict, st: dict, diff: str, verdict, result: dict) -> dict:
+def _review_variant_line(vid: str, rq: dict, st: dict, diff: str, result: dict) -> dict:
     """One variant of a compare in review_session's default view: who ran it,
     where it stands, how big its diff is and which files it touched, and a
-    short outcome — the error, else the scoped reviewer's verdict line, else
-    the end of what the harness said."""
+    short outcome — the error, else the end of what the harness said."""
     from server.routes.review import _parse_diff_files
     files = sorted(_parse_diff_files(diff or "")) if diff else []
     outcome = st.get("error") or (result or {}).get("error")
-    if not outcome and isinstance(verdict, dict):
-        try:
-            from mastercode.runtime.diff_review import activity_line
-            outcome = activity_line(verdict)
-        except Exception:  # noqa: BLE001 — the line is a convenience
-            outcome = None
     if not outcome:
         tail = str((result or {}).get("transcript_tail") or "").strip()
         if tail:
@@ -9282,7 +9369,6 @@ def _review_session_view(res: dict, variant: str = "") -> dict:
     manifest = res.get("manifest") if isinstance(res.get("manifest"), dict) else {}
     per = res.get("per_harness") if isinstance(res.get("per_harness"), dict) else {}
     diffs = res.get("diffs") if isinstance(res.get("diffs"), dict) else {}
-    reviews = res.get("review") if isinstance(res.get("review"), dict) else {}
     results = manifest.get("results") if isinstance(manifest.get("results"), dict) else {}
     # The whole string each harness was sent (review._record_sent_prompt):
     # 17,217 chars on one project's run, so a seven-variant compare would
@@ -9302,7 +9388,7 @@ def _review_session_view(res: dict, variant: str = "") -> dict:
             "session_id": res.get("session_id"), "status": res.get("status"),
             "variant": vid, "requested": requested.get(vid),
             "state": per.get(vid), "diff": diffs.get(vid, ""),
-            "review": reviews.get(vid), "result": results.get(vid),
+            "result": results.get(vid),
             "sent_prompt": sent.get(vid),
             "entrypoint": (res.get("entrypoints") or {}).get(vid)}}
     prompt = manifest.get("prompt")
@@ -9316,7 +9402,7 @@ def _review_session_view(res: dict, variant: str = "") -> dict:
         "session_id": res.get("session_id"),
         "status": res.get("status"),
         "variants": [_review_variant_line(v, requested.get(v) or {}, per.get(v) or {},
-                                          diffs.get(v) or "", reviews.get(v), results.get(v) or {})
+                                          diffs.get(v) or "", results.get(v) or {})
                      for v in vids],
         "manifest": short,
         "picks": res.get("picks"),
@@ -10170,11 +10256,10 @@ async def _exec_model_routing(args: dict) -> dict:
                                      "model": e.get("model") or e.get("model_id"),
                                      "effort": e.get("effort")}
                 # VALIDATED: passed the admission bench per the
-                # platform-shipped list. Both surviving text roles carry the
-                # standing so the user can see it, but only `chat` loses
-                # anything to the gate — it is the one that calls tools, for
+                # platform-shipped list. The text role carries the standing so
+                # the user can see it; `chat` is the one that calls tools, for
                 # its own turns and for the agents it dispatches.
-                if _mv is not None and role in ("chat", "review"):
+                if _mv is not None and role == "chat":
                     try:
                         roles_state[role]["validated"] = _mv.is_validated(
                             e["provider"], e.get("model") or e.get("model_id"))
@@ -14829,7 +14914,8 @@ async def _exec_research(args: dict, *, entity_id=None, pool=None, project_id=No
     links: list[dict] = []
     via, route_note = None, None
     if query:
-        got = await web_research.research_links(query, pool=pool, entity_id=entity_id)
+        got = await web_research.research_links(query, pool=pool, entity_id=entity_id,
+                                                on_engine=True)
         if got.get("status") != "ok" and not urls:
             return got
         if got.get("status") == "ok":
@@ -14902,7 +14988,10 @@ async def _exec_web_search(args: dict, *, entity_id=None, pool=None, project_id=
         return _refused("query required")
     from mastercode.runtime import web_research
     keep = await _keep_open(pool, entity_id, project_id)
-    out = await web_research.search(query, system=web_research.QUICK_SYSTEM, keep_pages=keep)
+    # The Host's own search: when nothing routed can search, a connected coding
+    # engine may run it (web_research.search on_engine).
+    out = await web_research.search(query, system=web_research.QUICK_SYSTEM, keep_pages=keep,
+                                    on_engine=True)
     return await _keep_search(out, entity_id, pool, project_id if keep else None, "web_search")
 
 
@@ -16830,11 +16919,6 @@ async def _factory_build_task_finish(pool, task_id: int | None, out: dict) -> bo
                 # The pod's acceptance verdict (v124) rides the row on both
                 # outcomes — it is what the delivery says about proof.
                 "acceptance": res.get("acceptance"),
-                # The scoped reviewer's verdict rides the row the
-                # same way: entity_tasks.result is what the delivery record is
-                # built from (agent_dispatch), so a verdict left off this merge
-                # never reaches the user.
-                "review": res.get("review") if isinstance(res.get("review"), dict) else None,
                 # The desktop render check on a landed desktop design
                 # (desktop_render.landed_tree_verdict) — the row is what the
                 # delivery reads, so a verdict left off it never reaches the Host.
@@ -16908,6 +16992,29 @@ BUILD_MODEL_WAIT_S = 3600
 BUILD_MODEL_WAIT_MAX_S = 14400
 
 
+def _build_wait_cap_s() -> float | None:
+    """The person's limit `build.model_wait_max_minutes` (runtime/user_limits)
+    in seconds, BUILD_MODEL_WAIT_MAX_S by default; None for no limit."""
+    from mastercode.runtime import user_limits
+    return user_limits.person_seconds_or("build.model_wait_max_minutes",
+                                         BUILD_MODEL_WAIT_MAX_S, off=None)
+
+
+def _build_wait_s(requested_s) -> tuple[int, str | None]:
+    """(seconds to wait on one silent model call, None) or (0, refusal). A
+    build that names no wait gets BUILD_MODEL_WAIT_S, within the person's
+    limit. One that asks for more than the limit is refused with the limit
+    named rather than quietly cut, so the Host can ask the person."""
+    cap = _build_wait_cap_s()
+    if requested_s is None:
+        return int(min(BUILD_MODEL_WAIT_S, cap) if cap else BUILD_MODEL_WAIT_S), None
+    if cap is not None and requested_s > cap:
+        from mastercode.runtime import user_limits
+        return 0, (f"a wait of {int(requested_s) // 60} minutes is above the person's limit. "
+                   + user_limits.hit_line("build.model_wait_max_minutes"))
+    return int(requested_s), None
+
+
 async def _pool_build(*, entity_id: int, pool, project_id: int, prompt: str,
                       research_id: str | None, timeout_s: int,
                       harness: str | None = None, model: str | None = None,
@@ -16954,7 +17061,9 @@ async def _pool_build(*, entity_id: int, pool, project_id: int, prompt: str,
     project_dir = f"{_PROJECTS_ROOT}/{project_id}" + (f"/{module}" if module else "")
     from server.applications.target_contracts import checks_for
     _checks = checks_for(target)
-    max_minutes = max(1, min((timeout_s + 59) // 60, BUILD_MODEL_WAIT_MAX_S // 60))
+    _cap_s = _build_wait_cap_s()
+    max_minutes = max(1, (timeout_s + 59) // 60 if _cap_s is None
+                      else min((timeout_s + 59) // 60, int(_cap_s) // 60))
     try:
         from server.routes.review import run_single_harness_build
     except Exception as e:
@@ -17124,12 +17233,6 @@ async def _pool_build(*, entity_id: int, pool, project_id: int, prompt: str,
             # results} or None when nothing was listed. Reported as notes (the
             # delivery record carries it); it never decides the phase's status.
             "acceptance": _acc,
-            # The scoped reviewer's verdict on the landed diff (the
-            # diff_review envelope: {ran, ok, score, summary, blocking,
-            # non_blocking, ...}) or None when no verdict was produced. The
-            # delivery record states it; a blocking one holds an Auto-Approve
-            # merge (_review_blocks). It never decides the phase's status.
-            "review": out.get("review") if isinstance(out.get("review"), dict) else None,
             # Static render of the landed files, or None when there is no
             # entry document. It is NOT the app.
             "files_preview_url": files_preview_url,
@@ -17922,13 +18025,17 @@ async def _autoadvance_pick_next(*, pool, project_id: int, chain_depth: int,
     whatever is left. Also stops on the depth backstop and the halt flag.
     Fail-soft throughout — a problem here must never corrupt the phase that
     just succeeded."""
-    if chain_depth >= _AUTOADVANCE_MAX_CHAIN:
+    from mastercode.runtime import user_limits as _ul
+    if chain_depth >= _ul.person_or("build.chain_phases", _AUTOADVANCE_MAX_CHAIN):
         log.warning("auto-advance: chain depth %d reached on project %d — stopping",
                     chain_depth, project_id)
+        from server import brain_service as _bs
+        await _ul.record_hit(pool, _bs._entity_id, "build.chain_phases",
+                             f"project {project_id}'s phases advancing by themselves")
         await _chain_stop(pool, finished_task_id, (
-            f"Auto-advance stopped after {chain_depth} consecutive phases (the "
-            "runaway backstop). Remaining phases have not been abandoned; whether "
-            "to go on is the user's call — put it in the question box (escalate)."))
+            f"Auto-advance stopped after {chain_depth} consecutive phases. Remaining "
+            "phases have not been abandoned; whether to go on is the user's call — put "
+            "it in the question box (escalate). " + _ul.hit_line("build.chain_phases")))
         return []
     try:
         # The brake, checked at the phase boundary — the ONE point where this
@@ -18318,8 +18425,10 @@ async def phase_repair_refusal(pool, entity_id: int, project_id: int, prow) -> d
     reviews, fails = _n("reviews"), kinds.count("work")
     platform_fails = kinds.count("platform")
     landed = reviews + fails
-    if landed < 1 + PHASE_AUTO_REPAIRS:
-        if platform_fails >= 1 + PHASE_AUTO_REPAIRS:
+    from mastercode.runtime import user_limits as _ul
+    _repairs = _ul.person_or("build.auto_repairs", PHASE_AUTO_REPAIRS)
+    if landed < 1 + _repairs:
+        if platform_fails >= 1 + _repairs:
             # The platform kept failing this phase. That is not the work's
             # failure and spends none of its repairs, but a woken turn must
             # not go on rebuilding into it unattended either.
@@ -18337,14 +18446,17 @@ async def phase_repair_refusal(pool, entity_id: int, project_id: int, prow) -> d
         return None
     log.info("phase repairs: phase %s landed without completing %d times — the automatic "
              "repairs are spent; refused in a woken turn", prow["id"], landed)
+    await _ul.record_hit(pool, entity_id, "build.auto_repairs",
+                         f"a repair of phase {prow['phase_number']} of project {project_id}")
     return {"status": "error", "reason": "repairs_spent", "result": (
         f"phase {prow['phase_number']} ('{prow['title']}') has landed without completing "
         f"{landed} times ({reviews} in review, {fails} failed), and this turn was started "
-        f"by the platform with nobody in it: the phase's {PHASE_AUTO_REPAIRS} automatic "
+        f"by the platform with nobody in it: the phase's {_repairs} automatic "
         "repairs are spent. Do NOT build it again from here. Put it in the question box "
         "(escalate), with what blocked it each time, and these options: build it once "
         "more; approve it as it is (Approve on the phase in the Workbench); or leave it. "
-        "When the answer comes back into the turn, act on it.")}
+        "When the answer comes back into the turn, act on it. "
+        + _ul.hit_line("build.auto_repairs"))}
 
 
 async def _phase_retry_pick(*, pool, entity_id: int, project_id: int,
@@ -18990,16 +19102,14 @@ async def _run_phase_build(*, entity_id: int, pool, session_id: str | None,
 
     ok = isinstance(out, dict) and out.get("status") == "ok"
     # The phase's outcome is the build's: landed (complete) or the harness
-    # failed (failed). The listed checks and the diff reviewer are reported
+    # failed (failed). The listed checks are reported
     # as information — the build PR body and the delivery state them — and
     # never change the outcome. A `continue` has no phase.
     _acc_env = None
-    _rev_env = None
     if isinstance(out, dict):
         _r = out.get("result")
         _acc_env = (_r.get("acceptance") if isinstance(_r, dict) else None) \
             or out.get("acceptance")
-        _rev_env = _r.get("review") if isinstance(_r, dict) else None
     # A build that landed a DESKTOP design is loaded in the browser before it
     # counts (desktop_render.landed_tree_verdict) — behind the user's
     # browser-proof switch; None when that is off or nothing desktop-shaped
@@ -19020,8 +19130,7 @@ async def _run_phase_build(*, entity_id: int, pool, session_id: str | None,
     _checks = None
     if phase_id is not None:
         phase_final = _PHASE_DONE if ok else _PHASE_FAILED
-        _verdicts = [_pipeline.harness_check_verdict(_acc_env, acceptance_declared),
-                     _pipeline.diff_review_verdict(_rev_env)]
+        _verdicts = [_pipeline.harness_check_verdict(_acc_env, acceptance_declared)]
         if _render_verdict is not None:
             _verdicts.append(_render_verdict)
             if not any(r.get("provider") == _render_verdict["provider"]
@@ -19227,13 +19336,6 @@ async def _run_phase_build(*, entity_id: int, pool, session_id: str | None,
     if ok:
         _label = f"build: {intent[:80]}"
         _sync = None
-        # A BLOCKED landing is held before its commit reaches the build PR,
-        # so a parallel landing cannot merge that PR in between; pr=None
-        # means "the open build PR" and is filled in after the sync.
-        _hold_blocked = _review_blocks(_pipe, _pipeline.diff_review_verdict(_rev_env))
-        _hold_written = True
-        if _hold_blocked:
-            _hold_written = await _set_review_hold(pool, project_id, task_id, None)
         try:
             _label, _sync = await _save_point(_checks)
             if isinstance(out.get("result"), dict):
@@ -19293,26 +19395,14 @@ async def _run_phase_build(*, entity_id: int, pool, session_id: str | None,
                     _repair_origin = _orig["repair"]
             except Exception as e:
                 log.warning("build origin read failed (non-fatal): %s", e)
-        # A change the diff reviewer BLOCKED is the user's to decide
-        # (diff_review: "the human decides"): auto-deliver once merged and
-        # shipped a blocked follow-up diff. The block is already
-        # committed to the rolling PR, so holding THIS delivery is not enough:
-        # the next one would merge it. The hold is recorded on the project and
-        # stands until that PR is merged or closed by the user.
-        # Counted the way pipeline.decide counts it: only when the project's
-        # pipeline lists the diff review as a required check (the default).
-        if _hold_blocked and (_sync or {}).get("pr") is not None:
-            _hold_written = (await _set_review_hold(
-                pool, project_id, task_id, _sync["pr"])) and _hold_written
+        # A review hold recorded when a diff reviewer could still block a
+        # landing stands until the person merges the PR that carries it
+        # (closing one moves the hold to the next PR): the blocked change is
+        # already on the rolling PR, and delivering now would ship it without
+        # them. No new hold is ever made (the reviewer is gone,
+        # pipeline.RETIRED_CHECKS).
         if _auto_deliver:
             _hold = await _active_review_hold(pool, project_id)
-            if _hold is None and _hold_blocked:
-                # THIS landing was blocked: it holds whatever the stored hold
-                # says (unwritten, or a stale one cleared just now).
-                _hold = {"task_id": task_id, "pr": (_sync or {}).get("pr")}
-                if _hold_written:
-                    _hold_written = await _set_review_hold(
-                        pool, project_id, task_id, (_sync or {}).get("pr"))
             if _hold is not None:
                 _auto_deliver = False
                 _held = _review_hold_reason(_hold)
@@ -20079,8 +20169,14 @@ async def _exec_build(args: dict, entity_id: int, pool, session_id: str | None,
         # `timeout` bounds ONE model call that never answers (nothing
         # arriving: no output, no CPU, no data), never the build — a build
         # has no total time limit (BUILD_MODEL_WAIT_S).
-        timeout_s = max(60, min(int(a.get("timeout") or BUILD_MODEL_WAIT_S),
-                                BUILD_MODEL_WAIT_MAX_S))
+        try:
+            timeout_s, _wait_refusal = _build_wait_s(
+                int(a["timeout"]) if a.get("timeout") else None)
+        except (TypeError, ValueError):
+            return _refused("timeout must be a whole number of seconds")
+        if _wait_refusal:
+            return _refused(_wait_refusal)
+        timeout_s = max(60, timeout_s)
 
         started: list = []
         taken: list = []
@@ -20212,8 +20308,14 @@ async def _exec_build(args: dict, entity_id: int, pool, session_id: str | None,
         # `timeout` bounds ONE model call that never answers (nothing
         # arriving: no output, no CPU, no data), never the build — a build
         # has no total time limit (BUILD_MODEL_WAIT_S).
-        timeout_s = max(60, min(int(a.get("timeout") or BUILD_MODEL_WAIT_S),
-                                BUILD_MODEL_WAIT_MAX_S))
+        try:
+            timeout_s, _wait_refusal = _build_wait_s(
+                int(a["timeout"]) if a.get("timeout") else None)
+        except (TypeError, ValueError):
+            return _refused("timeout must be a whole number of seconds")
+        if _wait_refusal:
+            return _refused(_wait_refusal)
+        timeout_s = max(60, timeout_s)
         _links = await _links_out_refusal(
             pool, project_id, module=(str(a.get("module") or "").strip().lower() or None))
         if _links:
@@ -20298,13 +20400,16 @@ async def _exec_build_run(a: dict, *, entity_id: int, pool, session_id: str | No
     if not prompt:
         return _refused("run requires a `prompt` — the task to build.")
     try:
-        max_minutes = int(a.get("max_minutes") or BUILD_MODEL_WAIT_S // 60)
+        _req_s = int(a["max_minutes"]) * 60 if a.get("max_minutes") else None
     except (TypeError, ValueError):
         return _refused("max_minutes must be an integer")
-    # Same bound as a phase build's `timeout` (BUILD_MODEL_WAIT_MAX_S): it is
-    # the longest one model call may go with nothing arriving, not a limit on
-    # how long the run may take.
-    max_minutes = max(1, min(max_minutes, BUILD_MODEL_WAIT_MAX_S // 60))
+    # Same bound as a phase build's `timeout` (the person's limit
+    # build.model_wait_max_minutes): it is the longest one model call may go
+    # with nothing arriving, not a limit on how long the run may take.
+    _wait_s, _wait_refusal = _build_wait_s(_req_s)
+    if _wait_refusal:
+        return _refused(_wait_refusal)
+    max_minutes = max(1, _wait_s // 60)
     try:
         acceptance = _normalize_acceptance(a.get("acceptance"))
     except ValueError as e:
@@ -21362,6 +21467,36 @@ async def _exec_turn_type(args: dict, entity_id: int, pool, *, thread_id=None) -
     return _refused("op must be list, show, draft, change, retire or root")
 
 
+async def _exec_limits(args: dict, entity_id: int, pool) -> dict:
+    """The person's limits (runtime/user_limits). status reads every limit:
+    value in force, default, who set it, what happens when it binds and when
+    it last did. propose files ONE card locked to the person; the limit
+    changes only on their click (tickets.decide_ticket_service). There is no
+    op that writes a limit."""
+    from mastercode.runtime import user_limits as _ul
+    a = args or {}
+    op = str(a.get("op") or "status").strip().lower()
+    try:
+        if op == "status":
+            bp = await _ul.read_bp(pool, entity_id)
+            return {"status": "ok", "result": {
+                "limits": _ul.status(bp, await _ul.last_hits(pool, entity_id)),
+                "note": ("These are the person's settings. To change one, propose it with "
+                         "the value you recommend and why; their click decides.")}}
+        if op == "propose":
+            name = str(a.get("name") or "").strip()
+            if a.get("to_default"):
+                raw = None
+            elif a.get("value") is None:
+                return _refused("propose needs value (0 = no limit) or to_default=true")
+            else:
+                raw = a.get("value")
+            return await _ul.propose(pool, entity_id, name, raw, str(a.get("reason") or ""))
+    except Exception as e:  # noqa: BLE001
+        return _refused_if_caller(e, f"limits failed: {getattr(e, 'detail', None) or e}")
+    return _refused("op must be status or propose")
+
+
 async def _exec_pipeline(args: dict, entity_id: int, pool) -> dict:
     """The project's build pipeline, from the host's side. Two ops:
 
@@ -21821,49 +21956,6 @@ async def _exec_create_project(args: dict, entity_id: int, pool,
 # ── list_projects implementation ─────────────────────
 
 
-# ── The review hold (projects.config.review_hold) ─────────────────────────
-# Set when the diff reviewer blocks a landing; read by auto-deliver before any
-# merge or install. It names the rolling PR the blocked commit went into and
-# stands until the user MERGES a PR carrying it — that is the user accepting
-# the change. Closing the PR drops nothing: the commit stays on host/build and
-# rides the next PR, so the hold moves to that one.
-
-def _review_blocks(pipe: dict, verdict: dict | None) -> bool:
-    """Does this landing's diff review hold delivery? Counted the way
-    pipeline.decide counts it: only when the project's pipeline lists the
-    diff review as a required check (the default) and it ran and failed."""
-    required = any(r.get("provider") == "diff-review" and r.get("required", True)
-                   for r in ((pipe or {}).get("check") or []))
-    return bool(required and verdict and verdict.get("ran") and verdict.get("ok") is False)
-
-
-async def _set_review_hold(pool, project_id: int, task_id, pr) -> bool:
-    """Record the hold; True when it is on the row. The NEWEST block is the
-    one recorded, so a leftover hold (on a PR the user has since merged) can
-    never stand in for a new one:
-      pr None (before the push)         -> this landing, PR to be filled in
-      pr given, stored hold has no PR   -> the stored hold gains the PR
-      pr given, stored hold on another  -> replaced by this landing
-      pr given, stored hold on this PR  -> kept"""
-    try:
-        await pool.execute(
-            "UPDATE projects SET config = jsonb_set(COALESCE(config,'{}'::jsonb), "
-            "'{review_hold}', CASE "
-            "WHEN config->'review_hold' IS NULL OR $3::int IS NULL THEN $2::jsonb "
-            "WHEN COALESCE(config->'review_hold'->'pr', 'null'::jsonb) = 'null'::jsonb "
-            "THEN config->'review_hold' || jsonb_build_object('pr', $3::int) "
-            "ELSE $2::jsonb END, true) "
-            "WHERE id=$1 AND (config->'review_hold' IS NULL OR $3::int IS NULL "
-            "OR COALESCE(config->'review_hold'->'pr', 'null'::jsonb) = 'null'::jsonb "
-            "OR (config->'review_hold'->>'pr')::int <> $3::int)",
-            project_id, json.dumps({"task_id": task_id, "pr": pr}),
-            None if pr is None else int(pr))
-        return True
-    except Exception as e:  # noqa: BLE001 — the caller holds this landing anyway
-        log.warning("review hold write failed for project %s: %s", project_id, e)
-        return False
-
-
 async def _ci_delivery_budget(pool, project_id: int) -> int:
     """How long an auto-deliver of this project may wait on the forge's CI
     (the longest gitea-actions row's wait_budget_s), or 0 when it never
@@ -22014,6 +22106,15 @@ async def _ci_merge_gate(pool, project_id: int, *, wait: bool = False,
                     "yourself"), sha
     return None, sha
 
+
+# ── The review hold (projects.config.review_hold) ─────────────────────────
+# Set, until 2026-10-20, when the diff reviewer blocked a landing; no code sets
+# one any more (the reviewer is gone, pipeline.RETIRED_CHECKS). A hold already
+# recorded is still read by auto-deliver and the install door before any merge
+# or install. It names the rolling PR the blocked commit went into and stands
+# until the user MERGES a PR carrying it — that is the user accepting the
+# change. Closing the PR drops nothing: the commit stays on host/build and
+# rides the next PR, so the hold moves to that one.
 
 async def _active_review_hold(pool, project_id: int) -> dict | None:
     """The standing hold, or None. Cleared here once its PR is MERGED (the

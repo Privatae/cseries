@@ -329,12 +329,32 @@ def _coerce(value, pgtype: str, n: int):
     return str(value)
 
 
+def max_timeout_s() -> float | None:
+    """The person's limit `host_data.query_max_minutes` (runtime/user_limits)
+    in seconds, MAX_TIMEOUT_S by default; None for no limit."""
+    from mastercode.runtime import user_limits
+    return user_limits.person_seconds_or("host_data.query_max_minutes", float(MAX_TIMEOUT_S))
+
+
 def _clamp_timeout(timeout_s) -> float:
     try:
         t = float(timeout_s) if timeout_s is not None else DEFAULT_TIMEOUT_S
     except (TypeError, ValueError):
         t = DEFAULT_TIMEOUT_S
-    return max(1.0, min(t, float(MAX_TIMEOUT_S)))
+    cap = max_timeout_s()
+    return max(1.0, t if cap is None else min(t, cap))
+
+
+def _timeout_text(timeout: float) -> str:
+    """What a cancelled statement says: how to give it longer, and, when it
+    already had all the person's limit allows, that limit by name."""
+    cap = max_timeout_s()
+    if cap is not None and timeout >= cap:
+        from mastercode.runtime import user_limits
+        return (f"Cancelled after {timeout:g}s and rolled back. "
+                + user_limits.hit_line("host_data.query_max_minutes"))
+    return (f"Cancelled after {timeout:g}s and rolled back. Pass timeout_s"
+            + (f" (up to {cap:g})" if cap is not None else "") + " for a long job.")
 
 
 # Everything in `world` that must say what it is for, and does not.
@@ -471,8 +491,7 @@ async def run_sql(sql, params=None, timeout_s=None, *, pool=None, dsn=None) -> d
                 "result": str(e), "snapshot": snapshot}
     except asyncio.TimeoutError:
         return {"status": "error", "reason": "timeout", "rolled_back": True,
-                "result": f"Cancelled after {timeout:g}s and rolled back. Pass timeout_s (up to "
-                          f"{MAX_TIMEOUT_S}) for a long job.", "snapshot": snapshot}
+                "result": _timeout_text(timeout), "snapshot": snapshot}
     except asyncpg.PostgresError as e:
         if full and getattr(e, "sqlstate", None) == "25006":
             free, size = room

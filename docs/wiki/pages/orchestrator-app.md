@@ -28,7 +28,7 @@ Below the checklist, **What answers when** says which provider and model handles
 
 ## What is in Advanced mode?
 
-- **Routing**: two text jobs, each with a provider, model, optional backup and, where the provider accepts one, reasoning effort. **Host model** talks, plans, researches, runs agents and keeps what it learns in memory as it answers; **Review** judges a build that just landed.
+- **Routing**: the **Host model**, with a provider, model, optional backup and, where the provider accepts one, reasoning effort. It talks, plans, researches, runs agents, reviews what its builds changed and keeps what it learns in memory as it answers. For a second opinion on a build, ask your Host to have a coding engine review it.
 - **Coding Engines**: Claude Code, Codex, Cursor, Grok, Kimi Code and Antigravity CLI each run on their own vendor's key or sign-in, and show as not connected without it; none is ever substituted for another. opencode, which has no vendor of its own, runs on your OpenRouter key. A build that names no engine runs on the one you tick as Default; with several connected and none ticked, it stops and asks.
 - **Multi-Agent Coding**: protocol files, plain instructions naming which engines run, in turn or at once, and what to do on pass or fail. Your Host can write one; you can edit, check, export and import them. A protocol cannot carry a credential.
 - **Embedding**: switching models never re-embeds or deletes what is stored, but entries embedded by the old model are not found by the new one until embedded again.

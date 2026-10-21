@@ -90,6 +90,7 @@ for fn in sorted(os.listdir(lib)):
     if fn.endswith(".py"):
         add("root/usr/local/lib/cseries-runtime/cseries_runtime/" + fn, os.path.join(lib, fn))
 add("root/usr/local/sbin/cseries-runtime", os.path.join(rt, "sbin/cseries-runtime"))
+add("root/usr/local/sbin/cseries-build-user", os.path.join(rt, "sbin/cseries-build-user"))
 for fn in sorted(os.listdir(os.path.join(rt, "systemd"))):
     add("root/etc/systemd/system/" + fn, os.path.join(rt, "systemd", fn))
 add("root/etc/containers/systemd/cseries-apps.network", os.path.join(rt, "containers/cseries-apps.network"))

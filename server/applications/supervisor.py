@@ -852,6 +852,15 @@ class Supervisor:
         if not running.is_alive():
             return
         proc = running.process
+        if proc is None:
+            # A pod-backed app (PodRuntime): no child in this container to
+            # signal; the app-runtime lane holds it, so it is released there,
+            # as release() does. The uninstall route and shutdown_all come
+            # through here for every running app.
+            running.stopping = True
+            from server.applications import harness_backend as _hb
+            await _hb.app_release(running.app_id)
+            return
         # Claim the exit BEFORE signalling. _reap is already awaiting this
         # process on its own task, so the window between the signal and the
         # flag would be enough for it to read the death as a crash.

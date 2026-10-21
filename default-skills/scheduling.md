@@ -1,7 +1,7 @@
 ---
 name: scheduling
 description: The host's own clock — how it schedules offline work (a governed model turn, or one deterministic operation with no model), templates that stamp tasks out, reads what a standing task actually did, manages its task queue, and delivers the weekly state-of-the-host changelog.
-allowed-tools: schedule_task, task_template, entity_tasks, calendar_read, host_changelog, browser_agent, system.start_app, system.stop_app, inbox_send
+allowed-tools: schedule_task, task_template, entity_tasks, calendar_read, host_changelog, browser_agent, system.start_app, system.stop_app, inbox_send, limits
 ---
 
 # Scheduling SOP
@@ -58,6 +58,7 @@ match wakes on any event of that kind. The events and their keys:
 | app_proven | app_id, project_id, task_id | an app's post-ship proof passed |
 | app_proof_failed | app_id, project_id, task_id, verdict | an app's post-ship proof did not pass |
 | site_published | project_id, repo, slug, hostname | a site was published |
+| limit_changed | name | the person changed one of their limits (skill 'limits') |
 
 A ticket that EXPIRES unanswered (an op card whose run lapsed or was
 replaced) was not decided, so `ticket_decided` does not fire for it: a task
@@ -116,9 +117,20 @@ re-interpreted at fire time — state them completely. `template_id` stamps out
 a task_template: its prompt + steps render into the payload, and its
 recurrence is inherited unless you pass your own.
 
+**A recurring task that runs a model is the person's to start.** On the
+prompt lane, `recurrence` makes the create put a card up instead of setting
+the task: it says what will run, how often, and what it may spend. Only their
+"Let it run" sets it, with its plan in the thread; you cannot decide the card.
+Say what it is for and what it costs, then end the turn. A one-time task (a
+follow-up in this conversation, a check in ten minutes) and the op lane (no
+model, nothing spent) are set at once, as before.
+
 **The prompt lane has a daily ceiling; the op lane does not.** A prompt task
-may run at most `max_runs_per_day` MODEL TURNS in a rolling 24 hours — 200 by
-default, which is more than twice what a quarter-hourly schedule needs.
+may run at most `max_runs_per_day` MODEL TURNS in a rolling 24 hours. The
+most any task may carry is the person's limit `scheduled.turns_per_day` (200
+unless they changed it, more than twice what a quarter-hourly schedule needs;
+skill 'limits'). You can set a task lower; for more, ask the person with
+`limits op='propose'`.
 
 The budget counts TURNS, not fires, and the difference matters the moment you
 pass `steps`: **each step is its own governed turn**, so one fire of a 20-step
@@ -129,12 +141,21 @@ At the ceiling the fire is skipped, the run history records why in plain
 English, and the task re-arms on its own recurrence — never faster. A skip is
 not a failure and is not counted as one. Creating a prompt task whose
 recurrence would spend more turns a day than its ceiling is REFUSED at create
-time with both numbers in the error: raise `max_runs_per_day` if the user
-genuinely wants that many turns, use fewer steps, or space the recurrence out.
+time with both numbers in the error: raise `max_runs_per_day` (up to the
+person's limit) if the user genuinely wants that many turns, use fewer steps,
+or space the recurrence out.
 If the work is identical every time the answer is none of those — it is
 `op_tool`, which runs no model and has no ceiling at all. Passing
 `max_runs_per_day` alongside `op_tool` is refused rather than ignored, for the
 same reason.
+
+**Work while the person is away.** When they hand you a job to carry on
+without them ("keep working on this tonight, spend up to $5"), schedule it as
+ONE task with `steps` (each step one turn) and `budget_usd` set to what they
+named. Say before you start: how many turns it will run, the budget, and that
+each run's cost comes back in the thread. Never set a budget they did not
+name, and never set one higher than they said. A daily look back over your
+own work is a different job, with its own skill ('housekeeping').
 
 ## calendar_read — guidance
 
@@ -143,6 +164,12 @@ to inspect a single event. `op='runs'` answers whether the host's standing
 work is actually working — for a recurring task, this is the only place the
 answer lives, and you should check it before telling the user something is
 running.
+
+Each run carries `cost_usd`: what its turns cost, the same estimate each turn
+row is stamped with, and the run's report in the thread says it. It is null
+when nothing priced the run (an op, or a model with no per-token price),
+never 0 for unknown. When the person asks what their standing work costs,
+read it here and say the figure; never estimate it.
 
 The Calendar app shows the user's events and your scheduled tasks on one
 calendar. To put one event in front of the user, `open_app` with app_id
@@ -174,7 +201,8 @@ the user can stop it from the Agents app.
 - **schedule_task** `template_id`: create (optional): a task_template id to stamp out — its prompt + steps render into the payload; its recurrence is inherited unless you pass your own.
 - **host_changelog** `deliver`: Write the changelog to the user's Inbox (default true). false = return the rendered changelog without delivering it.
 - **schedule_task** `recurrence`: For create (optional): 'hourly' | 'daily' | 'weekly' | 'monthly' | 'every:<seconds>'. Omit for a one-time task.
-- **schedule_task** `max_runs_per_day`: For create on the PROMPT/STEPS lane (optional): the most model turns this one task may run in a rolling 24 hours. Defaults to 200. A recurrence that would fire more often than this is refused at create time, naming both numbers. The op_tool lane runs no model and has no ceiling.
+- **schedule_task** `max_runs_per_day`: For create on the PROMPT/STEPS lane (optional): the most model turns this one task may run in a rolling 24 hours. Defaults to, and may not exceed, the person's limit scheduled.turns_per_day (200 unless they changed it). A recurrence that would fire more often than this is refused at create time, naming both numbers. The op_tool lane runs no model and has no ceiling.
+- **schedule_task** `budget_usd`: For create on the PROMPT/STEPS lane (optional): the total the person said this job may spend, in dollars. Before each fire and between steps the runner adds up what the task's runs cost; once that reaches the budget the task stops for good and says so in the thread. Only priced runs count: on a model with no per-token price nothing adds up, so say that when you set one. It narrows what runs; the person's limits still apply on top.
 
 ## The thread is your chain of thought
 

@@ -1,5 +1,5 @@
 """A build's report says what auto-deliver actually did, and auto-deliver
-never merges or ships a change the diff reviewer blocked.
+never merges or ships a change a standing review hold covers.
 
 The reviewer BLOCKED a follow-up
 build ("the diff touches an entirely different application"), auto-deliver
@@ -7,6 +7,11 @@ merged and shipped it anyway (a follow-up has no phase to hold in 'review'),
 and the report — built from the pre-ship app snapshot, with no auto-deliver
 fields on the record — told the user the app was not installed and "the phase
 stays in review".
+
+The diff reviewer is gone (the Host reviews in its own turn),
+so nothing records a new hold. A hold already stored on a project
+(projects.config.review_hold) is still honoured by auto-deliver and the install
+door until the person merges its PR; that is what the second half pins.
 
 AST/source checks plus the pure helper, so this runs outside the image.
 """
@@ -67,16 +72,17 @@ check("no proof promised when none was started",
       "proving" not in f and "no proof that it runs was started (installed id unknown" in f, f)
 
 tools = open(os.path.join(ROOT, "brain/mastercode/runtime/tools.py")).read()
-g = tools.index("if _hold_blocked and (_sync or {}).get(\"pr\") is not None:")
+# No code records a new hold: the reviewer and its writer are gone.
+check("no new review hold is ever recorded (the reviewer and its writer are gone)",
+      "_set_review_hold" not in tools and "_review_blocks" not in tools
+      and "diff_review_verdict" not in tools and "'{review_hold}', CASE" not in tools)
+g = tools.index("_hold = await _active_review_hold(pool, project_id)\n            if _hold is not None:\n"
+                "                _auto_deliver = False")
 m = tools.index("from server.routes.project_git import merge_project_pr", g)
 gate = tools[g:m]
-pre = tools.index("_hold_blocked = _review_blocks(_pipe, _pipeline.diff_review_verdict(_rev_env))")
-push = tools.index("_label, _sync = await _save_point(_checks)", pre)
-check("a blocked landing is held BEFORE its commit is pushed to the build PR",
-      "_hold_written = await _set_review_hold(pool, project_id, task_id, None)" in tools[pre:push])
 # A phase never pushes an early save point or waits for the forge; the forge's
 # CI is asked only by _ci_merge_gate before an automatic merge/install.
-check("a phase has no early save point or forge wait (the hold has one push to precede)",
+check("a phase has no early save point or forge wait",
       "# FORGE-SIDE CHECKS" not in tools and "_early = await _save_point(" not in tools
       and "_forge_fail_text" not in tools)
 check("...while the automatic merge still asks the forge's CI first (waiting), pinned to its head",
@@ -84,17 +90,17 @@ check("...while the automatic merge still asks the forge's CI first (waiting), p
       and "pool, project_id, wait=True, on_wait=_activity)" in tools
       and tools.index("_ci_held, _ci_head = await _ci_merge_gate(")
       < tools.index("await merge_project_pr(pool, project_id, expect_head=_ci_head)"))
-gate = tools[tools.index("if _hold_blocked and (_sync or {}).get(\"pr\") is not None:"):m]
-check("every auto-deliver consults the standing hold BEFORE the merge, and a failed write still holds",
-      "_hold = await _active_review_hold(pool, project_id)" in gate and "_auto_deliver = False" in gate
-      and "if _hold is None and _hold_blocked:" in gate
-      and 'out["result"]["auto_merge"] = {"merged": False, "held": _held}' in gate)
+check("every auto-deliver consults a STORED hold BEFORE the merge, and states it on the record",
+      "_auto_deliver = False" in gate and "_held = _review_hold_reason(_hold)" in gate
+      and 'out["result"]["auto_merge"] = {"merged": False, "held": _held}' in gate
+      and 'out["result"]["auto_ship"] = {"shipped": False, "reason": _held}' in gate
+      and tools.rindex("if _auto_deliver:", 0, g) > tools.rindex("_save_point(_checks)", 0, g))
 ship = tools[tools.index("async def _exec_ship_project_app"):tools.index("async def _exec_artifact")]
 check("the host's ship tool refuses while a hold stands",
       "_hold = await _active_review_hold(pool, project_id)" in ship
       and ship.index("_active_review_hold") < ship.index("await ship_project_service("))
 
-# ── the hold itself, run against an in-memory project row and a fake gitea ──
+# ── a stored hold, run against an in-memory project row and a fake gitea ──
 import asyncio  # noqa: E402
 import contextlib  # noqa: E402
 import json  # noqa: E402
@@ -103,7 +109,7 @@ import types  # noqa: E402
 
 ttree = ast.parse(tools)
 hs = [n for n in ttree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
-      and n.name in ("_set_review_hold", "_active_review_hold", "_review_hold_reason", "_review_blocks")]
+      and n.name in ("_active_review_hold", "_review_hold_reason")]
 tns = {"json": json, "log": logging.getLogger("t")}
 exec(compile(ast.Module(body=hs, type_ignores=[]), "tools.py", "exec"), tns)
 
@@ -161,22 +167,15 @@ sys.modules["server.routes.project_forge"] = types.SimpleNamespace(
 
 
 class Pool:
-    def __init__(self):
+    def __init__(self, hold=None):
         self.config, self.fail = {}, False
+        if hold is not None:
+            self.config["review_hold"] = hold
 
     async def execute(self, sql, pid, *a):
         if self.fail:
             raise RuntimeError("db down")
-        if "jsonb_set(COALESCE" in sql:          # _set_review_hold
-            new, pr = json.loads(a[0]), a[1]
-            cur = self.config.get("review_hold")
-            if cur is None or pr is None:
-                self.config["review_hold"] = new
-            elif cur.get("pr") is None:
-                cur["pr"] = pr
-            elif cur.get("pr") != pr:
-                self.config["review_hold"] = new
-        elif "- 'review_hold'" in sql:
+        if "- 'review_hold'" in sql:
             self.config.pop("review_hold", None)
         elif "jsonb_set(config" in sql:
             self.config["review_hold"] = json.loads(a[0])
@@ -195,14 +194,11 @@ class Pool:
 
 
 async def story():
-    pool, out = Pool(), []
+    # A hold stored while the reviewer could still block, on open pull request 1.
+    PRS.clear()
+    pool, out = Pool({"task_id": 9404, "pr": 1}), []
     PRS[1] = {"number": 1, "state": "open", "merged": False, "head": {"ref": "host/build"}}
-    await tns["_set_review_hold"](pool, 9239, 9404, None)                # before the push
-    await tns["_set_review_hold"](pool, 9239, 9404, 1)                   # PR known after it
     out.append(await tns["_active_review_hold"](pool, 9239))            # held on #1
-    await tns["_set_review_hold"](pool, 9239, 407, None)               # a later block, same PR
-    await tns["_set_review_hold"](pool, 9239, 407, 1)
-    out.append(dict(pool.config["review_hold"]))                        # names the newest
     PRS[1].update(state="closed")                                       # closed, NOT merged
     PRS[2] = {"number": 2, "state": "open", "merged": False, "head": {"ref": "host/build"}}
     out.append(await tns["_active_review_hold"](pool, 9239))            # moves to #2
@@ -211,19 +207,37 @@ async def story():
     out.append(pool.config.get("review_hold"))
     return out
 
-held1, kept, moved, after_merge, cfg = asyncio.run(story())
-check("a blocked landing holds every later auto-deliver while its PR is open",
+held1, moved, after_merge, cfg = asyncio.run(story())
+check("a stored hold holds every later auto-deliver while its PR is open",
       held1 == {"task_id": 9404, "pr": 1}, str(held1))
-check("a second block on the same PR is the one named, still on that PR", kept == {"task_id": 407, "pr": 1}, str(kept))
 check("closing the PR unmerged does not release it: the hold follows the open build PR",
-      moved == {"task_id": 407, "pr": 2}, str(moved))
+      moved == {"task_id": 9404, "pr": 2}, str(moved))
 check("the user merging the PR releases the hold and clears it",
       after_merge is None and cfg is None, f"{after_merge} {cfg}")
 
 
+async def no_hold():
+    PRS.clear()
+    PRS[1] = {"number": 1, "state": "open", "merged": False, "head": {"ref": "host/build"}}
+    return await tns["_active_review_hold"](Pool(), 9239)
+
+check("a project with no stored hold is not held", asyncio.run(no_hold()) is None)
+
+
+async def prless_hold():
+    # A hold stored before its PR was known: it finds the open build PR.
+    PRS.clear()
+    pool = Pool({"task_id": 420, "pr": None})
+    PRS[2] = {"number": 2, "state": "open", "merged": False, "head": {"ref": "host/build"}}
+    return await tns["_active_review_hold"](pool, 9239), dict(pool.config["review_hold"])
+
+seen, stored = asyncio.run(prless_hold())
+check("a stored hold with no PR finds the open build PR and keeps holding",
+      seen == {"task_id": 420, "pr": 2} and stored == {"task_id": 420, "pr": 2}, f"{seen} {stored}")
+
+
 async def outage():
-    pool = Pool()
-    pool.config["review_hold"] = {"task_id": 9, "pr": 5}
+    pool = Pool({"task_id": 9, "pr": 5})
 
     async def boom(*a, **k):
         raise RuntimeError("gitea down")
@@ -233,41 +247,16 @@ async def outage():
     finally:
         sys.modules["server.routes.gitea_client"].gitea_request = gitea_request
 
+
 async def db_down():
     pool = Pool()
     pool.fail = True
-    wrote = await tns["_set_review_hold"](pool, 1, 9, None)
-    return wrote, await tns["_active_review_hold"](pool, 1)
+    return await tns["_active_review_hold"](pool, 1)
 
-wrote, h = asyncio.run(db_down())
-check("a database error fails closed: the write reports failure, the read holds",
-      wrote is False and h and h.get("unreadable") and "could not be read" in tns["_review_hold_reason"](h), str(h))
-blk = tns["_review_blocks"]
-check("the hold counts the review exactly as pipeline.decide does",
-      blk({"check": [{"provider": "diff-review", "required": True}]}, {"ran": True, "ok": False})
-      and not blk({"check": [{"provider": "diff-review", "required": False}]}, {"ran": True, "ok": False})
-      and not blk({"check": [{"provider": "harness-check"}]}, {"ran": True, "ok": False})
-      and not blk({"check": [{"provider": "diff-review"}]}, {"ran": False, "ok": None}))
-
-async def merged_then_blocked_again():
-    # The user merges held pull request 1 by hand; before anything
-    # re-reads the hold, follow-up 410 is blocked too and lands on pull request 2.
-    PRS.clear()
-    pool = Pool()
-    PRS[1] = {"number": 1, "state": "open", "merged": False, "head": {"ref": "host/build"}}
-    await tns["_set_review_hold"](pool, 9239, 9404, None)
-    await tns["_set_review_hold"](pool, 9239, 9404, 1)
-    PRS[1].update(state="closed", merged=True)                          # the user accepted 9404
-    PRS[2] = {"number": 2, "state": "open", "merged": False, "head": {"ref": "host/build"}}
-    await tns["_set_review_hold"](pool, 9239, 410, None)                # 410 blocked, pre-push
-    await tns["_set_review_hold"](pool, 9239, 410, 2)                   # PR known
-    return dict(pool.config["review_hold"]), await tns["_active_review_hold"](pool, 9239)
-
-stored, seen = asyncio.run(merged_then_blocked_again())
-check("a stale hold on a merged PR never absorbs a new block: 410 holds on #2",
-      stored == {"task_id": 410, "pr": 2} and seen == {"task_id": 410, "pr": 2}, f"{stored} {seen}")
-
-check("an unreadable PR keeps the hold (never ships blocked code on a gitea error)",
+h = asyncio.run(db_down())
+check("a database error fails closed: the read holds",
+      h and h.get("unreadable") and "could not be read" in tns["_review_hold_reason"](h), str(h))
+check("an unreadable PR keeps the hold (never ships held code on a gitea error)",
       asyncio.run(outage()) == {"task_id": 9, "pr": 5})
 r = tns["_review_hold_reason"]({"task_id": 9404, "pr": 1})
 check("the held sentence names the task, the PR, and what releases it",
@@ -275,20 +264,5 @@ check("the held sentence names the task, the PR, and what releases it",
       and "ask me to undo it first; merging still releases it" in r and "close it" not in r, r)
 f = facts({"auto_merge": {"merged": False, "held": r}, "auto_ship": {"shipped": False, "reason": r}})
 check("the held line is not doubled", f.count("Nothing") == 1, f)
-
-async def stale_then_prless_block():
-    # A leftover hold on merged pull request 1, a new block whose sync
-    # returned no PR, auto-deliver off. The new block must still be recorded.
-    PRS.clear()
-    pool = Pool()
-    PRS[1] = {"number": 1, "state": "closed", "merged": True, "head": {"ref": "host/build"}}
-    pool.config["review_hold"] = {"task_id": 9404, "pr": 1}
-    await tns["_set_review_hold"](pool, 9239, 420, None)                # sync gave no PR
-    PRS[2] = {"number": 2, "state": "open", "merged": False, "head": {"ref": "host/build"}}
-    return dict(pool.config["review_hold"]), await tns["_active_review_hold"](pool, 9239)
-
-stored, seen = asyncio.run(stale_then_prless_block())
-check("a new block with no PR replaces a leftover hold and then finds the open PR",
-      stored == {"task_id": 420, "pr": None} and seen == {"task_id": 420, "pr": 2}, f"{stored} {seen}")
 print("all gates passed" if not failures else f"{len(failures)} failing")
 sys.exit(1 if failures else 0)

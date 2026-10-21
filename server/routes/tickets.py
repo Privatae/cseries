@@ -983,6 +983,58 @@ async def decide_ticket_service(
                 json.dumps(out["live_context_apply"]), ticket_id)
         except Exception as e:  # noqa: BLE001 — the decide already stands
             log.warning("ticket %d: live context apply result not recorded: %s", ticket_id, e)
+    # A limit the Host asked to change (runtime/user_limits): the person's
+    # click is the only writer, after the decide like the cards above, and the
+    # outcome is recorded on the ticket for the Host's limits(op='status').
+    if md.get("kind") == LIMIT_CHANGE_PROPOSAL_KIND:
+        from mastercode.runtime.user_limits import apply_proposal as _lim_apply
+        try:
+            out["limit_change_apply"] = await _lim_apply(
+                pool, eid, md, option_id=option_id, ticket_id=ticket_id)
+        except Exception as e:  # noqa: BLE001 — the decide already stands
+            log.warning("ticket %d: limit change not applied: %s", ticket_id, e)
+            out["limit_change_apply"] = {"applied": False, "why": str(e)[:300]}
+        try:
+            await pool.execute(
+                "UPDATE entity_tickets SET metadata = COALESCE(metadata, '{}'::jsonb) "
+                "|| jsonb_build_object('limit_change_apply', $1::jsonb) WHERE id = $2",
+                json.dumps(out["limit_change_apply"]), ticket_id)
+        except Exception as e:  # noqa: BLE001
+            log.warning("ticket %d: limit change result not recorded: %s", ticket_id, e)
+    # A recurring task the Host asked to start (runtime/scheduled_approval):
+    # the person's click sets it, after the decide like the cards above.
+    if md.get("kind") == RECURRING_TASK_PROPOSAL_KIND:
+        from mastercode.runtime.scheduled_approval import apply_proposal as _rt_apply
+        try:
+            out["recurring_task_apply"] = await _rt_apply(
+                pool, eid, md, option_id=option_id, ticket_id=ticket_id)
+        except Exception as e:  # noqa: BLE001 — the decide already stands
+            log.warning("ticket %d: recurring task not set: %s", ticket_id, e)
+            out["recurring_task_apply"] = {"applied": False, "why": str(e)[:300]}
+        try:
+            await pool.execute(
+                "UPDATE entity_tickets SET metadata = COALESCE(metadata, '{}'::jsonb) "
+                "|| jsonb_build_object('recurring_task_apply', $1::jsonb) WHERE id = $2",
+                json.dumps(out["recurring_task_apply"]), ticket_id)
+        except Exception as e:  # noqa: BLE001
+            log.warning("ticket %d: recurring task result not recorded: %s", ticket_id, e)
+    # A runbook trigger the Host asked to add (runtime/scheduled_approval):
+    # the person's click adds it.
+    if md.get("kind") == RUNBOOK_TRIGGER_PROPOSAL_KIND:
+        from mastercode.runtime.scheduled_approval import apply_trigger as _rb_apply
+        try:
+            out["runbook_trigger_apply"] = await _rb_apply(
+                pool, eid, md, option_id=option_id, ticket_id=ticket_id)
+        except Exception as e:  # noqa: BLE001 — the decide already stands
+            log.warning("ticket %d: runbook trigger not added: %s", ticket_id, e)
+            out["runbook_trigger_apply"] = {"applied": False, "why": str(e)[:300]}
+        try:
+            await pool.execute(
+                "UPDATE entity_tickets SET metadata = COALESCE(metadata, '{}'::jsonb) "
+                "|| jsonb_build_object('runbook_trigger_apply', $1::jsonb) WHERE id = $2",
+                json.dumps(out["runbook_trigger_apply"]), ticket_id)
+        except Exception as e:  # noqa: BLE001
+            log.warning("ticket %d: runbook trigger result not recorded: %s", ticket_id, e)
     # A support ticket another Host sent the platform: the operator's fix
     # / ask / decline is applied by the platform — 'fix' also opens the
     # build phase the answer rides on.
@@ -1235,6 +1287,13 @@ OP_ASK_KIND = "op_ask"   # = server/network/nac_ops.ASK_KIND
 # (nac_connector.decide_from_ticket). Only the pod's own /api/connector/pair
 # files one.
 CONNECTOR_PAIRING_KIND = "connector_pairing"   # = server/network/nac_connector.CONNECTOR_PAIRING_KIND
+# A change to one of the person's limits the Host proposed (runtime/user_limits):
+# the person's 'apply' writes the setting; only the Host's `limits` tool files one.
+LIMIT_CHANGE_PROPOSAL_KIND = "limit_change_proposal"   # = runtime/user_limits.PROPOSAL_KIND
+# A recurring task that runs a model, which the Host may not start by itself
+# (runtime/scheduled_approval): the person's 'apply' sets it.
+RECURRING_TASK_PROPOSAL_KIND = "recurring_task_proposal"   # = runtime/scheduled_approval.PROPOSAL_KIND
+RUNBOOK_TRIGGER_PROPOSAL_KIND = "runbook_trigger_proposal"  # = runtime/scheduled_approval.TRIGGER_KIND
 SUPPORT_NOTE_REQUIRED = ("reply", "ask", "decline")   # = support_collect.NOTE_REQUIRED (gate-pinned)
 BUILT_OPTION_ID = "built"
 _CRED_TYPES = ("api_key", "opaque")
@@ -1273,10 +1332,14 @@ def _strip_platform_locks(metadata: Any) -> dict:
                         "op_ask", "op_ask_result", "pipeline_proposal",
                         "turn_type_proposal", "turn_type_apply",
                         "live_context_proposal", "live_context_apply",
-                        "asked_in_session", "asked_in", "connector_pairing")}
+                        "asked_in_session", "asked_in", "connector_pairing",
+                        "limit_change", "limit_change_apply",
+                        "recurring_task", "recurring_task_apply",
+                        "runbook_trigger", "runbook_trigger_apply")}
     if out.get("kind") in (PHASE_GATE_KIND, SUPPORT_KIND, OP_ASK_KIND, PIPELINE_PROPOSAL_KIND,
                            TURN_TYPE_PROPOSAL_KIND, LIVE_CONTEXT_PROPOSAL_KIND,
-                           CONNECTOR_PAIRING_KIND):
+                           CONNECTOR_PAIRING_KIND, LIMIT_CHANGE_PROPOSAL_KIND,
+                           RECURRING_TASK_PROPOSAL_KIND, RUNBOOK_TRIGGER_PROPOSAL_KIND):
         # kind=support: the platform applies the answer on another Host's
         # ticket (a verdict, or the person's 'Tell them it's fixed') — only the operator's own
         # collect may raise one.

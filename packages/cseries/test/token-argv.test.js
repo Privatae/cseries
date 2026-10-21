@@ -80,7 +80,7 @@ function limaRun(platform) {
   const out = captureOutput();
   return main([], {
     platform, arch: 'x64', env: {}, paths: p, out, runner: m.runner, net: m.net,
-    sleep: async () => {}, prompt: async () => false, portState: async () => 'free',
+    sleep: async () => {}, prompt: async () => false, portState: async () => 'free', freeBytes: () => 64 * 1024 ** 3,
     releaseInfo: { release: r, placeholders: [], file: 'test' }, bastionKeys: m.bastionKeys,
   }).then((code) => ({ code, out, m }));
 }

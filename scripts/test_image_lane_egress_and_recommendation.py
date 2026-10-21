@@ -276,7 +276,7 @@ async def _get_capable_models(role, provider=None):
     return {"role": role, "providers": {provider: pane}}
 
 
-_inf = types.SimpleNamespace(ROLES=("chat", "review", "image_gen"),
+_inf = types.SimpleNamespace(ROLES=("chat", "image_gen"),
                              get_current_routing=_get_current_routing,
                              get_capable_models=_get_capable_models)
 _bs = types.SimpleNamespace(get_pool=lambda: object(), _entity_id=9003)

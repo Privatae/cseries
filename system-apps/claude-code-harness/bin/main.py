@@ -116,7 +116,8 @@ from _harness_runtime.harness_core import (  # noqa: E402
     MODEL_WAIT_MINUTES, sample_pids, ActivityGate,
     PROGRESS_MINUTES, PROGRESS_SCAN_S, TOOL_STEP_MINUTES, marker_pids,
     worktree_signature, _LIVE_ATTEMPTS, _LIVE_LOCK, _pod_strays, _pids_now,
-    _kill_pids, TOOL_STEP_MARGIN_MINUTES, requested_step_seconds,
+    _kill_pids, TOOL_STEP_MARGIN_MINUTES, TOOL_STEP_MAX_MINUTES, requested_step_seconds,
+    step_limit_name,
     adopt_nac_egress_lane, bound_core_dumps, make_stop,
 )
 
@@ -1046,6 +1047,19 @@ def run_stream(request):
         wait_min = MODEL_WAIT_MINUTES
     turn_budget_s = max(idle_s, wait_min * 60)
 
+    # The person's limits, when the kernel sends them (review._pod_limits,
+    # runtime/user_limits): per run, over the image's defaults; 0 turns a
+    # window off, as the env's 0 always has.
+    def _run_minutes(field, default):
+        try:
+            v = body.get(field)
+            return float(default if v is None else v)
+        except (TypeError, ValueError):
+            return float(default)
+    run_progress_s = max(0.0, _run_minutes("progress_minutes", PROGRESS_MINUTES) * 60)
+    tool_step_max_s = max(0.0, _run_minutes("tool_step_max_minutes", TOOL_STEP_MAX_MINUTES) * 60)
+    run_tool_step_s = max(0.0, _run_minutes("tool_step_minutes", TOOL_STEP_MINUTES) * 60)
+
     _ensure_claude_config()
     os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = token
     os.environ.pop("ANTHROPIC_API_KEY", None)
@@ -1116,7 +1130,7 @@ def run_stream(request):
                         # The timeout the call asked for (Bash `timeout`, ms):
                         # its step window is that plus a margin.
                         tool_asked[tid] = requested_step_seconds(
-                            "claude-code", getattr(block, "input", None))
+                            "claude-code", getattr(block, "input", None), tool_step_max_s)
                     elif name == "ToolResultBlock":
                         tid = getattr(block, "tool_use_id", None)
                         if tid:
@@ -1139,8 +1153,9 @@ def run_stream(request):
             # start. Worktree changes are evidence only and reset no clock.
             last_progress = time.time()
             tool_started = 0.0
-            progress_s = max(0.0, PROGRESS_MINUTES * 60)
-            tool_step_s = max(0.0, TOOL_STEP_MINUTES * 60)
+            progress_s = run_progress_s
+            tool_step_s = run_tool_step_s
+            stop_asked = 0.0
             wt_changes = 0
             _PROGRESS_MSGS = ("AssistantMessage", "UserMessage", "ResultMessage")
             # The single-run fallback (harness_core._pod_strays): processes
@@ -1255,6 +1270,7 @@ def run_stream(request):
                     if open_tools:
                         if tool_step_s and tool_started and now - tool_started > step_window:
                             why = "tool_step"
+                            stop_asked = asked
                             tool_step_s = step_window
                     elif progress_s and now - last_progress > max(progress_s, turn_budget_s):
                         why = "progress"
@@ -1302,6 +1318,9 @@ def run_stream(request):
                 "stop_kind": stop_kind,
                 "progress_s": max(progress_s, turn_budget_s),
                 "tool_step_s": tool_step_s,
+                "tool_step_limit": (step_limit_name(stop_asked, tool_step_s, run_tool_step_s,
+                                                    tool_step_max_s)
+                                    if stop_kind == "tool_step" else None),
                 "wt_changes": wt_changes,
                 "busy": time.time() - last_activity < idle_s,
                 "tool_running": bool(open_tools),
@@ -1419,6 +1438,8 @@ def run_stream(request):
                            "time(s) meanwhile; that is logged, not counted as progress."
                            if out.get("wt_changes") else "")
                 if out.get("stop_kind") == "tool_step":
+                    if out.get("tool_step_limit"):
+                        payload["limit"] = out["tool_step_limit"]
                     payload["error"] = (
                         f"claude-code started a tool step that had not returned after "
                         f"{float(out.get('tool_step_s') or 0) / 60:.0f} minutes, the "
@@ -1429,6 +1450,7 @@ def run_stream(request):
                         f"elapsed).{wt_note} No real tool step comes near this; the "
                         "run itself has no time limit. Partial work is kept.")
                 elif out.get("stop_kind") == "progress":
+                    payload["limit"] = "build.progress_minutes"
                     payload["error"] = (
                         f"claude-code produced no model or tool message for "
                         f"{float(out.get('progress_s') or 0) / 60:.0f} minutes while it "
@@ -1440,6 +1462,7 @@ def run_stream(request):
                         "time limit: a run whose model keeps producing messages is "
                         "never stopped by it. Partial work is kept.")
                 elif out.get("model_wait"):
+                    payload["limit"] = "build.model_wait_max_minutes"
                     payload["error"] = (
                         f"claude-code waited on the model for "
                         f"{turn_budget_s / 60:.0f} minutes with nothing arriving "
@@ -1458,6 +1481,7 @@ def run_stream(request):
                         f"({time.time() - started:.0f}s elapsed). Partial work "
                         "is kept.")
                 else:
+                    payload["limit"] = "build.idle_minutes"
                     payload["error"] = (
                         f"claude-code produced no output for {idle_s / 60:.0f} "
                         "minutes"

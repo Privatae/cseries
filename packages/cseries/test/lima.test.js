@@ -36,7 +36,7 @@ function run(argv, m, p, extra = {}) {
     net: m.net,
     sleep: async () => {},
     prompt: async () => false,
-    portState: async () => 'free',
+    portState: async () => 'free', freeBytes: () => 64 * 1024 ** 3,
     releaseInfo: { release: releaseFor(m), placeholders: [], file: 'test' },
     bastionKeys: m.bastionKeys,
     ...extra,
@@ -275,6 +275,18 @@ test('macOS, first run: no QEMU, vz, the bastion as launchd\'s daemon, and a Lau
   const again = await run([], m, p);
   assert.equal(again.code, 0, again.out.text() + again.out.errText());
   assert.equal(m.calls.filter((c) => /sudo$/.test(c.cmd)).length, 1, 'one sudo across both runs');
+});
+
+test('on macOS and Linux the line that makes the VM names no WSL or Windows', async () => {
+  for (const platform of ['linux', 'darwin']) {
+    const { m, p } = machineFor(platform, platform === 'linux' ? { qemu: false, kvm: 'denied', kvmMember: false } : {});
+    const { code, out } = await run([], m, p);
+    assert.equal(code, 0, out.text() + out.errText());
+    const line = out.text().split('\n').find((l) => l.includes('Creating the VM'));
+    assert.ok(line, `${platform}: the VM's sizing is said`);
+    assert.match(line, /\d+ GB of memory and \d+ processors at most/);
+    assert.doesNotMatch(line, /WSL|Windows/, `${platform}: ${line.trim()}`);
+  }
 });
 
 test('sudo refused: the Host still runs, the bastion step fails softly and says how to finish', async () => {

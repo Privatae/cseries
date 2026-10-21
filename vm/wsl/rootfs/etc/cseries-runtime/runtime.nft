@@ -15,9 +15,14 @@
 define APPS_NET = 10.89.78.0/24
 define APPS_GW = 10.89.78.1
 define APPS_HOST = 10.89.78.2
-# Who may use the plain proxy: an engine build's containers and the coding
-# engines (cseries_runtime/common.py PROXY_CLIENTS), never an app.
-define APPS_PROXY_CLIENTS = { 10.89.78.3-10.89.78.15, 10.89.78.240-10.89.78.247 }
+# Who on the network may use the plain proxy: the coding engines
+# (cseries_runtime/common.py PROXY_CLIENTS), never an app. An engine build
+# reaches it as BUILD_UID below, from the machine.
+define APPS_PROXY_CLIENTS = { 10.89.78.240-10.89.78.247 }
+# The user engine builds run as (cseries_runtime/common.py BUILD_UID): its
+# sockets carry every RUN step's traffic (pasta) and podman's own pulls, and
+# reach the plain proxy and nothing else.
+define BUILD_UID = 199999
 
 table inet cseries_runtime
 delete table inet cseries_runtime
@@ -31,8 +36,15 @@ table inet cseries_runtime {
 		ct state established,related accept
 		ip saddr $APPS_NET ip daddr $APPS_GW meta l4proto { tcp, udp } th dport 53 accept
 		ip saddr $APPS_PROXY_CLIENTS ip daddr $APPS_GW tcp dport 3128 accept
+		# A build's connections to the proxy, from the machine itself.
+		iif lo ip saddr $APPS_GW ip daddr $APPS_GW tcp dport 3128 accept
 		ip saddr $APPS_NET drop
 		tcp dport 3128 drop
+	}
+	chain output {
+		type filter hook output priority filter; policy accept;
+		meta skuid $BUILD_UID ip daddr $APPS_GW tcp dport 3128 accept
+		meta skuid $BUILD_UID drop
 	}
 	chain forward {
 		type filter hook forward priority filter; policy accept;

@@ -19,3 +19,8 @@ iproute2
 # coding engines' plain proxy is squid.
 python3
 squid
+# The coding engines are built by a user of their own with rootless podman
+# (cseries_runtime/build.py): its subordinate ids (newuidmap, newgidmap) and
+# its network namespace (pasta).
+uidmap
+passt

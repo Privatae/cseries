@@ -76,6 +76,56 @@ _STREAM_IDLE_TIMEOUT_S = float(os.environ.get("HARNESS_STREAM_IDLE_S", "780"))
 _STREAM_IDLE_MARGIN_S = float(os.environ.get("HARNESS_STREAM_IDLE_MARGIN_S", "180"))
 
 
+# The pod's own stop windows that are the person's limits (runtime/
+# user_limits, 2026-10-20). Sent with a run only when the person set one, so a
+# run they never touched keeps the pod's own defaults (its env) exactly.
+_POD_LIMITS = (("idle_minutes", "build.idle_minutes"),
+               ("progress_minutes", "build.progress_minutes"),
+               ("tool_step_minutes", "build.tool_step_minutes"),
+               ("tool_step_max_minutes", "build.tool_step_max_minutes"))
+
+
+# The person's "no limit" for each window, in the words the pod reads. The
+# progress window is off at 0 (harness_core: `progress_s and ...`). The tool
+# step cap is not: 0 there uncaps a requested timeout but drops a reported
+# step with no readable timeout (grok's child commands) to TOOL_STEP_MINUTES,
+# so "no limit" would be STRICTER than the 600-minute default; a cap no step
+# reaches is what the pod reads as none. build.idle_minutes refuses 0
+# (user_limits no_off), so it never reaches here as off.
+_POD_OFF = {"progress_minutes": 0, "tool_step_max_minutes": 10 ** 7}
+
+
+def _pod_limits() -> dict:
+    """{body field: minutes} for each pod window the person set, with their
+    "no limit" as _POD_OFF says the pod reads it."""
+    from mastercode.runtime import user_limits
+    out = {}
+    for field, name in _POD_LIMITS:
+        v = user_limits.person_or(name, None, off=_POD_OFF.get(field, 0))
+        if v is not None:
+            out[field] = v
+    return out
+
+
+def _limit_stop_said(run_out) -> None:
+    """A run the pod stopped on one of the person's limits says so by name,
+    in the standard words (user_limits.hit_line), and the hit is noted for
+    Settings > Limits. The pod names the window it stopped on (`limit`)."""
+    if not isinstance(run_out, dict) or run_out.get("ok"):
+        return
+    name = run_out.get("limit")
+    try:
+        from mastercode.runtime import user_limits
+        if name not in user_limits.LIMITS:
+            return
+        line = user_limits.hit_line(name)
+        if line not in str(run_out.get("error") or ""):
+            run_out["error"] = (str(run_out.get("error") or "").rstrip() + " " + line).strip()
+        user_limits.note_hit(brain_service._entity_id, name, "a build")
+    except Exception as e:  # noqa: BLE001 — words on a result, never the run
+        log.debug("limit stop not said: %s", e)
+
+
 def _stream_idle_timeout_s(max_minutes: Optional[int]) -> float:
     """How long the kernel waits on a silent stream for THIS run: never below
     the fixed backstop, and always the margin above the pod's model-turn
@@ -3814,7 +3864,7 @@ async def _run_on_pod(
                                    "will not be collected this run, because what it held "
                                    f"before the run could not be read: {str(e)[:400] or repr(e)}")})
         payload = {"prompt": prompt, "project_dir": in_container_dir,
-                   "max_minutes": max_minutes}
+                   "max_minutes": max_minutes, **_pod_limits()}
         if model:
             payload["model"] = model   # fan_out model unlock; harness /run reads it
         if effort:
@@ -3890,7 +3940,11 @@ async def _run_on_pod(
                 try:
                     run_out = await _stream_harness_run(
                         http, base, payload, label, session_dir,
-                        idle_timeout=_stream_idle_timeout_s(max_minutes),
+                        # The pod's idle window can be the person's longer one
+                        # now (_pod_limits): the kernel's patience follows the
+                        # longer of the two, so the pod still reports first.
+                        idle_timeout=_stream_idle_timeout_s(
+                            max(int(max_minutes or 0), int(payload.get("idle_minutes") or 0))),
                         frames_seen=frames_seen, host_rediffs=host_rediffs)
                 except _hin.HarnessInputRefused as se:
                     # The pod ANSWERED and sent something no bound can take.
@@ -4029,6 +4083,7 @@ async def _run_on_pod(
             # ended. Idempotent, so the caller's own unregister is harmless.
             _unregister_live_run(harness_id, live)
         _apply_kill_label(run_out, live)   # a killed run says who stopped it
+        _limit_stop_said(run_out)          # ...and one a limit of the person's stopped names it
         # Collect the worktree-after regardless of run outcome — the harness may
         # have produced partial work even on a non-zero exit.
         try:
@@ -6796,37 +6851,6 @@ async def run_single_harness_build(
         except Exception as exc:
             log.warning("build session finalize failed (non-fatal): %s", exc)
 
-    # THE REVIEW (mastercode.runtime.diff_review). One scoped model
-    # call over the diff just persisted, on the Orchestrator's `review` role:
-    # the diff and the brief, and nothing else. It runs HERE, after the land
-    # and before the run returns, so every landed build carries a typed
-    # verdict the delivery states. It never changes the build's outcome; a
-    # blocking verdict holds an Auto-Approve merge (tools._review_blocks).
-    # Never a pass by omission: an unrouted role, a model error or an
-    # unparseable answer is ran=False with the reason. Never blocks the run.
-    if ok and landed and session_dir is not None:
-        try:
-            try:
-                from mastercode.runtime.diff_review import activity_line, review_landed_run
-            except ImportError:
-                import sys as _sys
-                _sys.path.insert(0, "/app/brain")
-                from mastercode.runtime.diff_review import activity_line, review_landed_run
-            _eid = int(os.environ.get("ENTITY_ID", "0") or 0)
-            # The brief is the TASK (`_task`), never `prompt`: by now `prompt`
-            # is the composed text the harness got (the SDK and deployment
-            # contracts, the learned preferences, the desktop brief, the
-            # harness note), and the reviewer judged a correct card-game build
-            # 8/100 against another app named in the preferences.
-            _rev = await review_landed_run(
-                brain_service.get_pool(), _eid, session_dir=session_dir,
-                harness=harness, brief=_task, run_id=_run_id)
-            result["review"] = _rev
-            await _act(activity_line(_rev))
-        except Exception as exc:  # noqa: BLE001 — the verdict is best-effort
-            log.warning("diff review failed (non-fatal): %s", exc)
-            await _act(f"review: not run ({exc!r})")
-
     return {
         "ok": ok,
         "harness": result.get("harness") or harness,
@@ -6841,10 +6865,6 @@ async def run_single_harness_build(
         # run dict and this return once never copied it out, so the delivery
         # never saw it (project 229). None when nothing was listed.
         "acceptance": result.get("acceptance"),
-        # The scoped reviewer's verdict on THIS diff (diff_review envelope), or
-        # absent when the run did not land. The build envelope and the
-        # delivery record read it from here.
-        "review": result.get("review"),
         # The numbered run (harness_run.id). The phase save point carries it
         # as the commit's Host-Run trailer and the row gets the commit hash
         # back — the commit↔run link.
@@ -9176,16 +9196,6 @@ async def get_session_service(pool=None, *, session_id: str) -> dict:
             diffs[p.stem] = p.read_text()
     picks_path = session_dir / "picks.json"
     picks = json.loads(picks_path.read_text()) if picks_path.exists() else {}
-    # The scoped reviewer's verdict per harness (diff_review.review_landed_run
-    # writes review/<harness>.json beside the diff). Absent = not reviewed.
-    reviews: dict = {}
-    review_dir = session_dir / "review"
-    if review_dir.exists():
-        for p in review_dir.glob("*.json"):
-            try:
-                reviews[p.stem] = json.loads(p.read_text())
-            except (OSError, json.JSONDecodeError):
-                continue
     per_harness = _read_session_state(session_dir)
     status = _rollup_session_status(
         per_harness, session_over=_session_is_over(manifest, session_dir),
@@ -9195,7 +9205,6 @@ async def get_session_service(pool=None, *, session_id: str) -> dict:
         "manifest": manifest,
         "diffs": diffs,
         "picks": picks,
-        "review": reviews,
         "per_harness": per_harness,
         "status": status,
         # Did each harness produce something openable? Drives the run

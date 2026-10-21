@@ -1,6 +1,6 @@
 ---
 title: Settings
-summary: Settings holds your Host's version, its appearance and time zone, how it responds, the layout of your desktop and dock, its backups, and the optional Privatae network membership. It comes with every Host and cannot be removed.
+summary: Settings holds your Host's version, its appearance and time zone, how it responds, the limits on what it may spend and how long its work may run, the layout of your desktop and dock, its backups, and the optional Privatae network membership. It comes with every Host and cannot be removed.
 section: apps
 order: 10
 questions:
@@ -9,6 +9,7 @@ questions:
   - How do I join the Privatae network?
   - How do I change my desktop wallpaper or time zone?
   - How do I change how much my Host explains, or its personality?
+  - How do I change what my Host may spend, or how long its work may run?
   - Where do I set up backups for my Host?
   - Can my Host restore or change its own backups?
 app: settings
@@ -29,6 +30,12 @@ Desktop and Dock is where you choose which apps sit in the dock and on the deskt
 ## How do I change how my Host responds?
 
 Response Shaping has two settings. **How much your Host explains** has three positions: explain everything, explain new things, or use the terms. You can also ask your Host in conversation, for example "less detail", and it moves this same setting. **Personality** is ten sliders, such as warmth and directness, each with a line that says how your Host will sound at that position. The sliders are yours and never move on their own: your Host does not move them, and Settings shows you every slider you changed before it saves them.
+
+## What are Limits?
+
+The Limits tab lists every limit that can stop work you asked for: what one reply or one scheduled turn may spend, how many turns a scheduled task may run in a day, how many repairs a build starts by itself, how long a build, a browser agent or a query on your Host's own data may run, and the rest. Each starts at a default and is yours to change; 0 means no limit, and you can put the default back at any time. Each one says what happens when it is reached and when it last stopped something.
+
+When a limit stops work, your Host is told which one and its value, and what was kept. If the work needed more, your Host can ask you to raise it: a card shows the value it recommends and why, and nothing changes unless you choose it. Your Host can read every limit but can never change one.
 
 ## How do backups work?
 

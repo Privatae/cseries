@@ -393,14 +393,10 @@ async def _main() -> int:
             _rev8 = await pool.fetchval(
                 "SELECT result->'review' FROM entity_tasks WHERE task_id=$1", _t8_id)
             _rev8 = json.loads(_rev8) if isinstance(_rev8, str) else _rev8
-            # The reviewer ran after the land: in this hermetic container the
-            # review role is unrouted (and the stub run writes an empty patch),
-            # so the honest envelope is ran=False with a reason — present on
-            # the row, never a pass. Either reason is accepted so routing the
-            # role in the smoke image one day does not flip this assertion.
-            if not (isinstance(_rev8, dict) and _rev8.get("ran") is False
-                    and _rev8.get("ok") is None and _rev8.get("reason")):
-                print(f"FAIL: the build row does not carry the reviewer's envelope: {_rev8}")
+            # The diff reviewer was removed 2026-10-20 (the Host reviews in its
+            # own turn), so a landed build's row carries no reviewer verdict.
+            if _rev8 is not None:
+                print(f"FAIL: the build row still carries a reviewer verdict: {_rev8}")
                 return 1
         finally:
             await pool.execute("DELETE FROM projects WHERE id=$1", pid8)

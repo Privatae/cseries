@@ -4,8 +4,10 @@
 What it pins:
   1. decide() over the default pipeline returns what the pre-pipeline outcome
      function returned, for every combination of build ok × declared ×
-     acceptance envelope × review envelope (reproduced below as the
-     reference). decide() now only produces the per-check summaries (the build
+     acceptance envelope (reproduced below as the reference, without the
+     diff reviewer's branch: the reviewer and its `diff-review` check were
+     removed 2026-10-20, and a stored pipeline that still lists it is read
+     without that row). decide() now only produces the per-check summaries (the build
      PR body, the task row's `checks`): a build's outcome is whether it landed
      (2026-10-01) and a check never changes it — section 7 pins that.
   2. The new rules: a required row that cannot run is unproven; required=false
@@ -43,8 +45,10 @@ def check(name: str, ok: bool, detail: str = "") -> None:
         print(f"FAIL {name}" + (f" — {detail}" if detail else ""))
 
 
-def _old_phase_outcome(ok, declared, acceptance, review=None):
-    """The outcome function as it stood before the pipeline (main @ f08dd52e) — the reference decide() is held to."""
+def _old_phase_outcome(ok, declared, acceptance):
+    """The outcome function as it stood before the pipeline (main @ f08dd52e) — the reference decide() is held to.
+    Its last branch (a diff reviewer that ran and blocked → review) went with
+    the reviewer on 2026-10-20."""
     if not ok:
         return "failed"
     if not declared:
@@ -54,17 +58,11 @@ def _old_phase_outcome(ok, declared, acceptance, review=None):
         return "review"
     if acc.get("ok") is not True:
         return "failed"
-    rev = review if isinstance(review, dict) else {}
-    if rev.get("ran") and rev.get("ok") is False:
-        return "review"
     return "complete"
 
 
-def _new(ok, declared, acceptance, review=None, pipeline=None):
+def _new(ok, declared, acceptance, pipeline=None):
     vs = [pl.harness_check_verdict(acceptance, declared)]
-    rv = pl.diff_review_verdict(review)
-    if rv is not None:
-        vs.append(rv)
     return pl.decide(ok, pipeline or pl.default_pipeline(), vs)
 
 
@@ -74,23 +72,24 @@ ACC = [None, {},
        {"ran": True, "ok": False, "results": [{"cmd": "false", "ok": False, "exit": 1}]},
        {"ran": True, "ok": None, "results": []},
        {"ran": True, "results": []}]
-REV = [None, {},
-       {"ran": False, "ok": None, "reason": "no review route", "blocking": []},
-       {"ran": True, "ok": True, "blocking": []},
-       {"ran": True, "ok": False, "blocking": [{"file": "a.js", "line": 3, "issue": "x"}]},
-       {"ran": True, "ok": None, "blocking": []}]
+# A check that never proves a phase on its own (proves=False): the desktop
+# render check, as the generic non-proving / informational example.
+DR_PASS = {"provider": "desktop-render", "where": "browser_sidecar", "ran": True, "ok": True,
+           "results": [{"name": "index.html", "ok": True}]}
+DR_FAIL = {"provider": "desktop-render", "where": "browser_sidecar", "ran": True, "ok": False,
+           "results": [{"name": "index.html", "ok": False}]}
 
 
 def main() -> int:
     # ── 1. equivalence with the old outcome, exhaustively ───────────────
     mismatches = []
     n = 0
-    for ok, declared, acc, rev in itertools.product([True, False], [True, False], ACC, REV):
+    for ok, declared, acc in itertools.product([True, False], [True, False], ACC):
         n += 1
-        want = _old_phase_outcome(ok, declared, acc, rev)
-        got = _new(ok, declared, acc, rev)["status"]
+        want = _old_phase_outcome(ok, declared, acc)
+        got = _new(ok, declared, acc)["status"]
         if want != got:
-            mismatches.append((ok, declared, acc, rev, want, got))
+            mismatches.append((ok, declared, acc, want, got))
     check(f"decide() over the default pipeline == the reference on all {n} combinations",
           not mismatches, f"{len(mismatches)} differ, first: {mismatches[:1]}")
 
@@ -110,55 +109,87 @@ def main() -> int:
           and "no acceptance" in pl.harness_check_verdict(None, False)["reason"])
     check("harness verdict: declared but no envelope says 'no result from the pod'",
           pl.harness_check_verdict(None, True)["reason"] == "no result from the pod")
-    rv = pl.diff_review_verdict(REV[4])
-    check("review verdict: each blocking finding is a failed result named file:line",
-          rv["ok"] is False and rv["results"] == [{"name": "a.js:3", "ok": False, "output_tail": "x"}])
-    check("review verdict: no envelope → None (a missing review changes nothing)",
-          pl.diff_review_verdict(None) is None)
-    check("review verdict: ran without a boolean ok is not-run",
-          pl.diff_review_verdict(REV[5])["ran"] is False)
+
+    # ── 2a. the diff reviewer is gone (2026-10-20) ──────────────────────
+    check("the default pipeline's check is harness-check only",
+          pl.DEFAULT_CHECK == ("harness-check",)
+          and pl.default_pipeline()["check"] == [{"provider": "harness-check", "required": True}])
+    check("no diff-review provider and no reviewer verdict wrapper remain",
+          "diff-review" not in pl.PROVIDERS and not hasattr(pl, "diff_review_verdict")
+          and "diff-review" in pl.RETIRED_CHECKS)
+    check("no check provider withholds 'complete' on a failure any more (on_fail='review' was the reviewer's)",
+          not [k for k, sp in pl.PROVIDERS.items() if sp.stage == "check" and sp.on_fail == pl.REVIEW])
+    stored = {"format": pl.FORMAT, "check": [{"provider": "harness-check"},
+                                             {"provider": "diff-review", "required": True}]}
+    norm, errs = pl.validate(stored)
+    check("a stored pipeline listing diff-review validates, without that row",
+          not errs and norm["check"] == [{"provider": "harness-check", "required": True}], f"{norm} {errs}")
+    r = pl.resolve({"pipeline": stored})
+    check("...and resolves without it (no error, nothing unapproved)",
+          "error" not in r and "unapproved" not in r
+          and [x["provider"] for x in r["check"]] == ["harness-check"], f"{r}")
+    norm, errs = pl.validate({"format": pl.FORMAT, "check": [{"provider": "diff-review", "required": "yes",
+                                                              "model": "x"}]})
+    check("...even a retired row carrying settings it never declared is dropped, not refused",
+          not errs and norm["check"] == [], f"{norm} {errs}")
+    mod = {"pipeline": {"format": pl.FORMAT, "modules": {"api": {"check": [
+        {"provider": "diff-review", "required": False}, {"provider": "harness-check"}]}}}}
+    check("...in a module's override too",
+          "error" not in pl.resolve(mod, "api")
+          and pl.resolve(mod, "api")["check"] == [{"provider": "harness-check", "required": True}])
+    check("...and a landed build under it decides exactly as under the default",
+          pl.decide(True, pl.resolve({"pipeline": stored}), [pl.harness_check_verdict(ACC[3], True)])
+          == pl.decide(True, pl.default_pipeline(), [pl.harness_check_verdict(ACC[3], True)]))
 
     # ── 3. the list-shaped outcome's own rules ──────────────────────────
     passed = pl.harness_check_verdict(ACC[3], True)
     failed = pl.harness_check_verdict(ACC[4], True)
-    only_review = {**pl.default_pipeline(), "check": [{"provider": "diff-review", "required": True}]}
-    d = pl.decide(True, only_review, [pl.diff_review_verdict(REV[3])])
-    check("a pipeline whose only check is the reviewer proves nothing → review",
+    only_render = {**pl.default_pipeline(), "check": [{"provider": "desktop-render", "required": True}]}
+    d = pl.decide(True, only_render, [DR_PASS])
+    check("a pipeline whose only check proves nothing (desktop-render) → review",
           d["status"] == "review" and "proved" in d["why"][0])
     empty = {**pl.default_pipeline(), "check": []}
     check("an empty check list → review", pl.decide(True, empty, [])["status"] == "review")
     info = {**pl.default_pipeline(), "check": [{"provider": "harness-check", "required": True},
-                                               {"provider": "diff-review", "required": False}]}
-    check("required=false reviewer block is informational → complete",
-          pl.decide(True, info, [passed, pl.diff_review_verdict(REV[4])])["status"] == "complete")
+                                               {"provider": "desktop-render", "required": False}]}
+    check("required=false render failure is informational → complete",
+          pl.decide(True, info, [passed, DR_FAIL])["status"] == "complete")
     info2 = {**pl.default_pipeline(), "check": [{"provider": "harness-check", "required": False}]}
     check("required=false harness failure does not fail, and proves nothing → review",
           pl.decide(True, info2, [failed])["status"] == "review")
     check("a required row with NO verdict at all is unproven → review",
           pl.decide(True, pl.default_pipeline(), [])["status"] == "review")
+    # A required forge CI row with no verdict is unproven (review); a failed
+    # harness check alongside it is failed, and failed wins.
+    unran = {**pl.default_pipeline(), "check": [
+        {"provider": "harness-check", "required": True},
+        {"provider": "gitea-actions", "required": True, "contexts": "check/gates", "wait_budget_s": 900}]}
     check("failed outranks review",
-          pl.decide(True, pl.default_pipeline(), [failed, pl.diff_review_verdict(REV[4])])["status"] == "failed")
+          pl.decide(True, unran, [passed])["status"] == "review"
+          and pl.decide(True, unran, [failed])["status"] == "failed")
     bad = pl.resolve({"pipeline": {"format": "nope"}})
-    d = pl.decide(True, bad, [passed, pl.diff_review_verdict(REV[3])])
+    d = pl.decide(True, bad, [passed])
     check("an invalid stored setting holds the phase in review and says why",
           d["status"] == "review" and "invalid" in d["why"][0])
-    d = pl.decide(True, pl.default_pipeline(), [passed, pl.diff_review_verdict(REV[4])])
+    both = {**pl.default_pipeline(), "check": [{"provider": "harness-check", "required": True},
+                                               {"provider": "desktop-render", "required": True}]}
+    d = pl.decide(True, both, [passed, DR_FAIL])
     check("checks[] names each provider with its verdict",
-          [c["provider"] for c in d["checks"]] == ["harness-check", "diff-review"]
+          [c["provider"] for c in d["checks"]] == ["harness-check", "desktop-render"]
           and d["checks"][0]["ok"] is True and d["checks"][1]["ok"] is False
           and d["checks"][1]["failed"] == 1)
 
     lines = pl.check_lines(d["checks"])
     check("PR lines: one per provider, verdict next to the name",
           lines == ["- harness-check: passed (1 checked)",
-                    "- diff-review: did not pass (1 of 1 failed)"], f"got {lines}")
+                    "- desktop-render: did not pass (1 of 1 failed)"], f"got {lines}")
     long = pl.check_lines([{"provider": "harness-check", "required": True, "ran": False,
                             "reason": "/check HTTP 502: " + "x" * 400 + "\n<html>"}])
     check("PR lines: a long not-run reason is cut to one line",
           len(long[0]) < 220 and "\n" not in long[0] and long[0].endswith("…"), long[0])
     lines = pl.check_lines(pl.decide(True, info, [passed])["checks"])
     check("PR lines: not-run and informational are said so",
-          lines[1] == "- diff-review (informational): not run — no verdict", f"got {lines}")
+          lines[1] == "- desktop-render (informational): not run — no verdict", f"got {lines}")
 
     # ── 4. validator ────────────────────────────────────────────────────
     norm, errs = pl.validate({"format": pl.FORMAT})
@@ -171,28 +202,29 @@ def main() -> int:
     check("unknown provider refused", any("unknown provider 'jenkins'" in e for e in errs))
     _, errs = pl.validate({"format": pl.FORMAT, "check": [{"provider": "user-merge"}]})
     check("a provider in the wrong stage refused", any("is a review provider" in e for e in errs))
-    _, errs = pl.validate({"format": pl.FORMAT, "check": [{"provider": "diff-review"},
-                                                          {"provider": "diff-review"}]})
+    _, errs = pl.validate({"format": pl.FORMAT, "check": [{"provider": "harness-check"},
+                                                          {"provider": "harness-check"}]})
     check("a check listed twice refused", any("twice" in e for e in errs))
-    _, errs = pl.validate({"format": pl.FORMAT, "check": [{"provider": "diff-review", "workflow": "x"}]})
+    _, errs = pl.validate({"format": pl.FORMAT, "check": [{"provider": "harness-check", "workflow": "x"}]})
     check("a setting the provider does not declare refused", any("no setting 'workflow'" in e for e in errs))
-    _, errs = pl.validate({"format": pl.FORMAT, "check": [{"provider": "diff-review", "required": "yes"}]})
+    _, errs = pl.validate({"format": pl.FORMAT, "check": [{"provider": "harness-check", "required": "yes"}]})
     check("required must be a boolean", any("required must be" in e for e in errs))
     _, errs = pl.validate({"format": pl.FORMAT, "ship": {"provider": "pod-install", "required": False}})
     check("required on a non-check stage refused", any("check rows only" in e for e in errs))
-    _, errs = pl.validate({"format": pl.FORMAT, "check": {"provider": "diff-review"}})
+    _, errs = pl.validate({"format": pl.FORMAT, "check": {"provider": "harness-check"}})
     check("check must be a list", any("must be a list" in e for e in errs))
     _, errs = pl.validate({"format": pl.FORMAT, "modules": {"api": {"ship": {"provider": "pod-install"}}}})
     check("a module may override check only", any("only check can differ" in e for e in errs))
     key = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"
-    norm, errs = pl.validate({"format": pl.FORMAT, "check": [{"provider": "diff-review", "note": key}]})
+    norm, errs = pl.validate({"format": pl.FORMAT, "check": [{"provider": "harness-check", "note": key}]})
     check("a secret-shaped value is refused and never echoed",
           norm is None and len(errs) == 1 and "credential" in errs[0] and key not in errs[0], f"got {errs}")
     check("not an object refused", pl.validate(["x"])[1] == ["pipeline must be an object"])
     # Keys are scanned too, BEFORE any error quotes one (review of #step1, F2).
     for label, doc in (
             ("a top-level key", {"format": pl.FORMAT, key: 1}),
-            ("a row key", {"format": pl.FORMAT, "check": [{"provider": "diff-review", key: 1}]}),
+            ("a row key", {"format": pl.FORMAT, "check": [{"provider": "harness-check", key: 1}]}),
+            ("a retired row", {"format": pl.FORMAT, "check": [{"provider": "diff-review", "note": key}]}),
             ("a module name", {"format": pl.FORMAT, "modules": {key: {"check": []}}}),
             ("a module name in an otherwise VALID setting",
              {"format": pl.FORMAT, "modules": {key: {"check": [{"provider": "harness-check"}]}}})):
@@ -230,12 +262,12 @@ def main() -> int:
     cfg = {"pipeline": {"format": pl.FORMAT,
                         "check": [{"provider": "harness-check"}],
                         "modules": {"api": {"check": [{"provider": "harness-check"},
-                                                      {"provider": "diff-review", "required": False}]}}}}
+                                                      {"provider": "desktop-render", "required": False}]}}}}
     check("project check list applies to the root and to other modules",
           [r["provider"] for r in pl.resolve(cfg)["check"]] == ["harness-check"]
           and [r["provider"] for r in pl.resolve(cfg, "web")["check"]] == ["harness-check"])
     check("a module's override replaces check for that module only",
-          pl.resolve(cfg, "api")["check"][1] == {"provider": "diff-review", "required": False})
+          pl.resolve(cfg, "api")["check"][1] == {"provider": "desktop-render", "required": False})
     check("an invalid stored setting resolves with an error, not silently to default",
           "error" in pl.resolve({"pipeline": {"format": pl.FORMAT, "check": [{"provider": "nope"}]}}))
 
@@ -349,11 +381,11 @@ def main() -> int:
     cur = pl.default_pipeline()
     new, _ = pl.validate({"format": pl.FORMAT,
                           "check": [{"provider": "harness-check"},
-                                    {"provider": "diff-review", "required": False}],
+                                    {"provider": "desktop-render", "required": False}],
                           "modules": {"api": {"check": [{"provider": "harness-check"}]}}})
     lines = pl.changes(cur, new)
     check("changes(): one plain line per changed stage/module, written from the documents",
-          lines == ["checks: harness-check, diff-review → harness-check, diff-review (informational)",
+          lines == ["checks: harness-check → harness-check, desktop-render (informational)",
                     "module api checks: the project's checks → harness-check"], f"{lines}")
     check("changes(): nothing changed → []", pl.changes(cur, pl.default_pipeline()) == [])
     check("widens(): built-ins never widen", pl.widens(new, []) == [])
@@ -410,7 +442,7 @@ def main() -> int:
         check("runnable_check_rows(): an unapproved row is never run; an approved one is",
               [r["provider"] for r in pl.runnable_check_rows(r_no)] == []
               and [r["provider"] for r in pl.runnable_check_rows(r_ok)] == ["t-ext"])
-        # A provider whose missing verdict is ignored (like the reviewer) is
+        # A provider whose missing verdict is ignored (like desktop-render) is
         # still held when it is unapproved (review NB2).
         pl.PROVIDERS["t-ign"] = pl.ProviderSpec("t-ign", "check", where="external",
                                                 on_unran="ignore")
@@ -634,8 +666,10 @@ def main() -> int:
     check("a phase never waits for the forge: no per-phase forge wait, the merge gate is still there",
           "FORGE-SIDE CHECKS" not in run_build and "_fs.wait(" not in run_build
           and "runnable_check_rows" not in run_build and "_ci_merge_gate(" in run_build)
-    check("the review hold still follows the reviewer's required flag",
-          "_review_blocks(_pipe, _pipeline.diff_review_verdict(_rev_env))" in run_build)
+    check("the phase build reads no reviewer verdict and records no review hold (reviewer gone 2026-10-20)",
+          "_verdicts = [_pipeline.harness_check_verdict(_acc_env, acceptance_declared)]" in run_build
+          and "diff_review" not in tools_src and "_review_blocks" not in tools_src
+          and "_set_review_hold" not in tools_src)
     check("the pipeline is resolved before the build, and _pool_build is not told to fail on a check",
           run_build.index("_pipeline.resolve(") < run_build.index("out = await _pool_build(")
           and "acceptance_fails_build" not in tools_src)
@@ -662,13 +696,13 @@ def main() -> int:
     sys.modules["server.routes.gitea_client"] = fake
     try:
         from server.routes import project_git
-        d = pl.decide(True, pl.default_pipeline(), [passed, pl.diff_review_verdict(REV[4])])
+        d = pl.decide(True, both, [passed, DR_FAIL])
         pr = asyncio.run(project_git._ensure_pr("o/r", "P", "phase 1: x", [], d["checks"]))
         body = next(kw["json"]["body"] for m, _p, kw in sent if m == "PATCH")
         title = next(kw["json"]["title"] for m, _p, kw in sent if m == "PATCH")
         check("the Code Approval carries one line per provider under the build contract",
               "- The build contract passed.\n- harness-check: passed (1 checked)\n"
-              "- diff-review: did not pass (1 of 1 failed)" in body, body)
+              "- desktop-render: did not pass (1 of 1 failed)" in body, body)
         check("ready is still the build contract (display only in step 1)", pr["ready"] is True)
         check("the contract line says it is the contract, so a failing check below "
               "it never reads as a contradiction",

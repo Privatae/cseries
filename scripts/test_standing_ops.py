@@ -262,7 +262,8 @@ def main() -> int:
 
     recorded: list[dict] = []
 
-    async def fake_record_run(pool, event_id, entity_id, ok, excerpt, error):
+    async def fake_record_run(pool, event_id, entity_id, ok, excerpt, error,
+                              cost_usd=None, priced_usd=None):
         recorded.append({"ok": ok, "excerpt": excerpt, "error": error})
 
     async def fake_finalize(*a, **kw):

@@ -372,7 +372,7 @@ def summary(provider: str | None, model: str | None, effort: str | None = None) 
 # The text roles a route can still be stored and resolved under
 # (server/routes/inference.ROLES without the image/embedding ones);
 # scripts/test_three_text_roles.py keeps the two lists equal.
-LIVE_TEXT_ROLES = ("chat", "review")
+LIVE_TEXT_ROLES = ("chat",)
 
 
 def audit_routes(model_routing: dict | None) -> list[dict]:
@@ -391,7 +391,7 @@ def audit_routes(model_routing: dict | None) -> list[dict]:
         _BYO_ALLOWED_ROLES = frozenset({"embedding", "image", "image_gen"})  # noqa: N806
     for role, r in (model_routing or {}).items():
         # A route stored under a retired role (plan, research, agents, tutor,
-        # journal, consolidation) is never resolved, so it is never judged.
+        # journal, consolidation, review) is never resolved, so it is never judged.
         if role in _BYO_ALLOWED_ROLES or role not in LIVE_TEXT_ROLES or not isinstance(r, dict):
             continue
         prov, mod, eff = r.get("provider"), r.get("model"), r.get("effort")

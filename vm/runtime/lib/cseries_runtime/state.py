@@ -189,5 +189,17 @@ class State:
         return slot
 
     def record_build(self, hid, image, src_sha256, at):
-        self.built[hid] = {"image": image, "src_sha256": src_sha256, "built_at": at}
+        self.built[hid] = {"image": image, "src_sha256": src_sha256, "built_at": at,
+                           "build_key": C.BUILD_KEY}
         write_json(self.paths.built_json(), self.built)
+
+    def built_image(self, hid, src_sha256):
+        """The image id this machine built for an engine from these sources,
+        the way it builds now (common.BUILD_KEY); None for no such build. A
+        record from another way of building is not one: the engine is built
+        again."""
+        b = self.built.get(hid)
+        if (b and src_sha256 and b.get("src_sha256") == src_sha256 and
+                b.get("build_key") == C.BUILD_KEY):
+            return b.get("image")
+        return None

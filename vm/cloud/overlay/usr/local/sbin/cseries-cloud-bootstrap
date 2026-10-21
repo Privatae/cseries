@@ -423,6 +423,8 @@ def run_bootstrap(overlay):
         # its directory.
         sh(["systemctl", "disable", "--now", "squid.service"], check=False)
         sh(["systemctl", "mask", "squid.service"], check=False)
+        # The user the coding engines are built as (cseries_runtime/build.py).
+        sh(["/usr/local/sbin/cseries-build-user"])
         sh(["systemctl", "enable", "--now", "cseries-runtime.socket", "cseries-squid.service"])
         step = "host"
         host_ref, pg_ref, min_bastion, runtime = image_refs(cfg, manifest)

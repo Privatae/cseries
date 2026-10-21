@@ -21,6 +21,7 @@ import asyncio
 import hashlib
 import logging
 import os
+import pwd
 import shutil
 import tarfile
 import time
@@ -28,6 +29,7 @@ import urllib.request
 
 from . import common as C
 from . import validate as V
+from .podman import Podman, PodmanError, child_env
 
 log = logging.getLogger("cseries-runtime")
 
@@ -38,10 +40,9 @@ BUILD_TIMEOUT_S = 3600
 #
 # The RUN steps are third-party code (apt's maintainer scripts, a vendor's
 # install script, pip), run as root inside the build. Without these flags podman
-# gives them its default capability set and no user namespace, so that root is
-# the machine's root, with the capabilities containers.conf lists by default
-# (CHOWN, DAC_OVERRIDE, FOWNER, FSETID, KILL, NET_BIND_SERVICE, SETFCAP,
-# SETGID, SETPCAP, SETUID, SYS_CHROOT).
+# gives them the capabilities containers.conf lists by default (CHOWN,
+# DAC_OVERRIDE, FOWNER, FSETID, KILL, NET_BIND_SERVICE, SETFCAP, SETGID,
+# SETPCAP, SETUID, SYS_CHROOT).
 #
 # Capabilities: every one is dropped and only what the pinned Dockerfiles'
 # steps use is given back (sidecars/harness-*/Dockerfile: apt-get install,
@@ -57,33 +58,85 @@ BUILD_TIMEOUT_S = 3600
 # file capabilities), SETPCAP and SYS_CHROOT (no step changes its capability
 # set or chroots).
 #
-# User namespace: the RUN steps run in one, with the build's root mapped to
-# host ids nothing else uses. `--userns=auto` is a podman run/create option;
-# podman build's --userns takes "", "container", "host" or a namespace path
-# (podman-build(1)), and maps ids with --userns-uid-map/--userns-gid-map, so
-# the build gets the same effect that way: slot 0 of the runtime's id ranges
-# (common.UID_BASE), which State.allocate never hands to a container (its
-# slots start at 1).
+# Who runs them: the build user (common.BUILD_USER), with rootless podman
+# against a store of its own under its home. A RUN step's root is that user's
+# uid on the machine, its other ids the user's subordinate range (slot 0 of
+# the runtime's id ranges), so a step that escaped its container is an
+# unprivileged user that owns nothing of the Host's. The capabilities above
+# are then capabilities in that user namespace only, and every step runs with
+# no new privileges (a setuid program in a step gains nothing).
 #
-# HARDEN_BUILDS turns both on. Whether the builds still work this way is proved
-# on a real machine, not here: the VM harness builds opencode and wakes it
-# (vm/cloud/test/run-vm-test.sh, R4), and the other six Dockerfiles take the same
-# kinds of step (claude-code's pip install aside). Should a build fail under
-# them, setting this to False restores the old flags and changes nothing else.
+# Root's own podman is not used to build with a user namespace: on podman
+# 5.4.2 with crun (Debian 13) a build mapped with --userns-uid-map commits each
+# RUN step's layer with the machine's ids, so the next step cannot start
+# ("did not get container create message from subprocess: EOF"; measured in
+# the cloud VM). Rootless podman maps the ids itself, the way it is made to.
+#
+# The finished image goes to root's store, where the runtime runs it: podman
+# save as the build user into podman load as root, both podman's own, then
+# root's copy is checked to have the image id the build wrote (the sha256 of
+# its config, which names every layer's digest). The build user's store is
+# emptied before and after each build, so no layer outlives the build that
+# made it and the disk holds each engine's image once.
+#
+# Its network: a namespace of its own (pasta). The firewalls (door.nft,
+# runtime.nft) let the build user's sockets, which carry every RUN step's
+# traffic and podman's own pulls, reach the machine's plain proxy on the
+# runtime's gateway and nothing else; the proxy refuses private ranges.
+#
+# HARDEN_BUILDS turns the capability and no-new-privileges flags on. The VM
+# harness builds opencode and claude-code this way and wakes them
+# (vm/cloud/test/run-vm-test.sh, R4). Should a build fail under them, setting
+# this to False gives podman's defaults back, still as the build user, and
+# changes nothing else.
 HARDEN_BUILDS = True
 BUILD_CAPS = ("CHOWN", "DAC_OVERRIDE", "FOWNER", "FSETID", "KILL", "SETGID", "SETUID")
-BUILD_ID_SLOT = 0
 
 
 def hardening_args():
     """The podman build flags HARDEN_BUILDS turns on (empty when it is off)."""
     if not HARDEN_BUILDS:
         return []
-    base = C.UID_BASE + BUILD_ID_SLOT * C.UID_RANGE
     return ["--cap-drop", "ALL", "--cap-add", ",".join(BUILD_CAPS),
-            "--userns", "container",
-            "--userns-uid-map", f"0:{base}:{C.UID_RANGE}",
-            "--userns-gid-map", f"0:{base}:{C.UID_RANGE}"]
+            "--security-opt", "no-new-privileges"]
+
+
+BUILD_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+
+
+def podman_as_build_user(paths, binary="podman"):
+    """podman as the build user, in the builds' slice, against its own store.
+    Its own pulls (the Dockerfiles' base images) go through the plain proxy,
+    the one way out its firewall rule leaves it."""
+    run = paths.build_run()
+    no_proxy = "localhost,127.0.0.1,::1"
+    env = {"PATH": BUILD_PATH, "HOME": paths.build_home(), "XDG_RUNTIME_DIR": run,
+           "LANG": "C.UTF-8", "NO_PROXY": no_proxy, "no_proxy": no_proxy}
+    for k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
+        env[k] = C.SQUID_URL
+    wrap = ["systemd-run", "--scope", "--quiet", f"--slice={C.BUILD_SLICE}",
+            f"--uid={C.BUILD_UID}", f"--gid={C.BUILD_UID}", "--"]
+    # cgroupfs: the build user has no systemd user manager to ask for
+    # cgroups, so its containers stay in the slice its scope is in.
+    glob = ["--root", paths.build_store(), "--runroot", os.path.join(run, "storage"),
+            "--cgroup-manager", "cgroupfs"]
+    return Podman(binary, wrap=wrap, global_args=glob, env=env, cwd=paths.build_home())
+
+
+async def run_quiet(argv, timeout=120):
+    """A system command (systemctl), its exit status; never raises."""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *argv, stdin=asyncio.subprocess.DEVNULL, stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL, env=child_env())
+    except OSError:
+        return -1
+    try:
+        return await asyncio.wait_for(proc.wait(), timeout=timeout)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
+        return -1
 
 
 def fetch_to_file(url, path, max_bytes):
@@ -120,21 +173,120 @@ def unpack(tgz, dest):
     os.replace(tmp, dest)
 
 
+HANDOVER_TIMEOUT_S = 1800
+
+
+def has_subids(path, user=C.BUILD_USER, first=C.BUILD_SUBIDS[0], count=C.BUILD_SUBIDS[1]):
+    """Whether /etc/subuid (or subgid) gives `user` exactly its range."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return any(line.strip() == f"{user}:{first}:{count}" for line in f)
+    except OSError:
+        return False
+
+
 class Builder:
-    def __init__(self, paths, podman, fetch=fetch_to_file, clock=time.monotonic):
+    def __init__(self, paths, podman, fetch=fetch_to_file, clock=time.monotonic,
+                 build_podman=None, system=run_quiet, chown=os.chown, user_of=pwd.getpwuid):
         self.paths = paths
-        self.podman = podman
+        self.podman = podman           # root's: where the runtime runs images
+        self.bpodman = build_podman if build_podman is not None else podman_as_build_user(
+            paths, podman.binary)     # the build user's
         self.fetch = fetch
         self.clock = clock
+        self.system = system
+        self.chown = chown
+        self.user_of = user_of
         self.tasks = {}          # (engine, sources sha256) -> Task
         self.errors = {}         # (engine, sources sha256) -> last failure
         self.state = None
         self.guard = None
         self._src_lock = asyncio.Lock()
+        # One podman build at a time on the machine: every build uses the
+        # build user's one store, emptied before and after it, and the one
+        # builds' slice, stopped after it. (Before the build user, root's
+        # builds collided too: podman 5.4.2 with crun ran every build's RUN
+        # step in one unit named after --cgroup-parent.)
+        self._build_lock = asyncio.Lock()
 
     def bind(self, runtime):
         self.state = runtime.state
         self.guard = runtime.guard
+        if self.guard is not None and hasattr(self.guard, "watch_disk"):
+            # A build's layers are written under the build user's home: the
+            # disk floors hold there too.
+            self.guard.watch_disk(self.paths.build_home())
+
+    def prepare(self):
+        """The build user, its subordinate ids, its home and runtime
+        directory as it needs them; a ValueError naming what is missing."""
+        try:
+            name = self.user_of(C.BUILD_UID).pw_name
+        except KeyError:
+            name = None
+        if name != C.BUILD_USER:
+            raise ValueError(f"this machine has no build user {C.BUILD_USER} with uid {C.BUILD_UID} "
+                             "(the guest's installer makes it: cseries-build-user)")
+        for f in ("etc/subuid", "etc/subgid"):
+            if not has_subids(self.paths.p(f)):
+                raise ValueError(f"/{f} gives {C.BUILD_USER} no range {C.BUILD_SUBIDS[0]}:"
+                                 f"{C.BUILD_SUBIDS[1]} (cseries-build-user makes it)")
+        for d in (self.paths.build_home(), self.paths.build_run()):
+            os.makedirs(d, mode=0o700, exist_ok=True)
+            self.chown(d, C.BUILD_UID, C.BUILD_UID)
+            os.chmod(d, 0o700)
+
+    async def empty_store(self):
+        """The build user's store emptied: nothing a build made is kept for
+        the next one (no layer cache to reuse), and its disk is free again."""
+        rc, _, err = await self.bpodman.run(["podman", "system", "reset", "--force"], timeout=600,
+                                            check=False)
+        if rc != 0:
+            log.warning("emptying the build user's store failed: %s", err.strip()[-300:])
+        return rc == 0
+
+    async def hand_over(self, tag, image):
+        """The build user's image into root's store: podman save into podman
+        load, then root's copy checked to be the image id the build wrote."""
+        r, w = os.pipe()
+        procs = []
+        try:
+            try:
+                procs.append(await asyncio.create_subprocess_exec(
+                    *self.bpodman.argv(["podman", "save", "--format", "docker-archive", tag]),
+                    stdin=asyncio.subprocess.DEVNULL, stdout=w, stderr=asyncio.subprocess.PIPE,
+                    env=self.bpodman.proc_env(), cwd=self.bpodman.cwd))
+            finally:
+                os.close(w)
+            try:
+                procs.append(await asyncio.create_subprocess_exec(
+                    *self.podman.argv(["podman", "load", "--quiet"]),
+                    stdin=r, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                    env=self.podman.proc_env(), cwd=self.podman.cwd))
+            finally:
+                os.close(r)
+            save, load = procs
+            (_, serr), (_, lerr) = await asyncio.wait_for(
+                asyncio.gather(save.communicate(), load.communicate()), timeout=HANDOVER_TIMEOUT_S)
+        except (asyncio.TimeoutError, asyncio.CancelledError) as e:
+            for p in procs:
+                try:
+                    p.kill()
+                except ProcessLookupError:
+                    pass
+            if isinstance(e, asyncio.CancelledError):
+                raise
+            raise ValueError(f"handing the image to the runtime took over {HANDOVER_TIMEOUT_S} s") from None
+        if save.returncode != 0 or load.returncode != 0:
+            raise PodmanError(["podman", "save" if save.returncode else "load"],
+                              save.returncode or load.returncode,
+                              (serr if save.returncode else lerr).decode("utf-8", "replace"))
+        got = await self.podman.image_id(tag)
+        got = got[len("sha256:"):] if got.startswith("sha256:") else got
+        if got != image:
+            await self.podman.image_remove(tag)
+            raise ValueError(f"the runtime's store holds {tag} as {got[:12] or 'nothing'}, "
+                             f"the build made {image[:12]}")
 
     def cancel_all(self):
         """Cancel every build in flight (the machine guard, on a short disk);
@@ -212,36 +364,20 @@ class Builder:
             dockerfile = os.path.join(ctx, "sidecars", f"harness-{hid}", "Dockerfile")
             if not os.path.isfile(dockerfile):
                 raise ValueError(f"the sources have no Dockerfile for {hid}")
-            iid = os.path.join(self.paths.build_dir(), f"{hid}.iid")
-            try:
-                os.unlink(iid)
-            except FileNotFoundError:
-                pass
             tag = f"localhost/cseries-harness-{hid}:{src['sha256'][:12]}"
             log.info("building %s from the release's sources", hid)
             # The RUN steps (apt, npm, install scripts) are third-party code:
-            # on the runtime's network, through the machine's plain proxy, as
-            # the engine itself runs. The proxy settings are build arguments,
-            # so they are not kept in the image.
+            # through the machine's plain proxy, as the engine itself runs.
+            # The proxy settings are build arguments, so they are not kept in
+            # the image.
             no_proxy = f"localhost,127.0.0.1,::1,{C.HOST_IP}"
             proxy = []
             for k in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy"):
                 proxy += ["--build-arg", f"{k}={C.SQUID_URL}"]
             for k in ("NO_PROXY", "no_proxy"):
                 proxy += ["--build-arg", f"{k}={no_proxy}"]
-            # In the containers' slice, under the Host's CPU weight: a build
-            # compiles and installs for minutes (common.CGROUP_PARENT).
-            await self.podman.run(["podman", "build", "--pull=missing", "--layers",
-                                   "--cgroup-parent", C.CGROUP_PARENT,
-                                   "--network", C.NETWORK, *proxy, *hardening_args(),
-                                   "--label", f"{C.LABEL_BUILD}={hid}",
-                                   "-f", dockerfile, "-t", tag, "--iidfile", iid, ctx],
-                                  timeout=BUILD_TIMEOUT_S)
-            with open(iid, encoding="ascii") as f:
-                image = f.read().strip()
-            image = image[len("sha256:"):] if image.startswith("sha256:") else image
-            if not V.HEX64_RE.match(image):
-                raise ValueError("the build gave no image id")
+            async with self._build_lock:
+                image = await self._build_as_user(hid, ctx, tag, proxy)
             if self.state is not None:
                 self.state.record_build(hid, image, src["sha256"],
                                         time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
@@ -255,3 +391,47 @@ class Builder:
             self.errors[key] = str(e)
             log.warning("the build of %s failed: %s", hid, e)
             raise
+
+    async def _build_as_user(self, hid, ctx, tag, proxy):
+        """One build as the build user, its image handed to root's store; the
+        image id. The build user's store is emptied and its slice stopped
+        afterwards, whatever happened."""
+        self.prepare()
+        run = self.paths.build_run()
+        # The sources, copied where the build user can read them: root's
+        # state directory stays root's alone.
+        bctx = os.path.join(self.paths.build_home(), "context")
+        shutil.rmtree(bctx, ignore_errors=True)
+        await asyncio.to_thread(shutil.copytree, ctx, bctx, symlinks=True)
+        # Its own copy, so the runtime's umask (0077) does not keep it out.
+        for d, dirs, files in os.walk(bctx):
+            for n in [d, *(os.path.join(d, f) for f in files)]:
+                self.chown(n, C.BUILD_UID, C.BUILD_UID)
+        dockerfile = os.path.join(bctx, "sidecars", f"harness-{hid}", "Dockerfile")
+        iid = os.path.join(run, f"{hid}.iid")
+        try:
+            os.unlink(iid)
+        except FileNotFoundError:
+            pass
+        try:
+            await self.empty_store()
+            # Its own network namespace (pasta); the firewalls leave the
+            # build user only the plain proxy (see above). In the builds'
+            # slice, under the Host's CPU weight (the wrapper's --slice): a
+            # build compiles and installs for minutes.
+            await self.bpodman.run(["podman", "build", "--pull=missing", "--layers",
+                                    "--network", "pasta", *proxy, *hardening_args(),
+                                    "--label", f"{C.LABEL_BUILD}={hid}",
+                                    "-f", dockerfile, "-t", tag, "--iidfile", iid, bctx],
+                                   timeout=BUILD_TIMEOUT_S)
+            with open(iid, encoding="ascii") as f:
+                image = f.read().strip()
+            image = image[len("sha256:"):] if image.startswith("sha256:") else image
+            if not V.HEX64_RE.match(image):
+                raise ValueError("the build gave no image id")
+            await self.hand_over(tag, image)
+            return image
+        finally:
+            await self.empty_store()
+            await self.system(["systemctl", "stop", C.BUILD_SLICE])
+            shutil.rmtree(bctx, ignore_errors=True)

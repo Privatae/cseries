@@ -177,31 +177,17 @@ _HUGE = 1_000_000  # "disabled" backstop — large enough to never bind
 
 
 def backstop_rounds(behavioral_params: dict | None = None) -> int:
-    """The runaway backstop for one turn, in tool rounds.
-
-    Precedence: behavioral_params["max_tool_rounds"] → env
-    CSERIES_MAX_TOOL_ROUNDS → BACKSTOP_TOOL_ROUNDS. A value <= 0 in either
-    override DISABLES the backstop (returns a number no turn can reach), which
-    is the documented way to turn it off: with it off, the spend allowance,
-    the dead-tool ledger and the all-fail break are the only things that end a
-    tool loop. Anything unparseable falls back to the constant rather than
+    """The runaway backstop for one turn, in tool rounds: the person's limit
+    `turn.tool_rounds` (runtime/user_limits), stored at
+    behavioral_params["max_tool_rounds"] as before, then env
+    CSERIES_MAX_TOOL_ROUNDS, then BACKSTOP_TOOL_ROUNDS. 0 or less is no limit
+    (a number no turn can reach): with it off, the spend allowance, the
+    dead-tool ledger and the all-fail break are the only things that end a
+    tool loop. Anything unparseable falls back to the default rather than
     raising — a bad dial must never fail a turn.
     """
-    import os
-    raw = None
-    if isinstance(behavioral_params, dict):
-        raw = behavioral_params.get("max_tool_rounds")
-    if raw is None:
-        raw = os.environ.get("CSERIES_MAX_TOOL_ROUNDS")
-    if raw is None or raw == "":
-        return BACKSTOP_TOOL_ROUNDS
-    try:
-        n = int(raw)
-    except (TypeError, ValueError):
-        log.debug("max_tool_rounds %r is not an int — using the default %d",
-                  raw, BACKSTOP_TOOL_ROUNDS)
-        return BACKSTOP_TOOL_ROUNDS
-    return _HUGE if n <= 0 else n
+    from mastercode.runtime import user_limits
+    return user_limits.int_value("turn.tool_rounds", behavioral_params, off=_HUGE)
 
 
 def _usd(n: float) -> str:

@@ -42,6 +42,7 @@
 // name; hostCa the sha256 of the Host CA it was paired with.
 
 const fs = require('node:fs');
+const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { CliError } = require('./errors');
@@ -331,7 +332,18 @@ async function planFor(ctx, token) {
     anchor: pair || !st.anchored,
     enroll: pair || !st.enrolled,
     host: pair ? null : st.host,
+    // The authenticator entry enrolled for that Host: release-anchor sets
+    // its factor aside, so the person's app holds an entry that no longer
+    // works, under the same name as the one enrolled next.
+    staleEntry: pair && st.host && st.enrolled ? authenticatorEntry(ctx, st.host) : null,
   };
+}
+
+// The name the bastion gives the authenticator entry it enrols
+// (privatae-bastion stepup-enroll: "Privatae NAC:" + this machine's name +
+// " for " + the pairing's Host), as the app shows it.
+function authenticatorEntry(ctx, host) {
+  return `Privatae NAC: ${ctx.hostname || os.hostname()} for ${host}`;
 }
 
 function planNeeded(p) {
@@ -400,6 +412,11 @@ function describePlan(out, p, ctx) {
     } else {
       out.detail('  - enrol your authenticator app for approvals: the bastion shows a QR code in');
       out.detail('    this terminal; scan it, then type one code from the app here');
+    }
+    if (p.staleEntry) {
+      out.detail(`Your authenticator app already has an entry "${p.staleEntry}" from before.`);
+      out.detail('It was for the Host whose data was deleted and no longer works. Delete it from the');
+      out.detail('app before you scan the new code: the new entry has the same name.');
     }
   }
 }
@@ -474,6 +491,7 @@ module.exports = {
   planNeeded,
   record,
   describePlan,
+  authenticatorEntry,
   linuxUnit,
   findSudo,
   fetchManifest,

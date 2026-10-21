@@ -250,6 +250,9 @@ class Guard:
         self.meminfo_path = meminfo_path
         self.psi_path = psi_path
         self.disk_path = disk_path
+        # Other places the runtime writes to: the engine builds' own store
+        # (build.Builder.bind). Each floor holds for the fullest of them.
+        self.disk_paths = []
         self._total = total_mb
         # held(): the MiB the Host's and its database's ceilings take, or
         # None when one may take everything (parse_held). A test gives its own.
@@ -302,9 +305,19 @@ class Guard:
             return over_plan_text(needs_mi, 0, reason="pressure")
         return None
 
+    def watch_disk(self, path):
+        if path not in self.disk_paths:
+            self.disk_paths.append(path)
+
+    def free(self):
+        """The fewest bytes free on any disk the runtime writes to (None when
+        none can be read)."""
+        got = [f for f in (disk_free(p) for p in [self.disk_path, *self.disk_paths]) if f is not None]
+        return min(got) if got else None
+
     def disk_short(self):
         """The bytes free when they are under the wake floor, else None."""
-        free = disk_free(self.disk_path)
+        free = self.free()
         if free is not None and free < DISK_WAKE_FLOOR:
             return free
         return None

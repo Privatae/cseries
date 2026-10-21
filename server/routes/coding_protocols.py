@@ -193,9 +193,10 @@ def validate_protocol(doc: Any, *, model_opts: Optional[dict] = None,
         validate_harness_effort = None  # type: ignore[assignment]
         HARNESS_EFFORTS = {}            # type: ignore[assignment]
     try:
-        from server.routes.ladder import RUNG_WALL_CAP_MIN as _CAP
+        from server.routes.ladder import rung_wait_cap
+        _CAP = rung_wait_cap()
     except Exception:  # pragma: no cover
-        _CAP = 60
+        _CAP = 240
 
     steps: list[dict] = []
     ids: list[str] = []
@@ -289,9 +290,13 @@ def validate_protocol(doc: Any, *, model_opts: Optional[dict] = None,
                 step["samples"] = clean_s
         tb = s.get("time_budget_minutes")
         if tb is not None:
-            if isinstance(tb, bool) or not isinstance(tb, int) or not 1 <= tb <= _CAP:
-                return None, (f"step {sid}: time_budget_minutes, when given, must be an "
-                              f"int in 1..{_CAP} (the longest a model call may stay silent)")
+            if (isinstance(tb, bool) or not isinstance(tb, int) or tb < 1
+                    or (_CAP is not None and tb > _CAP)):
+                return None, (f"step {sid}: time_budget_minutes, when given, must be a whole "
+                              "number of minutes from 1"
+                              + (f" to {_CAP} (the person's limit build.model_wait_max_minutes)"
+                                 if _CAP is not None else "")
+                              + ": the longest a model call may stay silent")
             step["time_budget_minutes"] = tb
         for key in ("on_pass", "on_fail"):
             v = s.get(key)

@@ -24,7 +24,7 @@ always present so you know how to connect it.
   vendor's own catalog also lists some Claude models — `agy models` decides,
   not this file)
 - Multi-harness comparison — the same task on Antigravity beside Claude Code,
-  Codex or Kimi Code; the reviewer picks the best per file
+  Codex or Kimi Code; the user picks the best per file
 - Work the user wants billed to their Google plan rather than another vendor's
 
 **Don't use it for:**

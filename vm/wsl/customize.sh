@@ -21,10 +21,13 @@ install -D -m 0644 /src-seccomp/seccomp-browser.json "$root/usr/share/cseries/se
 install -d -m 0755 "$root/usr/local/lib/cseries-runtime/cseries_runtime"
 install -m 0644 /src-runtime/lib/cseries_runtime/*.py "$root/usr/local/lib/cseries-runtime/cseries_runtime/"
 install -D -m 0755 /src-runtime/sbin/cseries-runtime "$root/usr/local/sbin/cseries-runtime"
+install -D -m 0755 /src-runtime/sbin/cseries-build-user "$root/usr/local/sbin/cseries-build-user"
 install -m 0644 /src-runtime/systemd/* "$root/etc/systemd/system/"
 install -m 0644 /src-runtime/containers/cseries-apps.network "$root/etc/containers/systemd/cseries-apps.network"
 install -D -m 0644 /src-runtime/squid.conf "$root/etc/cseries-runtime/squid.conf"
 chroot "$root" groupadd --system cseries-runtime
+# The user the coding engines are built as (cseries_runtime/build.py).
+chroot "$root" /usr/local/sbin/cseries-build-user
 chroot "$root" systemctl enable cseries-runtime.socket cseries-squid.service cseries-runtime-firewall.service
 # Debian's own squid would listen on every address with its default rules.
 chroot "$root" systemctl mask squid.service

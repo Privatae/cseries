@@ -1,0 +1,2 @@
+# There is no research text role: web_search with nothing routed that can search runs on a connected coding engine that can (antigravity, then claude-code), in web_search's own envelope naming the engine; a run whose frames show no search call is ungrounded and the next engine is tried; none connected leaves "unavailable" saying how to fix it; an engine that cannot start or finish is said by name. Stand-in engine runs writing real frame logs; no pod, no DB.
+test_engine_research.py

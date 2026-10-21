@@ -10,8 +10,9 @@ NetworkName=cseries-apps
 PodmanArgs=--interface-name=cseries-apps0
 Subnet=10.89.78.0/24
 Gateway=10.89.78.1
-# Addresses podman hands out itself, to an engine build's RUN containers. The
+# Addresses podman hands out itself, to a container started without a fixed
+# one (the runtime starts none; cseries_runtime/common.py POOL_IP_FIRST). The
 # Host is .2 and the runtime places its containers at fixed addresses from .16
-# (cseries_runtime/common.py IP_FIRST), so a build never holds one of those.
+# (IP_FIRST). The plain proxy admits none of these.
 IPRange=10.89.78.3-10.89.78.15
 Options=no_default_route=1

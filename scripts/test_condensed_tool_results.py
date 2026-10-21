@@ -134,7 +134,7 @@ def matrix_fixture() -> dict:
 
 def routing_fixture() -> dict:
     """inference.get_current_routing's shape."""
-    roles = ["chat", "review", "memory"]
+    roles = ["chat", "embedding", "image", "image_gen"]
 
     def route(p, m):
         return {"provider": p, "model": m, "model_id": m, "lane": p, "base_url": None,
@@ -154,8 +154,8 @@ def routing_fixture() -> dict:
         "coding_harnesses": [{"id": "claude-code", "model": "claude-opus-5", "effort": "high"}],
         "default_coding_harness": "claude-code",
         "effective": {"chat": {**route("xai", "grok-4.7"), "source": "explicit"},
-                      "review": {**route("anthropic", "claude-opus-5"), "source": "derived"},
-                      "memory": {"provider": None, "model": None, "source": "unconfigured",
+                      "image_gen": {**route("openrouter", "vendor0/image-model-0"), "source": "derived"},
+                      "embedding": {"provider": None, "model": None, "source": "unconfigured",
                                  "unconfigured": "pick a provider and model in the Orchestrator"}},
         "providers": ([{"id": f"prov{i}", "has_key": i % 3 == 0} for i in range(26)]
                       + [{"id": "xai", "has_key": True, "via": "signin", "via_label": "xAI sign-in",
@@ -361,8 +361,8 @@ def part_bench():
         check("coding_bench routing: every role's effective route, without the resolver's aliases",
               (ro.get("effective") or {}).get("chat") == {"provider": "xai", "model": "grok-4.7",
                                                           "effort": "high", "source": "explicit"}
-              and ro["effective"]["memory"]["source"] == "unconfigured"
-              and "unconfigured" in ro["effective"]["memory"], repr(ro.get("effective")))
+              and ro["effective"]["embedding"]["source"] == "unconfigured"
+              and "unconfigured" in ro["effective"]["embedding"], repr(ro.get("effective")))
         check("coding_bench routing: the held providers (and how xai is held), the saved engines, "
               "the default tick",
               ro.get("providers_held") == [f"prov{i}" for i in range(0, 26, 3)] + ["xai", "local"]

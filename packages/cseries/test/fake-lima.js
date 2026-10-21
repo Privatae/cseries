@@ -48,7 +48,8 @@ function unquoteWords(line) {
 //        pm, sudo: 'yes'|'no', uid, macos, hv, systemd, failAt, hostName,
 //        userManager: bool, cpus, memKb (what the guest's status reports),
 //        sudoEnv (variables sudo passes on to the bastion script),
-//        tokenPrefix (the pairing tokens minted are <it>-1, <it>-2, ...)}
+//        tokenPrefix (the pairing tokens minted are <it>-1, <it>-2, ...),
+//        pullFail / qemuFail (the stderr of a pull, or a QEMU install, that fails)}
 function fakeLima(paths, opts = {}) {
   const platform = opts.platform || 'linux';
   const root = path.join(paths.base, 'machine');
@@ -183,7 +184,25 @@ function fakeLima(paths, opts = {}) {
         m.images = input;
         return { stdout: `changed=${changed ? 1 : 0}\n` };
       }
-      case 'pull': m.pulls++; return {};
+      case 'pull': {
+        m.pulls++;
+        if (opts.pullFail) return { code: 125, stderr: opts.pullFail };
+        if (m.imagesHere) return {};
+        m.imagesHere = true;
+        // What podman prints for a pull through limactl shell, invented ids:
+        // "Trying to pull" and the layers on stderr, the image id on stdout.
+        const chunks = [];
+        for (const which of ['postgres', 'host']) {
+          const ref = new RegExp(`^${which}=(.*)$`, 'm').exec(m.images || '');
+          if (!ref) continue;
+          chunks.push(`Trying to pull ${ref[1]}...\nGetting image source signatures\n`,
+            'Copying blob 0a1b2c3d4e5f [=====>-------] 12.0MiB / 48.0MiB | 3.1 MiB/s\r',
+            'Copying blob 0a1b2c3d4e5f done   | \nCopying blob 9f8e7d6c5b4a done   | \n',
+            'Copying config 1234abcd5678 done   | \nWriting manifest to image destination\n',
+            `${which === 'host' ? '6966a79c67b4' : '5a4b3c2d1e0f'}0123456789abcdef0123456789abcdef0123456789abcdef0123\n`);
+        }
+        return { chunks, stdout: '6966a79c67b40123456789abcdef0123456789abcdef0123456789abcdef0123\n' };
+      }
       case 'start': case 'restart': m.hostStarted = true; return {};
       case 'stop': m.hostStarted = false; return {};
       case 'health': return { code: m.hostStarted ? 0 : 1 };
@@ -225,7 +244,7 @@ function fakeLima(paths, opts = {}) {
         return guest(a.slice(at + 2), o.input);
       }
       case 'stop': if (m.instance) m.instance.status = 'Stopped'; m.hostStarted = false; return {};
-      case 'delete': m.instance = null; return {};
+      case 'delete': m.instance = null; m.imagesHere = false; return {};
       default: return { code: 1, stderr: `unknown limactl ${a[0]}` };
     }
   }
@@ -252,9 +271,13 @@ function fakeLima(paths, opts = {}) {
       if (args[sh + 1] === '-c') {
         const script = args[sh + 2];
         m.sudoRuns.push({ kind: 'qemu', script });
+        if (opts.qemuFail) return { code: 100, stdout: 'Reading package lists...\n', stderr: opts.qemuFail };
         if (/apt-get install/.test(script) && /qemu-system-x86/.test(script)) m.qemu = true;
         if (/usermod -a -G 'kvm' 'someone'/.test(script)) m.kvmMember = true;
-        return {};
+        // apt-get's own lines, as many as it prints for QEMU's packages.
+        const apt = [];
+        for (let i = 0; i < 40; i++) apt.push(`Unpacking libexample${i}:amd64 (1.0-${i}) ...`, `Setting up libexample${i}:amd64 (1.0-${i}) ...`);
+        return { stdout: `${apt.join('\n')}\n` };
       }
       if (args[sh + 1] === '-s') return runBastionScript(o.input);
       return { code: 2 };
@@ -307,6 +330,7 @@ function limaPaths(dir, platform = 'linux') {
     downloads: j(dir, 'downloads'),
     hostCa: j(dir, 'host-ca.pem'),
     installLog: j(dir, 'bastion-install.log'),
+    log: j(dir, 'install.log'),
     bastionDir: j(dir, 'home-bin'),
     bastionExe: j(dir, 'home-bin', 'privatae-bastion'),
     serviceDir,

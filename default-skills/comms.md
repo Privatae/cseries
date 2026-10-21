@@ -163,6 +163,9 @@ runs unattended, while the firing can.
   task_templates to run now, through the ordinary governed turn pipeline. The
   template has to exist already; you will be told at once if it does not. No
   code needed.
+  A trigger on a runbook channel runs a model turn each time it fires, so
+  `add_trigger` on one puts a card up for the person instead of adding it;
+  their "Let it run" adds it. Triggers on the other channels are added at once.
 - `{"type": "gmail_send"}` — one mail from the user's connected Gmail to that
   same address. Add `"connection_id"` only when more than one Gmail is
   connected. No code needed. It is created when Gmail is connected; build it

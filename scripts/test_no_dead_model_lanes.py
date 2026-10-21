@@ -279,8 +279,11 @@ def main() -> int:
     callers = sorted(set(callers_under(*KERNEL_ROOTS)))
     unreachable = sorted(os.path.relpath(f, root) for f in callers if f not in reach)
 
+    # A floor that proves the scan matches, not a count to keep: 7 since
+    # 2026-10-20, when runtime/diff_review.py (a caller on every landed
+    # build) was deleted with the review role.
     check(f"found the kernel call_model callers to check ({len(callers)})",
-          len(callers) >= 8,
+          len(callers) >= 7,
           "far fewer callers than expected — the scan is probably not matching")
     check("no call_model caller is orphaned", not unreachable,
           "unreachable from server/launch.py + server/main.py:\n"

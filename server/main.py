@@ -2008,6 +2008,8 @@ app.include_router(agents_routes.router)
 
 from server.routes import tickets as tickets_routes
 app.include_router(tickets_routes.router)
+from server.routes import limits as _limits_route
+app.include_router(_limits_route.router)    # Settings > Limits: the person's limits (runtime/user_limits)
 # Tickets pane, support half: platform-help tickets (draft -> user approves the
 # shared context -> bridge). server/routes/support.py.
 from server.routes import support as support_routes

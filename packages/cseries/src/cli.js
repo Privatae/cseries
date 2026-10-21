@@ -16,6 +16,7 @@ const { systemRunner } = require('./run');
 const release = require('./release');
 const net = require('./net');
 const { State } = require('./state');
+const { InstallLog } = require('./log');
 const { paths, machineArch } = require('./platform');
 const { selectDriver, requireSupported } = require('./vm/driver');
 const { runSteps } = require('./steps');
@@ -73,6 +74,8 @@ function makeContext(overrides = {}) {
     binPath: overrides.binPath || path.join(__dirname, '..', 'bin', 'cseries.js'),
     bastionKeys: overrides.bastionKeys,
     portState: overrides.portState,
+    freeBytes: overrides.freeBytes,
+    hostname: overrides.hostname || os.hostname(),
     osRelease: overrides.osRelease || os.release(),
     // os.availableParallelism is Node 18.14 and later; the package takes any 18.
     machine: overrides.machine || {
@@ -81,6 +84,7 @@ function makeContext(overrides = {}) {
     },
   };
   ctx.state = overrides.state || new State(p.state);
+  ctx.log = overrides.log || new InstallLog(p.log);
   ctx.releaseInfo = overrides.releaseInfo || null;
   return ctx;
 }
@@ -245,6 +249,11 @@ async function uninstall(ctx, args) {
     ctx.state.set('pairedHostCa', undefined);
     fs.rmSync(ctx.paths.hostCa, { force: true });
     ctx.out.line('C-Series and its data are removed.');
+    if (b.host && b.enrolled) {
+      ctx.out.line(`Your authenticator app's entry "${bastion.authenticatorEntry(ctx, b.host)}" was for this Host`);
+      ctx.out.line('and no longer works: delete it from the app. If you install C-Series again, it adds a');
+      ctx.out.line('new entry with the same name.');
+    }
   } else {
     ctx.out.line('C-Series is stopped and no longer starts at login.');
     ctx.out.line(`Its data is kept in the ${ctx.driver.label} system "cseries"; npx cseries brings it back,`);

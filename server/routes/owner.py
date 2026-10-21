@@ -265,9 +265,15 @@ async def setup_page():
         return RedirectResponse("/login", status_code=303)
     return _page(
         "Set up C-Series",
-        ('<p class="note">Create the owner account. The setup code is printed '
-         "in this Host's log (for example <code>docker compose logs host</code>), or was "
-         "given to you with the Host.</p>"),
+        # The Host cannot tell how it was installed, so the page names each
+        # way: npx first (the cseries command reads the code from the Host's
+        # log and prints it: packages/cseries/src/setup.js showSetup), then
+        # Docker Compose, then a Host handed over with its code.
+        ('<p class="note">Create the owner account. To get the setup code, run '
+         "<code>npx cseries open</code> on the machine this Host runs on if C-Series "
+         "was installed with npx cseries; with Docker Compose it is in this Host's "
+         "log (<code>docker compose logs host</code>). A Host someone set up for you "
+         "came with its code.</p>"),
         _form_html("/api/owner/setup",
                    '<label for="code">Setup code</label><input id="code" name="code" '
                    'autocomplete="one-time-code" required>' + _EMAIL +

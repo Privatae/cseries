@@ -1027,6 +1027,69 @@ check("the backup a restore came from is recorded as the good backup it was, not
       and "reason <> 'restore'" in fix[0][0], fp.sent[:3])
 check("  and it is set before the restore's own record and before the Host is told",
       fp.sent.index(fix[0]) < next(i for i, x in enumerate(fp.sent) if x[0].startswith("INSERT INTO host_backup_runs")))
+
+print("== the apps that were running come back when the restore finishes")
+# At the Host's start on the restored data each resident app is held and
+# woken (supervisor.ensure_resident_apps), and a wake of an app whose data is
+# still to be put back is answered "still starting" (local_runtime,
+# app_data_pending). The hold re-wakes on its own doubling wait
+# (harness_backend.resident_retry_wait): measured on the cloud VM, Telegram
+# stayed stopped about two minutes after an unverified restore. Once finish
+# has put the data back, the held apps are woken then; an app nobody held
+# (it was not running) is not.
+from server.applications import harness_backend as HBK  # noqa: E402
+_real_wake, _real_retry = HBK._wake_app, HBK.APP_RT_RESIDENT_RETRY_S
+_real_rad = hr._restore_app_data
+woken_by = []
+
+
+async def _wake_stub(app_id, creds=None):
+    woken_by.append(app_id)
+    if app_id in hr.app_data_pending():
+        return {"ok": False, "code": 503,
+                "error": f"still starting: the data of {app_id} is being put back from a backup"}
+    return {"ok": True, "url": "http://10.89.78.20:8850"}
+
+
+async def _put_back(plan):
+    for a in plan.get("app_data") or []:
+        a["state"] = hr.APP_DATA_RESTORED
+    hr._write_plan(plan)
+
+
+async def _resume_after_finish():
+    HBK._wake_app = _wake_stub
+    HBK.APP_RT_RESIDENT_RETRY_S = 30     # the hold's own next try: far past this check
+    hr._restore_app_data = _put_back
+    hr._write_plan({"state": hr.FINISHING, "live_db": "hostmem", "stamp": stamp,
+                    "taken_at": "2026-09-27T02:07:00+00:00", "staged_at": "2026-09-29T01:00:00+00:00",
+                    "app_data": [{"app_id": "telegram", "state": hr.APP_DATA_PENDING},
+                                 {"app_id": "notes", "state": hr.APP_DATA_PENDING}]})
+    HBK.app_hold("telegram")             # resident, held at the Host's start
+    refused = await HBK._wake_app("telegram")
+    woken_by.clear()
+    await hr.finish(RunPool(), 42)
+    for _ in range(40):
+        if (HBK._state.get("telegram") or {}).get("url"):
+            break
+        await asyncio.sleep(0.05)
+    url = (HBK._state.get("telegram") or {}).get("url")
+    HBK._stop_lease("telegram")
+    return refused, url
+
+
+try:
+    refused, url = asyncio.run(_resume_after_finish())
+finally:
+    HBK._wake_app, HBK.APP_RT_RESIDENT_RETRY_S = _real_wake, _real_retry
+    hr._restore_app_data = _real_rad
+check("precondition: while its data is pending, the held app's wake is answered still starting",
+      not refused["ok"] and refused.get("code") == 503, refused)
+check("once finish has put the data back, the held app is woken within two seconds, not at its "
+      "backoff", url == "http://10.89.78.20:8850" and woken_by[:1] == ["telegram"], (url, woken_by))
+check("  an app in the restore that nothing held (not running) is not woken", "notes" not in woken_by,
+      woken_by)
+HBK._state.pop("telegram", None)
 hr.keep_resealed(stamp, resealed)
 os.utime(kept, (0, 0))
 check("one older than an hour is dropped, not used", hr.load_resealed(stamp) is None and not kept.exists())

@@ -70,7 +70,10 @@ system: true
 #   and what lives in it; do_when_active is gone from the manifest contract,
 #   and its how-to lines live in skills and tool descriptions the Host reads on
 #   demand. Manifest-only; bundle repacked.
-version: "0.2.6"
+# 0.2.7 (2026-10-21): a scheduled task shows what it spent in the last 24
+#   hours, from runs that carried a price (v251), and counts the runs that ran
+#   without one; an op still shows "no model", never a dollar figure.
+version: "0.2.7"
 
 prompt_behavior:
   what_it_is: >-

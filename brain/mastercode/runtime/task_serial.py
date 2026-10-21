@@ -46,6 +46,53 @@ log = logging.getLogger("cseries.mastercode.task_serial")
 
 STALL_TURNS = 3          # three turns that each wrote nothing
 SKIP_LIMIT = 3           # turns the platform could not start, in a row
+
+
+# Both are the person's limits (runtime/user_limits, 2026-10-20): the
+# constants are the defaults, and the person's value wins when they set one.
+def stall_max() -> int:
+    from mastercode.runtime import user_limits
+    return user_limits.person_or("task_run.stall_turns", STALL_TURNS)
+
+
+def skip_max() -> int:
+    from mastercode.runtime import user_limits
+    return user_limits.person_or("task_run.skipped_turns", SKIP_LIMIT)
+
+
+def _stall_hit_line() -> str:
+    from mastercode.runtime import user_limits
+    return user_limits.hit_line("task_run.stall_turns")
+
+
+async def _skip_stop_said(pool, run: dict) -> None:
+    """The stop after skip_max() turns the platform could not start, said in
+    the run's conversation (no turn ran to say it) and noted for Settings >
+    Limits. Everything the run recorded stays."""
+    from mastercode.runtime import user_limits
+    await user_limits.record_hit(pool, run.get("entity_id"), "task_run.skipped_turns",
+                                 f"task run {run['id']}")
+    await _say_run_stopped(pool, run, (
+        f"This task's run stopped: {skip_max()} turns in a row could not be started or "
+        "finished (the background budget stayed full, or a turn failed: a provider limit, "
+        "an error). Everything it recorded is kept, and asking again starts it from there. "
+        + user_limits.hit_line("task_run.skipped_turns")))
+
+
+async def _say_run_stopped(pool, run: dict, text: str) -> None:
+    """One line in the conversation the run was started from, for a stop no
+    turn reports (the platform could not start one). Never raises."""
+    try:
+        from mastercode.brain.offline_task_runner import lands_in_circles, post_to_origin_thread
+        origin = _origin(dict(run))
+        if lands_in_circles(origin) and not str(origin.get("thread_id") or "").strip():
+            origin = await _run_topic(pool, int(run["id"]), int(run["entity_id"]))
+        await post_to_origin_thread(
+            pool, run["entity_id"], origin, text,
+            extra_tags={"source_kind": "task_run_stopped", "task_run_id": run["id"]},
+            fallback_session=f"task-run-{run['id']}")
+    except Exception as e:  # noqa: BLE001
+        log.warning("task run %s: its stop line did not land: %s", run.get("id"), e)
 SKIP_PAUSE_S = 120.0
 DEFAULT_UNITS = 3        # sources a turn reads when the model's window is unknown
 PAGE_CHARS = 40_000      # read_url's default page (url_reader._DEFAULT_MAX_CHARS)
@@ -186,7 +233,7 @@ async def brief_next(pool, entity_id: int, project_id: int, run: dict,
     stall = ""
     if run["stall_turns"]:
         stall = (f"\n\nThe last {run['stall_turns']} turn(s) wrote nothing to the record; after "
-                 f"{STALL_TURNS} in a row the run stops and reports what is open.")
+                 f"{stall_max()} in a row the run stops and reports what is open.")
     who = ("one turn at a time" if thread is None else
            f"thread {thread[0] + 1} of {thread[1]} in this round, each thread on its own sources")
     return (
@@ -215,7 +262,8 @@ def brief_final(run: dict, *, finished: bool) -> str:
                 "statement as it is and cite findings by their source and date.")
     else:
         head = ("[Platform wake-up — not the user typing. This task's serial run has stopped: "
-                f"{STALL_TURNS} turns in a row wrote nothing to the record.]")
+                f"{stall_max()} turns in a row wrote nothing to the record.]\n"
+                + _stall_hit_line())
         body = ("Report what is still open and why: task_record(op='report') returns the research "
                 "document with the open checks and the sources not read. Write it to the project's "
                 "docs/research.md with workspace_file, then tell the person what is open, what was "
@@ -355,7 +403,7 @@ def brief_work(run: dict, item: dict, items: list[dict]) -> str:
         mine.append(f"Link: {str(ln)[:WORK_CHARS]}")
     stall = ""
     if run["stall_turns"]:
-        stall = (f"\n\nThe last {run['stall_turns']} round(s) moved no work item; after {STALL_TURNS} "
+        stall = (f"\n\nThe last {run['stall_turns']} round(s) moved no work item; after {stall_max()} "
                  "in a row the run stops and the items still open are marked blocked.")
     return (
         "[Platform wake-up — not the user typing. Internal thread "
@@ -389,13 +437,17 @@ async def _drive_work(runtime, pool, sp, run: dict, state: dict) -> None:
     live = [i for i in items if i["status"] in ("open", "working")]
     if not live:
         await _end(sp, run_id, "finished", "every work item is done or blocked")
-    elif run["stall_turns"] >= STALL_TURNS:
-        await _end(sp, run_id, "stalled", f"{STALL_TURNS} rounds in a row moved no work item")
+    elif run["stall_turns"] >= stall_max():
+        await _end(sp, run_id, "stalled", f"{stall_max()} rounds in a row moved no work item")
         await sp.execute(
             "UPDATE task_work_items SET status = 'blocked', updated_at = now(), "
             "outcome = COALESCE(outcome, $2) WHERE run_id = $1 AND status IN ('open', 'working')",
-            run_id, f"stopped: {STALL_TURNS} rounds in a row moved nothing in its record")
-    if not live or run["stall_turns"] >= STALL_TURNS:
+            run_id, f"stopped: {stall_max()} rounds in a row moved nothing in its record "
+                    "(the person's limit task_run.stall_turns)")
+        from mastercode.runtime import user_limits
+        await user_limits.record_hit(pool, run.get("entity_id"), "task_run.stall_turns",
+                                     f"task run {run_id}")
+    if not live or run["stall_turns"] >= stall_max():
         for it in await _items(sp, run_id):
             if it["status"] in ("done", "blocked") and it["posted_at"] is None:
                 await post_item_line(pool, it)
@@ -430,10 +482,11 @@ async def _drive_work(runtime, pool, sp, run: dict, state: dict) -> None:
             await post_item_line(pool, it)
     if not any(results):
         state["skips"] += 1
-        if state["skips"] >= SKIP_LIMIT:
+        if state["skips"] >= skip_max():
             await _end(sp, run_id, "stopped",
                        "the platform could not start or finish a turn: the background budget "
                        "stayed full, or the turn failed (a provider limit, an error)")
+            await _skip_stop_said(pool, run)
             return
         await asyncio.sleep(SKIP_PAUSE_S)
         return
@@ -540,10 +593,12 @@ async def _drive(runtime, pool, entity_id: int, project_id: int, current: dict) 
                         display="(task: every check closed — writing the finished work)", chain=False)
             await _end(sp, run_id, "finished", "every check is answered or unanswerable")
             continue
-        if run["stall_turns"] >= STALL_TURNS:
+        if run["stall_turns"] >= stall_max():
+            from mastercode.runtime import user_limits
+            await user_limits.record_hit(pool, eid, "task_run.stall_turns", f"task run {run_id}")
             await _wake(runtime, run, brief_final(run, finished=False),
                         display="(task: stopped — nothing new in the record)", chain=False)
-            await _end(sp, run_id, "stalled", f"{STALL_TURNS} turns in a row wrote nothing to the record")
+            await _end(sp, run_id, "stalled", f"{stall_max()} turns in a row wrote nothing to the record")
             continue
         before = await record_mark(pool, eid, pid)
         seen.add(before)
@@ -589,10 +644,11 @@ async def _drive(runtime, pool, entity_id: int, project_id: int, current: dict) 
             eid, pid, run_owner(run_id), run_owner(run_id) + "-t%")
         if not landed:
             skips += 1
-            if skips >= SKIP_LIMIT:
+            if skips >= skip_max():
                 await _end(sp, run_id, "stopped",
                            "the platform could not start or finish a turn: the background budget "
                            "stayed full, or the turn failed (a provider limit, an error)")
+                await _skip_stop_said(pool, run)
                 continue
             await asyncio.sleep(SKIP_PAUSE_S)
             continue

@@ -135,8 +135,12 @@ from server.routes import brain as BR  # noqa: E402
 
 
 class _Req:
-    def __init__(self, body):
+    # The two allowances are the person's limits (runtime/user_limits,
+    # 2026-10-20): only the person's surfaces write them, so the request
+    # carries the Settings app's token unless a test says otherwise.
+    def __init__(self, body, app_id="settings"):
         self._b = body
+        self.state = type("S", (), {"app_token": type("T", (), {"app_id": app_id})()})()
 
     async def json(self):
         return self._b
@@ -156,6 +160,12 @@ for bad in ({"turn_allowance_usd": 0}, {"history_ceiling_tokens": "x"}, {"turn_r
         check(f"O refused: {bad}", False)
     except Exception as e:  # noqa: BLE001
         check(f"O refused: {bad}", getattr(e, "status_code", None) == 400, repr(e))
+try:
+    asyncio.run(BR.put_turn_defaults(_Req({"turn_allowance_usd": 9.0}, app_id="some-community-app")))
+    check("O a community app holding write:session cannot set them", False)
+except Exception as e:  # noqa: BLE001
+    check("O a community app holding write:session cannot set them",
+          getattr(e, "status_code", None) == 403 and "turn_allowance_usd" not in fake.bp, repr(e))
 got = asyncio.run(BR.get_turn_defaults())
 check("O GET /turn-defaults shows what is in force, what was set and the built-ins",
       got["set"] == {"history_ceiling_tokens": 48000} and got["built_in"]["turn_rounds"] == 20, got)

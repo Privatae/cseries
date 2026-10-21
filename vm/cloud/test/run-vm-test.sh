@@ -372,7 +372,7 @@ openssl x509 -req -in "$WORK/tg.csr" -CA "$F/test-ca.crt" -CAkey "$WORK/ca.key" 
     -extfile <(printf '%s\n' 'subjectAltName=DNS:api.telegram.org' 'basicConstraints=critical,CA:FALSE' \
         'keyUsage=critical,digitalSignature' 'extendedKeyUsage=serverAuth' \
         'subjectKeyIdentifier=hash' 'authorityKeyIdentifier=keyid,issuer') -out "$WORK/tg.crt" 2>/dev/null
-cp "$here/runtime_helper.py" "$F/"
+cp "$here/runtime_helper.py" "$here/build_sampler.sh" "$F/"
 cat > "$F/rt_pinned_present.py" <<'EOF'
 import json, subprocess, sys
 refs = json.load(open("/etc/cseries-runtime/images.json"))["images"].values()
@@ -694,6 +694,8 @@ r=$(rth release harness browser)
 check "R3: a release removes the browser's container" ct_gone cseries-h-browser
 
 say "R4: a coding engine, built on the box from the release's sources"
+# Every process in the builds' slice while the build runs, as the box sees it.
+vm 'sudo rm -f /var/tmp/cloud-test/build-sampler.stop; sudo sh -c "nohup sh /var/tmp/cloud-test/build_sampler.sh >/dev/null 2>&1 &"'
 s4=$(rth op workspace.set_harness '{"harness_id": "opencode", "enabled": true}')
 echo "$s4"
 check "R4: enabling opencode starts its build" jtrue "$s4" 'd["data"]["image_state"] in ("building", "built")'
@@ -701,6 +703,29 @@ t0=$(date +%s)
 for _ in $(seq 1 120); do st=$(rth status); jtrue "$st" '"opencode" in d["data"]["built"]' && break; sleep 15; done
 measure "R4: opencode built on the box in $(( $(date +%s) - t0 )) s"
 check "R4: built.json records the image" jtrue "$st" '"opencode" in d["data"]["built"]'
+vm 'sudo touch /var/tmp/cloud-test/build-sampler.stop'
+procs=$(vm 'sort /var/tmp/cloud-test/build-procs.txt | uniq -c | sort -rn' || true)
+measure "R4: processes in cseries-build.slice during the build (count uid capeff nnp comm): $(head -12 <<< "$procs" | tr -s ' ' | tr '\n' ';')"
+only_build_ids() { [ -n "$1" ] && ! awk '{print $2}' <<< "$1" | grep -qvE '^(199999|2[0-5][0-9]{4}|26[0-5][0-9]{3})$'; }
+check "R4: every process in the builds' slice ran as the build user or its ids, never as the box's root" \
+    only_build_ids "$procs"
+check "R4: the RUN steps held CapEff 0xfb and no new privileges (a shell, apt or dpkg in the slice)" \
+    grep -qE ' 00000000000000fb 1 (sh|apt-get|dpkg|http|curl|tar)$' <<< "$procs"
+check "R4: built.json records how the image was built (its build key)" \
+    vm "sudo python3 -c 'import json, sys; sys.exit(0 if json.load(open(\"/var/lib/cseries-runtime/built.json\"))[\"opencode\"].get(\"build_key\") else 1)'"
+oimg=$(vm "sudo python3 -c 'import json; print(json.load(open(\"/var/lib/cseries-runtime/built.json\"))[\"opencode\"][\"image\"])'" || true)
+own=$(vm "sudo podman run --rm --network none --entrypoint stat $oimg -c '%u:%g %n' /usr/bin/tini /app/lib /var/lib/cseries/apps/opencode/bin/opencode" 2>&1 || true)
+measure "R4: owners in root's copy of the image: $(tr '\n' ';' <<< "$own")"
+owners_ok() { grep -qx '0:0 /usr/bin/tini' <<< "$1" && grep -qx '10006:10006 /app/lib' <<< "$1" &&
+              grep -qx '10006:10006 /var/lib/cseries/apps/opencode/bin/opencode' <<< "$1"; }
+check "R4: in root's store the image's files keep their owners (root's, and the engine's 10006)" owners_ok "$own"
+check "R4: the build user's store holds no image after the build" \
+    vm 'cd /tmp && test -z "$(sudo systemd-run --scope --quiet --slice=cseries-build.slice --uid=199999 --gid=199999 --setenv=HOME=/var/lib/cseries-build --setenv=XDG_RUNTIME_DIR=/run/cseries-build -- podman --root /var/lib/cseries-build/storage --runroot /run/cseries-build/storage --cgroup-manager cgroupfs images -q 2>/dev/null)"; r=$?; sudo systemctl stop cseries-build.slice; exit $r'
+bcurl() { vm "cd /tmp && sudo -u cseries-build curl -s -m 8 -o /dev/null -w '%{http_code}' $*" 2>/dev/null || true; }
+eg="$(bcurl https://deb.debian.org/) $(bcurl -x http://10.89.78.1:3128 https://deb.debian.org/) $(bcurl http://10.89.77.2:8800/api/system/health) $(bcurl -x http://10.89.78.1:3128 http://10.89.77.1/)"
+measure "R4: the build user: the internet directly, through the proxy, the Host, the box through the proxy: $eg"
+check "R4: the build user reaches the internet only through the plain proxy, which refuses the box" \
+    test "$eg" = "000 200 000 403"
 w=$(rth op harness.wake '{"harness": "opencode"}')
 url=$(jget "$w" 'd["data"]["url"]')
 cap=$(jget "$w" 'd["data"]["cap"]')
@@ -721,6 +746,22 @@ w=$(rth op harness.wake '{"harness": "opencode", "slots": 8}')
 echo "$w"
 check "R4: eight run slots do not fit this machine: 402 with needs_mi and headroom_mi" \
     jtrue "$w" 'd["code"] == 402 and "capability_over_plan" in d["error"] and "headroom_mi" in d["error"]'
+
+say "R4b: claude-code, built the same way, woken and healthy"
+s4=$(rth op workspace.set_harness '{"harness_id": "claude-code", "enabled": true}')
+check "R4b: enabling claude-code starts its build" jtrue "$s4" 'd["data"]["image_state"] in ("building", "built")'
+t0=$(date +%s)
+for _ in $(seq 1 120); do st=$(rth status); jtrue "$st" '"claude-code" in d["data"]["built"]' && break; sleep 15; done
+measure "R4b: claude-code built on the box in $(( $(date +%s) - t0 )) s"
+check "R4b: built.json records claude-code's image" jtrue "$st" '"claude-code" in d["data"]["built"]'
+w=$(rth op harness.wake '{"harness": "claude-code"}')
+echo "$w" | head -c 400; echo
+url=$(jget "$w" 'd["data"]["url"]')
+check "R4b: claude-code wakes with a url and a capability" jtrue "$w" 'd["ok"] is True and len(d["data"]["cap"]) >= 40'
+check "R4b: its /health answers 200" jtrue "$(rth http "$url/health")" 'd["status"] == 200'
+rth release harness claude-code >/dev/null
+check "R4b: a release removes its container" ct_gone cseries-h-claude-code
+rth op workspace.set_harness '{"harness_id": "claude-code", "enabled": false}' >/dev/null
 
 say "R7: Discord and Slack, from the App Store"
 jar=$WORK/jar-store2
@@ -750,6 +791,16 @@ for a in discord slack; do
 done
 
 say "R8: the creative engines"
+# R7's two apps go first: on the 6 GiB test VM the machine guard refuses
+# Blender beside them, and that refusal is right. They are resident by their
+# manifests and their switch is untouched, so the Host's next start (the
+# updater's, the reboot's) brings them back, which R5 checks.
+for a in discord slack; do
+    rth release app "$a" >/dev/null
+    check "R8: R7's $a is released first" ct_gone "cseries-app-$a"
+done
+st=$(rth status)
+measure "R8: the machine's memory before the creative engines (MiB): $(jget "$st" '" ".join("%s=%s" % (k, d["data"].get(k)) for k in ("total_mi", "budget_mi", "held_mi", "headroom_mi"))')"
 for a in wordcraft-engine blender-engine; do
     check "R8: $a installs from the catalog through the App Store" store_install "$a"
     t=$(rth mcp-tools "$a")
@@ -983,6 +1034,23 @@ check "heartbeat: posted, and its signature verifies against bootstrap's heartbe
 assert b["host"]["health"] == "ok" and b["version"] == "0.2.0" and b["cert"]["not_after"]
 assert b["disk"]["root_free_bytes"] > 0 and b["disk"]["state_free_bytes"] > 0' "$hb"
 
+say "the door while the Host restarts"
+# What a restore's restart, an update or a reboot looks like from outside:
+# nothing answers on the Host's port, and Caddy answers the starting page or
+# error, never its own 502 (vm/cloud/overlay/etc/caddy/Caddyfile.in).
+jar=$WORK/jar-starting
+: > "$jar"
+vm 'sudo systemctl stop cseries-host.service'
+r=$(web "$jar" "https://$HOSTNAME/login" -H 'Accept: text/html')
+check "Host stopped: a page gets the starting page, 503 with Retry-After, not Caddy's 502" \
+    sh -c "test '${r%% *}' = 503 && grep -qi '^retry-after: 5' '$WORK/hdrs' && grep -q 'This Host is starting' '$WORK/body'"
+r=$(web "$jar" "https://$HOSTNAME/api/owner/login" -X POST -H 'Content-Type: application/json' --data "$(sign_in_json)")
+check "Host stopped: a sign-in gets 503 and the error the sign-in page shows" \
+    sh -c "test '${r%% *}' = 503 && grep -q '\"error\": \"This Host is starting' '$WORK/body'"
+vm 'sudo systemctl start cseries-host.service'
+for _ in $(seq 1 100); do vm 'sudo cseries-guest health' >/dev/null 2>&1 && break; sleep 3; done
+check "Host started again: healthy, and /login answers 200 through Caddy" sh -c "$V ssh 'sudo cseries-guest health' && curl -sk -o /dev/null -w '%{http_code}' --resolve $HOSTNAME:443:$VM4 https://$HOSTNAME/login | grep -qx 200"
+
 say "a reboot"
 # A runtime image the release no longer pins: the helper's repository under
 # another digest. The runtime removes it at its next start.
@@ -1018,6 +1086,14 @@ check "R5: the runtime removed the stale image at its start" vm "! sudo podman i
 check "R5: and kept every image images.json pins" vm "sudo python3 /var/tmp/cloud-test/rt_pinned_present.py"
 check "R5: nothing else the runtime started outlived the reboot" \
     sh -c "! $V ssh 'sudo podman container exists cseries-h-browser || sudo podman container exists cseries-h-opencode'"
+# The R2 pairing ended ten minutes after it opened (nac_connector.py
+# PAIRING_TTL_S, by design), and with it the connector's way to Telegram
+# through the Host. A new pairing is what the person would start. It changes
+# nothing in the app's data volume, so the offset the connector asks from
+# next can only have come from its saved state there.
+p=$(rth pair-telegram telegram-bot "$BOT_TOKEN")
+echo "$p"
+check "R5: a new pairing reaches the connector after the reboot" jtrue "$p" 'd["live"] is True'
 check "R5: the connector asks from its saved offset: its data volume survived" wait_fake "getUpdates offset=4243" "$nb" 120
 outside_pairing "after a reboot"
 
@@ -1049,7 +1125,12 @@ check "platform off: the Host restarts and is healthy" vm 'sudo cseries-guest he
 check "platform off: privatae.ai is unreachable from the box" sh -c "! $V ssh 'curl -s -m 5 -o /dev/null https://privatae.ai/'"
 door_checks "platform off" 1
 say "R6: the local runtime with the platform blocked"
+# Paired again for the same reason as R5: the pairing is the Host's own, and
+# it opens with every Privatae address blocked.
 np=$(fake_lines "getUpdates offset=4243")
+p=$(rth pair-telegram telegram-bot "$BOT_TOKEN")
+echo "$p"
+check "R6: a pairing opens with the platform blocked" jtrue "$p" 'd["live"] is True'
 check "R6: the connector keeps asking through the Host" wait_fake "getUpdates offset=4243" "$np" 120
 w=$(rth wake-browser)
 nv=$(rth browser POST /navigate "{\"url\": \"http://$OUT4:8098/site/\"}")
@@ -1059,6 +1140,14 @@ w=$(rth op harness.wake '{"harness": "opencode"}')
 check "R6: the coding engine wakes (built on the box, nothing to fetch)" jtrue "$w" 'd["ok"] is True'
 rth release harness opencode >/dev/null
 vm 'sudo nft delete table inet cloud_test_platform_off' || true
+
+# A session's own checks, in this script's context (its functions and
+# variables), while the box still has SSH: BEFORE_SEAL=<file>.
+if [ -n "${BEFORE_SEAL:-}" ]; then
+    say "checks from $BEFORE_SEAL"
+    # shellcheck disable=SC1090 # named by the caller
+    . "$BEFORE_SEAL"
+fi
 
 say "seal"
 s=$(vm 'sudo /var/tmp/cloud-test/bootstrap.sh seal' || true)

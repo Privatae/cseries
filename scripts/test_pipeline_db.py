@@ -11,7 +11,9 @@ phase a build lands. A build's outcome is whether it landed
   A. no setting        — a landed build with a passing declared check is
                          'complete', and the task row names each check's provider
   B. harness-check made informational (required=false) — still 'complete'; the
-                         row records the check as informational
+                         row records the check as informational. The setting
+                         also lists the retired diff-review (a setting stored
+                         before 2026-10-20): it is read without that row
   C. a FAILING declared check — 'complete' (not 'failed', not 'review'), under
                          the default setting and under an informational one; the
                          check ran and failed on the pod, and the delivery's
@@ -509,17 +511,22 @@ async def _main() -> int:
         if st != "complete":
             print(f"FAIL: A — no pipeline setting, passing check: phase {st!r}, not 'complete'")
             return 1
-        if [c.get("provider") for c in checks] != ["harness-check", "diff-review"] \
+        if [c.get("provider") for c in checks] != ["harness-check"] \
                 or checks[0].get("ok") is not True or checks[0].get("where") != "harness_pod":
             print(f"FAIL: A — the task row's checks do not name the providers: {checks}")
             return 1
 
-        # B. harness-check informational: still complete.
+        # B. harness-check informational: still complete. The stored setting
+        #    still lists the retired diff-review row; it is dropped on read,
+        #    never a reason to refuse the setting.
         info = {"format": fmt, "check": [{"provider": "harness-check", "required": False},
                                          {"provider": "diff-review"}]}
         st, res = await _one(pool, tools, eid, "pipeline-gate-informational", info, passing)
         if st != "complete":
             print(f"FAIL: B — an informational passing check made the phase {st!r}, not 'complete'")
+            return 1
+        if [c.get("provider") for c in (res.get("checks") or [])] != ["harness-check"]:
+            print(f"FAIL: B — the retired diff-review row was not dropped: {res.get('checks')}")
             return 1
         if (res.get("checks") or [{}])[0].get("required") is not False:
             print(f"FAIL: B — the row does not record the check as informational: {res.get('checks')}")
@@ -581,11 +588,10 @@ async def _main() -> int:
             br = b.get("result") or {}
             if b.get("status") != "ok" or br["pipeline"]["configured"] is not False \
                     or [r["provider"] for r in br["pipeline"]["effective"]["check"]] \
-                    != ["harness-check", "diff-review"] or br.get("pending_proposal") is not None:
+                    != ["harness-check"] or br.get("pending_proposal") is not None:
                 print(f"FAIL: F — status on a fresh project: {b}")
                 return 1
-            info_only = {"format": fmt, "check": [{"provider": "harness-check", "required": False},
-                                                  {"provider": "diff-review"}]}
+            info_only = {"format": fmt, "check": [{"provider": "harness-check", "required": False}]}
             r = await tools._exec_pipeline({"op": "propose", "project_id": pidf,
                                             "pipeline": info_only}, eid, pool)
             if r.get("status") != "error" or "reason is required" not in r.get("result", ""):

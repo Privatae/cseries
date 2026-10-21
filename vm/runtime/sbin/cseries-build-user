@@ -1,0 +1,36 @@
+#!/bin/sh
+# The user the coding engines' images are built as, with rootless podman
+# (cseries_runtime/build.py), and its subordinate ids: uid and gid 199999,
+# ids 200000-265535 (common.py BUILD_UID, BUILD_SUBIDS: slot 0 of the
+# runtime's ranges, which no container is given). Each guest's installer runs
+# it (the cloud bootstrap, the WSL and Lima images), and the runtime's unit
+# before every start, so a machine updated in place gets it too. It changes
+# nothing when everything is in place.
+set -eu
+name=cseries-build
+id=199999
+first=200000
+count=65536
+home=/var/lib/cseries-build
+
+if ! getent group "$name" >/dev/null; then
+    groupadd --system --gid "$id" "$name"
+fi
+if ! getent passwd "$name" >/dev/null; then
+    # 199999 is outside the system range useradd allocates from, on purpose
+    # (common.py says why); useradd warns about that and goes on.
+    useradd --system --uid "$id" --gid "$id" --home-dir "$home" --no-create-home \
+        --shell /usr/sbin/nologin --comment "C-Series engine builds" "$name"
+fi
+if [ "$(id -u "$name")" != "$id" ] || [ "$(id -g "$name")" != "$id" ]; then
+    echo "cseries-build-user: $name exists with ids $(id -u "$name"):$(id -g "$name"), not $id:$id" >&2
+    exit 1
+fi
+install -d -m 0700 -o "$id" -g "$id" "$home"
+for f in /etc/subuid /etc/subgid; do
+    [ -e "$f" ] || install -m 0644 /dev/null "$f"
+    if ! grep -qx "$name:$first:$count" "$f"; then
+        sed -i "/^$name:/d" "$f"
+        echo "$name:$first:$count" >> "$f"
+    fi
+done

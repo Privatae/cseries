@@ -3567,6 +3567,19 @@ async def finish(pool, eid: int) -> Optional[dict]:
         if plan.get("stamp"):
             await hb._drop_state(pool, f"reseal:{plan['stamp']}")
         _drop_plan()
+        # The apps that were running come back now. At this start they were
+        # held and woken (supervisor.ensure_resident_apps), and an app whose
+        # data was still to be put back was answered still starting
+        # (app_data_pending); its hold would try again only at the end of
+        # its doubling wait, minutes later. With the plan gone nothing is
+        # pending, so each held app is woken now; an app nobody held is not.
+        try:
+            from server.applications import harness_backend as _hbk
+            back = _hbk.rewake_resident_now()
+            if back:
+                log.info("restore: woken again now that their data is back: %s", ", ".join(sorted(back)))
+        except Exception as e:  # noqa: BLE001 — their holds still retry on their own
+            log.warning("restore: the apps that were running could not be woken now: %s", e)
         # What the owner is shown once the Host is back (Settings, Backup tab):
         # the links an unverified restore left out are said there, not only
         # in the run record.

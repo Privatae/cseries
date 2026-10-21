@@ -38,6 +38,8 @@ import pathlib
 import sys
 from datetime import datetime, timedelta, timezone
 
+import json
+
 import pytest
 
 _ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -68,10 +70,14 @@ class _Pool:
     # -- the runner's writes ------------------------------------------------
     async def execute(self, sql, *args):
         if "INSERT INTO calendar_event_runs" in sql:
-            event_id, entity_id, ok, excerpt, error = args
+            # cost_usd and priced_usd (v251) ride last: the run's whole price
+            # (None when any turn had none) and what its priced turns cost.
+            event_id, entity_id, ok, excerpt, error, *money = args
+            cost_usd, priced_usd = (list(money) + [None, None])[:2]
             self.rows.append({"event_id": event_id, "entity_id": entity_id,
                               "ran_at": datetime.now(timezone.utc),
-                              "ok": ok, "error": error})
+                              "ok": ok, "error": error, "excerpt": excerpt,
+                              "cost_usd": cost_usd, "priced_usd": priced_usd})
         elif "UPDATE calendar_events" in sql:
             self.updates.append((sql, args))
         return None
@@ -84,6 +90,17 @@ class _Pool:
 
     # -- the two COUNTs -----------------------------------------------------
     async def fetchval(self, sql, *args):
+        if "FROM calendar_event_runs" in sql and "sum(" in sql:
+            # budget_state's spend, evaluated the way its SQL states it.
+            event_id, entity_id = args
+            mine = [r for r in self.rows
+                    if r["event_id"] == event_id and r["entity_id"] == entity_id]
+            if "COALESCE(priced_usd, cost_usd)" in sql:
+                vals = [r.get("priced_usd") if r.get("priced_usd") is not None
+                        else r.get("cost_usd") for r in mine]
+            else:
+                vals = [r.get("cost_usd") for r in mine]
+            return sum(v for v in vals if v is not None)
         if "FROM calendar_event_runs" not in sql or "COUNT(*)" not in sql:
             return None
         event_id, entity_id, like = args
@@ -453,8 +470,9 @@ class _AuthoringPool(_Pool):
 APPENDED: list[dict] = []
 
 
-def _schedule(**kw):
+def _schedule(*, approval=False, **kw):
     import mastercode.runtime.tools as T
+    import mastercode.runtime.scheduled_approval as SA
     import server.bridge.memory_handlers as MH
     import server.brain_service as BS
     APPENDED.clear()
@@ -468,17 +486,23 @@ def _schedule(**kw):
     async def _posted(*a, **k):
         return True
 
-    _real = (BS.get_pool, BS._entity_id, MH.handle_calendar_append, R.post_to_origin_thread)
+    # A recurring prompt task waits for the person's card
+    # (runtime/scheduled_approval); this file is about the ceiling and the
+    # payload, so the card is skipped here unless a test asks for it.
+    _real = (BS.get_pool, BS._entity_id, MH.handle_calendar_append, R.post_to_origin_thread,
+             SA.needs_approval)
     BS.get_pool = lambda: _AuthoringPool()
     BS._entity_id = 9003
     MH.handle_calendar_append = _append
     R.post_to_origin_thread = _posted
+    if not approval:
+        SA.needs_approval = lambda **k: False
     try:
         return _run(T._exec_schedule_task(
             {"op": "create", "title": "t", "fire_at": "2026-10-01T00:00:00Z", **kw}))
     finally:
         (BS.get_pool, BS._entity_id, MH.handle_calendar_append,
-         R.post_to_origin_thread) = _real
+         R.post_to_origin_thread, SA.needs_approval) = _real
 
 
 def test_authoring_refuses_a_recurrence_that_outruns_the_ceiling():
@@ -546,3 +570,221 @@ def test_a_nonsense_ceiling_is_refused_not_silently_ignored():
         assert res["status"] == "error", (bad, res)
         assert "max_runs_per_day" in res["result"]
         assert APPENDED == [], (bad, APPENDED)
+
+
+# ── the job's own budget (payload budget_usd, 2026-10-20) ───────────────────
+
+@pytest.fixture()
+def priced(monkeypatch):
+    """Turns that report a price: each started turn takes the next cost from
+    `costs` and sends it on the context frame the way brain_service does
+    (2:[{"t": "context", ..., "est_cost_usd": …}]). None = an unpriced turn."""
+    state = {"costs": [], "started": []}
+
+    async def send_message(**kw):
+        state["started"].append(kw.get("message") or "")
+        c = state["costs"].pop(0) if state["costs"] else None
+        yield '0:"done"\n'
+        yield "2:" + json.dumps([{"t": "context", "est_cost_usd": c,
+                                   "price_basis": "list" if c is not None else "plan"}]) + "\n"
+
+    import server.brain_service as real_bs
+    monkeypatch.setattr(real_bs, "get_runtime", lambda: object())
+    monkeypatch.setattr(real_bs, "send_message", send_message)
+    said: list[str] = []
+
+    async def _capture(pool_, entity_id, origin, text, **kw):
+        said.append(text)
+        return True
+    monkeypatch.setattr(R, "post_to_origin_thread", _capture)
+
+    async def _origin(pool_, entity_id, origin, **kw):
+        return origin or {}
+    monkeypatch.setattr(R, "ensure_origin_thread", _origin)
+    state["said"] = said
+    return state
+
+
+def _armed(pool):
+    return any("status='scheduled'" in sql for sql, _ in pool.updates)
+
+
+def test_a_reached_budget_stops_between_steps_for_good(priced):
+    priced["costs"] = [0.30, 0.30, 0.30]
+    pool = _Pool([])
+    _run(R._run_one(pool, 9310, _task({"steps": ["one", "two", "three"],
+                                       "budget_usd": 0.5})))
+    assert len(priced["started"]) == 2, priced["started"]       # step three never ran
+    run = pool.rows[-1]
+    # Stopped at the person's budget is the job done as asked: the run is
+    # recorded ok with the reason beside it, and the task completes.
+    assert run["ok"] is True and abs(run["cost_usd"] - 0.6) < 1e-9, run
+    assert "budget" in str(run.get("error") or ""), run
+    assert not _armed(pool), pool.updates                         # not re-armed
+    assert any("completed" in (args or ()) for _, args in pool.updates), pool.updates
+    assert "stopped:" in priced["said"][-1] and "failed" not in priced["said"][-1]
+
+
+def test_a_partly_priced_run_still_counts_toward_the_budget(priced):
+    # Fire 1: the first step's turn has no price (a failover onto a plan), the
+    # second costs $0.40. The run's cost_usd is null — a partial sum never
+    # reads as the whole — but the $0.40 was spent all the same.
+    priced["costs"] = [None, 0.40]
+    pool = _Pool([])
+    payload = {"steps": ["one", "two"], "budget_usd": 0.35}
+    _run(R._run_one(pool, 9310, _task(payload)))
+    assert len(priced["started"]) == 2
+    assert pool.rows[-1]["cost_usd"] is None, pool.rows[-1]
+    # Fire 2: the job has spent $0.40 of its $0.35, so nothing runs.
+    priced["started"].clear()
+    priced["costs"] = [0.40, 0.40]
+    _run(R._run_one(pool, 9310, _task(payload)))
+    assert priced["started"] == [], "a job ran past its budget: the priced part " \
+        "of a partly priced run was not counted"
+    assert "stopped:" in priced["said"][-1]
+
+
+# ── the person's card covers a recurring op that schedules a model turn ─────
+# schedule_task is itself an unattended op (direct_ops.UNATTENDED_OP_TOOLS),
+# so a recurring OP-lane task whose op is schedule_task create of a one-time
+# PROMPT task runs a model on every fire just as a recurring prompt task does.
+# Ungated, it was the way round the card (review of 91ad90a9c).
+
+def _proposed(monkeypatch):
+    import mastercode.runtime.scheduled_approval as SA
+    seen: list[dict] = []
+
+    async def _propose(pool, eid, **kw):
+        seen.append(kw)
+        return {"status": "ok", "result": {"scheduled": None, "awaiting_approval": True,
+                                           "ticket_id": 1}}
+    monkeypatch.setattr(SA, "propose", _propose)
+    return seen
+
+
+def test_a_recurring_op_that_schedules_a_model_turn_waits_for_the_card(monkeypatch):
+    seen = _proposed(monkeypatch)
+    res = _schedule(approval=True, recurrence="daily", op_tool="schedule_task",
+                    op_args={"op": "create", "title": "inner", "fire_at": "2026-10-01T00:00:00Z",
+                             "prompt": "go", "steps": ["a", "b"]})
+    assert res["result"].get("awaiting_approval"), res
+    assert APPENDED == [], "the wrapped model task was set without the person"
+    assert seen and seen[0]["turns_per_fire"] == 2, seen
+
+
+def test_a_nested_wrap_is_followed_down_to_the_model_turn(monkeypatch):
+    seen = _proposed(monkeypatch)
+    inner = {"op": "create", "title": "inner", "fire_at": "2026-10-01T00:00:00Z",
+             "op_tool": "schedule_task",
+             "op_args": {"op": "create", "title": "innermost",
+                         "fire_at": "2026-10-01T00:00:00Z", "prompt": "go"}}
+    res = _schedule(approval=True, recurrence="daily", op_tool="schedule_task", op_args=inner)
+    assert res["result"].get("awaiting_approval") and APPENDED == [], res
+    assert seen
+
+
+def test_a_recurring_op_that_runs_no_model_is_still_set_at_once(monkeypatch):
+    seen = _proposed(monkeypatch)
+    res = _schedule(approval=True, recurrence="daily", op_tool="schedule_task",
+                    op_args={"op": "list"})
+    assert res["status"] == "ok" and not res["result"].get("awaiting_approval"), res
+    assert len(APPENDED) == 1 and not seen
+
+
+# ── a card decided after its thread was deleted sets nothing ────────────────
+# schedule_task refuses a create in a deleted thread (the delete cancelled
+# what was set there); the person's click on a card filed there before the
+# delete must not set what the create would have refused.
+
+def test_apply_after_the_thread_was_deleted_sets_nothing(monkeypatch):
+    import mastercode.circles_threads as CT
+    import mastercode.runtime.scheduled_approval as SA
+    import server.bridge.memory_handlers as MH
+    wrote: list = []
+
+    async def _gone(pool, eid, thread_id):
+        return None
+
+    async def _post(*a, **k):
+        wrote.append(("plan", a, k))
+        return True
+
+    async def _append(ev):
+        wrote.append(("row", ev))
+        return {"ok": True, "event_id": "e", "event_at": "x"}
+
+    monkeypatch.setattr(CT, "live_thread_id", _gone)
+    monkeypatch.setattr(R, "post_to_origin_thread", _post)
+    monkeypatch.setattr(MH, "handle_calendar_append", _append)
+    md = {"recurring_task": {"title": "t", "plan_msg": "Scheduled **t**",
+                             "origin": {"thread_id": "11111111-1111-1111-1111-111111111111"},
+                             "append": {"event_id": "22222222-2222-2222-2222-222222222222",
+                                        "event_type": "scheduled_task", "summary": "t",
+                                        "event_at": "2026-10-01T00:00:00Z",
+                                        "recurrence": "daily", "payload": {"prompt": "go"}}}}
+    out = _run(SA.apply_proposal(object(), 3, md, option_id=SA.OPT_APPLY, ticket_id=5))
+    assert out["applied"] is False and "deleted" in out["why"], out
+    assert wrote == [], wrote
+
+
+def test_the_card_names_no_daily_number_when_the_person_set_no_limit(monkeypatch):
+    # user_limits.person_or answers "no limit" as 10**9; the card is the
+    # person's to read, and "at most 1000000000 model turns a day" is not a bound.
+    import mastercode.runtime.scheduled_approval as SA
+    from server.routes import tickets as TK
+    filed: list = []
+
+    async def _create(pool, eid, **kw):
+        filed.append(kw)
+        return {"id": 9}
+    monkeypatch.setattr(TK, "create_ticket_service", _create)
+    _run(SA.propose(object(), 3, title="t", recurrence="daily", fire_at="x", plan_msg="p",
+                    append={}, origin=None, turns_per_fire=1, turns_per_day=10 ** 9,
+                    budget_usd=None))
+    assert "1000000000" not in filed[0]["sitrep"], filed[0]["sitrep"]
+    _run(SA.propose(object(), 3, title="t", recurrence="daily", fire_at="x", plan_msg="p",
+                    append={}, origin=None, turns_per_fire=1, turns_per_day=200,
+                    budget_usd=None))
+    assert "at most 200 model turns a day" in filed[1]["sitrep"], filed[1]["sitrep"]
+
+
+# ── a recurring bug_review that wakes the validation turn is model work ─────
+# bug_review op='pending' with wake=true starts a validation turn (a model)
+# when reports are waiting (runtime/bug_review.run); on a recurrence that is
+# repeating model work, so it waits for the card like any recurring prompt.
+
+def test_a_recurring_bug_review_wake_waits_for_the_card(monkeypatch):
+    seen = _proposed(monkeypatch)
+    res = _schedule(approval=True, recurrence="daily", op_tool="bug_review",
+                    op_args={"op": "pending", "wake": True})
+    assert res["status"] == "ok" and res["result"].get("awaiting_approval"), res
+    assert not APPENDED and len(seen) == 1, (APPENDED, seen)
+
+
+def test_a_recurring_bug_review_read_without_wake_is_set_at_once(monkeypatch):
+    seen = _proposed(monkeypatch)
+    res = _schedule(approval=True, recurrence="daily", op_tool="bug_review",
+                    op_args={"op": "pending"})
+    assert res["status"] == "ok" and not res["result"].get("awaiting_approval"), res
+    assert len(APPENDED) == 1 and not seen
+
+
+# ── the click adds the trigger to the channel the card was filed for ────────
+# A name is looked up again at the click, and by then it can name another
+# channel; the card carries the id it was checked under (review of 7bb1b4557).
+
+def test_the_runbook_card_adds_its_trigger_by_the_checked_channel_id(monkeypatch):
+    import server.reachout.service as ro
+    from mastercode.runtime import scheduled_approval as sa
+    seen = []
+
+    async def fake_add_trigger(pool, eid, **kw):
+        seen.append(kw)
+        return {"id": 3}
+    monkeypatch.setattr(ro, "add_trigger", fake_add_trigger)
+    md = {"runbook_trigger": {"channel": "invented-runbook", "channel_id": 9, "label": "invented",
+                              "match_kind": "system_notification", "match_event": None,
+                              "match_jsonb": None}}
+    out = asyncio.run(sa.apply_trigger(None, 1, md, option_id=sa.OPT_APPLY, ticket_id=1))
+    assert out["applied"] and seen and seen[0]["channel"] == 9, (out, seen)
+    assert seen[0]["label"] == "invented" and seen[0]["match_kind"] == "system_notification"

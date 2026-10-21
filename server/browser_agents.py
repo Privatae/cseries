@@ -112,6 +112,19 @@ LOAD_SETTLE_S = float(os.environ.get("BROWSER_AGENT_LOAD_SETTLE_S", "1.5"))
 DOWNLOAD_TIMEOUT_S = float(os.environ.get("BROWSER_AGENT_DOWNLOAD_TIMEOUT_S", "90"))
 PAUSE_TIMEOUT_S = float(os.environ.get("BROWSER_AGENT_PAUSE_TIMEOUT_S", "900"))
 RUN_TIMEOUT_S = float(os.environ.get("BROWSER_AGENT_RUN_TIMEOUT_S", "1500"))
+
+
+# The two above are the person's limits (runtime/user_limits, 2026-10-20):
+# the constants (with the operator's env) are the defaults, the person's value
+# wins, and their "no limit" is None (wait_for with no timeout).
+def _pause_timeout_s():
+    from mastercode.runtime import user_limits
+    return user_limits.person_seconds_or("browser_agent.pause_minutes", PAUSE_TIMEOUT_S)
+
+
+def _run_timeout_s():
+    from mastercode.runtime import user_limits
+    return user_limits.person_seconds_or("browser_agent.run_minutes", RUN_TIMEOUT_S)
 MAX_RUNS_KEPT = 50
 MAX_STEPS = 400
 
@@ -669,6 +682,8 @@ class _Run:
         self.answer_event = asyncio.Event()
         self.task: Optional[asyncio.Task] = None
         self.done = asyncio.Event()
+        self.limit_hit: Optional[str] = None   # the person's limit that stopped it
+        self.watchdog: Optional[asyncio.TimerHandle] = None
 
     def note(self, msg: str, **kw: Any) -> None:
         self.log.append({"ms": int(time.time() * 1000), "step": self.step_index,
@@ -1114,13 +1129,19 @@ async def _step(run: _Run, spec: dict, step: dict, *, pool: asyncpg.Pool,
             await _notify(
                 f"Agent {agent} is waiting for you",
                 f"{question}\n\nAnswer in the Browser app → Agents, or tell your host "
-                f"the code. The run waits {int(PAUSE_TIMEOUT_S // 60)} minutes.",
+                f"the code. " + (f"The run waits {int(_pause_timeout_s() // 60)} minutes."
+                                 if _pause_timeout_s() else "The run waits until you answer."),
                 agent=agent, run_id=run.run_id, kind="waiting")
+        _wait = _pause_timeout_s()
         try:
-            await asyncio.wait_for(run.answer_event.wait(), timeout=PAUSE_TIMEOUT_S)
+            await asyncio.wait_for(run.answer_event.wait(), timeout=_wait)
         except asyncio.TimeoutError:
-            raise AgentError(f"waited {int(PAUSE_TIMEOUT_S // 60)} minutes for an answer to "
-                             f"\"{question}\" and nobody answered")
+            from mastercode.runtime import user_limits
+            user_limits.note_hit(entity_id, "browser_agent.pause_minutes",
+                                 f"browser agent {agent} waiting for an answer")
+            raise AgentError(f"waited {int(_wait // 60)} minutes for an answer to "
+                             f"\"{question}\" and nobody answered. "
+                             + user_limits.hit_line("browser_agent.pause_minutes"))
         run.status = "running"
         run.question = None
         answer = run.answer or ""
@@ -1314,14 +1335,22 @@ async def _execute(run: _Run, spec: dict, *, pool: asyncpg.Pool, entity_id: int,
             await _capture_failure(run, session)
     except asyncio.CancelledError:
         run.status = "failed"
-        run.error = "cancelled"
-        raise
+        run.error = run.limit_hit or "cancelled"
+        if run.limit_hit is None:
+            raise
+        # Our own watchdog's cancel, taken: clear it so the cleanup below
+        # (awaits in `finally`) is not cancelled again on its first await.
+        _t = asyncio.current_task()
+        if _t is not None and hasattr(_t, "uncancel"):
+            _t.uncancel()
     except Exception as e:  # noqa: BLE001
         run.status = "failed"
         run.error = f"step {run.step_index}: {type(e).__name__}: {e}"[:400]
         if opened:
             await _capture_failure(run, session)
     finally:
+        if run.watchdog is not None:
+            run.watchdog.cancel()
         run.finished_at = datetime.now(timezone.utc).isoformat()
         if opened:
             try:
@@ -1334,7 +1363,18 @@ async def _execute(run: _Run, spec: dict, *, pool: asyncpg.Pool, entity_id: int,
         # Deliberately not "released": with holders, leaving does not imply
         # this run slept the pod — a viewport or another run may still hold it.
         run.note("browser handed back")
-        if run.status == "failed" and run.paused and run.trigger != "host":
+        if run.limit_hit is not None:
+            # Stopped by the person's limit: said to the person whoever
+            # started it (the Host's own call returned long before), and
+            # noted for Settings > Limits. The run record below is kept.
+            from mastercode.runtime import user_limits
+            await user_limits.record_hit(pool, entity_id, "browser_agent.run_minutes",
+                                         f"browser agent {agent}")
+            await _notify(
+                f"Agent {agent} was stopped by your time limit",
+                f"{run.limit_hit}\n\nWhat it did is in the Browser app → Agents.",
+                agent=agent, run_id=run.run_id, kind="failed")
+        elif run.status == "failed" and run.paused and run.trigger != "host":
             # The op lane already returned 'waiting' as ok for this run, so
             # this failure would otherwise reach nobody.
             await _notify(
@@ -1367,9 +1407,17 @@ async def run(pool: asyncpg.Pool, *, entity_id: int, name: str, actor: str,
         return _active[n].record()
     r = _Run(n, trigger)
     _active[n] = r
-    r.task = asyncio.create_task(asyncio.wait_for(
-        _execute(r, spec, pool=pool, entity_id=entity_id, actor=actor),
-        timeout=RUN_TIMEOUT_S))
+    r.task = asyncio.create_task(
+        _execute(r, spec, pool=pool, entity_id=entity_id, actor=actor))
+    _limit = _run_timeout_s()
+    if _limit:
+        def _stop_at_limit(run=r) -> None:
+            from mastercode.runtime import user_limits
+            run.limit_hit = (f"The run took {int(_limit // 60)} minutes and was stopped. "
+                             + user_limits.hit_line("browser_agent.run_minutes"))
+            if run.task is not None and not run.task.done():
+                run.task.cancel()
+        r.watchdog = asyncio.get_running_loop().call_later(_limit, _stop_at_limit)
     try:
         await asyncio.wait_for(r.done.wait(), timeout=max(0.0, wait_s))
     except asyncio.TimeoutError:

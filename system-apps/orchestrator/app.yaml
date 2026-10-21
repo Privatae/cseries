@@ -237,17 +237,20 @@ system: true
 #   saying what the app is and what lives in it; the how-to it carried lives in
 #   skills and tool descriptions. Manifest-only; bundle repacked.
 # 0.12.6 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
-version: "0.12.6"
+# 0.13.0 (2026-10-21): one text role. There is no review role: the Host
+#   reviews a build in its own turn, or has a coding engine review it. The
+#   recommended routes and the picker list chat alone.
+version: "0.13.0"
 # Host-facing catalog facts (code-true). Control panel, not a conversational
 # surface: what_it_is / user_path only.
 prompt_behavior:
   what_it_is: >-
     The Orchestrator app sets which provider and model answers each kind of work. It
     opens in Simple mode, a setup checklist: Thinking (one click applies a
-    recommended route for both text roles from a provider the user holds a key for),
+    recommended route for the host model from a provider the user holds a key for),
     Memory (embeddings, on the user's own machine or a keyed provider), Seeing (the
     model that makes images) and Hearing (the realtime-voice provider), then 'What
-    answers when' per activity. Advanced mode holds the full surface: Routing (exactly two text roles, HOST MODEL and REVIEW, each with provider, model, optional
+    answers when' per activity. Advanced mode holds the full surface: Routing (one text role, HOST MODEL, with provider, model, optional
     fallback and reasoning effort), Models (each provider's catalog, starred
     favourites), Coding engines (every engine with its key, default model, effort
     and the default tick), Multi-agent coding (the user's coding protocols),

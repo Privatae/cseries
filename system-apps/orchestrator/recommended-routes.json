@@ -1,54 +1,48 @@
 {
   "_doctrine": "Recommendations are DATA the user applies with one click in the Orchestrator's Simple mode — never hidden pins. Nothing in the platform reads this file at inference time; applying it writes ordinary, visible model_routing entries (the same PUT /api/inference/routing the Advanced grid uses), fully inspectable and editable in Advanced. An unrouted role still resolves EMPTY (no default model anywhere in code). The pin-ratchet (scripts/audit_pinned_models.py) scans runtime .py; this file is the sanctioned data home for recommended ids. Gated by scripts/test_recommended_routes.py.",
   "_provenance": "Researched 2026-08-27 against each vendor's public catalog announcements plus this repo's measured notes (kimi ids measured with a real key 2026-08-18; anthropic ids from the maintained API map in inference_config.py). Candidates per role are ORDERED: apply picks the FIRST one the provider's live catalog — under the user's own key — actually serves; unlisted candidates are skipped in order, and when the catalog is unreachable the first candidate is applied marked unverified (same honesty as the manual model-id entry, v0.6.2). Vendor lineups move (xAI retired its 4.1 ids mid-2026); refresh this file when they do — stale entries degrade to a skip, never a wrong route. google added 2026-08-31: ids verified verbatim against ai.google.dev/gemini-api/docs/models (3.7/3.6/3.5 Flash and 3.5/3.1 Flash-Lite stable; 3.1 Pro is Google's only current Pro and is PREVIEW — it degrades to a skip if withdrawn, which is why a Flash alternate follows it in every depth role), and the tier ORDER came from the live openrouter.ai/api/v1/models price+context table rather than from recall. anthropic rewritten 2026-09-05 (Sonnet 5 chat, Fable 5.1 review, Opus 5 the default elsewhere); claude-fable-5-1 is served by the pinned Agent SDK's own engine (claude-agent-sdk 0.2.152, model table read out of the bundled binary) and normalizes to itself through anthropic_api_model_id, and every Opus/Fable row carries a cheaper Claude fallback so a key that does not serve the first candidate degrades in order rather than failing. openai amended 2026-09-17 to lead review with gpt-6-astra: the slug is MEASURED off the pinned Codex CLI's own catalog (`codex debug models` on rust-v0.154.0, visibility=list) — it has NOT been verified against the OpenAI text API under a key, which is exactly why the astra row keeps its full 5.6 chain behind it and degrades to a skip on a key that does not serve it. chat and consolidation were left on 5.6 deliberately: astra is the frontier tier, wrong tier for a latency lane and wrong tier for a high-volume one. Trimmed to three roles 2026-09-19 with the Orchestrator itself — plan, research, agents, tutor and journal stopped being roles, so their rows went with them — and to two 2026-09-30, when consolidation (Memory) stopped being a role: memory forms in the host's own turn. xai chat amended 2026-10-05 to the Host model standard (brain/mastercode/runtime/approved_models.json): grok-4.7 then grok-4.6, the two xAI models it lists eligible; grok-4.5 (pending_card) and grok-4.3 (below_floor) left the chat row, and the review row moved to the same two the same day (grok-4.5 left it). grok-4.7 was listed by xAI's own /v1/models under a Grok sign-in token on 2026-10-05 05:45Z; Keys' Sign in with xAI routes chat from this row when a Host has none.",
-  "updated": "2026-10-05",
+  "updated": "2026-10-20",
   "providers": {
     "anthropic": {
       "label": "Anthropic",
-      "plan": "Sonnet 5 for conversation, Fable 5.1 for review. Sonnet's latency is the point in conversation, and Fable's critique is the point in review.",
+      "plan": "Sonnet 5 for conversation: its latency is the point there.",
       "roles": {
-        "chat":          {"candidates": ["claude-sonnet-5", "claude-opus-5"], "why": "flagship-balanced — strong and fast enough for conversation"},
-        "review":        {"candidates": ["claude-fable-5-1", "claude-opus-5"], "why": "Fable is the critique model — it reads a diff against the code rather than restating it"}
+        "chat":          {"candidates": ["claude-sonnet-5", "claude-opus-5"], "why": "flagship-balanced — strong and fast enough for conversation"}
       }
     },
     "openai": {
       "label": "OpenAI",
-      "plan": "GPT-6 Astra for review, where reading a diff against its brief is the coding-strongest tier's job; GPT-5.6 Terra (the balanced tier) for conversation.",
+      "plan": "GPT-5.6 Terra, the balanced tier, for conversation.",
       "roles": {
-        "chat":          {"candidates": ["gpt-5.6-terra", "gpt-5.5"], "why": "the balanced everyday tier"},
-        "review":        {"candidates": ["gpt-6-astra", "gpt-5.6-terra", "gpt-5.5"], "why": "code critique on the coding-strongest tier, degrading to the balanced one"}
+        "chat":          {"candidates": ["gpt-5.6-terra", "gpt-5.5"], "why": "the balanced everyday tier"}
       }
     },
     "xai": {
       "label": "xAI",
-      "plan": "Grok 4.7 for conversation and for review, the strongest xAI model the Host model standard lists eligible, with 4.6 behind it in both.",
+      "plan": "Grok 4.7 for conversation, the strongest xAI model the Host model standard lists eligible, with 4.6 behind it.",
       "roles": {
-        "chat":          {"candidates": ["grok-4.7", "grok-4.6"], "why": "the xAI models the Host model standard lists eligible, strongest first"},
-        "review":        {"candidates": ["grok-4.7", "grok-4.6"], "why": "the xAI models the Host model standard lists eligible, strongest first"}
+        "chat":          {"candidates": ["grok-4.7", "grok-4.6"], "why": "the xAI models the Host model standard lists eligible, strongest first"}
       }
     },
     "google": {
       "label": "Google",
-      "plan": "Gemini 3.7 Flash (Google's newest stable Flash) for conversation, 3.1 Pro for review where depth pays. Every text tier here carries a 1M-token context, so the pick is a cost choice rather than a context one.",
+      "plan": "Gemini 3.7 Flash (Google's newest stable Flash) for conversation. Every text tier here carries a 1M-token context, so the pick is a cost choice rather than a context one.",
       "roles": {
-        "chat":          {"candidates": ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-2.5-flash"], "why": "the newest stable Flash — Google's interactive default"},
-        "review":        {"candidates": ["gemini-3.1-pro-preview", "gemini-3.7-flash"], "why": "the Pro tier for critique"}
+        "chat":          {"candidates": ["gemini-3.7-flash", "gemini-3.6-flash", "gemini-2.5-flash"], "why": "the newest stable Flash — Google's interactive default"}
       }
     },
     "kimi": {
       "label": "Kimi (Moonshot)",
-      "plan": "K3 for both, on high reasoning effort. Both id forms are listed — your key's own catalog decides which applies.",
+      "plan": "K3 on high reasoning effort. Both id forms are listed — your key's own catalog decides which applies.",
       "roles": {
-        "chat":          {"candidates": ["kimi-k3", "k3"], "effort": "high", "why": "K3 with mid reasoning — the conversational sweet spot to start from"},
-        "review":        {"candidates": ["kimi-k3", "k3"], "effort": "high", "why": "critique with real reasoning"}
+        "chat":          {"candidates": ["kimi-k3", "k3"], "effort": "high", "why": "K3 with mid reasoning — the conversational sweet spot to start from"}
       }
     },
     "openrouter": {
       "label": "OpenRouter",
-      "plan": "The strong open-weight models: Kimi K3 for conversation, GLM-5.2 for review.",
+      "plan": "The strong open-weight models: Kimi K3 for conversation.",
       "roles": {
-        "chat":          {"candidates": ["moonshotai/kimi-k3", "z-ai/glm-5.2"], "effort": "low", "why": "the strongest open conversational model, kept snappy"},
-        "review":        {"candidates": ["z-ai/glm-5.2", "deepseek/deepseek-v4-pro"], "effort": "medium", "why": "long-horizon code critique"}
+        "chat":          {"candidates": ["moonshotai/kimi-k3", "z-ai/glm-5.2"], "effort": "low", "why": "the strongest open conversational model, kept snappy"}
       }
     }
   },

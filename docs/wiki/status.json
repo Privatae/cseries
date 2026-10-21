@@ -2,7 +2,7 @@
  "pages": {
   "agents": {
    "checked": "2026-10-20",
-   "status": "current"
+   "status": "changed"
   },
   "agents-app": {
    "checked": "2026-10-20",
@@ -46,7 +46,7 @@
   },
   "claude-code-app": {
    "checked": "2026-10-20",
-   "status": "current"
+   "status": "changed"
   },
   "code-repositories": {
    "checked": "2026-10-20",
@@ -54,7 +54,7 @@
   },
   "coding-agents": {
    "checked": "2026-10-20",
-   "status": "current"
+   "status": "changed"
   },
   "community-app": {
    "checked": "2026-10-20",
@@ -118,7 +118,7 @@
   },
   "models-and-keys": {
    "checked": "2026-10-20",
-   "status": "current"
+   "status": "changed"
   },
   "network-app": {
    "checked": "2026-10-20",
@@ -182,7 +182,7 @@
   },
   "workbench": {
    "checked": "2026-10-20",
-   "status": "current"
+   "status": "changed"
   },
   "workbench-app": {
    "checked": "2026-10-20",

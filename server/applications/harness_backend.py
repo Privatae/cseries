@@ -1141,6 +1141,9 @@ def app_hold(app_id: str) -> None:
     task = st.get("lease_task")
     if task and not task.done():
         return
+    # Set by rewake_resident_now: try the next re-wake now instead of at the
+    # end of the doubling wait. One per task, made in the loop that runs it.
+    kick = st["rewake_now"] = asyncio.Event()
 
     async def _beat() -> None:
         while True:
@@ -1156,7 +1159,15 @@ def app_hold(app_id: str) -> None:
             else:
                 wait = resident_retry_wait(int(cur.get("rewake_failures") or 0))
                 cur["rewake_next_s"] = wait
-            await asyncio.sleep(wait)
+            # The wait, or a kick (rewake_resident_now), whichever comes first.
+            sleeper = asyncio.ensure_future(asyncio.sleep(wait))
+            kicked = asyncio.ensure_future(kick.wait())
+            try:
+                await asyncio.wait({sleeper, kicked}, return_when=asyncio.FIRST_COMPLETED)
+            finally:
+                sleeper.cancel()
+                kicked.cancel()
+            kick.clear()
             cur = _state.get(app_id) or {}
             if not cur.get("resident"):
                 return
@@ -1182,6 +1193,28 @@ def app_hold(app_id: str) -> None:
                             f" — next try in {resident_retry_wait(cur['rewake_failures']):.0f}s")
 
     st["lease_task"] = asyncio.create_task(_beat())
+
+
+def rewake_resident_now(app_ids=None) -> list[str]:
+    """Wake now, not at the end of its doubling wait, each RESIDENT app held
+    with no live wake (of app_ids, or every one). A restore's finish calls
+    this once the apps' data is back (host_restore.finish): at the Host's
+    start their wakes were answered still starting while it was put back,
+    and their holds would otherwise wait out resident_retry_wait, up to
+    APP_RT_RESIDENT_RETRY_MAX_S. An app nobody holds (not running) is not
+    woken. The apps whose re-wake was moved up."""
+    moved = []
+    for aid, st in list(_state.items()):
+        if st.get("harness") != _APP_RT_MARK or not st.get("resident") or st.get("url"):
+            continue
+        if app_ids is not None and aid not in app_ids:
+            continue
+        task, kick = st.get("lease_task"), st.get("rewake_now")
+        if task is None or task.done() or kick is None:
+            continue
+        kick.set()
+        moved.append(aid)
+    return moved
 
 
 async def app_release(app_id: str) -> bool:

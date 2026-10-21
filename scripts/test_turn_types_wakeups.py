@@ -234,6 +234,12 @@ def main() -> int:
         return {"ok": True, "event_id": req.get("event_id") or 900 + len(written), "event_at": req["event_at"]}
     import server.bridge.memory_handlers as mh
     mh.handle_calendar_append = fake_append
+    # A recurring prompt task waits for the person's card
+    # (runtime/scheduled_approval, gated in scripts/test_scheduled_spend_pg.py);
+    # what this file checks is the type the task fires under, so the card is
+    # skipped here.
+    import mastercode.runtime.scheduled_approval as _sa
+    _sa.needs_approval = lambda **k: False
     bs.get_pool = lambda: object()
     bs._entity_id = 7
 
@@ -715,7 +721,8 @@ def main() -> int:
 
         async def fetchrow(self, sql, *a):
             if "FROM reachout_channels" in sql:
-                return {"kind": self.kind, "action": self.action}
+                return {"id": 7, "name": "nightly", "created_by": "host",
+                        "kind": self.kind, "action": self.action}
             return None
 
         async def fetchval(self, sql, *a):
@@ -742,6 +749,13 @@ def main() -> int:
     r = run(tools_mod._exec_reachout({"op": "test", "channel": "nightly"}, turn_type=fin))
     check("the guard keys on action.type (what the transport dispatches on), and reads a JSON-string action",
           r.get("status") == "denied" and fired == [], f"{r}")
+    # The dispatcher strips the type before it looks the transport up
+    # (reachout/service.py), so a spaced " runbook" still runs a runbook and
+    # the type guard reads it the same way.
+    bs.get_pool = lambda: ChPool("runbook", {"type": " runbook ", "template_id": 1, "type_id": OPS})
+    r = run(tools_mod._exec_reachout({"op": "test", "channel": "nightly"}, turn_type=fin))
+    check("a spaced runbook type is still another type's runbook to a typed turn",
+          r.get("status") == "denied" and fired == [], f"{r}")
     added = []
 
     async def fake_add_trigger(pool, eid, **kw):
@@ -757,11 +771,66 @@ def main() -> int:
     class TplTypePool(ChPool):
         async def fetchval(self, sql, *a):
             return FIN if "FROM entity_task_templates" in sql else None
+    proposed_triggers = []
+
+    async def _fake_propose_trigger(pool, eid, **kw):
+        proposed_triggers.append(kw)
+        return {"status": "ok", "result": {"awaiting_approval": True, "ticket_id": 1}}
+    import mastercode.runtime.scheduled_approval as _sa_rb
+    _sa_rb.propose_trigger = _fake_propose_trigger
     bs.get_pool = lambda: TplTypePool("runbook", {"type": "runbook", "template_id": 1})
     r = run(tools_mod._exec_reachout({"op": "add_trigger", "channel": "nightly", "label": "x",
                                       "match_kind": "event"}, turn_type=fin))
+    # Past the type guard, a trigger on a runbook is the person's to add
+    # (runtime/scheduled_approval): what "may" means now is that the card goes
+    # up rather than a denial.
     check("...but a runbook whose template is of its own type fires under it, so it may",
-          r.get("status") == "ok" and len(added) == 1, f"{r}")
+          r.get("status") == "ok" and (r.get("result") or {}).get("awaiting_approval")
+          and proposed_triggers, f"{r}")
+    # The runbook check reads the channel the way the dispatcher and
+    # add_trigger do (review of 7bb1b4557): the dispatcher strips action.type,
+    # and add_trigger resolves " 7" by NAME, so neither may slip past the card.
+    proposed_triggers.clear()
+    added.clear()
+    bs.get_pool = lambda: ChPool("webhook", _json.dumps({"type": " runbook", "template_id": 1}))
+    r = run(tools_mod._exec_reachout({"op": "add_trigger", "channel": "nightly", "label": "x",
+                                      "match_kind": "event"}))
+    check("RB1: a runbook whose stored type carries spaces still waits for the card",
+          (r.get("result") or {}).get("awaiting_approval") and proposed_triggers and not added,
+          f"{r} {added}")
+
+    class SplitPool:
+        """Channel id 7 is a log; the channel NAMED "7" (id 9) is a runbook."""
+        async def fetchrow(self, sql, *a):
+            if "FROM reachout_channels" not in sql:
+                return None
+            if "WHERE name=" in sql:
+                return ({"id": 9, "name": "7", "created_by": "host",
+                         "action": {"type": "runbook", "template_id": 1}} if a[0] == "7" else None)
+            if a[0] == 7:
+                return {"id": 7, "name": "invented-log", "created_by": "host", "action": {"type": "log"}}
+            if a[0] == 9:
+                return {"id": 9, "name": "7", "created_by": "host",
+                        "action": {"type": "runbook", "template_id": 1}}
+            return None
+
+        async def fetchval(self, sql, *a):
+            return None
+    proposed_triggers.clear()
+    added.clear()
+    bs.get_pool = lambda: SplitPool()
+    r = run(tools_mod._exec_reachout({"op": "add_trigger", "channel": " 7", "label": "x",
+                                      "match_kind": "event"}))
+    check("RB2: the channel checked is the one add_trigger resolves (' 7' is the name '7')",
+          (r.get("result") or {}).get("awaiting_approval") and not added
+          and proposed_triggers and proposed_triggers[0].get("channel_id") == 9,
+          f"{r} {added} {proposed_triggers}")
+    proposed_triggers.clear()
+    bs.get_pool = lambda: ChPool("runbook", {"type": "runbook", "template_id": 1})
+    r = run(tools_mod._exec_reachout({"op": "add_trigger", "channel": "nightly", "label": " ",
+                                      "match_kind": "event"}))
+    check("RB3: a card that its click could only refuse is never filed",
+          r.get("status") != "ok" and not proposed_triggers and not added, f"{r}")
     check("the dispatcher hands the turn's type to reachout",
           "return await _exec_reachout(args, turn_type=turn_type)" in tsrc0)
     fired.clear()

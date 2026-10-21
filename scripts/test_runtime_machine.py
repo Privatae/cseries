@@ -214,30 +214,33 @@ check(f"Subnet={C.SUBNET}" in net and f"Gateway={C.GATEWAY}" in net and f"Networ
 import ipaddress  # noqa: E402
 check(ipaddress.ip_network(C.SUBNET).network_address + 1 == ipaddress.ip_address(C.GATEWAY),
       "the apps network's gateway is its first address, which the Host's gate never counts as a container")
-# A build's RUN containers take an address from the network's range; the
-# runtime places its own at fixed addresses IP_FIRST..IP_LAST. The two must
-# not meet, or a wake fails on an address a build holds.
+# Podman hands out the network's own range to a container started without a
+# fixed address; the runtime places every one of its own at a fixed address
+# from IP_FIRST, so the two never meet.
 rng = [x for x in net.splitlines() if x.startswith("IPRange=")]
 lo, _, hi = (rng[0].split("=", 1)[1] if rng else "-").partition("-")
 check(rng and lo.startswith(C.IP_PREFIX) and hi.startswith(C.IP_PREFIX) and
       C.HOST_IP.rsplit(".", 1)[1] < lo.rsplit(".", 1)[1] and
       int(C.HOST_IP.rsplit(".", 1)[1]) < int(lo.rsplit(".", 1)[1]) <= int(hi.rsplit(".", 1)[1]) < C.IP_FIRST,
-      "the network's own range (for build containers) lies between the Host and the runtime's fixed addresses",
-      rng)
-check(lo == f"{C.IP_PREFIX}{C.BUILD_IP_FIRST}" and hi == f"{C.IP_PREFIX}{C.BUILD_IP_LAST}",
-      "the network's own range is the build range the plain proxy admits", rng)
+      "the network's own range lies between the Host and the runtime's fixed addresses", rng)
+check(lo == f"{C.IP_PREFIX}{C.POOL_IP_FIRST}" and hi == f"{C.IP_PREFIX}{C.POOL_IP_LAST}",
+      "the network's own range is common.py's POOL_IP_FIRST..POOL_IP_LAST", rng)
 
-# The plain proxy is the coding engines' and the builds' only: an app's own
-# code reaching it would leave past its declared hosts and the owner's signed
-# rules. Every address range the runtime hands out is either inside the
-# proxy's clients or outside them entirely, and only engines get the inside.
+# The plain proxy is the coding engines' only (a build reaches it as its own
+# user, from the machine): an app's own code reaching it would leave past its
+# declared hosts and the owner's signed rules. Every address range on the
+# network is either inside the proxy's clients or outside them entirely, and
+# only engines get the inside; an address podman hands out itself is outside.
 proxy_ips = {i for a, b in C.PROXY_CLIENTS for i in range(a, b + 1)}
 app_ips = set(range(C.IP_FIRST, C.IP_LAST + 1))
 engine_ips = set(range(C.ENGINE_IP_FIRST, C.ENGINE_IP_LAST + 1))
+pool_ips = set(range(C.POOL_IP_FIRST, C.POOL_IP_LAST + 1))
 check(not app_ips & proxy_ips and engine_ips <= proxy_ips and not app_ips & engine_ips
+      and not pool_ips & proxy_ips and proxy_ips == engine_ips
       and C.HOST_IP.rsplit(".", 1)[1] not in {str(i) for i in proxy_ips}
       and len(engine_ips) >= len(C.CODING_ENGINES) and C.IP_LAST < 255 and C.ENGINE_IP_LAST < 255,
-      "apps, the browser and the Host are outside the proxy's clients; every coding engine fits inside")
+      "apps, the browser, the Host and podman's own range are outside the proxy's clients; "
+      "every coding engine fits inside")
 check(all(C.ip_range("harness", h) == (C.ENGINE_IP_FIRST, C.ENGINE_IP_LAST) for h in C.CODING_ENGINES)
       and C.ip_range("harness", C.BROWSER) == (C.IP_FIRST, C.IP_LAST)
       and C.ip_range("app", "telegram") == (C.IP_FIRST, C.IP_LAST),
@@ -253,7 +256,7 @@ for rel in ("vm/wsl/rootfs/etc/cseries-runtime/runtime.nft", "vm/cloud/overlay/e
           "ip saddr $APPS_PROXY_CLIENTS ip daddr $APPS_GW tcp dport 3128 accept" in t and
           "ip saddr $APPS_NET ip daddr $APPS_GW tcp dport 3128 accept" not in t,
           f"{rel}: the same network, the bridge filter, no routing out, the proxy on the gateway "
-          "for the engines and builds only")
+          "for the engines only")
     # The rules name IPv4; IPv6 from the bridge (a link-local address a
     # container may hold) is dropped ahead of them, in input and forward.
     inp = t.split("chain input", 1)[1].split("chain ", 1)[0]
@@ -270,7 +273,7 @@ squid_ips = set()
 for part in (acl[0] if acl else []):
     squid_ips |= {int(str(a).rsplit(".", 1)[1]) for a in ipaddress.ip_network(part, strict=False)}
 check(len(acl) == 1 and squid_ips == proxy_ips and "http_port 3128" in sq,
-      "the plain proxy admits exactly the builds and the coding engines, on the runtime's port",
+      "the plain proxy admits exactly the coding engines' addresses, on the runtime's port",
       sorted(squid_ips ^ proxy_ips))
 check(C.HOST_PORT == 8800 and C.LANE_PORT == 13129 and C.SQUID_PORT == 3128,
       "the ports the firewall opens are the runtime's")

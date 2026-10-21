@@ -8,7 +8,7 @@ claude-sdk lane, no default model — an unrouted role resolves EMPTY and the
 Orchestrator surfaces it. Every token runs on the USER's OWN provider account
 (compute-only billing; there is no platform inference key).
 
-Roles: chat, review, embedding, image, image_gen (ROLES below).
+Roles: chat, embedding, image, image_gen (ROLES below).
 """
 
 import asyncio
@@ -41,8 +41,9 @@ router = APIRouter(prefix="/api/inference", tags=["inference"])
 # seat the user had to fill for a lane that either never fired or had one
 # obvious home, so every consumer now names one of the three at its call site
 # instead of resolving a role of its own. What survives is where reasoning
-# actually happens: `chat` is the host itself, `review` is the strong model
-# reading a landed diff. `consolidation` (the memory lane, shown as Memory)
+# actually happens: `chat` is the host itself. There is no `review` role:
+# the Host reviews in its own turn, or has a coding engine review.
+# `consolidation` (the memory lane, shown as Memory)
 # is gone (memory ops are just tool calls): no turn
 # asks a second model to decide a memory, and the background loop, when it
 # runs, uses the chat route (turn_consolidator._resolve_consolidation_route).
@@ -63,7 +64,11 @@ router = APIRouter(prefix="/api/inference", tags=["inference"])
 # scripts/test_recommended_routes.py, which excludes it alongside
 # embedding/image so the one-click recommendation gate doesn't demand a chat
 # plan for an image model.
-ROLES = ["chat", "review",
+# `review` went 2026-10-20: its one consumer, the diff reviewer that ran a
+# model on every landed build, was removed (the Host reviews in its own turn,
+# or has a coding engine review when the person wants a second opinion). A
+# route still stored under it is never resolved, like the other retired roles.
+ROLES = ["chat",
          "embedding", "image", "image_gen"]
 
 
@@ -1697,7 +1702,6 @@ async def remove_favorite(model_id: str) -> dict:
 
 ROLE_DESCRIPTIONS = {
     "chat":          "Talks with you — every Circles and Workbench turn, the VS Code editor, and every lane that has no model of its own: the Workbench's phase planner, web research, and the background agents your host dispatches.",
-    "review":        "Reads every landed build's diff against the brief it was given and returns a verdict, and picks the winner per file when several coding engines built the same thing. The strong model.",
     "embedding":     "Vector embedding model. Used by every memory write + retrieval. Picking a different dim re-embeds existing rows on the next memory-app sweep. Local options use your pod's Ollama; platform options use the platform's hosted catalog over the bridge.",
 }
 
@@ -4741,7 +4745,6 @@ async def test_role_model(role: str):
 
     test_prompts = {
         "chat": "Say hello in one sentence.",
-        "review": "Is `def add(a, b): return a + b` correct? One sentence.",
         "plan": "List 3 steps to build a REST API. One sentence each.",
         "research": "What is the capital of France? One sentence.",
     }

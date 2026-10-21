@@ -39,6 +39,7 @@ function rosettaTranslated() {
 // bastionDir/bastionExe: the per-user install earlier releases of this
 // command made, kept so the system-service install can remove it.
 // installLog: what the elevated step wrote, read back by this command.
+// log: the whole output of the programs the other steps run (log.js).
 //
 // macOS and Linux only (vm/lima.js): lima is Lima's own folder (LIMA_HOME,
 // the VM's disk included), tools holds the Lima release this command runs,
@@ -60,6 +61,7 @@ function paths(platform = process.platform, env = process.env, home = os.homedir
       wslConfig: p.join(env.USERPROFILE || home, '.wslconfig'),
       hostCa: p.join(base, 'host-ca.pem'),
       installLog: p.join(base, 'bastion-install.log'),
+      log: p.join(base, 'install.log'),
       bastionDir,
       bastionExe: p.join(bastionDir, 'privatae-bastion.exe'),
       serviceDir,
@@ -83,6 +85,7 @@ function paths(platform = process.platform, env = process.env, home = os.homedir
     downloads: p.join(base, 'downloads'),
     hostCa: p.join(base, 'host-ca.pem'),
     installLog: p.join(base, 'bastion-install.log'),
+    log: p.join(base, 'install.log'),
     bastionDir,
     bastionExe: p.join(bastionDir, 'privatae-bastion'),
     serviceDir,

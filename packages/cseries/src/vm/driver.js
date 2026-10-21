@@ -17,7 +17,8 @@
 //   guestRunning(ctx)    -> bool
 //   createGuest(ctx)             download the guest image and register it
 //   startGuest(ctx)              boot it, wait for systemd, keep it running
-//   guest(ctx, args, {input, inherit}) -> {code, stdout, stderr}
+//   guest(ctx, args, {input, inherit, onOutput}) -> {code, stdout, stderr}
+//                                onOutput(chunk): the output as it arrives
 //   stopGuest(ctx)
 //   removeGuest(ctx, {deleteData})
 //   setAutostart(ctx, on)        start the guest when the person logs in

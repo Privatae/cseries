@@ -13,26 +13,28 @@ import os
 # it, so a container reaches the Host, the gateway's DNS and proxy, and
 # nothing else. Containers get fixed addresses, one per name, kept across
 # restarts: apps and the browser from IP_FIRST..IP_LAST, the coding engines
-# from ENGINE_IP_FIRST..ENGINE_IP_LAST. podman hands an engine build's
-# containers BUILD_IP_FIRST..BUILD_IP_LAST (the network's IPRange).
+# from ENGINE_IP_FIRST..ENGINE_IP_LAST. podman hands out POOL_IP_FIRST..
+# POOL_IP_LAST (the network's IPRange) itself, to a container started without
+# a fixed address; the runtime starts none.
 #
-# Only a build and a coding engine may use the plain proxy: the firewalls and
-# squid admit PROXY_CLIENTS and nothing else on the network. An app's way out
-# is the Host's gate, under its declared hosts and the owner's signed rules; a
-# proxy that took any address on the network would let an app's own code skip
-# both.
+# Only a coding engine may use the plain proxy from the network: the firewalls
+# and squid admit PROXY_CLIENTS and nothing else on it. An engine build runs
+# as BUILD_UID in a network namespace of its own and reaches the proxy from
+# the machine. An app's way out is the Host's gate, under its declared hosts
+# and the owner's signed rules; a proxy that took any other address on the
+# network would let an app's own code skip both.
 NETWORK = "cseries-apps"
 SUBNET = "10.89.78.0/24"
 GATEWAY = "10.89.78.1"
 HOST_IP = "10.89.78.2"
 IP_PREFIX = "10.89.78."
-BUILD_IP_FIRST = 3
-BUILD_IP_LAST = 15
+POOL_IP_FIRST = 3
+POOL_IP_LAST = 15
 IP_FIRST = 16
 IP_LAST = 239
 ENGINE_IP_FIRST = 240
 ENGINE_IP_LAST = 247
-PROXY_CLIENTS = ((BUILD_IP_FIRST, BUILD_IP_LAST), (ENGINE_IP_FIRST, ENGINE_IP_LAST))
+PROXY_CLIENTS = ((ENGINE_IP_FIRST, ENGINE_IP_LAST),)
 
 
 def ip_range(kind, ident):
@@ -94,6 +96,32 @@ def image_repo(name):
 UID_BASE = 200000
 UID_RANGE = 65536
 MAX_SLOTS = 4096
+
+# ── who builds the coding engines ───────────────────────────────────────────
+#
+# An engine's image is built by a user of its own with rootless podman, never
+# by root (build.py says why). Its uid sits just under UID_BASE, outside both
+# the system and the login ranges (Debian's login.defs: SYS_UID_MAX 999,
+# UID_MAX 60000), so no package or person is ever given it, and the
+# firewalls can name it as a number: they load before anything could look a
+# name up. Its subordinate ids are slot 0 of the ranges above, which no
+# container is given (State.allocate starts at 1): a build's root is
+# BUILD_UID on the machine and its other ids UID_BASE and up. Each guest's
+# installer makes the user (vm/runtime/sbin/cseries-build-user).
+BUILD_USER = "cseries-build"
+BUILD_UID = UID_BASE - 1
+BUILD_SUBIDS = (UID_BASE, UID_RANGE)
+# Every build runs in this slice, under the containers' one (CGROUP_PARENT),
+# and the slice is stopped after each build, which ends whatever the build
+# user still runs (rootless podman's pause process holds its user namespace).
+BUILD_SLICE = "cseries-build.slice"
+# How an engine image on this machine was built. built.json records it with
+# each image, and a record made another way is built again: buildah's layer
+# cache is keyed by the Dockerfile's steps, never by podman's flags, so an
+# image or a layer built under other flags (a user namespace that left the
+# machine's ids in the files, root with podman's default capabilities) would
+# be reused as it was.
+BUILD_KEY = "rootless-cseries-build-1"
 
 # ── the engines ─────────────────────────────────────────────────────────────
 #
@@ -254,6 +282,17 @@ class Paths:
 
     def build_dir(self):
         return os.path.join(self.state, "build")
+
+    def build_home(self):
+        """The build user's home: its podman storage under storage/."""
+        return self.p("var/lib/cseries-build")
+
+    def build_store(self):
+        return os.path.join(self.build_home(), "storage")
+
+    def build_run(self):
+        """The build user's XDG_RUNTIME_DIR (tmpfs), 0700 and its own."""
+        return self.p("run/cseries-build")
 
     def creds_dir(self, name):
         return os.path.join(self.run, "creds", name)

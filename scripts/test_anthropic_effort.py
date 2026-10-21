@@ -536,12 +536,12 @@ INF._report_config_change_to_central = _noop
 
 def _write(**body):
     WRITES.clear()
-    return _try(run, INF.apply_role_route(INF.SetRoleModel(role="review", **body)))
+    return _try(run, INF.apply_role_route(INF.SetRoleModel(role="chat", **body)))
 
 
 def _stored():
     js = [w for w in WRITES if w and isinstance(w[0], str)]
-    return json.loads(js[-1][0])["model_routing"]["review"] if js else None
+    return json.loads(js[-1][0])["model_routing"]["chat"] if js else None
 
 
 r = _write(provider="anthropic", model="claude-haiku-5-5", effort="high")

@@ -122,10 +122,8 @@ async def main():
         check(f"guard: {prov} allowed for chat",
               provider_allowed_for_role(prov, "chat"))
     for prov in ("subscription", "claude-sdk"):
-        check(f"guard: {prov} refused for review",
-              not provider_allowed_for_role(prov, "review"))
-    check("guard: claude-sdk refused for chat",
-          not provider_allowed_for_role("claude-sdk", "chat"))
+        check(f"guard: {prov} refused for chat",
+              not provider_allowed_for_role(prov, "chat"))
 
     # ── 3a. Stored new-shape route resolves verbatim (incl. fallback) ────────
     pool = FakePool({"model_routing": {"chat": {
@@ -139,17 +137,17 @@ async def main():
           and not r.get("unconfigured"), r)
 
     # ── 3b. Legacy {lane, direct_provider} migrates to the direct provider ───
-    pool = FakePool({"model_routing": {"review": {
+    pool = FakePool({"model_routing": {"chat": {
         "lane": "openrtr", "model": "model-a", "direct_provider": "xai"}}})
-    r = await resolve_role_route(pool, 1, "review")
+    r = await resolve_role_route(pool, 1, "chat")
     check("route: legacy lane+direct_provider migrates to provider",
           r["provider"] == "xai" and r["model"] == "model-a"
           and not r.get("unconfigured"), r)
 
     # ── 3c. Legacy bare openrtr lane normalizes to openrouter ────────────────
-    pool = FakePool({"model_routing": {"review": {
+    pool = FakePool({"model_routing": {"chat": {
         "lane": "openrtr", "model": "org/model-a"}}})
-    r = await resolve_role_route(pool, 1, "review")
+    r = await resolve_role_route(pool, 1, "chat")
     check("route: legacy bare openrtr lane → openrouter",
           r["provider"] == "openrouter" and r["model"] == "org/model-a", r)
 

@@ -156,9 +156,15 @@ def main() -> int:
     check("5: an accepted effort passes (case-folded)", err is None, f"{err}")
 
     # ── 6. time budget bounded by the platform cap ───────────────────
-    from server.routes.ladder import RUNG_WALL_CAP_MIN
-    _, err = V({"name": "x", "steps": [{"engines": ["kimi"], "time_budget_minutes": RUNG_WALL_CAP_MIN + 1}]}, model_opts=OPTS)
-    check("6: time budget over the platform cap is refused", bool(err) and str(RUNG_WALL_CAP_MIN) in err, f"{err}")
+    # The cap is the person's limit build.model_wait_max_minutes (2026-10-20,
+    # runtime/user_limits), the same one a build's own wait is held to.
+    from server.routes.ladder import rung_wait_cap
+    _cap = rung_wait_cap()
+    _, err = V({"name": "x", "steps": [{"engines": ["kimi"], "time_budget_minutes": _cap + 1}]}, model_opts=OPTS)
+    check("6: time budget over the person's limit is refused, naming it",
+          bool(err) and str(_cap) in err and "build.model_wait_max_minutes" in err, f"{err}")
+    _, err = V({"name": "x", "steps": [{"engines": ["kimi"], "time_budget_minutes": 61}]}, model_opts=OPTS)
+    check("6: a budget past the old 60-minute rung cap is accepted under the limit", err is None, f"{err}")
     doc, err = V({"name": "x", "steps": [{"engines": ["kimi"]}]}, model_opts=OPTS)
     check("6: time budget is optional ('if any') — absent stays absent",
           err is None and "time_budget_minutes" not in doc["steps"][0])

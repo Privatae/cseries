@@ -87,7 +87,10 @@ async function showSetup(ctx, { open = true } = {}) {
   out.line();
   out.line('C-Series is running.');
   out.line(`  Open:        ${url}`);
-  out.line(`  or           ${BASE}   (when the browser cannot open the name; some Safari versions)`);
+  // The name is one some Safari versions cannot open; elsewhere the address
+  // is only the fallback.
+  const why = ctx.platform === 'darwin' ? 'when the browser cannot open the name; some Safari versions' : 'when the browser cannot open the name';
+  out.line(`  or           ${BASE}   (${why})`);
   if (code) {
     out.line(`  Setup code:  ${code}`);
     if (await copyToClipboard(ctx, code)) out.line('               (copied to the clipboard)');

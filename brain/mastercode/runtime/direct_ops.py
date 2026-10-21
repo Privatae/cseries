@@ -160,6 +160,9 @@ DIRECT_OP_TOOLS: frozenset[str] = frozenset({
     #    decision ticket the user answers. The tool never writes the setting. ──
     "pipeline",
     "turn_type",
+    # ── the person's limits — status is a read; propose files a card the
+    #    person decides. The tool never writes a limit. ──
+    "limits",
     # ── gitea — list/repo/tree/read/grep are reads
     #    (read_safe_ops); op='propose' is ONE deterministic call with the
     #    files the host already holds: fork, branch, one commit, pull request

@@ -1067,6 +1067,9 @@ def collect(root: Path) -> dict:
         # ratchet.
         "/api/connector": [],
         "/api/tickets": ["tickets", "escalate"],
+        # the person's limits (2026-10-20): the Host reads them and asks for a
+        # change with `limits`; the write is the person's alone, by design
+        "/api/limits": ["limits"],
         # support half of the Tickets pane (server/routes/support.py): the same
         # `tickets` tool reaches it through its support_* ops
         "/api/support": ["tickets"],

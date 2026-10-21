@@ -514,26 +514,48 @@ def _next_occurrence(start_time: datetime, period: int) -> datetime:
 
 
 async def _record_run(pool, event_id: int, entity_id: int, ok: bool,
-                      output_excerpt: str | None, error: str | None) -> None:
+                      output_excerpt: str | None, error: str | None,
+                      cost_usd: float | None = None,
+                      priced_usd: float | None = None) -> None:
     """Append a calendar_event_runs child row. Best-effort — a failed run
-    record must never propagate out of the per-task handler."""
+    record must never propagate out of the per-task handler.
+
+    cost_usd is the run's whole price, or None when any turn had none;
+    priced_usd is what its priced turns cost even then (v251), the figure a
+    job's budget counts (budget_state)."""
     try:
         await pool.execute(
             """
             INSERT INTO calendar_event_runs
-                (event_id, entity_id, ran_at, ok, output_excerpt, error)
-            VALUES ($1, $2, NOW(), $3, $4, $5)
+                (event_id, entity_id, ran_at, ok, output_excerpt, error, cost_usd,
+                 priced_usd)
+            VALUES ($1, $2, NOW(), $3, $4, $5, $6, $7)
             """,
             event_id, entity_id, ok,
-            (output_excerpt or None), (error or None),
+            (output_excerpt or None), (error or None), cost_usd, priced_usd,
         )
     except Exception as e:  # noqa: BLE001
         log.warning("offline-task: run-record insert failed (event=%s): %s",
                     event_id, e)
 
 
+def person_turns_per_day() -> int:
+    """The person's limit `scheduled.turns_per_day` (runtime/user_limits):
+    their value when they set one (0 = no limit), else DEFAULT_MAX_RUNS_PER_DAY.
+    A new task may ask for less, never more (tools._exec_schedule_task)."""
+    from mastercode.runtime import user_limits
+    return user_limits.person_or("scheduled.turns_per_day", DEFAULT_MAX_RUNS_PER_DAY)
+
+
 def max_runs_per_day(payload: dict) -> int:
-    """This task's governed-turn ceiling, from its payload, else the default.
+    """This task's governed-turn ceiling: the value its payload carries, else
+    the person's limit (person_turns_per_day).
+
+    A payload value is honoured as it is, including one set above today's
+    limit before the limit was the person's (2026-10-20): cutting a task the
+    person relied on would break it without asking. New tasks cannot carry
+    one above the limit: both writers of a task's payload refuse it (the
+    Host's schedule_task, and the calendar append behind POST /api/calendar).
 
     A value at or below zero, or one that is not a number, means the payload
     never set one — fall back rather than treat garbage as "no runs allowed",
@@ -543,8 +565,16 @@ def max_runs_per_day(payload: dict) -> int:
     try:
         n = int(raw)
     except (TypeError, ValueError):
-        return DEFAULT_MAX_RUNS_PER_DAY
-    return n if n > 0 else DEFAULT_MAX_RUNS_PER_DAY
+        return person_turns_per_day()
+    return n if n > 0 else person_turns_per_day()
+
+
+def _num_or_none(raw) -> int | None:
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
 
 
 def _ceiling_error(message: str) -> str:
@@ -666,6 +696,36 @@ class TaskCancelled(Exception):
     """The task's row went 'cancelled' while it was running."""
 
 
+class BudgetReached(Exception):
+    """The job's own budget (payload budget_usd) was reached between steps."""
+
+
+async def budget_state(pool, event_id: int, entity_id: int,
+                       payload: dict) -> tuple[float | None, float]:
+    """(the job's budget in dollars or None, what its priced runs have spent).
+    The budget is the one the person named for this job ("spend up to $5"),
+    stored by schedule_task as payload budget_usd. Runs with no price (a
+    subscription plan, a local model) add nothing: the budget can only count
+    what was priced, and the skill says so to the person. A run with SOME
+    priced turns counts them (priced_usd): its cost_usd is null so it never
+    reads as whole, and dropping its priced turns too would let a job spend
+    past the budget the person set."""
+    try:
+        budget = float((payload or {}).get("budget_usd"))
+    except (TypeError, ValueError):
+        return None, 0.0
+    if not budget > 0:
+        return None, 0.0
+    try:
+        spent = await pool.fetchval(
+            "SELECT COALESCE(sum(COALESCE(priced_usd, cost_usd)), 0) FROM calendar_event_runs "
+            "WHERE event_id = $1 AND entity_id = $2", event_id, entity_id)
+    except Exception as e:  # noqa: BLE001 — unread, the run goes ahead
+        log.warning("offline-task: budget spend unread (event=%d): %s", event_id, e)
+        return budget, 0.0
+    return budget, float(spent or 0.0)
+
+
 async def _task_cancelled(pool, entity_id: int, event_id: int) -> bool:
     """True when the task's row reads 'cancelled'. A failed read is False: a
     task is never stopped on a read error."""
@@ -682,7 +742,10 @@ async def _report_and_finalize(pool, entity_id: int, event_id: int, title: str,
                                recurrence, start_time, ok: bool, content: str,
                                error: str | None, *, report_on_success: bool,
                                origin: dict | None = None,
-                               skipped: bool = False) -> None:
+                               skipped: bool = False,
+                               stopped: bool = False,
+                               cost_usd: float | None = None,
+                               priced_usd: float | None = None) -> None:
     """Shared tail for both lanes: tell the user, record the run, re-arm.
 
     `report_on_success` is the one difference between them, and it is a product
@@ -714,6 +777,10 @@ async def _report_and_finalize(pool, entity_id: int, event_id: int, title: str,
     elif report_on_success or not ok:
         if ok and content:
             report = content
+        elif stopped:
+            # The job's own budget was reached (budget_state): not a failure,
+            # and nothing more of it runs.
+            report = f"Scheduled task **{title}** stopped: {error}"
         elif skipped:
             # A ceiling skip is the governor working, NOT the task breaking,
             # and the user is owed the difference in the word itself. This
@@ -724,6 +791,10 @@ async def _report_and_finalize(pool, entity_id: int, event_id: int, title: str,
         else:
             report = (f"Scheduled task **{title}** failed: {error}"
                       if error else f"Scheduled task **{title}** produced no output.")
+        # What the run spent, said where the person reads its result: work
+        # that runs unwatched must not spend unseen (v251).
+        if cost_usd is not None:
+            report += f"\n\n(This run cost ${cost_usd:.4f}.)"
         await post_to_origin_thread(pool, entity_id, origin, report,
                                     extra_tags={"scheduled_task_id": event_id},
                                     fallback_session=f"scheduled_task:{event_id}",
@@ -733,8 +804,13 @@ async def _report_and_finalize(pool, entity_id: int, event_id: int, title: str,
     # The STORED reason carries the sentinel; the REPORTED prose above never
     # does. runs_in_last_24h and the Agents panel's failure count both key on it.
     stored_error = _ceiling_error(error) if (skipped and error) else error
-    await _record_run(pool, event_id, entity_id, ok, excerpt, stored_error)
-    await _finalize(pool, event_id, entity_id, recurrence, start_time, ok)
+    # A job stopped at the budget the person set did what they asked: the run
+    # is recorded as done (the reason kept beside it) and the task completes
+    # rather than reading as failed. The caller passes recurrence=None.
+    done = ok or stopped
+    await _record_run(pool, event_id, entity_id, done, excerpt, stored_error, cost_usd,
+                      priced_usd)
+    await _finalize(pool, event_id, entity_id, recurrence, start_time, done)
 
 
 def lands_in_circles(origin: dict | None) -> bool:
@@ -1151,7 +1227,10 @@ async def _run_one(pool, entity_id: int, row) -> None:
     # The budget is in TURNS, because that is what costs money and what every
     # text the user reads calls it. One fire of a steps task is len(steps)
     # turns, so the count of fires is multiplied up rather than used raw.
+    from mastercode.runtime import user_limits
+    await user_limits.fresh(pool, entity_id)
     ceiling = max_runs_per_day(payload)
+    _own_ceiling = _num_or_none((payload or {}).get("max_runs_per_day")) is not None
     per_fire = turns_per_fire(payload)
     fires = await runs_in_last_24h(pool, event_id, entity_id)
     spent = fires * per_fire
@@ -1169,7 +1248,12 @@ async def _run_one(pool, entity_id: int, row) -> None:
                 f"allowed in a day.{_each} Nothing was run this time and nothing "
                 f"was spent. It will try again at its next scheduled time" +
                 (f" ({recurrence})." if recurrence else ".") +
-                " Raise max_runs_per_day on the task to let it run more often.")
+                (" The task carries its own ceiling (max_runs_per_day); the Host can "
+                 "set it again, up to the person's limit `scheduled.turns_per_day`."
+                 if _own_ceiling else " " + user_limits.hit_line("scheduled.turns_per_day")))
+        if not _own_ceiling:
+            await user_limits.record_hit(pool, entity_id, "scheduled.turns_per_day",
+                                         f"a run of the scheduled task {title!r}")
         log.warning("offline-task: ceiling reached (event=%d spent=%d/%d turns, "
                     "%d per fire) — skipping the governed turn",
                     event_id, spent, ceiling, per_fire)
@@ -1191,10 +1275,27 @@ async def _run_one(pool, entity_id: int, row) -> None:
             await _finalize(pool, event_id, entity_id, recurrence, start_time, False)
         return
 
+    # The job's own budget (payload budget_usd), when the person named one:
+    # reached, the task stops for good and says so, with what it spent.
+    _budget, _budget_spent = await budget_state(pool, event_id, entity_id, payload)
+    if _budget is not None and _budget_spent >= _budget:
+        _msg = (f"it has spent ${_budget_spent:.2f} of the ${_budget:.2f} budget you set "
+                "for it, so it stops here. Nothing was run this time.")
+        await _report_and_finalize(pool, entity_id, event_id, title, None,
+                                   start_time, False, "", _msg,
+                                   report_on_success=False,
+                                   origin=payload.get("origin"), stopped=True)
+        return
+
     # Steps already run this fire. A full process may only REQUEUE a task
     # that ran nothing yet; once a step has run, requeueing would run it
     # again — messages, ops, uncounted turns.
     _steps_done: list[str] = []
+    # What this fire's turns cost, from each turn's context frame (the
+    # estimate its turn row is stamped with). Unpriced as soon as one turn
+    # has no price: a partial sum would read as the whole.
+    _fire_cost = {"usd": 0.0, "turns": 0, "priced": True}
+    _budget_stop = False
     try:
         # Headless governed turn — the FULL host pipeline (identity + system
         # prompt + resolved chat-role model + CEIGAS fail-closed inference gate +
@@ -1295,6 +1396,18 @@ async def _run_one(pool, entity_id: int, row) -> None:
                             pending = True
                     except Exception:  # noqa: BLE001
                         pass
+                elif line.startswith("2:") and '"t": "context"' in line:
+                    try:
+                        for _it in _json.loads(line[2:]):
+                            if isinstance(_it, dict) and _it.get("t") == "context":
+                                _fire_cost["turns"] += 1
+                                _c = _it.get("est_cost_usd")
+                                if isinstance(_c, (int, float)):
+                                    _fire_cost["usd"] += float(_c)
+                                else:
+                                    _fire_cost["priced"] = False
+                    except Exception:  # noqa: BLE001 — a cost line, never the run
+                        _fire_cost["priced"] = False
                 elif line.startswith("2:") and "model_unconfigured" in line:
                     try:
                         if any(isinstance(i, dict) and i.get("type") == "model_unconfigured"
@@ -1346,6 +1459,14 @@ async def _run_one(pool, entity_id: int, row) -> None:
                 # to the sweep between steps.
                 await _touch(pool, entity_id, event_id)
                 seg.append(f"**Step {i}/{len(steps)}: {step}**\n{step_out}".rstrip())
+                # The job's budget, between steps: the steps left do not start
+                # once what it has spent reaches it.
+                if (_budget is not None and i < len(steps)
+                        and _budget_spent + _fire_cost["usd"] >= _budget):
+                    raise BudgetReached(
+                        f"the job reached the ${_budget:.2f} budget you set for it after step "
+                        f"{i} of {len(steps)} (${_budget_spent + _fire_cost['usd']:.2f} spent), "
+                        "so the remaining steps did not run")
             content = "\n\n".join(seg)
         else:
             _body = (f"{_lead}\nTheir message: {prompt}" if payload.get("saved_request")
@@ -1398,6 +1519,11 @@ async def _run_one(pool, entity_id: int, row) -> None:
                      ("Nothing ran: this Host's tools never arrived after "
                       f"{_tries} tries over several hours, so the request was not "
                       "carried out."))
+        if isinstance(e, BudgetReached):
+            # Stopped for good: a reached budget is the person's word.
+            error = str(e)
+            recurrence = None
+            _budget_stop = True
         if isinstance(e, TaskCancelled):
             log.info("offline-task: #%d cancelled while it ran — %d step(s) had run",
                      event_id, len(_steps_done))
@@ -1411,7 +1537,13 @@ async def _run_one(pool, entity_id: int, row) -> None:
     await _report_and_finalize(pool, entity_id, event_id, title, recurrence,
                                start_time, ok, content, error,
                                report_on_success=True,
-                               origin=payload.get("origin"))
+                               origin=payload.get("origin"),
+                               stopped=_budget_stop,
+                               cost_usd=(round(_fire_cost["usd"], 6)
+                                         if _fire_cost["turns"] and _fire_cost["priced"]
+                                         else None),
+                               priced_usd=(round(_fire_cost["usd"], 6)
+                                           if _fire_cost["turns"] else None))
 
 
 # The wake-ups running now, so each poll knows the free slots. Held here so a

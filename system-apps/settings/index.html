@@ -29,6 +29,7 @@
                 <button class="cseries-nav-btn" data-view="history" role="tab" aria-selected="false">History</button>
                 <button class="cseries-nav-btn" data-view="synaptive" role="tab" aria-selected="false">Synaptive</button>
                 <button class="cseries-nav-btn" data-view="shaping" role="tab" aria-selected="false">Response Shaping</button>
+                <button class="cseries-nav-btn" data-view="limits" role="tab" aria-selected="false">Limits</button>
                 <button class="cseries-nav-btn" data-view="appearance" role="tab" aria-selected="false">Appearance</button>
                 <button class="cseries-nav-btn" data-view="desktop" role="tab" aria-selected="false">Desktop</button>
                 <button class="cseries-nav-btn" data-view="backup" role="tab" aria-selected="false">Backup</button>
@@ -165,6 +166,17 @@
                         <button id="rs-weights-discard" class="cseries-btn ghost" hidden>Discard changes</button>
                     </div>
                 </div>
+            </section>
+
+            <!-- Limits -->
+            <section id="view-limits" class="app-view" hidden>
+                <div class="view-heading">
+                    <h2>Limits</h2>
+                    <p class="view-sub">Every limit that can stop work you asked for: what it may spend, how many turns or repairs it runs by itself, how long it may take. Each starts at the default shown and is yours to change; 0 means no limit. When one stops something, your Host says which, and it can ask you to change it. It can never change one itself.</p>
+                </div>
+                <div class="cseries-card lim-notice" id="lim-notice" role="status" hidden></div>
+                <div class="label-sys" id="lim-state">Loading…</div>
+                <div id="lim-body" class="stack" hidden></div>
             </section>
 
             <!-- Appearance -->

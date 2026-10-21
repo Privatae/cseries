@@ -22,7 +22,7 @@ function machine(opts = {}) {
     const out = captureOutput();
     const code = await main(argv, {
       platform: 'win32', arch: 'x64', env: {}, paths: p, out, runner: m.runner, net: m.net,
-      sleep: async () => {}, prompt: async () => false, portState: async () => 'free', osRelease: '10.0.22631',
+      sleep: async () => {}, prompt: async () => false, portState: async () => 'free', freeBytes: () => 64 * 1024 ** 3, osRelease: '10.0.22631',
       releaseInfo: { release: rel, placeholders: [], file: 'test' }, bastionKeys: m.bastionKeys,
     });
     return { code, text: out.text(), err: out.errText() };

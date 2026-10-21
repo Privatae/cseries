@@ -90,6 +90,7 @@ TOOL_NAMES = [
     ("owner/" "sentinel", "private repository"),
     ("privatae-" "api", "platform service"),
     ("fable" " review", "review tool"),
+    ("srv" "mayo", "internal name; public text says 'platform'"),
 ]
 TOOL = [(re.compile(r"(?<![A-Za-z0-9])" + re.escape(n).replace(r"\ ", r"\s+"), re.I), label)
         for n, label in TOOL_NAMES]

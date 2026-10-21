@@ -15,14 +15,21 @@ function toBuf(v) {
   return Buffer.isBuffer(v) ? v : Buffer.from(String(v));
 }
 
-// handler(cmd, args, opts) -> {code, stdout, stderr, notFound} | undefined
+// handler(cmd, args, opts) -> {code, stdout, stderr, notFound, chunks} | undefined
+// chunks: the output as it would arrive, piece by piece, for opts.onOutput;
+// without it onOutput gets stdout and then stderr, as the real runner would.
 function fakeRunner(handler = () => ({})) {
   const calls = [];
   return {
     calls,
     async run(cmd, args, opts = {}) {
-      calls.push({ kind: 'run', cmd, args, input: opts.input, env: opts.env });
+      calls.push({ kind: 'run', cmd, args, input: opts.input, env: opts.env, stdin: opts.stdin });
       const h = (await handler(cmd, args, opts)) || {};
+      if (opts.onOutput) {
+        for (const c of h.chunks || [h.stdout, h.stderr]) {
+          if (c !== undefined && c !== null && String(c) !== '') opts.onOutput(toBuf(c));
+        }
+      }
       return { code: h.code === undefined ? 0 : h.code, stdout: toBuf(h.stdout), stderr: toBuf(h.stderr), notFound: Boolean(h.notFound) };
     },
     async inherit(cmd, args, opts = {}) {
@@ -74,6 +81,7 @@ function testPaths(dir = tmpdir()) {
     wslConfig: path.join(dir, 'home', '.wslconfig'),
     hostCa: path.join(dir, 'host-ca.pem'),
     installLog: path.join(dir, 'bastion-install.log'),
+    log: path.join(dir, 'install.log'),
     bastionDir: path.join(dir, 'b'),
     bastionExe: path.join(dir, 'b', 'privatae-bastion.exe'),
     serviceDir: path.join(dir, 'pf', 'Privatae'),

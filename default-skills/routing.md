@@ -57,26 +57,30 @@ Roles: chat (you, talking — and every lane with no model of its own: the
 Workbench's phase planner, web research, the VS Code editor; an agent you
 dispatch for untrusted work runs on the model the dispatch names, else the
 one preferred for that kind of work, `preference` op='prefer', else this
-one), review (reads each landed build's diff and reports a verdict beside
-it; it never picks between engines — the user does), and image_gen (making an image). There
+one), and image_gen (making an image). There
 is no role for reading an image: you read pictures with your own model
 (image_generate action='look'), so a Host model whose catalog row lists image
 input is one that sees.
 Embedding is NOT set here — it has its own flow (embedding_route).
 
-There are two text roles and no others. If the user asks about a plan,
-research, agents, tutor or journal route, say those were removed 2026-09-19;
-a memory ("consolidation") route went 2026-09-30, when memory came to form in
-your own turn. All of that work runs on the host model now. Never offer to set
-one.
+There is one text role, chat (the host model), and no others. If the user
+asks about a plan, research, agents, tutor or journal route, say those were
+removed 2026-09-19; a memory ("consolidation") route went 2026-09-30, when
+memory came to form in your own turn; a review route went 2026-10-20: you
+review what your builds changed in your own turn, and a second opinion is a
+coding engine's review (skill 'review'). All of that work runs on the host
+model now. Never offer to set one.
 
 **Web search when the host model cannot search.** Only OpenRouter, Anthropic,
 OpenAI, xAI and Kimi ship a web mechanism. If the host model is on one that
-does not (local, google, deepinfra, together, fireworks, groq), search still
-works: it borrows a search-capable provider ONE OF THE TWO TEXT ROLES IS
-ALREADY ROUTED TO — host model or review — on that provider's
-recommended chat model, for that call only. Nothing is stored and the routing
-table is untouched.
+does not (local, google, deepinfra, together, fireworks, groq), web search runs
+on one of the person's connected coding engines that can search (Antigravity,
+then Claude Code), on that engine's own key or sign-in. It takes
+minutes rather than seconds, and the result names the engine: say so. With
+none of them connected, web search is unavailable and the result says how to
+fix it. When a model the catalog marks as unable to search sits on
+a provider that can, the search borrows that provider's recommended chat model
+for that call only. Nothing is stored and the routing table is untouched.
 
 A stored key is NOT enough, on purpose: borrowing a merely-keyed provider
 would open a bill on one the user never chose to run this host on. So the
@@ -87,7 +91,7 @@ chat model cannot search") on EVERY outcome, including failures — RELAY it,
 so the user knows which model answered and why. If a borrowed search fails,
 say the borrowed provider failed; do NOT tell them to re-route the host model
 as though it had answered. If nothing routed can search, the result says so
-and names the fix: point either role at a search-capable provider
+and names the fix: point the host model at a search-capable provider
 in the Orchestrator.
 
 ## model_route / inference_catalog — guidance
@@ -120,8 +124,8 @@ The user sets routes by hand in the Orchestrator app. This is its layout, for
 
 **Simple mode** (it opens here) is a setup checklist, in order. THINKING: pick
 a provider the user holds a key for, and one click writes the recommended
-route for both text roles (the same data `op='recommend'` reads), with an
-optional backup provider as each role's fallback. MEMORY: embeddings, either
+route for the host model (the same data `op='recommend'` reads), with an
+optional backup provider as its fallback. MEMORY: embeddings, either
 free on a machine of the user's own (it opens Getting Started at its Network
 step, which explains a bastion) or a keyed provider's embedding model (skill
 'embedding'). SEEING: the image-making model, chosen from an authenticated
@@ -162,5 +166,5 @@ API keys live in the Keys app; this app never touches credentials.
 - **model_route** `op`: current = per-role routing + effective model (default); catalog = one page of available models; switch = assign a model to a role.
 - **model_route** `provider`: switch: a provider the user holds a key for (openrouter, anthropic, openai, xai, …) or 'local'. catalog: filter to 'openrouter' | 'local'.
 - **model_routing** `op`: status = what is routed now (default); recommend = what to pick for unrouted roles, writes nothing; set = write one route.
-- **model_routing** `role`: For op='set': which kind of work. chat, review, image_gen.
+- **model_routing** `role`: For op='set': which kind of work. chat, image_gen.
 - **model_routing** `provider`: For op='set': a Keys registry provider id (openrouter, anthropic, openai, google, xai, kimi, …) or 'local'. Must be one the user holds a key for.

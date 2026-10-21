@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-TWO text roles — the ratchet that keeps a third from growing back. (The file
+ONE text role — the ratchet that keeps a second from growing back. (The file
 keeps the name it had when there were three; other files point at it.)
 
 The orchestrator was too complicated; model calls belong only
@@ -10,6 +10,9 @@ where reasoning happens. Nine roles became three — `chat`
 agents, tutor and journal are gone. `consolidation` followed
 (memory ops are plain tool calls): memory forms in the Host's
 own turn, and the background loop, when it runs, resolves the chat route.
+`review` followed with the diff reviewer, its one consumer: the Host reviews
+in its own turn, or has a coding engine review. `chat` is the one text role
+left.
 
 Measured on one Host over the 14 days before the cut: plan 0 attributable
 calls, review 0, tutor 0, journal 0 (chat sessions are ephemeral so the
@@ -58,10 +61,11 @@ for _p in (str(_ROOT), str(_ROOT / "brain")):
         sys.path.insert(0, _p)
 os.environ.setdefault("ENTITY_ID", "1")
 
-TEXT_ROLES = {"chat", "review"}
-# 'vision' left: a picture goes to the Host model itself, so no
-# second model is routed to read one.
-REMOVED = ("plan", "research", "agents", "tutor", "journal", "consolidation", "vision")
+TEXT_ROLES = {"chat"}
+# 'vision' left: a picture goes to the Host model itself, so no second model
+# is routed to read one. 'review' left with the diff reviewer: the Host
+# reviews in its own turn.
+REMOVED = ("plan", "research", "agents", "tutor", "journal", "consolidation", "vision", "review")
 # Not text roles and never were — they pick from a provider's image-capable
 # catalog, and embedding routes through /api/embedding/switch.
 NON_TEXT = ("embedding", "image", "image_gen")
@@ -76,17 +80,23 @@ def check(name: str, ok: bool, detail: str = "") -> None:
         FAILS.append(name)
 
 
-# ── 1. the declaration: ROLES carries exactly the three, plus the non-text ──
+# ── 1. the declaration: ROLES carries exactly chat, plus the non-text ──────
 
 print("== 1. server/routes/inference.py — the declaration ==")
 from server.routes import inference as I            # noqa: E402
 
 declared_text = {r for r in I.ROLES if r not in NON_TEXT}
-check("ROLES' text set is exactly {chat, review}",
+check("ROLES' text set is exactly {chat}",
       declared_text == TEXT_ROLES, str(sorted(declared_text)))
 from mastercode.runtime.model_standard import LIVE_TEXT_ROLES   # noqa: E402
 check("model_standard judges exactly the text roles (a retired role's stored route is never judged)",
       set(LIVE_TEXT_ROLES) == TEXT_ROLES, str(LIVE_TEXT_ROLES))
+from mastercode.runtime import model_standard as _MS   # noqa: E402
+_audit_roles = {a.get("role") for a in _MS.audit_routes({
+    "chat": {"provider": "openai", "model": "invented-model-a"},
+    "review": {"provider": "openai", "model": "invented-model-b"}}) if isinstance(a, dict)}
+check("...so a route still stored under 'review' is never judged",
+      "chat" in _audit_roles and "review" not in _audit_roles, str(_audit_roles))
 check("no removed role survives in ROLES",
       not (set(REMOVED) & set(I.ROLES)),
       str(sorted(set(REMOVED) & set(I.ROLES))))
@@ -102,7 +112,7 @@ check("the write surface validates against ROLES",
       "set_role_model no longer gates on ROLES")
 
 
-# ── 2. static scan: every resolve_role_route call names one of the three ────
+# ── 2. static scan: every resolve_role_route call names a live role ────────
 #
 # A literal argument is checkable; a variable is not, so a non-literal is
 # reported rather than passed over — it is exactly how a removed role would
@@ -210,7 +220,7 @@ check("every declared generic site still exists",
 # from the nine-role era. Two things must hold: they never reach the caller,
 # and reading them raises nothing.
 
-print("\n== 3. a stored plan/agents route is dropped, not reported ==")
+print("\n== 3. a stored plan/agents/review route is dropped, not reported ==")
 
 import asyncio                                       # noqa: E402
 import types as _types                               # noqa: E402
@@ -222,6 +232,8 @@ STALE_PARAMS = {
         "plan":   {"provider": "openai", "model": "gpt-5.5"},
         "agents": {"provider": "anthropic", "model": "claude-opus-5"},
         "tutor":  {"provider": "kimi", "model": "k3"},
+        # Left behind by a user who routed review before 2026-10-20.
+        "review": {"provider": "anthropic", "model": "claude-opus-5"},
     },
 }
 
@@ -289,7 +301,7 @@ check("the routing status walks inf.ROLES, so `unrouted` can only name live role
       "for role in inf.ROLES:" in _tools)
 
 
-# ── 4. the Orchestrator UI and its bundle offer three rows ──────────────────
+# ── 4. the Orchestrator UI and its bundle offer one text row ───────────────
 
 print("\n== 4. the Orchestrator surface ==")
 
@@ -322,7 +334,7 @@ check("the 'what answers when' overlay describes exactly the text roles",
 
 _recs = json.loads((_ROOT / "system-apps/orchestrator/recommended-routes.json").read_text())
 for prov, spec in (_recs.get("providers") or {}).items():
-    check(f"recommended-routes {prov}: three roles, no more",
+    check(f"recommended-routes {prov}: the one text role, no more",
           set((spec.get("roles") or {})) == TEXT_ROLES,
           str(sorted(spec.get("roles") or {})))
 
@@ -360,9 +372,14 @@ for bundle in ("native-bundles/orchestrator.cseries", "factory-bundles/orchestra
           "review, plan, research, agents, consolidation, journal" not in behavior)
     # The positive half — a negative check alone passes on copy that says
     # nothing at all.
-    check(f"{bundle}: prompt_behavior says there are exactly two, and names them",
-          "exactly two" in behavior
-          and all(w in behavior for w in ("HOST MODEL", "REVIEW")))
+    check(f"{bundle}: prompt_behavior says there is one text role, and names it",
+          "one text role" in behavior and "HOST MODEL" in behavior)
+    # REVIEW was the role's display name, which the REMOVED scan above
+    # (lowercase, next to the word 'role') cannot see.
+    check(f"{bundle}: prompt_behavior names no two-role count and no Review role",
+          "exactly two" not in behavior and "both text roles" not in behavior
+          and "two text roles" not in behavior and "REVIEW" not in behavior,
+          [w for w in ("exactly two", "both text roles", "two text roles", "REVIEW") if w in behavior])
     # The Memory role went by its DISPLAY name, which the REMOVED scan above
     # cannot see: "MEMORY (distilling conversations…)" survived in this text
     # while the Routing tab already showed two rows.
@@ -377,8 +394,13 @@ for bundle in ("native-bundles/orchestrator.cseries", "factory-bundles/orchestra
 # google / deepinfra / together / fireworks / groq could reach the web: those
 # providers ship no search mechanism, and the role could previously be
 # pointed at OpenRouter. Chat-only would have dropped the capability in
-# silence. research_routes borrows a keyed search-capable provider instead —
+# silence. research_routes borrows a ROUTED search-capable provider instead —
 # so what follows is the ratchet on a CAPABILITY, not on a role.
+#
+# Since 2026-10-20 (review gone) chat is the only routed text role, so the
+# borrow is reached when the chat MODEL cannot search on a provider that can
+# (web_research.MODEL_WEBSEARCH_OVERRIDES); a route stored under the retired
+# review role is never borrowed. The borrow mechanics are exercised that way.
 
 print("\n== 5. web search without a research role ==")
 
@@ -388,7 +410,7 @@ from mastercode.runtime import web_research as WR      # noqa: E402
 def _routes(routing, served=None, keyed=()):
     """research_routes against a faked ROUTING TABLE.
 
-    `routing` is {role: (provider, model)} for chat/review — the
+    `routing` is {role: (provider, model)} for chat (and retired roles) — the
     real routed_providers runs over it, so the narrowing is under test rather
     than stubbed. `keyed` is the provider-key registry: it is faked too, and
     deliberately WIDER than `routing`, so a provider the user holds a key for
@@ -430,16 +452,20 @@ _AN = WR.recommended_chat_candidates("anthropic")
 check("the recommendation data has chat candidates to borrow",
       bool(_OR) and bool(_AN), f"openrouter={_OR} anthropic={_AN}")
 
+# A chat model that cannot search, on a provider that can (an invented id).
+_NOSEARCH = "invented/no-web-model"
+_saved_ov = dict(WR.MODEL_WEBSEARCH_OVERRIDES)
+WR.MODEL_WEBSEARCH_OVERRIDES[_NOSEARCH] = False
+
 # a) the host model can search — use it, and borrow nothing.
-r = _routes({"chat": ("openrouter", "x/y"), "review": ("anthropic", "claude-opus-5")})
+r = _routes({"chat": ("openrouter", "x/y")})
 check("chat on a search-capable provider searches on the chat model itself",
       len(r) == 1 and r[0]["provider"] == "openrouter" and r[0]["model"] == "x/y"
       and not r[0].get("_fallback") and not r[0].get("_route_note"), str(r))
 
-# b) the host model cannot search, but a ROUTED provider can.
-r = _routes({"chat": ("local", "llama-local"), "review": ("openrouter", "z/w")},
-            served=[_OR[0]])
-check("chat on local + review routed to openrouter borrows openrouter",
+# b) the host model cannot search, but its ROUTED provider can.
+r = _routes({"chat": ("openrouter", _NOSEARCH)}, served=[_OR[0]])
+check("a chat model that cannot search, on openrouter, borrows openrouter's recommended model",
       len(r) == 1 and r[0]["provider"] == "openrouter" and r[0].get("_fallback") is True,
       str(r))
 check("the borrowed model comes from recommended-routes.json, never a pin",
@@ -451,28 +477,28 @@ check("the route carries the TRUE failure sentence for a borrowed call",
       bool(r) and "borrowed openrouter/" in (r[0].get("_fail_note") or "")
       and "host model itself cannot search" in (r[0].get("_fail_note") or ""), str(r))
 
-# b2) a route stored under the retired Memory role is not a routing decision
-#     any more: nothing reads it, so it is never borrowed.
+# b2) a route stored under a retired role is not a routing decision any
+#     more: nothing reads it, so it is never borrowed — Memory (2026-09-30)
+#     and Review (2026-10-20) alike.
 r = _routes({"chat": ("local", "l"), "consolidation": ("anthropic", "claude-x")},
             served=[_AN[0]])
 check("a provider routed only under the retired MEMORY role is not borrowed",
       r == [], str(r))
+r = _routes({"chat": ("local", "llama-local"), "review": ("openrouter", "z/w")},
+            served=[_OR[0]])
+check("a provider routed only under the retired REVIEW role is not borrowed",
+      r == [], str(r))
 
 # c) THE NARROWING: keyed is not routed. A key is permission to spend, not a
 #    decision to — borrowing one would open a bill the user never chose.
-r = _routes({"chat": ("local", "l"), "review": ("deepinfra", "d/m")},
-            served=[_OR[0]], keyed=["openrouter", "anthropic", "openai"])
-check("a provider the user has a KEY for but routes NOTHING to is not borrowed",
-      r == [], str(r))
 r = _routes({"chat": ("local", "l")}, served=[_OR[0]],
             keyed=["openrouter", "anthropic", "openai", "xai", "kimi"])
-check("every search-capable provider keyed, none routed → still no borrow",
+check("every search-capable provider keyed, none routed → no borrow",
       r == [], str(r))
 
 # d) nothing routed can search — say so, never fabricate a route.
-r = _routes({"chat": ("local", "l"), "review": ("together", "t/m"),
-             "consolidation": ("groq", "g/m")})
-check("chat on local + no routed search-capable provider yields NO route",
+r = _routes({"chat": ("together", "t/m"), "consolidation": ("groq", "g/m")})
+check("chat on a provider with no web mechanism + nothing else routed yields NO route",
       r == [], str(r))
 check("SEARCH_CAPABLE_PROVIDERS is the whole test of who may be borrowed",
       WR.SEARCH_CAPABLE_PROVIDERS
@@ -481,21 +507,22 @@ check("SEARCH_CAPABLE_PROVIDERS is the whole test of who may be borrowed",
 
 # e) the catalog decides WHICH candidate; unreachable still answers, flagged.
 if len(_OR) > 1:
-    r2 = _routes({"chat": ("local", "l"), "review": ("openrouter", "z/w")},
-                 served=[_OR[1]])
+    r2 = _routes({"chat": ("openrouter", _NOSEARCH)}, served=[_OR[1]])
     check("the live catalog picks among the candidates, skipping what it won't serve",
           bool(r2) and r2[0]["model"] == _OR[1], str(r2))
-r3 = _routes({"chat": ("local", "l"), "review": ("openrouter", "z/w")}, served=None)
+r3 = _routes({"chat": ("openrouter", _NOSEARCH)}, served=None)
 check("an unreachable catalog still answers, flagged unverified",
       bool(r3) and r3[0]["model"] == _OR[0]
       and "unverified" in (r3[0].get("_route_note") or ""), str(r3))
 
-# f) the borrowed provider is the ROUTED one — review's — never one stored
+# f) the borrowed provider is the ROUTED one — chat's — never one stored
 #    under a retired role, even one that would sort first.
-r = _routes({"chat": ("local", "l"), "review": ("xai", "grok-x"),
-             "consolidation": ("anthropic", "claude-x")}, served=None)
-check("the borrowed provider is review's, not a retired role's that sorts first",
+r = _routes({"chat": ("xai", _NOSEARCH), "consolidation": ("anthropic", "claude-x"),
+             "review": ("anthropic", "claude-y")}, served=None)
+check("the borrowed provider is chat's, not a retired role's that sorts first",
       bool(r) and r[0]["provider"] == "xai", str(r))
+WR.MODEL_WEBSEARCH_OVERRIDES.clear()
+WR.MODEL_WEBSEARCH_OVERRIDES.update(_saved_ov)
 
 # g) the disclosure survives EVERY envelope shape, not just the dict ones.
 #    A borrowed call that fails used to read as the host's own model failing.
@@ -544,13 +571,14 @@ check("the no-route message says a key alone is not enough",
 # or memory" survived the Memory role's removal because the
 # checks above test only what the message says, never which roles it offers.
 check("the no-route message offers no removed role",
-      not re.search(r"\b(memory|consolidation)\b", _out["result"], re.I),
+      not re.search(r"\b(memory|consolidation|review)\b", _out["result"], re.I),
       str(_out)[:240])
 for _skill in ("default-skills/routing.md", "default-skills/research.md"):
     _txt = (_ROOT / _skill).read_text()
-    check(f"{_skill}: the web-search borrow names the two text roles, no more",
-          not re.search(r"\bthree (text )?roles\b", _txt, re.I)
-          and "review or memory" not in _txt, _skill)
+    check(f"{_skill}: the web-search borrow names the one text role, no more",
+          not re.search(r"\b(three|two|both) (text )?roles\b", _txt, re.I)
+          and "review or memory" not in _txt and "either role" not in _txt,
+          [m.group(0) for m in re.finditer(r"\b(?:three|two|both) (?:text )?roles\b|either role", _txt, re.I)])
 
 # i) the borrowed route reaches the ANSWER and the stored FINDING, not just the log.
 _sop = (_ROOT / "default-skills/routing.md").read_text()
@@ -591,7 +619,7 @@ if FAILS:
     for f in FAILS:
         print("  - " + f)
     sys.exit(1)
-print("PASS: two text roles — chat and review; every consumer "
-      "names one of them; stale stored routes are ignored, not reported; web "
+print("PASS: one text role — chat; every consumer "
+      "names a live role; stale stored routes are ignored, not reported; web "
       "search survives a chat model that cannot search; measured rows split "
       "host from agent")

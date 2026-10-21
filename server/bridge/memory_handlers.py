@@ -226,6 +226,25 @@ async def handle_calendar_append(payload: dict) -> dict:
     if not isinstance(body_payload, dict):
         return {"ok": False, "error": "payload must be an object"}
 
+    # A scheduled task's daily ceiling may not exceed the person's limit
+    # scheduled.turns_per_day (runtime/user_limits, 2026-10-20). The Host's
+    # schedule_task refuses it; this route is the other writer of such a
+    # payload, so it refuses the same, and the runner keeps honouring values
+    # stored before the limit was the person's.
+    if event_type == "scheduled_task" and body_payload.get("max_runs_per_day") is not None:
+        try:
+            _asked = int(body_payload.get("max_runs_per_day"))
+        except (TypeError, ValueError):
+            _asked = None
+        from mastercode.brain.offline_task_runner import person_turns_per_day
+        if _asked is not None and _asked > person_turns_per_day():
+            from mastercode.runtime import user_limits as _ul
+            # "must be": routes/calendar._unwrap answers a refused value 400.
+            return {"ok": False, "error": (
+                f"max_runs_per_day must be at most {person_turns_per_day()}, the "
+                f"person's limit of model turns a day; {_asked} was asked. "
+                + _ul.hit_line("scheduled.turns_per_day"))}
+
     # Ship E alignment: if the caller (the platform memory service's dual-write) supplies an
     # event_id, use it so the row has the same UUID in PME and EME.
     # ON CONFLICT lets the same dual-write retry idempotently.
@@ -1470,7 +1489,7 @@ async def handle_calendar_runs(payload: dict) -> dict:
         return {"ok": False, "error": "not found"}
     args: list = [parent["id"], int(entity_id)]
     # `id` keeps two runs stamped the same moment in one order across pages.
-    sql = ("SELECT ran_at, ok, output_excerpt, error "
+    sql = ("SELECT ran_at, ok, output_excerpt, error, cost_usd "
            "  FROM calendar_event_runs "
            " WHERE event_id=$1 AND entity_id=$2 "
            " ORDER BY ran_at DESC, id DESC")
@@ -1497,6 +1516,9 @@ async def handle_calendar_runs(payload: dict) -> dict:
             "ok": bool(r["ok"]),
             "output_excerpt": r["output_excerpt"],
             "error": r["error"],
+            # What the run spent (v251); null = not priced (an op, or a route
+            # with no per-token price), never 0 for unknown.
+            "cost_usd": r["cost_usd"],
         }
         for r in rows
     ]

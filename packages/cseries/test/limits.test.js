@@ -27,7 +27,7 @@ function machine(opts = {}) {
     const out = captureOutput();
     const code = await main(argv, {
       platform: 'win32', arch: 'x64', env: {}, paths: p, out, runner: m.runner, net: m.net,
-      sleep: async () => {}, prompt: async () => false, portState: async () => 'free', osRelease: '10.0.22631',
+      sleep: async () => {}, prompt: async () => false, portState: async () => 'free', freeBytes: () => 64 * 1024 ** 3, osRelease: '10.0.22631',
       releaseInfo: { release: rel, placeholders: [], file: 'test' }, bastionKeys: m.bastionKeys,
     });
     return { code, text: out.text(), err: out.errText() };
@@ -308,7 +308,7 @@ test('an install adds the limits to the person\'s .wslconfig, keeps what they se
   const out = captureOutput();
   const code = await main([], {
     platform: 'win32', arch: 'x64', env: {}, paths: p, out, runner: m.runner, net: m.net,
-    sleep: async () => {}, prompt: async () => false, portState: async () => 'free', osRelease: '10.0.22631',
+    sleep: async () => {}, prompt: async () => false, portState: async () => 'free', freeBytes: () => 64 * 1024 ** 3, osRelease: '10.0.22631',
     releaseInfo: { release: rel, placeholders: [], file: 'test' }, bastionKeys: m.bastionKeys,
     machine: { totalMem: 16 * GiB, cpus: 12 },
   });
@@ -324,7 +324,7 @@ test('a PC with no .wslconfig gets one with both limits, and a second run leaves
   rel.guest['wsl-x64'].sha256 = m.rootfsSha256;
   const go = () => main([], {
     platform: 'win32', arch: 'x64', env: {}, paths: p, out: captureOutput(), runner: m.runner, net: m.net,
-    sleep: async () => {}, prompt: async () => false, portState: async () => 'free', osRelease: '10.0.22631',
+    sleep: async () => {}, prompt: async () => false, portState: async () => 'free', freeBytes: () => 64 * 1024 ** 3, osRelease: '10.0.22631',
     releaseInfo: { release: rel, placeholders: [], file: 'test' }, bastionKeys: m.bastionKeys,
     machine: { totalMem: 32 * GiB, cpus: 16 },
   });
@@ -355,7 +355,7 @@ function installWith(p, opts = {}) {
   const out = captureOutput();
   return main([], {
     platform: 'win32', arch: 'x64', env: {}, paths: p, out, runner: m.runner, net: m.net,
-    sleep: async () => {}, prompt: async () => false, portState: async () => 'free', osRelease: '10.0.22631',
+    sleep: async () => {}, prompt: async () => false, portState: async () => 'free', freeBytes: () => 64 * 1024 ** 3, osRelease: '10.0.22631',
     releaseInfo: { release: rel, placeholders: [], file: 'test' }, bastionKeys: m.bastionKeys,
     machine: { totalMem: 16 * GiB, cpus: 8 }, ...opts,
   }).then((code) => ({ code, text: out.text(), err: out.errText() }));

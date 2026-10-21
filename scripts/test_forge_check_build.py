@@ -9,7 +9,9 @@ seams (the pool, _pool_build, the save point, the forge poll) — and pins:
      the forge: no poll, one save point, the PR body is not refreshed later,
      and the phase lands 'complete'
   2. the outcome is landed or failed and nothing else: a failing check, a
-     check the step-up does not cover, a blocked review, or a save point that
+     check the step-up does not cover, a stored pipeline that still lists the
+     retired diff reviewer (no review hold is taken for it; removed
+     2026-10-20), or a save point that
      did not reach the forge never turn a landed build into anything but
      'complete'; a crashed build is 'failed' and the seeded retry carries just
      the build's own failure text
@@ -69,6 +71,10 @@ class Pool:
         return []
 
     async def execute(self, sql, *args):
+        # Any write of projects.config.review_hold is recorded: since the
+        # diff reviewer went (2026-10-20) a phase build never takes one.
+        if "review_hold" in sql:
+            self.events.append(("review_hold", sql))
         return "UPDATE 1"
 
 
@@ -141,15 +147,10 @@ def scenario(*, forge=None, build_ok=True, approved=True, pushed=True, acc_ok=Tr
         ev.append(("retry_pick", kw.get("failure")))
         return None
 
-    async def set_review_hold(pool_, pid, tid, pr):
-        ev.append(("review_hold", pr))
-        return True
-
     patch(t, "_phase_retry_pick", retry_pick)
 
     patch(t, "_append_build_activity", lambda p, tid, msg: _rec(ev, "activity", (msg,)))
     patch(t, "_get_runtime_dispatch", lambda: None)
-    patch(t, "_set_review_hold", set_review_hold)
     from server.routes import gitea_client as gc
     patch(gc, "gitea_creds", lambda: ("host-3", "tok", "git.invalid"))
     patch(pl, "load_approved", load_approved)
@@ -499,12 +500,22 @@ def main() -> int:
           any(c["provider"] == "harness-check" and c["ok"] is False
               for c in [e for e in ev if e[0] == "sync"][0][1]), f"{ev}")
 
+    # A project whose stored pipeline still lists the retired diff reviewer,
+    # and a build result still carrying a blocked verdict of the old shape
+    # (a pod image from before 2026-10-20): the row is dropped, nothing is
+    # held, and the phase is complete.
     blocked = {"ran": True, "ok": False, "blocking": [{"file": "a.py", "line": 1, "issue": "x"}]}
     pipe_rev = {**PIPE, "check": PIPE["check"] + [{"provider": "diff-review"}]}
     ev, status = scenario(forge=never, review=blocked, pipe=pipe_rev)
-    check("a landing the code review blocked still takes the review hold BEFORE its push, "
-          "and the phase is complete (never 'review')",
-          0 <= _idx(ev, "review_hold") < _idx(ev, "sync") and status == "complete", f"{status} {ev}")
+    syncs = [e for e in ev if e[0] == "sync"]
+    check("a stored pipeline listing the retired diff-review: complete, pushed once, "
+          "no review hold written",
+          status == "complete" and len(syncs) == 1 and _idx(ev, "review_hold") == -1,
+          f"{status} {ev}")
+    check("...and the retired row is not in the PR-body checks",
+          syncs and not [c for c in syncs[0][1] if c["provider"] == "diff-review"]
+          and any(c["provider"] == "harness-check" for c in syncs[0][1]),
+          f"{syncs[0][1] if syncs else ev}")
 
     ev, status = scenario(forge=never, pushed=False)
     check("a save point that did not reach the forge does not change the outcome: complete",

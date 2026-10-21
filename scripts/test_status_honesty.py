@@ -95,9 +95,13 @@ if "last_heartbeat_at" not in src.split("task_type='agent' AND status='in_progre
 #     force-failed real builds and stranded their output.
 tools_src = (REPO / "brain/mastercode/runtime/tools.py").read_text()
 # `timeout` bounds one hung model call, not
-# the build, and the bound is named once (BUILD_MODEL_WAIT_MAX_S).
+# the build, and the bound is named once (BUILD_MODEL_WAIT_MAX_S). It is the
+# DEFAULT of the person's limit build.model_wait_max_minutes
+# (runtime/user_limits), read by _build_wait_s, which both phase-build paths
+# go through.
 if ("BUILD_MODEL_WAIT_MAX_S = 14400" not in tools_src
-        or tools_src.count('min(int(a.get("timeout") or BUILD_MODEL_WAIT_S),') < 2):
+        or '"build.model_wait_max_minutes",\n                                         BUILD_MODEL_WAIT_MAX_S' not in tools_src
+        or tools_src.count('timeout_s, _wait_refusal = _build_wait_s(') < 2):
     failures.append(
         "tools.py: build timeout ceiling shrank below 14400s (found "
         f"{tools_src.count('14400')} refs) — the 30-min build guillotine is back")

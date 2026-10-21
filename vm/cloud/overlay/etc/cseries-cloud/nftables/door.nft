@@ -32,9 +32,15 @@ define HOST_IP = 10.89.77.2
 define APPS_NET = 10.89.78.0/24
 define APPS_GW = 10.89.78.1
 define APPS_HOST = 10.89.78.2
-# Who may use the plain proxy: an engine build's containers and the coding
-# engines (cseries_runtime/common.py PROXY_CLIENTS), never an app.
-define APPS_PROXY_CLIENTS = { 10.89.78.3-10.89.78.15, 10.89.78.240-10.89.78.247 }
+# Who on the network may use the plain proxy: the coding engines
+# (cseries_runtime/common.py PROXY_CLIENTS), never an app. An engine build
+# reaches it as BUILD_UID below, from the machine.
+define APPS_PROXY_CLIENTS = { 10.89.78.240-10.89.78.247 }
+# The user engine builds run as (cseries_runtime/common.py BUILD_UID): its
+# sockets carry every RUN step's traffic (pasta) and podman's own pulls, and
+# reach the plain proxy and nothing else. They reach it over lo, which the
+# input chain admits.
+define BUILD_UID = 199999
 
 table inet cseries_door
 delete table inet cseries_door
@@ -199,6 +205,8 @@ table inet cseries_door {
 	chain output {
 		type filter hook output priority filter; policy accept;
 		jump bastion_out
+		meta skuid $BUILD_UID ip daddr $APPS_GW tcp dport 3128 accept
+		meta skuid $BUILD_UID drop
 	}
 
 	# Filled by cseries-firewall when privatae-bastion starts (the rule names

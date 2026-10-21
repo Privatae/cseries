@@ -115,6 +115,11 @@ EVENTS: dict[str, dict[str, Any]] = {
         "keys": ("project_id", "repo", "slug", "hostname"),
         "when": "a site was published (from a project, or from a repo) and is live at hostname",
     },
+    "limit_changed": {
+        "keys": ("name",),
+        "when": "the person changed one of their limits (in Settings or on a limit card); "
+                "name is the limit, as limits(op='status') lists it",
+    },
 }
 
 EVENT_NAMES: tuple[str, ...] = tuple(EVENTS)

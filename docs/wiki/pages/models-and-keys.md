@@ -23,14 +23,15 @@ There is no model built into your Host and none supplied by Privatae. Until you 
 
 ## What does the Orchestrator let me set?
 
-Two text roles, each routed on its own:
+One text role:
 
-- **Host model**: the Host itself, in conversation and in its work, including what it keeps in memory as it answers, and the agents it dispatches, which run on the same model unless the Host picks another for a particular task.
-- **Review**: reads what a coding engine built and checks it against what was asked.
+- **Host model**: the Host itself, in conversation and in its work, including what it keeps in memory as it answers, reviewing what its builds changed, and the agents it dispatches, which run on the same model unless the Host picks another for a particular task.
+
+There is no separate review model. For a second opinion on a build, ask your Host to have a coding engine review it.
 
 Alongside those you choose where embeddings come from (for search by meaning) and which model makes images. Pictures you share are read by the Host model itself, so choose one that reads images; if it does not, it is told a picture was there that it cannot see, and the turn goes on without it.
 
-For each text role you pick a provider and a model, and you can add a **fallback provider** that answers when the first one returns an error or does not offer that model. Where the provider accepts it, you can also set a reasoning effort. When a fallback answers, the result is marked as failed over. With no fallback set, a failure reaches you as an error rather than as a silent switch to some other model.
+For the text role you pick a provider and a model, and you can add a **fallback provider** that answers when the first one returns an error or does not offer that model. Where the provider accepts it, you can also set a reasoning effort. When a fallback answers, the result is marked as failed over. With no fallback set, a failure reaches you as an error rather than as a silent switch to some other model.
 
 ## Can I use a subscription I already pay for?
 

@@ -514,6 +514,8 @@ settings-app:
   sources:
   - system-apps/settings/app.yaml
   - system-apps/settings/index.html
+  - brain/mastercode/runtime/user_limits.py
+  - server/routes/limits.py
   - server/routes/brain.py::put_explanation_level
   - server/routes/brain.py::put_personality_weights
   - server/routes/update.py::check_updates

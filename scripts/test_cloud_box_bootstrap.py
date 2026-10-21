@@ -302,6 +302,30 @@ with tempfile.TemporaryDirectory() as tmp:
           not any(re.match(r"header_up\s+\+?X-Cseries-Door\b", ln, re.I) for ln in proxy_lines),
           "reverse_proxy strips the door key from every request it passes on", proxy_lines)
     check("DOOR_MARKER" not in caddy, "no placeholder is left in the Caddyfile")
+    # While the Host restarts (a restore swapping in, an update) Caddy cannot
+    # reach it and answered 502 Bad Gateway: measured on the cloud VM, the
+    # first sign-in after a verified restore. Caddy's own 502/503/504 are the
+    # starting answer instead, 503 with Retry-After, a self-reloading page for
+    # a browser and the sign-in page's {"error"} for a call; nothing else
+    # (the Host's own answers are responses, not errors, and pass as they are:
+    # on Debian 13's Caddy 2.6.2 a stand-in Host's 502 and the door's 401 and
+    # 403 came through unchanged).
+    errs = block(rules, "handle_errors")
+    starting = block(errs, "handle @starting")
+    page = block(starting, "handle @page")
+    call = block(starting.replace("handle @page {", "handle_page {"), "handle")
+    check(re.search(r"^\s*@starting expression `\{err\.status_code\} in \[502, 503, 504\]`$", errs, re.M)
+          is not None and starting.count("respond ") == 2
+          and re.search(r"^\s*header Retry-After 5$", starting, re.M) is not None
+          and re.search(r"^\s*@page header Accept \*text/html\*$", starting, re.M) is not None
+          and re.search(r"respond `<!doctype html>.*http-equiv=\"refresh\".*This Host is starting.*` 503$",
+                        page, re.M) is not None
+          and re.search(r'respond `\{"error": "This Host is starting\. [^`]*"\}` 503$', call, re.M) is not None,
+          "Caddy's own 502/503/504 (the Host restarting) answer the starting page or error, 503 with "
+          "Retry-After, not Bad Gateway", errs)
+    check('Strict-Transport-Security "max-age=63072000; includeSubDomains"' in errs and "-Server" in errs
+          and "X-Content-Type-Options nosniff" in errs,
+          "the starting answer carries the site's headers (an error answer starts without them)", errs)
     with open(paths.p("etc/systemd/system/caddy.service.d/cloud.conf")) as f:
         caddy_unit = f.read()
     unit_lines = [ln.strip() for ln in caddy_unit.splitlines()

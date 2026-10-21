@@ -80,13 +80,14 @@ async function main() {
 // here; it is also what DIST already uses two lines up.
 async function srcRev() {
   const files = [];
-  async function walk(dir, rel) {
+  async function walk(dir, rel, skipDocs = false) {
     for (const ent of (await readdir(dir, { withFileTypes: true })).sort((a, b) =>
       a.name.localeCompare(b.name),
     )) {
       if (ent.name === "node_modules" || ent.name === "dist") continue;
+      if (skipDocs && !ent.isDirectory() && ent.name.endsWith(".md")) continue;
       const u = new URL(ent.name + (ent.isDirectory() ? "/" : ""), dir);
-      if (ent.isDirectory()) await walk(u, `${rel}${ent.name}/`);
+      if (ent.isDirectory()) await walk(u, `${rel}${ent.name}/`, skipDocs);
       else files.push([`${rel}${ent.name}`, u]);
     }
   }
@@ -99,8 +100,10 @@ async function srcRev() {
   // created app-web-kit/ is what reopened it. The `../app-web-kit/` prefix
   // cannot collide with a src/ path, and the Python side walks the identical
   // set with the identical prefix — they are load-bearing on each other, and
-  // any disagreement fails the gate rather than passing it.
-  await walk(new URL("../app-web-kit/", CWD), "../app-web-kit/");
+  // any disagreement fails the gate rather than passing it. The kit's Markdown
+  // is its documentation, which no build reads, so it is left out on both
+  // sides: a README edit once marked all four apps stale with no output changed.
+  await walk(new URL("../app-web-kit/", CWD), "../app-web-kit/", true);
   // Repo files outside src/ and the kit that this app's build READS. They are in
   // the stamp for the same reason the kit is: an edit to one changes the built
   // output while no src/ byte moves. scripts/test_bundle_freshness.py keeps the

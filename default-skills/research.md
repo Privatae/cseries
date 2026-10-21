@@ -35,8 +35,8 @@ days and an unset one already fell through to here). Providers that can
 search: OpenRouter (any model, via its web plugin), Anthropic, OpenAI, xAI.
 
 If the host model is on a provider with no web mechanism, the lane borrows a
-search-capable provider one of the two text roles is already routed to
-(host model or review), on that provider's recommended chat model,
+search-capable provider the host model's route already uses when there is one,
+on that provider's recommended chat model,
 for that call only — nothing is stored, and a merely-keyed provider is never
 borrowed, so the search cannot open a bill the user did not choose. The
 result then carries `route_note` whether it succeeded or failed: say which
@@ -47,6 +47,11 @@ on the Kimi subscription (coding) endpoint the search results do not reach
 the model (measured 2026-08-23), so that route refuses rather than invent
 sources. Local and generic-key providers (deepinfra, together, fireworks,
 groq) have no web mechanism and are never asked.
+
+When no routed provider can search, the search runs on a connected coding engine that can
+search (Antigravity, then Claude Code), on that engine's own key or
+sign-in. It counts only when the engine's run shows a search call; it takes
+minutes, and the result names the engine.
 
 ## Rules
 

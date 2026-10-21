@@ -8,7 +8,11 @@
 //   inherit(cmd, args, opts) -> {code, notFound}; output goes to this terminal
 //   detached(cmd, args, {verbatim}) -> starts it in the background, returns at once
 //
-// opts: {input: string|Buffer, env: {...}, timeoutMs}. verbatim passes the
+// opts: {input: string|Buffer, env: {...}, timeoutMs, onOutput, stdin}.
+// onOutput(chunk) is handed each piece of stdout and stderr as it arrives
+// (for the install log and a step's status line); stdin: 'inherit' gives the
+// program this terminal's input, for sudo, which asks for the password on the
+// terminal itself while its output is captured. verbatim passes the
 // arguments to a Windows program as written, unquoted (for cmd.exe's start).
 
 const { spawn } = require('node:child_process');
@@ -22,7 +26,7 @@ function systemRunner() {
           child = spawn(cmd, args, {
             env: opts.env ? { ...process.env, ...opts.env } : process.env,
             windowsHide: true,
-            stdio: ['pipe', 'pipe', 'pipe'],
+            stdio: [opts.stdin === 'inherit' ? 'inherit' : 'pipe', 'pipe', 'pipe'],
           });
         } catch (err) {
           resolve({ code: -1, stdout: Buffer.alloc(0), stderr: Buffer.from(String(err)), notFound: err.code === 'ENOENT' });
@@ -34,8 +38,13 @@ function systemRunner() {
         if (opts.timeoutMs) {
           timer = setTimeout(() => child.kill(), opts.timeoutMs);
         }
-        child.stdout.on('data', (d) => out.push(d));
-        child.stderr.on('data', (d) => errs.push(d));
+        const seen = (d) => {
+          if (opts.onOutput) {
+            try { opts.onOutput(d); } catch { /* a status line never stops the program */ }
+          }
+        };
+        child.stdout.on('data', (d) => { out.push(d); seen(d); });
+        child.stderr.on('data', (d) => { errs.push(d); seen(d); });
         child.on('error', (err) => {
           if (timer) clearTimeout(timer);
           resolve({ code: -1, stdout: Buffer.concat(out), stderr: Buffer.from(String(err.message)), notFound: err.code === 'ENOENT' });
@@ -44,9 +53,11 @@ function systemRunner() {
           if (timer) clearTimeout(timer);
           resolve({ code: code === null ? -1 : code, stdout: Buffer.concat(out), stderr: Buffer.concat(errs), notFound: false });
         });
-        child.stdin.on('error', () => {});
-        if (opts.input !== undefined) child.stdin.end(opts.input);
-        else child.stdin.end();
+        if (child.stdin) {
+          child.stdin.on('error', () => {});
+          if (opts.input !== undefined) child.stdin.end(opts.input);
+          else child.stdin.end();
+        }
       });
     },
 

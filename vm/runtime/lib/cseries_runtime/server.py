@@ -1181,9 +1181,9 @@ class Runtime:
         if hid == C.BROWSER:
             return self._image_for_family(C.BROWSER_FAMILY)
         _images, src = self.images()
-        built = self.state.built.get(hid)
-        if built and src and built.get("src_sha256") == src["sha256"]:
-            return built["image"]
+        built = self.state.built_image(hid, src["sha256"] if src else None)
+        if built:
+            return built
         if self.builder is None or src is None:
             raise V.Refusal(504, f"terminal: no build of {hid} on this machine")
         return await self.builder.wait(hid, src, deadline)
@@ -1268,10 +1268,10 @@ class Runtime:
                 await self.teardown(u, "its engine was turned off")
         elif hid in C.CODING_ENGINES:
             _images, src = self.images()
-            built = self.state.built.get(hid)
+            built = self.state.built_image(hid, src["sha256"] if src else None)
             if self.arm64():
                 image_state = "unsupported"
-            elif built and src and built.get("src_sha256") == src["sha256"]:
+            elif built:
                 image_state = "built"
             elif self.builder is not None and src is not None:
                 self.builder.start(hid, src)
@@ -1325,7 +1325,8 @@ class Runtime:
                 "images": sorted(images), "harness_src": bool(src),
                 "harnesses": sorted(self.state.harnesses),
                 "app_runtimes": sorted(self.state.descriptors),
-                "built": {h: b.get("src_sha256", "")[:12] for h, b in self.state.built.items()},
+                "built": {h: b.get("src_sha256", "")[:12] for h, b in self.state.built.items()
+                          if self.state.built_image(h, b.get("src_sha256"))},
                 "building": self.builder.building() if self.builder else []}
 
     async def handle(self, op, params):
@@ -1413,7 +1414,7 @@ class Runtime:
     async def watchdog_once(self):
         _total, avail = parse_meminfo(read_text(self.guard.meminfo_path))
         psi = parse_psi_full(read_text(self.guard.psi_path))
-        disk = disk_free(self.guard.disk_path)
+        disk = self.guard.free()
         now = self.clock()
         if disk is not None and disk < DATA_WATCH_BELOW:
             # Whose data grew last decides who the disk floor stops first; at
@@ -1480,8 +1481,7 @@ class Runtime:
         cur = src["sha256"] if src else None
         pinned = set(images.values())
         repos = {C.image_repo(r) for r in pinned} | set(C.FAMILY_REPOS)
-        keep_built = {b.get("image") for b in self.state.built.values()
-                      if cur and b.get("src_sha256") == cur}
+        keep_built = {self.state.built_image(h, cur) for h in self.state.built} - {None}
         stale = []
         for img in await self.podman.images():
             iid = str(img.get("Id") or "")
@@ -1634,8 +1634,9 @@ def listening_socket(path=None):
 
 
 def make_runtime():
-    from .build import Builder
-    builder = Builder(C.Paths(), Podman())
+    from .build import Builder, podman_as_build_user
+    paths = C.Paths()
+    builder = Builder(paths, Podman(), build_podman=podman_as_build_user(paths))
     rt = Runtime(builder=builder)
     builder.bind(rt)
     return rt

@@ -275,11 +275,6 @@ def delivery_record(row, res: dict) -> dict:
         "acceptance": (res.get("acceptance")
                        if isinstance(res.get("acceptance"), dict) else None),
         "acceptance_declared": bool(res.get("acceptance_declared")),
-        # The scoped reviewer's verdict on the landed diff (the diff_review
-        # envelope). The delivery states it as a fact line
-        # (diff_review.review_facts); absent = the diff was not reviewed.
-        "review": (res.get("review")
-                   if isinstance(res.get("review"), dict) else None),
         # A landed desktop design, loaded in the browser (desktop_render
         # landed_tree_verdict): stated by session._desktop_render_facts.
         "desktop_render": (res.get("desktop_render")

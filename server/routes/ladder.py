@@ -81,6 +81,18 @@ _VERIFY_TIMEOUT_S = 600
 # number (the user cannot know how long something takes); `max_minutes` is an
 # override for API/host callers.
 RUNG_WALL_CAP_MIN = 60
+
+
+def rung_wait_cap() -> int | None:
+    """The most a rung may ask for: the person's limit
+    build.model_wait_max_minutes (runtime/user_limits, 2026-10-20), the same
+    one a build's own wait is held to; None for no limit. RUNG_WALL_CAP_MIN
+    stays the default a rung gets when it names none."""
+    from mastercode.runtime import user_limits
+    v = user_limits.value("build.model_wait_max_minutes")
+    return None if v is None else int(v)
+
+
 _ACTIVE: set[str] = set()   # ladder ids with a live climb task (no double-climb)
 # Strong refs to in-flight climb tasks. asyncio.create_task only holds a WEAK
 # ref, so a detached climb could be garbage-collected mid-flight and freeze
@@ -131,10 +143,14 @@ def _valid_rung(r: dict, model_opts: Optional[dict] = None) -> Optional[str]:
     if not isinstance(r, dict) or not isinstance(r.get("harness"), str) or not r["harness"]:
         return "each rung needs a harness id (or '*' for the full bench)"
     # max_minutes is OPTIONAL: absent = RUNG_WALL_CAP_MIN. Present, it is an
-    # override bounded by that value (see the note at its definition).
+    # override bounded by the person's limit (rung_wait_cap).
     mm = r.get("max_minutes")
-    if mm is not None and (not isinstance(mm, int) or not 1 <= mm <= RUNG_WALL_CAP_MIN):
-        return f"max_minutes, when given, must be an int in 1..{RUNG_WALL_CAP_MIN}"
+    _cap = rung_wait_cap()
+    if mm is not None and (not isinstance(mm, int) or isinstance(mm, bool) or mm < 1
+                           or (_cap is not None and mm > _cap)):
+        return (f"max_minutes, when given, must be a whole number of minutes from 1"
+                + (f" to {_cap}, the person's limit build.model_wait_max_minutes"
+                   if _cap is not None else ""))
     n = r.get("samples", 1)
     if not isinstance(n, int) or not 1 <= n <= 16:
         return "samples must be an int in 1..16 (Self-MoA bound)"
@@ -313,9 +329,12 @@ async def _climb(lid: str) -> None:
             rung = rungs[i]
             h = rung["harness"]
             # Absent or 0 → RUNG_WALL_CAP_MIN; a stored override is bounded by
-            # it (the store validated 1..60, but clamp anyway so a hand-written
-            # state file can't exceed it).
-            mm = min(int(rung.get("max_minutes") or RUNG_WALL_CAP_MIN), RUNG_WALL_CAP_MIN)
+            # the person's limit (rung_wait_cap) — clamped again here so a
+            # hand-written state file, or a limit lowered since, cannot exceed it.
+            mm = int(rung.get("max_minutes") or RUNG_WALL_CAP_MIN)
+            _cap = rung_wait_cap()
+            if _cap is not None:
+                mm = min(mm, _cap)
             targets = await _rung_targets(h)
             if h == "*":
                 # The bench rung is the REST of the bench: an engine that

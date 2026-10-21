@@ -2304,7 +2304,18 @@ async def put_thread_context(kind: str, thread_id: str, request: Request) -> dic
     Keyed on PRESENCE, matching /api/brain/thread-context: a body carrying
     only one field leaves the other untouched, and null clears. The panel
     saves the two dials independently, so a value-keyed write would have each
-    save wipe the other."""
+    save wipe the other.
+
+    The allowance is the person's limit for that thread (runtime/user_limits),
+    so a body that sets it is taken only from the person's surfaces
+    (routes/limits._person), whatever scope the caller holds."""
+    try:
+        _body_peek = await request.json()
+    except ValueError:
+        _body_peek = None
+    from server.routes.limits import _person
+    if isinstance(_body_peek, dict) and "turn_allowance_usd" in _body_peek and not _person(request):
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "only the person sets what a turn may spend")
     if kind not in {"self", "dm", "entity", "circle"}:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "unknown thread kind")
     # ONLY THE SELF-THREAD RUNS A TURN ON THIS HOST, so only the self-thread

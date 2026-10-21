@@ -61,6 +61,19 @@ RUN set -eu \
  && mkdir -p /opt/blender \
  && tar -xJf blender.tar.xz -C /opt/blender --strip-components=1 \
  && rm blender.tar.xz
+# Blender 5.2.2's own Python carries certifi 2025.4.26, whose CA bundle has the
+# emSign root behind the compromised intermediates (GHSA-6q48-6c7w-9gw2,
+# CRITICAL). It is replaced with 2026.10.19, pinned by hash; the old package
+# and its metadata go first, so nothing is left of it. Drop this once a Blender
+# release ships 2026.10.19 or later.
+RUN set -eu \
+ && sp=$(echo /opt/blender/*/python/lib/python3*/site-packages) \
+ && test -d "$sp" && test -d "$sp/certifi" \
+ && rm -rf "$sp/certifi" "$sp"/certifi-*.dist-info \
+ && printf '%s\n' 'certifi==2026.10.19 --hash=sha256:42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b' > /tmp/certifi.txt \
+ && python -m pip install --no-cache-dir --no-deps --require-hashes --only-binary=:all: --target "$sp" -r /tmp/certifi.txt \
+ && rm /tmp/certifi.txt \
+ && test "$(ls -d "$sp"/certifi-*.dist-info)" = "$sp/certifi-2026.10.19.dist-info"
 # Each ArtCraft program: fetched, checked against its pinned sha256, and only
 # then unpacked; the command-line program and its licence notices are kept.
 # Every step in the loop ends in `|| exit 1`: inside a loop that is part of an
@@ -99,6 +112,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     PIP_NO_CACHE_DIR=1
+
+# pip 26.2.1, the one the base image carries, vendors certifi 2026.6.17, whose
+# CA bundle trusts the emSign root behind eight intermediates with compromised
+# keys (GHSA-6q48-6c7w-9gw2, CRITICAL). pip 26.2.2 vendors the fixed 2026.10.19.
+# Pinned by hash; drop this once the base image ships 26.2.2 or later.
+RUN printf '%s\n' 'pip==26.2.2 --hash=sha256:fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70' > /tmp/pip.txt \
+ && python -m pip install --no-cache-dir --require-hashes -r /tmp/pip.txt \
+ && rm /tmp/pip.txt
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \

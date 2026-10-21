@@ -298,7 +298,7 @@ DECLARE
        'task_sources', 'task_work_items', 'tool_call_log',
        'turn_tool_results', 'turn_types', 'ui_last_open', 'update_notifications',
        'user_context', 'vault_audit', 'vault_audit_rollup', 'vault_identity_pubkey',
-       'world_catalog_vectors', 'memory_recall_aliases'
+       'world_catalog_vectors', 'memory_recall_aliases', 'limit_hits'
     ];
     secret text[] := ARRAY[
        'kernel_secrets', 'nac_agent_delegations', 'nac_agent_activity', 'vault_envelope',

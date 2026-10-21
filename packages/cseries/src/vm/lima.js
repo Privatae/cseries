@@ -31,6 +31,7 @@ const { CliError } = require('../errors');
 const { guestResourcesFor, HOST_NEEDS_GIB } = require('./common');
 const { limaTemplate } = require('./lima/template');
 const machine = require('./lima/machine');
+const { NO_LOG } = require('../log');
 
 const INSTANCE = 'cseries';
 const GUEST_BIN = '/usr/local/bin/cseries-guest';
@@ -157,11 +158,27 @@ async function installLinuxPieces(ctx) {
   }
   describeLinuxInstall(ctx.out, packages, f, join);
   const script = machine.installScript(f, ctx.arch, { packages, join });
-  const r = await ctx.runner.inherit(f.sudo, ['-p', '[cseries] sudo password for %u: ', '/bin/sh', '-c', script]);
+  // sudo asks for the password on the terminal itself (not on its output,
+  // which is captured), so the status line starts only once the script
+  // prints: before that, sudo's prompt may be on the line.
+  const doing = packages.length ? `Installing ${packages.join(' ')} with ${f.pm}` : `Adding you to the ${f.kvm_group} group`;
+  let status = null;
+  const log = ctx.log || NO_LOG;
+  log.section(`sudo: ${doing}`);
+  const r = await ctx.runner.run(f.sudo, ['-p', '[cseries] sudo password for %u: ', '/bin/sh', '-c', script], {
+    stdin: 'inherit',
+    onOutput: (c) => {
+      log.write(c);
+      if (!status) status = ctx.out.status(doing);
+    },
+  });
   if (r.code !== 0) {
-    throw new CliError(`Installing QEMU did not finish (sudo ended with exit code ${r.code}). Nothing else was changed.`,
-      `Run npx cseries again. To do it by hand: sudo ${f.pm} install ${packages.join(' ')}${join ? `, then sudo usermod -a -G ${f.kvm_group} ${f.user}` : ''}.`);
+    if (status) status.end();
+    const why = tail(`${text(r.stderr)}\n${text(r.stdout)}`, 6);
+    throw new CliError(`Installing QEMU did not finish (sudo ended with exit code ${r.code}). Nothing else was changed.${why ? `\n${why}` : ''}`,
+      `Run npx cseries again. The whole output is in ${ctx.paths.log}. To do it by hand: sudo ${f.pm} install ${packages.join(' ')}${join ? `, then sudo usermod -a -G ${f.kvm_group} ${f.user}` : ''}.`);
   }
+  if (status) status.end(packages.length ? `Installed ${packages.join(' ')}.` : `You are in the ${f.kvm_group} group.`);
   const after = await facts(ctx, true);
   const still = machine.missingPieces(after);
   if (still.length) {
@@ -183,9 +200,15 @@ async function limaStart(ctx) {
       argv = [f.kvm_group, '-c', machine.sgCommand(limactlPath(ctx), args)];
     }
   }
-  const r = await ctx.runner.run(cmd, argv, { env: env(ctx) });
+  const log = ctx.log || NO_LOG;
+  log.section('limactl start');
+  const r = await ctx.runner.run(cmd, argv, { env: env(ctx), onOutput: (c) => log.write(c) });
   return { code: r.code, stdout: text(r.stdout), stderr: text(r.stderr) };
 }
+
+// state.json "limaFirstStart": set when the VM is created and cleared once it
+// has started, so only that first start, which takes longest, says so.
+const FIRST_START = 'limaFirstStart';
 
 function launchAgentPlist(ctx) {
   const x = (s) => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -341,13 +364,14 @@ function driver(platform) {
         memoryGiB: res.memoryGiB,
       }));
       fs.mkdirSync(ctx.paths.lima, { recursive: true });
-      ctx.out.detail(`Creating the VM (${res.memoryGiB} GB of memory and ${res.cpus} processors at most, as WSL gives one on Windows; nothing of this machine shared with it)...`);
+      ctx.out.detail(`Creating the VM (${res.memoryGiB} GB of memory and ${res.cpus} processors at most; nothing of this machine shared with it)...`);
       const r = await limactl(ctx, ['create', `--name=${INSTANCE}`, yaml]);
       fs.rmSync(yaml, { force: true });
       if (r.code !== 0 && !/already exists/i.test(r.stderr)) {
         throw new CliError(`Lima could not create the C-Series Linux system:\n${tail(r.stderr || r.stdout)}`,
           'Run npx cseries again; the image is already downloaded.');
       }
+      if (r.code === 0 && ctx.state) ctx.state.set(FIRST_START, true);
       // Lima keeps its own copy of the image in the instance.
       fs.rmSync(file, { force: true });
     },
@@ -355,8 +379,11 @@ function driver(platform) {
     async startGuest(ctx) {
       const i = await instance(ctx);
       if (!i || i.status !== 'Running') {
-        ctx.out.detail('Starting the VM (the first start takes a minute or two)...');
+        const first = Boolean(ctx.state && ctx.state.get(FIRST_START));
+        const status = ctx.out.status(first ? 'Starting the VM (the first start takes a minute or two)' : 'Starting the VM');
         const r = await limaStart(ctx);
+        status.end(r.code === 0 ? 'The VM is started.' : undefined);
+        if (r.code === 0 && first) ctx.state.set(FIRST_START, undefined);
         if (r.code !== 0) {
           throw new CliError(`Lima could not start the C-Series Linux system:\n${tail(r.stderr || r.stdout)}`,
             `Run npx cseries again. Lima's own log is ${ctx.paths.join(ctx.paths.lima, INSTANCE, 'ha.stderr.log')}.`);
@@ -376,7 +403,7 @@ function driver(platform) {
         const r = await ctx.runner.inherit(limactlPath(ctx), argv, { env: env(ctx) });
         return { code: r.code, stdout: '', stderr: '' };
       }
-      const r = await ctx.runner.run(limactlPath(ctx), argv, { input: opts.input, env: env(ctx) });
+      const r = await ctx.runner.run(limactlPath(ctx), argv, { input: opts.input, env: env(ctx), onOutput: opts.onOutput });
       return { code: r.code, stdout: text(r.stdout), stderr: text(r.stderr) };
     },
 

@@ -21,7 +21,7 @@ BOOT=/etc/cseries-cloud/bootstrap.json
 STAGE=/var/lib/cseries-cloud/bootstrap
 PACKAGES="podman crun conmon netavark aardvark-dns nftables caddy lego python3 squid
 python3-cryptography unattended-upgrades apt-listchanges needrestart ca-certificates curl jq
-age"
+age uidmap passt"
 
 die() {
     printf '{"ok": false, "step": "%s", "error": "%s"}\n' "$1" "$2"

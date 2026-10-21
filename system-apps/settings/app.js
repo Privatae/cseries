@@ -36,6 +36,7 @@
         else if (view === 'history') renderHistory();
         else if (view === 'synaptive') loadSynaptive();
         else if (view === 'shaping') loadShaping();
+        else if (view === 'limits') loadLimits();
         else if (view === 'desktop') loadDesktopTab();
         else if (view === 'backup') loadBackup();
         else if (view === 'network') loadNetwork();
@@ -2838,6 +2839,102 @@
     // ── Utility ─────────────────────────────────────────
     // Escapes all five, so the result is safe as text and inside a quoted
     // attribute (the textContent→innerHTML trick left " and ' alone).
+    // ── Limits tab ──────────────────────────────────────
+    // GET /api/limits lists the person's limits (runtime/user_limits); PUT
+    // /api/limits/<name> {value} sets one, null puts the default back. Only
+    // this app and the person's chats may write (server/routes/limits.py).
+    function limNotice(text, bad) {
+        var n = document.getElementById('lim-notice');
+        if (!n) return;
+        n.hidden = !text;
+        n.textContent = text || '';
+        n.classList.toggle('warn', !!bad);
+    }
+
+    function limWhen(iso) {
+        if (!iso) return '';
+        var d = new Date(iso);
+        return isNaN(d) ? '' : d.toLocaleString();
+    }
+
+    function limRow(l) {
+        var shown = l.set_by === 'you' ? (l.value == null ? '0' : String(l.value)) : '';
+        var who = l.set_by === 'you' ? 'set by you'
+            : l.set_by === 'operator' ? 'set on this Host\'s machine' : 'default';
+        var hit = l.last_hit
+            ? '<div class="label-sys">Last stopped ' + esc(l.last_hit.what || 'work') + ', '
+              + esc(limWhen(l.last_hit.at)) + '</div>' : '';
+        return '<div class="cseries-card lim-row" data-limit="' + attr(l.name) + '">'
+            + '<div class="lim-head"><strong>' + esc(l.label) + '</strong>'
+            + '<span class="label-sys">' + esc(l.name) + '</span></div>'
+            + '<div class="label-sys">Now: ' + esc(l.shown) + ' (' + esc(who) + '). Default: '
+            + esc(l.default_shown) + '.</div>'
+            + '<div class="label-sys">' + esc(l.on_hit) + '</div>' + hit
+            + '<div class="bundle-actions">'
+            + '<input class="cseries-input lim-input" type="number" min="0" step="'
+            + (l.unit === 'dollars' ? '0.01' : '1') + '" inputmode="decimal" value="'
+            + attr(shown) + '" placeholder="' + attr(l.unit) + '" aria-label="'
+            + attr(l.label + ', in ' + l.unit) + '" style="max-width: 140px;">'
+            + '<span class="label-sys">' + esc(l.unit) + '</span>'
+            + '<button class="cseries-btn primary" data-lim-save>Save</button>'
+            + (l.set_by === 'you' ? '<button class="cseries-btn ghost" data-lim-default>Use the default</button>' : '')
+            + '</div></div>';
+    }
+
+    async function loadLimits() {
+        var st = document.getElementById('lim-state');
+        var body = document.getElementById('lim-body');
+        if (!st || !body) return;
+        try {
+            var d = await fetchJSON('/api/limits', { cache: 'no-store' });
+            var html = '';
+            (d.groups || []).forEach(function (g) {
+                var rows = (d.limits || []).filter(function (l) { return l.group === g.id; });
+                if (!rows.length) return;
+                html += '<div class="view-heading"><h3>' + esc(g.label) + '</h3></div>'
+                    + rows.map(limRow).join('');
+            });
+            body.innerHTML = html;
+            body.hidden = false;
+            st.hidden = true;
+        } catch (e) {
+            st.hidden = false;
+            st.textContent = 'Could not load your limits: ' + (e.detail || e.message);
+        }
+    }
+
+    async function saveLimit(name, value) {
+        try {
+            var r = await fetchJSON('/api/limits/' + encodeURIComponent(name), {
+                method: 'PUT', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ value: value }),
+            });
+            limNotice(name + ': ' + r.before + ' → ' + r.after + '.', false);
+            await loadLimits();
+        } catch (e) {
+            limNotice('Not saved: ' + (e.detail || e.message), true);
+        }
+    }
+
+    function wireLimits() {
+        var body = document.getElementById('lim-body');
+        if (!body) return;
+        body.addEventListener('click', function (e) {
+            var row = e.target.closest && e.target.closest('[data-limit]');
+            if (!row) return;
+            var name = row.getAttribute('data-limit');
+            if (e.target.closest('[data-lim-default]')) {
+                saveLimit(name, null);
+            } else if (e.target.closest('[data-lim-save]')) {
+                var raw = (row.querySelector('.lim-input') || {}).value;
+                if (raw === '' || raw == null) { saveLimit(name, null); return; }
+                var n = Number(raw);
+                if (!isFinite(n) || n < 0) { limNotice('Enter a number, 0 for no limit.', true); return; }
+                saveLimit(name, n);
+            }
+        });
+    }
+
     function esc(s) {
         return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
             return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
@@ -3003,6 +3100,9 @@
 
         // ── Response Shaping tab ─────────────────────────
         wireShaping();
+
+        // ── Limits tab ───────────────────────────────────
+        wireLimits();
 
         // ── Network tab ──────────────────────────────────
         var netJoin = document.getElementById('net-join-btn');

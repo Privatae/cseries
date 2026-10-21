@@ -476,7 +476,11 @@ def test_gateway_sends_an_approved_route_whatever_effort_the_caller_sends(datafi
 def test_audit_routes_finds_what_the_writer_would_now_refuse(datafile, monkeypatch):
     monkeypatch.setattr(MV, "is_validated", lambda p, m: True)
     routing = {
-        "chat": {"provider": "openrouter", "model": "x-ai/grok-4.7", "effort": "low"},
+        "chat": {"provider": "openrouter", "model": "x-ai/grok-4.7", "effort": "low",
+                 "fallback_provider": "xai", "fallback_model": "grok-4.3"},
+        # `review` is a retired role since 2026-10-20 (the diff reviewer went):
+        # a route stored under it is never resolved, so it is never judged,
+        # even one the writer would now refuse.
         "review": {"provider": "anthropic", "model": "claude-opus-5",
                    "fallback_provider": "xai", "fallback_model": "grok-4.3"},
         "consolidation": {"provider": "xai", "model": "grok-4.6"},
@@ -484,7 +488,7 @@ def test_audit_routes_finds_what_the_writer_would_now_refuse(datafile, monkeypat
     }
     rows = MS.audit_routes(routing)
     got = {(r["role"], r["which"]) for r in rows}
-    assert got == {("chat", "primary"), ("review", "fallback")}, rows
+    assert got == {("chat", "primary"), ("chat", "fallback")}, rows
     assert all(r["reason"] for r in rows)
     assert MS.audit_routes(None) == []
 

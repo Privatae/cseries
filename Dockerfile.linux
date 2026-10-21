@@ -167,6 +167,246 @@ ADD https://deb.debian.org/debian/dists/bookworm-updates/InRelease debian-bookwo
 ADD https://deb.debian.org/debian-security/dists/bookworm-security/InRelease debian-bookworm-security
 ADD https://apt.postgresql.org/pub/repos/apt/dists/bookworm-pgdg/InRelease pgdg-bookworm
 
+# The image's gate scripts, gathered in a stage of their own so the final
+# stage copies them as ONE layer. One COPY per file put the Host image at 150
+# layers, past the about 125 that Docker's overlay2 store can load (`max depth
+# exceeded` on `docker load`). Each script still has its own line here, which
+# is what scripts/check_smoke_copies.py and the gates that name their own
+# COPY read.
+FROM scratch AS image-scripts
+
+COPY scripts/test_transcript_format.py /app/scripts/test_transcript_format.py
+COPY scripts/test_picture_fit_image.py /app/scripts/test_picture_fit_image.py
+# Factory-build gate: the smoke suite execs this in-image (plan→gate→build over
+# the stub harness) — the "verify builds before anyone tests" ratchet.
+COPY scripts/test_factory_build_gate.py /app/scripts/test_factory_build_gate.py
+COPY scripts/test_tool_registry_parity.py /app/scripts/test_tool_registry_parity.py
+COPY scripts/test_circles_threads.py /app/scripts/test_circles_threads.py
+COPY scripts/test_knowledge_toc.py /app/scripts/test_knowledge_toc.py
+COPY scripts/test_provider_credentials.py /app/scripts/test_provider_credentials.py
+COPY scripts/test_credential_resolver.py /app/scripts/test_credential_resolver.py
+COPY scripts/test_direct_models_pricing.py /app/scripts/test_direct_models_pricing.py
+COPY scripts/test_cache_stable_wire.py /app/scripts/test_cache_stable_wire.py
+COPY scripts/test_harness_keys_fallback.py /app/scripts/test_harness_keys_fallback.py
+COPY scripts/test_harness_dispatch_fields.py /app/scripts/test_harness_dispatch_fields.py
+COPY scripts/test_shell_token.py /app/scripts/test_shell_token.py
+COPY scripts/test_harness_revocation.py /app/scripts/test_harness_revocation.py
+COPY scripts/test_harness_login_routes.py /app/scripts/test_harness_login_routes.py
+COPY scripts/test_harness_login_next_step.py /app/scripts/test_harness_login_next_step.py
+COPY scripts/test_coding_matrix.py /app/scripts/test_coding_matrix.py
+# Writing standard: the no-DB gate + the in-pod A/B harness that
+# measures the calibration and writing_standard blocks on a live entity
+# (CSERIES_CALIBRATION_TEST_ENABLE=1). Neither was in the image before, so the
+# harness could not run where its own docstring says to run it.
+COPY scripts/test_writing_standard.py /app/scripts/test_writing_standard.py
+COPY scripts/calibration_effectiveness_test.py /app/scripts/calibration_effectiveness_test.py
+COPY scripts/test_platform_token_refresh_default.py /app/scripts/test_platform_token_refresh_default.py
+COPY scripts/test_picker_layout.py /app/scripts/test_picker_layout.py
+COPY scripts/test_harness_effort_wiring.py /app/scripts/test_harness_effort_wiring.py
+COPY scripts/test_role_effort_wiring.py /app/scripts/test_role_effort_wiring.py
+# Web-research dialers gate — smoke execs this in-container beside the
+# effort-wiring gates; the COPY is load-bearing.
+COPY scripts/test_web_research_dialers.py /app/scripts/test_web_research_dialers.py
+# Two gates smoke_test.sh execs in-container. A gate wired into smoke without
+# its COPY line execs as file-not-found and reports nothing rather than run;
+# the smoke self-check red-fails on a missing COPY for that reason.
+COPY scripts/test_inference_usage_telemetry.py /app/scripts/test_inference_usage_telemetry.py
+COPY scripts/test_background_effort_and_json_budgets.py /app/scripts/test_background_effort_and_json_budgets.py
+# The FAILURE half of the same ledger — smoke execs it in-container beside its
+# success-lane sibling above; the COPY is load-bearing (the
+# exec-as-file-not-found shape the note above describes).
+COPY scripts/test_background_activity.py /app/scripts/test_background_activity.py
+# Tool-trail context lane gate — smoke execs this in-container beside its
+# effort-wiring sibling above; the COPY is load-bearing.
+COPY scripts/test_tool_trail.py /app/scripts/test_tool_trail.py
+# End-to-end SDK training loop test
+COPY scripts/test_sdk_training_loop.py /app/scripts/test_sdk_training_loop.py
+# Host SDK engine wall gate — the smoke gate execs this in-container; without
+# this COPY the gate fails on a missing script rather than on the wall's
+# actual invariants.
+COPY scripts/test_agent_grant_wall.py /app/scripts/test_agent_grant_wall.py
+COPY scripts/test_dispatch_spawn.py /app/scripts/test_dispatch_spawn.py
+# Dispatch-skill doc-truth gate — smoke execs this in-container; the COPY is
+# load-bearing.
+COPY scripts/test_dispatch_grant_doc.py /app/scripts/test_dispatch_grant_doc.py
+# Host build-door gate — smoke execs this in-container; the COPY is
+# load-bearing.
+COPY scripts/test_host_build_door.py /app/scripts/test_host_build_door.py
+# Build harness resolution + credential truth gate —
+# smoke execs this in-container; the COPY is load-bearing.
+COPY scripts/test_build_harness_resolution.py /app/scripts/test_build_harness_resolution.py
+# Coding-protocol file rules + migration + default tick — smoke
+# execs this in-container; the COPY is load-bearing.
+COPY scripts/test_coding_protocols.py /app/scripts/test_coding_protocols.py
+# One-table lane ratchet — smoke execs it
+# in-container; the COPY is load-bearing.
+COPY scripts/check_tool_lanes.py /app/scripts/check_tool_lanes.py
+# Workbench surface names its project — smoke execs it in-container;
+# the COPY is load-bearing.
+COPY scripts/test_workbench_names_project.py /app/scripts/test_workbench_names_project.py
+# Project preview + landed-file read gate — smoke execs this in-container;
+# the COPY is load-bearing.
+COPY scripts/test_project_preview.py /app/scripts/test_project_preview.py
+# Governance floor gate (SB 243) — smoke execs this in-container; the COPY is
+# load-bearing.
+COPY scripts/test_governance_floor.py /app/scripts/test_governance_floor.py
+# PII sterilize path gate — smoke execs this in-container; the COPY is
+# load-bearing.
+COPY scripts/test_pii_path.py /app/scripts/test_pii_path.py
+COPY scripts/test_untrusted_content_screen.py /app/scripts/test_untrusted_content_screen.py
+# Secret-shapes gate — pasted keys/credentials are redacted at
+# the top of send_message from brain/mastercode/secret_shapes.json (the same
+# rules file the composers warn from). Smoke execs this in-container; the
+# COPY is load-bearing.
+COPY scripts/test_secret_shapes.py /app/scripts/test_secret_shapes.py
+# Software-for-the-AI gates — smoke execs all three in-container,
+# so these COPYs are load-bearing. check_host_parity.py additionally reads the
+# committed ratchet floor docs/parity-baseline.json (copied below), alongside
+# the capabilities.json the generator writes into /app/docs at build.
+COPY scripts/check_direct_ops.py /app/scripts/check_direct_ops.py
+COPY scripts/check_host_parity.py /app/scripts/check_host_parity.py
+COPY scripts/check_kernel_ops.py /app/scripts/check_kernel_ops.py
+# Capability-surface gates. Both read /app/docs/capabilities.json,
+# which the generator writes at build (see below), so they are image-lane only —
+# a source tree has no generated doc to check.
+#   check_capability_coverage.py — every schema'd, reachable tool is either
+#     documented or declared out of scope with a reason that still holds. Exists
+#     because the host's five permanent orchestration verbs (dispatch, operate,
+#     recall, agent_status, escalate) were advertised on every turn and appeared
+#     nowhere in the doc, which told the host they did not exist.
+#   test_capability_answers.py — the adversarial half: ask in a user's plain
+#     words and check a usable answer comes back, in BOTH directions (real
+#     capabilities must be findable; invented ones must not match).
+COPY scripts/check_capability_coverage.py /app/scripts/check_capability_coverage.py
+COPY scripts/test_capability_answers.py /app/scripts/test_capability_answers.py
+# test_app_manifest_scopes.py — an app's DATA-declared endpoints (a step table's
+# `endpoint:` strings, which the build-time conformance check cannot parse) vs.
+# its manifest permissions. Image lane for a different reason than the two
+# above: it imports server.main to read each route's RESOLVED scope, so it needs
+# the full runtime dependency set rather than a generated doc.
+COPY scripts/test_app_manifest_scopes.py /app/scripts/test_app_manifest_scopes.py
+COPY scripts/test_harness_control_cap.py /app/scripts/test_harness_control_cap.py
+COPY scripts/test_codesearch_rerank_lane.py /app/scripts/test_codesearch_rerank_lane.py
+# DB lane: the code-search store on the entity's own Postgres (code_chunks, v200).
+COPY scripts/test_codesearch_pg.py /app/scripts/test_codesearch_pg.py
+# Parser lane: the tree-sitter grammars baked above load with no network.
+COPY scripts/test_codesearch_parsers_baked.py /app/scripts/test_codesearch_parsers_baked.py
+# Connector pictures: smoke runs this in a fresh container from the image under
+# the Host's seccomp profile; the COPY is load-bearing.
+COPY scripts/test_connector_picture_image.py /app/scripts/test_connector_picture_image.py
+# SDK partial-streaming invariant — exactly-once emission bookkeeping
+# Detached-turn registry gate — the turn lifecycle wall (detach/
+# reattach/lock/cancel/timeout); smoke execs it in-container
+COPY scripts/test_turn_registry.py /app/scripts/test_turn_registry.py
+# Error-lane gate — recorder contract + schema parity + the
+# choke-point coverage ratchet; smoke execs it in-container
+COPY scripts/test_error_lane.py /app/scripts/test_error_lane.py
+COPY scripts/test_role_routing_lanes.py /app/scripts/test_role_routing_lanes.py
+COPY scripts/test_harness_streaming.py /app/scripts/test_harness_streaming.py
+# Sidecar proxy bridge idle-transparency gate — the 10 s upstream
+# timeout that cut grok/antigravity streams; smoke execs it in-container
+COPY scripts/test_sidecar_proxy_bridge.py /app/scripts/test_sidecar_proxy_bridge.py
+# Embed bastion-identity lane ratchet — the stale-pinned-IP failure class
+COPY scripts/test_embed_identity_lane.py /app/scripts/test_embed_identity_lane.py
+# Directive effectiveness audit
+COPY scripts/directive_effectiveness_test.py /app/scripts/directive_effectiveness_test.py
+# App SDK signing-key revocation ratchet — runs in-container (smoke + live entity)
+COPY scripts/_revocation_gate_incontainer.py /app/scripts/_revocation_gate_incontainer.py
+# NAC engine invariant — runs in-container (smoke + live entity): nac-pdp-bound-default-preserve
+COPY scripts/check_nac_engine.py /app/scripts/check_nac_engine.py
+# Bastion fp-from-CSR invariant — runs in-container (smoke + live entity)
+COPY scripts/check_fp_from_csr.py /app/scripts/check_fp_from_csr.py
+# Bastion posture re-decides invariant (device_health) — runs in-container
+COPY scripts/check_posture_redecides.py /app/scripts/check_posture_redecides.py
+# Machine refusal accounting (enforcing.audit) — runs in-container
+COPY scripts/test_machine_refusal_posture.py /app/scripts/test_machine_refusal_posture.py
+# Bastion update forward needs no approval (bastion 0.44.0) — runs in-container
+COPY scripts/test_heartbeat_update_forward.py /app/scripts/test_heartbeat_update_forward.py
+# MCP NAC gate invariant (the inbound wall) — runs in-container
+COPY scripts/check_mcp_nac_gate.py /app/scripts/check_mcp_nac_gate.py
+# NAC user-gate invariant (step-up + signing) — runs in-container
+COPY scripts/check_nac_user_gate.py /app/scripts/check_nac_user_gate.py
+# Hub PDP armed invariant — runs in-container
+COPY scripts/check_hub_pdp_armed.py /app/scripts/check_hub_pdp_armed.py
+# DCN CN-0 invariant (route-map groundwork) — runs in-container
+COPY scripts/check_dcn_cn0.py /app/scripts/check_dcn_cn0.py
+# DCN CN-1 invariant (store grants + the DCN pod gate) — runs in-container
+COPY scripts/check_dcn_cn1.py /app/scripts/check_dcn_cn1.py
+# Box op vocabulary — a box reported degraded when it was not. The e2e test EXECS
+# in-container; check_box_ops_sync.py is IMPORTED by it (for the one copy of the
+# measured op list), and smoke's preflight only greps for exec'd /app/scripts
+# paths, so an imported script has to be copied here deliberately or the e2e
+# dies at import with the gate reporting a pass-shaped failure.
+COPY scripts/check_box_ops_sync.py /app/scripts/check_box_ops_sync.py
+COPY scripts/test_box_ops_not_degraded.py /app/scripts/test_box_ops_not_degraded.py
+# NAC liveness reaper invariant (CoA) — runs in-container
+COPY scripts/check_nac_reaper.py /app/scripts/check_nac_reaper.py
+# NAC egress decision-core invariant (the user's outbound layer) — runs in-container
+COPY scripts/check_nac_egress.py /app/scripts/check_nac_egress.py
+COPY scripts/check_git_lane.py /app/scripts/check_git_lane.py
+# NAC mgmt + harness dispatch invariant (signed-grant gate + image allowlist) — runs in-container
+COPY scripts/check_nac_mgmt.py /app/scripts/check_nac_mgmt.py
+# Agent-management presentation invariants for get_network (blind≠quiet, one disposition, drift) — runs in-container
+COPY scripts/check_agent_management_context.py /app/scripts/check_agent_management_context.py
+# Embed reverse-relay transport invariant (token-keyed, no worker ⇒ None) — runs in-container
+COPY scripts/check_embed_relay.py /app/scripts/check_embed_relay.py
+# prompt_behavior truth gate (host-environment awareness) — runs in-container:
+# every backticked tool/app reference in an app's prompt_behavior must resolve to a real
+# tool or app, so a host's environment direction can't go stale or promise a fake capability.
+COPY scripts/test_prompt_behavior_truth.py /app/scripts/test_prompt_behavior_truth.py
+# Realtime voice ephemeral-token mint gate — runs in-container:
+# hermetic gate for server/routes/realtime.py (TTL clamp, vault key resolution, clean 400/502 paths).
+COPY scripts/test_realtime_client_secrets.py /app/scripts/test_realtime_client_secrets.py
+# Vendor-lock gate — runs in-container: proves triage's grok
+# classifier is ripped, image_gen/vision route through the user's own model (no xAI
+# default, no platform billing), and dead model constants are gone.
+COPY scripts/test_pin_removal.py /app/scripts/test_pin_removal.py
+# App /api conformance gate (App SDK) — runs in-container (smoke): proves
+# the code-true route contract + validate_build diff (nonexistent-route + undeclared-
+# scope) hold. Same COPY discipline as every gate above — smoke execs it at
+# /app/scripts/test_app_conformance.py, so the file MUST be baked in or the gate
+# red-fails on its own absence.
+COPY scripts/test_app_conformance.py /app/scripts/test_app_conformance.py
+# In-container prompt gates (smoke): check_system_separation.py proves the two registered
+# slider writers are the only writers of a weight column and that the personality package
+# stays gone; test_prompt_provenance.py proves prompt_log rows for every
+# injected block. Same COPY discipline as every gate above.
+COPY scripts/check_system_separation.py /app/scripts/check_system_separation.py
+COPY scripts/test_prompt_provenance.py /app/scripts/test_prompt_provenance.py
+# test_context_read_resolution.py proves relayed/mangled identifiers resolve (or error
+# naming real candidates) in context_ingest read, so a missed lookup never reads as absence.
+COPY scripts/test_context_read_resolution.py /app/scripts/test_context_read_resolution.py
+# test_memory_recall_engine.py proves the unified recall engine: filter coherence
+# (superseded rows in zero lanes), lexical arm without embeddings, honest
+# RecallUnavailable, federated front door, memory_search retired.
+COPY scripts/test_memory_recall_engine.py /app/scripts/test_memory_recall_engine.py
+# test_memory_prefire_recall.py proves the per-turn pre-fire: the
+# live user message drives a hybrid recall that leads the memory block, prefired
+# rows dedup out of the standing sections, no-query/no-match render no section.
+COPY scripts/test_memory_prefire_recall.py /app/scripts/test_memory_prefire_recall.py
+# test_context_budget.py proves conversation-depth token budgeting against the
+# model window (derivation, the default history ceiling, per-thread
+# overrides, the ONE trim order, overflow retry seams).
+COPY scripts/test_context_budget.py /app/scripts/test_context_budget.py
+# test_context_janitor.py proves the pre-fire vs recall split for documents
+# and captured tool results (the janitor it was named for is retired). Same
+# COPY discipline as every gate above.
+COPY scripts/test_context_janitor.py /app/scripts/test_context_janitor.py
+COPY scripts/test_memory_integrity_db.py /app/scripts/test_memory_integrity_db.py
+COPY scripts/test_live_context_db.py /app/scripts/test_live_context_db.py
+# test_pod_conn_retry.py and test_sidecar_error_encoding.py are two build
+# gates smoke execs in-container. A gate wired into smoke_test.sh without a
+# COPY line is the exact trap smoke's self-check exists to catch. Adding a gate
+# script means adding its COPY in the same commit, always.
+COPY scripts/test_pod_conn_retry.py /app/scripts/test_pod_conn_retry.py
+COPY scripts/test_sidecar_error_encoding.py /app/scripts/test_sidecar_error_encoding.py
+COPY scripts/test_modules_versions.py /app/scripts/test_modules_versions.py
+COPY scripts/test_ticket_import.py /app/scripts/test_ticket_import.py
+COPY scripts/test_integrations_store_pg.py /app/scripts/test_integrations_store_pg.py
+COPY scripts/test_ticket_projects_share_repo.py /app/scripts/test_ticket_projects_share_repo.py
+COPY scripts/test_parallel_builds_db.py /app/scripts/test_parallel_builds_db.py
+COPY scripts/test_pipeline_db.py /app/scripts/test_pipeline_db.py
+
 # ============================================================
 # Stage 2: Runtime (minimal, hardened)
 # ============================================================
@@ -176,6 +416,14 @@ ADD https://apt.postgresql.org/pub/repos/apt/dists/bookworm-pgdg/InRelease pgdg-
 # instead. Image is ~1.1GB smaller as a result.
 # ============================================================
 FROM python:3.14-slim-bookworm@sha256:5127143f679a1bcf59e6b9ea1a95e6cef8b8d0905bf1ca459a7f0141398ddc4f
+
+# pip 26.2.1, the one the base image carries, vendors certifi 2026.6.17, whose
+# CA bundle trusts the emSign root behind eight intermediates with compromised
+# keys (GHSA-6q48-6c7w-9gw2, CRITICAL). pip 26.2.2 vendors the fixed 2026.10.19.
+# Pinned by hash; drop this once the base image ships 26.2.2 or later.
+RUN printf '%s\n' 'pip==26.2.2 --hash=sha256:fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70' > /tmp/pip.txt \
+ && python -m pip install --no-cache-dir --require-hashes -r /tmp/pip.txt \
+ && rm /tmp/pip.txt
 
 # Runtime-only system deps — NO compilers, NO recon tools
 # PGDG repo required for the PG17 CLIENT on bookworm (Debian ships 15).
@@ -342,238 +590,9 @@ COPY --chown=privatae:privatae default-skills/ /app/default-skills/
 COPY --chown=privatae:privatae init-db.sql /app/init-db.sql
 COPY --chown=privatae:privatae migrations/ /app/migrations/
 # Smoke gate for the SDK transcript JSONL format
-COPY --chown=privatae:privatae scripts/test_transcript_format.py /app/scripts/test_transcript_format.py
-COPY --chown=privatae:privatae scripts/test_picture_fit_image.py /app/scripts/test_picture_fit_image.py
-# Factory-build gate: the smoke suite execs this in-image (plan→gate→build over
-# the stub harness) — the "verify builds before anyone tests" ratchet.
-COPY --chown=privatae:privatae scripts/test_factory_build_gate.py /app/scripts/test_factory_build_gate.py
-COPY --chown=privatae:privatae scripts/test_tool_registry_parity.py /app/scripts/test_tool_registry_parity.py
-COPY --chown=privatae:privatae scripts/test_circles_threads.py /app/scripts/test_circles_threads.py
-COPY --chown=privatae:privatae scripts/test_knowledge_toc.py /app/scripts/test_knowledge_toc.py
-COPY --chown=privatae:privatae scripts/test_provider_credentials.py /app/scripts/test_provider_credentials.py
-COPY --chown=privatae:privatae scripts/test_credential_resolver.py /app/scripts/test_credential_resolver.py
-COPY --chown=privatae:privatae scripts/test_direct_models_pricing.py /app/scripts/test_direct_models_pricing.py
-COPY --chown=privatae:privatae scripts/test_cache_stable_wire.py /app/scripts/test_cache_stable_wire.py
-COPY --chown=privatae:privatae scripts/test_harness_keys_fallback.py /app/scripts/test_harness_keys_fallback.py
-COPY --chown=privatae:privatae scripts/test_harness_dispatch_fields.py /app/scripts/test_harness_dispatch_fields.py
-COPY --chown=privatae:privatae scripts/test_shell_token.py /app/scripts/test_shell_token.py
-COPY --chown=privatae:privatae scripts/test_harness_revocation.py /app/scripts/test_harness_revocation.py
-COPY --chown=privatae:privatae scripts/test_harness_login_routes.py /app/scripts/test_harness_login_routes.py
-COPY --chown=privatae:privatae scripts/test_harness_login_next_step.py /app/scripts/test_harness_login_next_step.py
-COPY --chown=privatae:privatae scripts/test_coding_matrix.py /app/scripts/test_coding_matrix.py
-# Writing standard: the no-DB gate + the in-pod A/B harness that
-# measures the calibration and writing_standard blocks on a live entity
-# (CSERIES_CALIBRATION_TEST_ENABLE=1). Neither was in the image before, so the
-# harness could not run where its own docstring says to run it.
-COPY --chown=privatae:privatae scripts/test_writing_standard.py /app/scripts/test_writing_standard.py
-COPY --chown=privatae:privatae scripts/calibration_effectiveness_test.py /app/scripts/calibration_effectiveness_test.py
-COPY --chown=privatae:privatae scripts/test_platform_token_refresh_default.py /app/scripts/test_platform_token_refresh_default.py
-COPY --chown=privatae:privatae scripts/test_picker_layout.py /app/scripts/test_picker_layout.py
-COPY --chown=privatae:privatae scripts/test_harness_effort_wiring.py /app/scripts/test_harness_effort_wiring.py
-COPY --chown=privatae:privatae scripts/test_role_effort_wiring.py /app/scripts/test_role_effort_wiring.py
-# Web-research dialers gate — smoke execs this in-container beside the
-# effort-wiring gates; the COPY is load-bearing.
-COPY --chown=privatae:privatae scripts/test_web_research_dialers.py /app/scripts/test_web_research_dialers.py
-# Two gates smoke_test.sh execs in-container. A gate wired into smoke without
-# its COPY line execs as file-not-found and reports nothing rather than run;
-# the smoke self-check red-fails on a missing COPY for that reason.
-COPY --chown=privatae:privatae scripts/test_inference_usage_telemetry.py /app/scripts/test_inference_usage_telemetry.py
-COPY --chown=privatae:privatae scripts/test_background_effort_and_json_budgets.py /app/scripts/test_background_effort_and_json_budgets.py
-# The FAILURE half of the same ledger — smoke execs it in-container beside its
-# success-lane sibling above; the COPY is load-bearing (the
-# exec-as-file-not-found shape the note above describes).
-COPY --chown=privatae:privatae scripts/test_background_activity.py /app/scripts/test_background_activity.py
-# Tool-trail context lane gate — smoke execs this in-container beside its
-# effort-wiring sibling above; the COPY is load-bearing.
-COPY --chown=privatae:privatae scripts/test_tool_trail.py /app/scripts/test_tool_trail.py
-# End-to-end SDK training loop test
-COPY --chown=privatae:privatae scripts/test_sdk_training_loop.py /app/scripts/test_sdk_training_loop.py
-# Host SDK engine wall gate — the smoke gate execs this in-container; without
-# this COPY the gate fails on a missing script rather than on the wall's
-# actual invariants.
-COPY --chown=privatae:privatae scripts/test_agent_grant_wall.py /app/scripts/test_agent_grant_wall.py
-COPY --chown=privatae:privatae scripts/test_dispatch_spawn.py /app/scripts/test_dispatch_spawn.py
-# Dispatch-skill doc-truth gate — smoke execs this in-container; the COPY is
-# load-bearing.
-COPY --chown=privatae:privatae scripts/test_dispatch_grant_doc.py /app/scripts/test_dispatch_grant_doc.py
-# Host build-door gate — smoke execs this in-container; the COPY is
-# load-bearing.
-COPY --chown=privatae:privatae scripts/test_host_build_door.py /app/scripts/test_host_build_door.py
-# Build harness resolution + credential truth gate —
-# smoke execs this in-container; the COPY is load-bearing.
-COPY --chown=privatae:privatae scripts/test_build_harness_resolution.py /app/scripts/test_build_harness_resolution.py
-# Coding-protocol file rules + migration + default tick — smoke
-# execs this in-container; the COPY is load-bearing.
-COPY --chown=privatae:privatae scripts/test_coding_protocols.py /app/scripts/test_coding_protocols.py
-# One-table lane ratchet — smoke execs it
-# in-container; the COPY is load-bearing.
-COPY --chown=privatae:privatae scripts/check_tool_lanes.py /app/scripts/check_tool_lanes.py
-# Workbench surface names its project — smoke execs it in-container;
-# the COPY is load-bearing.
-COPY --chown=privatae:privatae scripts/test_workbench_names_project.py /app/scripts/test_workbench_names_project.py
-# Project preview + landed-file read gate — smoke execs this in-container;
-# the COPY is load-bearing.
-COPY --chown=privatae:privatae scripts/test_project_preview.py /app/scripts/test_project_preview.py
-# Governance floor gate (SB 243) — smoke execs this in-container; the COPY is
-# load-bearing.
-COPY --chown=privatae:privatae scripts/test_governance_floor.py /app/scripts/test_governance_floor.py
-# PII sterilize path gate — smoke execs this in-container; the COPY is
-# load-bearing.
-COPY --chown=privatae:privatae scripts/test_pii_path.py /app/scripts/test_pii_path.py
-COPY --chown=privatae:privatae scripts/test_untrusted_content_screen.py /app/scripts/test_untrusted_content_screen.py
-# Secret-shapes gate — pasted keys/credentials are redacted at
-# the top of send_message from brain/mastercode/secret_shapes.json (the same
-# rules file the composers warn from). Smoke execs this in-container; the
-# COPY is load-bearing.
-COPY --chown=privatae:privatae scripts/test_secret_shapes.py /app/scripts/test_secret_shapes.py
-# Software-for-the-AI gates — smoke execs all three in-container,
-# so these COPYs are load-bearing. check_host_parity.py additionally reads the
-# committed ratchet floor docs/parity-baseline.json (copied below), alongside
-# the capabilities.json the generator writes into /app/docs at build.
-COPY --chown=privatae:privatae scripts/check_direct_ops.py /app/scripts/check_direct_ops.py
-COPY --chown=privatae:privatae scripts/check_host_parity.py /app/scripts/check_host_parity.py
-COPY --chown=privatae:privatae scripts/check_kernel_ops.py /app/scripts/check_kernel_ops.py
+# The gate scripts from the image-scripts stage above, as one layer.
+COPY --from=image-scripts --chown=privatae:privatae /app/scripts/ /app/scripts/
 COPY --chown=privatae:privatae docs/parity-baseline.json /app/docs/parity-baseline.json
-# Capability-surface gates. Both read /app/docs/capabilities.json,
-# which the generator writes at build (see below), so they are image-lane only —
-# a source tree has no generated doc to check.
-#   check_capability_coverage.py — every schema'd, reachable tool is either
-#     documented or declared out of scope with a reason that still holds. Exists
-#     because the host's five permanent orchestration verbs (dispatch, operate,
-#     recall, agent_status, escalate) were advertised on every turn and appeared
-#     nowhere in the doc, which told the host they did not exist.
-#   test_capability_answers.py — the adversarial half: ask in a user's plain
-#     words and check a usable answer comes back, in BOTH directions (real
-#     capabilities must be findable; invented ones must not match).
-COPY --chown=privatae:privatae scripts/check_capability_coverage.py /app/scripts/check_capability_coverage.py
-COPY --chown=privatae:privatae scripts/test_capability_answers.py /app/scripts/test_capability_answers.py
-# test_app_manifest_scopes.py — an app's DATA-declared endpoints (a step table's
-# `endpoint:` strings, which the build-time conformance check cannot parse) vs.
-# its manifest permissions. Image lane for a different reason than the two
-# above: it imports server.main to read each route's RESOLVED scope, so it needs
-# the full runtime dependency set rather than a generated doc.
-COPY --chown=privatae:privatae scripts/test_app_manifest_scopes.py /app/scripts/test_app_manifest_scopes.py
-COPY --chown=privatae:privatae scripts/test_harness_control_cap.py /app/scripts/test_harness_control_cap.py
-COPY --chown=privatae:privatae scripts/test_codesearch_rerank_lane.py /app/scripts/test_codesearch_rerank_lane.py
-# DB lane: the code-search store on the entity's own Postgres (code_chunks, v200).
-COPY --chown=privatae:privatae scripts/test_codesearch_pg.py /app/scripts/test_codesearch_pg.py
-# Parser lane: the tree-sitter grammars baked above load with no network.
-COPY --chown=privatae:privatae scripts/test_codesearch_parsers_baked.py /app/scripts/test_codesearch_parsers_baked.py
-# Connector pictures: smoke runs this in a fresh container from the image under
-# the Host's seccomp profile; the COPY is load-bearing.
-COPY --chown=privatae:privatae scripts/test_connector_picture_image.py /app/scripts/test_connector_picture_image.py
-# SDK partial-streaming invariant — exactly-once emission bookkeeping
-# Detached-turn registry gate — the turn lifecycle wall (detach/
-# reattach/lock/cancel/timeout); smoke execs it in-container
-COPY --chown=privatae:privatae scripts/test_turn_registry.py /app/scripts/test_turn_registry.py
-# Error-lane gate — recorder contract + schema parity + the
-# choke-point coverage ratchet; smoke execs it in-container
-COPY --chown=privatae:privatae scripts/test_error_lane.py /app/scripts/test_error_lane.py
-COPY --chown=privatae:privatae scripts/test_role_routing_lanes.py /app/scripts/test_role_routing_lanes.py
-COPY --chown=privatae:privatae scripts/test_harness_streaming.py /app/scripts/test_harness_streaming.py
-# Sidecar proxy bridge idle-transparency gate — the 10 s upstream
-# timeout that cut grok/antigravity streams; smoke execs it in-container
-COPY --chown=privatae:privatae scripts/test_sidecar_proxy_bridge.py /app/scripts/test_sidecar_proxy_bridge.py
-# Embed bastion-identity lane ratchet — the stale-pinned-IP failure class
-COPY --chown=privatae:privatae scripts/test_embed_identity_lane.py /app/scripts/test_embed_identity_lane.py
-# Directive effectiveness audit
-COPY --chown=privatae:privatae scripts/directive_effectiveness_test.py /app/scripts/directive_effectiveness_test.py
-# App SDK signing-key revocation ratchet — runs in-container (smoke + live entity)
-COPY --chown=privatae:privatae scripts/_revocation_gate_incontainer.py /app/scripts/_revocation_gate_incontainer.py
-# NAC engine invariant — runs in-container (smoke + live entity): nac-pdp-bound-default-preserve
-COPY --chown=privatae:privatae scripts/check_nac_engine.py /app/scripts/check_nac_engine.py
-# Bastion fp-from-CSR invariant — runs in-container (smoke + live entity)
-COPY --chown=privatae:privatae scripts/check_fp_from_csr.py /app/scripts/check_fp_from_csr.py
-# Bastion posture re-decides invariant (device_health) — runs in-container
-COPY --chown=privatae:privatae scripts/check_posture_redecides.py /app/scripts/check_posture_redecides.py
-# Machine refusal accounting (enforcing.audit) — runs in-container
-COPY --chown=privatae:privatae scripts/test_machine_refusal_posture.py /app/scripts/test_machine_refusal_posture.py
-# Bastion update forward needs no approval (bastion 0.44.0) — runs in-container
-COPY --chown=privatae:privatae scripts/test_heartbeat_update_forward.py /app/scripts/test_heartbeat_update_forward.py
-# MCP NAC gate invariant (the inbound wall) — runs in-container
-COPY --chown=privatae:privatae scripts/check_mcp_nac_gate.py /app/scripts/check_mcp_nac_gate.py
-# NAC user-gate invariant (step-up + signing) — runs in-container
-COPY --chown=privatae:privatae scripts/check_nac_user_gate.py /app/scripts/check_nac_user_gate.py
-# Hub PDP armed invariant — runs in-container
-COPY --chown=privatae:privatae scripts/check_hub_pdp_armed.py /app/scripts/check_hub_pdp_armed.py
-# DCN CN-0 invariant (route-map groundwork) — runs in-container
-COPY --chown=privatae:privatae scripts/check_dcn_cn0.py /app/scripts/check_dcn_cn0.py
-# DCN CN-1 invariant (store grants + the DCN pod gate) — runs in-container
-COPY --chown=privatae:privatae scripts/check_dcn_cn1.py /app/scripts/check_dcn_cn1.py
-# Box op vocabulary — a box reported degraded when it was not. The e2e test EXECS
-# in-container; check_box_ops_sync.py is IMPORTED by it (for the one copy of the
-# measured op list), and smoke's preflight only greps for exec'd /app/scripts
-# paths, so an imported script has to be copied here deliberately or the e2e
-# dies at import with the gate reporting a pass-shaped failure.
-COPY --chown=privatae:privatae scripts/check_box_ops_sync.py /app/scripts/check_box_ops_sync.py
-COPY --chown=privatae:privatae scripts/test_box_ops_not_degraded.py /app/scripts/test_box_ops_not_degraded.py
-# NAC liveness reaper invariant (CoA) — runs in-container
-COPY --chown=privatae:privatae scripts/check_nac_reaper.py /app/scripts/check_nac_reaper.py
-# NAC egress decision-core invariant (the user's outbound layer) — runs in-container
-COPY --chown=privatae:privatae scripts/check_nac_egress.py /app/scripts/check_nac_egress.py
-COPY --chown=privatae:privatae scripts/check_git_lane.py /app/scripts/check_git_lane.py
-# NAC mgmt + harness dispatch invariant (signed-grant gate + image allowlist) — runs in-container
-COPY --chown=privatae:privatae scripts/check_nac_mgmt.py /app/scripts/check_nac_mgmt.py
-# Agent-management presentation invariants for get_network (blind≠quiet, one disposition, drift) — runs in-container
-COPY --chown=privatae:privatae scripts/check_agent_management_context.py /app/scripts/check_agent_management_context.py
-# Embed reverse-relay transport invariant (token-keyed, no worker ⇒ None) — runs in-container
-COPY --chown=privatae:privatae scripts/check_embed_relay.py /app/scripts/check_embed_relay.py
-# prompt_behavior truth gate (host-environment awareness) — runs in-container:
-# every backticked tool/app reference in an app's prompt_behavior must resolve to a real
-# tool or app, so a host's environment direction can't go stale or promise a fake capability.
-COPY --chown=privatae:privatae scripts/test_prompt_behavior_truth.py /app/scripts/test_prompt_behavior_truth.py
-# Realtime voice ephemeral-token mint gate — runs in-container:
-# hermetic gate for server/routes/realtime.py (TTL clamp, vault key resolution, clean 400/502 paths).
-COPY --chown=privatae:privatae scripts/test_realtime_client_secrets.py /app/scripts/test_realtime_client_secrets.py
-# Vendor-lock gate — runs in-container: proves triage's grok
-# classifier is ripped, image_gen/vision route through the user's own model (no xAI
-# default, no platform billing), and dead model constants are gone.
-COPY --chown=privatae:privatae scripts/test_pin_removal.py /app/scripts/test_pin_removal.py
-# App /api conformance gate (App SDK) — runs in-container (smoke): proves
-# the code-true route contract + validate_build diff (nonexistent-route + undeclared-
-# scope) hold. Same COPY discipline as every gate above — smoke execs it at
-# /app/scripts/test_app_conformance.py, so the file MUST be baked in or the gate
-# red-fails on its own absence.
-COPY --chown=privatae:privatae scripts/test_app_conformance.py /app/scripts/test_app_conformance.py
-# In-container prompt gates (smoke): check_system_separation.py proves the two registered
-# slider writers are the only writers of a weight column and that the personality package
-# stays gone; test_prompt_provenance.py proves prompt_log rows for every
-# injected block. Same COPY discipline as every gate above.
-COPY --chown=privatae:privatae scripts/check_system_separation.py /app/scripts/check_system_separation.py
-COPY --chown=privatae:privatae scripts/test_prompt_provenance.py /app/scripts/test_prompt_provenance.py
-# test_context_read_resolution.py proves relayed/mangled identifiers resolve (or error
-# naming real candidates) in context_ingest read, so a missed lookup never reads as absence.
-COPY --chown=privatae:privatae scripts/test_context_read_resolution.py /app/scripts/test_context_read_resolution.py
-# test_memory_recall_engine.py proves the unified recall engine: filter coherence
-# (superseded rows in zero lanes), lexical arm without embeddings, honest
-# RecallUnavailable, federated front door, memory_search retired.
-COPY --chown=privatae:privatae scripts/test_memory_recall_engine.py /app/scripts/test_memory_recall_engine.py
-# test_memory_prefire_recall.py proves the per-turn pre-fire: the
-# live user message drives a hybrid recall that leads the memory block, prefired
-# rows dedup out of the standing sections, no-query/no-match render no section.
-COPY --chown=privatae:privatae scripts/test_memory_prefire_recall.py /app/scripts/test_memory_prefire_recall.py
-# test_context_budget.py proves conversation-depth token budgeting against the
-# model window (derivation, the default history ceiling, per-thread
-# overrides, the ONE trim order, overflow retry seams).
-COPY --chown=privatae:privatae scripts/test_context_budget.py /app/scripts/test_context_budget.py
-# test_context_janitor.py proves the pre-fire vs recall split for documents
-# and captured tool results (the janitor it was named for is retired). Same
-# COPY discipline as every gate above.
-COPY --chown=privatae:privatae scripts/test_context_janitor.py /app/scripts/test_context_janitor.py
-COPY --chown=privatae:privatae scripts/test_memory_integrity_db.py /app/scripts/test_memory_integrity_db.py
-COPY --chown=privatae:privatae scripts/test_live_context_db.py /app/scripts/test_live_context_db.py
-# test_pod_conn_retry.py and test_sidecar_error_encoding.py are two build
-# gates smoke execs in-container. A gate wired into smoke_test.sh without a
-# COPY line is the exact trap smoke's self-check exists to catch. Adding a gate
-# script means adding its COPY in the same commit, always.
-COPY --chown=privatae:privatae scripts/test_pod_conn_retry.py /app/scripts/test_pod_conn_retry.py
-COPY --chown=privatae:privatae scripts/test_sidecar_error_encoding.py /app/scripts/test_sidecar_error_encoding.py
-COPY --chown=privatae:privatae scripts/test_modules_versions.py /app/scripts/test_modules_versions.py
-COPY --chown=privatae:privatae scripts/test_ticket_import.py /app/scripts/test_ticket_import.py
-COPY --chown=privatae:privatae scripts/test_integrations_store_pg.py /app/scripts/test_integrations_store_pg.py
-COPY --chown=privatae:privatae scripts/test_ticket_projects_share_repo.py /app/scripts/test_ticket_projects_share_repo.py
-COPY --chown=privatae:privatae scripts/test_parallel_builds_db.py /app/scripts/test_parallel_builds_db.py
-COPY --chown=privatae:privatae scripts/test_pipeline_db.py /app/scripts/test_pipeline_db.py
 COPY --chown=privatae:privatae entrypoint.sh /app/entrypoint.sh
 # ARCHITECTURE.md deliberately NOT copied — see the ratchet below.
 COPY --chown=privatae:privatae LICENSE /app/LICENSE

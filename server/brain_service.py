@@ -172,6 +172,15 @@ async def initialize(entity_id: int = 1) -> None:
     logger.info("Brain DB pool created (min=%s, max=%s, idle-prune=60s)",
                 BRAIN_POOL_KWARGS["min_size"], BRAIN_POOL_KWARGS["max_size"])
 
+    # The person's limits (runtime/user_limits), held for readers outside a
+    # turn before anything that enforces one starts. Never raises: unread, the
+    # coded defaults hold until the next read.
+    try:
+        from mastercode.runtime import user_limits
+        await user_limits.load(_pool, _entity_id)
+    except Exception as e:  # noqa: BLE001
+        logger.warning("limits not loaded at boot (defaults hold): %s", e)
+
     # The reserved bastion control-plane lane (see _control_pool above). min=1 so the
     # connection exists BEFORE it is needed — acquiring it under contention is exactly
     # the case this pool defends against. A failure here is not fatal: callers fall back

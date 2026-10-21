@@ -1604,9 +1604,27 @@ def _fmt_window(seconds: float) -> str:
     return f"{seconds:.0f} s" if seconds < 120 else f"{seconds / 60:.0f} minutes"
 
 
-def requested_step_seconds(harness_id: str, args) -> float:
+def step_limit_name(requested_s: float, window_s: float, step_s: float,
+                    step_max_s: float) -> Optional[str]:
+    """Which of the person's limits stopped a tool step (runtime/user_limits,
+    sent per run by the kernel), or None when none did: a step that asked for
+    no time of its own ran past build.tool_step_minutes; one whose request was
+    cut to the cap ran past build.tool_step_max_minutes; one that ran past its
+    OWN request (and the margin) was stopped by what it asked for, which no
+    setting of the person's would change. The window is never shorter than
+    build.tool_step_minutes, so when that is what the window came to, it is
+    the one named, even for a capped request (a step window set above the cap)."""
+    if not requested_s or window_s <= step_s:
+        return "build.tool_step_minutes"
+    if step_max_s and requested_s >= step_max_s:
+        return "build.tool_step_max_minutes"
+    return None
+
+
+def requested_step_seconds(harness_id: str, args, cap_s: Optional[float] = None) -> float:
     """The timeout a tool call asked for, in seconds, where that CLI's call
-    carries one (_REQUESTED_TIMEOUT_FIELDS); 0 when it does not."""
+    carries one (_REQUESTED_TIMEOUT_FIELDS); 0 when it does not. Capped at
+    `cap_s` (this run's tool_step_max_minutes) or TOOL_STEP_MAX_MINUTES."""
     if not isinstance(args, dict):
         return 0.0
     for field, unit in _REQUESTED_TIMEOUT_FIELDS.get(harness_id, ()):
@@ -1618,7 +1636,7 @@ def requested_step_seconds(harness_id: str, args) -> float:
                 return 0.0
             if not math.isfinite(req):
                 return 0.0          # an infinite request is not a request
-            cap = TOOL_STEP_MAX_MINUTES * 60
+            cap = TOOL_STEP_MAX_MINUTES * 60 if cap_s is None else cap_s
             return min(req, cap) if cap > 0 else req
     return 0.0
 
@@ -2287,8 +2305,18 @@ def _make_watched_run(spec: HarnessSpec, stream_flags: bool = True):
                 base_env.update(_run_env(spec, model, base_env) or {})
             except Exception as exc:          # noqa: BLE001 — a setting, never the run
                 spec.logger.warning("%s per-run env failed: %s", spec.display, exc)
-        progress_s = max(0.0, PROGRESS_MINUTES * 60)
-        tool_step_s = max(0.0, TOOL_STEP_MINUTES * 60)
+        # The person's limits, when the kernel sends them (review._pod_limits,
+        # runtime/user_limits, 2026-10-20): per run, over this pod's env
+        # defaults. 0 turns a window off, as the env's 0 always has.
+        def _run_minutes(field: str, default: float) -> float:
+            try:
+                v = body.get(field)
+                return float(default if v is None else v)
+            except (TypeError, ValueError):
+                return float(default)
+        progress_s = max(0.0, _run_minutes("progress_minutes", PROGRESS_MINUTES) * 60)
+        tool_step_max_s = max(0.0, _run_minutes("tool_step_max_minutes", TOOL_STEP_MAX_MINUTES) * 60)
+        tool_step_s = max(0.0, _run_minutes("tool_step_minutes", TOOL_STEP_MINUTES) * 60)
         step_margin_s = max(0.0, TOOL_STEP_MARGIN_MINUTES * 60)
 
         # `max_minutes` no longer caps a streaming run's total time (see
@@ -2553,6 +2581,10 @@ def _make_watched_run(spec: HarnessSpec, stream_flags: bool = True):
                                         in_tool = True
                                         step_t0 = min(t for t, _ in running)
                                         step_req = max(r for _, r in running)
+                                        # Held to this run's cap, as a reported
+                                        # call's request is (requested_step_seconds).
+                                        if tool_step_max_s:
+                                            step_req = min(step_req, tool_step_max_s)
                                 # Also when a reported step is open but asked for
                                 # no timeout (grok >= 1.0 prints tool events, and
                                 # carries no readable request): its command still
@@ -2595,7 +2627,7 @@ def _make_watched_run(spec: HarnessSpec, stream_flags: bool = True):
                                         in_tool = True
                                         first = now - (_boot_now() - min(starts))
                                         step_t0 = max(first, last_event[0])
-                                        step_req = TOOL_STEP_MAX_MINUTES * 60
+                                        step_req = tool_step_max_s
                                         child_step[0] = True
                                         if reported:
                                             # Its command is alive NOW: once the
@@ -2806,7 +2838,8 @@ def _make_watched_run(spec: HarnessSpec, stream_flags: bool = True):
                                     tool_requested[0] = 0.0
                                 tool_requested[0] = max(tool_requested[0],
                                                         requested_step_seconds(
-                                                            spec.id, pl.get("args")))
+                                                            spec.id, pl.get("args"),
+                                                            tool_step_max_s))
                                 tool_in_flight[0] = True
                             elif k in ("tool_result", "file_edit"):
                                 tool_in_flight[0] = False
@@ -2942,6 +2975,10 @@ def _make_watched_run(spec: HarnessSpec, stream_flags: bool = True):
                         + f"{_fmt_window(stop_window[0])} "
                         f"({time.time() - started:.0f}s elapsed). Partial work is kept.")
                 elif stop_kind[0] == "tool_step":
+                    _lim = step_limit_name(tool_requested[0], stop_window[0] or tool_step_s,
+                                           tool_step_s, tool_step_max_s)
+                    if _lim:
+                        payload["limit"] = _lim
                     payload["error"] = (
                         f"{spec.display} started a tool step that had not "
                         f"returned after {_fmt_window(stop_window[0] or tool_step_s)}, "
@@ -2958,6 +2995,7 @@ def _make_watched_run(spec: HarnessSpec, stream_flags: bool = True):
                         f"elapsed).{wt_note} No real tool step comes near this; "
                         "the run itself has no time limit. Partial work is kept.")
                 elif stop_kind[0] == "progress":
+                    payload["limit"] = "build.progress_minutes"
                     payload["error"] = (
                         f"{spec.display} produced no model or tool event for "
                         f"{max(progress_s, turn_budget_s) / 60:.0f} minutes while "
@@ -2970,6 +3008,7 @@ def _make_watched_run(spec: HarnessSpec, stream_flags: bool = True):
                         "a time limit: a run whose model keeps producing events "
                         "is never stopped by it. Partial work is kept.")
                 elif model_wait_killed[0]:
+                    payload["limit"] = "build.model_wait_max_minutes"
                     payload["error"] = (
                         f"{spec.display} waited on the model for "
                         f"{turn_budget_s / 60:.0f} minutes with nothing arriving "
@@ -2988,6 +3027,7 @@ def _make_watched_run(spec: HarnessSpec, stream_flags: bool = True):
                         f"({time.time() - started:.0f}s elapsed). Partial work "
                         "is kept.")
                 else:
+                    payload["limit"] = "build.idle_minutes"
                     payload["error"] = (
                         f"{spec.display} produced no output for "
                         f"{idle_s / 60:.0f} minutes"

@@ -7,7 +7,6 @@ registers the providers that exist today behind it:
 
   harness-check  the phase's declared acceptance commands, run on the harness
                  pod in the run's worktree (review._run_acceptance)
-  diff-review    the scoped diff reviewer (diff_review.review_landed_run)
   gitea-actions  the platform forge's CI, read as commit statuses on the pushed
                  save point (server/routes/forge_status.py)
 
@@ -28,18 +27,20 @@ Three rules from the check stage survive pluggability and are enforced here:
 
   1. A check that could not run is "unproven", never a pass (ran=False on a
      required row → review).
-  2. A reviewer-kind block withholds 'complete' but never fails a phase.
+  2. A check whose provider says on_fail='review' withholds 'complete' but
+     never fails a phase.
   3. The verdict is typed data; nothing here reads prose.
 
 and one new one: complete needs at least one REQUIRED, PROVING check that ran
-and passed. A pipeline whose only check is the reviewer proves nothing, so a
-phase under it lands in 'review' — the same rule as "nothing declared".
+and passed. A pipeline whose only checks prove nothing lands a phase in
+'review' — the same rule as "nothing declared".
 
 A phase's status does not follow decide() (a build
 either landed or failed). tools._run_phase_build writes 'complete' for a
 landed build and 'failed' for a harness failure; decide() still summarises
-the listed checks for the build PR body and the delivery, and the diff
-reviewer's required flag still decides the review hold on Auto-Approve.
+the listed checks for the build PR body and the delivery. (Until 2026-10-20
+a diff reviewer's verdict could also hold an Auto-Approve merge; the
+reviewer and its hold are gone, see RETIRED_CHECKS.)
 
 Pure: no DB, no network — except load_approved(), the one async read of the
 entity key an approval is verified with. The callers (tools._run_phase_build,
@@ -76,8 +77,8 @@ class ProviderSpec:
     where: str
     # A required row that ran and did not pass: 'failed' or 'review'.
     on_fail: str = FAILED
-    # A required row that could not run: 'review' (unproven) or 'ignore' (the
-    # reviewer: a verdict that is missing changes nothing, as before).
+    # A required row that could not run: 'review' (unproven) or 'ignore' (a
+    # verdict that is missing changes nothing).
     on_unran: str = REVIEW
     # Whether a pass from this provider proves the phase (the "one new
     # rule" in the module docstring).
@@ -98,8 +99,6 @@ PROVIDERS: dict[str, ProviderSpec] = {p.key: p for p in (
                                 "repo": {"type": "string", "required": True}}),
     ProviderSpec("harness-check", "check", where="harness_pod",
                  on_fail=FAILED, on_unran=REVIEW, proves=True),
-    ProviderSpec("diff-review", "check", where="harness_pod",
-                 on_fail=REVIEW, on_unran="ignore", proves=False),
     # The CI on the platform forge (Gitea Actions): after the save point is
     # pushed, the commit statuses its jobs post on that commit
     # (server/routes/forge_status.py). `contexts` names the statuses that must
@@ -131,7 +130,16 @@ PROVIDERS: dict[str, ProviderSpec] = {p.key: p for p in (
     ProviderSpec("pod-install", "ship", where="kernel"),
 )}
 
-DEFAULT_CHECK = ("harness-check", "diff-review")
+DEFAULT_CHECK = ("harness-check",)
+
+# Check providers that no longer exist. `diff-review` was a model call on every
+# landed build, on the Orchestrator's `review` role. It is gone: the Host
+# reviews in its own turn, or has a coding engine review when the person
+# wants a second opinion, so there is no separate role. A stored
+# setting that still lists one is read without that row rather than refused:
+# refusing would hold every phase of the project in review for a check that
+# can no longer run.
+RETIRED_CHECKS = frozenset({"diff-review"})
 
 _ROW_BASE_KEYS = frozenset({"provider", "required"})
 _TOP_KEYS = frozenset({"format", "source", "check", "review", "ship", "modules"})
@@ -251,6 +259,8 @@ def _norm_check(rows: Any, where: str, errors: list[str]) -> list[dict]:
         return []
     out, seen = [], set()
     for i, r in enumerate(rows):
+        if isinstance(r, dict) and r.get("provider") in RETIRED_CHECKS:
+            continue
         n = _norm_row(r, "check", f"{where}[{i}]", errors)
         if n is None:
             continue
@@ -377,24 +387,6 @@ def harness_check_verdict(acceptance: Optional[dict], declared: bool) -> dict:
          "results": acc.get("results") if isinstance(acc.get("results"), list) else []}
     # Ran without a clean True is a failure, never a pass — as before.
     v["ok"] = (acc.get("ok") is True) if v["ran"] else None
-    return v
-
-
-def diff_review_verdict(review: Optional[dict]) -> Optional[dict]:
-    """The diff_review envelope as a verdict, or None when no review ran.
-    Each blocking finding becomes a failed result, so every provider's
-    failures read the same way; the original keys ride along."""
-    if not isinstance(review, dict):
-        return None
-    base = {"provider": "diff-review", "where": "harness_pod"}
-    ran = bool(review.get("ran")) and isinstance(review.get("ok"), bool)
-    results = [{"name": f"{f.get('file')}:{f.get('line')}", "ok": False,
-                "output_tail": f.get("issue")}
-               for f in (review.get("blocking") or []) if isinstance(f, dict)]
-    v = {**review, **base, "ran": ran, "ok": review.get("ok") if ran else None,
-         "results": results}
-    if not ran and not v.get("reason"):
-        v["reason"] = "reviewer returned no verdict"
     return v
 
 

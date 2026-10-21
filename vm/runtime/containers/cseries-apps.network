@@ -1,0 +1,17 @@
+# The network every container the local runtime starts is on, and the Host
+# beside them at 10.89.78.2. It has no default route: a container reaches the
+# Host, and the machine at the gateway for DNS and the engines' plain proxy,
+# and nothing else (the machine's firewall drops anything routed out of it,
+# and its bridge filter lets a frame through only to or from the Host).
+[Network]
+NetworkName=cseries-apps
+# Its bridge's name, which the firewall's bridge filter matches (Quadlet in
+# Podman 5.4 has no InterfaceName key for a network, so it is passed as is).
+PodmanArgs=--interface-name=cseries-apps0
+Subnet=10.89.78.0/24
+Gateway=10.89.78.1
+# Addresses podman hands out itself, to an engine build's RUN containers. The
+# Host is .2 and the runtime places its containers at fixed addresses from .16
+# (cseries_runtime/common.py IP_FIRST), so a build never holds one of those.
+IPRange=10.89.78.3-10.89.78.15
+Options=no_default_route=1

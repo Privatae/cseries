@@ -764,7 +764,8 @@ def test_root_type_context_is_an_allowlist():
                    "_sys_content = _root_mod.ROOT_RULES.strip()",
                    "grok_messages = _root_mod.build_messages(\n                _static_sys, _dyn_sys, _root_hist, list(_protect_msgs))"):
         assert needle in s, needle
-    assert re.search(r"_root_hist = \[.*?SUMMARY_PREFIX", s, re.S), "no rolling summary in a root turn"
+    # A root turn reads no notes on evicted turns (evicted_record) either.
+    assert re.search(r"_root_hist = \[.*?RECORD_PREFIX", s, re.S), "no evicted-turn record in a root turn"
 
 
 def test_untrusted_connections_mark_the_turn():

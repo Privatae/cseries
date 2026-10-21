@@ -1,0 +1,2 @@
+# 2026-10-19 (the OAuth returns on a Host the internet reaches): a provider's redirect back arrives without the SameSite=Strict session cookie, so the integrations, gitea and MCP returns are let through the Host's gates for GET only, each reaching a handler that acts only on a state this Host made, kept on this Host and good once; POST, a path that is no provider key and a provider with no manifest are refused; gitea trades a code once, never past ten minutes. In-process; no database, no network.
+test_oauth_callbacks_unit.py

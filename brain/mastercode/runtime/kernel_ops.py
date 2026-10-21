@@ -91,6 +91,14 @@ _EXPOSED_PREFIXES: tuple[str, ...] = (
     # cause here is the owner's own rows arriving in the owner's own Host. The
     # kernel never names a subject; it cannot.
     "/api/applications/sites/data",
+    # The apps' kept data on this machine (the local runtime): GET lists
+    # each app's data volume, installed or removed, with its size and the disk's
+    # floors. A read, so the Host can tell the person what data removed apps
+    # left behind and what it takes. Gated execute:install (bit 16), the install
+    # flow's own scope. Deleting a removed app's data is permanent and the
+    # person's act alone: .../app-data/{app_id} is in _WALLED_PATHS, which wins
+    # over this prefix.
+    "/api/applications/runtime/app-data",
     # The peer app lane: an installed app's peers, grants, sends, outbox and inbox on the direct
     # host<->host lane. Entity-domain like circles (read:peer_app at the
     # READ_MEMORY bit, write:peer_app at WRITE_MEMORY), so "did the veterans
@@ -210,6 +218,20 @@ _WALLED_PATHS: frozenset[str] = frozenset({
     "/api/backup/key/register",
     "/api/backup/key/retire",
     "/api/backup/key/recovery/adopt",
+    # The recovery key the owner made on this Host (its public half), and the
+    # key to the owner's own bucket: who backups go to, and with what.
+    "/api/backup/key/recovery/own",
+    "/api/backup/storage-key",
+    # The backups on this machine: what leaves the Host as a file (download,
+    # export), what comes back to replace it (upload, restore), and the list
+    # those are chosen from.
+    "/api/backup/files",
+    "/api/backup/files/{stamp}/download",
+    "/api/backup/files/{stamp}/link",
+    "/api/backup/files/download/{ticket}",
+    "/api/backup/files/upload",
+    "/api/backup/files/restore",
+    "/api/backup/export",
     # Retired (410), and walled all the same.
     "/api/backup/key/generate",
     "/api/backup/key/escrow",
@@ -283,6 +305,21 @@ _WALLED_PATHS: frozenset[str] = frozenset({
     "/api/connector/messages",
     "/api/connector/messages/sent",
     "/api/connector/turns/{turn_id}",
+    # Deleting the data a removed app left on this machine. It cannot be undone,
+    # so it is the person's Delete in the App Store; the list above it
+    # (GET /api/applications/runtime/app-data) stays the Host's to read. Keyed
+    # by the route's TEMPLATE, like the oversight entry.
+    "/api/applications/runtime/app-data/{app_id}",
+    # Signing in to an MCP server (server/routes/mcp_oauth.py): starting a
+    # sign-in (which can also set the OAuth client the person entered), signing
+    # out, and the authorization server's redirect that finishes one. Each
+    # decides which account the Host acts as on that server, so all three are
+    # the person's, on the server's card in the Network app. /api/mcp is not an
+    # exposed prefix; walled anyway so the classification survives any later
+    # exposure, as /api/vault/user-keys is.
+    "/api/mcp/oauth/{name}/start",
+    "/api/mcp/oauth/{name}/sign-out",
+    "/api/mcp/oauth/callback",
 })
 
 _CONNECTOR_WALL = (
@@ -291,6 +328,18 @@ _CONNECTOR_WALL = (
     "connect a messaging account, use propose_nac_policy kind=connector; the person "
     "finishes the pairing in the Network app. nac_status lists connectors, and "
     "revoke_nac_rule kind=connector ends one.")
+
+_BACKUP_FILES_WALL = (
+    "The backup files on this machine are the owner's to take away or bring back: "
+    "downloading one, making an export, uploading a file and restoring from it are their "
+    "acts, in the Backups app (a restore also takes their code). You can read how the "
+    "backups went with GET /api/backup/runs.")
+
+_MCP_SIGNIN_WALL = (
+    "Signing in to an MCP server, and signing out of one, are the person's own acts: "
+    "they decide which account you use on that server. They are the Sign in and Sign "
+    "out buttons on the server's card in the Network app, and the sign-in finishes in "
+    "the person's browser. Tell them the server needs a sign-in and where to do it.")
 
 # Why a walled path is walled, where it is NOT the credential-bytes reason the
 # original entries share. run_kernel_op relays this, so the host tells the user
@@ -318,6 +367,28 @@ _WALL_REASONS: dict[str, str] = {
     "/api/connector/messages": _CONNECTOR_WALL,
     "/api/connector/messages/sent": _CONNECTOR_WALL,
     "/api/connector/turns/{turn_id}": _CONNECTOR_WALL,
+    "/api/backup/key/recovery/own": (
+        "Choosing the recovery key every backup is encrypted to is the owner's own act: "
+        "they make it in the Backups app, keep it, and confirm it with their code. You can "
+        "read which key is in use with GET /api/backup/settings."),
+    "/api/backup/storage-key": (
+        "The key to the owner's own bucket is the owner's to give: they enter it in "
+        "Settings, Backup, and it goes straight into the vault."),
+    "/api/backup/files": _BACKUP_FILES_WALL,
+    "/api/backup/files/{stamp}/download": _BACKUP_FILES_WALL,
+    "/api/backup/files/{stamp}/link": _BACKUP_FILES_WALL,
+    "/api/backup/files/download/{ticket}": _BACKUP_FILES_WALL,
+    "/api/backup/files/upload": _BACKUP_FILES_WALL,
+    "/api/backup/files/restore": _BACKUP_FILES_WALL,
+    "/api/backup/export": _BACKUP_FILES_WALL,
+    "/api/applications/runtime/app-data/{app_id}": (
+        "Deleting the data a removed app left on this machine cannot be undone, so it is "
+        "the person's own act: the Delete button under 'Data kept from removed apps' in "
+        "the App Store. You can read what each app keeps, and how much, with GET "
+        "/api/applications/runtime/app-data."),
+    "/api/mcp/oauth/{name}/start": _MCP_SIGNIN_WALL,
+    "/api/mcp/oauth/{name}/sign-out": _MCP_SIGNIN_WALL,
+    "/api/mcp/oauth/callback": _MCP_SIGNIN_WALL,
 }
 
 # Method-aware carve-out. _WALLED_PATHS is keyed by PATH, so it can only say

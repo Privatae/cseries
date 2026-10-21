@@ -1,0 +1,20 @@
+# The local runtime's socket (cseries-runtime). Its directory is mounted into
+# the Host container, which holds the cseries-runtime group: the Host alone can
+# enter it. The runtime then answers only uid 1000 inside cseries-host.service's
+# cgroup, so the machine's own uid-1000 user is refused too.
+[Unit]
+Description=C-Series local runtime socket
+
+[Socket]
+# Made here rather than by tmpfiles (the WSL guest runs no tmpfiles at boot),
+# before the socket, with the group that lets the Host in.
+ExecStartPre=/usr/bin/install -d -m 0750 -o root -g cseries-runtime /run/cseries-runtime
+ListenStream=/run/cseries-runtime/runtime.sock
+SocketUser=root
+SocketGroup=cseries-runtime
+SocketMode=0660
+DirectoryMode=0750
+Accept=no
+
+[Install]
+WantedBy=sockets.target

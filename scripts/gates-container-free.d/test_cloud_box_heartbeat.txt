@@ -1,0 +1,2 @@
+# 2026-10-19 (C-Series Cloud box): the heartbeat body has the fields the platform reads (backup.paused among them: only the query's t or f, else null), null for what the box cannot read, RFC 3339 UTC times; X-Machine-Signature verifies over privatae-machine-heartbeat-v1, machine_id, ts and the body's sha256 and fails for any change; the key is made once, 0600; an undeliverable post changes nothing. In-process; no network.
+test_cloud_box_heartbeat.py

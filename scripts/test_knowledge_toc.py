@@ -12,7 +12,7 @@ WHAT THIS RATCHETS:
   3. EVERY TOC ITEM CARRIES AN id (every item carries its row id, which
      is what makes provenance answerable by `read` instead of recited):
      episodes, artifacts, tool_trail.tasks, related, goals.open,
-     goals.resolved, summary.
+     goals.resolved. No summary lane: the rolling summary is retired.
   4. A READ IS AN EVENT — `chat_threads op='read'` on a thread ref, from
      inside a turn that has a thread, writes EXACTLY ONE circles_thread_links
      row reason='recall'. The same call with no thread on the turn
@@ -34,8 +34,10 @@ WHAT THIS RATCHETS:
 
 Seeded through the real writers wherever one exists: circles_threads.
 create_thread, memory_engine.write_turn_row (what session.py:2660 calls, with
-session.py:2608-2612's tag shape), thread_consolidator._store_summary for the
-summary row, thread_consolidator.stash_tool_artifacts for the artifact.
+session.py:2608-2612's tag shape), circles_threads.set_thread_topic for the
+topic (close_turn's own call, its one writer). The artifact is a user_context
+row in the shape the retired tool-result capture wrote (nothing writes new
+ones; a Host keeps those it has).
 Typed goal rows are inserted directly, in the scope shape the in-turn writers
 stamp (the thread's source_context). No row can be 'unresolved' since v235
 (the type is retired and the CHECK refuses it), so the block must name none.
@@ -76,14 +78,9 @@ SEEDED_REPOS = 1
 # A non-zero cost and one supersession so thread_weight's cost_usd and
 # superseded are exercised for real instead of trivially 0.
 SEEDED_COST_USD = 0.0473
-# The summary is stored a moment before the block renders, so its age line
-# reads "0m old". An age is a fact about the clock, not about weight.
-SUMMARY_AGE_MINUTES = 0
-
 ALLOWED_INTEGERS = {
     SEEDED_TURNS, SEEDED_OPEN_GOALS, SEEDED_RESOLVED_GOALS, SEEDED_UNRESOLVED,
     SEEDED_ARTIFACTS, SEEDED_RELATED, SEEDED_TASKS, SEEDED_REPOS,
-    SUMMARY_AGE_MINUTES,
 }
 
 # The host is never handed a number it could narrate as knowledge.
@@ -205,9 +202,6 @@ def _missing_ids(payload: dict) -> list[str]:
         for i, item in enumerate((payload.get("goals") or {}).get(bucket) or []):
             if not isinstance(item, dict) or item.get("id") in (None, ""):
                 bad.append(f"goals.{bucket}[{i}]")
-    summary = payload.get("summary")
-    if summary is not None and summary.get("id") in (None, ""):
-        bad.append("summary")
     return bad
 
 
@@ -228,7 +222,6 @@ async def main() -> int:
     try:
         from mastercode import circles_threads as ct
         from mastercode import knowledge_toc as kt
-        from mastercode import thread_consolidator as tc
         from mastercode.runtime import tools as rt
 
         await pool.execute(
@@ -257,28 +250,21 @@ async def main() -> int:
         check("turn rows landed through write_turn_row",
               len(turn_ids) == SEEDED_TURNS and all(turn_ids), str(turn_ids))
 
-        # The rolling summary, through the consolidator's own writer.
-        summary_id, version = await tc._store_summary(
-            pool, TEST_EID, SESSION, src_a,
-            "The user is reconciling invoices.", None, SEEDED_TURNS,
-            segment_topic=TOPIC)
-        check("summary row landed via _store_summary (v1)",
-              summary_id is not None and version == 1,
-              f"id={summary_id} v={version}")
+        # The topic, as close_turn (its one writer) sets it.
+        await ct.set_thread_topic(pool, TEST_EID, a_id, TOPIC)
         a_row = await ct.get_thread(pool, TEST_EID, a_id)
-        check("_store_summary wrote the topic onto circles_threads.topic",
+        check("the topic is on circles_threads.topic",
               a_row is not None and a_row["topic"] == TOPIC, json.dumps(a_row))
         # Beta shares the topic, so it is RELATED by lookup with no
         # link row — the link half is exercised separately below.
         await ct.set_thread_topic(pool, TEST_EID, b_id, TOPIC)
 
-        art = await tc.stash_tool_artifacts(
-            pool, TEST_EID, SESSION, src_a,
-            [{"tool": "read_url", "content": ARTIFACT_TEXT}],
-            turn_id=str(turn_ids[0]))
-        check("artifact stashed through stash_tool_artifacts",
-              int((art or {}).get("stashed") or 0) == SEEDED_ARTIFACTS,
-              json.dumps(art))
+        art = await pool.fetchval(
+            "INSERT INTO user_context (entity_id, title, content, source, status, metadata)"
+            " VALUES ($1, 'read_url result', $2, 'tool:read_url', 'raw', $3::jsonb) RETURNING id",
+            TEST_EID, ARTIFACT_TEXT, json.dumps({"artifact": True, "source_context": src_a,
+                                                 "turn_id": str(turn_ids[0])}))
+        check("a captured tool result (the retired capture's row shape) is in place", art is not None)
 
         for i in range(SEEDED_OPEN_GOALS):
             await _seed_typed(pool, a_id, "goal", f"open goal {i}")
@@ -368,18 +354,17 @@ async def main() -> int:
 
         # ── 3. every item in the pulled payload carries an id ─────────────
         payload = await kt.build_toc(pool, TEST_EID, a_id, session_id=SESSION)
-        check("3. the TOC returned every lane",
+        check("3. the TOC returned every lane, and no summary lane",
               all(k in payload for k in ("thread", "episodes", "artifacts",
-                                         "tool_trail", "related", "goals",
-                                         "summary")),
+                                         "tool_trail", "related", "goals"))
+              and "summary" not in payload,
               str(sorted(payload.keys())))
         check("3. the TOC is not empty (episodes, artifacts, tasks, related, "
-              "goals, summary all present)",
+              "goals all present)",
               bool(payload["episodes"]) and bool(payload["artifacts"])
               and bool(payload["tool_trail"]["tasks"])
               and bool(payload["related"]) and bool(payload["goals"]["open"])
-              and bool(payload["goals"]["resolved"])
-              and payload["summary"] is not None,
+              and bool(payload["goals"]["resolved"]),
               json.dumps({k: (len(v) if isinstance(v, list) else "…")
                           for k, v in payload.items()}))
         missing = _missing_ids(payload)
@@ -387,9 +372,6 @@ async def main() -> int:
         check("3. the episode's id is a real, openable turn row",
               payload["episodes"][0]["id"] in turn_ids,
               f"{payload['episodes'][0]['id']} not in {turn_ids}")
-        check("3. the summary item carries the summary row's id",
-              payload["summary"]["id"] == summary_id,
-              f"{payload['summary']['id']} != {summary_id}")
 
         # ── 4. a read is an event ─────────────────────────────────────────
         await pool.execute(
@@ -553,7 +535,7 @@ async def main() -> int:
         hit = await kt.render_block(cpool, TEST_EID, a_id, session_id=SESSION)
         hit_sql = list(cpool.calls)
         check("7. a second render with no new rows reads ONLY the stamp — no "
-              "weight, artifact, trail or summary query",
+              "weight, artifact or trail query",
               hit == miss and len(hit_sql) == 1
               and "max(created_at)" in hit_sql[0],
               f"{len(hit_sql)} queries: {[q.strip()[:60] for q in hit_sql]}")

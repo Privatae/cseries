@@ -1,0 +1,15 @@
+[Unit]
+Description=Privatae bastion - your secure door into your private mesh (tunnel + lanes)
+After=network-online.target
+Wants=network-online.target
+[Service]
+Type=simple
+# Runs as root on purpose (no User=): the networked bastion's ops need it and the
+# anchor claim is root-proved. HOME=/root puts the state under /root/.config.
+Environment=HOME=/root
+ExecStart=/usr/local/bin/privatae-bastion run
+Restart=always
+RestartSec=2
+LimitNOFILE=65536
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,16 @@
+# The pairing-window helper's socket. The Host container mounts
+# /run/cseries-door and holds the cseries group, so it alone can connect;
+# the helper answers only uid 1000 (cseries-door-helper).
+[Unit]
+Description=C-Series Cloud pairing-window helper socket
+
+[Socket]
+ListenStream=/run/cseries-door/helper.sock
+SocketUser=root
+SocketGroup=cseries
+SocketMode=0660
+DirectoryMode=0750
+Accept=no
+
+[Install]
+WantedBy=sockets.target

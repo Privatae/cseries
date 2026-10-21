@@ -1,0 +1,13 @@
+# 2026-10-20: a Host with no platform backs itself up (server/host_backup.py).
+# Where backups go (the owner's choice in Settings, Backup, else the network's
+# storage for a member and a folder on this machine for a standalone Host; a
+# Host told to use the network while not on one writes nothing and says so once
+# per scheduled time); the recovery key the owner makes on the Host stays the
+# active key until they replace it (an offer from the account page waits, a
+# transfer still retires it); a run to a folder or a bucket writes one
+# encrypted file and its key file that the recovery key opens, sends nothing
+# over the bridge, keeps the newest backups only and never one a restore is
+# reading; backup.report goes out for a member and never for a standalone Host;
+# an export is recorded apart from the backups. Real age, a stand-in pg_dump
+# and pool; no pod, no DB server, no network.
+test_standalone_backups.py

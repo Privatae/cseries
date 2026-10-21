@@ -238,6 +238,50 @@ def sign_state(payload: dict[str, Any]) -> str:
 STATE_PREFIX_SEP = "~"
 
 
+#: How long a state this Host handed out stays good (verify_state's max_age_s).
+STATE_TTL_S = 900
+#: The nonce of every state this Host handed out and has not seen back: its
+#: sha-256 -> use by (time.monotonic()). The signature shows a state is this
+#: Host's; this shows it is used once. The callback is reached without a
+#: session (middleware/localhost_only.is_oauth_callback), so a state that
+#: verified once must not sign in a second account later. In memory: the
+#: server is one process, and a state lives for one sign-in.
+_pending_states: dict[str, float] = {}
+_PENDING_STATES_MAX = 256
+
+
+def _nonce_key(nonce: str) -> str:
+    return hashlib.sha256(nonce.encode("utf-8", "ignore")).hexdigest()
+
+
+def mint_state(state_payload: dict[str, Any]) -> str:
+    """A signed state for `state_payload`, with a fresh time and nonce, which
+    claim_state accepts once within STATE_TTL_S."""
+    now_m = time.monotonic()
+    for k in [k for k, until in _pending_states.items() if until <= now_m]:
+        del _pending_states[k]
+    while len(_pending_states) >= _PENDING_STATES_MAX:
+        del _pending_states[next(iter(_pending_states))]
+    payload = dict(state_payload)
+    payload["ts"] = int(time.time())
+    payload["nonce"] = _secrets.token_urlsafe(16)
+    _pending_states[_nonce_key(payload["nonce"])] = now_m + STATE_TTL_S
+    return sign_state(payload)
+
+
+def claim_state(state: str) -> dict[str, Any] | None:
+    """The payload of a state this Host minted (mint_state) and has not seen
+    back, or None; once claimed it is spent."""
+    payload = verify_state(state or "", STATE_TTL_S)
+    nonce = payload.get("nonce") if payload else None
+    if not isinstance(nonce, str):
+        return None
+    until = _pending_states.pop(_nonce_key(nonce), None)
+    if until is None or until <= time.monotonic():
+        return None
+    return payload
+
+
 def verify_state(state: str, max_age_s: int = 900) -> dict[str, Any] | None:
     """Verify the signature + freshness on a state token. Returns the
     decoded payload or None if invalid.
@@ -293,11 +337,7 @@ async def authorize_url(
         logger.warning("no OAuth creds for family=%s", family)
         return None
 
-    payload = dict(state_payload)
-    payload["ts"] = int(time.time())
-    payload["nonce"] = _secrets.token_urlsafe(12)
-
-    state = sign_state(payload)
+    state = mint_state(state_payload)
     if state_prefix:
         if STATE_PREFIX_SEP in state_prefix:
             # Would split wrong at the far end and route somewhere unintended.

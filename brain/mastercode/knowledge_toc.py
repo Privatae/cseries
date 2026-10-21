@@ -1,8 +1,9 @@
 """The knowledge table of contents — one pushed block, one pulled payload.
 
-The problem this answers: context is PUSHED. Every turn gets the rolling
-summary, then verbatim turns to fill the budget, then pre-fired memories, and
-the host has to think to reach for anything else. The nearest index it had was
+The problem this answers: context is PUSHED. Every turn gets where the
+thread stands, then verbatim turns to fill the budget (with the Host's own
+notes on the turns that fell out), then pre-fired memories, and the host has
+to think to reach for anything else. The nearest index it had was
 `chat_threads op='list'` — a list of scopes, not one scope's contents.
 
 Two halves, deliberately asymmetric:
@@ -12,7 +13,7 @@ Two halves, deliberately asymmetric:
                       the pull; it is not itself the knowledge.
   build_toc(...)      the PULLED payload behind `chat_threads op='toc'`:
                       episodes, artifacts, the tool trail, related threads,
-                      open/resolved goals, the live summary. Every item
+                      open/resolved goals. Every item
                       carries its row id, so the existing `read` ops open
                       any of them and provenance is answerable by id.
 
@@ -38,8 +39,8 @@ THREE RULES THE CODE HERE ENFORCES:
 Typed memory rows (goals, unresolved items) and artifacts are NOT turn rows,
 so _turn_row_where does not apply to them — they are matched on the same
 {kind, ref} descriptor they were stamped with when they were derived
-(memory_engine.py:2460-2461 for entity_memory; thread_consolidator.py:499-505
-for user_context).
+(memory_engine.py:2460-2461 for entity_memory; the retired tool-result
+capture stamped user_context rows the same way).
 """
 from __future__ import annotations
 
@@ -255,16 +256,14 @@ async def scope_episodes(
 
 async def scope_artifacts(pool, entity_id: int, src_ctx: dict,
                           *, limit: int = ARTIFACTS_LIMIT) -> list[dict]:
-    """The thread's captured tool results — user_context rows stashed by
-    stash_tool_artifacts (thread_consolidator.py:446), tagged with this
-    scope's descriptor (:499-505) under source 'tool:<name>'.
+    """The thread's captured tool results: user_context rows a turn's tool
+    results were once stashed as (source 'tool:<name>', metadata.artifact,
+    tagged with this scope's descriptor). Nothing writes new ones (the
+    capture and the separate model call that curated it are retired); a
+    Host keeps the rows it has, and they are read here.
 
-    Dropped rows are excluded: the janitor sets status='dismissed' on a drop
-    (thread_consolidator.py:_curate_artifacts), which is the predicate every
-    user_context recall lane already filters on. `kept` is the janitor's
-    verdict, metadata.artifact_verdict == 'keep' (written alongside
-    artifact_processed in the same update).
-    """
+    Dismissed rows are excluded, the predicate every user_context recall
+    lane already filters on."""
     args: list = [entity_id]
     where = _typed_scope(args, src_ctx=src_ctx)
     where.append("source LIKE 'tool:%'")
@@ -473,11 +472,11 @@ async def thread_weight(pool, entity_id: int, thread_id, *,
                        `corrects_earlier`, batch_consolidator.py:818) and for
                        a dedup merge alike, and the two columns cannot tell
                        them apart — so this counts supersessions, which is
-                       all an ordering input needs to mean. Summaries use the
-                       same two columns for their own rolling supersede
-                       (thread_consolidator._store_summary:305-312) and are
-                       excluded: counting them would score a thread by how
-                       often its summary was rewritten.
+                       all an ordering input needs to mean. Summary rows
+                       (the retired rolling summary, kept for the as-of
+                       view) used the same two columns for their own
+                       rewrites and are excluded: counting them would score
+                       a thread by how often its summary was rewritten.
       turns            memory_engine.count_scope_turns (→ _turn_row_where).
                        `count_turns=False` skips that full-scope count and
                        leaves the field None — for a caller that does not
@@ -638,33 +637,12 @@ def rank_key(weight: dict) -> tuple:
 # ── related threads ────────────────────────────────────────────
 
 
-async def _segment_topics(pool, entity_id: int, src_ctx: dict) -> list[str]:
-    """Every topic this thread has been about — the segment_topic on each
-    summary row in its chain (thread_consolidator._store_summary:278-279
-    writes it; the chain survives as superseded rows, :305-312). The CURRENT
-    topic is the live summary's; the rest are what co-occurred with it here.
-    """
-    args: list = [entity_id]
-    where = _typed_scope(args, src_ctx=src_ctx)
-    where.append("memory_type = 'summary'")
-    where.append("metadata->>'source_kind' = 'thread_consolidator'")
-    where.append("metadata->>'segment_topic' IS NOT NULL")
-    try:
-        rows = await pool.fetch(
-            "SELECT DISTINCT metadata->>'segment_topic' AS topic "
-            f"FROM entity_memory WHERE {' AND '.join(where)}", *args)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("toc segment topics failed (entity=%s): %s", entity_id, exc)
-        return []
-    return [r["topic"] for r in rows if r["topic"]]
-
-
 async def related_threads(pool, entity_id: int, thread_id, *,
                           own_row: dict | None = None) -> list[dict]:
     """Threads related to this one, ordered by weight. The weight is
     NOT in the output — it decides the order and is then gone.
 
-    Three sources, all counted events or exact lookups, never the graph
+    Two sources, all counted events or exact lookups, never the graph
     (a topic node would be high-degree by design and memory_graph's hub
     rule would drop it):
 
@@ -672,13 +650,12 @@ async def related_threads(pool, entity_id: int, thread_id, *,
               thread on the user's behalf, or a Split. reason is the
               row's own: 'recall' or 'split'.
       topic   another thread whose circles_threads.topic is this thread's
-              topic. Exact match, a lookup and not a score.
-      topic   (co-occurrence) another thread whose topic is any topic THIS
-              thread has been about across its summary chain.
+              topic. Exact match, a lookup and not a score. The topic is the
+              Host's own (close_turn is its one writer); the topics a retired
+              summary call once wrote are not read.
 
     The legacy scope has no row and no links (circles_threads.write_link is a
-    no-op for it), so its relations come from the topic lookup alone — via
-    the live summary's segment_topic, which the legacy scope does have.
+    no-op for it), and no topic of its own: it has no relations.
 
     `own_row` is this thread's own list-shape row when the caller already
     read it (render_block does, one line above): ct.get_thread costs the row
@@ -712,7 +689,7 @@ async def related_threads(pool, entity_id: int, thread_id, *,
             log.warning("toc links failed (entity=%s, thread=%s): %s",
                         entity_id, thread_id, exc)
 
-    topics = await _segment_topics(pool, entity_id, _descriptor(thread_id))
+    topics: list[str] = []
     own = own_row
     if own is None:
         try:
@@ -771,30 +748,16 @@ async def build_toc(pool, entity_id: int, thread_id: str | None,
     real scope with real rows and is served here exactly like a thread.
 
     Every item carries its row id: an episode its first/last turn id, an
-    artifact its user_context id, a goal its entity_memory id, the summary
-    its row id, a related thread its circles_threads id. That is what makes
-    provenance answerable on demand rather than recited by default —
-    the host reads by id when asked where something came from.
+    artifact its user_context id, a goal its entity_memory id, a related
+    thread its circles_threads id. That is what makes provenance answerable
+    on demand rather than recited by default — the host reads by id when
+    asked where something came from. (No summary: no model outside the
+    Host's turn writes one; evicted_record.)
     """
     from mastercode import circles_threads as ct
-    from mastercode.thread_consolidator import get_live_summary
 
     src = _descriptor(thread_id)
     thread = await ct.get_thread(pool, entity_id, thread_id)
-
-    summary = None
-    try:
-        # get_live_summary(pool, entity_id, src_ctx) -> dict | None
-        # (thread_consolidator.py:199) — {id, content, version, segment_topic,
-        # created_at, created_iso}. 'Live' = active and not superseded.
-        row = await get_live_summary(pool, entity_id, src)
-        if row:
-            summary = {"id": row.get("id"), "content": row.get("content") or "",
-                       "version": row.get("version"),
-                       "topic": row.get("segment_topic"),
-                       "created_at": row.get("created_iso")}
-    except Exception as exc:  # noqa: BLE001
-        log.warning("toc summary failed (entity=%s): %s", entity_id, exc)
 
     return {
         "thread": thread,
@@ -805,7 +768,6 @@ async def build_toc(pool, entity_id: int, thread_id: str | None,
                                              session_id=session_id),
         "related": await related_threads(pool, entity_id, thread_id),
         "goals": await scope_goals(pool, entity_id, src),
-        "summary": summary,
     }
 
 
@@ -840,13 +802,9 @@ async def _topic_reach(pool, entity_id: int, thread_id, topic: str | None) -> in
     explanation_level stays user-set.
 
     It excludes `thread_id` BY ID in the SQL rather than subtracting 1 from
-    the total. Subtracting 1 assumed the current thread's topic came from its
-    own `circles_threads.topic` column and so was always in the count(*) —
-    but `topic` here can also come from the LIVE SUMMARY's segment_topic
-    (render_block passes `topic = topic or srow.get("segment_topic")`), which
-    the thread's own row may not have adopted yet. In that case the thread is
-    not in the count at all, and subtracting 1 undercounted every other
-    thread sharing that topic by one.
+    the total, so the count is of the other threads whatever the current
+    thread's own row holds (render_block passes the row's own
+    `circles_threads.topic`).
     """
     if not topic:
         return 0
@@ -874,8 +832,8 @@ def _flat(value) -> str:
     goes through this.
 
     The twelve-line cap is applied by slicing `lines` (BLOCK_MAX_LINES), and
-    a title or a segment_topic is free text — the user types the first and
-    the consolidator's model writes the second. One embedded newline turns
+    a title or a topic is free text — the user types the first and the Host
+    names the second in its own turn (close_turn). One embedded newline turns
     one element of that list into two rendered lines and the cap stops
     holding, so the cap is only real if no value can carry a newline.
     """
@@ -892,18 +850,12 @@ def _flat(value) -> str:
 # already invalidated or re-reads a scope nothing has touched. The stamp is
 # exact in the direction that matters — a new turn in the scope always misses.
 #
-# WHAT THE STAMP CANNOT SEE: a summary, goal or artifact written with NO new
-# turn row in the scope. That does not happen in practice — every one of those
-# writers runs as a post-turn task OF a turn in that same scope
-# (thread_consolidator, batch_consolidator, stash_tool_artifacts), so the row
-# that triggered them has already moved the stamp, and the next render in this
-# scope is a miss anyway. A user RENAME is the one edit with no row behind it,
-# and it reaches the block on the next message in that thread — which is the
-# next time the block is rendered at all.
-#
-# The same holds for the one clock-derived string in
-# the block, the summary's age: it is re-derived on every miss, and a hit
-# means no message has been sent in this thread since it was derived.
+# WHAT THE STAMP CANNOT SEE: a goal written with NO new turn row in the
+# scope. That does not happen in practice: its writer (close_turn) runs in a
+# turn OF that same scope, whose row has already moved the stamp, so the next
+# render in this scope is a miss anyway. A user RENAME is the one edit with no
+# row behind it, and it reaches the block on the next message in that thread,
+# which is the next time the block is rendered at all.
 _BLOCK_CACHE: dict[tuple, tuple] = {}
 _BLOCK_CACHE_MAX = 512
 
@@ -944,8 +896,8 @@ async def render_block(pool, entity_id: int, thread_id, *, session_id: str) -> s
     WHEN IT IS EMPTY. A real thread always renders: its identity and size
     are facts the host has nowhere else, and a brand-new thread saying
     "0 messages, nothing yet" is exactly a first turn. The LEGACY scope
-    renders only when it has something to say — a live summary, an open goal
-    or unresolved item, an artifact, a related thread, or a tool-trail item.
+    renders only when it has something to say — an open goal or unresolved
+    item, an artifact, a related thread, or a tool-trail item.
     Turn count alone does not count as something to say there: every Circles
     chat ever written is in that scope, so a line reporting its size would
     ride every legacy turn forever and tell the host nothing it can act on.
@@ -958,7 +910,8 @@ async def render_block(pool, entity_id: int, thread_id, *, session_id: str) -> s
               count_scope_turns, cost) · artifacts 1 · tool trail 1 ·
               summary 1 · related_threads 4-8 (its own get_thread = a THIRD
               full-scope count) · topic reach 1.
-      AFTER   11-15 on a miss: the thread row and its count are read ONCE
+      AFTER   10-14 on a miss (no summary read since the rolling summary was
+              retired): the thread row and its count are read ONCE
               and passed through (thread_weight count_turns=False,
               related_threads own_row=), and the stamp query is +1.
               1 on a HIT — the stamp query alone.
@@ -991,34 +944,20 @@ async def render_block(pool, entity_id: int, thread_id, *, session_id: str) -> s
     # (circles_threads._turn_count, through get_thread) and never recounted.
     turn_count = int(thread.get("turn_count") or 0)
 
-    # Every read here is bounded: weight, artifacts, trail and the summary
-    # are single-scope reads, and related_threads is batched (two queries
+    # Every read here is bounded: weight, artifacts and trail are
+    # single-scope reads, and related_threads is batched (two queries
     # for all candidates, never one per candidate), so all of them run
     # before the legacy scope decides whether it has anything to say.
     weight = await thread_weight(pool, entity_id, thread_id, count_turns=False)
     artifacts = await scope_artifacts(pool, entity_id, src)
     trail = await scope_tool_trail(pool, entity_id, src, session_id=session_id)
 
-    summary_age = None
+    # The topic is the Host's own (close_turn, its only writer).
     topic = thread.get("topic")
-    try:
-        # Only while the consolidator runs: with it off no
-        # summary rides the turn, and naming a frozen one's age would point
-        # the Host at context it does not have.
-        from mastercode import summary_policy as _tcm
-        if _tcm.summary_on(src):
-            from mastercode.thread_consolidator import get_live_summary
-            srow = await get_live_summary(pool, entity_id, src)
-            if srow:
-                summary_age = _age_phrase(srow.get("created_at"))
-                topic = topic or srow.get("segment_topic")
-    except Exception as exc:  # noqa: BLE001
-        log.warning("toc block: summary unavailable (entity=%s): %s",
-                    entity_id, exc)
 
     open_n = int(weight.get("goals_open") or 0)
     unres_n = int(weight.get("unresolved") or 0)
-    has_anything = bool(summary_age or open_n or unres_n or artifacts
+    has_anything = bool(open_n or unres_n or artifacts
                         or trail.get("tasks") or trail.get("repos"))
     # Related threads count as something to say too — a legacy scope whose
     # summaries are all superseded can still share topics with real threads.
@@ -1030,8 +969,8 @@ async def render_block(pool, entity_id: int, thread_id, *, session_id: str) -> s
         _cache_put(cache_key, stamp, "")
         return ""
 
-    # A thread's title is null until the user sets one or the consolidator's
-    # first segment_topic fills it in (circles_threads.set_thread_topic), so
+    # A thread's title is null until the user sets one or the first topic the
+    # Host names in its turn fills it in (circles_threads.set_thread_topic), so
     # "untitled" is a real and common state — and it is NOT the same thing as
     # the original conversation, which is the one scope that has no row.
     if thread.get("title"):
@@ -1054,8 +993,6 @@ async def render_block(pool, entity_id: int, thread_id, *, session_id: str) -> s
     # else to say.
     if not legacy:
         head.append(_plural(turn_count, "message"))
-    if summary_age:
-        head.append(f"summary {summary_age}")
 
     lines = [
         "## This thread, by the numbers",
@@ -1085,9 +1022,7 @@ async def render_block(pool, entity_id: int, thread_id, *, session_id: str) -> s
         lines.append("RELATED      " + " · ".join(titles))
 
     if artifacts:
-        kept = sum(1 for a in artifacts if a.get("kept"))
-        tail = f" ({kept} kept by the janitor)" if kept else ""
-        lines.append(f"ARTIFACTS    {len(artifacts)} in this thread{tail}")
+        lines.append(f"ARTIFACTS    {len(artifacts)} in this thread")
 
     tasks, repos = trail.get("tasks") or [], trail.get("repos") or []
     if tasks or repos:

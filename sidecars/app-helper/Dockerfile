@@ -10,7 +10,11 @@
 #
 # CA roots are copied from the builder: upstream fetches are HTTPS-only
 # (CONNECT through the node squid still terminates TLS at the origin).
-FROM golang:1.27-alpine AS build
+# The build image pinned by digest (the 1.27.2-alpine3.24 index, all
+# architectures), so a release builds the binary from the toolchain it was
+# checked with and a moved tag changes nothing. Bump the tag and digest
+# together.
+FROM golang:1.27-alpine@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS build
 WORKDIR /src
 COPY go.mod main.go ./
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /app-helper .

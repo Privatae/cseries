@@ -7,9 +7,13 @@ server/routes/connector.py is the HTTP side; this is the rest:
        /thread <n>;
     2. a reply to a message the map knows (message_map), to that thread;
     3. a message in a platform thread the map knows, to that thread;
-    4. everything else: the Host picks (thread_pick.choose_thread, then
-       land_pick). A failed pick, or a thread closed meanwhile (PickGone),
-       runs no turn and asks the person which thread (ASK_WHICH_THREAD).
+    4. everything else is placed in software (thread_pick.place_connector):
+       a clear score-based match joins its thread; otherwise the message
+       lands in the thread this chat used last (a new one for a new chat)
+       and the Host's own turn may move it to one of the open threads its
+       frame lists (runtime/thread_choice); the reply follows the move
+       (_follow_move). No model call places a message. A thread that cannot
+       be written runs no turn and asks the person (ASK_WHICH_THREAD).
     A thread the person deleted or closed is never a landing place: 2 and 3
     pointing at one fall through to 4.
 
@@ -398,10 +402,11 @@ def parse_message(caller, body: dict) -> Incoming:
     runs nothing (403). The account is the grant's, from its signed terms.
 
     The message's text is cut of its secret shapes here, where it arrives, as
-    the turn would cut it (server/secret_cut.py): the Host's pick sends it to
-    the chat model before any turn starts, /new names a thread after its first
-    line, and a nudge carries it into a running turn, so nothing downstream
-    reads the words before they are cut."""
+    the turn would cut it (server/secret_cut.py): the placement's search
+    embeds it before any turn starts (thread_pick.place_connector), a thread
+    made for it or by /new is named after its first line, and a nudge carries
+    it into a running turn, so nothing downstream reads the words before they
+    are cut."""
     want = str(caller.account_id or "")
     got = body.get("account_id")
     got = str(got).strip() if isinstance(got, (str, int)) and not isinstance(got, bool) else ""
@@ -770,6 +775,43 @@ async def _followed_turn(reply: Reply, rec):
     return nxt
 
 
+def moved_to(frames: list) -> Optional[dict]:
+    """Where the turn's exchange was moved (the thread_moved frame, sent when
+    the Host picked its thread in the turn: runtime/thread_choice), as
+    {kind, ref, title}, or None."""
+    for f in frames:
+        if not (isinstance(f, str) and f.startswith("2:") and "thread_moved" in f):
+            continue
+        try:
+            items = json.loads(f[2:])
+        except ValueError:
+            continue
+        for it in items if isinstance(items, list) else []:
+            to = it.get("to") if isinstance(it, dict) and it.get("type") == "thread_moved" else None
+            if isinstance(to, dict) and to.get("kind") and to.get("ref"):
+                return {"kind": str(to["kind"]), "ref": str(to["ref"]), "title": str(it.get("to_title") or "")}
+    return None
+
+
+async def _follow_move(pool, reply: Reply, frames: list) -> None:
+    """The Host moved this reply's exchange to another thread in its turn:
+    the reply says where it is now, and the map's rows for this turn follow
+    it, so the chat's next message and any reply to these continue there."""
+    to = moved_to(frames)
+    if to is None or pool is None or (to["kind"], to["ref"]) == (reply.kind, reply.ref):
+        return
+    try:
+        await pool.execute(
+            "UPDATE connector_messages SET scope_kind = $3, scope_ref = $4"
+            " WHERE entity_id = $1 AND turn_id = $2", _eid(), reply.reply_id, to["kind"], to["ref"])
+    except Exception as e:  # noqa: BLE001 — the reply still goes out
+        log.warning("connector reply %s: map not moved: %s", reply.reply_id[:8], e)
+    reply.kind, reply.ref = to["kind"], to["ref"]
+    reply.title = to["title"] or reply.title
+    reply.changed = True
+    reply.lead = f"Moved to: {reply.title}" if reply.title else reply.lead
+
+
 async def _builder(reply: Reply, rec) -> None:
     from server import brain_service
 
@@ -781,6 +823,7 @@ async def _builder(reply: Reply, rec) -> None:
             start = await _follow_holds(reply, cur, out, noticed)
             pool = brain_service.get_pool()
             frames = list(cur.frames)
+            await _follow_move(pool, reply, frames)
             cards = await waiting_cards(pool, read_frames(frames)[1]) if pool is not None else []
             out.publish(await _segment_parts(reply, frames[start:], cards=cards, noticed=noticed,
                                              final=True,
@@ -804,7 +847,7 @@ async def _builder(reply: Reply, rec) -> None:
 # ── the turn ─────────────────────────────────────────────────────────────────
 
 async def start_turn(pool, caller, msg: Incoming, *, kind: str, ref: str, title: str,
-                     changed: bool, new: bool):
+                     changed: bool, new: bool, choice: Optional[dict] = None):
     """Write the inbound row, then start the person's own chat turn in that
     conversation on the real send path. A Reply (a turn it started, or a
     refusal) or a Nudge (the conversation's turn was already running)."""
@@ -829,6 +872,10 @@ async def start_turn(pool, caller, msg: Incoming, *, kind: str, ref: str, title:
         # connector_origin into the user row's tags); the header carries it
         # as words.
         send["frame"] = {"connector_origin": msg.origin.as_meta()}
+    if choice:
+        # The threads the Host may move this exchange to in its turn
+        # (runtime/thread_choice); _builder follows a move.
+        send["frame"] = {**(send.get("frame") or {}), "thread_choice": choice}
     # The connector keeps no copy of the words, and needs to say nothing about
     # it: words that land in a running turn are the server's to deliver unless
     # they came through a route whose client keeps a copy, which this is not.
@@ -1025,24 +1072,30 @@ async def route(pool, caller, msg: Incoming):
         if s and await _open(pool, eid, *s):
             target = s
 
-    # 4. the Host picks
+    # 4. placed in software (thread_pick.place_connector): a clear match
+    # joins its thread; otherwise the message lands in the chat's last
+    # thread (or a new one) and the Host's own turn may move it to one of
+    # the open threads it is shown (runtime/thread_choice). No model call.
+    choice = None
     if target is None:
-        # The pick reads the message with its label, as the turn will.
-        pick = await tp.choose_thread(
-            pool, eid,
-            message=(f"[{origin_label(msg.origin)}]\n{quoted(text)}" if msg.origin else text),
+        placed = await tp.place_connector(
+            pool, eid, message=(f"[{origin_label(msg.origin)}]\n{quoted(text)}" if msg.origin else text),
             platform=caller.platform, current=current)
-        if not pick.ok:
+        if placed is None:
             return await _ask(caller, msg)
-        landing = await _land(pool, caller, pick)
-        if landing is None:
-            return await _ask(caller, msg)
-        target, new = (landing.kind, landing.ref), landing.new
+        target, new = (placed.kind, placed.ref), placed.new
+        if placed.choice:
+            from mastercode.runtime.thread_choice import frame_value
+            choice = frame_value(surface="connector", platform=caller.platform, candidates=list(placed.choice),
+                                 landed={"kind": placed.kind, "ref": placed.ref,
+                                         "title": await _title(pool, eid, placed.kind, placed.ref),
+                                         "provisional": placed.provisional})
 
     kind, ref = target
     title = await _title(pool, eid, kind, ref)
     return await start_turn(pool, caller, dataclasses.replace(msg, text=text), kind=kind,
-                            ref=ref, title=title, changed=new or (kind, ref) != current, new=new)
+                            ref=ref, title=title, changed=new or (kind, ref) != current, new=new,
+                            choice=choice)
 
 
 # One chat's messages are placed one at a time, in the order they came: a

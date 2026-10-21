@@ -1,0 +1,442 @@
+#!/usr/bin/python3 -I
+"""The cloud box's own update, run daily by cseries-cloud-update.timer.
+
+  cseries-cloud-update [--release-base URL] [--trust-key-file FILE]
+                       [--health-timeout SECONDS]
+
+1. Fetches cloud-release.json and its signature, <url>.<16 hex>.sig, from the
+   release location (cloud.json release_base, by default the latest GitHub
+   release).
+2. Verifies the signature for kind cseries-cloud against the pinned release
+   keys, and refuses a version that is not newer than the one installed.
+3. Downloads the overlay the manifest names, checks its sha256, unpacks it
+   beside the previous one and installs it. A unit the previous overlay
+   shipped and this one does not is stopped, disabled and its file removed;
+   a unit this one adds is enabled, and started when the next boot would
+   start it (cseries_cloud.overlay_units has the rule).
+4. Points the Host at the manifest's images through cseries-guest configure,
+   pulls them, restarts and waits up to 5 minutes for the Host to be ready by
+   its deep health check (cseries-guest ready: /api/system/health/deep
+   answers "ready", so its database, its migrations and its runtime are up),
+   not merely for its web server to answer. If that fails, the previous
+   overlay and images go back and the Host is restarted on them, with the
+   units the previous overlay ran. That signed manifest is then held for 7
+   days rather than tried again at every run; any other release is taken at
+   once.
+5. When the installed bastion is older than the manifest's
+   bastion.min_version, fetches and verifies the bastion's own signed
+   manifest, swaps the binary and restarts the service (the old binary comes
+   back if the new one does not stay up).
+
+The result of every run is in /var/lib/cseries-cloud/update.json.
+--trust-key-file replaces the pinned keys with the base64 keys in FILE, one a
+line; it exists for a test machine and is never set by the timer.
+"""
+
+import argparse
+import grp
+import json
+import os
+import platform
+import shutil
+import subprocess
+import sys
+import tarfile
+import time
+
+sys.path.insert(0, "/usr/local/lib/cseries-cloud")
+import cseries_cloud as cc  # noqa: E402
+
+GUEST = "/usr/local/bin/cseries-guest"
+BASTION_UNIT = "privatae-bastion.service"
+# How long a release this box rolled back waits before it is tried again.
+HOLD_AFTER_ROLLBACK_S = 7 * 86400
+
+
+def log(msg):
+    print(f"update: {msg}", file=sys.stderr, flush=True)
+
+
+def _systemctl(*args):
+    return cc.run(["systemctl", *args])
+
+
+class Updater:
+    def __init__(self, paths, cfg, keys=cc.RELEASE_KEYS, fetch=cc.fetch,
+                 fetch_to_file=cc.fetch_to_file, guest=GUEST, systemctl=_systemctl,
+                 health_timeout=300, health_every=3.0, bastion_wait=10.0, now=time.time,
+                 gids=None):
+        self.paths = paths
+        self.cfg = cfg
+        self.keys = tuple(keys)
+        self.fetch = fetch
+        self.fetch_to_file = fetch_to_file
+        self.guest_bin = guest
+        self.systemctl = systemctl
+        self.health_timeout = health_timeout
+        self.health_every = health_every
+        self.bastion_wait = bastion_wait
+        self.now = now
+        self.gids = gids
+
+    # ── the pieces ──────────────────────────────────────────────────────────
+
+    def guest(self, *args, input=None):
+        return cc.run([self.guest_bin, *args], input=input, timeout=3600)
+
+    def healthy(self):
+        """True once the Host is READY, by its deep health check. A release
+        whose web server answers while its database or migrations are not
+        up passes a liveness check and still cannot serve a chat, so
+        liveness alone is not enough to keep a release."""
+        end = time.monotonic() + self.health_timeout
+        while True:
+            r = subprocess.run([self.guest_bin, "ready"], capture_output=True, check=False)
+            if r.returncode == 0:
+                return True
+            if time.monotonic() >= end:
+                return False
+            time.sleep(self.health_every)
+
+    def state(self):
+        return cc.read_json(self.paths.update_state(), {}) or {}
+
+    def record(self, **fields):
+        st = self.state()
+        st.update(fields)
+        st["at"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self.now()))
+        cc.write_json(self.paths.update_state(), st)
+        return st
+
+    def current_images(self):
+        """(host ref, postgres ref) of the image.conf files now in place."""
+        refs = []
+        for which in ("host", "postgres"):
+            ref = None
+            try:
+                with open(self.paths.image_conf(which), encoding="utf-8") as f:
+                    for line in f:
+                        if line.startswith("Image="):
+                            ref = line[len("Image="):].strip()
+            except FileNotFoundError:
+                pass
+            refs.append(ref)
+        return tuple(refs)
+
+    def current_release(self):
+        try:
+            with open(self.paths.release_file(), encoding="utf-8") as f:
+                return f.read().strip() or None
+        except FileNotFoundError:
+            return None
+
+    def unpack_overlay(self, manifest):
+        """The unpacked overlay the signed manifest names. A tree already
+        unpacked for this version is used again only when it came from the
+        same sha256; anything else is fetched and checked anew."""
+        v, want = manifest["version"], manifest["overlay"]["sha256"]
+        dest = self.paths.overlay_dir(v)
+        marker = os.path.join(dest, ".overlay-sha256")
+        try:
+            with open(marker, encoding="ascii") as f:
+                if f.read().strip() == want:
+                    return dest
+        except FileNotFoundError:
+            pass
+        tgz = dest + ".tar.gz"
+        got = self.fetch_to_file(manifest["overlay"]["url"], tgz, cc.MAX_OVERLAY_BYTES)
+        if got != want:
+            os.unlink(tgz)
+            raise cc.CloudError(f"the overlay hashes to {got}, the signed manifest says {want}")
+        tmp = dest + ".new"
+        shutil.rmtree(tmp, ignore_errors=True)
+        os.makedirs(tmp)
+        with tarfile.open(tgz, "r:gz") as t:
+            for m in t.getmembers():
+                if not (m.isfile() or m.isdir()):
+                    raise cc.CloudError(f"the overlay holds {m.name!r}, which is not a file "
+                                        "or a directory")
+            t.extractall(tmp, filter="data")
+        with open(os.path.join(tmp, "VERSION"), encoding="utf-8") as f:
+            if f.read().strip() != v:
+                raise cc.CloudError(f"the overlay's VERSION is not {v}")
+        with open(os.path.join(tmp, ".overlay-sha256"), "w", encoding="ascii") as f:
+            f.write(want + "\n")
+        shutil.rmtree(dest, ignore_errors=True)
+        os.replace(tmp, dest)
+        os.unlink(tgz)
+        return dest
+
+    def install_overlay(self, tree, backup=None, prev_tree=None, units=None):
+        """Install the overlay tree, reload what reads its files, then (with
+        units, a dict) switch its units against prev_tree's, the overlay
+        installed before it; see switch_units."""
+        gids = self.gids
+        if gids is None:
+            # A release can bring a group a service hands the Host (the local
+            # runtime's); bootstrap made the others.
+            for g in ("cseries-runtime",):
+                try:
+                    grp.getgrnam(g)
+                except KeyError:
+                    cc.run(["groupadd", "--system", g])
+            gids = {g: grp.getgrnam(g).gr_gid for g in ("privatae-host", "cseries")}
+        changed = cc.apply_overlay(os.path.join(tree, "root"), self.paths,
+                                   cc.template_values(self.cfg, gids), backup)
+        self.reload_for(changed)
+        if units is not None:
+            self.switch_units(prev_tree, tree, backup, units)
+        return changed
+
+    def switch_units(self, prev_tree, tree, backup, done):
+        """Units the previous overlay shipped and this one does not are
+        stopped and disabled (triggers first), and their files removed into
+        backup; then the units this one adds are enabled, and started when
+        one of cc.BOOT_TARGETS wants them. Units in both are left as they
+        are. Without the previous overlay's tree every unit of this one counts
+        as added, and nothing as removed.
+
+        Each step is written into done before it runs, so a rollback undoes
+        a step that failed half way too: done["enabled"] are disabled again,
+        done["disabled"] enabled again (done["started"] and done["restart"]
+        are the ones started)."""
+        new = cc.overlay_units(os.path.join(tree, "root"))
+        old = cc.overlay_units(os.path.join(prev_tree, "root")) if prev_tree else {}
+        removed = sorted(set(old) - set(new))
+        added = sorted(set(new) - set(old))
+        off = [u for u in removed if old[u][0]]
+        stop = [u for u in removed if not old[u][0]]
+        if off:
+            done["disabled"] = off
+            done["restart"] = [u for u in off if old[u][1]]
+            self.systemctl("disable", "--now", *off)
+        if stop:
+            done["stopped"] = stop
+            self.systemctl("stop", *stop)
+        if removed:
+            done["removed"] = cc.remove_files(self.paths, [f"{cc.UNIT_DIR}/{u}" for u in removed],
+                                              backup)
+            self.systemctl("daemon-reload")
+        enable = [u for u in added if new[u] == (True, False)]
+        start = [u for u in added if new[u] == (True, True)]
+        if enable:
+            done["enabled"] = done.get("enabled", []) + enable
+            self.systemctl("enable", *enable)
+        if start:
+            done["enabled"] = done.get("enabled", []) + start
+            done["started"] = start
+            self.systemctl("enable", "--now", *start)
+        return done
+
+    def reload_for(self, changed):
+        """Reload what reads the files in changed."""
+        self.systemctl("daemon-reload")
+        if any(c.startswith("etc/cseries-cloud/nftables/") or c.endswith("cseries-firewall")
+               for c in changed):
+            self.systemctl("reload", "cseries-firewall.service")
+        if "etc/caddy/Caddyfile" in changed:
+            self.systemctl("reload", "caddy.service")
+        if any("cseries-door-helper" in c for c in changed):
+            self.systemctl("try-restart", "cseries-door-helper.service")
+        if "etc/cseries-runtime/squid.conf" in changed:
+            self.systemctl("try-restart", "cseries-squid.service")
+        if any(c.startswith("usr/local/lib/cseries-runtime/") or c.endswith("sbin/cseries-runtime")
+               for c in changed):
+            # Its containers go with it; the Host wakes again what it holds.
+            self.systemctl("try-restart", "cseries-runtime.service")
+        return changed
+
+    def run_images(self, host_ref, pg_ref, release, force_restart, runtime=""):
+        # The Host's memory ceiling from the box's memory now, so a box
+        # resized since its bootstrap gets the ceiling of its new size.
+        limits = cc.host_limit_lines(self.paths)
+        out = self.guest("configure",
+                         input=f"host={host_ref}\npostgres={pg_ref}\nrelease={release}\n{limits}{runtime}")
+        self.guest("pull")
+        if "changed=1" in out or force_restart:
+            self.guest("restart")
+        else:
+            self.guest("start")
+        if not self.healthy():
+            raise cc.CloudError(f"the Host was not ready by its deep health check within "
+                                f"{self.health_timeout} seconds on {host_ref}")
+
+    # ── the update ──────────────────────────────────────────────────────────
+
+    def run(self, release_base=None):
+        base = (release_base or self.cfg["release_base"]).rstrip("/")
+        url = f"{base}/{cc.MANIFEST_NAME}"
+        try:
+            manifest, body, _sig = cc.fetch_signed(url, cc.KIND, self.keys, self.fetch)
+            cc.validate_manifest(manifest)
+        except cc.CloudError as e:
+            log(f"refused: {e}")
+            return self.record(result="refused", error=str(e), offered=None)
+        st = self.state()
+        installed = st.get("version") or "0.0.0"
+        new = manifest["version"]
+        if cc.parse_version(new) == cc.parse_version(installed):
+            log(f"{installed} is current")
+            return self.record(result="current", error=None, offered=new)
+        if cc.parse_version(new) < cc.parse_version(installed):
+            err = f"the release offered is {new}, older than the installed {installed}; not taken"
+            log(err)
+            return self.record(result="refused", error=err, offered=new)
+
+        # A release this box already rolled back is not tried again every day:
+        # each try restarts the Host twice and can leave it unanswering for
+        # the whole health wait. The same signed manifest is tried again after
+        # HOLD_AFTER_ROLLBACK_S (a failure can be passing, a pull that timed
+        # out), and any other release is taken at once.
+        signed = cc.sha256_hex(body)
+        held = st.get("held") or {}
+        if held.get("manifest_sha256") == signed and isinstance(held.get("at"), (int, float)) and \
+                self.now() - held["at"] < HOLD_AFTER_ROLLBACK_S:
+            err = (f"{new} was rolled back on this box at "
+                   f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(held['at']))}; it is tried "
+                   f"again {HOLD_AFTER_ROLLBACK_S // 86400} days after that, or a newer release is taken")
+            log(err)
+            return self.record(result="held", error=err, offered=new)
+
+        prev_overlay = st.get("overlay_version")
+        prev_tree = self.paths.overlay_dir(prev_overlay) if prev_overlay else None
+        prev_host, prev_pg = self.current_images()
+        prev_release = self.current_release() or installed
+        prev_runtime = cc.runtime_lines_installed(self.paths)
+        log(f"updating {installed} -> {new}")
+        try:
+            tree = self.unpack_overlay(manifest)
+        except (cc.CloudError, OSError, tarfile.TarError) as e:
+            log(f"refused: {e}")
+            return self.record(result="refused", error=str(e), offered=new)
+        # What every file the new overlay writes held before it, so a rollback
+        # puts back exactly that: a file the release added goes away, and one
+        # it replaced that the previous overlay never named comes back.
+        backup = {}
+        units = {}
+        try:
+            changed = self.install_overlay(tree, backup, prev_tree, units)
+            quadlets = any(c.startswith("etc/containers/") for c in changed)
+            self.run_images(cc.pinned(manifest["images"]["host"]),
+                            cc.pinned(manifest["images"]["postgres"]), new, quadlets,
+                            cc.runtime_lines(manifest))
+        except (cc.CloudError, OSError, subprocess.SubprocessError) as e:
+            log(f"failed: {e}; going back to {installed}")
+            back = self.roll_back(prev_overlay, backup, prev_host, prev_pg, prev_release, units,
+                                  prev_runtime)
+            return self.record(result="rolled_back", error=str(e), offered=new,
+                               rollback=back,
+                               held={"version": new, "manifest_sha256": signed, "at": self.now()})
+        self.record(version=new, overlay_version=new, result="updated", error=None, offered=new,
+                    rollback=None, held=None, units=units or None)
+        b = self.ensure_bastion(manifest["bastion"]["min_version"])
+        return self.record(bastion=b)
+
+    def roll_back(self, prev_overlay, backup, prev_host, prev_pg, prev_release, units=None,
+                  prev_runtime=""):
+        """Put the previous overlay's files, units and images back and
+        restart the Host on them. Returns what happened, for update.json."""
+        notes = []
+        units = units or {}
+        try:
+            # The units the failed overlay enabled are stopped while their
+            # files are still there to name them; the ones it disabled come
+            # back once their files do. A unit that will not move is noted
+            # and the rest of the rollback goes on: the images matter more.
+            if units.get("enabled"):
+                self._undo("disable", "--now", *units["enabled"], notes=notes)
+            if backup:
+                self.reload_for(cc.restore_files(self.paths, backup))
+                notes.append(f"overlay {prev_overlay} restored ({len(backup)} files)")
+            back_on = [u for u in units.get("disabled", ()) if u not in units.get("restart", ())]
+            if back_on:
+                self._undo("enable", *back_on, notes=notes)
+            if units.get("restart"):
+                self._undo("enable", "--now", *units["restart"], notes=notes)
+            if prev_host and prev_pg:
+                self.run_images(prev_host, prev_pg, prev_release, True, prev_runtime)
+                notes.append("previous images restored and healthy")
+            else:
+                notes.append("no previous images to restore")
+            return {"ok": True, "notes": notes}
+        except (cc.CloudError, OSError, subprocess.SubprocessError) as e:
+            notes.append(f"rollback failed: {e}")
+            log(notes[-1])
+            return {"ok": False, "notes": notes}
+
+    def _undo(self, *args, notes):
+        try:
+            self.systemctl(*args)
+            notes.append(f"systemctl {' '.join(args)}")
+        except (cc.CloudError, OSError, subprocess.SubprocessError) as e:
+            notes.append(f"systemctl {' '.join(args)} failed: {e}")
+            log(notes[-1])
+
+    def ensure_bastion(self, min_version):
+        dest = self.paths.bastion_bin()
+        have = _bastion_version(dest)
+        if have and cc.parse_version(have) and cc.parse_version(have) >= cc.parse_version(min_version):
+            return {"version": have, "changed": False}
+        try:
+            manifest, _, _ = cc.fetch_signed(cc.BASTION_MANIFEST_URL, cc.BASTION_KIND, self.keys,
+                                             self.fetch)
+            if cc.parse_version(manifest.get("version")) is None or \
+                    cc.parse_version(manifest["version"]) < cc.parse_version(min_version):
+                raise cc.CloudError(f"the published bastion {manifest.get('version')} is older "
+                                    f"than {min_version}")
+            key = "linux-arm64" if platform.machine() in ("aarch64", "arm64") else "linux-amd64"
+            b = (manifest.get("binaries") or {}).get(key) or {}
+            if not cc.SHA256_RE.match(str(b.get("sha256", ""))) or \
+                    not str(b.get("url", "")).startswith("https://"):
+                raise cc.CloudError(f"the bastion release has no {key} build")
+            new = dest + ".download"
+            got = self.fetch_to_file(b["url"], new, cc.MAX_BASTION_BYTES)
+            if got != b["sha256"]:
+                os.unlink(new)
+                raise cc.CloudError(f"the bastion download hashes to {got}, not {b['sha256']}")
+            os.chmod(new, 0o755)
+            old = dest + ".previous"
+            if os.path.exists(dest):
+                shutil.copy2(dest, old)
+            os.replace(new, dest)
+            self.systemctl("restart", BASTION_UNIT)
+            time.sleep(self.bastion_wait)
+            r = subprocess.run(["systemctl", "is-active", "--quiet", BASTION_UNIT], check=False)
+            if r.returncode != 0 and os.path.exists(old):
+                os.replace(old, dest)
+                self.systemctl("restart", BASTION_UNIT)
+                raise cc.CloudError(f"bastion {manifest['version']} did not stay up; {have} is back")
+            return {"version": manifest["version"], "changed": True}
+        except (cc.CloudError, OSError, subprocess.SubprocessError) as e:
+            log(f"bastion: {e}")
+            return {"version": have, "changed": False, "error": str(e)}
+
+
+def _bastion_version(path):
+    if not os.path.exists(path):
+        return None
+    out = subprocess.run([path, "version"], capture_output=True, text=True, timeout=30,
+                         check=False).stdout.split()
+    return out[1].lstrip("v") if len(out) >= 2 and out[0] == "privatae-bastion" else None
+
+
+def main(argv):
+    ap = argparse.ArgumentParser(prog="cseries-cloud-update")
+    ap.add_argument("--release-base")
+    ap.add_argument("--trust-key-file")
+    ap.add_argument("--health-timeout", type=int, default=300)
+    a = ap.parse_args(argv)
+    paths = cc.Paths()
+    cfg = cc.load_cloud(paths)
+    keys = cc.RELEASE_KEYS
+    if a.trust_key_file:
+        with open(a.trust_key_file, encoding="utf-8") as f:
+            keys = tuple(line.strip() for line in f if line.strip())
+    u = Updater(paths, cfg, keys=keys, health_timeout=a.health_timeout)
+    st = u.run(a.release_base)
+    print(json.dumps(st, sort_keys=True))
+    return 0 if st.get("result") in ("updated", "current") else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

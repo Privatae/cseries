@@ -113,6 +113,27 @@ def _compare_versions(a: str, b: str) -> int:
     return 0
 
 
+def _install_dir(app_id: Any, stored: Any) -> str | None:
+    """Where an installed app lives: installer.INSTALL_ROOT/<id>, the one
+    folder install_bundle extracts an app to and registers. The column is
+    not trusted for it. A restored backup's rows are anyone's, and the
+    supervisor runs a process app beside the kernel from this folder (its
+    app.yaml's command, in it): a row naming another folder that holds an
+    app.yaml would have the kernel run whatever that file says. So a row
+    names only its own app's folder, and an id that is not an app id names
+    none."""
+    if not stored:
+        return None
+    from server.applications import installer
+    from server.applications.manifest import _ID_RE
+    if not isinstance(app_id, str) or not _ID_RE.match(app_id):
+        return None
+    own = str(installer.INSTALL_ROOT / app_id)
+    if str(stored) != own:
+        log.warning("installed app %s names %r as its folder; using its own, %s", app_id, stored, own)
+    return own
+
+
 def _row_to_app(row: Any) -> InstalledApp:
     perms_raw = row["permissions"]
     if isinstance(perms_raw, str):
@@ -161,7 +182,7 @@ def _row_to_app(row: Any) -> InstalledApp:
         provenance=row["provenance"],
         entrypoint=row["entrypoint"],
         permissions=perms,
-        source_dir=row["source_dir"],
+        source_dir=_install_dir(row["id"], row["source_dir"]),
         source_signature=row["source_signature"],
         installed_at=row["installed_at"],
         upgraded_at=row["upgraded_at"],
@@ -325,7 +346,18 @@ async def register(pool: asyncpg.Pool, manifest: AppManifest, *,
         return _row_to_app(row)
 
 
+def _is_app_id(app_id: Any) -> bool:
+    """An app id as the manifest allows one (manifest._ID_RE, whole string).
+    Callers put the id in a path (INSTALL_ROOT/<id>: applications/proxy.py
+    serve_app serves files from that folder) and a URL: a row whose id is not
+    one (a restored backup's rows are anyone's) is never returned."""
+    from server.applications.manifest import _ID_RE
+    return isinstance(app_id, str) and _ID_RE.fullmatch(app_id) is not None
+
+
 async def get(pool: asyncpg.Pool, app_id: str) -> InstalledApp | None:
+    if not _is_app_id(app_id):
+        return None
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT * FROM installed_applications WHERE id = $1",
@@ -343,7 +375,7 @@ async def list_active(pool: asyncpg.Pool) -> list[InstalledApp]:
              ORDER BY provenance, id
             """
         )
-        return [_row_to_app(r) for r in rows]
+        return [_row_to_app(r) for r in rows if _is_app_id(r["id"])]
 
 
 async def uninstall(pool: asyncpg.Pool, app_id: str) -> None:

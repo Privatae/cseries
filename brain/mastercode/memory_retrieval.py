@@ -47,7 +47,7 @@ RRF_K = 60
 # The one column list every arm selects — callers map from these keys.
 _HIT_COLS = (
     "id, content, memory_type, importance, confidence, access_count, status, "
-    "metadata, created_at, project_id, "
+    "metadata, created_at, project_id, slot_topic, "
     "metadata->'source_context'->>'kind' AS sctx_kind, "
     "metadata->'source_context'->>'ref'  AS sctx_ref"
 )
@@ -474,7 +474,7 @@ async def _vector_arm(pool, entity_id, query, *, where_sql, params,
                            1 - ({content_col} <=> ${n + 1}::{cast}) AS relevance
                     FROM entity_memory
                     WHERE {where_sql} AND {content_col} IS NOT NULL
-                    ORDER BY {content_col} <=> ${n + 1}::{cast}, id
+                    ORDER BY {content_col} <=> ${n + 1}::{cast}, id DESC
                     LIMIT ${n + 2}
                     """,
                     *params, vec, candidates,
@@ -489,32 +489,83 @@ async def _vector_arm(pool, entity_id, query, *, where_sql, params,
     return hits, True, None
 
 
+# The OR of the message's words as a tsquery: its runs of letters and digits
+# joined by "or" and read by websearch_to_tsquery, which drops stopwords,
+# stems with the configuration search_tsv is built with, and never fails on
+# the person's punctuation. A message of stopwords alone is an empty query,
+# which matches nothing.
+def _any_words_sql(qp: int) -> str:
+    return (f"websearch_to_tsquery('english', regexp_replace(btrim(regexp_replace("
+            f"${qp}, '[^[:alnum:]]+', ' ', 'g')), ' ', ' or ', 'g'))")
+
+
+def _lexemes_sql(qp: int) -> str:
+    return f"tsvector_to_array(to_tsvector('english', ${qp}))"
+
+
+# A row whose slot topic (memory_slots) shares a word with the message
+# matches on that alone: the topic is what the entry is about, named by the
+# Host. idx_entity_memory_slot_topic_tsv (migrations/v241) serves it.
+_TOPIC_TSV = "to_tsvector('english'::regconfig, replace(entity_memory.slot_topic, '_', ' '))"
+# How much a topic match adds to the text rank: enough to lead every row
+# that matched on words alone (ts_rank of a short row is well under 0.5).
+_TOPIC_RANK = 0.5
+
+
 async def _lexical_arm(pool, entity_id, query, *, where_sql, params,
-                       candidates) -> tuple[list[dict], bool, Optional[str]]:
+                       candidates, any_words: bool = False) -> tuple[list[dict], bool, Optional[str]]:
     """FTS arm over search_tsv. Returns (hits, ran, why_not). A pod whose
-    schema predates v096 simply reports the arm unavailable. Never raises."""
+    schema predates v096 simply reports the arm unavailable. Never raises.
+
+    `any_words` False (the default, and what thread_pick.topic_scores reads
+    as strong evidence): a row matches when it holds EVERY content word of
+    the query (plainto_tsquery). True (the per-turn pre-fire): a row matches
+    when it holds at least two of the query's content words, or the only one
+    when the query has one. Measured on a default Host with no embedder: "Which
+    spelling do you want me to use?" matched nothing under every-word, so the
+    standing caps alone decided what rode. Two words, not one, so that one
+    common word ("use", "want") shared with the message is not a match.
+
+    Either way a row whose slot topic shares a word with the query matches,
+    and ranks above the rows that matched on words alone. Ties go to the
+    NEWER row (id DESC): of two rows that match equally, the later statement
+    leads (an older contradicted entry used to take rank 0 here)."""
     n = len(params)
+    qp = n + 1
+    if any_words:
+        q_expr = _any_words_sql(qp)
+        words_ok = (f"(search_tsv @@ qq.q AND (SELECT count(*) FROM unnest({_lexemes_sql(qp)}) x"
+                    f" WHERE x = ANY(tsvector_to_array(search_tsv)))"
+                    f" >= LEAST(2, cardinality({_lexemes_sql(qp)})))")
+    else:
+        q_expr = f"plainto_tsquery('english', ${qp})"
+        words_ok = "search_tsv @@ qq.q"
+    topic_hit = (f"(entity_memory.slot_topic IS NOT NULL AND {_TOPIC_TSV} @@ "
+                 f"{_any_words_sql(qp)})")
+    rank = f"ts_rank(search_tsv, qq.q) + CASE WHEN {topic_hit} THEN {_TOPIC_RANK} ELSE 0 END"
     # The Host's aliases (memory_curate op='alias', migrations/v234) match
     # beside the row's own text: words recall should have found it by. A
     # schema without the table (a pod before v234) searches the text alone.
     with_aliases = f"""
-        SELECT {_HIT_COLS}, GREATEST(ts_rank(search_tsv, q), COALESCE(al.alias_rank, 0)) AS lex_rank
+        SELECT {_HIT_COLS}, GREATEST({rank}, COALESCE(al.alias_rank, 0)) AS lex_rank
         FROM entity_memory
-             CROSS JOIN plainto_tsquery('english', ${n + 1}) AS q
+             CROSS JOIN LATERAL (SELECT {q_expr} AS q) qq
              LEFT JOIN LATERAL (
-                 SELECT max(ts_rank(a.alias_tsv, q)) AS alias_rank
+                 SELECT max(ts_rank(a.alias_tsv, qq.q)) AS alias_rank
                    FROM memory_recall_aliases a
-                  WHERE a.memory_id = entity_memory.id AND a.alias_tsv @@ q
+                  WHERE a.memory_id = entity_memory.id AND a.alias_tsv @@ qq.q
              ) al ON true
-        WHERE {where_sql} AND (search_tsv @@ q OR al.alias_rank IS NOT NULL)
-        ORDER BY lex_rank DESC, id
+        WHERE {where_sql} AND qq.q IS NOT NULL
+          AND ({words_ok} OR {topic_hit} OR al.alias_rank IS NOT NULL)
+        ORDER BY lex_rank DESC, id DESC
         LIMIT ${n + 2}
         """
     text_only = f"""
-        SELECT {_HIT_COLS}, ts_rank(search_tsv, q) AS lex_rank
-        FROM entity_memory, plainto_tsquery('english', ${n + 1}) AS q
-        WHERE {where_sql} AND search_tsv @@ q
-        ORDER BY lex_rank DESC, id
+        SELECT {_HIT_COLS}, {rank} AS lex_rank
+        FROM entity_memory CROSS JOIN LATERAL (SELECT {q_expr} AS q) qq
+        WHERE {where_sql} AND qq.q IS NOT NULL
+          AND ({words_ok} OR {topic_hit})
+        ORDER BY lex_rank DESC, id DESC
         LIMIT ${n + 2}
         """
     try:
@@ -597,8 +648,11 @@ async def recall_memories(pool, entity_id: int, query: str, *, limit: int = 15,
                           memory_types=None, include_superseded: bool = False,
                           audience=None, project_ids=None,
                           turn_scope=None, scope_everywhere_types=None,
-                          exclude_rules: bool = False, skip_words=None) -> dict:
+                          exclude_rules: bool = False, skip_words=None,
+                          any_words: bool = False) -> dict:
     """Hybrid recall over entity_memory — THE entry point for every lane.
+    `any_words`: the lexical arm's matching (_lexical_arm); the per-turn
+    pre-fire passes True.
     `exclude_rules`: see _canonical_where (the pre-fire's; False finds rules).
     `skip_words` (the pre-fire's): same_words_key keys already in the turn —
     the words of the rules its taught block carries. A hit in those words,
@@ -653,7 +707,7 @@ async def recall_memories(pool, entity_id: int, query: str, *, limit: int = 15,
     vec_why = vec_why2 or vec_why
     lex_hits, lex_ran, lex_why = await _lexical_arm(
         pool, entity_id, query,
-        where_sql=where_sql, params=params, candidates=candidates)
+        where_sql=where_sql, params=params, candidates=candidates, any_words=any_words)
 
     if not vec_ran and not lex_ran:
         raise RecallUnavailable(
@@ -730,7 +784,8 @@ async def federated_recall(pool, entity_id: int, query: str, *,
                            context: dict | None = None,
                            memory_types=None,
                            turn_scope=None, scope_everywhere_types=None,
-                           exclude_rules: bool = False, skip_words=None) -> dict:
+                           exclude_rules: bool = False, skip_words=None,
+                           any_words: bool = False) -> dict:
     """ONE search across the stores the host can see — its own memory and the
     user's uploaded documents — each store searched by its own engine, each
     honest about availability. Raises RecallUnavailable only when EVERY
@@ -799,7 +854,7 @@ async def federated_recall(pool, entity_id: int, query: str, *,
                     pool, entity_id, query, limit=fetch, project_ids=_project_ids,
                     memory_types=memory_types, turn_scope=turn_scope,
                     scope_everywhere_types=scope_everywhere_types,
-                    exclude_rules=exclude_rules, skip_words=skip_words)
+                    exclude_rules=exclude_rules, skip_words=skip_words, any_words=any_words)
             except RecallUnavailable as e:
                 out["memory"] = {"unavailable": str(e)}
                 unavailable.append(f"memory: {e}")

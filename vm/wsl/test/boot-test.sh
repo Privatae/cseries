@@ -12,11 +12,20 @@
 # may point at it) and Node 18 or later on this machine. WORK sets the scratch
 # directory (default /var/tmp); KEEP=1 leaves the guest container running for
 # a look inside after a failure (remove it with docker rm -f).
+#
+# With RT_PY_IMAGE and RT_BROWSER_IMAGE (the runtime's python and browser
+# images, built from this tree) it also starts the local runtime's containers
+# in the guest through the Host's own code: the Telegram connector installed
+# from its signed bundle and woken as its window wakes it, the browser woken
+# as the Host's browser lane wakes it, and the connector back by itself after
+# the guest restarts. Without them that part is skipped, and says so.
 set -euo pipefail
 
 rootfs=$(readlink -f "${1:?usage: $0 <rootfs.tar.gz> [host image] [postgres image]}")
 host_img=${2:-cseries:dev}
 pg_img=${3:-cseries-postgres:dev}
+rt_py=${RT_PY_IMAGE:-}
+rt_browser=${RT_BROWSER_IMAGE:-}
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../../.." && pwd)
 name="cseries-npxtest-$$"
@@ -46,6 +55,10 @@ say() { printf '\n== %s\n' "$*"; }
 say "guest image $(basename "$rootfs") ($(sha256sum "$rootfs" | cut -c1-16)...)"
 docker import "$rootfs" "$name-rootfs:local" >/dev/null
 docker save "$host_img" "$pg_img" -o "$work/images.tar"
+if [ -n "$rt_py" ] && [ -n "$rt_browser" ]; then
+    docker save "$rt_py" "$rt_browser" -o "$work/runtime-images.tar"
+    cp "$repo/vm/cloud/test/runtime_helper.py" "$repo/factory-bundles/telegram.cseries" "$work/"
+fi
 docker volume create "$name-storage" >/dev/null
 docker run -d --name "$name" --privileged --cgroupns=private \
     --tmpfs /run --tmpfs /run/lock --tmpfs /tmp \
@@ -76,6 +89,89 @@ fi
 
 say "the cseries command's guest steps, twice"
 G node /opt/cseries-test/e2e-guest.js /opt/cseries-cli "$host_ref" "$pg_ref"
+
+say "the local runtime: its socket, proxy and firewall, and the Host on its network"
+G stat -c '%n %a %U:%G' /run/cseries-runtime /run/cseries-runtime/runtime.sock
+[ "$(G stat -c '%a %U:%G' /run/cseries-runtime)" = "750 root:cseries-runtime" ] ||
+    { echo "FAIL: the runtime's socket directory is not 0750 root:cseries-runtime"; exit 1; }
+G systemctl is-active cseries-runtime.socket cseries-squid.service cseries-runtime-firewall.service ||
+    { echo "FAIL: a runtime unit is not active"; G systemctl status --no-pager cseries-squid.service || true; exit 1; }
+G nft list table bridge cseries_apps >/dev/null || { echo "FAIL: the runtime's bridge filter is not loaded"; exit 1; }
+ask='import socket; s = socket.socket(socket.AF_UNIX); s.connect("/run/cseries-runtime/runtime.sock"); s.sendall(b"{\"op\": \"runtime.status\"}\n"); print(s.makefile().readline().strip())'
+st=$(G podman exec cseries-host python3 -c "$ask")
+echo "from the Host: ${st:0:160}"
+grep -q '"ok": true' <<< "$st" || { echo "FAIL: the runtime does not answer the Host"; G journalctl -u cseries-runtime --no-pager -n 30 || true; exit 1; }
+# One memory budget: the runtime leaves the Host's and the database's own
+# ceilings (their units' MemoryMax, as systemd holds them) out of what it
+# admits containers into.
+held=$(python3 -c 'import json, sys; print(json.loads(sys.argv[1])["data"]["held_mi"])' "$st")
+hmax=$(G systemctl show -p MemoryMax --value cseries-host.service)
+pmax=$(G systemctl show -p MemoryMax --value cseries-postgres.service)
+echo "the runtime holds back ${held} MiB: the Host's MemoryMax $hmax and the database's $pmax"
+[ "$held" = $(( (hmax + 1048575) / 1048576 + (pmax + 1048575) / 1048576 )) ] ||
+    { echo "FAIL: the runtime's held_mi $held is not the Host's and the database's ceilings"; exit 1; }
+st=$(G python3 -c "$ask" 2>&1 || true)
+grep -q 'only the Host may use this socket' <<< "$st" || { echo "FAIL: root in the guest was not refused: $st"; exit 1; }
+st=$(G runuser -u cseries -- python3 -c "$ask" 2>&1 || true)
+grep -q 'PermissionError' <<< "$st" || { echo "FAIL: the guest's own user reached the socket: $st"; exit 1; }
+nets=$(G podman inspect cseries-host --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}}={{$v.IPAddress}} {{end}}')
+echo "the Host's networks: $nets"
+grep -q 'cseries-apps=10.89.78.2' <<< "$nets" || { echo "FAIL: the Host is not on the runtime's network"; exit 1; }
+G sh -c 'test -s /etc/cseries-runtime/browser-control-token && stat -c "%a" /etc/cseries-runtime/browser-control-token' | grep -qx 600 ||
+    { echo "FAIL: the browser's control token is missing or not 0600"; exit 1; }
+
+# The Host's own code, in a process of its own in the Host container (the
+# cloud VM test's helper: vm/cloud/test/runtime_helper.py).
+H() {
+    G podman cp /test/runtime_helper.py cseries-host:/tmp/runtime_helper.py
+    G podman exec cseries-host python3 /tmp/runtime_helper.py "$@"
+}
+jq_py() { python3 -c 'import json, sys; d = json.loads(sys.argv[1]); print(eval(sys.argv[2]))' "$1" "$2"; }
+if [ -n "$rt_py" ] && [ -n "$rt_browser" ]; then
+    say "the local runtime's containers: Telegram from its signed bundle, and the browser"
+    G podman load -q -i /test/runtime-images.tar
+    ref() { echo "localhost/${1%:*}@$(G podman image inspect --format '{{.Digest}}' "localhost/$1")"; }
+    rel=$(G cseries-guest status | sed -n 's/^release=//p')
+    printf 'host=%s\npostgres=%s\nrelease=%s\npython=%s\nbrowser=%s\n' \
+        "$host_ref" "$pg_ref" "$rel" "$(ref "$rt_py")" "$(ref "$rt_browser")" | G cseries-guest configure
+    G cseries-guest restart
+    for _ in $(seq 1 100); do G cseries-guest ready >/dev/null 2>&1 && break; sleep 3; done
+    G cseries-guest ready || { echo "FAIL: the Host is not ready after the runtime's images were pinned"; exit 1; }
+    G podman cp /test/telegram.cseries cseries-host:/tmp/telegram.cseries
+    r=$(H install-file /tmp/telegram.cseries)
+    echo "$r"
+    [ "$(jq_py "$r" 'd["installed"]')" = telegram ] || { echo "FAIL: the signed Telegram bundle did not install"; exit 1; }
+    w=$(H wake-app telegram)
+    echo "$w"
+    up=$(jq_py "$w" 'd["upstream"] or ""')
+    [ -n "$up" ] || { echo "FAIL: the connector's container did not wake"; G journalctl -u cseries-runtime --no-pager -n 40 || true; exit 1; }
+    h=$(H http "http://$up/health")
+    echo "$h"
+    [ "$(jq_py "$h" 'd["status"] == 200 and json.loads(d["body"])["ok"] is True and "waiting for the pairing" in json.loads(d["body"])["phase"]')" = True ] ||
+        { echo "FAIL: the connector does not answer its health from inside the runtime"; exit 1; }
+    insp=$(G podman container inspect cseries-app-telegram --format '{{.HostConfig.ReadonlyRootfs}} {{.HostConfig.Memory}} {{.HostConfig.MemorySwap}} {{.HostConfig.LogConfig.Type}}')
+    um=$(G sh -c 'cat /proc/$(podman container inspect --format {{.State.Pid}} cseries-app-telegram)/uid_map')
+    echo "telegram's container: $insp; uid map: $um"
+    python3 -c 'import sys; f = sys.argv[1].split(); u = sys.argv[2].split()
+sys.exit(0 if f[0] == "true" and f[1] == f[2] and int(f[1]) > 0 and f[3] == "journald"
+         and u[0] == "0" and int(u[1]) >= 200000 and u[2] == "65536" else 1)' "$insp" "$um" ||
+        { echo "FAIL: the connector's container is not read-only with no swap, logging to the journal, in a user range of its own"; exit 1; }
+    b=$(H wake-browser)
+    echo "$b"
+    [ "$(jq_py "$b" 'str(d["upstream"]).endswith(":8830")')" = True ] || { echo "FAIL: the browser did not wake"; exit 1; }
+    h=$(H browser GET /health)
+    echo "browser: ${h:0:200}"
+    [ "$(jq_py "$h" 'd["status"] == 200 and d["body"]["ok"] is True')" = True ] ||
+        { echo "FAIL: Chromium does not answer its health inside the runtime's user namespace"; exit 1; }
+    f=$(H browser-frame)
+    echo "viewport: $f"
+    [ "$(jq_py "$f" 'd["frame"] is True')" = True ] || { echo "FAIL: the browser's viewport WebSocket delivered no frame"; exit 1; }
+    H release harness browser >/dev/null
+    if G podman container exists cseries-h-browser; then echo "FAIL: a release left the browser's container"; exit 1; fi
+    echo "the connector and the browser ran in the guest through the runtime"
+else
+    say "the local runtime's containers: SKIPPED (set RT_PY_IMAGE and RT_BROWSER_IMAGE)"
+fi
 
 say "the hardening, against compose.yaml"
 G podman inspect cseries-postgres cseries-host > "$work/inspect.json"
@@ -190,6 +286,15 @@ done
 [ -n "$ok" ] || { echo "FAIL: the Host did not come back after a restart"; G cseries-guest logs host --lines 40; exit 1; }
 G cseries-guest status
 G curl -s -o /dev/null -w 'GET /setup -> %{http_code}\n' http://127.0.0.1:8800/setup
+if [ -n "$rt_py" ] && [ -n "$rt_browser" ]; then
+    back=""
+    for _ in $(seq 1 60); do
+        [ "$(G podman container inspect --format '{{.State.Running}}' cseries-app-telegram 2>/dev/null)" = true ] && { back=1; break; }
+        sleep 3
+    done
+    [ -n "$back" ] || { echo "FAIL: the Host did not bring the Telegram connector back after the restart"; exit 1; }
+    echo "the Host brought the Telegram connector back by itself (a resident app)"
+fi
 
 say "keepalive: a second one exits at once"
 G sh -c 'cseries-guest keepalive & first=$!; sleep 1

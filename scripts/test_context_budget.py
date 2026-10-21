@@ -21,8 +21,9 @@ WHAT THIS RATCHETS:
      REPLACED by a JSON truncation envelope, never sliced) → tool-call
      GROUPS as one unit (an assistant tool_calls message and its
      role:"tool" results are never separated); identity/constitutional (system block), the
-     current user message and the rolling summary are never dropped and the
-     summary is never truncated; tool_calls arguments count in the estimate.
+     current user message and the record of evicted turns (the Host's own
+     close_turn notes, evicted_record) are never dropped and the record is
+     never truncated; tool_calls arguments count in the estimate.
   5. OVERFLOW PATH — provider context-overflow errors are detected (the
      retry-once trigger); a trim brings the estimate under a tiny window;
      a target <= 0 (window smaller than the reserve) trims to the floor and
@@ -88,7 +89,7 @@ def pure_checks(check, cb) -> None:
           and cb.clamp_output_reserve(None, 16_384) == 16_384)
 
     # 4. Trim order. System block carries identity + a pre-fire section;
-    # history = summary + 4 verbatim turns; last = current user message.
+    # history = the evicted-turn record + 4 verbatim turns; last = current user message.
     sys_content = (
         "IDENTITY: you are the host. CONSTITUTION: never lie."
         "\n\n## What You Remember\n### Relevant Right Now"
@@ -98,7 +99,7 @@ def pure_checks(check, cb) -> None:
         "\n### Their Preferences\n- dashboards"
     )
     summary_msg = {"role": "system",
-                   "content": cb.SUMMARY_PREFIX + "\nDecisions: x" + "s" * 400}
+                   "content": cb.RECORD_PREFIX + "\n- [2026-09-01] next step: x" + "s" * 400}
     turns = [{"role": "user" if i % 2 == 0 else "assistant",
               "content": f"turn {i} " + "t" * 800} for i in range(4)]
     user_msg = {"role": "user", "content": "the current question"}
@@ -120,8 +121,8 @@ def pure_checks(check, cb) -> None:
     check("trim step 2: oldest verbatim turns evicted (newest kept)",
           all("turn 0" not in (m.get("content") or "") for m in trimmed2)
           and any("turn 3" in (m.get("content") or "") for m in trimmed2))
-    check("trim step 2: rolling summary spared while turns remain",
-          any((m.get("content") or "").startswith(cb.SUMMARY_PREFIX)
+    check("trim step 2: the evicted-turn record spared while turns remain",
+          any((m.get("content") or "").startswith(cb.RECORD_PREFIX)
               for m in trimmed2))
     check("trim: current user message never dropped",
           trimmed2[-1]["content"] == "the current question")
@@ -163,10 +164,10 @@ def pure_checks(check, cb) -> None:
           all("u1 " not in (m.get("content") or "") for m in out_tl))
 
     # Step 3 replaces an oversized tool result with a JSON envelope — never a
-    # raw slice — and never truncates the rolling summary.
+    # raw slice — and never truncates the evicted-turn record.
     msgs3 = [
         {"role": "system", "content": "IDENTITY"},
-        {"role": "system", "content": cb.SUMMARY_PREFIX + "\n" + "S" * 5000},
+        {"role": "system", "content": cb.RECORD_PREFIX + "\n" + "S" * 5000},
         {"role": "assistant", "content": None,
          "tool_calls": [{"id": "c1", "type": "function",
                          "function": {"name": "t", "arguments": "{}"}}]},
@@ -184,8 +185,8 @@ def pure_checks(check, cb) -> None:
             env_ok = False
     check("trim step 3: oversized tool result becomes a well-formed JSON envelope",
           env_ok, str(tool_out[0]["content"][:120]) if tool_out else "no tool msg")
-    summ = [m for m in trimmed3 if (m.get("content") or "").startswith(cb.SUMMARY_PREFIX)]
-    check("trim step 3: rolling summary present and NOT truncated",
+    summ = [m for m in trimmed3 if (m.get("content") or "").startswith(cb.RECORD_PREFIX)]
+    check("trim step 3: the evicted-turn record present and NOT truncated",
           bool(summ) and len(summ[0]["content"]) == len(msgs3[1]["content"]),
           str(len(summ[0]["content"]) if summ else None))
 

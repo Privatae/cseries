@@ -39,12 +39,19 @@ const BASTION_URL = 'https://downloads.invalid/privatae-bastion-linux-amd64';
 
 const guestSha = sha256Hex(fs.readFileSync(qcow2));
 const bastionBytes = fs.readFileSync(bastionBin);
+// The manifest names the binary's own version, and the run asks for the
+// release's own floor (release.json): a hand-written version here let a
+// bastion older than the floor pass the install and fail at pairing.
+const bastionVersion = (/^privatae-bastion ([0-9]+\.[0-9]+\.[0-9]+)\s*$/.exec(
+  require('node:child_process').execFileSync(bastionBin, ['version'], { encoding: 'utf8' })) || [])[1];
+if (!bastionVersion) throw new Error(`${bastionBin} version: not a privatae-bastion X.Y.Z`);
+const minVersion = JSON.parse(fs.readFileSync(`${pkg}/release.json`, 'utf8')).bastion.min_version;
 const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
 const manifest = Buffer.from(JSON.stringify({
-  version: '0.53.0',
+  version: bastionVersion,
   binaries: { 'linux-amd64': { url: BASTION_URL, sha256: sha256Hex(bastionBytes) } },
 }, null, 2));
-const sig = crypto.sign(null, statement('bastion', '0.53.0', sha256Hex(manifest)), privateKey).toString('base64');
+const sig = crypto.sign(null, statement('bastion', bastionVersion, sha256Hex(manifest)), privateKey).toString('base64');
 const bastionKeys = [publicKey.export({ format: 'der', type: 'spki' }).subarray(12).toString('base64')];
 
 const local = { [GUEST_URL]: qcow2, [BASTION_URL]: bastionBin };
@@ -70,7 +77,7 @@ const release = {
   // The digests are podman's, read once the images are loaded.
   images: { host: { ref: hostImage.replace(/:[^:/]+$/, ''), digest: null }, postgres: { ref: pgImage.replace(/:[^:/]+$/, ''), digest: null } },
   guest: { 'lima-x64': { url: GUEST_URL, sha256: guestSha } },
-  bastion: { min_version: '0.53.0' },
+  bastion: { min_version: minVersion },
 };
 
 const loadImages = {

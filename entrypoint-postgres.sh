@@ -383,6 +383,27 @@ else
     fi
 fi
 
+# ══════ The restore's load role, locked before anything can connect ══════
+# server/host_restore.py loads a backup's rows as host_restore, a role that can
+# log in only while a restore loads (_load_rows). A restore killed in the middle
+# of its load (the machine off, a container stopped) leaves it able to log in,
+# with its grants in the restore's database. So every boot puts it back first,
+# in single-user mode, before the server listens on any socket: no login, no
+# setting, a member of no role and with no member (host_restore.lock_load_role
+# does the same at the start of every restore, and takes back its grants).
+# Not fatal: a cluster this cannot reach still serves, and the next restore
+# locks the role before anything else.
+lock_restore_role() {
+    _lock_sql="DO \$\$ DECLARE r record; BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'host_restore') THEN RETURN; END IF; ALTER ROLE host_restore NOLOGIN NOBYPASSRLS; ALTER ROLE host_restore RESET ALL; FOR r IN SELECT d.datname FROM pg_db_role_setting s JOIN pg_database d ON d.oid = s.setdatabase WHERE s.setrole = 'host_restore'::regrole LOOP EXECUTE format('ALTER ROLE host_restore IN DATABASE %I RESET ALL', r.datname); END LOOP; FOR r IN SELECT g.rolname AS granted, u.rolname AS member, w.rolname AS grantor FROM pg_auth_members m JOIN pg_roles g ON g.oid = m.roleid JOIN pg_roles u ON u.oid = m.member JOIN pg_roles w ON w.oid = m.grantor WHERE m.member = 'host_restore'::regrole OR m.roleid = 'host_restore'::regrole LOOP EXECUTE format('REVOKE %I FROM %I GRANTED BY %I CASCADE', r.granted, r.member, r.grantor); END LOOP; END \$\$;"
+    if printf '%s\n' "$_lock_sql" | postgres --single -D "$PGDATA" postgres >/tmp/pg_lock_restore.log 2>&1 \
+            && ! grep -q 'ERROR:' /tmp/pg_lock_restore.log; then
+        return 0
+    fi
+    echo "WARNING: could not lock the restore role host_restore before serving; the next restore locks it first" >&2
+    tail -20 /tmp/pg_lock_restore.log >&2 || true
+}
+lock_restore_role
+
 # ══════ Peer-visible stats ══════
 # The kernel's resources panel reads its OWN cgroup and its OWN /proc
 # (server/routes/system.py). Since the split that means the database — the

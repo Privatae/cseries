@@ -250,18 +250,25 @@ bin_dir = tmp / "bin"
 bin_dir.mkdir()
 restored_dump = tmp / "restored.dump"
 # The restore loads in passes (host_restore._load_database): the dump file is
-# an argument, `-l` lists the Host's own schema (none here, so its pass is
-# skipped), and psql declares that schema. The fake keeps the first pass's bytes.
+# an argument; `-l` lists one kernel table's rows (and nothing of the Host's own
+# schema, so its pass is skipped); psql names that table in the schema the
+# restore built. The schema build itself, and what the dump may run, are
+# test_restore_untrusted_dump_pg's, on a real database. The fake keeps the
+# bytes of the pass that loads the rows.
 (bin_dir / "pg_restore").write_text(
-    '#!/bin/sh\nlast=""; list=""\n'
-    'for a in "$@"; do last="$a"; [ "$a" = "-l" ] && list=1; done\n'
-    '[ -n "$list" ] && exit 0\n'
+    '#!/bin/sh\nlast=""; list=""; world=""\n'
+    'for a in "$@"; do last="$a"; [ "$a" = "-l" ] && list=1; [ "$a" = "--schema" ] && world=1; done\n'
+    'if [ -n "$list" ]; then [ -z "$world" ] && echo "6001; 0 16800 TABLE DATA public t1 entity"; exit 0; fi\n'
     f'if [ -f "$last" ]; then cat "$last" > "{restored_dump}"; else cat > "{restored_dump}"; fi\n'
     'if [ -n "$FAKE_RESTORE_FAIL" ]; then echo "pg_restore: bad" >&2; exit 1; fi\n')
 (bin_dir / "pg_restore").chmod(0o755)
-(bin_dir / "psql").write_text("#!/bin/sh\nexit 0\n")
+# The load's role is the boot's (migrations/v242_host_restore_role.sql): the
+# stand-in database has it, unless FAKE_NO_ROLE says the boot never made it.
+(bin_dir / "psql").write_text('#!/bin/sh\ncase "$*" in *"relkind::text"*) echo "r t1";;\n'
+                              '  *"rolname = \'host_restore\'"*) [ -z "$FAKE_NO_ROLE" ] && echo 1;; esac\nexit 0\n')
 (bin_dir / "psql").chmod(0o755)
 os.environ["PATH"] = f"{bin_dir}:{os.environ['PATH']}"
+hr._build_own_schema = lambda: None
 
 
 def backup_file(members, *, manifest=True, recipient=rec, db_sha=None, chunks=None, unlisted=(),
@@ -382,6 +389,12 @@ out, _ = unpack(backup_file(GOOD))
 os.environ.pop("FAKE_RESTORE_FAIL")
 check("a database that will not load is refused, with pg_restore's words",
       isinstance(out, str) and "pg_restore: bad" in out, out)
+os.environ["FAKE_NO_ROLE"] = "1"
+restored_dump.unlink(missing_ok=True)
+out, _ = unpack(backup_file(GOOD))
+os.environ.pop("FAKE_NO_ROLE")
+check("a database whose boot never made the load's role is refused, with the reason, and loads nothing",
+      isinstance(out, str) and "no host_restore role" in out and not restored_dump.exists(), out)
 
 # ── a hostile backup file ───────────────────────────────────────────────────
 # Anyone who can write where backups are kept can make a file that decrypts
@@ -426,6 +439,11 @@ out, _ = unpack(backup_file(DB + [("apps/app-state/user-files/notes.txt", b"n", 
 check("a hard link is refused (the writer stores every name whole)", refused(out, "hard link"), out)
 out, _ = unpack(backup_file(DB + [("apps/pipe", None, "fifo")]))
 check("a pipe or a device is refused", refused(out, "not a file"), out)
+# The room cases from here to the single-disk ones below are a Host in the
+# cluster, on a node's disk: the kubelet's eviction threshold is what it keeps
+# (host_restore._reserve, in_cluster). The kubelet sets this in every pod.
+_K8S_WAS = os.environ.get("KUBERNETES_SERVICE_HOST")
+os.environ["KUBERNETES_SERVICE_HOST"] = "10.96.0.1"
 # The Host's room is this test's own number, not what the machine running it
 # has free. Free space on a shared filesystem moves between two readings (other
 # gates write and delete there): a margin set from one reading handed the Host
@@ -537,6 +555,39 @@ check("  the share is the node's when the operator gives it (CSERIES_NODE_EVICTI
 for bad in ("15", "-0.1", "1", "nan", "inf", "15%", ""):
     out, _ = restore_on(int(1.6 * G), share=bad)
     check(f"  a share of {bad!r} is refused by name, not read as the default", refused(out, "CSERIES_NODE_EVICTION_FREE"), out)
+
+# ON ONE MACHINE (no kubelet: a C-Series machine runs the Host under podman)
+# nothing is evicted, and 15% of a disk kept empty refuses a restore that
+# fits: the reserve is the larger of 2 GiB (this image's PostgreSQL may hold
+# max_wal_size 256MB plus max_slot_wal_keep_size 1024MB of write-ahead log)
+# and 5% (ext4's own reserve on a new filesystem).
+os.environ.pop("KUBERNETES_SERVICE_HOST", None)
+check("off the cluster the Host knows it runs on one machine", hr.in_cluster() is False)
+roomy = 100 * G
+out, _ = restore_on(6 * G)
+check("on one machine's 100 GiB disk, a restore that leaves 6 GiB free goes ahead (15% would keep 15 GiB)",
+      isinstance(out, dict), out)
+check("  the reserve there is 5% of the disk", hr._reserve(hr.Room(6 * G, U, 0, 0, roomy))[0] == 5 * G
+      and "one machine" in hr._reserve(hr.Room(6 * G, U, 0, 0, roomy))[2])
+out, _ = restore_on(int(4.9 * G))
+check("  and one that would leave under 5% free is refused", refused(out, "room for"), out)
+roomy = 10 * G
+out, _ = restore_on(int(1.9 * G))
+check("on a small disk (10 GiB) the reserve is never under 2 GiB", refused(out, "room for"), out)
+out, _ = restore_on(int(2.1 * G))
+check("  and a restore past it goes ahead", isinstance(out, dict), out)
+out, _ = restore_on(4 * G, share="0.5")
+check("  the operator's share still applies on one machine (CSERIES_NODE_EVICTION_FREE: half of 10 GiB)",
+      refused(out, "room for"), out)
+os.environ["KUBERNETES_SERVICE_HOST"] = "10.96.0.1"
+roomy = 100 * G
+out, _ = restore_on(6 * G)
+check("in the cluster the same restore on a 100 GiB node disk is still refused: 15% stays free for the kubelet",
+      refused(out, "room for"), out)
+if _K8S_WAS is None:
+    os.environ.pop("KUBERNETES_SERVICE_HOST", None)
+else:
+    os.environ["KUBERNETES_SERVICE_HOST"] = _K8S_WAS
 out, _ = unpack(backup_file(GOOD), expect={"sha256": "0" * 64, "bytes": 1})
 check("an encrypted file that is not the one its key file names is refused, and nothing is loaded",
       refused(out, "not the one its key file was made for"), out)
@@ -651,7 +702,7 @@ check(f"an unpack that runs past its time limit is stopped, saying so ({took:.1f
 seen_lock = []
 
 
-async def _stage_sees_lock(pool, eid, stamp, unverified_ok=False):
+async def _stage_sees_lock(pool, eid, stamp, unverified_ok=False, where=None):
     seen_lock.append(hb._run_lock.locked())
     return {"state": "staged"}
 _real_stage = hr._stage
@@ -884,6 +935,98 @@ check("  and so does what Settings reads once the Host is back",
       and saved["restore"].get("links_left_out") == ["apps-link", "deep/out"]
       and saved["restore"].get("links_left_out_count") == 57 and saved["restore"].get("verified") is False,
       saved.get("restore"))
+# Restored onto a machine with no recovery key (a new one: a restore keeps
+# this machine's keys): the Host is told, so its next turn tells the owner
+# backups are paused until they add theirs.
+told = []
+_real_recips, _real_tell = hb.recipients, hb.tell_host_paused
+
+
+async def _none(pool, eid, bp=None):
+    return []
+
+
+async def _with_key(pool, eid, bp=None):
+    return [{"kind": "host-recovery"}]
+
+
+async def _tell(pool, eid, why=""):
+    told.append(why)
+    return True
+hb.recipients, hb.tell_host_paused = _none, _tell
+for recips in (_none, _with_key):
+    hb.recipients = recips
+    hr._write_plan({"state": hr.FINISHING, "live_db": "hostmem", "stamp": stamp,
+                    "taken_at": "2026-09-27T02:07:00+00:00", "staged_at": "2026-09-29T01:00:00+00:00",
+                    "verified": False})
+    asyncio.run(hr.finish(RunPool(), 42))
+hb.recipients, hb.tell_host_paused = _real_recips, _real_tell
+check("a restore onto a machine with no recovery key tells the Host backups are paused, saying why; "
+      "one onto a machine with a key does not", told == [hb.RESTORED_WITHOUT_KEY], told)
+# What the carry said about the owner's sign-in (carry_rows keeps it with its
+# marker in the restored database): the restore's result says it, in the run
+# and in what Settings reads, and the Host is told, so its next turn tells the
+# owner. Nothing to say, nothing said.
+SIGN_IN_NOTE = "This backup came from a Host whose owner signed in with another email."
+
+
+class MarkedPool(RunPool):
+    """A restored database whose carry marker holds a word on the sign-in."""
+
+    async def fetchval(self, sql, *a):
+        if sql.startswith("SELECT v FROM host_backup_state") and a and a[0] == hr.CARRIED_MARKER:
+            return json.dumps({"stamp": stamp, "owner": SIGN_IN_NOTE})
+        return None
+
+
+signed_in_told = []
+
+
+async def _sign_in_told(pool, eid, note):
+    signed_in_told.append(note)
+_real_sign_in_tell = getattr(hr, "_tell_host_sign_in", None)
+hr._tell_host_sign_in = _sign_in_told
+hb.recipients = _with_key
+got_owner = []
+for pool_cls in (MarkedPool, RunPool):
+    hr._write_plan({"state": hr.FINISHING, "live_db": "hostmem", "stamp": stamp,
+                    "taken_at": "2026-09-27T02:07:00+00:00", "staged_at": "2026-09-29T01:00:00+00:00"})
+    _p = pool_cls()
+    asyncio.run(hr.finish(_p, 42))
+    got_owner.append(((_p.parts[0].get("restored") or {}).get("owner") if _p.parts else "no run",
+                      saved.get("restore", {}).get("owner")))
+hb.recipients = _real_recips
+hr._tell_host_sign_in = _real_sign_in_tell
+check("the restore's result says what the carry said about the owner's sign-in, in the run and in "
+      "what Settings reads; a restore with nothing to say says nothing",
+      got_owner == [(SIGN_IN_NOTE, SIGN_IN_NOTE), (None, None)], got_owner)
+check("  and the Host is told it, once, so its next turn tells the owner",
+      signed_in_told == [SIGN_IN_NOTE], signed_in_told)
+
+
+class FixPool(RunPool):
+    """Records every statement finish() sends."""
+
+    def __init__(self):
+        super().__init__()
+        self.sent = []
+
+    async def execute(self, sql, *a):
+        self.sent.append((" ".join(sql.split()), a))
+        return await super().execute(sql, *a)
+fp = FixPool()
+hr._write_plan({"state": hr.FINISHING, "live_db": "hostmem", "stamp": stamp,
+                "taken_at": "2026-09-27T02:07:00+00:00", "staged_at": "2026-09-29T01:00:00+00:00"})
+asyncio.run(hr.finish(fp, 42))
+fix = [x for x in fp.sent if x[0].startswith("UPDATE host_backup_runs SET state = 'ok'")]
+check("the backup a restore came from is recorded as the good backup it was, not the 'running' its own "
+      "dump caught (which the boot sweep calls interrupted)",
+      len(fix) == 1 and fix[0][1][0] == stamp
+      and fix[0][1][1] == _dt_mod.datetime(2026, 9, 27, 2, 7, tzinfo=_dt_mod.timezone.utc)
+      and "state = 'running'" in fix[0][0] and "error LIKE 'interrupted:%'" in fix[0][0]
+      and "reason <> 'restore'" in fix[0][0], fp.sent[:3])
+check("  and it is set before the restore's own record and before the Host is told",
+      fp.sent.index(fix[0]) < next(i for i, x in enumerate(fp.sent) if x[0].startswith("INSERT INTO host_backup_runs")))
 hr.keep_resealed(stamp, resealed)
 os.utime(kept, (0, 0))
 check("one older than an hour is dropped, not used", hr.load_resealed(stamp) is None and not kept.exists())
@@ -940,7 +1083,7 @@ async def _fake_run(pool, eid, reason, keep=()):
     return {"state": "ok", "run_id": 9, "stamp": BEFORE_ROW["stamp"]}
 
 
-async def _entry_here(pool, eid, st):
+async def _entry_here(pool, eid, st, where=None):
     return {"where": "platform", "key": f"d/s/{st}.tar.zst.age", "bytes": 10, "taken_at": "t"}
 
 
@@ -1030,7 +1173,7 @@ check("a backup this Host made is staged, and the encrypted file must be the one
                             "trust_links": True}, unpacked_with[-1])
 
 
-async def _entry_other_sha(pool, eid, st):
+async def _entry_other_sha(pool, eid, st, where=None):
     return dict(await _entry_here(pool, eid, st), sha256="0" * 64)
 hr._entry = _entry_other_sha
 hr.keep_resealed(stamp, sidecar_for())
@@ -1176,6 +1319,7 @@ live_db = FakeDB({
                                           # the Hub key every live machine pinned
                                           {"id": "hub_wg", "secret": b"LIVE-HUB-WG"}]),
     "host_backup_state": dict(STATE, rows=[{"k": "recovery_offer", "v": {"fingerprint": "live-offer"}},
+                                           {"k": "recovery_own", "v": {"fingerprint": "live-own"}},
                                            {"k": "restore", "v": {"state": "staging"}}]),
 })
 # The restored database: the backup's day, when all of that was still open.
@@ -1193,6 +1337,7 @@ restored_db = FakeDB({
                                           {"id": "hub_wg", "secret": b"BACKUP-HUB-WG"},
                                           {"id": "nac_stepup_failures_app:terminal", "secret": b'{"n": 2, "at": 1}'}]),
     "host_backup_state": dict(STATE, rows=[{"k": "recovery_offer", "v": {"fingerprint": "old-offer"}},
+                                           {"k": "recovery_own", "v": {"fingerprint": "old-own"}},
                                            {"k": "restore", "v": {"state": "old"}}]),
 })
 done = asyncio.run(hr.carry_rows(live_db, restored_db))
@@ -1227,6 +1372,8 @@ check("the next backup goes to the live keys: the new recovery key and the live 
 state = {x["k"]: x["v"] for x in r["host_backup_state"]["rows"]}
 check("the live recovery-key offer is kept; other state stays the backup's",
       state["recovery_offer"] == {"fingerprint": "live-offer"} and state["restore"] == {"state": "old"})
+check("which key the owner made on this Host is the live record, as the keys are",
+      state.get("recovery_own") == {"fingerprint": "live-own"}, state.get("recovery_own"))
 check("serial sequences follow the carried rows",
       {"mcp_client_tokens_id_seq", "nac_mgmt_grants_id_seq", "backup_user_key_id_seq"} <= set(restored_db.setvals))
 check("every table that holds access is on the list",
@@ -1234,6 +1381,45 @@ check("every table that holds access is on the list",
        "nac_pairing_grants", "bastion_pairing_tokens", "service_reach_grants", "backup_user_key",
        "vault_identity_pubkey", "entity_permissions", "browser_form_grant"} <= set(hr.CARRIED_TABLES)
       and {"nac_stepup_totp", "nac_stepup_enrolled", "nac_stepup_last_counter"} <= set(hr.CARRIED_SECRETS))
+
+print("== the owner's account and sessions are the live ones")
+# The passkeys and recovery codes were carried, and the account they sign in
+# to was the backup's: another password and cookie name, or none at all, and
+# the owner sent to /setup (scripts/test_restore_carry_real_schema.py drives
+# the sign-in itself on the real schema).
+OWN = {"cols": ["id", "email", "password_hash", "cookie_suffix"]}
+SESS = {"cols": ["token_hash", "origin", "parent"]}
+LIVE_OWNER = {"id": 1, "email": "owner@live.example", "password_hash": "scrypt$live", "cookie_suffix": "live0001"}
+LIVE_SESSIONS = [{"token_hash": "h-browser", "origin": "home.box.example", "parent": None},
+                 {"token_hash": "h-app", "origin": "apps-settings-home.box.example", "parent": "h-browser"}]
+for label, backup_owner, want_note in (
+        ("the backup's owner had another email", [{"id": 1, "email": "someone@backup.example",
+                                                   "password_hash": "scrypt$old", "cookie_suffix": "back0001"}],
+         "another email"),
+        ("the backup's owner is the same, its email typed in other case",
+         [dict(LIVE_OWNER, email="Owner@Live.example", password_hash="scrypt$old", cookie_suffix="back0002")], None),
+        ("the backup was taken before the owner was made", [], None)):
+    o_src = FakeDB({"owner_account": dict(OWN, rows=[LIVE_OWNER]), "owner_sessions": dict(SESS, rows=LIVE_SESSIONS),
+                    "owner_passkeys": {"cols": ["credential_id", "public_key"], "rows": [{"credential_id": b"k", "public_key": b"p"}]},
+                    "host_backup_state": dict(STATE, rows=[])})
+    o_dst = FakeDB({"owner_account": dict(OWN, rows=backup_owner),
+                    "owner_sessions": dict(SESS, rows=[{"token_hash": "h-backup", "origin": "home.box.example",
+                                                        "parent": None}]),
+                    "owner_passkeys": {"cols": ["credential_id", "public_key"], "rows": []},
+                    "host_backup_state": dict(STATE, rows=[])})
+    o_done = asyncio.run(hr.carry_rows(o_src, o_dst, stamp="20261019T020000Z"))
+    check(f"{label}: the live owner account and the live sessions are kept, the backup's are not",
+          o_dst.t["owner_account"]["rows"] == [LIVE_OWNER] and o_dst.t["owner_sessions"]["rows"] == LIVE_SESSIONS,
+          (o_dst.t["owner_account"]["rows"], o_dst.t["owner_sessions"]["rows"]))
+    o_mark = next((r["v"] for r in o_dst.t["host_backup_state"]["rows"] if r["k"] == hr.CARRIED_MARKER), {})
+    note = o_done.get("owner_note")
+    check(f"  and the restore says {'so' if want_note else 'nothing about the sign-in'}, with the carry's marker",
+          ((want_note in (note or "") and "owner@live.example" in note and "someone@backup" not in note)
+           if want_note else note is None) and o_mark.get("owner") == note, (note, o_mark))
+_owner_note = getattr(hr, "owner_note", lambda live, backup: "no owner_note")
+check("no owner when the restore ran: the backup's is not brought back, and the restore says to make one",
+      "/setup" in (_owner_note(None, "someone@backup.example") or ""))
+check("nothing on either side: nothing to say", _owner_note(None, None) is None)
 
 print("== a backup from another Host number: renumbered, and only live access kept")
 # Host 17 was lost; this Host is 42. The restored database is Host 17's.
@@ -1412,6 +1598,98 @@ class _RestoredPool:
 
 check("  and the key the next backup is tagged with (host_backup.auth_key, on the restored database) "
       "is the live one", asyncio.run(hb.auth_key(_RestoredPool(first_unverified))) == K_LIVE)
+
+print("== an unverified restore keeps this Host's signing identity, the one its trust store holds")
+# A crafted backup of this same Host number carries an entity_sign of its own,
+# while the trust store (application_signing_keys, carried) is the live Host's.
+# Kept, every project this Host builds is signed with a key it does not trust:
+# each build, the restore's own reinstall of a Host-built app among them, is
+# refused at install's first gate. The build below is the real one
+# (entity_signing.sign_with_entity_key, then trust_store.list_active_keys and
+# bundles.verify_any, as installer.install_bundle checks a bundle).
+from server.applications import bundles as _bundles  # noqa: E402
+from server.applications import entity_signing as _es  # noqa: E402
+from server.applications import trust_store as _ts  # noqa: E402
+from server.applications.tokens import _SECRET_SCHEMA  # noqa: E402
+
+SIGNKEYS = {"cols": ["fingerprint", "public_key", "publisher", "provenance_allowed", "registered_at", "revoked_at"]}
+LIVE_PEM, LIVE_PUB = _es._generate_keypair()
+CRAFTED_PEM, CRAFTED_PUB = _es._generate_keypair()
+
+
+def _trusted(pub):
+    return {"fingerprint": _ts._fingerprint(pub), "public_key": pub, "publisher": "Entity-42",
+            "provenance_allowed": ["custom"], "registered_at": T0, "revoked_at": None}
+
+
+class _BuildPool:
+    """What a project build reads, answered from the restored database."""
+
+    def __init__(self, db):
+        self.db = db
+
+    def acquire(self):
+        db = self.db
+
+        class C:
+            async def __aenter__(s):
+                return s
+
+            async def __aexit__(s, *a):
+                return False
+
+            async def execute(s, q, *a):          # the kernel_secrets schema step, only
+                assert q == _SECRET_SCHEMA, q[:80]
+                return "OK"
+
+            async def fetchrow(s, q, *a):
+                assert "FROM kernel_secrets WHERE id" in q, q
+                rows = [r for r in db.t["kernel_secrets"]["rows"] if r["id"] == a[0]]
+                return {"secret": rows[0]["secret"]} if rows else None
+
+            async def fetch(s, q, *a):
+                assert "FROM application_signing_keys" in q, q
+                return [r for r in db.t["application_signing_keys"]["rows"] if r["revoked_at"] is None]
+        return C()
+
+
+async def _project_build_verifies(db) -> bool:
+    pool = _BuildPool(db)
+    unsigned = _bundles._build_zip(b"id: board\nname: Board\nprovenance: custom\n",
+                                   {"index.html": b"<p>board</p>"}, {}, signature=None)
+    signed = await _es.sign_with_entity_key(pool, 42, unsigned)
+    keys = await _ts.list_active_keys(pool)
+    try:
+        _bundles.verify_any(signed, trusted_keys=[k.public_key for k in keys])
+    except _bundles.BundleError:
+        return False
+    return True
+
+
+for verified in (False, True):
+    src = FakeDB({"kernel_secrets": dict(SECRETS, rows=[{"id": "entity_sign", "secret": LIVE_PEM}]),
+                  "application_signing_keys": dict(SIGNKEYS, rows=[_trusted(LIVE_PUB)]),
+                  "host_backup_state": dict(STATE, rows=[])})
+    dst = FakeDB({"kernel_secrets": dict(SECRETS, rows=[{"id": "entity_sign", "secret": CRAFTED_PEM}]),
+                  "application_signing_keys": dict(SIGNKEYS, rows=[_trusted(CRAFTED_PUB)]),
+                  "host_backup_state": dict(STATE, rows=[])})
+    asyncio.run(hr.carry_rows(src, dst, 42, 42, verified=verified))
+    sign = [r["secret"] for r in dst.t["kernel_secrets"]["rows"] if r["id"] == "entity_sign"]
+    if not verified:
+        check("unverified: the signing identity is the live one, never the backup's",
+              sign == [LIVE_PEM], [s[:40] for s in sign])
+        check("  so a project built after the restore passes install's signature check",
+              asyncio.run(_project_build_verifies(dst)))
+    else:
+        check("verified: the signing identity stays the backup's, as before", sign == [CRAFTED_PEM],
+              [s[:40] for s in sign])
+src = FakeDB({"kernel_secrets": dict(SECRETS, rows=[]), "host_backup_state": dict(STATE, rows=[])})
+dst = FakeDB({"kernel_secrets": dict(SECRETS, rows=[{"id": "entity_sign", "secret": CRAFTED_PEM}]),
+              "host_backup_state": dict(STATE, rows=[])})
+asyncio.run(hr.carry_rows(src, dst, verified=False))
+check("unverified, and this Host never signed anything: the backup's key is dropped, so the first "
+      "build makes this Host's own",
+      not [r for r in dst.t["kernel_secrets"]["rows"] if r["id"] == "entity_sign"], dst.t["kernel_secrets"]["rows"])
 seen_kw = []
 
 
@@ -1602,6 +1880,8 @@ _Rr.brain_service.get_pool = lambda: object()
 runs = asyncio.run(_Rr.get_backup_runs())
 check("and Settings is told, in a sentence, that backups are paused until the restore finishes",
       "backups are paused" in (runs["problem"] or ""), runs)
+check("  and its verdict line says so, reading nothing of the runs mid-swap",
+      runs["status"]["state"] == "restoring" and "restore" in runs["status"]["headline"], runs.get("status"))
 hb.last_runs, hb.configured = _real_last_runs, _real_conf
 hr._write_plan({"state": hr.STAGED_STATE})
 check("a restore only staged holds nothing up", not hb.restore_in_progress())
@@ -1835,6 +2115,113 @@ check("the browser gets the sealed key file, this Host's recipient and the ids t
 check("a sealed key file for a made-up stamp is refused", status_of(R.restore_sidecar("latest")) == 400)
 check("an unknown way to get the key is refused",
       status_of(R.restore_key(R.RestoreKeyReq(stepup_code="123456", stamp=stamp, via="platform"))) == 400)
+
+print("== the Host is told what the restore kept of the owner's sign-in")
+import mastercode.context_store as _cs  # noqa: E402
+sign_in_written = []
+
+
+class _Context:
+    """The Host's own message list, read into its next turn (runtime/session.py)."""
+
+    def __init__(self, pool_, eid):
+        self.eid = eid
+
+    async def append_to_list(self, path, item, max_items=100):
+        sign_in_written.append((self.eid, path, item))
+_real_ctx = _cs.ContextStore
+_cs.ContextStore = _Context
+try:
+    if getattr(hr, "_tell_host_sign_in", None):
+        asyncio.run(hr._tell_host_sign_in(object(), 42, SIGN_IN_NOTE))
+finally:
+    _cs.ContextStore = _real_ctx
+sign_in_msg = sign_in_written[-1][2] if sign_in_written else {}
+check("a message in the Host's own list, unread, for its next turn, carrying what the restore said",
+      len(sign_in_written) == 1 and sign_in_written[0][:2] == (42, "inbox/messages.json")
+      and sign_in_msg.get("read") is False and sign_in_msg.get("source") == "backups"
+      and SIGN_IN_NOTE in sign_in_msg.get("content", "") and "Tell the owner" in sign_in_msg.get("content", ""),
+      sign_in_written)
+
+print("== a backup's Git directories run nothing (host_restore.defuse_git)")
+# A crafted backup: a project whose .git/config has a clean filter (git add
+# and git status run it), a signing program, a work tree elsewhere, an include
+# and a hook; a project folder shaped as a bare repository with its own
+# filter; a .git whose commondir sends git to another folder's config; and a
+# sha256 repository. Real git, run the way the Host runs it in a project
+# (routes/project_git.py HARDENED_GIT_CONFIG).
+from server.routes.project_git import HARDENED_GIT_CONFIG  # noqa: E402
+_marker = tmp / "planted-program-ran"
+_evil = (f'[filter "x"]\n\tclean = "touch {_marker}; cat"\n\tsmudge = "touch {_marker}; cat"\n'
+         f'[core]\n\tworktree = {tmp}\n\tsshCommand = touch {_marker}\n'
+         f'[commit]\n\tgpgsign = true\n[gpg]\n\tprogram = /bin/false\n'
+         f'[include]\n\tpath = {tmp}/elsewhere.cfg\n').encode()
+
+
+def _repo(base, gitdir="", config=_evil):
+    g = f"{base}/{gitdir}" if gitdir else base
+    return [(f"{g}", None, "dir"), (f"{g}/HEAD", b"ref: refs/heads/main\n", "file"),
+            (f"{g}/objects", None, "dir"), (f"{g}/objects/info", None, "dir"),
+            (f"{g}/refs", None, "dir"), (f"{g}/refs/heads", None, "dir"),
+            (f"{g}/config", config, "file")]
+
+
+GIT_EVIL = (DB + [("apps/projects", None, "dir"), ("apps/projects/1", None, "dir")]
+            + _repo("apps/projects/1", ".git")
+            + [("apps/projects/1/.git/hooks", None, "dir"),
+               ("apps/projects/1/.git/hooks/pre-commit", f"#!/bin/sh\ntouch {_marker}\n".encode(), "file"),
+               ("apps/projects/1/.git/objects/info/alternates", b"/etc\n", "file"),
+               ("apps/projects/1/.gitattributes", b"* filter=x diff=x\n", "file"),
+               ("apps/projects/1/a.txt", b"hello\n", "file"),
+               ("apps/projects/2", None, "dir")]
+            + [m for m in _repo("apps/projects/2") if m[0] != "apps/projects/2"]
+            + [("apps/projects/2/.gitattributes", b"* filter=x\n", "file"),
+               ("apps/projects/3", None, "dir"), ("apps/projects/3/.git", None, "dir"),
+               ("apps/projects/3/.git/HEAD", b"ref: refs/heads/main\n", "file"),
+               ("apps/projects/3/.git/commondir", b"../../4\n", "file"),
+               ("apps/projects/3/.gitattributes", b"* filter=x\n", "file"),
+               ("apps/projects/3/b.txt", b"b\n", "file"),
+               ("apps/projects/4", None, "dir"), ("apps/projects/4/config", _evil, "file"),
+               ("apps/projects/4/objects", None, "dir"), ("apps/projects/4/refs", None, "dir"),
+               ("apps/projects/5", None, "dir")]
+            + _repo("apps/projects/5", ".git", b'[core]\n\trepositoryformatversion = 1\n'
+                    b'[extensions]\n\tobjectformat = sha256\n' + _evil))
+out, dest = unpack(backup_file(GIT_EVIL))
+check("the crafted backup unpacks", isinstance(out, dict), out)
+check("every Git directory is named as reset, and nothing else",
+      isinstance(out, dict) and out.get("git_dirs_reset") == ["projects/1/.git", "projects/2",
+                                                               "projects/3/.git", "projects/5/.git"],
+      out.get("git_dirs_reset") if isinstance(out, dict) else out)
+_cfg1 = (dest / "projects/1/.git/config").read_text() if (dest / "projects/1/.git/config").exists() else ""
+check("a project's .git/config keeps only its format",
+      _cfg1 == "[core]\n\trepositoryformatversion = 0\n\tbare = false\n", _cfg1)
+check("...its hooks, alternates and commondir are gone",
+      not any((dest / "projects/1/.git/hooks").iterdir())
+      and not (dest / "projects/1/.git/objects/info/alternates").exists()
+      and not (dest / "projects/3/.git/commondir").exists())
+check("a folder shaped as a bare repository is said to be bare",
+      "bare = true" in (dest / "projects/2/config").read_text())
+check("a sha256 repository stays sha256",
+      "objectformat = sha256" in (dest / "projects/5/.git/config").read_text()
+      and "filter" not in (dest / "projects/5/.git/config").read_text())
+_genv = {**os.environ, "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null",
+         "GIT_TERMINAL_PROMPT": "0", "GIT_CEILING_DIRECTORIES": str(tmp)}
+_ran = []
+for _proj, _args in (("projects/1", ("add", "-A")), ("projects/1", ("status", "--porcelain")),
+                     ("projects/1", ("-c", "user.name=t", "-c", "user.email=t@example.test",
+                                     "commit", "-qm", "x")),
+                     ("projects/1", ("diff", "--cached", "--no-ext-diff", "--no-textconv")),
+                     ("projects/2", ("status",)), ("projects/3", ("add", "-A")),
+                     ("projects/5", ("status",))):
+    _r = subprocess.run(["git", *HARDENED_GIT_CONFIG, "-C", str(dest / _proj), *_args],
+                        env=_genv, capture_output=True, text=True, timeout=60)
+    _ran.append((_proj, _args[-1], _r.returncode, _r.stderr.strip()[-120:]))
+check("git add, status, commit and diff in the restored projects ran no planted program",
+      not _marker.exists(), _ran)
+check("...and the project's own repository still works: its file was committed",
+      subprocess.run(["git", *HARDENED_GIT_CONFIG, "-C", str(dest / "projects/1"), "ls-files"],
+                     env=_genv, capture_output=True, text=True).stdout.split() == [".gitattributes", "a.txt"],
+      _ran)
 
 import shutil  # noqa: E402
 shutil.rmtree(tmp, ignore_errors=True)

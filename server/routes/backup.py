@@ -31,6 +31,7 @@ accepts a private key (_no_private_keys).
 
 from __future__ import annotations
 
+import asyncio
 import json
 from typing import Optional
 import logging
@@ -250,6 +251,13 @@ def _effective(bp: dict) -> dict:
     # storage choice is not a schedule, and must not move when the backup runs.
     out["platform"] = bool(stored.get("platform", True))
     out["target"], out["target_problem"] = _readable_target(out.get("target"))
+    # Where backups go (server/host_backup.py destination_of): the owner's
+    # choice, else the default for what this Host is. Also not a schedule.
+    from server import host_backup
+    out["mode"] = host_backup.host_mode()
+    out["where"] = host_backup.destination_of(bp, out["mode"])
+    out["where_chosen"] = str(stored.get("where") or "") in host_backup.WHERES
+    out["local_keep"] = host_backup.local_keep(bp)
     return out
 
 
@@ -409,12 +417,23 @@ def _reduces_protection(prior: dict, new: dict) -> Optional[str]:
         return "back up weekly instead of daily"
     if prior.get("platform", True) is not False and new.get("platform") is False:
         return "stop keeping backups in platform storage"
+    # Where the backups themselves go, as the Host reads it (the default for
+    # what it is, when the owner never chose): moving them is the owner's act.
+    from server import host_backup
+    mode = host_backup.host_mode()
+    if (host_backup.destination_of({"backup": new}, mode)
+            != host_backup.destination_of({"backup": prior}, mode)):
+        return "change where your backups go"
+    if host_backup.local_keep({"backup": new}) < host_backup.local_keep({"backup": prior}):
+        return "keep fewer backups on this machine"
     # Adding a destination counts too: it sends the owner's backups (ciphertext)
     # somewhere and spends a credential from their Keys app on it, so the Host
     # must not choose one for them.
     old_target = prior.get("target") or None
     new_target = new.get("target") or None
     if new_target != old_target:
+        if host_backup.destination_of({"backup": new}, mode) == host_backup.WHERE_S3:
+            return "change the bucket your backups go to"
         return ("send a second copy of your backups somewhere new" if old_target is None
                 else "remove or change where the second copy goes")
     return None
@@ -485,6 +504,32 @@ async def set_backup_settings(request: Request) -> dict:
 
     if "platform" in body and not isinstance(body["platform"], bool):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "platform must be true or false")
+    from server import host_backup
+    if "where" in body:
+        where = str(body["where"] or "").strip().lower()
+        if where not in host_backup.WHERES:
+            raise HTTPException(
+                status.HTTP_400_BAD_REQUEST,
+                f"where must be one of {', '.join(host_backup.WHERES)} (got {body['where']!r})")
+        if where == host_backup.WHERE_S3 and (target or {}).get("kind") != backup_ship.KIND_S3:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                "to send your backups to your own bucket, save the bucket too "
+                                "(target, kind s3)")
+        if (where == host_backup.WHERE_NETWORK
+                and host_backup.host_mode() == host_backup.MODE_STANDALONE):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                "this Host is not on the network, so nothing would be written "
+                                "there: join it in Settings, Network first, or choose your own "
+                                "bucket or a folder on this machine")
+        settings["where"] = where
+    if "local_keep" in body:
+        raw_keep = body["local_keep"]
+        if (isinstance(raw_keep, bool) or not isinstance(raw_keep, int)
+                or not 1 <= raw_keep <= host_backup.LOCAL_KEEP_MAX):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                f"local_keep must be a whole number from 1 to "
+                                f"{host_backup.LOCAL_KEEP_MAX} (got {raw_keep!r})")
+        settings["local_keep"] = raw_keep
     eid = brain_service._entity_id
     # Read, check and write under the row's lock, and write only the `backup`
     # key: the weakening check is against what is stored when the write
@@ -510,7 +555,25 @@ async def set_backup_settings(request: Request) -> dict:
                 settings["platform"] = body["platform"]
             elif "platform" in prior:
                 settings["platform"] = bool(prior["platform"])
-            if settings.get("platform") is False and not target:
+            # Where they go, and how many the folder keeps: kept unless this
+            # request says otherwise, like the storage choice above.
+            for k in ("where", "local_keep"):
+                if k not in settings and k in prior:
+                    settings[k] = prior[k]
+            goes = host_backup.destination_of({"backup": settings}, host_backup.host_mode())
+            if goes == host_backup.WHERE_S3 and (target or {}).get("kind") != backup_ship.KIND_S3:
+                raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                    "your backups go to your own bucket: keep it saved, or choose "
+                                    "another place for them first")
+            if goes == host_backup.WHERE_LOCAL and target:
+                # A second copy is sent from the network's storage
+                # (backup_ship.get_source); a backup kept on this machine has
+                # none, and a saved one would read as a copy nothing makes.
+                raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                    "backups kept in a folder on this machine are not sent anywhere "
+                                    "else: remove the second copy (target null), or keep your backups "
+                                    "in the network's storage or your own bucket")
+            if goes == host_backup.WHERE_NETWORK and settings.get("platform") is False and not target:
                 raise HTTPException(
                     status.HTTP_400_BAD_REQUEST,
                     "with platform storage off, choose where your backups go instead "
@@ -518,6 +581,17 @@ async def set_backup_settings(request: Request) -> dict:
             reduced = _reduces_protection(prior, settings)
             if reduced:
                 await _require_owner_code(request, pool, body.get("stepup_code"), reduced)
+            # The bucket's address, checked when it changes (which only the
+            # owner does, with their code: above, so a caller who may not
+            # change it cannot make this Host look a name up either). It must
+            # be on the public internet (backup_stores.check_endpoint), never
+            # this machine, its cloud's metadata service or a private network.
+            if (target or {}).get("kind") == backup_ship.KIND_S3 and target != (prior.get("target") or None):
+                from server import backup_stores
+                try:
+                    await asyncio.to_thread(backup_stores.check_endpoint, target.get("endpoint"))
+                except ValueError as e:
+                    raise HTTPException(status.HTTP_400_BAD_REQUEST, f"target.endpoint: {e}") from None
             await conn.execute(
                 "UPDATE entity_registry SET behavioral_params = jsonb_set("
                 "  CASE WHEN jsonb_typeof(behavioral_params) = 'object' THEN behavioral_params "
@@ -572,8 +646,13 @@ async def get_backup_runs() -> dict:
         await host_backup.pin_recovery_key(pool, brain_service._entity_id)
         if not await host_backup.recipients(pool, brain_service._entity_id):
             problem = host_backup.NO_RECIPIENT_TEXT
+    if problem is None:
+        problem = await host_backup.destination_problem(pool, brain_service._entity_id)
     return {
         "problem": problem,
+        # One verdict: are backups working, and when did the last one finish
+        # (host_backup.backup_status). Settings, Backup opens with it.
+        "status": await host_backup.backup_status(pool, brain_service._entity_id),
         "running": host_backup._run_lock.locked(),
         "runs": [_run_json(r) for r in await host_backup.last_runs(pool, limit=10)],
     }
@@ -597,6 +676,9 @@ async def start_backup_run() -> dict:
     await host_backup.pin_recovery_key(pool, brain_service._entity_id)
     if not await host_backup.recipients(pool, brain_service._entity_id):
         raise HTTPException(status.HTTP_409_CONFLICT, host_backup.NO_RECIPIENT_TEXT)
+    nowhere = await host_backup.destination_problem(pool, brain_service._entity_id)
+    if nowhere:
+        raise HTTPException(status.HTTP_409_CONFLICT, nowhere)
     if host_backup._run_lock.locked():
         return {"started": False, "running": True}
     asyncio.create_task(host_backup.run_once(pool, brain_service._entity_id, "manual"))
@@ -1115,6 +1197,412 @@ async def ship_backup_now() -> dict:
     task.add_done_callback(_SHIP_TASKS.discard)
     return {"ok": True, "started": True,
             "note": "Sending. Progress shows on this tab; it keeps going if you close it."}
+
+
+# ── The owner's own recovery key, made on this Host ──────────────────────────
+# The Backups app makes the key pair in the owner's browser, shows the private
+# half once and has the owner confirm they saved it; only the public half and
+# its fingerprint come here (server/host_backup.py make_own_recovery_key).
+# Walled from the Host (kernel_ops._WALLED_PATHS), behind the second factor,
+# like adopting a key the account page offers.
+
+class OwnRecoveryReq(BaseModel):
+    stepup_code: str
+    recipient: str               # age1..., the public half
+    fingerprint: str             # what the owner's saved key file says
+    label: str = ""
+    # Asked for, never assumed: backups already taken stay encrypted to the
+    # key in use now.
+    replace: bool = False
+
+
+@router.post(
+    "/key/recovery/own",
+    dependencies=[Depends(requires_permission("write:backup_settings"))],
+)
+async def own_recovery_key(req: OwnRecoveryReq) -> dict:
+    """Use the recovery key the owner made in their browser on this Host.
+    From the next backup on, backups are encrypted to it. A key the account
+    page offers later never takes its place unless the owner adopts it."""
+    from server import host_backup
+    pool = brain_service.get_pool()
+    if pool is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "brain pool down")
+    await _require_stepup(pool, req.stepup_code, what="choosing your recovery key")
+    try:
+        got = await host_backup.make_own_recovery_key(
+            pool, brain_service._entity_id, (req.recipient or "").strip(),
+            (req.fingerprint or "").strip(), req.label, replace=req.replace)
+    except host_backup.BackupError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e)) from None
+    note = ("Your host backs up to this recovery key from now on. Keep it safe: your backups open "
+            "only with it." if not got.get("replaced") else
+            "Your next backup is encrypted to this recovery key. Keep the old one too: backups "
+            "taken before open only with it.")
+    return {"ok": True, "fingerprint": got["fingerprint"], "replaced": got.get("replaced"),
+            "note": note}
+
+
+# ── The owner's bucket: its key, sealed in the vault ─────────────────────────
+# Settings, Backup takes the bucket's access key and secret and stores them
+# here, in the Host's vault, sealed to this Host; the saved destination names
+# them (target.cred_name) and holds no secret (backup_ship.validate_target
+# refuses one). Walled from the Host: it says where the owner's backups may
+# be written, with what. Nothing here ever answers with the secret.
+STORAGE_KEY_NAME = "backup-storage"
+STORAGE_KEY_TYPE = "s3_credentials"
+_KEY_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]{0,63}")
+
+
+class StorageKeyReq(BaseModel):
+    access_key_id: str
+    secret_access_key: str
+    session_token: str = ""
+    name: str = ""
+
+
+@router.post(
+    "/storage-key",
+    dependencies=[Depends(requires_permission("write:backup_settings"))],
+)
+async def save_storage_key(req: StorageKeyReq, request: Request) -> dict:
+    """Seal the owner's bucket key in the vault; answer the name it is kept under.
+
+    Only from Settings (OWNER_APP_IDS), the one window that asks for it, and
+    only under a name that is free or already holds a bucket key: the vault
+    supersedes a key of the same name (vault/api.py store_secret), so a name
+    typed here must never replace another of the owner's credentials (a
+    provider's API key, say) with this one. A deactivated key of that name
+    counts as taken, as the vault itself counts it."""
+    from server.vault import api as vault_api
+    pool = brain_service.get_pool()
+    if pool is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "brain pool down")
+    if not _from_owner(request):
+        raise HTTPException(status.HTTP_403_FORBIDDEN,
+                            "only the owner saves the key to their bucket: in the Settings app, "
+                            "Backup tab")
+    key_id = (req.access_key_id or "").strip()
+    secret = (req.secret_access_key or "").strip()
+    if not key_id or not secret:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "both the access key and its secret are needed")
+    if len(key_id) > 512 or len(secret) > 1024 or len(req.session_token or "") > 4096:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "that key is longer than any bucket key")
+    name = (req.name or STORAGE_KEY_NAME).strip()
+    if not _KEY_NAME.fullmatch(name):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "name the key with letters, digits, dots, dashes or underscores")
+    held = await pool.fetchval(
+        "SELECT cred_type FROM vault_envelope WHERE owner_identity = $1 AND logical_name = $2 "
+        "AND superseded_at IS NULL LIMIT 1",
+        vault_identity.host_identity(brain_service._entity_id), name)
+    if held is not None and held != STORAGE_KEY_TYPE:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"your Keys app already holds a key named {name!r} that is not a bucket "
+                            "key, and saving this one would replace it: choose another name")
+    creds = {"access_key_id": key_id, "secret_access_key": secret}
+    if (req.session_token or "").strip():
+        creds["session_token"] = req.session_token.strip()
+    await vault_api.store_secret(pool, entity_id=brain_service._entity_id, name=name,
+                                 cred_type=STORAGE_KEY_TYPE, plaintext=json.dumps(creds).encode())
+    return {"ok": True, "cred_name": name}
+
+
+# ── The backups on this machine: list, download, upload, restore, export ─────
+# The folder on this machine (server/backup_stores.py LocalStore, under
+# host_backup.LOCAL_DIR): the backups written there, an export the owner asked
+# for (exports/), and a file the owner uploaded to restore from (uploads/).
+# Each is ciphertext: a backup and its key file, both sealed to the owner's
+# keys. Downloaded as one file (a plain tar: README, key file, backup); the
+# owner's browser reads the key file from the start of it to restore it on
+# any C-Series Host. All walled from the Host (kernel_ops._WALLED_PATHS): what
+# leaves the Host, and what replaces it, are the owner's acts.
+
+_LOCAL_EXPORT_TASKS: set = set()
+_FOLDERS = ("", "exports", "uploads")
+
+
+@router.get(
+    "/files",
+    dependencies=[Depends(requires_permission("read:backup_settings"))],
+)
+async def list_backup_files() -> dict:
+    """The backups on this machine, newest first; the export and any upload;
+    and what the owner's browser needs to restore one here (this Host's
+    recipient and number)."""
+    import asyncio
+    from server import host_backup, host_restore
+    pool = brain_service.get_pool()
+    if pool is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "brain pool down")
+    eid = brain_service._entity_id
+
+    def collect() -> dict:
+        out: dict = {}
+        for sub in _FOLDERS:
+            out[sub] = [{"stamp": s, "bytes": p["bytes"], "taken_at": p["taken_at"], "folder": sub}
+                        for s, p in host_backup.local_store(sub).pairs().items()]
+        return out
+    found = await asyncio.to_thread(collect)
+    eff = _effective(await _load_bp(eid))
+    await host_backup.pin_recovery_key(pool, eid)
+    return {"backups": found[""], "exports": found["exports"], "uploads": found["uploads"],
+            "status": await host_backup.backup_status(pool, eid),
+            "export": await host_backup._state(pool, host_backup.EXPORT_STATE),
+            "running": host_backup._run_lock.locked(),
+            "where": eff["where"], "mode": eff["mode"], "local_keep": eff["local_keep"],
+            "host_recipient": await host_restore.host_recipient(pool), "entity_id": eid}
+
+
+@router.get(
+    "/files/{stamp}/download",
+    dependencies=[Depends(requires_permission("read:backup_settings"))],
+)
+async def download_backup_file(stamp: str, folder: str = ""):
+    """One backup on this machine as one file to keep: README, its key file,
+    and the backup, in a plain tar. Streamed from the disk as it is sent."""
+    from server import host_backup
+    if not _STAMP.fullmatch(stamp or ""):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "choose a backup from the list")
+    if folder not in _FOLDERS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "folder is one of exports or uploads")
+    store = host_backup.local_store(folder)
+    if stamp not in await asyncio.to_thread(store.pairs):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "that backup is not on this machine")
+    try:
+        parts = await asyncio.to_thread(store.bundle, stamp)
+    except host_backup.BackupError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(e)) from None
+    return _bundle_response(stamp, parts)
+
+
+def _bundle_response(stamp: str, parts: list):
+    from fastapi.responses import StreamingResponse
+    from server import backup_stores
+    name = backup_stores.bundle_name(stamp)
+    return StreamingResponse(backup_stores.bundle_stream(parts), media_type="application/x-tar",
+                             headers={"Content-Disposition": f'attachment; filename="{name}"',
+                                      "Content-Length": str(backup_stores.bundle_size(parts)),
+                                      "Cache-Control": "no-store",
+                                      "X-Content-Type-Options": "nosniff"})
+
+
+# ── a download the browser writes to disk itself ─────────────────────────────
+# A window's requests carry its token in a header (the shell stamps fetch()),
+# and a plain link cannot carry one. A page with the save-file picker streams
+# a fetch to the file it chose; a page without one (a framed page, Firefox,
+# Safari) could only hand the browser the backup as a Blob, the whole file in
+# memory first. So the page asks here, with its token, for a link to one file,
+# and the browser follows the link as an ordinary download (Content-Disposition:
+# attachment), writing it to disk as it arrives.
+#
+# The link is good for one download, within _LINK_TTL_S, of that one file, and
+# only on the origin of the window that asked for it: the test the token
+# middleware makes (app_origin.token_fits_origin), so the Backups app's link
+# opens nothing from another app's page. It stays behind the Host's sign-in
+# like any page load: the router's session cookie goes with the navigation.
+_LINKS: dict = {}          # ticket -> (stamp, folder, origin key, expiry on the monotonic clock)
+_LINK_TTL_S = 60.0
+_TICKET = re.compile(r"dl_[A-Za-z0-9_-]{32}")
+
+
+def _mint_link(stamp: str, folder: str, origin_key: str) -> str:
+    import secrets as _secrets
+    import time as _time
+    now = _time.monotonic()
+    for t, row in list(_LINKS.items()):
+        if row[3] < now:
+            _LINKS.pop(t, None)
+    ticket = "dl_" + _secrets.token_urlsafe(24)
+    _LINKS[ticket] = (stamp, folder, origin_key or "", now + _LINK_TTL_S)
+    return ticket
+
+
+def _redeem_link(ticket: str, request: Request) -> Optional[tuple[str, str]]:
+    """(stamp, folder) the link was made for, or None. Redeeming spends it,
+    whatever the answer."""
+    import time as _time
+    from server.applications import app_origin
+    row = _LINKS.pop(ticket or "", None)
+    if row is None or row[3] < _time.monotonic():
+        return None
+    origin = app_origin.classify(app_origin.browser_host(request.headers))
+    if not app_origin.token_fits_origin(row[2], origin):
+        return None
+    return row[0], row[1]
+
+
+@router.post(
+    "/files/{stamp}/link",
+    dependencies=[Depends(requires_permission("read:backup_settings"))],
+)
+async def link_backup_file(stamp: str, request: Request, folder: str = "") -> dict:
+    """A link the browser downloads one backup on this machine from, as one
+    file, writing it to disk as it arrives (above)."""
+    from server import backup_stores, host_backup
+    if not _STAMP.fullmatch(stamp or ""):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "choose a backup from the list")
+    if folder not in _FOLDERS:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "folder is one of exports or uploads")
+    if stamp not in await asyncio.to_thread(host_backup.local_store(folder).pairs):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "that backup is not on this machine")
+    tok = getattr(request.state, "app_token", None)
+    ticket = _mint_link(stamp, folder, getattr(tok, "origin_key", "") or "")
+    return {"url": f"/api/backup/files/download/{ticket}", "name": backup_stores.bundle_name(stamp),
+            "expires_in": int(_LINK_TTL_S)}
+
+
+@router.get("/files/download/{ticket}")
+async def download_backup_link(ticket: str, request: Request):
+    """The download a link from POST /files/{stamp}/link names. Its own
+    authentication: the one-shot link itself (route_policy, own-auth)."""
+    from server import host_backup
+    got = _redeem_link(ticket, request) if _TICKET.fullmatch(ticket or "") else None
+    if got is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND,
+                            "that download link has been used or has expired: download it again "
+                            "from the Backups app or Settings, Backup")
+    stamp, folder = got
+    store = host_backup.local_store(folder)
+    if stamp not in await asyncio.to_thread(store.pairs):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "that backup is not on this machine any more")
+    try:
+        parts = await asyncio.to_thread(store.bundle, stamp)
+    except host_backup.BackupError as e:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, str(e)) from None
+    return _bundle_response(stamp, parts)
+
+
+@router.get(
+    "/files/upload",
+    dependencies=[Depends(requires_permission("read:backup_settings"))],
+)
+async def upload_backup_status(stamp: str) -> dict:
+    """How much of an upload this Host holds, so a dropped one carries on."""
+    from server import host_restore
+    if not _STAMP.fullmatch(stamp or ""):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "name the backup by its time stamp")
+    return host_restore.upload_status(stamp)
+
+
+# The upload streams its body to disk as it arrives, so it has a router of
+# its own: the router above reads every body whole first (_no_private_keys),
+# which would hold a whole backup in memory. It refuses a private key itself,
+# chunk by chunk (host_restore.receive_upload).
+upload_router = APIRouter(prefix="/api/backup", tags=["backup"])
+
+
+@upload_router.put(
+    "/files/upload",
+    dependencies=[Depends(requires_permission("write:backup_settings"))],
+)
+async def upload_backup_file(request: Request, stamp: str, part: str, offset: int, total: int,
+                             final: bool = False) -> dict:
+    """One piece of a file the owner uploads to restore from: the key file
+    whole (part=key), or the backup from `offset` (part=data). `total` is the
+    whole file's size."""
+    from server import host_restore
+    try:
+        return await host_restore.receive_upload(stamp, part, offset, total, request.stream(), final)
+    except host_restore.RestoreError as e:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, str(e)) from None
+
+
+class FileRestoreReq(BaseModel):
+    stepup_code: str
+    stamp: str
+    sidecar: str                 # the key file, sealed again to this Host in the browser
+    # The owner said this backup is theirs although this Host did not make it
+    # (an export from another Host): host_restore.UNVERIFIED_TEXT.
+    unverified_ok: bool = False
+
+
+@router.post(
+    "/files/restore",
+    dependencies=[Depends(requires_permission("write:backup_settings"))],
+)
+async def restore_backup_file(req: FileRestoreReq) -> dict:
+    """Restore a backup on this machine (one the owner uploaded, an export, or
+    one of the folder's own) in one act: the key file the owner's browser
+    sealed to this Host with their recovery key, and their code. The Host
+    checks the key file opens with its own key and names this backup, then
+    stages the restore and restarts onto it (host_restore.stage), the same
+    way as every restore, undo included."""
+    import asyncio
+    from server import host_backup, host_restore
+    pool = brain_service.get_pool()
+    if pool is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "brain pool down")
+    if not _STAMP.fullmatch(req.stamp or ""):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "choose a backup from the list")
+    if req.stamp not in await asyncio.to_thread(host_restore._local_backups):
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "that backup is not on this machine: upload it first")
+    text = (req.sidecar or "").strip()
+    if not text.startswith("-----BEGIN AGE ENCRYPTED FILE-----") or len(text) > 16384:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                            "send the key file your browser sealed to this Host, from -----BEGIN "
+                            "AGE ENCRYPTED FILE----- to its END line")
+    if host_restore.read_plan() is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "a restore is already waiting for this Host to restart")
+    if host_backup._run_lock.locked():
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            "a backup or restore is running; try again when it has finished")
+    await _require_stepup(pool, req.stepup_code, what="restoring a backup")
+    try:
+        got = await host_restore.accept_resealed(pool, req.stamp, (text + "\n").encode("ascii"),
+                                                 via="file")
+    except host_restore.RestoreError as e:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(e)) from None
+    except UnicodeEncodeError:
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "a key file is plain text") from None
+    if not got.get("verified") and not req.unverified_ok:
+        raise HTTPException(status.HTTP_409_CONFLICT, host_restore.UNVERIFIED_TEXT)
+    # The file the owner chose, on this machine: never another backup that
+    # shares its stamp in the network's storage (host_restore._entry).
+    task = asyncio.create_task(host_restore.stage(pool, brain_service._entity_id, req.stamp,
+                                                  unverified_ok=req.unverified_ok, where="local"))
+    _RESTORE_TASKS.add(task)
+    task.add_done_callback(_RESTORE_TASKS.discard)
+    return {"started": True, "verified": bool(got.get("verified"))}
+
+
+@router.post(
+    "/export",
+    dependencies=[Depends(requires_permission("write:backup_settings"))],
+)
+async def start_export() -> dict:
+    """Make an export now: the whole Host as one file, encrypted to the same
+    keys as its backups, to download from GET /files (exports). Returns at
+    once; its state is GET /files `export`."""
+    import asyncio
+    from server import host_backup
+    pool = brain_service.get_pool()
+    if pool is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "brain pool down")
+    eid = brain_service._entity_id
+    if any(not t.done() for t in _LOCAL_EXPORT_TASKS):
+        return {"started": False, "running": True}
+    problem = host_backup.configured()
+    if problem:
+        raise HTTPException(status.HTTP_409_CONFLICT, problem)
+    await host_backup.pin_recovery_key(pool, eid)
+    if not await host_backup.recipients(pool, eid):
+        raise HTTPException(status.HTTP_409_CONFLICT, host_backup.NO_RECIPIENT_TEXT)
+
+    async def _run():
+        try:
+            await host_backup.export_to_file(pool, eid)
+        except host_backup.BackupError as e:
+            logger.info("export not made: %s", e)
+        except Exception:  # pragma: no cover - defensive
+            logger.exception("export failed")
+    task = asyncio.create_task(_run())
+    _LOCAL_EXPORT_TASKS.add(task)
+    task.add_done_callback(_LOCAL_EXPORT_TASKS.discard)
+    return {"started": True, "note": "Making the export. It is ready to download here when it is done."}
 
 
 # ── The user's own MEMORY MIRROR ─────────────────────────────────────────────

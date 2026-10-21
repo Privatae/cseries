@@ -23,6 +23,12 @@
     }
     const BUTTON = { 0: "left", 1: "middle", 2: "right" };
 
+    // Control characters and the ones that reorder text become spaces: the
+    // same as Settings' oneLine().
+    function oneLine(s) {
+        return String(s == null ? "" : s).replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, " ");
+    }
+
     function init(opts) {
         const canvas = opts.canvas;          // <canvas>
         const stage = opts.stage;            // sizing container
@@ -34,6 +40,9 @@
         let alive = false;
         let closedByUs = false;
         let retryMs = 1000;
+        // Why this machine would not start the browser (a short disk, no
+        // room), as the kernel said it; kept on screen until a wake lands.
+        let refused = "";
         let frameW = 0, frameH = 0;
 
         function send(obj) {
@@ -183,7 +192,7 @@
         // ── connection ─────────────────────────────────────────────
         function connect() {
             const scheme = location.protocol === "https:" ? "wss" : "ws";
-            onStatus(alive ? "Reconnecting…" : "Starting browser…");
+            if (!refused) onStatus(alive ? "Reconnecting…" : "Starting browser…");
             ws = new WebSocket(scheme + "://" + location.host + WS_PATH);
             ws.binaryType = "blob";
             ws.addEventListener("open", () => {
@@ -194,30 +203,41 @@
             });
             ws.addEventListener("message", (ev) => {
                 if (ev.data instanceof Blob) {
-                    if (!alive) { alive = true; onStatus(""); }
+                    if (!alive) { alive = true; refused = ""; onStatus(""); }
                     drawBlob(ev.data);
                     return;
                 }
                 let m;
                 try { m = JSON.parse(ev.data); } catch (_) { return; }
                 if (m.t === "frame") {
-                    if (!alive) { alive = true; onStatus(""); }
+                    if (!alive) { alive = true; refused = ""; onStatus(""); }
                     drawFrame(m.data);
                 } else if (m.t === "hello") {
                     alive = true;
+                    refused = "";
                     onStatus("");
                     pushSize();
                 } else if (m.t === "pages") {
                     renderPages(m.pages || []);
+                } else if (m.t === "error" && m.refused) {
+                    // Text, one line: it can name app ids.
+                    refused = oneLine(m.detail || "refused");
+                    onStatus("The browser did not start: " + refused);
                 } else if (m.t === "error") {
                     onStatus("Viewport: " + (m.detail || "error"));
                 }
             });
             ws.addEventListener("close", () => {
                 if (closedByUs) return;
-                // The first attempts race the harness wake — keep trying,
-                // with a ceiling so an uninstalled sidecar doesn't spin.
-                onStatus("Viewport disconnected — retrying…");
+                if (refused) {
+                    // Refused, not starting: the reason stays, and the wake
+                    // is asked again at the slowest pace.
+                    retryMs = 15000;
+                } else {
+                    // The first attempts race the harness wake — keep trying,
+                    // with a ceiling so an uninstalled sidecar doesn't spin.
+                    onStatus("Viewport disconnected — retrying…");
+                }
                 setTimeout(connect, retryMs);
                 retryMs = Math.min(retryMs * 2, 15000);
             });

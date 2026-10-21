@@ -1148,10 +1148,11 @@ def _diff_was_cut(text: str) -> bool:
 
 
 def _bridge():
-    """Entity-side CEIGAS bridge client (mirror billing.py). The governed
-    channel for harness wake/release: entity -> bridge -> operator."""
-    from server.main import get_bridge_client
-    return get_bridge_client()
+    """The governed channel for harness wake/release/capacity: the bridge to
+    the operator on the platform, the machine's local runtime on a Host whose
+    machine runs one (local_runtime.runtime_client)."""
+    from server.applications.local_runtime import runtime_client
+    return runtime_client()
 
 
 async def _harness_bridge(op: str, harness_id: str, *,
@@ -1302,7 +1303,17 @@ async def _fanout_capacity(harnesses: list[str],
         "slots": {h: n for h, n in (data.get("slots") or {}).items()
                   if isinstance(h, str) and isinstance(n, int)
                   and not isinstance(n, bool) and n >= 1},
+        # "machine" when this machine's own runtime answered: no plan is
+        # involved, and the sentences say so (_room_of).
+        "scope": data.get("scope"),
     }
+
+
+def _room_of(answer: Optional[dict]) -> str:
+    """Whose memory a capacity answer or a 402 refusal counted: "this
+    machine" when this machine's own runtime answered (scope machine), "this
+    plan" otherwise. The split harness_backend.wake_refused makes."""
+    return "this machine" if (answer or {}).get("scope") == "machine" else "this plan"
 
 
 def _mi_text(v) -> str:
@@ -1354,15 +1365,16 @@ def _capacity_message(cap: dict, requested: list[str], *, waves: bool = False) -
         need_txt = "; ".join(f"{h} {t}" for h, t in rendered)
     free_txt = f"{_mi_text(cap.get('remaining_mi'))} free"
     at_once = " at once" if waves else ""
+    room = _room_of(cap)
     if fits and waves:
-        parts = [f"{len(fits)} of {n} harnesses fit this plan at once ({need_txt}; {free_txt}).",
+        parts = [f"{len(fits)} of {n} harnesses fit {room} at once ({need_txt}; {free_txt}).",
                  "Running " + ", ".join(fits) + " now; "
                  + _and_list([h for h, _ in rendered]) + " start as memory frees."]
     elif fits:
-        parts = [f"{len(fits)} of {n} harnesses fit this plan ({need_txt}; {free_txt}).",
+        parts = [f"{len(fits)} of {n} harnesses fit {room} ({need_txt}; {free_txt}).",
                  "Running " + ", ".join(fits) + "."]
     else:
-        parts = [f"None of the {n} harnesses fit this plan right now "
+        parts = [f"None of the {n} harnesses fit {room} right now "
                  f"({need_txt}; {free_txt}). Nothing was started."]
     if cap.get("upgrade_to"):
         parts.append(f"The {_plan_text(cap['upgrade_to'])} plan has room for all {n}{at_once}.")
@@ -1386,7 +1398,7 @@ def _refused_variant_error(cap: dict, harness: str) -> str:
                  if r.get("harness") == harness), None)
     need_txt = (f"needs {_mi_text(need)}" if isinstance(need, int) and need > 0
                 else "needs more than is free")
-    return (f"Not started: {harness} {need_txt} and this plan has "
+    return (f"Not started: {harness} {need_txt} and {_room_of(cap)} has "
             f"{_mi_text(cap.get('remaining_mi'))} free.")
 
 
@@ -1398,7 +1410,7 @@ def _waiting_variant_note(cap: dict, harness: str, running: list[str]) -> str:
     need_txt = (f"needs {_mi_text(need)}" if isinstance(need, int) and need > 0
                 else "needs more than is free")
     while_txt = (f" while {_and_list(list(running))} run" if running else "")
-    return (f"Waiting for memory: {harness} {need_txt} and this plan has "
+    return (f"Waiting for memory: {harness} {need_txt} and {_room_of(cap)} has "
             f"{_mi_text(cap.get('remaining_mi'))} free{while_txt}. "
             "It starts as memory frees.")
 
@@ -3379,7 +3391,7 @@ def _plain_run_failure(label: str, error: Optional[str]) -> str:
             if d.get("error") == "capability_over_plan":
                 need, free = d.get("needs_mi"), d.get("headroom_mi")
                 up = d.get("upgrade_to")
-                text = (f"{label} could not start: this plan has {free}Mi free "
+                text = (f"{label} could not start: {_room_of(d)} has {free}Mi free "
                         f"and {label} needs {need}Mi")
                 if up:
                     text += f" (the {up} plan has room for it)"

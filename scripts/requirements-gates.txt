@@ -29,6 +29,16 @@ PyYAML==6.0.3
 cryptography==46.0.5
 boto3==1.40.72
 
+# scripts/test_owner_passkeys_unit.py drives server/owner_passkeys.py through
+# the webauthn library. The image pins webauthn 3.0.1, which needs
+# cryptography >= 49; the gates' cryptography above is older, so they run
+# webauthn 2.5.2, whose API the module uses identically. The unit test passes
+# with both.
+webauthn==2.5.2
+asn1crypto==1.5.1
+cbor2==6.1.4
+pyOpenSSL==25.3.0
+
 # The Settings restore gate in headless Chromium
 # (scripts/test_settings_restore_chromium.py); its browser is installed with
 # `python3 -m playwright install --with-deps chromium`.

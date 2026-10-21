@@ -121,7 +121,9 @@ def _type(tid, name, status="active"):
 
 
 def main() -> int:
-    app_root = os.environ.get("APP_ROOT", "/app")
+    # The tree this script is in, unless APP_ROOT names another (/app in the
+    # image is this script's own tree too).
+    app_root = os.environ.get("APP_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     sys.path.insert(0, os.path.join(app_root, "brain"))
     sys.path.insert(0, app_root)
     src = lambda *p: open(os.path.join(app_root, *p), encoding="utf-8").read()
@@ -415,11 +417,16 @@ def main() -> int:
     i_set = ssrc.find("set_current_turn_type(getattr(sess, \"turn_type\", None))")
     i_res = ssrc.find("sess.turn_type = await resolve_session_type(")
     i_prompt = ssrc.find("_pt_block = await build_per_turn_prompt(self, sess, user_message)")
+    # The report is the first turn_type event after the record, and it comes
+    # before the prompt is built; held to that order, not to a distance, so
+    # another stamp of the type between the two (the memory rows' own) does
+    # not read as a missing report.
+    i_evt = ssrc.find('"event": "turn_type",', i_set) if i_set > 0 else -1
     check("the session records the type once it resolves, before the prompt is built, and reports it",
-          0 < i_res < i_set < i_prompt and '"event": "turn_type",' in ssrc[i_set:i_set + 900])
+          0 < i_res < i_set < i_evt < i_prompt, (i_res, i_set, i_evt, i_prompt))
     check("...saying 'untyped' outright, so the registry can tell it from 'not known yet'",
-          '"turn_type_status": (_tt_now.get("status") or "untyped") if _tt_now else "untyped",'
-          in ssrc[i_set:i_set + 1400])
+          i_evt > 0 and '"turn_type_status": (_tt_now.get("status") or "untyped") if _tt_now else "untyped",'
+          in ssrc[i_evt:i_evt + 600])
     # The runner: the op lane records the task's type for what the op starts.
     from mastercode.brain import offline_task_runner as otr
     import mastercode.runtime.direct_ops as dops

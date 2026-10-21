@@ -234,7 +234,7 @@ def main() -> int:
 
     async def fake_fed(pool, entity_id, query, *, scope="all", limit=10, context=None,
                        memory_types=None, turn_scope=None, scope_everywhere_types=None,
-                       exclude_rules=False, skip_words=None):
+                       exclude_rules=False, skip_words=None, any_words=False):
         fed_calls.append({"scope": scope, "limit": limit, "context": context})
         return {"query": query, "scope": scope,
                 "memory": {"hits": [{"content": "prefers invoice 42 paid by transfer", "matched": ["lexical"],

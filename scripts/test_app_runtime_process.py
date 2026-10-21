@@ -413,11 +413,14 @@ def main() -> int:
     check("GET /api/applications/{app_id}/source exists",
           "/api/applications/{app_id}/source" in paths)
     from server.middleware import localhost_only as L
-    # A standalone Host has no app runtime pods: the source path is not
-    # exempt, so a fetch from off the box needs the owner's session.
-    check("middleware does not exempt the source path on a standalone Host",
+    # An app's container reaches the source path only from the local runtime's
+    # network (runtime_exempt); from anywhere else a fetch from off the box
+    # needs the owner's session (scripts/test_localhost_gate_runtime_net.py).
+    check("middleware exempts the source path only from the runtime's network",
           not any("/api/applications/x/source".startswith(p) for p in L._SELF_AUTH_PREFIXES)
-          and not hasattr(L, "_SELF_AUTH_SHAPES"))
+          and not hasattr(L, "_SELF_AUTH_SHAPES")
+          and L.runtime_exempt("/api/applications/x/source", "GET", {})
+          and not L.runtime_peer("192.0.2.10"))
 
     # ── 5. proxy reads runtime.image ─────────────────────────────────────
     from server.applications import proxy as P

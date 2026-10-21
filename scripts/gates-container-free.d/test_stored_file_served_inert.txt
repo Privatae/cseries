@@ -1,0 +1,2 @@
+# 2026-10-20: a stored file is never served as a page of the Host's origin. GET /api/brain/context/{id}/file shows inline only kinds a browser renders without running the file on the origin (pictures, PDF, plain text, audio, video) and sends every other stored mime as a download of bytes; the wallpaper (no token) is only an allowed image type, sandboxed. A restored row saying text/html had either route serve a page running as the owner. Real route functions, invented rows, a stand-in pool; no DB.
+test_stored_file_served_inert.py

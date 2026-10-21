@@ -4066,18 +4066,6 @@ else
     failed=1
 fi
 
-# ── Thread consolidator gate (conversation-depth P2, 2026-08-04) ────────────
-# Post-turn rolling summaries per thread scope: full-window input (retained
-# AND evicted turns, corrections rule in the prompt), atomic supersede
-# (t_valid_until + resolution_pointer, turn rows untouched), in-flight
-# guard, failure-degrades-to-old-window.
-if docker exec "$CNAME" python3 /app/scripts/test_thread_consolidator.py; then
-    green "OK    thread consolidator — trigger, full-window input, atomic supersede, in-flight guard"
-else
-    red "FAIL  thread consolidator — rolling-summary pipeline regressed"
-    failed=1
-fi
-
 # ── Circles threads gate (2026-09-21) ───────────────────────────────────────
 # A new thread's turn
 # count is 0 while the legacy app:circles scope is unchanged, recall never
@@ -4105,19 +4093,16 @@ else
     failed=1
 fi
 
-# ── Context janitor gate (conversation-depth P5, 2026-08-04) ────────────────
-# §7a: tool-result artifact capture into user_context (scope/turn tagging,
-# small/duplicate skip), the janitor's KEEP/DROP curation against the real
-# recall predicate + per-ids embed job, the pre-fire vs recall split (the
-# per-turn block pre-fires preferences only and pushes no
-# document; `recall` reaches the user's document and the kept artifact
-# through its documents store, and an empty store answers "no matches"),
-# topic segments ("Previously: X" + atomic supersede), and the trigger set
-# (the 45-minute idle-gap trigger retired 2026-09-19 with the post-turn lane).
+# ── Pre-fire vs recall for documents and captured tool results ──────────────
+# The janitor this gate was named for is retired with the rolling summary. What
+# it still proves: the per-turn block pre-fires preferences only and pushes no
+# document; `recall` reaches the user's document and a kept captured tool
+# result through its documents store, a dismissed one through nothing, and an
+# empty store answers "no matches".
 if docker exec "$CNAME" python3 /app/scripts/test_context_janitor.py; then
-    green "OK    context janitor — artifact capture, KEEP/DROP + embed, no document pre-fired + recall reaches documents, topic segments, triggers"
+    green "OK    pre-fire vs recall — no document pre-fired, recall reaches documents and kept tool results"
 else
-    red "FAIL  context janitor — conversation-depth P5 regressed"
+    red "FAIL  pre-fire vs recall — the per-turn block or recall's documents store regressed"
     failed=1
 fi
 

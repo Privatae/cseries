@@ -1,0 +1,2 @@
+# 2026-10-19 (the free public App Store): scripts/build_store_catalog.py writes the same catalog.json from the same bundles, lists only the store lane (no image-baked, retired or platform-tool app), stops on any bundle the installer would refuse (wrong key, or provenance its signer may not sign), and its catalog validates and verifies in the Host's reader; over the repository's own factory-bundles and keys it succeeds. Container-free; temporary directories only. 2026-10-20: issued_at is written, from the epoch by default, or from --issued-at.
+test_build_store_catalog.py

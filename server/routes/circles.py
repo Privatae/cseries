@@ -1602,6 +1602,18 @@ async def _topic_for(eid: int, current: str | None, text: str, known: bool = Tru
     return landing
 
 
+def _with_choice(frame: dict | None, landing) -> dict | None:
+    """The turn's frame with the topics the Host may still move the message
+    to in its turn (runtime/thread_choice), when the placement left any."""
+    if not getattr(landing, "choice", None) or not landing.thread_id:
+        return frame
+    from mastercode.runtime.thread_choice import frame_value
+    return {**(frame or {}), "thread_choice": frame_value(
+        surface="circles", candidates=list(landing.choice),
+        landed={"kind": "thread", "ref": landing.thread_id,
+                "title": landing.title or "a new topic", "provisional": bool(landing.new)})}
+
+
 def _topic_known(body: dict) -> bool:
     """Whether the page names a topic the person was in this visit: a blank
     page after login names none, and its first message is then no
@@ -2532,13 +2544,17 @@ async def send_message(request: Request) -> dict:
                 _topic = _tp1.TopicLanding(
                     thread_id=_thread_id, title="", picked=True,
                     related=await _tp1.related_topics(brain_service.get_pool(), eid, text,
-                                                      thread_id=_thread_id))
+                                                      thread_id=_thread_id),
+                    # The topics POST /topic left for the Host's pick in its
+                    # turn, kept on the new topic's marker.
+                    choice=tuple(await _tp1.pending_choice(brain_service.get_pool(), eid, _thread_id)))
             except Exception as _rel_err:  # noqa: BLE001 — the turn runs without them
                 log.warning("related topics not read (non-fatal): %s", _rel_err)
         if _topic is not None and not _topic.root:
             frame = {**(frame or {}), "topic": {
                 "title": _topic.title, "new": _topic.new, "marker": _topic.marker,
                 "related": list(_topic.related)}}
+            frame = _with_choice(frame, _topic)
 
         # Turn types:
         # WHERE this message lands is decided here, before the turn, in
@@ -2575,6 +2591,7 @@ async def send_message(request: Request) -> dict:
                 frame = {**(frame or {}), "topic": {
                     "title": _topic.title, "new": _topic.new, "marker": _topic.marker,
                     "related": list(_topic.related)}}
+                frame = _with_choice(frame, _topic)
 
         # The quote goes into the turn's words AFTER the landing: where the
         # message lands is the person's call (their pick, else their words),

@@ -18,9 +18,15 @@ system: true
 #   saying what the app is and what lives in it; the how-to it carried lives in
 #   skills and tool descriptions. Manifest-only; bundle repacked.
 # 2.2.6 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
-# 2.2.7 (2026-10-20): text only. The memory line no longer mentions plans; the
+# 2.2.7 (2026-10-20): Uninstall offers "Also delete this app's data", unticked,
+#   with the size the machine keeps for it (GET /api/applications/runtime/app-data);
+#   ticked, the uninstall sends ?purge=true. "Data kept from removed apps" lists
+#   what removed apps left on this machine, with a Delete for each (DELETE
+#   /api/applications/runtime/app-data/<id>). The catalog's notices (old, undated,
+#   no rollback record) show above the list. Same execute:install scope.
+# 2.2.8 (2026-10-20): text only. The memory line no longer mentions plans; the
 #   payments-unavailable message says payments are not set up on this Host.
-version: "2.2.7"
+version: "2.2.8"
 # 2.2.1 (2026-09-17): a "Group only" badge on any catalog card whose
 #   `distribution` is 'circle' — the store's source of truth (migration 045
 #   demoted `audience`/`public` to derived columns, so this reads the real

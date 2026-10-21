@@ -33,8 +33,12 @@
 #                  of its own; built in and free, no store row)
 #   vscode         removed (retired with the Coding Tutor;
 #                  kernel.RETIRED_APPS)
+#   backups        added (a standalone Host makes its recovery key, keeps
+#                  its backups and restores from a file here; every Host
+#                  backs up, and one with no network cannot reach the store)
 agents
 artifacts
+backups
 calendar
 circles
 community

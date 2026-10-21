@@ -32,7 +32,7 @@ Response Shaping has two settings. **How much your Host explains** has three pos
 
 ## How do backups work?
 
-The Backup tab sets a schedule (every day, once a week, or off) and holds your keys. A backup is meant to be encrypted on your Host before it leaves, to a recovery key you keep and to the key of any bastion you add, so nobody else can open it. In this release a standalone Host cannot yet write or restore its own backups, so until that is finished the Host's volumes on your machine are the only copy.
+The Backup tab sets a schedule (every day, once a week, or off), where backups go, and holds your keys. Every backup is encrypted on your Host, to the recovery key you make in the Backups app and to the key of any bastion you add, so nobody else can open it; until your Host has a recovery key it takes no backups. A Host on its own keeps them in a folder on your machine unless you choose your own S3-compatible bucket; on the optional Privatae network they can go to the network's storage. A backup holds your Host's whole state: its database (memory and conversations), its apps, files and settings, each app's own data, including data you kept from an app you removed, and copies of its Git repositories. Restore puts all of it back except the Git repositories, which stay as they are.
 
 ## How do I join the Privatae network?
 

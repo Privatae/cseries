@@ -34,6 +34,13 @@ on TCP, published on the machine's loopback only (compose.yaml):
                    certificate is the bastion's identity here, where on the
                    sockets it was the directory's owner and group.
 
+A Host on a server of its own is reached on the same two ports from other
+machines, at the name CSERIES_LANE_HOST gives (lane_host): the redeem URL and
+the lane address name it instead of the loopback. The server's firewall, not
+this process, decides who reaches them; the enroll port is opened to one
+address at a time, for the pairing window the owner asked for
+(server/network/door_helper.py).
+
 Nothing here runs for a Host with a platform: run_supervised checks
 standalone() first, and the platform's redeem (bastion_enroll.redeem) is not
 touched. Nothing a bastion runs reaches the Host's :8800 listener through
@@ -46,6 +53,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import ipaddress
 import json
 import logging
 import os
@@ -128,16 +136,56 @@ def _published_port(var: str, default: int) -> int:
     return port
 
 
+_LANE_LABEL_RE = re.compile(r"[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?")
+_lane_host_warned: set = set()
+
+
+def _lane_host_setting() -> Optional[str]:
+    """CSERIES_LANE_HOST in the form a URL and a host:port carry it (an IPv6
+    address in brackets), or None when it is unset or is neither a host name
+    nor an IP address."""
+    raw = os.environ.get("CSERIES_LANE_HOST", "").strip().lower()
+    if not raw:
+        return None
+    try:
+        ip = ipaddress.ip_address(raw[1:-1] if raw.startswith("[") and raw.endswith("]") else raw)
+        return f"[{ip}]" if ip.version == 6 else str(ip)
+    except ValueError:
+        pass
+    if len(raw) <= 253 and all(_LANE_LABEL_RE.fullmatch(lb) for lb in raw.split(".")):
+        return raw
+    if raw not in _lane_host_warned:
+        _lane_host_warned.add(raw)
+        log.warning("CSERIES_LANE_HOST=%r is not a host name or an IP address; using 127.0.0.1", raw)
+    return None
+
+
+def remote_lane() -> bool:
+    """Whether bastions on other machines reach this Host's pairing ports
+    (CSERIES_LANE_HOST is set): a Host on a server of its own, not in a VM on
+    the bastion's machine."""
+    return _lane_host_setting() is not None
+
+
+def lane_host() -> str:
+    """Where a bastion reaches the enroll and lane ports: CSERIES_LANE_HOST,
+    the Host's public name on a server of its own, or else the machine's
+    loopback, where compose.yaml publishes them. The redeem URL and the lane
+    address always name the same host: the bastion refuses a lane on any host
+    but the one its redeem URL named."""
+    return _lane_host_setting() or "127.0.0.1"
+
+
 def enroll_url() -> str:
-    """The redeem URL for a bastion on the machine: the enroll port where
-    compose.yaml publishes it (CSERIES_ENROLL_PORT, default 8810)."""
-    return f"https://127.0.0.1:{_published_port('CSERIES_ENROLL_PORT', PUBLISHED_ENROLL_PORT)}{TCP_REDEEM_PATH}"
+    """The redeem URL on the enroll port (CSERIES_ENROLL_PORT, default 8810)
+    at lane_host()."""
+    return f"https://{lane_host()}:{_published_port('CSERIES_ENROLL_PORT', PUBLISHED_ENROLL_PORT)}{TCP_REDEEM_PATH}"
 
 
 def lane_address() -> str:
-    """The lane's address for a bastion on the machine, as host:port
-    (CSERIES_LANE_PORT, default 8811). The redeem on the enroll port answers it."""
-    return f"127.0.0.1:{_published_port('CSERIES_LANE_PORT', PUBLISHED_LANE_PORT)}"
+    """The lane's address, as host:port (CSERIES_LANE_PORT, default 8811) at
+    lane_host(). The redeem on the enroll port answers it."""
+    return f"{lane_host()}:{_published_port('CSERIES_LANE_PORT', PUBLISHED_LANE_PORT)}"
 
 
 def pairing_host_name(handle: str) -> str:

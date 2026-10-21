@@ -223,6 +223,39 @@ _ENTRIES: list[tuple[str, str, str, str]] = [
     *_e("POST", "/api/owner/logout", "own-auth",
         "ends only the session named by the caller's own session cookie "
         "(owner_login.sign_out); without one there is nothing to end"),
+    # The owner's passkeys and recovery codes (server/owner_passkeys.py).
+    *_e("POST", "/api/owner/passkey/login/options", "own-auth",
+        "starts a passkey sign-in: an in-memory challenge for this Host's own name, used once, "
+        "naming no credential; refused before there is an owner"),
+    *_e("POST", "/api/owner/passkey/login/verify", "own-auth",
+        "the owner's passkey assertion, checked against a stored public key by "
+        "owner_passkeys.passkey_sign_in under the sign-in's per-client backoff"),
+    *_e("POST", "/api/owner/recovery/login", "own-auth",
+        "one of the owner's single-use recovery codes, spent by owner_passkeys.recovery_sign_in "
+        "under the sign-in's per-client backoff"),
+    *_e("POST", "/api/owner/passkey/register/options", "own-auth",
+        "the owner's live session cookie on this Host's own name, and a password sign-in in the "
+        "last five minutes for the first passkey, or once one exists a check with it or a "
+        "recovery code in that time"),
+    *_e("POST", "/api/owner/passkey/register/verify", "own-auth",
+        "the owner's live session cookie and the challenge that session was given; the new "
+        "passkey is verified by the webauthn library before it is kept"),
+    *_e("POST", "/api/owner/passkey/stepup/options", "own-auth",
+        "the owner's live session cookie on this Host's own name; a challenge for a passkey "
+        "this Host holds"),
+    *_e("POST", "/api/owner/passkey/stepup/verify", "own-auth",
+        "the owner's live session cookie and a passkey assertion for the challenge that session "
+        "was given, under the sign-in's per-client backoff"),
+    *_e("POST", "/api/owner/passkey/remove", "own-auth",
+        "the owner's live session cookie on this Host's own name and a passkey check or "
+        "recovery-code sign-in in the last five minutes; the last passkey is never removed"),
+    *_e("POST", "/api/owner/sessions/end-others", "own-auth",
+        "the owner's live session cookie on this Host's own name and a fresh check (a passkey "
+        "or recovery code, or before any passkey the password, in the last five minutes); "
+        "ends only other sessions"),
+    *_e("POST", "/api/owner/recovery/new", "own-auth",
+        "the owner's live session cookie and a passkey check or recovery-code sign-in in the "
+        "last five minutes"),
     *_e("GET", "/api/applications/{app_id}/source", "own-auth", _RUNTIME_TOKEN),
     *_e("POST", "/api/applications/{app_id}/runtime-log", "own-auth", _RUNTIME_TOKEN),
     *_e("POST", "/api/network/bastions/redeem", "own-auth",
@@ -246,13 +279,18 @@ _ENTRIES: list[tuple[str, str, str, str]] = [
         _CONNECTOR_CAP + " (an approved grant)"),
     *_e("GET", "/api/connector/turns/{turn_id}", "own-auth",
         _CONNECTOR_CAP + " (an approved grant)"),
+    *_e("GET", "/api/backup/files/download/{ticket}", "own-auth",
+        "a one-shot ticket minted by the read:backup_settings POST /api/backup/files/{stamp}/link "
+        "for one backup file, dead after 60 s and good only on the minting window's origin "
+        "(app_origin.token_fits_origin): a plain link download carries no token header"),
 
     # ── OAuth redirects ──────────────────────────────────────────────────
     *_e("GET", "/api/gitea/oauth/callback", "oauth-callback",
-        "gitea's redirect; the code is exchanged only for a PKCE state this Host holds"),
+        "gitea's redirect; the code is exchanged only for a PKCE state this Host holds, "
+        "taken out as it is read, under ten minutes old"),
     *_e("GET", "/api/integrations/callback/{key}", "oauth-callback",
-        "a data provider's redirect; refused unless oauth.verify_state accepts the "
-        "state this Host signed for that provider"),
+        "a data provider's redirect; refused unless oauth.claim_state accepts a state "
+        "this Host signed and minted for that provider, spent as it is used, fifteen minutes"),
     *_e("GET", "/api/mcp/oauth/callback", "oauth-callback",
         "an MCP server's authorization server's redirect; acts only on a pending sign-in "
         "found by the sha-256 of its state (single use, ten minutes), checks iss before "

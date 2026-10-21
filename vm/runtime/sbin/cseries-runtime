@@ -1,0 +1,15 @@
+#!/usr/bin/python3 -I
+"""cseries-runtime: starts the containers a standalone C-Series Host asks for.
+
+Run by cseries-runtime.service on the socket cseries-runtime.socket passes
+(/run/cseries-runtime/runtime.sock); only the Host container can connect.
+The code is in /usr/local/lib/cseries-runtime/cseries_runtime.
+
+  cseries-runtime [--socket PATH]
+"""
+import sys
+
+sys.path.insert(0, "/usr/local/lib/cseries-runtime")
+from cseries_runtime.server import main  # noqa: E402
+
+sys.exit(main(sys.argv[1:]))

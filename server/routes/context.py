@@ -712,12 +712,34 @@ async def get_context_file(ctx_id: int):
     # ASCII-safe fallback.
     from urllib.parse import quote
     ascii_name = fname.encode("ascii", errors="replace").decode("ascii").replace('"', "'")
-    disposition = (f'inline; filename="{ascii_name}"; '
+    mime, how = file_served_as(meta.get("mime"))
+    disposition = (f'{how}; filename="{ascii_name}"; '
                    f"filename*=UTF-8''{quote(fname)}")
     return Response(
         content=data,
-        media_type=meta.get("mime") or "application/octet-stream",
+        media_type=mime,
         headers={"Content-Disposition": disposition})
+
+
+# The kinds a stored file is shown as, in the page, from the Host's own origin:
+# ones a browser renders without running anything of the file's on that
+# origin (a PDF runs in the browser's own viewer). Every other kind, text/html
+# and image/svg+xml among them, goes as a download of bytes: the row's mime is
+# the uploader's word, and a restored backup's rows are anyone's, so a stored
+# page opened from here would run as the owner. nosniff is on every response
+# (main.py security_headers).
+_INLINE_MIME = frozenset({"image/png", "image/jpeg", "image/gif", "image/webp", "image/avif",
+                          "application/pdf", "text/plain", "text/csv",
+                          "audio/mpeg", "audio/ogg", "audio/wav", "audio/webm",
+                          "video/mp4", "video/webm", "video/ogg"})
+
+
+def file_served_as(mime) -> tuple[str, str]:
+    """(media type, disposition) a stored file of this mime is served with."""
+    m = (mime or "").split(";", 1)[0].strip().lower() if isinstance(mime, str) else ""
+    if m in _INLINE_MIME:
+        return m, "inline"
+    return "application/octet-stream", "attachment"
 
 
 @router.get("/stats", dependencies=[Depends(requires_permission("read:memory"))])

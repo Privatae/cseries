@@ -77,7 +77,6 @@ _SITES = {
     "brain/mastercode/runtime/web_research.py": "research",
     "brain/mastercode/skills/deep_research.py": "research",
     "brain/mastercode/memory_consolidation.py": "summaries",
-    "brain/mastercode/thread_consolidator.py": "summaries",
 }
 for rel, row in _SITES.items():
     tree = ast.parse(open(os.path.join(_root, rel), encoding="utf-8").read())
@@ -212,35 +211,13 @@ check("search()'s default is the model's own limit",
       inspect.signature(wr.search).parameters["max_tokens"].default is None)
 
 
-# ── 4. the thread summary ────────────────────────────────────────────────────
-print("\n== 4. the thread summary: the model's limit, a cut is said ==")
-from mastercode import thread_consolidator as thc  # noqa: E402
-
-# Thread summary: the gateway resolves the limit (and holds it to half the
-# window), so the call carries None.
-TH: list[dict] = []
-
-
-async def _route(pool, entity_id, role, **kw):
-    return {"provider": "anthropic", "model": "claude-opus-5-5"}
-
-
-async def _ent(messages, **kw):
-    TH.append(kw)
-    return {"content": "s"}
-
-
-from mastercode import inference_config as ic  # noqa: E402
-from mastercode.runtime import tools as rt  # noqa: E402
-ic.resolve_role_route = _route
-rt._call_entity_model = _ent
-asyncio.run(thc._default_model_fn(None, 3, [{"role": "user", "content": "x"}]))
-check("the thread summary asks for the model's own limit",
-      bool(TH) and "max_tokens" in TH[0] and TH[0]["max_tokens"] is None, str(TH[:1]))
-_th_src = open(os.path.join(_root, "brain/mastercode/thread_consolidator.py"),
-               encoding="utf-8").read()
-check("a summary cut off at the limit is reported as model_cut, not model_empty",
-      '"reason": "model_cut"' in _th_src)
+# ── 4. no thread summary call remains ───────────────────────────────────────
+# The rolling summary was a model call outside the Host's turn; it is retired
+# (migrations/v241), and what falls out of a window rides as the Host's own
+# close_turn notes (evicted_record), which no model writes.
+print("\n== 4. no thread summary call remains ==")
+check("no thread summary module ships",
+      not os.path.exists(os.path.join(_root, "brain/mastercode/thread_consolidator.py")))
 
 print()
 print("FAIL" if FAILS else "PASS", f"({FAILS} failing checks)")

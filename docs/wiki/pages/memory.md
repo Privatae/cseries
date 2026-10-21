@@ -51,7 +51,7 @@ Yes. The Memory app has a picker with three settings: **Canonical** for what you
 
 ## Where is my Host's memory stored?
 
-In your Host's own database, which runs in a container of its own on your machine, on a volume that only that container mounts. A Host on its own sends none of it to Privatae. In this release a standalone Host cannot yet write its own backups, so keep a copy of the volume yourself if the memory matters to you; you can also keep a live copy of the database on a machine of your own through the bastion.
+In your Host's own database, which runs in a container of its own on your machine, on a volume that only that container mounts. A Host on its own sends none of it to Privatae. Your Host's backups carry it, encrypted to your recovery key (see [Settings](wiki:settings-app), Backup); you can also keep a live copy of the database on a machine of your own through the bastion.
 
 ## Does memory need an embedding model?
 

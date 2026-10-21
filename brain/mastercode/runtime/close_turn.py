@@ -26,7 +26,12 @@ WHO DOES WHAT
                         conversation it was said in (provenance, as for every
                         writer), metadata.reason, written_by='close_turn'. The
                         same words already held live are rescoped, not
-                        written twice
+                        written twice. A preference with a `topic` goes into
+                        its slot (memory_slots.write_in_slot: one live entry
+                        per type, scope and topic; the newer replaces the
+                        older in the same transaction, and a rule the person
+                        taught outranks it). The turn's type is stamped on
+                        every row (turn_type), by the platform
       goal           -> a memory_type 'goal' row scoped to the turn's own
                         conversation (the recall scope); met -> resolved_at
     The rows go through the consolidator's own insert/supersede helpers and
@@ -41,6 +46,7 @@ path may produce a silent turn.
 """
 from __future__ import annotations
 
+import contextvars
 import json
 import logging
 from typing import Any
@@ -88,6 +94,20 @@ ALREADY_RECORDED = "close_turn was already called this turn; this call was not r
 # stands, so the next close_turn's handoff replaces it. Nothing else is re-run.
 HANDOFF_TAKEN = ("close_turn was already recorded this turn; only this call's "
                  "handoff was kept, replacing the earlier one.")
+
+# The thread topic and title close_turn names, held until the turn ends, then
+# written to the thread the turn ends in (finish_topic). The Host can still
+# file the turn elsewhere after naming them (pick_thread later in the same
+# completion, or in a later round), and the exchange moves only when the turn
+# ends (thread_choice.move_exchange): written at once, they would land on the
+# thread the message left. session.py sets the holder when the turn has a
+# pick to make, {"session_id", "entity_id", "landed"} ("landed": where the
+# message was placed), and close_turn adds "thread", "topic" and "title".
+# With no holder for the session (no pick this turn, or outside a turn) they
+# are written at once.
+TURN_TOPIC: "contextvars.ContextVar[dict | None]" = contextvars.ContextVar(
+    "close_turn_topic", default=None)
+HELD_TOPIC = "held: written when the turn ends, to the thread it ends in"
 
 
 def next_step(content: Any, *, reply_written: bool = False) -> str:
@@ -210,7 +230,16 @@ def normalize(args: Any) -> tuple[dict, list[str]]:
                     ref = _str(sc["ref"], _MAX_NAME, f"{w}.scope.ref", errors)
                     if ref is not None:
                         scope["ref"] = ref
-                out.append({"text": text, "reason": reason, "scope": scope})
+                item = {"text": text, "reason": reason, "scope": scope}
+                if p.get("topic") is not None:
+                    from mastercode.memory_slots import normalize_topic
+                    topic = normalize_topic(p.get("topic")) if isinstance(p.get("topic"), str) else None
+                    if topic is None:
+                        errors.append(f"{w}.topic: a few words naming what the preference is about; "
+                                      "kept with no topic")
+                    else:
+                        item["topic"] = topic
+                out.append(item)
             if out:
                 sig["preferences"] = out[:_MAX_ITEMS]
 
@@ -363,8 +392,48 @@ def _visibility(text: str) -> str:
         return "default"
 
 
+def _stamp(session_id, turn_type) -> str:
+    """The turn type a row this turn writes is stamped with: the running
+    turn's (memory_engine.turn_type_now, set by the platform), else the one
+    the caller was handed."""
+    from mastercode.memory_engine import turn_type_now
+    from mastercode.memory_slots import turn_type_label
+    return turn_type_now(session_id) or turn_type_label(turn_type)
+
+
+async def _key_held(pool, entity_id: int, rid: int, topic: str | None, said) -> dict:
+    """A restatement in the exact words of a held row, with a topic: the held
+    row takes the slot (memory_slots.key_row, restated: it is the current
+    statement). Nothing when no topic was named or the row already has one."""
+    if not topic:
+        return {}
+    try:
+        from mastercode.memory_slots import key_row
+        cur = await pool.fetchval("SELECT slot_topic FROM entity_memory WHERE id = $1 AND entity_id = $2",
+                                  int(rid), entity_id)
+        if cur:
+            return {"topic": cur}
+        res = await key_row(pool, entity_id, int(rid), topic, restated=True, stamp=said)
+        out = {"topic": topic}
+        if res.get("replaced"):
+            out["replaced"] = res["replaced"]
+        if res.get("replaced_by"):
+            out["replaced_by"] = res["replaced_by"]
+        return out
+    except Exception as e:  # noqa: BLE001 — the row stands; only its topic is missing
+        log.warning("close_turn: keying held row %s failed: %s", rid, e)
+        return {}
+
+
 async def _write_preference(pool, entity_id: int, pref: dict, *, session_id,
-                            turn_scope, turn_type=None, taught: list | None = None) -> dict:
+                            turn_scope, turn_type=None, taught: list | None = None,
+                            from_turns: list | None = None,
+                            turn_tokens: list | None = None) -> dict:
+    """`from_turns`: the turn's message row (memory_engine.turn_from_turns),
+    and `turn_tokens` the turn's token (memory_engine.turn_tokens_now), named
+    on the row, on its decision (scoped_in) and on every record this write
+    leaves (scope_stamp), so all of them follow the message when it moves
+    (circles_threads.carry_learned)."""
     text = _sanitize(pref["text"])
     reason = _sanitize(pref["reason"])
     if not text:
@@ -413,10 +482,12 @@ async def _write_preference(pool, entity_id: int, pref: dict, *, session_id,
     )
     from mastercode.memory_consolidation import MemoryConsolidator, scope_stamp
     cons = MemoryConsolidator(pool)
-    said = scope_stamp(turn_scope)
+    said = scope_stamp(turn_scope, from_turns, turn_tokens)
+    from mastercode.memory_slots import normalize_topic
+    topic = normalize_topic(pref.get("topic")) if pref.get("topic") else None
     rid = await held_already(cons, entity_id, rows, about, said)
     if rid is not None:
-        return {"status": "already_held", "id": rid}
+        return {"status": "already_held", "id": rid, **await _key_held(pool, entity_id, rid, topic, said)}
     # Words a rule holds, named for a place the rule is not read in: a rule's
     # scope changes only through memory_scope, explicit and in the thread
     # (edit in the open, no automatic path). So close_turn
@@ -437,80 +508,62 @@ async def _write_preference(pool, entity_id: int, pref: dict, *, session_id,
     held = [_held_row(r) for r in rows or []]
     if held and about == _GLOBAL:
         rid, prior, _reach = held[0]
-        res = await apply_memory_scope(pool, entity_id, rid, kind, ref)
+        res = await apply_memory_scope(pool, entity_id, rid, kind, ref, decided_in=said)
         if res.get("status") != "ok":
             return {"status": "error", "id": rid, "error": res.get("result")}
         # Held now, everywhere: this conversation said it too, recorded as
         # every other "already held" is (note_held). Gone meanwhile (a
         # delete took the row), this conversation keeps a row of its own.
         if await cons.note_held(entity_id, rid, said):
-            return {"status": "rescoped", "id": rid, "from": prior or "where said", "to": about}
-    # Near the same words (the merge pass's own test: cosine > 0.85 and over
-    # half the longer text's words shared): the new wording replaces the
-    # nearest such row it is read everywhere that row was — the latest
-    # statement is the current one. Anywhere less, both stay: a correction
-    # for this thread never takes the rule from the others. Without an
-    # embedder only the exact match above applies.
+            return {"status": "rescoped", "id": rid, "from": prior or "where said", "to": about,
+                    **await _key_held(pool, entity_id, rid, topic, said)}
+    # A new statement. With a topic it goes into its slot: the newer entry
+    # in the same type, scope and topic replaces the older one in the same
+    # transaction, and a rule the person taught holds its slot against an
+    # inferred preference (memory_slots.write_in_slot). Without one it is a
+    # row of its own, as before slots. No similarity test decides anything:
+    # a reworded correction and an addition look alike to an embedder, and
+    # which one it is is the Host's call, made by naming the topic.
     vec = await _embed(pool, entity_id, text)
-    near = await _near_preferences(pool, entity_id, text, vec)
     from datetime import datetime as _dt, timezone as _tz
     meta: dict = {"reason": reason, "written_by": WRITTEN_BY, "about": about,
-                  "scoped_by": "host", "scoped_at": _dt.now(_tz.utc).isoformat()}
+                  "scoped_by": "host", "scoped_at": _dt.now(_tz.utc).isoformat(),
+                  # the turn that decided it (circles_threads.carry_learned)
+                  "scoped_in": said}
     if isinstance(turn_scope, dict) and turn_scope.get("kind"):
         meta["source_context"] = dict(turn_scope)   # where it was said
+    # the message it was learned in, by row id and by the turn's token
+    from mastercode.memory_consolidation import turn_marks
+    meta.update(turn_marks({"from_turns": from_turns, "from_turn_tokens": turn_tokens}))
+    stamp_name = _stamp(session_id, turn_type)
+    if topic:
+        from mastercode.memory_slots import slot_scope_for, write_in_slot
+        res = await write_in_slot(
+            pool, entity_id, content=text, memory_type="preference",
+            scope=slot_scope_for("preference", meta), topic=topic, metadata=meta,
+            importance=1.0, confidence=1.0, visibility=_visibility(text), embedding=vec,
+            source_session=session_id, turn_type=stamp_name, stamp=said)
+        if res["status"] == "already_held":
+            await cons.note_held(entity_id, res["id"], said)
+            return {"status": "already_held", "id": res["id"], "topic": topic}
+        if res["status"] == "held_by_rule":
+            return {"status": "held_by_rule", "id": res["id"], "topic": topic,
+                    "note": (f"rule #{res['id']} holds topic '{topic}' here: what the person taught "
+                             "outranks an inferred preference, so nothing was stored. If they "
+                             "changed it, correct the rule in the open: memory_curate op='replace' "
+                             f"memory_id={res['id']}")}
+        out = {"status": "stored", "id": res["id"], "about": about, "topic": topic}
+        if res.get("replaced"):
+            out["replaced"] = res["replaced"][0] if len(res["replaced"]) == 1 else res["replaced"]
+        return out
     mid = await cons._insert_new_memory(
         entity_id, text, "preference", 1.0, vec, None, None,
         source_session=session_id, confidence=1.0, visibility=_visibility(text),
-        metadata_extra=meta,
+        metadata_extra=meta, turn_type=stamp_name,
     )
-    for n_id in near:
-        if await _covers(pool, entity_id, int(mid), n_id):
-            if await cons._supersede(entity_id, n_id, int(mid)):
-                return {"status": "stored", "id": int(mid), "about": about, "replaced": n_id}
-            break
-    return {"status": "stored", "id": int(mid), "about": about}
-
-
-async def _near_preferences(pool, entity_id: int, text: str, vec) -> list[int]:
-    """Ids of the live preferences that pass the merge pass's duplicate test
-    against `text` (memory_consolidation._merge_duplicates: cosine > 0.85 and
-    word overlap > 0.5 of the longer text), nearest first. A rule is never
-    one of them: a later wording in close_turn does not retire what the
-    person taught (memory_engine.RULE_KINDS); correcting a rule is
-    memory_curate's, in the open."""
-    if not vec:
-        return []
-    try:
-        from mastercode.memory_engine import (active_embedding_column, embedding_cast_type,
-                                              not_rule_sql)
-        col, dim = await active_embedding_column(pool, entity_id)
-        cast = embedding_cast_type(dim)
-        rows = await pool.fetch(
-            f"""
-            SELECT id, content, 1 - ({col} <=> $2::{cast}) AS sim
-              FROM entity_memory
-             WHERE entity_id = $1 AND memory_type = 'preference'
-               AND status = 'active' AND t_valid_until IS NULL
-               AND {not_rule_sql()}
-               AND {col} IS NOT NULL
-             ORDER BY {col} <=> $2::{cast}
-             LIMIT 5
-            """, entity_id, vec)
-    except Exception as e:  # noqa: BLE001 — no near check is the exact check alone
-        log.debug("close_turn: near-preference check skipped: %s", e)
-        return []
-    words = set(text.lower().split())
-    out: list[int] = []
-    for r in rows or []:
-        if (r["sim"] or 0) <= 0.85:
-            continue
-        other = set((r["content"] or "").lower().split())
-        if not words or not other:
-            continue
-        if len(words & other) / max(len(words), len(other)) <= 0.5:
-            continue
-        out.append(int(r["id"]))
-    return out
+    return {"status": "stored", "id": int(mid), "about": about,
+            "note": "kept with no topic: it rides beside any other entry about the same thing "
+                    "until it is given one (memory_curate op='key')"}
 
 
 async def _covers(pool, entity_id: int, new_id: int, old_id: int) -> bool:
@@ -675,11 +728,14 @@ async def _open_goals_in(pool, entity_id: int, scope: dict) -> list[dict]:
     return [dict(r) for r in rows or []]
 
 
-async def _write_goal(pool, entity_id: int, goal: dict, *, session_id, turn_scope) -> dict:
+async def _write_goal(pool, entity_id: int, goal: dict, *, session_id, turn_scope,
+                      turn_type=None, from_turns: list | None = None,
+                      turn_tokens: list | None = None) -> dict:
     if not (isinstance(turn_scope, dict) and turn_scope.get("kind") and turn_scope.get("ref")):
         return {"status": "error", "error": "this turn has no conversation scope to hold a goal", _INPUT_REFUSED: True}
-    from mastercode.memory_consolidation import MemoryConsolidator, scope_stamp
-    stamp = scope_stamp(turn_scope)
+    from mastercode.memory_consolidation import MemoryConsolidator, scope_stamp, turn_marks
+    # The goal and its records name the turn's message (_write_preference).
+    stamp = scope_stamp(turn_scope, from_turns, turn_tokens)
     out: dict = {}
     open_goals = await _open_goals_in(pool, entity_id, turn_scope)
     target_ids: list[int] = [int(g["id"]) for g in open_goals]
@@ -698,7 +754,9 @@ async def _write_goal(pool, entity_id: int, goal: dict, *, session_id, turn_scop
                 entity_id, text, "goal", 1.0, await _embed(pool, entity_id, text), None, None,
                 source_session=session_id, confidence=1.0, visibility=_visibility(text),
                 metadata_extra=_tt_goal.stamp(
-                    {"source_context": dict(turn_scope), "written_by": WRITTEN_BY}),
+                    {"source_context": dict(turn_scope), "written_by": WRITTEN_BY,
+                     **turn_marks(stamp)}),
+                turn_type=_stamp(session_id, turn_type),
             ))
             # One goal per conversation: the one set here replaces the others.
             replaced = []
@@ -717,11 +775,84 @@ async def _write_goal(pool, entity_id: int, goal: dict, *, session_id, turn_scop
     return out
 
 
+async def write_topic(pool, entity_id: int, thread, topic, title, *, session_id=None) -> str:
+    """Write a topic and title to `thread`'s row (circles_threads.
+    set_thread_topic: the title only when the thread has none). PII mode: each
+    goes through the PII queue under the thread's session, the title first
+    (the topic's write also fills an empty title, and the queue drains oldest
+    first). Returns what close_turn reports. Never raises."""
+    try:
+        from mastercode import pii_queue as _pii
+        from mastercode.circles_threads import set_thread_topic
+        if not thread:
+            return "no thread row for this conversation"
+        if _pii.enabled():
+            thread_tag = f"thread:{session_id}"
+            if title:
+                await _pii.submit(str(title), thread_tag, lambda t: set_thread_topic(
+                    pool, entity_id, thread, None, title=t), pool=pool, entity_id=entity_id)
+            if topic:
+                await _pii.submit(str(topic), thread_tag, lambda t: set_thread_topic(
+                    pool, entity_id, thread, t), pool=pool, entity_id=entity_id)
+            return "queued"
+        ok = await set_thread_topic(pool, entity_id, thread, topic, title=title)
+        return "written" if ok else "no thread row for this conversation"
+    except Exception as e:  # noqa: BLE001
+        log.warning("close_turn: topic write failed (entity %s): %s", entity_id, e)
+        return f"error: {e}"
+
+
+async def finish_topic(pool, *, moved: dict | None = None, holder: dict | None = None) -> str | None:
+    """Write the topic and title close_turn held this turn (TURN_TOPIC) to the
+    thread the turn ends in: where the Host's pick filed the exchange
+    (`moved`, thread_choice.move_exchange's result, when it moved it), else
+    where the message was placed (the holder's "landed"), else the thread
+    close_turn ran in. A turn that ends in a project has no thread row: nothing
+    is written. Once per turn (the held words are taken); None when nothing
+    was held. Never raises."""
+    held = holder if holder is not None else TURN_TOPIC.get()
+    if not isinstance(held, dict):
+        return None
+    topic, title = held.pop("topic", None), held.pop("title", None)
+    if not (topic or title):
+        return None
+    place = None
+    if isinstance(moved, dict) and moved.get("moved") and isinstance(moved.get("to"), dict):
+        place = moved["to"]
+    elif isinstance(held.get("landed"), dict) and held["landed"].get("kind"):
+        place = held["landed"]
+    if place is not None:
+        thread = place.get("ref") if place.get("kind") == "thread" else None
+    else:
+        thread = held.get("thread")
+    return await write_topic(pool, held.get("entity_id"), thread, topic, title,
+                             session_id=held.get("session_id"))
+
+
 async def apply(pool, entity_id: int, signal: dict, *, session_id=None, thread_id=None,
-                turn_type: dict | None = None, turn_scope: dict | None = None) -> dict:
+                turn_type: dict | None = None, turn_scope: dict | None = None,
+                from_turns: list | None = None, turn_tokens: list | None = None) -> dict:
     """Run the writes `signal` drives. Each write is independent: one that
-    fails is reported and the rest still run. Never raises."""
+    fails is reported and the rest still run. Never raises. `from_turns`:
+    the turn's message row the rows and records name, by default the running
+    turn's (memory_engine.turn_from_turns); `turn_tokens` the turn's token,
+    by default the running turn's (memory_engine.turn_tokens_now), read here
+    in the turn's own task, before any write is queued."""
     res: dict = {}
+    if turn_tokens is None:
+        try:
+            from mastercode.memory_engine import turn_tokens_now
+            turn_tokens = turn_tokens_now(session_id)
+        except Exception as e:  # noqa: BLE001 — the writes stand without the link
+            log.debug("close_turn: turn token unknown: %s", e)
+            turn_tokens = []
+    if from_turns is None and (signal.get("preferences") or signal.get("goal")):
+        try:
+            from mastercode.memory_engine import turn_from_turns
+            from_turns = await turn_from_turns(session_id)
+        except Exception as e:  # noqa: BLE001 — the writes stand without the link
+            log.debug("close_turn: turn row unknown: %s", e)
+            from_turns = []
     # PII mode: nothing the model wrote is stored as it was written. Each text
     # goes through the PII queue (pii_queue.submit), which tokenizes it and
     # then runs the same write on the tokenized words — as turn rows do, and
@@ -730,9 +861,8 @@ async def apply(pool, entity_id: int, signal: dict, *, session_id=None, thread_i
     # preference's reason is not kept in PII mode.
     from mastercode import pii_queue as _pii
     pii = _pii.enabled()
-    # The queue's own scopes (pii_queue._Item): a thread's words under its
-    # session, durable memory under the entity, verified.
-    thread_tag = f"thread:{session_id}"
+    # The queue's own scope for durable memory (pii_queue._Item): under the
+    # entity, verified (a thread's words go under its session: write_topic).
     memory_tag = f"entity:{entity_id}:memory"
 
     async def _then_forget(out):
@@ -747,26 +877,15 @@ async def apply(pool, entity_id: int, signal: dict, *, session_id=None, thread_i
         thread = thread_id
         if not thread and isinstance(turn_scope, dict) and turn_scope.get("kind") == "thread":
             thread = turn_scope.get("ref")
-        try:
-            from mastercode.circles_threads import set_thread_topic
-            if not thread:
-                res["topic"] = "no thread row for this conversation"
-            elif pii:
-                # The title first: the topic's write also fills an empty title
-                # with the topic, and the queue drains oldest first.
-                if title:
-                    await _pii.submit(str(title), thread_tag, lambda t: set_thread_topic(
-                        pool, entity_id, thread, None, title=t), pool=pool, entity_id=entity_id)
-                if topic:
-                    await _pii.submit(str(topic), thread_tag, lambda t: set_thread_topic(
-                        pool, entity_id, thread, t), pool=pool, entity_id=entity_id)
-                res["topic"] = "queued"
-            else:
-                ok = await set_thread_topic(pool, entity_id, thread, topic, title=title)
-                res["topic"] = "written" if ok else "no thread row for this conversation"
-        except Exception as e:  # noqa: BLE001
-            log.warning("close_turn: topic write failed (entity %s): %s", entity_id, e)
-            res["topic"] = f"error: {e}"
+        held = TURN_TOPIC.get()
+        if (isinstance(held, dict) and session_id is not None
+                and str(held.get("session_id")) == str(session_id)):
+            # Written when the turn ends, to the thread it ends in.
+            held.update({"thread": thread, "topic": topic, "title": title})
+            res["topic"] = HELD_TOPIC
+        else:
+            res["topic"] = await write_topic(pool, entity_id, thread, topic, title,
+                                             session_id=session_id)
     prefs = []
     for p in signal.get("preferences") or []:
         try:
@@ -778,18 +897,23 @@ async def apply(pool, entity_id: int, signal: dict, *, session_id=None, thread_i
                 async def _land_pref(t, p=p, _taught_now=_taught_now):
                     return await _then_forget(await _write_preference(
                         pool, entity_id, {**p, "text": t, "reason": ""}, session_id=session_id,
-                        turn_scope=turn_scope, turn_type=turn_type, taught=_taught_now))
+                        turn_scope=turn_scope, turn_type=turn_type, taught=_taught_now,
+                        from_turns=from_turns, turn_tokens=turn_tokens))
                 await _pii.submit(str(p.get("text") or ""), memory_tag, _land_pref, verify=True,
                                   pool=pool, entity_id=entity_id)
                 prefs.append({"status": "queued"})
                 continue
             prefs.append(await _write_preference(pool, entity_id, p, session_id=session_id,
-                                                 turn_scope=turn_scope, turn_type=turn_type))
+                                                 turn_scope=turn_scope, turn_type=turn_type,
+                                                 from_turns=from_turns, turn_tokens=turn_tokens))
         except Exception as e:  # noqa: BLE001
             log.warning("close_turn: preference write failed (entity %s): %s", entity_id, e)
             prefs.append({"status": "error", "error": str(e)})
     if prefs:
         res["preferences"] = prefs
+        listing = await _topics_listing(pool, entity_id, prefs)
+        if listing:
+            res["topics"] = listing
     if signal.get("goal"):
         try:
             goal = signal["goal"]
@@ -797,7 +921,8 @@ async def apply(pool, entity_id: int, signal: dict, *, session_id=None, thread_i
                 async def _land_goal(t):
                     return await _then_forget(await _write_goal(
                         pool, entity_id, {**goal, "set": t}, session_id=session_id,
-                        turn_scope=turn_scope))
+                        turn_scope=turn_scope, turn_type=turn_type, from_turns=from_turns,
+                        turn_tokens=turn_tokens))
                 await _pii.submit(str(goal["set"]), memory_tag, _land_goal, verify=True,
                                   pool=pool, entity_id=entity_id)
                 res["goal"] = {"status": "queued"}
@@ -808,13 +933,16 @@ async def apply(pool, entity_id: int, signal: dict, *, session_id=None, thread_i
                 # first, and ignores the text it is handed.
                 async def _land_met(_t):
                     return await _write_goal(pool, entity_id, goal, session_id=session_id,
-                                             turn_scope=turn_scope)
+                                             turn_scope=turn_scope, from_turns=from_turns,
+                                             turn_tokens=turn_tokens)
                 await _pii.submit("goal met", memory_tag, _land_met,
                                   pool=pool, entity_id=entity_id)
                 res["goal"] = {"status": "queued"}
             else:
                 res["goal"] = await _write_goal(pool, entity_id, goal,
-                                                session_id=session_id, turn_scope=turn_scope)
+                                                session_id=session_id, turn_scope=turn_scope,
+                                                turn_type=turn_type, from_turns=from_turns,
+                                                turn_tokens=turn_tokens)
         except Exception as e:  # noqa: BLE001
             log.warning("close_turn: goal write failed (entity %s): %s", entity_id, e)
             res["goal"] = {"status": "error", "error": str(e)}
@@ -830,6 +958,29 @@ async def apply(pool, entity_id: int, signal: dict, *, session_id=None, thread_i
         except Exception as e:  # noqa: BLE001
             log.warning("close_turn: forget_if_deleted failed (entity %s): %s", entity_id, e)
     return res
+
+
+async def _topics_listing(pool, entity_id: int, prefs: list[dict]) -> list[dict]:
+    """The topics already in use where these preferences were written, and
+    the rows there with no topic yet (memory_slots.topics_in_scope): the Host
+    reuses a topic instead of coining a near twin."""
+    from mastercode.memory_slots import slot_scope_for, topics_in_scope
+    scopes = []
+    for p in prefs:
+        about = p.get("about") if isinstance(p.get("about"), dict) else None
+        if p.get("status") in ("stored", "already_held", "held_by_rule", "rescoped") and p.get("id"):
+            sc = slot_scope_for("preference", {"about": about} if about else
+                                {"about": p.get("to")} if isinstance(p.get("to"), dict) else {})
+            if sc not in scopes:
+                scopes.append(sc)
+    out = []
+    for sc in scopes[:4]:
+        t = await topics_in_scope(pool, entity_id, "preference", sc)
+        out.append({"scope": sc,
+                    "in_use": [f"{x['topic']} #{x['id']}" + (f" ({x['scope']})" if x["scope"] != sc else "")
+                               for x in t["topics"]],
+                    "no_topic": [f"#{x['id']} {x['says']}" for x in t["no_topic"]]})
+    return out
 
 
 # The two rows "where this thread stands" is made of: the thread's open goal,
@@ -873,12 +1024,30 @@ def _handoff_dict(ho) -> dict:
     return ho if isinstance(ho, dict) else {}
 
 
-def _state_text(goal, ho: dict) -> str | None:
+def _day(ts) -> str:
+    """'Oct 19' for a timestamp, '' for none: the date a goal or a handoff
+    was written, so one set months ago never reads like today's."""
+    if ts is None:
+        return ""
+    try:
+        from datetime import timezone as _tz
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=_tz.utc)
+        ts = ts.astimezone(_tz.utc)
+        return f"{ts:%b} {ts.day}, {ts.year}"
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _state_text(goal, ho: dict, *, goal_at=None, handoff_at=None) -> str | None:
     lines = []
     if goal:
-        lines.append(f"Goal: {goal}")
+        when = _day(goal_at)
+        lines.append(f"Goal (set {when}): {goal}" if when else f"Goal: {goal}")
     if ho.get("next_step"):
-        lines.append(f"Next step (from the last turn): {ho['next_step']}")
+        when = _day(handoff_at)
+        lines.append(f"Next step (from the last turn, {when}): {ho['next_step']}" if when
+                     else f"Next step (from the last turn): {ho['next_step']}")
     if ho.get("open_work"):
         lines.append("Open work: " + "; ".join(str(x) for x in ho["open_work"]))
     if ho.get("identifiers"):
@@ -891,11 +1060,10 @@ def _state_text(goal, ho: dict) -> str | None:
 
 async def thread_state(pool, entity_id: int, scope: dict | None, *,
                        withhold_untrusted: bool = False) -> str | None:
-    """The thread-level context a turn starts from when the consolidator is
-    off: the thread's open goal and what the
-    last turn handed to the next one (its close_turn handoff, identifiers
-    verbatim). No rolling summary: nothing here is a re-reading of the
-    conversation, and nothing goes stale while the thread is quiet — both
+    """The thread-level context a turn starts from: the thread's open goal
+    and what the last turn handed to the next one (its close_turn handoff,
+    identifiers verbatim), each dated. Nothing here is a re-reading of the
+    conversation, and nothing goes stale while the thread is quiet: both
     lines change only when a turn changes them. None when the thread has
     neither yet.
 
@@ -905,19 +1073,25 @@ async def thread_state(pool, entity_id: int, scope: dict | None, *,
     if not (isinstance(scope, dict) and scope.get("kind")):
         return None
     kind, ref = str(scope["kind"]), str(scope.get("ref") or "")
-    if not withhold_untrusted:
-        goal = await pool.fetchval(_goal_row_sql("content"), entity_id, kind, ref)
-        ho = await pool.fetchval(_handoff_row_sql("metadata->'close_turn'->'handoff'"),
-                                 entity_id, kind, ref)
-        return _state_text(goal, _handoff_dict(ho))
-    g = await pool.fetchrow(_goal_row_sql("content, (metadata ? 'untrusted') AS untrusted"),
-                            entity_id, kind, ref)
+    g = await pool.fetchrow(_goal_row_sql(
+        "content, created_at, (metadata ? 'untrusted') AS untrusted"), entity_id, kind, ref)
     h = await pool.fetchrow(_handoff_row_sql(
-        "metadata->'close_turn'->'handoff' AS handoff, (metadata ? 'untrusted') AS untrusted"),
-        entity_id, kind, ref)
-    goal = g["content"] if g is not None and not g["untrusted"] else None
-    ho = h["handoff"] if h is not None and not h["untrusted"] else None
-    return _state_text(goal, _handoff_dict(ho))
+        "metadata->'close_turn'->'handoff' AS handoff, created_at,"
+        " (metadata ? 'untrusted') AS untrusted"), entity_id, kind, ref)
+    keep_g = g is not None and not (withhold_untrusted and _get(g, "untrusted"))
+    keep_h = h is not None and not (withhold_untrusted and _get(h, "untrusted"))
+    return _state_text(g["content"] if keep_g else None,
+                       _handoff_dict(h["handoff"] if keep_h else None),
+                       goal_at=_get(g, "created_at") if keep_g else None,
+                       handoff_at=_get(h, "created_at") if keep_h else None)
+
+
+def _get(row, key):
+    """A column a row may not carry (a caller's own select)."""
+    try:
+        return row[key] if key in row.keys() else None
+    except Exception:  # noqa: BLE001
+        return None
 
 
 async def thread_state_parts(pool, entity_id: int, scope: dict | None) -> dict | None:
@@ -940,7 +1114,8 @@ async def thread_state_parts(pool, entity_id: int, scope: dict | None) -> dict |
     goal_text = goal["content"] if goal is not None else None
     ho = _handoff_dict(last["handoff"] if last is not None else None)
     return {
-        "text": _state_text(goal_text, ho),
+        "text": _state_text(goal_text, ho, goal_at=goal["created_at"] if goal is not None else None,
+                            handoff_at=last["created_at"] if last is not None else None),
         "goal": goal_text or None,
         "goal_at": goal["created_at"] if goal is not None else None,
         "next_step": ho.get("next_step") or None,

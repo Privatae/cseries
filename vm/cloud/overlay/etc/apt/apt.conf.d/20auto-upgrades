@@ -1,0 +1,4 @@
+// The cloud box takes Debian's security and stable updates by itself.
+APT::Periodic::Update-Package-Lists "1";
+APT::Periodic::Unattended-Upgrade "1";
+APT::Periodic::AutocleanInterval "7";

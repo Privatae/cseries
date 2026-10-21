@@ -160,19 +160,26 @@ expect 401 "$(code -X POST -H 'Content-Type: application/json' \
     "sign-in with a non-ASCII email is a refusal, not a server error"
 expect 401 "$(code -X POST -H 'Content-Type: application/json' -d 'not json' "$BASE/api/owner/login")" \
     "sign-in with a body that is not JSON is a refusal, not a server error"
-# Behind a proxy that terminates TLS the Host sees plain HTTP; the proxy's
-# header says the browser used HTTPS, and the cookie must then be Secure.
+# Behind a proxy that terminates TLS the Host sees plain HTTP, and only a
+# trusted proxy's header (CSERIES_TRUSTED_PROXIES) says the browser used HTTPS
+# (scripts/test_owner_login_unit.py). This Host trusts no proxy, so the same
+# headers from any visitor add no Secure.
 login_hdrs() { curl -s -D - -o /dev/null -X POST -H 'Content-Type: application/json' \
     -d "{\"email\":\"owner@example.com\",\"password\":\"$PW\"}" "$@" "$BASE/api/owner/login"; }
-grep -i "^set-cookie: $CK=" <<<"$(login_hdrs -H 'X-Forwarded-Proto: https')" | grep -qi '; *secure' \
-    && ok "behind a TLS proxy (X-Forwarded-Proto) the cookie is Secure" \
-    || fail "behind a TLS proxy (X-Forwarded-Proto) the cookie is not Secure"
-grep -i "^set-cookie: $CK=" <<<"$(login_hdrs -H 'Forwarded: for=192.0.2.1;proto=https')" | grep -qi '; *secure' \
-    && ok "behind a TLS proxy (Forwarded) the cookie is Secure" \
-    || fail "behind a TLS proxy (Forwarded) the cookie is not Secure"
-grep -i "^set-cookie: $CK=" <<<"$(login_hdrs)" | grep -qi '; *secure' \
-    && fail "over plain HTTP the cookie is Secure, so a browser would drop it" \
-    || ok "over plain HTTP the cookie is not Secure"
+# not_secure <what> [curl args]: a sign-in that sets the session cookie, and
+# sets it without Secure. No Set-Cookie at all is a failure, not a pass.
+not_secure() {
+    local what="$1" line; shift
+    line="$(grep -i "^set-cookie: $CK=" <<<"$(login_hdrs "$@")" || true)"
+    if [[ -z "$line" ]]; then fail "$what: the sign-in set no session cookie"
+    elif grep -qi '; *secure' <<<"$line"; then fail "$what: the cookie is Secure"
+    else ok "$what"; fi
+}
+not_secure "X-Forwarded-Proto from a peer that is no trusted proxy adds no Secure" \
+    -H 'X-Forwarded-Proto: https'
+not_secure "Forwarded from a peer that is no trusted proxy adds no Secure" \
+    -H 'Forwarded: for=192.0.2.1;proto=https'
+not_secure "over plain HTTP the cookie is not Secure (a browser would drop a Secure one)"
 expect 200 "$(code -c "$JAR/c2" -X POST -H 'Content-Type: application/json' \
     -d "{\"email\":\"owner@example.com\",\"password\":\"$PW\"}" "$BASE/api/owner/login")" \
     "sign-in with the right password"

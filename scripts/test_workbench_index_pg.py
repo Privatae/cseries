@@ -23,34 +23,37 @@ scripts/test_project_list_speed_pg.py seeds (300 projects, 75,000 project turn r
      the excerpt read goes by primary key.
   T. wall-clock medians of the Start dialog's search and of the Index, and
      a backstop ceiling; the budget itself is the plan check above.
-  C. the pick's list: the first INDEX_PICK_K pages of the Index's own search for the
-     message, in its order, open and archived, with turns or none yet, ticket projects
-     too, then the open page when the search did not rank it; never an artifact or
-     another entity's project; the open page marked and kept by any budget; each
-     page's newest rows read through idx_entity_memory_project_turns. The call is
-     one, with one tool, pick_page, in the Index's words.
-  K. the pick's cost does not grow with the pages: on a Host of 50
-     pages and on one of 300, the pick's input (system, message, tool; chars/4) is
-     within PICK_BUDGET_TOKENS and lists at most INDEX_PICK_K + 1 pages; the send's
-     wall clock, without the model's own time, is printed and held to a backstop.
-  X. a page the search ranks below the first INDEX_PICK_K is not in the Host's list,
-     and a pick naming it lands nowhere: the person is asked, nothing is written.
+  C. the placement's list: the first INDEX_PICK_K pages of the Index's own search
+     for the message, in its order, open and archived, with turns or none yet, ticket
+     projects too, then the open page when the search did not rank it; never an
+     artifact or another entity's project; the open page kept by any budget; each
+     page's newest rows read through idx_entity_memory_project_turns. No model call
+     places the message: a clear match among those pages (thread_pick.page_scores,
+     clear_match) takes it; otherwise the open page does, and the other open pages
+     go to the turn's frame for the Host's own pick (runtime/thread_choice), in the
+     Index's words, never offering a Circles thread of its own.
+  K. the placement's cost does not grow with the pages: on a Host of 50 pages and
+     on one of 300, it scores at most INDEX_PICK_K + 1 pages, and the pages handed to
+     the turn (the frame's block, chars/4) stay within CHOICE_BUDGET_TOKENS and its
+     instruction; the send's wall clock is printed and held to a backstop.
+  X. a page the search ranks below the first INDEX_PICK_K is not scored or offered:
+     a match there joins nothing, and the message goes to the open page.
   D. secrets: a pasted key is cut (brain/mastercode/secret_shapes, as the turn cuts
-     it) before the search embeds the words, before the pick's call, before a new
-     page takes its title from them and before the turn starts.
-  M. the marker: "Index message, picked this page: <reason>" (or "started"), a turn
-     row on the page (role assistant, index_pick, never mined), never shown as a
-     page's last exchange to the Index or to a connector.
-  N. a "new" pick makes a Workbench project with the Host's title, writes "started
-     this page" on it and starts the turn there; a marker that cannot be written
-     leaves no project behind.
-  A. an archived pick is restored and the turn starts there; a refused restore
-     (409) is reported with its reason, the page stays archived, nothing is written
-     and no turn starts; a marker that cannot be written leaves the page archived
-     (the restore is in the landing's transaction).
-  F. a failed pick (no call, a page not in the list, a model error, a call that
-     raises, no chat model) starts nothing, writes nothing, makes nothing, and hands
-     back the pages the Host was shown (or would have been) to choose from.
+     it) before the search embeds the words, before the placement scores them and
+     before the turn starts.
+  M. the marker: "Index message, picked this page: <reason>" (the placement's own
+     reason), a turn row on the page (role assistant, index_pick, never mined), never
+     shown as a page's last exchange to the Index or to a connector.
+  N. no page open and nothing matching clearly: nothing is made, nothing written, no
+     turn starts, and the person is asked which page, from the pages the Index found
+     (the Index's own "starts a new page" mode makes one).
+  A. a clear match on an archived page restores it and the turn starts there; a
+     refused restore (409) is reported with its reason, the page stays archived,
+     nothing is written and no turn starts; a marker that cannot be written leaves
+     the page archived (the restore is in the landing's transaction).
+  F. with no page open and no clear match (the search finds nothing, a match outside
+     the list, two pages matching alike), the send starts nothing, writes nothing,
+     makes nothing, and hands back the pages it would have offered to choose from.
   W. the turn starts through brain_service.send_message as POST /api/brain/messages
      starts one: the words verbatim, the calling app and its permissions, the
      project, its thread key; the answer names the turn and where to follow it. The
@@ -64,19 +67,19 @@ scripts/test_project_list_speed_pg.py seeds (300 projects, 75,000 project turn r
      refuse what the GETs refused (limit and length), answer a lone surrogate half
      (JSON can carry one; a query string never did), keep their scopes' guard, and
      the GETs are gone: the words are never in a URL (CWE-598).
-  Q. the pick's fill, clip and one send per request id:
-     - fill: a message the search finds fewer than INDEX_PICK_K pages for is shown
-       them first, then the most recently active open pages, INDEX_PICK_K in all
-       (one the search finds nothing for gets the recent pages, not only "new");
-     - clip: the pick reads at most the first INDEX_PICK_MESSAGE_CHARS of a long
-       message and is told how much more follows; the turn gets it whole, and the
-       pick's input stays within PICK_BUDGET_TOKENS;
+  Q. the placement's fill, clip and one send per request id:
+     - fill: a message the search finds fewer than INDEX_PICK_K pages for is scored
+       against them first, then the most recently active open pages, INDEX_PICK_K in
+       all (one the search finds nothing for gets the recent pages);
+     - clip: the placement's search reads at most the first INDEX_PICK_MESSAGE_CHARS
+       of a long message; the turn gets it whole, and the pages handed to it stay
+       within CHOICE_BUDGET_TOKENS;
      - one send per request id: a second request with the id while the first's
        pick is held, or one after the answer, are one pick, one marker and one
        turn with one answer; another id is another send; one id with other words
        is refused (409), an id of another shape too (400); a send that failed is
        not kept, so the same id runs again; a request that goes away mid-pick
-       loses nothing; the route sends the id. The pick is held until the check
+       loses nothing; the route sends the id. The placement is held until the check
        lets it answer (HeldModel), never timed with a sleep.
      Every Q check fails on the code before these three.
   R. the same, across a restart: the request id is kept with the delivery,
@@ -113,10 +116,11 @@ scripts/test_project_list_speed_pg.py seeds (300 projects, 75,000 project turn r
      runtime in scripts/test_late_nudge_once.py (section I).
      Every R check fails on the code before the request id was kept.
 
-The Host's pick is scripted through choose_page's call_model seam, as the connector
-gates script choose_thread. The turn's body is a scripted
-brain_service._send_message_inner behind the real send_message and turn registry.
-No model is called; no project directory or Code Repository is made.
+Where a check needs a page to match clearly, the placement's scoring
+(thread_pick.page_scores, the one call the send makes to score the listed pages) is
+scripted per send (Model below); elsewhere the real one runs. The turn's body is a
+scripted brain_service._send_message_inner behind the real send_message and turn
+registry. No model is called; no project directory or Code Repository is made.
 
 Fresh clone of the kernel schema on TEST_PG_DSN / PEER_TEST_DSN / TEST_DSN, else a
 throwaway cseries-postgres through docker. Run against another tree (APP_ROOT=<that tree>) it reports which checks that tree
@@ -165,19 +169,14 @@ WORST = "iki epm enih fnh lidin npo ppcleg bffc"
 # shape of a message typed straight into the Index.
 LONG = ("could you look at the iki epm numbers again and fix the enih fnh export before friday, the lidin "
         "npo report and ppcleg bffc totals still disagree with the quokka sheet we sent")
-# The pick's list: the Index's best pages for the message, at most this many
-# (thread_pick.INDEX_PICK_K), plus the open page.
+# The placement's list: the Index's best pages for the message, at most this
+# many (thread_pick.INDEX_PICK_K), plus the open page.
 K = 12
-# The pick's input, in the estimate the picker itself sizes by (chars/4,
-# context_budget.est_tokens): the system message, the message and the tool's
-# schema. Fixed, whatever the number of pages. Its parts, measured at their
-# limits: a listed page is at most 193 tokens (a 120-character
-# title, the archived note, the last-active time, and two exchange lines of
-# 280 characters, thread_pick._TITLE_CHARS and _EXCHANGE_CHARS), the
-# instruction 162 and pick_page's schema 176, so thirteen pages with this
-# message come to 2,872 at most. Every page listed, as before, the pick took
-# 8,412 at 50 pages and 48,713 at 321.
-PICK_BUDGET_TOKENS = 3_500
+# The block the turn is handed (runtime/thread_choice.render_block), chars/4:
+# the candidates are fitted to thread_pick.CHOICE_BUDGET_TOKENS (2,400) and the
+# block's own two lines of instruction come to under 100 more. Fixed, whatever
+# the number of pages.
+HANDED_MAX_TOKENS = 2_400 + 100
 # A message the seed's every page matches ("project"), so the list is full.
 KMSG = "Can you update the project plan before Friday?"
 # A pasted key's shape (secret_shapes.json anthropic-key), made up.
@@ -386,24 +385,43 @@ async def median_ms(fn, runs=5):
     return statistics.median(t)
 
 
-# ── the pick and the turn, scripted ─────────────────────────────────────────
+# ── the placement and the turn, scripted ────────────────────────────────────
 
 def pick_call(**args):
-    return {"content": "", "tool_calls": [{"id": "c1", "type": "function",
-                                           "function": {"name": "pick_page", "arguments": json.dumps(args)}}]}
+    """What a scripted placement answers: `page` is the page that matches the
+    message clearly (it joins when it is listed); none, nothing does."""
+    return dict(args)
+
+
+# The placement a send runs under: the send helpers set it, and the detached
+# send task index_send_once makes carries it (a task copies its context), so
+# sends side by side each read their own.
+import contextvars  # noqa: E402
+PLACER: contextvars.ContextVar = contextvars.ContextVar("placer", default=None)
+REAL_SCORES: dict = {}
+
+
+async def _page_scores_seam(pool, entity_id, message, pages=None):
+    m = PLACER.get()
+    if m is None:
+        return await REAL_SCORES["page_scores"](pool, entity_id, message, pages)
+    return await m(pool, entity_id, message, pages)
 
 
 class Model:
-    """The Host's one pick call, scripted: records what it was sent."""
+    """The placement's scoring of the listed pages (thread_pick.page_scores),
+    scripted: records each call (the message as scored, the pages listed) and
+    answers a clear match for the page its answer names."""
 
     def __init__(self, answer):
         self.answer, self.calls = answer, []
 
-    async def __call__(self, messages, **kw):
-        self.calls.append((messages, kw))
+    async def __call__(self, pool, entity_id, message, pages=None):
+        self.calls.append((message, [int(x) for x in (pages or [])]))
         if isinstance(self.answer, Exception):
             raise self.answer
-        return self.answer
+        ref = (self.answer or {}).get("page")
+        return [(ref, 1.0)] if ref else []
 
 
 INNER_CALLS: list = []
@@ -430,25 +448,32 @@ async def settle(turn_id):
     return rec
 
 
-async def send(W, pool, text, answer, *, route=ROUTE, current=None, entity=E):
+async def send(W, pool, text, answer, *, current=None, entity=E):
     model = Model(answer)
-    status, out = await W.index_send_service(pool, entity, text, current_project_id=current, app_id=APP,
-                                             app_permissions=PERMS, call_model=model, route=route)
+    tok = PLACER.set(model)
+    try:
+        status, out = await W.index_send_service(pool, entity, text, current_project_id=current, app_id=APP,
+                                                 app_permissions=PERMS)
+    finally:
+        PLACER.reset(tok)
     rec = await settle((out.get("turn") or {}).get("turn_id"))
     return status, out, rec, model
 
 
 def listed(model) -> list:
-    """The page ids the Host was shown in the pick's call, in order."""
-    msgs = model.calls[0][0] if model.calls else [{}]
-    return [int(x) for x in re.findall(r"^\[project:(\d+)\]", msgs[0].get("content", ""), re.M)]
+    """The page ids the placement scored (the pages listed), in order."""
+    return list(model.calls[0][1]) if model.calls else []
 
 
-def pick_input_tokens(model) -> int:
-    """The pick's input as the picker estimates it (chars/4): every message
-    and the tools' schemas."""
-    msgs, kw = model.calls[0]
-    return (sum(len(m.get("content") or "") for m in msgs) + len(json.dumps(kw.get("tools")))) // 4
+def handed(n_before: int):
+    """The thread-choice block the turn started by the last send was handed
+    (runtime/thread_choice.render_block over its frame): None when no turn
+    started, '' when it was handed none."""
+    from mastercode.runtime import thread_choice as tc
+    if len(INNER_CALLS) <= n_before:
+        return None
+    ch = tc.from_frame(INNER_CALLS[-1].get("frame"))
+    return tc.render_block(ch) if ch else ""
 
 
 async def attempt(call):
@@ -465,8 +490,8 @@ async def attempt(call):
 # ── Q: fill, clip and one send per request id ───────────────────────────────
 
 class HeldModel(Model):
-    """The pick call, scripted, held until the check lets it answer
-    (release): a second request comes while the first is picking because the
+    """The placement, scripted, held until the check lets it answer
+    (release): a second request comes while the first is placing because the
     check sends it then, never because a sleep was long enough."""
 
     def __init__(self, answer):
@@ -476,16 +501,16 @@ class HeldModel(Model):
     def release(self):
         self.go.set()
 
-    async def __call__(self, messages, **kw):
-        self.calls.append((messages, kw))
+    async def __call__(self, pool, entity_id, message, pages=None):
+        self.calls.append((message, [int(x) for x in (pages or [])]))
         await self.go.wait()
-        return self.answer
+        ref = (self.answer or {}).get("page")
+        return [(ref, 1.0)] if ref else []
 
 
 async def picking(model, n=1, secs=10.0):
-    """Until the pick has been called `n` times, that is, the send is out and
-    the Host is picking (a backstop of `secs`, never a wait for its own
-    sake)."""
+    """Until the placement has been called `n` times, that is, the send is
+    out and placing (a backstop of `secs`, never a wait for its own sake)."""
     t0 = time.perf_counter()
     while len(model.calls) < n and time.perf_counter() - t0 < secs:
         await asyncio.sleep(0.005)
@@ -493,13 +518,17 @@ async def picking(model, n=1, secs=10.0):
 
 
 async def send_once(W, pool, text, rid, model, *, current=None):
-    """index_send_once as the route calls it, the pick scripted by `model`."""
-    return await W.index_send_once(pool, E, text, request_id=rid, current_project_id=current, app_id=APP,
-                                   app_permissions=PERMS, call_model=model, route=ROUTE)
+    """index_send_once as the route calls it, the placement scripted by `model`."""
+    tok = PLACER.set(model)
+    try:
+        return await W.index_send_once(pool, E, text, request_id=rid, current_project_id=current, app_id=APP,
+                                       app_permissions=PERMS)
+    finally:
+        PLACER.reset(tok)
 
 
 async def q_slice5(W, tp, pool, pg):
-    print("-- Q: the pick's list filled to K, a long message clipped, one send per request id")
+    print("-- Q: the placement's list filled to K, a long message clipped, one send per request id")
 
     # Fill: "quokka" is found on four pages; the rest of the list is the most
     # recently active open pages. Each check below is one the code before
@@ -507,11 +536,11 @@ async def q_slice5(W, tp, pool, pg):
     # turn is the ground it stands on, held in the same check.
     found = ids(await index(W, pool, "quokka"))
     want = await want_pick_pages(W, pool, "quokka")
-    status, out, rec, model = await send(W, pool, "quokka", pick_call(page=f"project:{pg['qk_many']}", reason="r"),
+    status, out, rec, model = await send(W, pool, "quokka", pick_call(page=f"project:{pg['qk_many']}"),
                                          current=pg["qk_one"])
     shown = listed(model)
     arch = {r["id"] for r in await pool.fetch("SELECT id FROM projects WHERE status = 'archived'")}
-    check(f"Q fill: the search finds {len(found)} of {K} pages for 'quokka'; the Host is shown them first, in "
+    check(f"Q fill: the search finds {len(found)} of {K} pages for 'quokka'; they are scored first, in "
           f"its order, then the most recently active open pages (never archived ones, each once), {K} in all, "
           "and the send lands as before",
           0 < len(found) < K and shown == want and len(shown) == K and shown[:len(found)] == found
@@ -521,50 +550,50 @@ async def q_slice5(W, tp, pool, pg):
     nothing = "Plan the zyxwvut gathering"
     want = await want_pick_pages(W, pool, nothing)
     none_found = ids(await index(W, pool, nothing))
-    status, out, rec, model = await send(W, pool, nothing, pick_call(new=True, title="Gathering", reason="r"))
+    status, out, rec, model = await send(W, pool, nothing, pick_call())
     shown = listed(model)
-    check(f"Q fill: a message the search finds no page for is shown the {K} most recently active pages, "
-          "not only 'new'", not none_found and shown == want and len(shown) == K, (none_found[:3], shown, want))
+    check(f"Q fill: a message the search finds no page for is scored against the {K} most recently active "
+          "pages", not none_found and shown == want and len(shown) == K, (none_found[:3], shown, want))
     t0 = time.perf_counter()
     for _ in range(3):
-        _s, o, _r, filled = await send(W, pool, "quokka", pick_call(page=f"project:{pg['qk_many']}", reason="r"))
+        _s, o, _r, filled = await send(W, pool, "quokka", pick_call(page=f"project:{pg['qk_many']}"))
     fill_ms = (time.perf_counter() - t0) * 1000 / 3
-    print(f"   a send whose list is filled, the model's own time left out: {fill_ms:.1f} ms (mean of 3)")
-    check(f"Q fill: a send whose list is filled to {K} lands under {CEILING_MS} ms without the model's time",
+    print(f"   a send whose list is filled: {fill_ms:.1f} ms (mean of 3)")
+    check(f"Q fill: a send whose list is filled to {K} lands under {CEILING_MS} ms",
           fill_ms < CEILING_MS and len(listed(filled)) == K, (round(fill_ms), len(listed(filled))))
 
-    # Clip: the pick reads the opening of a long message; the turn reads it all.
+    # Clip: the placement's search reads the opening of a long message; the
+    # turn reads it all.
     cap = getattr(tp, "INDEX_PICK_MESSAGE_CHARS", None)
-    check("Q clip: the pick reads at most 2,000 characters of a message", cap == 2_000, cap)
+    check("Q clip: the placement's search reads at most 2,000 characters of a message", cap == 2_000, cap)
     cap = 2_000
+    from mastercode import memory_retrieval as MR
+    real_recall, searched = MR.recall_memories, []
+
+    async def recording_recall(pool_, eid, query, *a, **k):
+        searched.append(query)
+        return await real_recall(pool_, eid, query, *a, **k)
     long_msg = "Please look at the quokka feeder notes again. " + "The camera log says " * 1200 + "END-OF-IT"
     n_inner = len(INNER_CALLS)
-    status, out, rec, model = await send(W, pool, long_msg, pick_call(page=f"project:{pg['qk_many']}", reason="r"),
-                                         current=pg["qk_one"])
-    msgs = model.calls[0][0] if model.calls else [{}, {}]
-    copy = msgs[-1].get("content", "")
-    sysmsg = msgs[0].get("content", "")
-    check(f"Q clip: a {len(long_msg):,}-character message reaches the pick as its opening, ended with '…', "
-          "while the turn on the page reads it whole",
-          len(copy) <= cap + 1 and copy.endswith("…") and copy.startswith("Please look at the quokka feeder")
-          and "END-OF-IT" not in copy and len(INNER_CALLS) == n_inner + 1
-          and INNER_CALLS[-1].get("message") == long_msg, (len(copy), copy[-40:]))
-    left = len(long_msg) - (len(copy) - 1)
-    check("Q clip: ...cut at a space, and the Host is told how much more follows",
-          long_msg.startswith(copy[:-1]) and long_msg[len(copy) - 1] == " "
-          and f"{left:,} more characters follow" in sysmsg and "gets the whole message" in sysmsg,
-          sysmsg[-200:])
-    size = pick_input_tokens(model) if model.calls else None
-    check(f"Q clip: the pick's input with a long message and {len(listed(model))} pages listed stays within "
-          f"{PICK_BUDGET_TOKENS} tokens (chars/4): {size}", size is not None and size <= PICK_BUDGET_TOKENS, size)
-    exact = "q" * cap
-    m = tp.build_index_messages(exact, [])
-    copy_fn = getattr(tp, "index_pick_copy", None)
-    got = copy_fn("x" * (cap + 1)) if copy_fn else None
-    check("Q clip: at exactly 2,000 characters a message is whole, with no note; one more with no space to cut "
-          "at is cut at 2,000, one character left out",
-          m[-1]["content"] == exact and "more characters follow" not in m[0]["content"]
-          and got == ("x" * cap + "…", 1), (len(m[-1]["content"]), got and (len(got[0]), got[1])))
+    MR.recall_memories = recording_recall
+    try:
+        # The real placement (no script): its search is what is clipped.
+        status, out = await W.index_send_service(pool, E, long_msg, current_project_id=pg["qk_one"], app_id=APP,
+                                                 app_permissions=PERMS)
+        await settle((out.get("turn") or {}).get("turn_id"))
+    finally:
+        MR.recall_memories = real_recall
+    scored = [q for q in searched if q.startswith("Please look at the quokka feeder")]
+    check(f"Q clip: a {len(long_msg):,}-character message is scored on its opening {cap:,} characters, while "
+          "the turn on the page reads it whole",
+          scored and all(len(q) <= cap and "END-OF-IT" not in q for q in scored)
+          and len(INNER_CALLS) == n_inner + 1 and INNER_CALLS[-1].get("message") == long_msg,
+          ([len(q) for q in scored], len(INNER_CALLS) - n_inner))
+    block = handed(n_inner)
+    size = len(block or "") // 4
+    check(f"Q clip: the pages handed to the turn with a long message stay within {HANDED_MAX_TOKENS} tokens "
+          f"(chars/4): {size}, and carry none of the message",
+          block is not None and size <= HANDED_MAX_TOKENS and "camera log says" not in (block or ""), size)
 
     # One send per request id.
     have = hasattr(W, "index_send_once")
@@ -572,7 +601,7 @@ async def q_slice5(W, tp, pool, pg):
     if not have:
         return
     before, n_inner = await counts(pool), len(INNER_CALLS)
-    model = HeldModel(pick_call(page=f"project:{pg['qk_many']}", reason="It is about the quokka notes."))
+    model = HeldModel(pick_call(page=f"project:{pg['qk_many']}"))
     text = "Did the quokka eat today?"
     first = asyncio.ensure_future(send_once(W, pool, text, "rq-1", model))
     out = await picking(model)
@@ -583,8 +612,8 @@ async def q_slice5(W, tp, pool, pg):
     model.release()
     (s1, o1), (s2, o2) = await asyncio.gather(first, second)
     await settle((o1.get("turn") or {}).get("turn_id"))
-    check("Q a double Enter (a second request with the id while the first's pick is held): one pick, one "
-          "marker, one turn",
+    check("Q a double Enter (a second request with the id while the first's placement is held): one "
+          "placement, one marker, one turn",
           out and held and len(model.calls) == 1 and await counts(pool) == (before[0], before[1] + 1)
           and len(INNER_CALLS) == n_inner + 1, (out, held, len(model.calls), await counts(pool), before,
                                                 len(INNER_CALLS) - n_inner))
@@ -592,7 +621,7 @@ async def q_slice5(W, tp, pool, pg):
           s1 == s2 == 200 and o1 == o2 and o1.get("state") == "started" and (o1.get("turn") or {}).get("turn_id"),
           (o1, o2))
     s3, o3 = await send_once(W, pool, text, "rq-1", model)
-    check("Q a retry after the answer gets that answer again: no pick, no turn",
+    check("Q a retry after the answer gets that answer again: no placement, no turn",
           (s3, o3) == (s1, o1) and len(model.calls) == 1 and len(INNER_CALLS) == n_inner + 1, (s3, o3))
     s4, o4 = await send_once(W, pool, text, "rq-2", model)
     await settle((o4.get("turn") or {}).get("turn_id"))
@@ -601,12 +630,12 @@ async def q_slice5(W, tp, pool, pg):
           and (o4.get("turn") or {}).get("turn_id") != (o1.get("turn") or {}).get("turn_id"), (s4, o4))
     before, n_calls = await counts(pool), len(model.calls)
     s5, o5 = await send_once(W, pool, "Something else entirely", "rq-1", model)
-    check("Q an id already used for other words is refused (409), nothing picked or written",
+    check("Q an id already used for other words is refused (409), nothing placed or written",
           s5 == 409 and o5.get("state") == "request_id_reused" and len(model.calls) == n_calls
           and await counts(pool) == before, (s5, o5))
     s6, o6 = await send_once(W, pool, text, "not an id!", model)
     s7, _o7 = await send_once(W, pool, text, "x" * 65, model)
-    check("Q an id of another shape is a 400, and the Host is asked nothing",
+    check("Q an id of another shape is a 400, and nothing is placed",
           s6 == 400 and s7 == 400 and len(model.calls) == n_calls, (s6, o6, s7))
 
     # A send that failed is not kept: the same id runs again.
@@ -629,9 +658,9 @@ async def q_slice5(W, tp, pool, pg):
           raised and s8 == 200 and o8.get("state") == "started" and len(model.calls) == n_calls + 1
           and len(INNER_CALLS) == n_inner + 1, (raised, s8, o8.get("state")))
 
-    # A request that goes away mid-pick: the send goes on, once.
+    # A request that goes away mid-placement: the send goes on, once.
     before, n_inner = await counts(pool), len(INNER_CALLS)
-    slow = HeldModel(pick_call(page=f"project:{pg['qk_many']}", reason="r"))
+    slow = HeldModel(pick_call(page=f"project:{pg['qk_many']}"))
     gone = asyncio.ensure_future(send_once(W, pool, "Count the quokkas.", "rq-4", slow))
     out = await picking(slow)
     gone.cancel()
@@ -641,7 +670,8 @@ async def q_slice5(W, tp, pool, pg):
     slow.release()
     s9, o9 = await send_once(W, pool, "Count the quokkas.", "rq-4", slow)
     await settle((o9.get("turn") or {}).get("turn_id"))
-    check("Q a request that goes away mid-pick loses nothing: the send lands once, and the retry gets its answer",
+    check("Q a request that goes away mid-placement loses nothing: the send lands once, and the retry gets its "
+          "answer",
           went and s9 == 200 and o9.get("state") == "started" and len(slow.calls) == 1
           and await counts(pool) == (before[0], before[1] + 1) and len(INNER_CALLS) == n_inner + 1,
           (s9, o9.get("state"), len(slow.calls), len(INNER_CALLS) - n_inner))
@@ -872,7 +902,7 @@ async def r_late(W, tp, pool, pg):
         unread = UnreadTurn(page, "sess-unread-a")
         rec, err = await running_on(page, unread, "Sort the shed today.")
         rid, text = "rr-unread", "Water the tomatoes too."
-        model = Model(pick_call(page=f"project:{page}", reason="It is the plain page."))
+        model = Model(pick_call(page=f"project:{page}"))
         n_inner = len(INNER_CALLS)
         s1, o1 = await send_once(W, pool, text, rid, model, current=page)
         check("R(a) a send onto a page whose turn runs is a nudge, its id in the runtime's queue",
@@ -907,8 +937,8 @@ async def r_late(W, tp, pool, pg):
         unread = UnreadTurn(page, "sess-unread-b")
         rec, err = await running_on(page, unread, "Check the ledger totals.")
         (rid_a, text_a), (rid_b, text_b) = ("rr-join-a", "And the March column."), ("rr-join-b", "Also the April one.")
-        model_a = Model(pick_call(page=f"project:{page}", reason="The ledger page."))
-        model_b = Model(pick_call(page=f"project:{page}", reason="The ledger page."))
+        model_a = Model(pick_call(page=f"project:{page}"))
+        model_b = Model(pick_call(page=f"project:{page}"))
         n_inner = len(INNER_CALLS)
         sa, oa = await send_once(W, pool, text_a, rid_a, model_a, current=page)
         sb, ob = await send_once(W, pool, text_b, rid_b, model_b, current=page)
@@ -942,7 +972,7 @@ async def r_late(W, tp, pool, pg):
         rec, err = await running_on(page, held, words)
         await asyncio.gather(*ROW_TASKS)
         rid = "rr-reattached"
-        model = Model(pick_call(page=f"project:{page}", reason="The helpdesk page."))
+        model = Model(pick_call(page=f"project:{page}"))
         n_inner = len(INNER_CALLS)
         s1, o1 = await send_once(W, pool, words, rid, model, current=page)
         md = {}
@@ -980,8 +1010,8 @@ async def r_late(W, tp, pool, pg):
         unread = UnreadTurn(page, "sess-unread-d")
         rec, err = await running_on(page, unread, "Look at the payout schedule.")
         words, rid_x, rid_y = "Chase the March payout.", "rr-same-x", "rr-same-y"
-        model_x = Model(pick_call(page=f"project:{page}", reason="The payouts page."))
-        model_y = Model(pick_call(page=f"project:{page}", reason="The payouts page."))
+        model_x = Model(pick_call(page=f"project:{page}"))
+        model_y = Model(pick_call(page=f"project:{page}"))
         n_inner = len(INNER_CALLS)
         sx, ox = await send_once(W, pool, words, rid_x, model_x, current=page)
         S.release_holds(unread.sid)                     # the turn reads no more: words now start a turn of their own
@@ -1035,8 +1065,8 @@ async def r_late(W, tp, pool, pg):
         unread = UnreadTurn(page, "sess-unread-e")
         rec, err = await running_on(page, unread, "Look at the refund schedule.")
         words, rid_x, rid_y = "Chase the April refund.", "rr-gone-x", "rr-gone-y"
-        model_x = Model(pick_call(page=f"project:{page}", reason="The payouts page."))
-        model_y = Model(pick_call(page=f"project:{page}", reason="The payouts page."))
+        model_x = Model(pick_call(page=f"project:{page}"))
+        model_y = Model(pick_call(page=f"project:{page}"))
         sx, ox = await send_once(W, pool, words, rid_x, model_x, current=page)
         S.release_holds(unread.sid)
         bs._send_message_inner = real_signature(dying_inner)   # the waiting turn dies before its row
@@ -1071,7 +1101,7 @@ async def r_late(W, tp, pool, pg):
         held = RunningTurn(page, "sess-not-yet")        # running, its own row not written
         rec, err = await running_on(page, held, words)
         rid = "rr-attach-gone"
-        model = Model(pick_call(page=f"project:{page}", reason="The helpdesk page."))
+        model = Model(pick_call(page=f"project:{page}"))
         s1, o1 = await send_once(W, pool, words, rid, model, current=page)
         await asyncio.gather(*list(_TR_PENDING()))
         markers, users = await carrying(pool, rid)
@@ -1118,7 +1148,7 @@ async def r_pii(W, tp, pool, pg):
     try:
         page = pg["nar_desc"]
         rid, text = "rr-pii-tell-them-my-name-is-ada", "Note the narwhal count for the bay."
-        model = Model(pick_call(page=f"project:{page}", reason="The bay survey."))
+        model = Model(pick_call(page=f"project:{page}"))
         n_inner = len(INNER_CALLS)
         s1, o1 = await send_once(W, pool, text, rid, model, current=page)
         await settle((o1.get("turn") or {}).get("turn_id"))
@@ -1169,7 +1199,7 @@ async def r_durable(W, tp, pool, pg):
     from server.turn_registry import get_turn_registry
     check("R thread_pick finds a send by its request id (find_index_send)", hasattr(tp, "find_index_send"))
     page = pg["qk_many"]
-    pick = pick_call(page=f"project:{page}", reason="It is about the quokka notes.")
+    pick = pick_call(page=f"project:{page}")
     real_inner = bs._send_message_inner
     bs._send_message_inner = durable_inner
     try:
@@ -1300,7 +1330,7 @@ async def r_durable(W, tp, pool, pg):
             if rec is not None and rec.session_id == running.sid:
                 break
             await asyncio.sleep(0.01)
-        model4 = Model(pick_call(page=f"project:{page4}", reason="It is the garden page."))
+        model4 = Model(pick_call(page=f"project:{page4}"))
         n_inner = len(INNER_CALLS)
         s4, o4 = await send_once(W, pool, text4, rid4, model4, current=page4)
         queued = S.nudge_ids(running.sid)
@@ -1328,7 +1358,7 @@ async def r_durable(W, tp, pool, pg):
         bs._send_message_inner = durable_inner
         rid6 = "rr-secret"
         typed6 = f"{SECRET} is the key for the garden gate"
-        model6 = Model(pick_call(page=f"project:{page}", reason="r"))
+        model6 = Model(pick_call(page=f"project:{page}"))
         s6, o6 = await send_once(W, pool, typed6, rid6, model6, current=page)
         await settle((o6.get("turn") or {}).get("turn_id"))
         await asyncio.gather(*ROW_TASKS)
@@ -1381,7 +1411,7 @@ async def r_durable(W, tp, pool, pg):
     check("R ...and the marker holds the answer's fields beside it (title, restored, created, reason)",
           bool(re.fullmatch(r"[0-9a-f]{64}", str(stored.get("digest") or ""))) and stored.get("title") == "Field notes"
           and stored.get("restored") is False and stored.get("created") is False
-          and stored.get("reason") == "It is about the quokka notes.", stored)
+          and stored.get("reason") == "the conversation on this page matches the message clearly", stored)
 
     # 5. the lookup is one index read; the migration and init-db.sql make the same index.
     await pool.execute("ANALYZE entity_memory")
@@ -1529,8 +1559,8 @@ async def run(dsn):
     have_w = not isinstance(W, Exception)
     check("the tree has the Index (server/routes/workbench_index.py)", have_w, W)
     have_tp = (not isinstance(tp, Exception) and hasattr(tp, "list_index_candidates")
-               and hasattr(tp, "choose_page") and hasattr(tp, "land_index_pick"))
-    check("thread_pick has the Index's entry (list_index_candidates, choose_page, land_index_pick)", have_tp)
+               and hasattr(tp, "page_scores") and hasattr(tp, "land_index_pick"))
+    check("thread_pick has the Index's entry (list_index_candidates, page_scores, land_index_pick)", have_tp)
 
     pool = await asyncpg.create_pool(dsn, min_size=1, max_size=4)
     saved = (bs._pool, bs._entity_id, bs._send_message_inner, P.ensure_project_dir, P.ensure_project_repo)
@@ -1550,6 +1580,9 @@ async def run(dsn):
         bs._pool, bs._entity_id = pool, E
         REAL["inner"] = bs._send_message_inner   # its signature: real_signature
         bs._send_message_inner = scripted_inner
+        if have_tp:
+            REAL_SCORES["page_scores"] = tp.page_scores
+            tp.page_scores = _page_scores_seam
         P.ensure_project_dir = made_dirs.append
         P.ensure_project_repo = no_repo
 
@@ -1764,8 +1797,8 @@ async def run(dsn):
         await pool.execute("UPDATE projects SET search_embedding = NULL, search_embedding_model = NULL")
 
         # ── C: the pick's list ──────────────────────────────────────────────
-        print("-- C: the pick's list and call")
-        check("C the Host is shown at most INDEX_PICK_K of the search's pages",
+        print("-- C: the placement's list, and no call")
+        check("C at most INDEX_PICK_K of the search's pages are listed",
               getattr(tp, "INDEX_PICK_K", None) == K, getattr(tp, "INDEX_PICK_K", None))
         # A message the search answers with an archived page, a page with no
         # turns yet and a ticket's page; the open page is one it does not rank.
@@ -1821,50 +1854,50 @@ async def run(dsn):
         n_turns = await pool.fetchval("SELECT count(*) FROM entity_memory WHERE project_id = $1", busiest)
         check(f"C ...the busiest page ({n_turns} turn rows): {read} entity_memory rows read, at most 25",
               bool(nodes) and read <= 25, read)
-        model = Model(pick_call(page=f"project:{pg['qk_many']}", reason="It is about the quokka notes."))
-        res, err = await attempt(lambda: tp.choose_page(pool, E, message=cmsg, pages=top, current=cur,
-                                                call_model=model, route=ROUTE))
-        pick, shown = res if res is not None else (tp.Pick(ok=False, failure=repr(err)), [])
-        msgs, kw = model.calls[0] if model.calls else ([{}, {}], {})
-        sysmsg = msgs[0].get("content", "") if msgs else ""
-        check("C one call, its only tool pick_page, on the Host's chat route",
-              len(model.calls) == 1 and kw.get("tools") == [tp.INDEX_PICK_TOOL]
-              and (kw.get("provider"), kw.get("provider_model")) == ("anthropic", "claude-opus-5-5"),
-              (kw.get("tools"), err))
-        check("C the message is the user turn, verbatim",
-              msgs[1:] == [{"role": "user", "content": cmsg}], msgs[1:])
-        check("C the Index's words: no messaging app, pages not threads, the Index's own matches",
-              "typed this message into the Workbench's Index" in sysmsg and "pick_page" in sysmsg
-              and "The pages the Index found for this message, best match first" in sysmsg
-              and "pick_thread" not in sysmsg and "Telegram" not in sysmsg and "arrived from" not in sysmsg,
-              sysmsg[:300])
-        check("C the Host's list is that list", listed(model) == top + [pg["led_new"]], (listed(model), top))
-        check("C the open page is marked, once", sysmsg.count("The person has this page open") == 1
-              and f"[project:{pg['led_new']}] Ledger two, " in sysmsg.split("The person has this page open")[0][-400:],
-              sysmsg[-300:])
-        check("C an archived page and a page with no turns are in the list, marked so",
-              f"[project:{pg['qk_arch']}] Old zoo (archived), last active" in sysmsg
-              and f"[project:{pg['qk_name']}] Quokka integration, no messages yet" in sysmsg)
-        check("C the pick lands where it named, with the Host's reason",
-              pick.ok and (pick.kind, pick.ref, pick.new, pick.reason)
-              == ("project", str(pg["qk_many"]), False, "It is about the quokka notes.")
-              and len(shown) == len(top) + 1, pick)
-        p2 = tp.read_pick(pick_call(new=True, reason="nothing fits"), shown, message="Plan the kite day\nmore",
-                          shape=tp._PAGE)
-        check("C a new page with no title takes the message's first line, and is a project",
-              p2.ok and p2.new and p2.kind == "project" and p2.title == "Plan the kite day", p2)
-        p3 = tp.read_pick({"tool_calls": [{"function": {"name": "pick_thread", "arguments": json.dumps(
-            {"thread": f"project:{pg['qk_many']}"})}}]}, shown, shape=tp._PAGE)
-        check("C the connector's tool is not a pick on the Index", not p3.ok, p3)
+        check("C no model call places a message: the separate pick call, its prompt and tool are gone",
+              not any(hasattr(tp, n) for n in ("choose_page", "read_pick", "build_index_messages",
+                                                "index_pick_copy", "INDEX_PICK_TOOL", "_ask_host"))
+              and "call_model(" not in (ROOT / "server/routes/workbench_index.py").read_text())
+        n_inner = len(INNER_CALLS)
+        # Read before the send: the send's own marker makes the open page the
+        # most recently active.
+        want = await want_pick_pages(W, pool, cmsg)
+        want += [pg["led_new"]] if pg["led_new"] not in want else []
+        status, out, rec, model = await send(W, pool, cmsg, None, current=pg["led_new"])
+        check("C the placement scores that list once: the search's pages, filled to K, then the open page",
+              listed(model) == want and len(model.calls) == 1 and listed(model)[:len(top)] == top,
+              (listed(model), want, top))
+        check("C nothing matching clearly, the message goes to the open page",
+              status == 200 and out.get("state") == "started" and out.get("project_id") == pg["led_new"]
+              and out.get("reason") == "no page matched clearly, so it went to the open page", (status, out))
+        block = handed(n_inner) or ""
+        offered = re.findall(r"^- \[project:(\d+)\]", block, re.M)
+        archived = {r["id"] for r in await pool.fetch("SELECT id FROM projects WHERE status = 'archived'")}
+        want_offered = [str(i) for i in want if i != pg["led_new"] and i not in archived][:8]
+        check("C ...and the other listed pages go to the turn for the Host's own pick, in the Index's words: "
+              "no archived page (a move does not restore one), never a Circles thread of its own",
+              offered == want_offered and "landed in 'Ledger two'" in block and "stays on this page" in block
+              and "new=true" not in block, (offered, want_offered, block[:400]))
+        fr = (INNER_CALLS[-1].get("frame") or {}).get("thread_choice") if len(INNER_CALLS) > n_inner else None
+        check("C the frame names the Index and where the message landed",
+              isinstance(fr, dict) and fr.get("surface") == "index"
+              and fr.get("landed") == {"kind": "project", "ref": str(pg["led_new"]), "title": "Ledger two",
+                                       "provisional": False}, fr)
+        n_inner = len(INNER_CALLS)
+        status, out, rec, model = await send(W, pool, cmsg, pick_call(page=f"project:{pg['qk_many']}"),
+                                             current=pg["led_new"])
+        check("C a clear match lands there, with the placement's own reason, and the turn is offered nothing",
+              status == 200 and out.get("project_id") == pg["qk_many"]
+              and out.get("reason") == "the conversation on this page matches the message clearly"
+              and handed(n_inner) == "", (status, out))
 
         # ── W, M: a send that lands on a page ───────────────────────────────
         print("-- W, M: a send from the Index")
         before = await counts(pool)
         text = "  Is the quokka feeder fixed?\nCheck the camera too.  "
-        status, out, rec, _m = await send(W, pool, text, pick_call(page=f"project:{pg['qk_many']}",
-                                                                   reason="It is about the quokka notes."),
+        status, out, rec, _m = await send(W, pool, text, pick_call(page=f"project:{pg['qk_many']}"),
                                           current=pg["qk_one"])
-        check("W 200, started, on the page the Host picked, not restored, not made",
+        check("W 200, started, on the page that matched clearly, not restored, not made",
               status == 200 and out.get("state") == "started" and out.get("project_id") == pg["qk_many"]
               and out.get("restored") is False and out.get("created") is False, (status, out))
         inner = INNER_CALLS[-1] if INNER_CALLS else {}
@@ -1877,7 +1910,7 @@ async def run(dsn):
               and out.get("turn", {}).get("turn_id") == rec.turn_id and out["turn"].get("mode") == "started"
               and out.get("stream") == f"/api/brain/turns/{rec.turn_id}/stream",
               (out.get("turn"), rec and rec.thread_key))
-        marker = "Index message, picked this page: It is about the quokka notes."
+        marker = "Index message, picked this page: the conversation on this page matches the message clearly"
         row = await pool.fetchrow("SELECT content, metadata, project_id FROM entity_memory"
                                   " WHERE metadata->>'source_kind' = 'index_pick' ORDER BY id DESC LIMIT 1")
         md = (json.loads(row["metadata"]) if isinstance(row["metadata"], str) else row["metadata"]) if row else {}
@@ -1906,63 +1939,34 @@ async def run(dsn):
               == "Index message, started this page: r"
               and tp.index_marker_text(tp.Pick(ok=True, kind="project", ref="1")) == "Index message, picked this page.")
 
-        # ── N: a new page ───────────────────────────────────────────────────
-        print("-- N: a new page")
-        before = await counts(pool)
-        status, out, rec, _m = await send(W, pool, "Plan the kite festival for May",
-                                          pick_call(new=True, title="Kite festival",
-                                                    reason="Nothing open is about kites."))
-        new = await pool.fetchrow("SELECT id, name, kind, status, entity_id FROM projects WHERE name = 'Kite festival'")
-        check("N a new Workbench project with the Host's title",
-              new is not None and (new["kind"], new["status"], new["entity_id"]) == ("project", "planning", E), new)
-        check("N the answer: created, started, on it",
-              status == 200 and out.get("state") == "started" and new is not None
-              and out.get("project_id") == new["id"] and out.get("created") is True and out.get("restored") is False,
-              (status, out))
-        check("N 'started this page' is written on it",
-              new is not None and await pool.fetchval(
-                  "SELECT content FROM entity_memory WHERE project_id = $1 AND metadata->>'source_kind' = 'index_pick'",
-                  new["id"]) == "Index message, started this page: Nothing open is about kites.")
-        check("N the turn starts there",
-              new is not None and rec is not None and rec.thread_key == f"project|{E}|{new['id']}"
-              and INNER_CALLS[-1].get("project_id") == new["id"], INNER_CALLS[-1:])
-        check("N its directory and Code Repository are asked for, as POST /api/projects asks",
-              new is not None and made_dirs[-1:] == [new["id"]] and made_repos[-1:] == [(new["id"], "Kite festival")],
-              (made_dirs[-1:], made_repos[-1:]))
-        check("N one project and one marker more", await counts(pool) == (before[0] + 1, before[1] + 1),
-              (before, await counts(pool)))
-        real_write = tp.write_index_marker
-
-        async def broken(*a, **k):
-            raise RuntimeError("the marker write failed")
-        tp.write_index_marker = broken
-        n_inner, raised = len(INNER_CALLS), False
-        try:
-            await send(W, pool, "x", pick_call(new=True, title="Kite orphan", reason="r"))
-        except RuntimeError:
-            raised = True
-        finally:
-            tp.write_index_marker = real_write
-        check("N a marker that cannot be written leaves no new project, and no turn",
-              raised and not await pool.fetchval("SELECT count(*) FROM projects WHERE name = 'Kite orphan'")
-              and len(INNER_CALLS) == n_inner, (raised, len(INNER_CALLS) - n_inner))
+        # ── N: no page open, nothing matching clearly ───────────────────────
+        print("-- N: no page open and nothing matching clearly")
+        before, n_inner = await counts(pool), len(INNER_CALLS)
+        nmsg = "Plan the kite festival for May"
+        status, out, rec, model = await send(W, pool, nmsg, pick_call())
+        cand = [c["project_id"] for c in out.get("candidates") or []]
+        check("N the person is asked which page, from the pages the Index found",
+              status == 200 and out.get("state") == "ask" and cand == listed(model) and cand, (status, out))
+        check("N ...nothing is made or written, and no turn starts",
+              await counts(pool) == before and len(INNER_CALLS) == n_inner and rec is None
+              and not await pool.fetchval("SELECT count(*) FROM projects WHERE name ILIKE '%kite festival%'"),
+              (before, await counts(pool), len(INNER_CALLS) - n_inner))
 
         # ── A: archived picks ───────────────────────────────────────────────
         print("-- A: an archived pick")
         status, out, rec, _m = await send(W, pool, "What did the quokka gate cost?",
-                                          pick_call(page=f"project:{pg['qk_arch']}",
-                                                    reason="The quokka gate was priced there."))
-        check("A an archived pick is restored first and the turn starts there",
+                                          pick_call(page=f"project:{pg['qk_arch']}"))
+        check("A an archived page that matches clearly is restored first and the turn starts there",
               status == 200 and out.get("state") == "started" and out.get("restored") is True
               and await pool.fetchval("SELECT status FROM projects WHERE id = $1", pg["qk_arch"]) == "active"
               and rec is not None and rec.thread_key == f"project|{E}|{pg['qk_arch']}", (status, out))
-        check("A ...and the pick is written there",
+        check("A ...and the placement is written there",
               await pool.fetchval("SELECT content FROM entity_memory WHERE project_id = $1 AND"
                                   " metadata->>'source_kind' = 'index_pick'", pg["qk_arch"])
-              == "Index message, picked this page: The quokka gate was priced there.")
+              == "Index message, picked this page: the conversation on this page matches the message clearly")
         before, n_inner = await counts(pool), len(INNER_CALLS)
         status, out, rec, _m = await send(W, pool, "Where is the shared repo?",
-                                          pick_call(page=f"project:{pg['repo_arch']}", reason="It holds the repo."))
+                                          pick_call(page=f"project:{pg['repo_arch']}"))
         check("A a refused restore is a 409 that says why",
               status == 409 and out.get("state") == "restore_refused" and out.get("project_id") == pg["repo_arch"]
               and "Code Repository" in (out.get("reason") or ""), (status, out))
@@ -1972,51 +1976,62 @@ async def run(dsn):
               (await counts(pool), before, len(INNER_CALLS) - n_inner))
         # The restore and the marker land together: a marker that cannot be
         # written leaves the page archived, never restored with nothing on it.
+        real_write = tp.write_index_marker
+
+        async def broken(*a, **k):
+            raise RuntimeError("the marker write failed")
         tank = await project(pool, "Old aquarium", status="archived", days_ago=45)
         await turn(pool, tank, "The aquarium pump hums again.", mins_ago=6000)
         tp.write_index_marker = broken
         n_inner, raised = len(INNER_CALLS), False
         try:
-            await send(W, pool, "Is the aquarium pump fixed?", pick_call(page=f"project:{tank}", reason="r"))
+            await send(W, pool, "Is the aquarium pump fixed?", pick_call(page=f"project:{tank}"))
         except RuntimeError:
             raised = True
         finally:
             tp.write_index_marker = real_write
-        check("A an archived pick whose marker cannot be written stays archived, and no turn starts",
+        check("A an archived match whose marker cannot be written stays archived, and no turn starts",
               raised and await pool.fetchval("SELECT status FROM projects WHERE id = $1", tank) == "archived"
               and len(INNER_CALLS) == n_inner,
               (raised, await pool.fetchval("SELECT status FROM projects WHERE id = $1", tank),
                len(INNER_CALLS) - n_inner))
 
-        # ── F: failed picks ─────────────────────────────────────────────────
-        print("-- F: failed picks")
-        # What the Host is shown for this message (or would have been): the
-        # search's best for it, an archived page among them, and the open page.
+        # ── F: nothing placed ───────────────────────────────────────────────
+        print("-- F: nothing placed")
+        # The pages it would have offered for this message: the search's best
+        # for it, an archived page among them, and no page open.
         fmsg = "Where does the narwhal survey go?"
-        fexpect = set(await want_pick_pages(W, pool, fmsg)) | {pg["qk_name"]}
-        for label, answer, route in (
-                ("no call", {"content": "Sure.", "tool_calls": []}, ROUTE),
-                ("a page not in the list", pick_call(page="project:999999", reason="r"), ROUTE),
-                ("a model error", {"error": "429 rate limited"}, ROUTE),
-                ("a call that raises", RuntimeError("provider down"), ROUTE),
-                ("no chat model set up", None, {"provider": "", "model": "", "unconfigured": "set up a chat model"})):
+        fexpect = set(await want_pick_pages(W, pool, fmsg))
+        for label, answer in (
+                ("the search finds no clear match", pick_call()),
+                ("a match outside the list", pick_call(page="project:999999")),
+                ("two pages matching alike", None)):
             before, n_inner = await counts(pool), len(INNER_CALLS)
-            status, out, rec, _m = await send(W, pool, fmsg, answer, route=route, current=pg["qk_name"])
+            if answer is None:
+                async def tie(pool_, eid, message, pages=None):
+                    return [(f"project:{pg['nar_name']}", 1.0), (f"project:{pg['nar_desc']}", 1.0)]
+                tok = PLACER.set(tie)
+                try:
+                    status, out = await W.index_send_service(pool, E, fmsg, app_id=APP, app_permissions=PERMS)
+                finally:
+                    PLACER.reset(tok)
+                rec = await settle((out.get("turn") or {}).get("turn_id"))
+            else:
+                status, out, rec, _m = await send(W, pool, fmsg, answer)
             cand = {c["project_id"]: c for c in out.get("candidates") or []}
-            check(f"F {label}: 200 ask, the pages the Host was shown (or would have been) to choose from, "
-                  "archived and turnless ones marked",
+            check(f"F {label}, no page open: 200 ask, the pages it would have offered to choose from, "
+                  "archived ones marked",
                   status == 200 and out.get("state") == "ask" and bool(out.get("failure"))
-                  and pg["nar_name"] in cand and cand[pg["nar_name"]]["archived"] is True
-                  and pg["qk_name"] in cand and set(cand) == fexpect,
+                  and pg["nar_name"] in cand and cand[pg["nar_name"]]["archived"] is True and set(cand) == fexpect,
                   (status, out.get("state"), out.get("failure"), sorted(cand), sorted(fexpect)))
             check(f"F {label}: nothing written, nothing made, no turn",
                   await counts(pool) == before and len(INNER_CALLS) == n_inner and rec is None,
                   (before, await counts(pool)))
-        status, out, rec, model = await send(W, pool, "   ", pick_call(page=f"project:{pg['qk_one']}", reason="r"))
-        check("F an empty message is a 400 and asks the Host nothing", status == 400 and not model.calls, (status, out))
+        status, out, rec, model = await send(W, pool, "   ", pick_call(page=f"project:{pg['qk_one']}"))
+        check("F an empty message is a 400 and places nothing", status == 400 and not model.calls, (status, out))
 
         # ── D: a pasted key ─────────────────────────────────────────────────
-        print("-- D: a pasted key is cut before the search, the pick and the turn")
+        print("-- D: a pasted key is cut before the search, the placement and the turn")
         embedded: list = []
 
         async def recording_embed(text):
@@ -2034,17 +2049,12 @@ async def run(dsn):
             embedded.clear()
             before, n_inner = await counts(pool), len(INNER_CALLS)
             dtext = f"{SECRET} is the key, keep it safe\nand plan the quokka feeder"
-            status, out, rec, model = await send(W, pool, dtext, pick_call(new=True, reason="Nothing open fits."))
-            msgs = model.calls[0][0] if model.calls else []
+            status, out, rec, model = await send(W, pool, dtext, None, current=pg["qk_none"])
+            scored = model.calls[0][0] if model.calls else ""
             check("D the send runs the Index's search, which embeds the words with the key cut",
                   bool(embedded) and not any("sk-ant" in t or "Wv5Wv5" in t for t in embedded), embedded)
-            check("D the pick's call never carries the key: the message reaches it cut, as the turn reads it",
-                  bool(msgs) and "Wv5Wv5" not in json.dumps(msgs)
-                  and msgs[-1].get("content", "").startswith("[REDACTED:anthropic-key] is the key"), msgs[-1:])
-            made = await pool.fetchrow("SELECT id, name FROM projects WHERE id = $1", out.get("project_id") or -1)
-            check("D a new page titled from the message's first line takes it without the key",
-                  made is not None and "Wv5Wv5" not in made["name"] and "sk-ant" not in made["name"]
-                  and made["name"].startswith("[REDACTED:anthropic-key] is the key"), made)
+            check("D the placement never scores the key: the message reaches it cut, as the turn reads it",
+                  scored.startswith("[REDACTED:anthropic-key] is the key") and "Wv5Wv5" not in scored, scored[:80])
             check("D the turn starts on the words with the key cut",
                   len(INNER_CALLS) == n_inner + 1 and "Wv5Wv5" not in INNER_CALLS[-1].get("message", "")
                   and INNER_CALLS[-1].get("message", "").startswith("[REDACTED:anthropic-key]"),
@@ -2068,20 +2078,21 @@ async def run(dsn):
         order = ids(await index(W, pool, KMSG))
         outside = order[30] if len(order) > 30 else None
         before, n_inner = await counts(pool), len(INNER_CALLS)
-        status, out, rec, model = await send(W, pool, KMSG, pick_call(page=f"project:{outside}", reason="r"),
+        status, out, rec, model = await send(W, pool, KMSG, pick_call(page=f"project:{outside}"),
                                              current=pg["qk_one"])
         shown_ids = listed(model)
-        check(f"X the Host is shown the search's first {K} for the message, then the open page",
+        check(f"X the search's first {K} for the message are scored, then the open page",
               shown_ids == order[:K] + [pg["qk_one"]], (shown_ids[:14], order[:K]))
-        check("X a page the search ranks 31st is not in the Host's list",
-              outside is not None and outside not in shown_ids, (outside, len(shown_ids)))
-        check("X ...named anyway, it lands nowhere: the person is asked, nothing written, no turn",
-              status == 200 and out.get("state") == "ask" and "not in the list" in (out.get("failure") or "")
-              and await counts(pool) == before and len(INNER_CALLS) == n_inner and rec is None,
-              (status, out.get("state"), out.get("failure"), len(INNER_CALLS) - n_inner))
+        check("X a page the search ranks 31st is not scored or offered",
+              outside is not None and outside not in shown_ids
+              and f"project:{outside}" not in (handed(n_inner) or ""), (outside, len(shown_ids)))
+        check("X ...a match there joins nothing: the message goes to the open page, one marker",
+              status == 200 and out.get("state") == "started" and out.get("project_id") == pg["qk_one"]
+              and await counts(pool) == (before[0], before[1] + 1) and len(INNER_CALLS) == n_inner + 1,
+              (status, out.get("state"), out.get("project_id"), len(INNER_CALLS) - n_inner))
 
         # ── K: the pick's cost, at 50 pages and at 300 ──────────────────────
-        print("-- K: the pick's cost does not grow with the pages")
+        print("-- K: the placement's cost does not grow with the pages")
         e50 = 3
         await pool.execute("INSERT INTO entity_registry (id, display_name) VALUES ($1, 'fifty pages')"
                            " ON CONFLICT (id) DO NOTHING", e50)
@@ -2102,31 +2113,30 @@ async def run(dsn):
                                                      refresh_in_background=False))
             # The open page one the search ranks low: the list's longest, K + 1.
             cur_id = order[-1]
-            status, out, rec, model = await send(W, pool, KMSG, {"content": "", "tool_calls": []},
-                                                 current=cur_id, entity=eid)
-            size, shown_n = (pick_input_tokens(model), len(listed(model))) if model.calls else (None, None)
+            n_inner = len(INNER_CALLS)
+            status, out, rec, model = await send(W, pool, KMSG, pick_call(), current=cur_id, entity=eid)
+            block = handed(n_inner)
+            size, shown_n = (len(block) // 4 if block is not None else None), len(listed(model))
             sizes[n] = size
-            check(f"K {label}: the pick's input is within {PICK_BUDGET_TOKENS} tokens (chars/4): {size}",
-                  size is not None and size <= PICK_BUDGET_TOKENS, size)
-            check(f"K {label}: it lists at most {K} + 1 pages: {shown_n}",
-                  shown_n is not None and shown_n <= K + 1, shown_n)
+            check(f"K {label}: the pages handed to the turn are within {HANDED_MAX_TOKENS} tokens (chars/4): {size}",
+                  size is not None and 0 < size <= HANDED_MAX_TOKENS, size)
+            check(f"K {label}: it scores at most {K} + 1 pages: {shown_n}", 0 < shown_n <= K + 1, shown_n)
 
-            async def one_send(eid=eid, cur_id=cur_id, first=order[0]):
-                model = Model(pick_call(page=f"project:{first}", reason="r"))
+            async def one_send(eid=eid, cur_id=cur_id):
                 t0 = time.perf_counter()
                 _status, out = await W.index_send_service(pool, eid, KMSG, current_project_id=cur_id, app_id=APP,
-                                                          app_permissions=PERMS, call_model=model, route=ROUTE)
+                                                          app_permissions=PERMS)
                 ms = (time.perf_counter() - t0) * 1000
                 await settle((out.get("turn") or {}).get("turn_id"))
                 return ms, out
             runs = [await one_send() for _ in range(5)]
             ms = statistics.median(r[0] for r in runs)
-            print(f"   {label}: the pick's input ~{size} tokens, {shown_n} pages listed; a send, the model's own "
-                  f"time left out: {ms:.1f} ms (median of 5)")
-            check(f"K {label}: a send lands and starts its turn, under {CEILING_MS} ms without the model's time",
+            print(f"   {label}: ~{size} tokens handed to the turn, {shown_n} pages scored; a send: "
+                  f"{ms:.1f} ms (median of 5)")
+            check(f"K {label}: a send lands and starts its turn, under {CEILING_MS} ms",
                   all(r[1].get("state") == "started" for r in runs) and ms < CEILING_MS,
                   (round(ms), [r[1].get("state") for r in runs]))
-        print(f"   the pick's input by Host size: {sizes}")
+        print(f"   tokens handed to the turn by Host size: {sizes}")
 
         # ── Q: fill, clip and one send per request id ───────────────────────
         await q_slice5(W, tp, pool, pg)
@@ -2167,6 +2177,8 @@ async def run(dsn):
         await h_post_routes(P, W, pool)
     finally:
         bs._pool, bs._entity_id, bs._send_message_inner, P.ensure_project_dir, P.ensure_project_repo = saved
+        if REAL_SCORES.get("page_scores") is not None:
+            tp.page_scores = REAL_SCORES["page_scores"]
         await pool.close()
 
 

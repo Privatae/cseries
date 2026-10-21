@@ -1,49 +1,29 @@
-"""Which thread a messaging-app message belongs to, decided by the Host itself.
+"""Which thread a message belongs to: placed in software, chosen by the Host in
+its own turn when that is unclear.
 
 A message that points at a thread (a reply to a mapped message, a mapped
 native thread, a command) is routed by the connector route in software. Every
-other message comes here. The platform never continues a thread or opens a
-new one on its own: a new thread, but never automatically; the host
-asks itself which thread the message belongs to.
+other message comes here, and no model is called here:
 
-So the Host is asked, in one short call on its own chat model. It sees the
-message and its open threads, newest first: the original conversation, open
-Circles threads and projects that have a conversation, each with its title,
-type, last activity and last exchange, and the thread this chat used last
-marked. The list is cut to fit the model's context window. The call has one
-tool, pick_thread, and nothing else in reach.
+  - a CLEAR score-based match joins its thread (topic_scores / page_scores,
+    then clear_match: a score of at least JOIN_SCORE and a lead of at least
+    JOIN_MARGIN over the runner-up);
+  - otherwise the message lands somewhere deterministic and the Host's own
+    turn gets the candidate threads in its frame, with one tool to move the
+    exchange to one of them or to a thread of its own
+    (runtime/thread_choice.py, pick_thread). A messaging app's message lands
+    in the thread the chat used last (a new thread for a chat the map has
+    never seen); a message typed in the Workbench's Index lands on the page
+    the person has open; a Circles message starts a topic of its own.
 
-  pick_thread(thread="<kind>:<ref>", reason=...)      an existing thread
-  pick_thread(new=true, title="...", reason=...)      a new thread
+The pick is visible: the landing writes a marker in the thread it lands in,
+and the Host's move writes another where it moved the exchange, the way adopt
+and split leave a line where they moved a conversation.
 
-A failed pick (a model error, no call, a thread that was not in the list, a
-call that names both or neither) runs no turn: the route asks the person
-which thread, and never falls back to one of its own choosing.
-
-The pick is visible. land_pick writes it into the chosen thread as a marker
-turn, in the Host's words ("Telegram message, picked this thread: <reason>"),
-the way adopt and split leave a line where they moved a conversation.
-Nothing about the choice is hidden: the thread is the Host's chain of
-thought.
-
-THE WORKBENCH'S INDEX asks the same question about a message the person typed in the
-Index box rather than on a page. Same single call and the same reading of the
-answer; what differs is the list and the words:
-
-  - the list is the pages the Index's own search ranks first for the message
-    (at most INDEX_PICK_K, open or archived, with a conversation or not yet),
-    and the page the person has open, marked, when the search did not rank it
-    (list_index_candidates). Never every page: what the person pays for the
-    call stays the same at 50 pages or 500;
-  - the call's one tool is pick_page, and the instruction names the Index,
-    never a messaging app (build_index_messages);
-  - a new page is a new Workbench project, not a Circles thread, and the
-    marker reads "Index message, picked this page: <reason>"
-    (land_index_pick, index_marker_text).
-
-routes/workbench_index.py runs the search and starts the turn on the page; an
-archived pick is restored in the transaction that lands it. A failed pick, as
-here, runs no turn.
+This module once asked the Host which thread in one short call on its chat
+model, before the turn (_ask_host). That call decided which history, thread
+preferences, goal and summary the turn read, outside the turn, and its spend
+was hidden from the activity feed.
 """
 from __future__ import annotations
 
@@ -52,11 +32,9 @@ import logging
 import re
 from dataclasses import dataclass, replace
 from datetime import datetime, timezone
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Optional
 
 log = logging.getLogger("privatae.connectors.thread_pick")
-
-PICK_TOOL_NAME = "pick_thread"
 
 # The marker row's source_kind. Its own kind, not split's 'thread_marker':
 # that one carries a `marker.thread_id` that thread deletion rewrites, and a
@@ -65,91 +43,32 @@ PICK_MARKER_KIND = "connector_pick"
 # The Index's marker: the same furniture, from another surface. Left out of a
 # conversation's last exchange like the connector's (_NOT_MARKER).
 INDEX_PICK_MARKER_KIND = "index_pick"
-INDEX_PICK_TOOL_NAME = "pick_page"
 # Circles as one conversation: the
-# marker a topic switch leaves in the topic the message went to, and the
-# pick's one tool. See "Circles: one conversation" below.
+# marker a topic switch leaves in the topic the message went to. See
+# "Circles: one conversation" below.
 TOPIC_MARKER_KIND = "topic_pick"
-TOPIC_PICK_TOOL_NAME = "pick_topic"
-# How many of the Index search's best pages the Host is shown for a message
-# typed in the Index. The list, not the Host's history,
-# sets the call's input: at most this many pages plus the open one, each a
-# title and a clipped last exchange, so the call costs the same at 50 pages or
-# 500. A page outside them cannot be picked (read_pick checks the list); the
-# person can still open any page from the Index.
+# How many of the Index search's best pages are scored and offered for a
+# message typed in the Index: at most this many pages plus the open one, so
+# the work is the same at 50 pages or 500. The person can still open any page
+# from the Index.
 INDEX_PICK_K = 12
-# How much of a message typed in the Index the pick's call carries. Where a
-# message belongs shows in its opening; a long paste is then paid for once,
-# by the turn that reads it whole on the page, not a second time by the
-# pick. The turn always gets the whole message.
+# How much of a message the search reads to score threads: where a message
+# belongs shows in its opening. The turn always gets the whole message.
 INDEX_PICK_MESSAGE_CHARS = 2_000
+# What the turn's frame lists when the Host is to pick (runtime/thread_choice):
+# the candidates' titles and last exchanges, at most this many tokens and
+# thread_choice.CHOICE_MAX candidates.
+CHOICE_BUDGET_TOKENS = 2_400
 
 # What the route sends the person when the pick fails. No turn runs.
 ASK_WHICH_THREAD = ("Which thread is this for? Send /threads to choose one, "
                     "or /new to start a new one.")
-
-# When the model's context window is not known, the list is cut to this.
-# Every model a Host can be routed to today has at least this much.
-_UNKNOWN_WINDOW_TOKENS = 16_000
 
 # How much of each side of a thread's last exchange the Host sees.
 _EXCHANGE_CHARS = 280
 _TITLE_CHARS = 120
 
 PLATFORM_NAMES = {"telegram": "Telegram", "discord": "Discord", "slack": "Slack"}
-
-PICK_TOOL = {
-    "type": "function",
-    "function": {
-        "name": PICK_TOOL_NAME,
-        "description": (
-            "Say which of your threads this message belongs to: an existing "
-            "thread by its id from the list, or a new thread with a title."),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "thread": {"type": "string",
-                           "description": "The id in brackets from the list, e.g. 'thread:6f1c…' "
-                                          "or 'project:12'."},
-                "new": {"type": "boolean",
-                        "description": "true to start a new thread for this message."},
-                "title": {"type": "string",
-                          "description": "With new=true: the new thread's title, a few words."},
-                "reason": {"type": "string",
-                           "description": "One short sentence: why this thread. It is written into "
-                                          "the thread, where the person reads it."},
-            },
-            "required": ["reason"],
-        },
-    },
-}
-
-# The Index's tool: the same shape in the Workbench's words. A page is a
-# project; a new page is a new project.
-INDEX_PICK_TOOL = {
-    "type": "function",
-    "function": {
-        "name": INDEX_PICK_TOOL_NAME,
-        "description": (
-            "Say which of your pages this message belongs to: an existing "
-            "page by its id from the list, or a new page with a title."),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "page": {"type": "string",
-                         "description": "The id in brackets from the list, e.g. 'project:12'."},
-                "new": {"type": "boolean",
-                        "description": "true to start a new page (a new project) for this message."},
-                "title": {"type": "string",
-                          "description": "With new=true: the new page's title, a few words."},
-                "reason": {"type": "string",
-                           "description": "One short sentence: why this page. It is written on the "
-                                          "page, where the person reads it."},
-            },
-            "required": ["reason"],
-        },
-    },
-}
 
 # How the list marks the conversation the person is in.
 _CHAT_CURRENT = "This chat's last messages went here"
@@ -477,246 +396,6 @@ async def list_index_candidates(pool, entity_id: int, pages: list, *, budget_tok
                       current_note=_INDEX_CURRENT)
 
 
-def build_messages(message: str, candidates: list[Candidate], *, platform: str,
-                   current: Optional[tuple[str, str]] = None) -> list[dict]:
-    cur_key = f"{current[0]}:{current[1]}" if current else None
-    listing = "\n".join(_block(c, c.key == cur_key) for c in candidates)
-    system = (
-        f"A message just arrived from {platform_name(platform)}, sent by the person you work "
-        "for. Before you answer it, decide which of your threads it belongs to.\n\n"
-        "Your open threads, most recently active first:\n\n"
-        f"{listing}\n\n"
-        "Call pick_thread once:\n"
-        "- pick_thread(thread=\"<the id in brackets>\", reason=\"...\") when the message "
-        "continues one of these threads;\n"
-        "- pick_thread(new=true, title=\"...\", reason=\"...\") when it starts something "
-        "none of them covers.\n"
-        "The reason is one short sentence. It is written into the thread you pick, "
-        "where the person reads it.")
-    return [{"role": "system", "content": system},
-            {"role": "user", "content": str(message or "")}]
-
-
-def index_pick_copy(message: str) -> tuple[str, int]:
-    """The pick's copy of a message typed in the Index: the whole message
-    when it has at most INDEX_PICK_MESSAGE_CHARS characters; else its opening,
-    cut at the last space within the final 200 of them (at the limit when
-    there is none) and ended with "…". Returns (the copy, how many characters
-    of the message it leaves out; 0 when whole)."""
-    text = str(message or "")
-    if len(text) <= INDEX_PICK_MESSAGE_CHARS:
-        return text, 0
-    cut = text[:INDEX_PICK_MESSAGE_CHARS]
-    space = cut.rfind(" ", INDEX_PICK_MESSAGE_CHARS - 200)
-    if space > 0:
-        cut = cut[:space]
-    cut = cut.rstrip()
-    return cut + "…", len(text) - len(cut)
-
-
-def build_index_messages(message: str, candidates: list[Candidate], *,
-                         current: Optional[tuple[str, str]] = None) -> list[dict]:
-    """The Index's call: the person typed `message` into the Workbench's
-    Index, on no page; the list is the pages the Index found for it
-    (list_index_candidates). The message is the user turn, verbatim, as on a
-    connector, up to INDEX_PICK_MESSAGE_CHARS (index_pick_copy); a longer one
-    is its opening, and the instruction says how much more follows."""
-    cur_key = f"{current[0]}:{current[1]}" if current else None
-    listing = "\n".join(_block(c, c.key == cur_key, _INDEX_CURRENT) for c in candidates)
-    shown, left_out = index_pick_copy(message)
-    longer = (f"\n\nThe message is long: you are shown its opening, and {left_out:,} more characters "
-              "follow. The page you pick gets the whole message." if left_out else "")
-    system = (
-        "The person you work for typed this message into the Workbench's Index, not on any "
-        "page. Before you answer it, decide which of your pages it belongs to. Each page is "
-        "one of your projects.\n\n"
-        "The pages the Index found for this message, best match first:\n\n"
-        f"{listing or '(none)'}\n\n"
-        "Call pick_page once:\n"
-        "- pick_page(page=\"<the id in brackets>\", reason=\"...\") when the message belongs "
-        "on one of these pages; an archived page is brought back when you pick it;\n"
-        "- pick_page(new=true, title=\"...\", reason=\"...\") when it starts something none "
-        "of them covers. That makes a new project.\n"
-        "The reason is one short sentence. It is written on the page you pick, where the "
-        f"person reads it.{longer}")
-    return [{"role": "system", "content": system},
-            {"role": "user", "content": shown}]
-
-
-# ── reading the answer ───────────────────────────────────────────────────────
-
-@dataclass(frozen=True)
-class _Shape:
-    """What a pick is called on one surface: the tool, the argument that
-    names an existing conversation, and what a new one is."""
-    tool: str
-    id_arg: str
-    noun: str
-    new_kind: str
-    new_title: str
-
-
-_THREAD = _Shape(tool=PICK_TOOL_NAME, id_arg="thread", noun="thread", new_kind="thread",
-                 new_title="New thread")
-_PAGE = _Shape(tool=INDEX_PICK_TOOL_NAME, id_arg="page", noun="page", new_kind="project",
-               new_title="New page")
-
-
-def _args_of(call: Any, tool: str = PICK_TOOL_NAME) -> Optional[dict]:
-    fn = call.get("function") if isinstance(call, dict) else None
-    if not isinstance(fn, dict) or fn.get("name") != tool:
-        return None
-    raw = fn.get("arguments")
-    if isinstance(raw, dict):
-        return raw
-    try:
-        parsed = json.loads(raw or "{}")
-    except (TypeError, ValueError):
-        return None
-    return parsed if isinstance(parsed, dict) else None
-
-
-def _choice(args: dict, id_arg: str = "thread") -> tuple:
-    return (str(args.get(id_arg) or "").strip(), args.get("new") is True)
-
-
-def read_pick(result: Any, candidates: list[Candidate], *, message: str = "",
-              shape: _Shape = _THREAD) -> Pick:
-    """The model's answer as a Pick, checked against the list it was shown.
-
-    Only a structured pick_thread call is a pick. Every lane the chat turn
-    runs on sends tools on the wire (provider_gateway: tools with
-    tool_choice "auto" on the OpenAI wire, tool_use on Anthropic's), and the
-    turn itself reads no tool call out of text. Reading one out of the text
-    here also read the message: the message is the user turn, a model that
-    answers it may quote it, and a quoted {"new": true} opened a thread the
-    Host never picked. A reply with no call asks the person.
-
-    `shape` is the surface's tool and words: a connector's pick_thread (the
-    default), or the Index's pick_page, whose new page is a project."""
-    tool, noun = shape.tool, shape.noun
-    if not isinstance(result, dict):
-        return Pick(ok=False, failure="no answer from the model")
-    if result.get("error"):
-        return Pick(ok=False, failure=f"model error: {_clip(result.get('error'), 200)}")
-    picks = [a for a in (_args_of(c, tool) for c in (result.get("tool_calls") or [])) if a is not None]
-    if not picks:
-        return Pick(ok=False, failure=f"the model did not call {tool}")
-    if len({_choice(a, shape.id_arg) for a in picks}) > 1:
-        # Taking one of two different answers would be the platform's pick.
-        return Pick(ok=False, failure=f"the model called {tool} with different answers")
-    args = picks[0]
-    reason = _clip(args.get("reason"), 300)
-    named = str(args.get(shape.id_arg) or "").strip()
-    new = args.get("new") is True
-    if new and named:
-        return Pick(ok=False, failure=f"the pick named a {noun} and asked for a new one")
-    if new:
-        first_line = str(message or "").strip().splitlines()[0] if str(message or "").strip() else ""
-        title = _clip(args.get("title"), _TITLE_CHARS) or _clip(first_line, 60) or shape.new_title
-        return Pick(ok=True, kind=shape.new_kind, title=title, new=True, reason=reason)
-    if not named:
-        return Pick(ok=False, failure=f"the pick named no {noun}")
-    cand = {c.key: c for c in candidates}.get(named)
-    if cand is None:
-        return Pick(ok=False, failure=f"the pick named a {noun} that was not in the list: {named!r}")
-    return Pick(ok=True, kind=cand.kind, ref=cand.ref, title=cand.title, reason=reason)
-
-
-# ── the call ─────────────────────────────────────────────────────────────────
-
-CallModel = Callable[..., Awaitable[dict]]
-
-
-async def _ask_host(pool, entity_id: int, *, message: str, build, candidates, tool: dict,
-                    shape: _Shape, call_model: Optional[CallModel], route: Optional[dict],
-                    what: str) -> tuple[Pick, list[Candidate]]:
-    """The one short call both surfaces make: the chat route's model, the
-    list cut to its window, one tool. `build(cands)` makes the messages,
-    `candidates(budget)` the list. Returns the Pick and the list the Host was
-    shown ([] when no list was read). Never raises."""
-    shown: list[Candidate] = []
-    try:
-        from mastercode.context_budget import est_tokens, model_context_window, reply_reserve
-        from mastercode.inference_config import chosen_effort, resolve_role_route, route_effort
-
-        route = route or await resolve_role_route(pool, entity_id, "chat")
-        if not route.get("model"):
-            return Pick(ok=False, failure=route.get("unconfigured") or "no chat model is set up"), shown
-        window = await model_context_window(route["model"], route.get("provider"))
-        if not window:
-            # A cold catalog, as the chat turn reads it (runtime/session.py,
-            # the route's window): fill the route's rows once, then ask
-            # again, so a known model is never sized as unknown.
-            try:
-                from server.routes.inference import warm_route_catalog
-                await warm_route_catalog(route.get("provider"))
-                window = await model_context_window(route["model"], route.get("provider"))
-            except Exception as e:  # noqa: BLE001 — the fallback size below still applies
-                log.debug("route catalog warm failed (thread pick): %s", e)
-        window = window or _UNKNOWN_WINDOW_TOKENS
-        bare = build([])
-        budget = window - reply_reserve(window) - sum(est_tokens(m["content"]) for m in bare)
-        shown = await candidates(max(budget, 0))
-        messages = build(shown)
-        if call_model is None:
-            from mastercode.runtime.tools import _call_entity_model as call_model
-        result = await call_model(
-            messages, temperature=0.3, tools=[tool],
-            provider=route["provider"], provider_model=route["model"],
-            base_url=route.get("base_url"),
-            fallback_provider=route.get("fallback_provider"),
-            fallback_model=route.get("fallback_model"),
-            fallback_base_url=route.get("fallback_base_url"),
-            reasoning_effort=route_effort(route),
-            chosen_effort=chosen_effort(route),
-            reasoning_inline=route.get("reasoning_inline") is True,
-        )
-        pick = read_pick(result, shown, message=message, shape=shape)
-    except Exception as e:  # noqa: BLE001 — a failed pick asks the person, never guesses
-        log.warning("%s failed (entity %s): %s", what, entity_id, e)
-        return Pick(ok=False, failure=f"pick failed: {_clip(e, 200)}"), shown
-    if not pick.ok:
-        log.info("%s refused (entity %s): %s", what, entity_id, pick.failure)
-    return pick, shown
-
-
-async def choose_thread(pool, entity_id: int, *, message: str, platform: str,
-                        current: Optional[tuple[str, str]] = None,
-                        call_model: Optional[CallModel] = None,
-                        route: Optional[dict] = None) -> Pick:
-    """Ask the Host which thread `message` belongs to. Never raises: any
-    failure is a Pick with ok=False, and the route runs no turn."""
-    pick, _shown = await _ask_host(
-        pool, entity_id, message=message,
-        build=lambda cands: build_messages(message, cands, platform=platform, current=current),
-        # Looked up when called, so the module's list_candidates is the one used.
-        candidates=lambda budget: list_candidates(pool, entity_id, budget_tokens=budget, current=current),
-        tool=PICK_TOOL, shape=_THREAD, call_model=call_model, route=route,
-        what="connector thread pick")
-    return pick
-
-
-async def choose_page(pool, entity_id: int, *, message: str, pages: list,
-                      current: Optional[tuple[str, str]] = None,
-                      call_model: Optional[CallModel] = None,
-                      route: Optional[dict] = None) -> tuple[Pick, list[Candidate]]:
-    """Ask the Host which Workbench page a message typed in the Index belongs
-    to: `pages` the Index's own search ranked first for the message (project
-    ids, best first; the first INDEX_PICK_K are shown), `current` the page the
-    person has open ("project", "<id>"), shown too. Returns the Pick and the
-    pages the Host was shown, which the route hands back when the pick failed
-    so the person can choose. Never raises: a failure is a Pick with
-    ok=False, and no turn runs."""
-    return await _ask_host(
-        pool, entity_id, message=message,
-        build=lambda cands: build_index_messages(message, cands, current=current),
-        candidates=lambda budget: list_index_candidates(pool, entity_id, pages, budget_tokens=budget,
-                                                        current=current),
-        tool=INDEX_PICK_TOOL, shape=_PAGE, call_model=call_model, route=route,
-        what="index page pick")
-
-
 # ── landing it ───────────────────────────────────────────────────────────────
 
 def marker_text(platform: str, pick: Pick) -> str:
@@ -1022,36 +701,35 @@ async def mark_index_ids_reattached(pool, entity_id: int, request_ids) -> None:
 # ── Circles: one conversation ────────────────────────────────────────────────
 #
 # Circles is one conversation. The person never opens, names or switches a
-# thread: every message goes through the same one-call pick the connectors
-# and the Index use, and the Host says which TOPIC it belongs to. A topic is
-# an ordinary Circles thread (a circles_threads row, or the original
-# conversation), so history, recall, turn locks and Clear all keep working
-# per topic, and two topics run their turns at the same time (turn_registry:
-# one running turn per thread key).
+# thread: every message is placed by the same rules the connectors and the
+# Index use, and the TOPIC it belongs to is a clear match or the Host's own
+# pick in its turn. A topic is an ordinary Circles thread (a circles_threads
+# row), so history, recall, turn locks and Clear all keep working per topic,
+# and two topics run their turns at the same time (turn_registry: one running
+# turn per thread key).
 #
-# The pick is CONSERVATIVE. A topic's history is what the turn reads, so
+# The placement is CONSERVATIVE. A topic's history is what the turn reads, so
 # joining the wrong one puts an unrelated conversation in front of the model.
-# So, in this order:
-#   1. A message sent to the root thread stays there; no pick runs
-#      (runtime/root_turn). The root thread is never offered either.
+# So, in this order, with no model call:
+#   1. A message sent to the root thread stays there (runtime/root_turn). The
+#      root thread is never offered either.
 #   2. A bare reply ("yes", "do that", "ok go ahead") stays on the topic the
-#      person was just in (is_short_reply); no pick runs. A longer one that
-#      opens like a reply ("ok go ahead with the second one", but also "also
-#      remind me to call mom") is not assumed to: the Host is shown the topic
-#      in use as the one it may join (is_follow_on), and unsure is new.
-#   3. Otherwise the search scores every topic for the message (topic_scores)
-#      and a topic may be JOINED only on a clear match: a score of at least
-#      JOIN_SCORE and a lead of at least JOIN_MARGIN over the runner-up
-#      (clear_match). The Host is shown that one topic and may join it or
-#      start a new one; with no clear match it is shown none and can only
-#      start a new one. It is never asked to choose between close calls.
-#   4. A failed pick starts a new topic, titled from the message. Never a
-#      best-guess join.
+#      person was just in (is_short_reply).
+#   3. The search scores every topic for the message (topic_scores) and a
+#      topic is JOINED on a clear match: a score of at least JOIN_SCORE and a
+#      lead of at least JOIN_MARGIN over the runner-up (clear_match).
+#   4. Otherwise the message starts a topic of its own, untitled until the
+#      Host names it (close_turn's title), and the topics it may still
+#      continue go to the turn's frame as a thread choice
+#      (runtime/thread_choice): the topic the person was just in when the
+#      message opens like a reply to it (is_follow_on), and every topic that
+#      scored at least JOIN_SCORE without a clear lead. The Host moves the
+#      exchange to one of them with pick_thread, in its turn, or leaves it.
 # The other topics the search found go to the turn's frame as one-line
 # pointers (title and date, related_topics) that recall can open. Their turns
-# are never put in the history. The marker says which way the pick went
-# ("continuing: <topic>, <date>" or "new topic: <title>"), so a wrong pick is
-# visible in the feed.
+# are never put in the history. The marker says which way the placement went
+# ("continuing: <topic>, <date>" or "new topic"), so a wrong one is visible in
+# the feed.
 
 TOPIC_RELATED_MAX = 5
 _TOPIC_NEW_TITLE = "New topic"
@@ -1086,33 +764,6 @@ _FOLLOW_ON_OPENERS = frozenset({
     "and", "also", "but", "then", "sounds", "great", "perfect", "agreed", "right", "exactly",
     "correct", "same", "both", "neither", "option", "try", "keep", "stop", "continue", "again"})
 
-TOPIC_PICK_TOOL = {
-    "type": "function",
-    "function": {
-        "name": TOPIC_PICK_TOOL_NAME,
-        "description": (
-            "Say which topic of your conversation with the person this message belongs "
-            "to: the topic in the list when the message continues it, else a new topic "
-            "with a title."),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "topic": {"type": "string",
-                          "description": "The id in brackets from the list, e.g. 'thread:6f1c…'."},
-                "new": {"type": "boolean",
-                        "description": "true when the message is not plainly a continuation of "
-                                       "the listed topic."},
-                "title": {"type": "string",
-                          "description": "With new=true: the new topic's title, a few words."},
-                "reason": {"type": "string", "description": "One short sentence: why."},
-            },
-            "required": ["reason"],
-        },
-    },
-}
-
-_TOPIC = _Shape(tool=TOPIC_PICK_TOOL_NAME, id_arg="topic", noun="topic", new_kind="thread",
-                new_title=_TOPIC_NEW_TITLE)
 _TOPIC_CURRENT = "The person's last messages were in this topic"
 
 
@@ -1244,66 +895,6 @@ async def _topic_scopes(pool, entity_id: int, keys: list[str]) -> dict[str, tupl
     return out
 
 
-def build_topic_messages(message: str, candidates: list[Candidate], *,
-                         continuing: bool = False) -> list[dict]:
-    """The pick's call for a message typed in Circles: the one topic the
-    search found a clear match in, if any, and the message (its opening when
-    long, index_pick_copy). `continuing`: the topic shown is the one the
-    person was just in, offered because the message opens like a reply to
-    it (is_follow_on), not because the search matched it."""
-    listing = "\n".join(_block(c, False) for c in candidates)
-    shown, left_out = index_pick_copy(message)
-    longer = (f"\n\nThe message is long: you are shown its opening, and {left_out:,} more characters "
-              "follow. The topic you pick gets the whole message." if left_out else "")
-    if candidates and continuing:
-        what = ("The person's last messages were in this topic, and this message opens like a "
-                f"reply to it:\n\n{listing}\n\n"
-                "Call pick_topic once:\n"
-                "- pick_topic(topic=\"<the id in brackets>\", reason=\"...\") only when the message "
-                "answers or continues what was just said there;\n"
-                "- pick_topic(new=true, title=\"...\", reason=\"...\") when it brings up something "
-                "else. When unsure, start a new topic.")
-    elif candidates:
-        what = ("The search found one earlier topic that matches this message clearly:\n\n"
-                f"{listing}\n\n"
-                "Call pick_topic once:\n"
-                "- pick_topic(topic=\"<the id in brackets>\", reason=\"...\") only when the message "
-                "plainly continues that topic;\n"
-                "- pick_topic(new=true, title=\"...\", reason=\"...\") otherwise, including when it is "
-                "only in the same broad area. When unsure, start a new topic.")
-    else:
-        what = ("No earlier topic matches this message clearly, so it starts a new topic.\n\n"
-                "Call pick_topic(new=true, title=\"...\", reason=\"...\") once, with a title of a few "
-                "words for it.")
-    system = (
-        "The person you work for wrote this message in Circles, your one conversation with "
-        "them. They never choose a topic; you do. The topic's earlier messages are what you "
-        f"will read with it, so only a clear continuation joins an earlier topic.\n\n{what}\n"
-        f"The reason is one short sentence.{longer}")
-    return [{"role": "system", "content": system},
-            {"role": "user", "content": shown}]
-
-
-async def choose_topic(pool, entity_id: int, *, message: str, join: Optional[str],
-                       call_model: Optional[CallModel] = None,
-                       route: Optional[dict] = None,
-                       continuing: bool = False) -> tuple[Pick, list[Candidate]]:
-    """Ask the Host which topic a Circles message belongs to: the clear match
-    `join` (a list key) or a new topic. Returns the Pick and what it was
-    shown. Never raises."""
-    async def cands(budget):
-        if not join:
-            return []
-        scopes = await _topic_scopes(pool, entity_id, [join])
-        return await _fit(pool, entity_id, [scopes[join]] if join in scopes else [],
-                          budget_tokens=budget, current=None, current_note=_TOPIC_CURRENT)
-    return await _ask_host(
-        pool, entity_id, message=message,
-        build=lambda c: build_topic_messages(message, c, continuing=continuing),
-        candidates=cands, tool=TOPIC_PICK_TOOL, shape=_TOPIC, call_model=call_model, route=route,
-        what="circles topic pick")
-
-
 def _day(ts: Optional[datetime]) -> str:
     if ts is None:
         return ""
@@ -1314,21 +905,27 @@ def _day(ts: Optional[datetime]) -> str:
 
 
 def topic_marker_text(*, new: bool, title: str, last_activity: Optional[datetime] = None) -> str:
-    """The one line a topic switch leaves in the feed: which way the pick
-    went, so a wrong one is seen."""
+    """The one line a topic switch leaves in the feed: which way the
+    placement went, so a wrong one is seen."""
     if new:
-        return f"new topic: {title}"
+        return f"new topic: {title}" if title else "new topic"
     day = _day(last_activity)
     return f"continuing: {title}" + (f", {day}" if day else "")
 
 
-async def write_topic_marker(conn, entity_id: int, thread_id: Optional[str], text: str) -> int:
+async def write_topic_marker(conn, entity_id: int, thread_id: Optional[str], text: str,
+                             choice: Optional[list] = None) -> int:
     """The switch, written into the topic the message went to, just before the
     message's own row: a marker turn the person and the Host both read, kept
-    out of mining and of a topic's last exchange like the other markers."""
+    out of mining and of a topic's last exchange like the other markers.
+    `choice`: the topics the Host may still move the message to in its turn
+    (thread_choice), kept on the marker so a send that asked for the topic
+    first (POST /topic, then topic_picked) finds them (pending_choice)."""
     from mastercode import circles_threads as ct
     md = {"role": "assistant", "source_kind": TOPIC_MARKER_KIND, "app_id": "circles",
           "source_context": ct.descriptor_for(thread_id)}
+    if choice:
+        md["choice"] = list(choice)
     return await conn.fetchval(
         "INSERT INTO entity_memory"
         "  (entity_id, content, memory_type, importance, status, source_session,"
@@ -1355,10 +952,15 @@ class TopicLanding:
     follow_on: bool = False
     failure: str = ""
     related: tuple = ()
+    # The topics the Host may still move the message to in its turn
+    # (runtime/thread_choice), as frame candidates; () when the placement
+    # was settled (a clear match, a follow-on, the root thread).
+    choice: tuple = ()
 
 
 async def land_topic(pool, entity_id: int, pick: Pick, *, current_key: Optional[str],
-                     last_activity: Optional[datetime] = None) -> TopicLanding:
+                     last_activity: Optional[datetime] = None,
+                     choice: Optional[list] = None) -> TopicLanding:
     """Make the Host's topic pick real, in one transaction: a new topic is a
     new circles_threads row with the Host's title; a closed topic picked is
     opened again; a deleted one is never landed in (PickGone, nothing
@@ -1371,7 +973,7 @@ async def land_topic(pool, entity_id: int, pick: Pick, *, current_key: Optional[
     async with pool.acquire() as conn:
         async with conn.transaction():
             if pick.new:
-                row = await ct.create_thread(conn, entity_id, title=pick.title, origin="user")
+                row = await ct.create_thread(conn, entity_id, title=pick.title or None, origin="user")
                 tid, title = str(row["id"]), row.get("title") or pick.title
             elif pick.kind == "app":
                 # No topic is offered as app:circles any more; a pick naming
@@ -1394,8 +996,9 @@ async def land_topic(pool, entity_id: int, pick: Pick, *, current_key: Optional[
             marker = ""
             if moved or pick.new:
                 marker = topic_marker_text(new=pick.new, title=title, last_activity=last_activity)
-                await write_topic_marker(conn, entity_id, tid, marker)
-    return TopicLanding(thread_id=tid, title=title, new=pick.new, moved=moved, marker=marker, picked=True)
+                await write_topic_marker(conn, entity_id, tid, marker, choice=choice)
+    return TopicLanding(thread_id=tid, title=title, new=pick.new, moved=moved, marker=marker, picked=True,
+                        choice=tuple(choice or ()))
 
 
 async def _related(pool, entity_id: int, scores: list[tuple[str, float]], chosen_key: str) -> tuple:
@@ -1422,19 +1025,27 @@ async def _title_of(pool, entity_id: int, key: str) -> str:
     return scopes[key][2] if key in scopes else ""
 
 
+def candidate_dicts(cands: list) -> list[dict]:
+    """Candidates as the turn's frame carries them (runtime/thread_choice)."""
+    return [{"kind": c.kind, "ref": c.ref, "title": c.title,
+             "last_activity": c.last_activity.isoformat() if c.last_activity else None,
+             "last_user": c.last_user, "last_host": c.last_host,
+             **({"archived": True} if c.archived else {})} for c in cands]
+
+
 async def pick_topic(pool, entity_id: int, message: str, *, current_thread_id: Optional[str] = None,
-                     current_known: bool = True,
-                     call_model: Optional[CallModel] = None,
-                     route: Optional[dict] = None) -> TopicLanding:
+                     current_known: bool = True) -> TopicLanding:
     """Where a message typed in Circles goes (the one-conversation send); the
     rules are at the top of this section. `current_thread_id`: the topic the
-    person was last in (None for the original conversation);
-    `current_known` False: they have been in none this visit (a blank page),
-    so nothing is a follow-on and any landing is a switch. Never raises for
-    the pick; a database error propagates to the route, which keeps the
+    person was last in; `current_known` False: they have been in none this
+    visit (a blank page), so nothing is a follow-on and any landing is a
+    switch. No model call: an unclear message starts a topic of its own and
+    carries its candidate topics (TopicLanding.choice) for the Host's pick in
+    its turn. A database error propagates to the route, which keeps the
     message where it was."""
     from mastercode import circles_threads as ct
     from mastercode.runtime import root_turn
+    from mastercode.runtime.thread_choice import CHOICE_MAX
 
     cur = ct.canonical_id(current_thread_id)
     if cur and await root_turn.is_root_thread(pool, entity_id, cur):
@@ -1447,33 +1058,137 @@ async def pick_topic(pool, entity_id: int, message: str, *, current_thread_id: O
         if title and is_short_reply(message):
             return TopicLanding(thread_id=cur, title=title, picked=True, follow_on=True,
                                 related=await _related(pool, entity_id, scores, cur_key))
-        # Opens like a reply but may carry a subject of its own: the Host
-        # is shown the topic in use, unless another one clearly matches.
+        # Opens like a reply but may carry a subject of its own: the topic in
+        # use is offered to the Host, unless another one clearly matches.
         replying = cur_key if title else None
-    live = set((await _topic_scopes(pool, entity_id, [k for k, _ in scores])).keys())
+    scopes = await _topic_scopes(pool, entity_id, [k for k, _ in scores] + ([replying] if replying else []))
+    live = set(scopes.keys())
     join = clear_match(scores, live)
-    continuing = join is None and replying is not None
-    if continuing:
-        join = replying
-    pick, shown = await choose_topic(pool, entity_id, message=message, join=join,
-                                     call_model=call_model, route=route, continuing=continuing)
-    if not pick.ok:
-        # Unclear is a new topic, titled from the message: never a guess.
-        first = str(message or "").strip().splitlines()[0] if str(message or "").strip() else ""
-        pick = Pick(ok=True, kind="thread", new=True, title=_clip(first, 60) or _TOPIC_NEW_TITLE,
-                    reason="", failure=pick.failure)
-    chosen = next((c for c in shown if c.kind == pick.kind and c.ref == pick.ref), None)
+    if join:
+        s = scopes[join]
+        landing = await land_topic(pool, entity_id, Pick(ok=True, kind="thread", ref=s[1], title=s[2]),
+                                   current_key=cur_key, last_activity=s[4])
+        return replace(landing, related=await _related(pool, entity_id, scores, join))
+    keys: list[str] = [replying] if replying else []
+    keys += [k for k, sc in scores if k in live and sc >= JOIN_SCORE and k not in keys]
+    cands = await _fit(pool, entity_id, [scopes[k] for k in keys[:CHOICE_MAX] if k in scopes],
+                       budget_tokens=CHOICE_BUDGET_TOKENS, current=None, current_note=_TOPIC_CURRENT)
+    landing = await land_topic(pool, entity_id, Pick(ok=True, kind="thread", new=True, title=""),
+                               current_key=cur_key, choice=candidate_dicts(cands))
+    return replace(landing, related=await _related(pool, entity_id, scores, _current_key(landing.thread_id)))
+
+
+async def pending_choice(pool, entity_id: int, thread_id: Optional[str]) -> list[dict]:
+    """The candidate topics a topic made for one message still carries for the
+    Host's pick (write_topic_marker `choice`), while nobody has written in it
+    yet: what a send after POST /topic gives its turn. [] otherwise."""
+    from mastercode import circles_threads as ct
+    tid = ct.canonical_id(thread_id)
+    if not tid:
+        return []
+    row = await pool.fetchrow(
+        "SELECT metadata->'choice' AS choice FROM entity_memory"
+        " WHERE entity_id = $1 AND memory_type = 'turn' AND status = 'active'"
+        "   AND metadata->>'source_kind' = $2"
+        "   AND metadata->'source_context'->>'kind' = 'thread' AND metadata->'source_context'->>'ref' = $3"
+        "   AND NOT EXISTS (SELECT 1 FROM entity_memory u WHERE u.entity_id = $1 AND u.memory_type = 'turn'"
+        "       AND u.metadata->>'role' = 'user' AND u.metadata->'source_context'->>'ref' = $3)"
+        " ORDER BY id DESC LIMIT 1", entity_id, TOPIC_MARKER_KIND, tid)
+    choice = row["choice"] if row is not None else None
+    if isinstance(choice, str):
+        try:
+            choice = json.loads(choice)
+        except ValueError:
+            choice = None
+    return list(choice) if isinstance(choice, list) else []
+
+
+# ── messaging apps and the Index: placed in software ─────────────────────────
+
+async def page_scores(pool, entity_id: int, message: str,
+                      pages: Optional[list] = None) -> list[tuple[str, float]]:
+    """Every Workbench page the search finds for `message`, as
+    ("project:<id>", score), best first: the best of its turn rows among the
+    hits, scored as topic_scores scores a topic (a lexical hit 1.0, else its
+    cosine). `pages`: only these project ids (the Index's own list). A search
+    that cannot run finds nothing."""
+    from mastercode.memory_retrieval import recall_memories
+
+    text = str(message or "").strip()
+    if not text:
+        return []
     try:
-        landing = await land_topic(pool, entity_id, pick, current_key=cur_key,
-                                   last_activity=chosen.last_activity if chosen else None)
-    except PickGone as e:
-        log.info("circles topic pick landed nowhere (entity %s): %s", entity_id, e)
-        landing = await land_topic(pool, entity_id, Pick(ok=True, kind="thread", new=True,
-                                                         title=_clip(message, 60) or _TOPIC_NEW_TITLE),
-                                   current_key=cur_key)
-    key = _current_key(landing.thread_id)
-    return replace(landing, failure=pick.failure,
-                   related=await _related(pool, entity_id, scores, key))
+        out = await recall_memories(pool, entity_id, text[:INDEX_PICK_MESSAGE_CHARS],
+                                    limit=60, memory_types=["turn"])
+    except Exception as e:  # noqa: BLE001 — no evidence, no join
+        log.info("page search unavailable (entity %s): %s", entity_id, e)
+        return []
+    allowed = {int(p) for p in pages} if pages is not None else None
+    best: dict[str, float] = {}
+    for h in out.get("hits") or []:
+        pid = h.get("project_id")
+        if pid is None or (allowed is not None and int(pid) not in allowed):
+            continue
+        md = _md(h.get("metadata"))
+        if md.get("source_kind") in (INDEX_PICK_MARKER_KIND, PICK_MARKER_KIND, "thread_marker"):
+            continue
+        key = f"project:{int(pid)}"
+        best[key] = max(best.get(key, 0.0), _hit_strength(h))
+    return sorted(best.items(), key=lambda kv: (-kv[1], kv[0]))
+
+
+@dataclass(frozen=True)
+class Placement:
+    """Where a messaging app's message goes: (kind, ref) and whether it is a
+    new thread made for it, and the candidates the Host may move it to in its
+    turn (() when settled)."""
+    kind: str
+    ref: str
+    new: bool
+    choice: tuple = ()
+    provisional: bool = False
+
+
+async def place_connector(pool, entity_id: int, *, message: str, platform: str,
+                          current: Optional[tuple[str, str]] = None) -> Optional[Placement]:
+    """A messaging app's message no reply, platform thread or command placed.
+    A clear match among the open threads and projects joins it. Otherwise it
+    lands in the thread this chat used last while that is open, else in a new
+    thread made for it, and the open threads go to the turn's frame for the
+    Host's pick (runtime/thread_choice). No model call. None only when no
+    thread could be written (the route then asks the person)."""
+    from mastercode.runtime.thread_choice import CHOICE_MAX
+    scopes_all = await _scopes(pool, entity_id)
+    open_keys = {f"{s[0]}:{s[1]}" for s in scopes_all}
+    scores = sorted(await topic_scores(pool, entity_id, message) + await page_scores(pool, entity_id, message),
+                    key=lambda kv: (-kv[1], kv[0]))
+    join = clear_match(scores, open_keys)
+    if join:
+        kind, _, ref = join.partition(":")
+        return Placement(kind=kind, ref=ref, new=False)
+    cur_key = f"{current[0]}:{current[1]}" if current else None
+    landed: Optional[tuple[str, str]] = current if cur_key in open_keys else None
+    new = False
+    if landed is None:
+        first = str(message or "").strip().splitlines()[0] if str(message or "").strip() else ""
+        try:
+            landing = await land_pick(pool, entity_id, Pick(ok=True, kind="thread", new=True,
+                                                            title=_clip(first, 60) or "New thread"),
+                                      platform=platform)
+        except PickGone:
+            return None
+        landed, new = (landing.kind, landing.ref), True
+    # The candidates: the threads that scored at all first, then the most
+    # recently active, as many as fit; never the one it landed in.
+    order = {k: i for i, (k, _) in enumerate(scores)}
+    landed_key = f"{landed[0]}:{landed[1]}"
+    others = [s for s in scopes_all if f"{s[0]}:{s[1]}" != landed_key]
+    scored = sorted((s for s in others if f"{s[0]}:{s[1]}" in order), key=lambda s: order[f"{s[0]}:{s[1]}"])
+    rest = sorted((s for s in others if f"{s[0]}:{s[1]}" not in order), key=_sort_key, reverse=True)
+    cands = await _fit(pool, entity_id, (scored + rest)[:CHOICE_MAX], budget_tokens=CHOICE_BUDGET_TOKENS,
+                       current=None, current_note=_CHAT_CURRENT)
+    return Placement(kind=landed[0], ref=str(landed[1]), new=new, choice=tuple(candidate_dicts(cands)),
+                     provisional=new)
 
 
 async def clear_topic_for(pool, entity_id: int, message: str) -> Optional[str]:

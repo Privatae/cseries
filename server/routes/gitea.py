@@ -306,7 +306,11 @@ async def oauth_login(request: Request):
 async def oauth_callback(code: str = "", state: str = ""):
     """gitea redirects here with the code. Exchange it (PKCE) for the user's token,
     hold it in memory, and hand back a page that closes the popup / returns."""
-    entry = _pkce.pop(state, None)
+    # Reached without a session (middleware/localhost_only.is_oauth_callback):
+    # only a PKCE entry this Host made, under _PKCE_TTL old, taken out as it is
+    # read, so a state works once.
+    _reap_pkce()
+    entry = _pkce.pop(state, None) if state else None
     if not entry or not code:
         return HTMLResponse(
             "<p>Sign-in link expired — reopen the Gitea app and try again.</p>",

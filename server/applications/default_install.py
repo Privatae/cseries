@@ -432,7 +432,11 @@ async def run_once(bc: "BridgeClient | None") -> dict:
     pool = brain_service.get_pool()
     if pool is None:
         return {"status": "pool_not_ready"}
-    if bc is None or not getattr(bc, "_connected", False):
+    # Every call below is an App Store op: the network's door when it
+    # answers, else the free public catalog (applications/public_store.py).
+    from server.applications.public_store import store_client
+    bc = store_client(bc)
+    if not getattr(bc, "_connected", False):
         return {"status": "bridge_not_ready"}
 
     if await _has_non_native_installs(pool):

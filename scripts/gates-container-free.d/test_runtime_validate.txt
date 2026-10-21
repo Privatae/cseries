@@ -1,0 +1,2 @@
+# 2026-10-19 (local runtime): every request the Host sends cseries-runtime is checked before it can reach a podman argument list: app and engine ids, cred file names and sizes, vcpus and slots, every descriptor field (image family only, command after the image, readyPath, portEnv, budget, CPU, timeouts, network hostnames, the source token), unknown keys ignored, the descriptor's kernelUrl never read, and the image table keeps only known families pinned by digest. In-process, no podman.
+test_runtime_validate.py

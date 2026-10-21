@@ -230,7 +230,8 @@ DECLARE
     t TEXT;
 BEGIN
     FOREACH t IN ARRAY ARRAY['kernel_secrets', 'nac_agent_delegations',
-                             'owner_account', 'owner_sessions'] LOOP
+                             'owner_account', 'owner_sessions',
+                             'owner_passkeys', 'owner_recovery_codes'] LOOP
         IF to_regclass('public.' || t) IS NOT NULL THEN
             EXECUTE format('REVOKE ALL ON public.%I FROM host_recall CASCADE', t);
             RAISE NOTICE 'v139: % is NOT readable by host_recall', t;

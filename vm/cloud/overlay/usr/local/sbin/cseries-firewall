@@ -1,0 +1,35 @@
+#!/bin/sh
+# Loads the cloud box's firewall (/etc/cseries-cloud/nftables).
+#
+#   cseries-firewall load      door.nft, then the SSH rule while the box is not
+#                              sealed, then the bastion's rule when it runs
+#   cseries-firewall bastion   the bastion's rule alone (its ExecStartPre)
+#   cseries-firewall seal      drop the SSH rule
+set -eu
+
+D=/etc/cseries-cloud/nftables
+SEALED=/var/lib/cseries-cloud/sealed
+BASTION_CGROUP=/sys/fs/cgroup/system.slice/privatae-bastion.service
+
+case "${1:-load}" in
+    load)
+        nft -f "$D/door.nft"
+        if [ ! -e "$SEALED" ]; then
+            # The provisioner's way in until it runs `bootstrap.sh seal`.
+            nft add rule inet cseries_door pre_seal tcp dport 22 accept
+        fi
+        if [ -d "$BASTION_CGROUP" ]; then
+            nft -f "$D/bastion.nft"
+        fi
+        ;;
+    bastion)
+        nft -f "$D/bastion.nft"
+        ;;
+    seal)
+        nft flush chain inet cseries_door pre_seal
+        ;;
+    *)
+        echo "usage: cseries-firewall load|bastion|seal" >&2
+        exit 2
+        ;;
+esac

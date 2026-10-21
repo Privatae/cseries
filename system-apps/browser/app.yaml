@@ -12,7 +12,10 @@ system: false
 #   demand. Manifest-only; bundle repacked.
 # 0.5.6 (2026-10-18): the recording name placeholder is a neutral example.
 # 0.5.7 (2026-10-18): changelog rewritten as plain rationale; no behaviour change.
-version: "0.5.7"
+# 0.5.8 (2026-10-20): when this machine refuses to start the browser (a short
+#   disk, no room), the viewport shows the reason the kernel sends, as one line
+#   of text, instead of retrying with "disconnected" and no reason.
+version: "0.5.8"
 # 0.5.2 (2026-09-05): prompt_behavior only — the card no longer tells the host
 # it cannot look at a page. It used to end "you have no tool that reads the
 # viewport", which was TRUE and was the block: on one Host a user reported a

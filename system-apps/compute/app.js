@@ -572,11 +572,42 @@ async function toggleRunDetail(runId) {
 }
 
 // -- Inference (estimate lane) ----------------------------------------------
+// Every model call the Host made, newest first, each with what it cost: the
+// activity feed (GET /api/inference/activity) with the Host's own turn calls
+// included. A call with no published rate says so instead of showing $0.
+// One call more than is listed is asked for, so a day with more calls than
+// the list holds says so instead of passing the newest ones off as all.
+const RECENT_CALLS = 50;
+function recentCallsHTML(feed) {
+    const all = (feed && feed.activity) || [];
+    if (!all.length) return `<div class="ca-empty">No model calls in the last day.</div>`;
+    const rows = all.slice(0, RECENT_CALLS);
+    const more = all.length > RECENT_CALLS
+        ? `<div class="ca-section-hint">More than ${RECENT_CALLS} model calls in the last day: the newest ${RECENT_CALLS} are listed.</div>`
+        : "";
+    const cost = (r) => r.cost_usd != null
+        ? `<td class="num" title="estimate at the model's published rates">${fmtUsd(r.cost_usd)}</td>`
+        : `<td class="num"><span class="ca-chip ca-chip-dim" title="${esc(r.cost_basis || "unpriced")}: no per-call dollar figure">${esc(r.cost_basis === "subscription" ? "flat plan" : r.cost_basis === "local" ? "local" : "unpriced")}</span></td>`;
+    return `<table class="ca-table"><thead><tr>
+        <th>when</th><th>what</th><th>model</th><th class="num">tokens in</th>
+        <th class="num">tokens out</th><th class="num">cost ${LANE_BADGE.est}</th>
+      </tr></thead><tbody>${rows.map(r => `
+      <tr${r.ok ? "" : ' class="ca-row-fail"'}><td>${esc(r.at ? new Date(r.at).toLocaleString() : UNKNOWN)}</td>
+          <td>${esc(r.group)} · ${esc(r.detail)}${r.ok ? "" : ` <span class="ca-chip ca-chip-dim">${esc(r.error || "failed")}</span>`}</td>
+          <td>${esc(r.model || UNKNOWN)}</td>
+          <td class="num">${fmtTokens(r.tokens_in)}</td><td class="num">${fmtTokens(r.tokens_out)}</td>
+          ${cost(r)}</tr>`).join("")}
+      </tbody></table>${more}`;
+}
+
 async function renderInference() {
     root().innerHTML = `<div class="ca-loading">Loading inference estimates…</div>`;
     let data;
     try { data = await load("inference"); }
     catch (e) { root().innerHTML = errorCard(e, "inference"); return; }
+    let feed = null;
+    try { feed = await getJSON(`/api/inference/activity?limit=${RECENT_CALLS + 1}&hours=24&include_turns=true`); }
+    catch (e) { feed = { activity: [], error: e.message }; }
     const mods = data.by_module || [], models = data.by_model || [], chat = data.chat_by_model || [];
     const cov = data.price_coverage || {};
     const totalEst = mods.reduce((a, r) => a + (r.est_cost_usd || 0), 0);
@@ -624,6 +655,11 @@ async function renderInference() {
                   ? ` — ${fmtNum(cov.unpriced_calls)} have no rate card (${fmtTokens(cov.unpriced_tokens)} tokens), so real spend is higher`
                   : "")
             : "this window, container-local log"}</div></div>
+      </section>
+      <section class="ca-section">
+        <div class="ca-section-head"><span class="ca-section-title">Every model call, newest first</span>
+          <span class="ca-section-hint">your Host's turns and everything it ran beside them, each with what it cost</span></div>
+        ${feed && feed.error ? `<div class="ca-empty">Couldn't read the calls: ${esc(feed.error)}</div>` : recentCallsHTML(feed)}
       </section>
       <section class="ca-section">
         <div class="ca-section-head"><span class="ca-section-title">Background calls by module</span></div>

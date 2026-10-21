@@ -4548,7 +4548,13 @@ async def get_inference_budget(hours: int = 24):
 # the user is owed. An unrecognised source is TITLED, never hidden — a lane
 # nobody labelled is exactly the lane worth seeing.
 _ACTIVITY_LABELS = {
-    "thread_consolidator": ("Memory",   "Summarising a long conversation"),
+    # The owner's Training Memory run (brain/training_memory/worker.py): the
+    # classifier batch over imported sessions, one row per finished batch.
+    "training_memory":     ("Memory",   "Classifying sessions for Training Memory"),
+    # The owner's Test button on a model route (test_role_model below).
+    "role_test":           ("Settings", "Testing a model route"),
+    "diff_review":         ("Review",   "Reviewing a change"),
+    "image_look":          ("Pictures", "Looking at a picture"),
     # Writes purpose='shape' rows per turn (synaptive_handler.py:216-227) —
     # embedding + classifying what was just said. Named, because the fallback
     # would render it "Background · Synaptive handler", which tells the user
@@ -4564,6 +4570,14 @@ _ACTIVITY_LABELS = {
 _CHAT_SOURCE_MODULE = "entity_runtime"
 
 
+def _col(row, key):
+    """A column of an activity row, None when the row does not carry it."""
+    try:
+        return row[key] if key in row.keys() else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _activity_label(source_module: str) -> tuple[str, str]:
     """(group, detail) for a source_module. Unknown lanes get a readable
     fallback rather than being dropped."""
@@ -4576,8 +4590,15 @@ def _activity_label(source_module: str) -> tuple[str, str]:
 
 @router.get("/activity",
             dependencies=[Depends(requires_permission("read:inference_log"))])
-async def get_background_activity(limit: int = 20, hours: int = 24, failed: bool = False):
+async def get_background_activity(limit: int = 20, hours: int = 24, failed: bool = False,
+                                  include_turns: bool = False):
     """Background model calls — what the Host ran that the user never saw.
+
+    Every entry carries its cost (`cost_usd`, the list-price estimate the
+    gateway logged; null when the route publishes no rate). `include_turns`
+    adds the calls of the Host's own turns (source_module entity_runtime),
+    so the feed can show every model call the Host made, not only the ones
+    outside a turn.
 
     Reads BOTH halves of inference_cost_log: completed calls
     (purpose='inference', written by the gateway's _log_inference) and failed
@@ -4604,16 +4625,17 @@ async def get_background_activity(limit: int = 20, hours: int = 24, failed: bool
     rows = await pool.fetch(
         """
         SELECT id, source_module, model_id, provider, purpose,
-               tokens_in, tokens_out, latency_ms, metadata, created_at
+               tokens_in, tokens_out, latency_ms, metadata, created_at, est_cost_usd,
+               cost_method
         FROM inference_cost_log
         WHERE entity_id = $1
-          AND source_module IS DISTINCT FROM $2
+          AND ($6::boolean OR source_module IS DISTINCT FROM $2)
           AND created_at >= now() - ($3::text || ' hours')::interval
           AND (NOT $5::boolean OR purpose = 'inference_error')
         ORDER BY created_at DESC, id DESC
         LIMIT $4
         """,
-        eid, _CHAT_SOURCE_MODULE, str(hours), limit, bool(failed),
+        eid, _CHAT_SOURCE_MODULE, str(hours), limit, bool(failed), bool(include_turns),
     )
     issues = await pool.fetchval(
         """
@@ -4635,7 +4657,8 @@ async def get_background_activity(limit: int = 20, hours: int = 24, failed: bool
             except Exception:
                 meta = {}
         meta = meta or {}
-        group, detail = _activity_label(r["source_module"])
+        group, detail = (("Turn", "Your Host's own turn") if r["source_module"] == _CHAT_SOURCE_MODULE
+                         else _activity_label(r["source_module"]))
         # A dispatched agent's row carries its task id (scoped_agent
         # _log_meta), so the line names the agent the Agents app lists.
         _task_id = meta.get("task_id")
@@ -4657,6 +4680,13 @@ async def get_background_activity(limit: int = 20, hours: int = 24, failed: bool
             "tokens_in": int(r["tokens_in"] or 0),
             "tokens_out": int(r["tokens_out"] or 0),
             "latency_ms": int(r["latency_ms"] or 0),
+            # The list-price estimate the gateway logged, and what kind of
+            # figure it is (cost_method: 'list' priced at published rates;
+            # 'subscription', 'local' or 'unpriced' have no per-call dollar
+            # figure, so cost_usd is None, never a $0 that reads as free).
+            "cost_usd": (round(float(_col(r, "est_cost_usd") or 0.0), 6)
+                         if _col(r, "cost_method") == "list" else None),
+            "cost_basis": _col(r, "cost_method"),
             "ok": ok,
             # Surfaced verbatim, never prettified into a shrug: an
             # unconfigured role and a provider outage need different actions.
@@ -4725,6 +4755,7 @@ async def test_role_model(role: str):
             temperature=0.3, max_tokens=100,
             provider=provider, provider_model=model,
             base_url=route.get("base_url"),
+            _source="role_test",
         )
         elapsed = int((time.time() - t0) * 1000)
 

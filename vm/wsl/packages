@@ -15,3 +15,7 @@ iptables
 ca-certificates
 curl
 iproute2
+# The local runtime (cseries-runtime) is Python, standard library only, and the
+# coding engines' plain proxy is squid.
+python3
+squid

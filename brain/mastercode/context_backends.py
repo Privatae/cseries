@@ -107,6 +107,19 @@ async def get_backend_config(pool, entity_id: int) -> dict:
     return cfg
 
 
+def _checked_endpoint(raw, where: str = "") -> str:
+    """An S3 endpoint as given, refused with the reason when the bucket may not
+    be there (server/backup_stores.check_endpoint, the backup bucket's check).
+    Empty is Amazon S3 itself. S3Backend checks it again before every use."""
+    endpoint = (raw or "").strip()
+    from server import backup_stores
+    try:
+        backup_stores.check_endpoint(endpoint)
+    except ValueError as e:
+        raise ValueError(f"{where}{e}") from None
+    return endpoint
+
+
 async def set_backend_config(pool, entity_id: int, cfg: dict) -> dict:
     """Persist this host's context-backend selection into
     behavioral_params.context_backend (merging, not clobbering other params).
@@ -123,7 +136,7 @@ async def set_backend_config(pool, entity_id: int, cfg: dict) -> dict:
         clean["bucket"] = bucket
         clean["prefix"] = (cfg.get("prefix") or "").strip()
         clean["region"] = (cfg.get("region") or "").strip()
-        clean["endpoint_url"] = (cfg.get("endpoint_url") or "").strip()  # for R2/B2/MinIO
+        clean["endpoint_url"] = _checked_endpoint(cfg.get("endpoint_url"))  # for R2/B2/MinIO
         # The credential lives in the vault under this logical name; the agent
         # seals it first via keys_manage/connect_compute and references it here.
         clean["cred_name"] = (cfg.get("cred_name") or "ctx:s3").strip()
@@ -198,7 +211,7 @@ def _validate_route_cfg(route: dict) -> dict:
         clean["bucket"] = bucket
         clean["prefix_key"] = (route.get("prefix_key") or "").strip()  # s3 key prefix (NOT the route prefix)
         clean["region"] = (route.get("region") or "").strip()
-        clean["endpoint_url"] = (route.get("endpoint_url") or "").strip()
+        clean["endpoint_url"] = _checked_endpoint(route.get("endpoint_url"), f"route '{prefix}': ")
         clean["cred_name"] = (route.get("cred_name") or "ctx:s3").strip()
     elif backend == "bastion":
         server = (route.get("server") or "").strip()
@@ -881,7 +894,18 @@ class S3Backend(ContextBackend):
         {"access_key_id","secret_access_key","session_token"?} sealed host-owned
         in the vault under self.cred_name. Lazy-imports boto3 + reads the vault
         in-pod; the agent never sees the raw bytes here either (they go straight
-        into the client and stay in-process)."""
+        into the client and stay in-process).
+
+        The endpoint is read from stored rows (the host's config, a route, a
+        file's recorded location), and a restored backup's rows are anyone's.
+        So it gets the check the backup bucket gets (backup_stores.check_endpoint:
+        https, and a name that resolves only to public addresses), before the
+        vault is opened, and again before each request the client sends."""
+        from server import backup_stores
+        try:
+            backup_stores.check_endpoint(self.endpoint_url)
+        except ValueError as e:
+            raise RuntimeError(f"s3 backend: {e}") from None
         from server.vault import api as vault_api  # in-pod, host-owned open
         raw = await vault_api.open_secret(pool, entity_id=entity_id, name=self.cred_name)
         if not raw:
@@ -900,7 +924,9 @@ class S3Backend(ContextBackend):
             aws_session_token=creds.get("session_token") or None,
             region_name=self.region,
         )
-        return session.client("s3", endpoint_url=self.endpoint_url)
+        client = session.client("s3", endpoint_url=self.endpoint_url)
+        client.meta.events.register("before-send", backup_stores._guard_request)
+        return client
 
     async def store(self, pool, entity_id: int, file_path: str, content: str) -> dict:
         import asyncio

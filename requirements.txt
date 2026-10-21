@@ -23,6 +23,17 @@ websockets==16.0
 # findings.
 cryptography==50.0.2
 
+# Passkeys for the owner's sign-in (server/owner_passkeys.py): webauthn
+# (BSD-3-Clause) and the four packages it brings that nothing above pins:
+# cbor2 (MIT), pyasn1 and pyasn1-modules (BSD-2-Clause), pyOpenSSL (Apache-2.0).
+# All are pure python but cbor2, which has cp314 wheels for amd64 and arm64.
+# webauthn 3.0.1 needs cryptography >= 49 and pyOpenSSL < 51 allows 50.0.2.
+webauthn==3.0.1
+cbor2==6.1.5
+pyasn1==0.6.4
+pyasn1-modules==0.4.2
+pyOpenSSL==26.4.0
+
 # Screen capture
 mss==10.0.0
 # 12.3.0: first line with cp314 wheels. Renovate bumped the base

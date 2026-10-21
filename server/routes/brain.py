@@ -710,6 +710,91 @@ async def put_thread_context(request: Request):
             "turn_allowance_usd": allowance}
 
 
+# The Host-wide bounded defaults (context_budget.read_turn_defaults): what a
+# turn gets when no per-thread dial says otherwise. Each key is a decision the
+# owner can change; null clears it back to the built-in.
+_TURN_DEFAULT_KEYS = {
+    "history_ceiling_tokens": int,          # 0 = fill the window (no ceiling)
+    "turn_allowance_usd": float,            # dollars per turn
+    "scheduled_task_allowance_usd": float,  # dollars per scheduled run
+    "turn_rounds": int,                     # built-in default, full-context rounds; 0 = none
+    "scheduled_rounds": int,
+}
+
+
+@router.get("/turn-defaults",
+            dependencies=[Depends(requires_permission("read:brain_memory"))])
+async def get_turn_defaults():
+    """The Host's bounded defaults in force, what the owner set, and the
+    built-in values."""
+    pool = brain_service.get_pool()
+    if pool is None:
+        return {"error": "pool not ready"}, 503
+    from mastercode.context_budget import DEFAULT_HISTORY_CEILING_TOKENS, read_turn_defaults
+    from mastercode.runtime.turn_allowance import DEFAULT_SCHEDULED_ROUNDS, DEFAULT_TURN_ROUNDS
+    eid = brain_service._entity_id
+    row = await pool.fetchrow("SELECT behavioral_params FROM entity_registry WHERE id=$1", eid)
+    bp = (row and row["behavioral_params"]) or {}
+    if isinstance(bp, str):
+        bp = json.loads(bp)
+    return {
+        "in_force": await read_turn_defaults(pool, eid),
+        "set": {k: bp.get(k) for k in _TURN_DEFAULT_KEYS if isinstance(bp, dict) and bp.get(k) is not None},
+        "built_in": {"history_ceiling_tokens": DEFAULT_HISTORY_CEILING_TOKENS,
+                     "turn_allowance_usd": None, "scheduled_task_allowance_usd": None,
+                     "turn_rounds": DEFAULT_TURN_ROUNDS, "scheduled_rounds": DEFAULT_SCHEDULED_ROUNDS},
+    }
+
+
+@router.put("/turn-defaults",
+            dependencies=[Depends(requires_permission("write:session"))])
+async def put_turn_defaults(request: Request):
+    """Set (or clear with null) the Host's bounded defaults. Keyed on
+    presence, like the per-thread dial: a body naming one key leaves the
+    others as they are."""
+    body = await request.json()
+    if not isinstance(body, dict):
+        raise HTTPException(400, "body must be an object")
+    unknown = [k for k in body if k not in _TURN_DEFAULT_KEYS]
+    if unknown:
+        raise HTTPException(400, f"unknown keys: {unknown}; known: {sorted(_TURN_DEFAULT_KEYS)}")
+    patch: dict = {}
+    for key, cast in _TURN_DEFAULT_KEYS.items():
+        if key not in body:
+            continue
+        if body[key] is None:
+            patch[key] = None
+            continue
+        try:
+            v = cast(body[key])
+        except (TypeError, ValueError):
+            raise HTTPException(400, f"{key} must be a number or null")
+        if v < 0 or (cast is float and v == 0):
+            raise HTTPException(400, f"{key} must be positive"
+                                + (" (0 is allowed: it turns that default off)" if cast is int else
+                                   " (send null to clear it)"))
+        patch[key] = v
+    pool = brain_service.get_pool()
+    if pool is None:
+        return {"error": "pool not ready"}, 503
+    eid = brain_service._entity_id
+    row = await pool.fetchrow("SELECT behavioral_params FROM entity_registry WHERE id=$1", eid)
+    bp = (row and row["behavioral_params"]) or {}
+    if isinstance(bp, str):
+        bp = json.loads(bp)
+    if not isinstance(bp, dict):
+        bp = {}
+    for k, v in patch.items():
+        if v is None:
+            bp.pop(k, None)
+        else:
+            bp[k] = v
+    await pool.execute("UPDATE entity_registry SET behavioral_params=$2::jsonb WHERE id=$1",
+                       eid, json.dumps(bp))
+    from mastercode.context_budget import read_turn_defaults
+    return {"ok": True, "in_force": await read_turn_defaults(pool, eid)}
+
+
 @router.get("/threads",
             dependencies=[Depends(requires_permission("read:brain_memory"))])
 async def threads(
@@ -1044,7 +1129,7 @@ async def list_memories(
                status, status_reason, created_at, updated_at, t_valid_until,
                correction_of, corrected_by, resolution_pointer, resolved_at,
                (embedding IS NOT NULL) AS has_embedding,
-               metadata
+               metadata, slot_topic, slot_scope, turn_type
         FROM entity_memory {where}
         ORDER BY created_at DESC
         LIMIT ${len(params) + 1} OFFSET ${len(params) + 2}
@@ -1075,6 +1160,12 @@ async def list_memories(
                 "corrected_by": r["corrected_by"],
                 "resolution_pointer": r["resolution_pointer"],
                 "resolved_at": r["resolved_at"].isoformat() if r["resolved_at"] else None,
+                # The slot (memory_slots): what it is about, where it is read,
+                # and the turn type it was written in. No topic = outside the
+                # one-live-entry rule.
+                "topic": r["slot_topic"],
+                "slot_scope": r["slot_scope"],
+                "turn_type": r["turn_type"],
             }
             for r in rows
         ],
@@ -1252,7 +1343,7 @@ async def get_memory_detail(memory_id: int, request: Request):
                project_id,
                visibility, metadata,
                (embedding IS NOT NULL) AS has_embedding,
-               created_at, updated_at
+               created_at, updated_at, slot_topic, slot_scope, turn_type
         FROM entity_memory
         {where}
     """, *params)
@@ -1304,7 +1395,89 @@ async def get_memory_detail(memory_id: int, request: Request):
         "metadata": json.loads(row["metadata"]) if isinstance(row["metadata"], str) else (row["metadata"] or {}),
         "created_at": row["created_at"].isoformat() if row["created_at"] else None,
         "updated_at": row["updated_at"].isoformat() if row["updated_at"] else None,
+        # The slot and its replacement chain (memory_slots): the rows this one
+        # replaced, newest first, each with when and why it left.
+        "topic": row["slot_topic"],
+        "slot_scope": row["slot_scope"],
+        "turn_type": row["turn_type"],
+        "replaced_by": row["resolution_pointer"],
+        "chain": await _slot_chain(pool, row["id"]),
     }
+
+
+async def _slot_chain(pool, row_id: int) -> list:
+    try:
+        from mastercode.memory_slots import slot_chain
+        return await slot_chain(pool, brain_service._entity_id, int(row_id))
+    except Exception as e:  # noqa: BLE001 — the row reads without its chain
+        logger.info("memory chain unavailable for %s: %s", row_id, e)
+        return []
+
+
+@router.get("/memory-slots", dependencies=[Depends(requires_permission("read:brain_memory"))])
+async def list_memory_slots(request: Request, limit: int = Query(200, ge=1, le=500)):
+    """Every live preference and relationship note by slot (memory_slots:
+    type, scope, topic), each with its replacement chain, and the live rows
+    with no topic yet (outside the one-live-entry rule until one is given:
+    POST /manage/memories/{id}/topic). The Memory app's Slots lens."""
+    pool = brain_service.get_pool()
+    if not pool:
+        return {"slots": [], "no_topic": []}
+    if _memory_audience(request) is not None:
+        # An app sees memories tagged for it, not the Host's whole slot table.
+        raise HTTPException(status_code=403, detail="the slot table is the owner's view")
+    eid = brain_service._entity_id
+    rows = await pool.fetch(
+        "SELECT id, content, memory_type, slot_topic, slot_scope, turn_type, created_at,"
+        "       metadata ? 'rule_kind' AS is_rule, metadata->>'written_by' AS written_by"
+        "  FROM entity_memory WHERE entity_id = $1 AND memory_type IN ('preference', 'relationship')"
+        "   AND status = 'active' AND t_valid_until IS NULL AND slot_topic IS NOT NULL"
+        " ORDER BY memory_type, slot_scope, slot_topic LIMIT $2", eid, limit)
+    from mastercode.memory_slots import slot_chain
+    slots = []
+    for r in rows:
+        slots.append({
+            "type": r["memory_type"], "scope": r["slot_scope"], "topic": r["slot_topic"],
+            "rule": bool(r["is_rule"]),
+            "live": {"id": r["id"], "content": r["content"], "turn_type": r["turn_type"],
+                     "written_by": r["written_by"],
+                     "created_at": r["created_at"].isoformat() if r["created_at"] else None},
+            "chain": await slot_chain(pool, eid, int(r["id"])),
+        })
+    loose = await pool.fetch(
+        "SELECT id, content, memory_type, slot_scope, turn_type, created_at,"
+        "       metadata ? 'rule_kind' AS is_rule"
+        "  FROM entity_memory WHERE entity_id = $1 AND memory_type IN ('preference', 'relationship')"
+        "   AND status = 'active' AND t_valid_until IS NULL AND slot_topic IS NULL"
+        " ORDER BY created_at DESC, id DESC LIMIT $2", eid, limit)
+    return {
+        "slots": slots,
+        "no_topic": [{"id": r["id"], "content": r["content"], "type": r["memory_type"],
+                      "scope": r["slot_scope"], "turn_type": r["turn_type"], "rule": bool(r["is_rule"]),
+                      "created_at": r["created_at"].isoformat() if r["created_at"] else None}
+                     for r in loose],
+    }
+
+
+@router.post("/manage/memories/{memory_id}/topic", dependencies=[Depends(requires_permission("write:brain_memory"))])
+async def set_memory_topic(memory_id: int, request: Request):
+    """The owner gives a live preference or relationship note a topic, or
+    renames it (memory_slots.key_row). When another live row holds that
+    slot, a rule outranks a preference, else the newer row stays; the other
+    is retired into it. Body: {"topic": "<a few words>"}."""
+    pool = brain_service.get_pool()
+    if not pool:
+        raise HTTPException(status_code=503, detail="Brain not initialized")
+    body = await request.json()
+    from mastercode.memory_slots import key_row, normalize_topic
+    topic = normalize_topic((body or {}).get("topic"))
+    if topic is None:
+        raise HTTPException(status_code=400, detail="topic: a few words naming what the entry is about")
+    res = await key_row(pool, brain_service._entity_id, memory_id, topic,
+                        stamp={"kind": "app", "ref": "memory"})
+    if res.get("status") in ("not_live", "not_slotted"):
+        raise HTTPException(status_code=404, detail="no live preference or relationship note with that id")
+    return {"ok": True, **res}
 
 
 # ── Ollama Model Management ───────────────────────────
@@ -1811,6 +1984,15 @@ async def edit_single_memory(memory_id: int, request: Request):
                     t_valid_until = NOW(), status_changed_at = NOW(),
                     updated_at = NOW()
                 WHERE id = $1 AND entity_id = $2
+            """, memory_id, eid, new_id)
+            # The new version takes the old one's slot (memory_slots), now
+            # that the old one has left it, with the owner's edit as its
+            # provenance.
+            await conn.execute("""
+                UPDATE entity_memory n
+                   SET slot_topic = o.slot_topic, slot_scope = o.slot_scope, turn_type = 'owner edit'
+                  FROM entity_memory o
+                 WHERE n.id = $3 AND n.entity_id = $2 AND o.id = $1 AND o.entity_id = $2
             """, memory_id, eid, new_id)
 
     return {"ok": True, "old_id": memory_id, "new_id": new_id,

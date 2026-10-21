@@ -210,6 +210,15 @@ async def _handle_cases():
         ER.get_egress_relay = lambda: relay
         proxy._direct_dispatch = direct
 
+    # A pinned app-lane request meets the private-address floor before the
+    # bastion (EgressProxy._pinned_dispatch; its own cases are in
+    # test_egress_lane_private_refused.py). These cases are about where a pin
+    # goes, so the destination resolves to a public address here, and no
+    # real DNS is asked.
+    async def _public(host, port):
+        return ["93.184.215.14"]
+    NE._resolve = _public
+
     PIN = [{"id": 1, "pattern": "*", "action": "allow", "priority": 10,
             "subject": "harness:browser", "exit": "bastion:home"}]
     # A lane request CARRIES its credential — the subject the rule matches on is

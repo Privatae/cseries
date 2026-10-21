@@ -910,10 +910,17 @@ async def serve_custom_image(request: Request) -> Response:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(query, brain_service._entity_id)
         if row is not None:
+            # The upload takes only ALLOWED_TYPES, but the row is what is
+            # served, and a restored backup's rows are anyone's: a stored
+            # text/html here would be a page on the Host's own origin, opened
+            # with no token. So only an allowed image type is ever said, and
+            # the sandbox makes even a mislabelled one inert (routes/images.py).
+            ctype = row["image_content_type"]
             return Response(
                 content=bytes(row["image_bytes"]),
-                media_type=row["image_content_type"] or "image/jpeg",
-                headers={"Cache-Control": "no-cache"},
+                media_type=ctype if ctype in ALLOWED_TYPES else "image/jpeg",
+                headers={"Cache-Control": "no-cache",
+                         "Content-Security-Policy": "default-src 'none'; sandbox"},
             )
     if variant == "mobile":
         raise HTTPException(status.HTTP_404_NOT_FOUND, "no mobile wallpaper uploaded")

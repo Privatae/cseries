@@ -35,7 +35,6 @@ WRAPPER = ROOT / "brain/mastercode/runtime/tools.py"
 CALLERS = [
     ROOT / "brain/mastercode/runtime/session.py",
     ROOT / "brain/mastercode/runtime/tools.py",
-    ROOT / "brain/mastercode/thread_consolidator.py",
 ]
 TARGET = "_call_entity_model"
 _FUNCS = (ast.FunctionDef, ast.AsyncFunctionDef)

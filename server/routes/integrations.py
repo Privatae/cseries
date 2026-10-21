@@ -581,6 +581,10 @@ async def provider_callback(key: str, request: Request,
     if not code or not state:
         return HTMLResponse(_oauth_complete_page(error="missing_params"), status_code=400)
 
+    # Reached without a session, so only an installed provider's module is
+    # looked up, never whatever name the path carries.
+    if not manifests.get(key):
+        raise HTTPException(status_code=404, detail="provider not found")
     module = _import_provider(key)
     if not module or not hasattr(module, "handle_callback"):
         raise HTTPException(status_code=404, detail=f"{key} has no callback handler")

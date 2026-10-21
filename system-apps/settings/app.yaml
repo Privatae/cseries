@@ -129,9 +129,36 @@ system: true
 #   app is and what lives in it; the how-to it carried lives in skills and tool
 #   descriptions. Bundle repacked.
 # 3.12.1 (2026-10-18): the storage endpoint placeholder is a neutral example; comments rewritten as plain rationale; no behaviour change.
-# 3.12.2 (2026-10-20): text only. The Backup, export and Network wording no longer
-#   describes a hosted service; Privatae network membership is said to be optional.
-version: "3.12.2"
+# 3.13.0 (2026-10-20): Backup, "Where backups go": the network's storage (a
+# Host on the network only), the owner's own S3-compatible bucket (its key is
+# entered here and goes straight into the vault, POST /api/backup/storage-key;
+# the setting names it), or a folder on this machine with how many to keep and
+# "Download the latest backup". The second copy is offered only for backups in
+# the network's storage. The restore list says which backups are on this machine.
+# 3.13.1 (2026-10-20): Backup opens with one verdict line, whether backups are
+# working (or paused, failing, off) and when the last one finished; "Download
+# the latest backup" is a one-time link the browser downloads itself, never
+# the whole backup held in the page.
+# 3.13.2 (2026-10-20): after a restore, Backup says what the restore kept of
+# the owner's sign-in (the restore's owner note), in the restore's line and in
+# the run list.
+# 3.13.3 (2026-10-20): text only. The Backup, export and Network wording no longer
+#   describes a hosted service; Privatae network membership is said to be optional;
+#   Backup says where a host on its own and one on the network keep backups, and a
+#   host with no recovery key is told to make one in the Backups app.
+# 3.13.4 (2026-10-20): a backup's line names each app's own data it holds (the
+#   kept data volumes on this machine, which backups now carry), the restore's
+#   agreement says each app's data comes back too, and after a restore the line
+#   names any app whose data was not put back, and why.
+# 3.13.5 (2026-10-20): after a restore, Backup also says what the restore said
+#   about the backup's database (what its load left out, what the boot's
+#   migrations dropped or left unchecked), in the restore's line and in the run
+#   list, as it already said each app's data.
+# 3.13.6 (2026-10-20): after a restore of a backup this host could not confirm
+#   it made, Backup also says which apps were installed again and from where,
+#   and which need reinstalling and why, in the restore's line and in the run
+#   list.
+version: "3.13.6"
 # Environment-catalog facts (host-facing, code-true). Source for the L1
 # topology block + describe_app — NOT a surface_role body (this is a control
 # panel, not a conversational surface): what_it_is/user_path only.

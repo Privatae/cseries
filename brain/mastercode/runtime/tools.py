@@ -5748,10 +5748,10 @@ async def _exec_refresh_app_store(args):
         pool = brain_service.get_pool()
         if pool is None:
             return {"status": "error", "result": "pool unavailable"}
-        from server.main import get_bridge_client
-        bc = get_bridge_client()
-        if bc is None or not getattr(bc, "_connected", False):
-            return {"status": "error", "result": "bridge not connected — cannot reach store"}
+        from server.applications.public_store import store_client
+        bc = store_client()
+        if not bc._connected:
+            return {"status": "error", "result": "no App Store is reachable"}
         from server.applications.default_install import _sync_store_upgrades
         res = await _sync_store_upgrades(bc, pool)
         return {"status": "ok", "result": res}
@@ -5765,10 +5765,10 @@ async def _exec_list_app_catalog(args):
         pool = brain_service.get_pool()
         if pool is None:
             return {"status": "error", "result": "pool unavailable"}
-        from server.main import get_bridge_client
-        bc = get_bridge_client()
-        if bc is None or not getattr(bc, "_connected", False):
-            return {"status": "error", "result": "bridge not connected — cannot reach store"}
+        from server.applications.public_store import store_client
+        bc = store_client()
+        if not bc._connected:
+            return {"status": "error", "result": "no App Store is reachable"}
         envelope = await bc.request_full("appstore.list", {})
         if not envelope.get("ok"):
             return {"status": "error", "result": envelope.get("error") or "store error"}
@@ -5822,10 +5822,10 @@ async def _exec_purchase_app(args):
         eid = current_entity_id()
         if not allowed_for_entity(app_id, eid):
             return _refused(f"{app_id!r} is a platform tool; this host is not in its install allow-list")
-        from server.main import get_bridge_client
-        bc = get_bridge_client()
-        if bc is None or not getattr(bc, "_connected", False):
-            return {"status": "error", "result": "bridge not connected"}
+        from server.applications.public_store import store_client
+        bc = store_client()
+        if not bc._connected:
+            return {"status": "error", "result": "no App Store is reachable"}
         # Stripe Connect is the single purchase path for paid apps, so an agent can install FREE apps but cannot spend
         # money on the host's behalf. This op records free-path entitlements;
         # a paid app comes back as checkout_required and the human buys it in
@@ -7929,8 +7929,11 @@ async def _exec_chat_threads(args, *, entity_id: int | None = None, pool=None,
 # an exact live duplicate is not stored twice, a row no decision may retire
 # (NEVER_SUPERSEDED_TYPES: the transcript, the constitution, what the user
 # taught) is left to the user, and only what the plan keeps writing — a
-# preference or a relationship note — is written.
-_CURATE_OPS = ("add", "replace", "drop", "alias")
+# preference or a relationship note — is written. A `topic` puts the entry in
+# its slot (memory_slots): the newest entry of a type, scope and topic is the
+# live one, and the older is replaced in the same transaction; op='key' gives a
+# held row a topic (a rule the person taught arrives with none).
+_CURATE_OPS = ("add", "replace", "drop", "alias", "key")
 _CURATE_TYPES = ("preference", "relationship")
 _ALIAS_MAX = 300      # migrations/v234 memory_recall_aliases CHECK
 
@@ -7966,11 +7969,82 @@ async def _exec_memory_alias(a: dict) -> dict:
                        else f"#{target} already had that alias")}
 
 
+def _curate_scope(raw) -> tuple[dict | None, str | None]:
+    """memory_curate's optional `scope`: 'global', or '<kind>:<ref>' for a
+    project, an app or a thread. (decision, error); (None, None) when not
+    given."""
+    if raw is None or str(raw).strip() == "":
+        return None, None
+    text = str(raw).strip()
+    if text.lower() == "global":
+        return {"kind": "global"}, None
+    kind, _, ref = text.partition(":")
+    kind = kind.strip().lower()
+    if kind not in ("project", "app", "thread") or not ref.strip():
+        return None, "scope is 'global' or project:<id>, app:<name>, thread:<id>"
+    return {"kind": kind, "ref": ref.strip()}, None
+
+
+async def _exec_memory_key(a: dict, session_id) -> dict:
+    """memory_curate op='key': give a held preference or relationship note a
+    topic (memory_slots.key_row). The row is named by memory_id, or by its
+    exact words (a rule the person taught this turn is kept word for word
+    with no topic). When another live row holds that slot, a rule outranks a
+    plain preference, else the newer row stays and the other is retired
+    into it."""
+    from mastercode.memory_slots import key_row, normalize_topic, topics_in_scope
+    topic = normalize_topic(a.get("topic"))
+    if topic is None:
+        return _refused("key needs topic: a few words naming what the entry is about")
+    from server import brain_service
+    pool = brain_service.get_pool()
+    if pool is None:
+        return {"status": "error", "result": "memory pool not ready"}
+    entity_id = brain_service._entity_id
+    target = None
+    try:
+        target = int(a.get("memory_id")) if a.get("memory_id") is not None else None
+    except (TypeError, ValueError):
+        return _refused("memory_id is an integer: the #id recall shows")
+    if target is None:
+        words = " ".join(str(a.get("content") or "").split())
+        if not words:
+            return _refused("key needs memory_id, or content: the entry's exact words")
+        target = await pool.fetchval(
+            "SELECT id FROM entity_memory WHERE entity_id = $1 AND content = $2"
+            " AND memory_type IN ('preference', 'relationship')"
+            " AND status = 'active' AND t_valid_until IS NULL"
+            " ORDER BY (metadata ? 'rule_kind') DESC, created_at DESC, id DESC LIMIT 1",
+            entity_id, words)
+        if target is None:
+            return _refused("no live preference or relationship note has exactly those words")
+    from mastercode.memory_engine import session_source_context, turn_from_turns, turn_tokens_now
+    from mastercode.memory_consolidation import scope_stamp
+    # A retirement the key makes names the turn's message, so it moves with it.
+    stamp = scope_stamp(await session_source_context(pool, entity_id, session_id),
+                        await turn_from_turns(session_id), turn_tokens_now(session_id))
+    res = await key_row(pool, entity_id, int(target), topic, stamp=stamp)
+    if res["status"] in ("not_live", "not_slotted"):
+        return _refused(f"#{target} is not a live preference or relationship note")
+    row = await pool.fetchrow("SELECT memory_type, slot_scope FROM entity_memory WHERE id = $1",
+                              int(target))
+    listing = await topics_in_scope(pool, entity_id, row["memory_type"], row["slot_scope"]) if row else {}
+    out = {"action": "key", "memory_id": int(target), "topic": topic, "status": res["status"],
+           "slot": res.get("slot"), "topics_here": listing}
+    if res.get("replaced"):
+        out["replaced"] = res["replaced"]
+    if res.get("replaced_by"):
+        out["replaced_by"] = res["replaced_by"]
+        out["note"] = (f"#{res['replaced_by']} already holds topic '{topic}' here and stays (a rule "
+                       f"outranks a preference; else the newer stays): #{target} is retired into it")
+    return {"status": "ok", "result": out}
+
+
 async def _exec_memory_curate(args, *, session_id=None):
     a = args or {}
     op = str(a.get("op") or "add").strip().lower()
     if op not in _CURATE_OPS:
-        return _refused("op is add, replace, drop or alias")
+        return _refused("op is add, replace, drop, alias or key")
     from mastercode.memory_engine import (
         ABOUT_MACHINERY, NEVER_SUPERSEDED_TYPES, is_machinery_memory,
         session_source_context, hidden_lane_turn,
@@ -7981,6 +8055,20 @@ async def _exec_memory_curate(args, *, session_id=None):
             "scheduled run), which changes nothing in the conversation it runs in")
     if op == "alias":
         return await _exec_memory_alias(a)
+    if op == "key":
+        try:
+            return await _exec_memory_key(a, session_id)
+        except Exception as e:
+            return _refused_if_caller(e, f"memory_curate failed: {getattr(e, 'detail', None) or e}")
+    from mastercode.memory_slots import normalize_topic
+    topic = None
+    if a.get("topic") is not None and str(a.get("topic")).strip():
+        topic = normalize_topic(str(a.get("topic")))
+        if topic is None:
+            return _refused("topic: a few words naming what the entry is about")
+    scope_decision, scope_err = _curate_scope(a.get("scope"))
+    if scope_err:
+        return _refused(scope_err)
     content = (a.get("content") or "").strip()
     if op != "drop":
         if not content:
@@ -8021,9 +8109,15 @@ async def _exec_memory_curate(args, *, session_id=None):
         from mastercode.memory_consolidation import MemoryConsolidator, scope_stamp
         cons = MemoryConsolidator(pool)
         # The conversation this turn is in: where a new row is said, and the
-        # conversation a retirement or a restatement is recorded against.
+        # conversation a retirement or a restatement is recorded against —
+        # with the turn's message (memory_engine.turn_from_turns), which the
+        # new row names too (_learned_in), so both follow the message when it
+        # moves (circles_threads.carry_learned).
+        # The turn's token is read here, in the turn's own task, before the
+        # write is queued (PII mode lands it in the drain worker).
+        from mastercode.memory_engine import turn_from_turns, turn_tokens_now
         _sctx = await session_source_context(pool, entity_id, session_id)
-        stamp = scope_stamp(_sctx)
+        stamp = scope_stamp(_sctx, await turn_from_turns(session_id), turn_tokens_now(session_id))
         held = None
         if target is not None:
             held = await pool.fetchrow(_HELD_FOR_REPLACE, target, entity_id)
@@ -8054,10 +8148,11 @@ async def _exec_memory_curate(args, *, session_id=None):
                 res: dict = {"action": "drop", "memory_id": target, "dropped": bool(done)}
             elif op == "replace":
                 res = await _curate_replace(pool, cons, entity_id, target, text,
-                                            asked_type, _sctx, stamp, session_id)
+                                            asked_type, _sctx, stamp, session_id, topic=topic)
             else:
                 res = await _curate_add(pool, cons, entity_id, text, asked_type or "preference",
-                                        _sctx, stamp, session_id)
+                                        _sctx, stamp, session_id, topic=topic,
+                                        scope_decision=scope_decision)
             # The thread deleted while this ran (or before a queued write
             # landed): what it wrote or retired here goes with the rest of it,
             # whichever path wrote it.
@@ -8090,20 +8185,77 @@ async def _exec_memory_curate(args, *, session_id=None):
         if out.get("new"):
             from mastercode.memory_retrieval import verify_retrievable
             out["retrievable"] = await verify_retrievable(pool, entity_id, out["memory_id"])
+        if out.get("memory_id") and op != "drop":
+            # The topics already in use where it was written, and the rows
+            # there with none: the Host reuses a topic instead of coining a
+            # near twin, and can key or drop an old row (memory_slots).
+            from mastercode.memory_slots import topics_in_scope
+            _row = await pool.fetchrow(
+                "SELECT memory_type, slot_scope, slot_topic FROM entity_memory WHERE id = $1 AND entity_id = $2",
+                int(out["memory_id"]), entity_id)
+            if _row is not None and _row["memory_type"] in ("preference", "relationship"):
+                out.setdefault("topic", _row["slot_topic"])
+                out["topics_here"] = await topics_in_scope(pool, entity_id, _row["memory_type"],
+                                                           _row["slot_scope"])
+                if not _row["slot_topic"]:
+                    out["note"] = ("kept with no topic: it rides beside any other entry about the "
+                                   "same thing until it has one (op='key')")
         return {"status": "ok", "result": out}
     except Exception as e:
         return _refused_if_caller(e, f"memory_curate failed: {getattr(e, 'detail', None) or e}")
 
 
-async def _curate_add(pool, cons, entity_id, content, memory_type, sctx, stamp, session_id) -> dict:
+async def _curate_slot_scope(pool, entity_id, memory_type, topic, sctx, decision) -> tuple[str, dict | None, str | None]:
+    """(slot scope, the decision to store as metadata.about, error) for a
+    curate add with a topic. A relationship note is read everywhere. An
+    explicit `scope` is the Host's decision, checked like memory_scope's.
+    Otherwise the topic's own live slot where this conversation reads it
+    (this conversation's place first, then global): a correction by topic
+    replaces what it corrects instead of starting a narrower twin. Else
+    where it is said, undecided, as an add without a topic is."""
+    from mastercode.memory_slots import slot_scope_for
+    if memory_type == "relationship":
+        return "global", None, None
+    if isinstance(decision, dict):
+        if decision.get("kind") == "global":
+            return "global", {"kind": "global"}, None
+        ref, why = await _memory_scope_ref(pool, entity_id, decision["kind"], str(decision.get("ref") or ""))
+        if why:
+            return "", None, why
+        about = {"kind": decision["kind"], "ref": ref}
+        return slot_scope_for(memory_type, {"about": about}), about, None
+    here = slot_scope_for(memory_type, {"source_context": sctx} if isinstance(sctx, dict) else {})
+    for sc in ([here, "global"] if here != "global" else ["global"]):
+        if await pool.fetchval(
+                "SELECT 1 FROM entity_memory WHERE entity_id = $1 AND memory_type = $2"
+                " AND slot_scope = $3 AND slot_topic = $4 AND status = 'active' AND t_valid_until IS NULL",
+                entity_id, memory_type, sc, topic):
+            if sc == "global":
+                return "global", {"kind": "global"}, None
+            kind, _, ref = sc.partition(":")
+            return sc, {"kind": kind, "ref": ref}, None
+    return here, None, None
+
+
+async def _curate_add(pool, cons, entity_id, content, memory_type, sctx, stamp, session_id, *,
+                      topic=None, scope_decision=None) -> dict:
     """The same words held already: 'already held' only when this
     conversation reads the row (close_turn._held_row, recall's own reading),
     and this conversation is recorded on it (close_turn.held_already).
     Otherwise a row nobody has scoped is recorded as said here too (note_held),
     which makes it read here; a row decided for another place is left to
-    that place, and this conversation gets a row of its own."""
+    that place, and this conversation gets a row of its own.
+
+    With a `topic` the entry goes into its slot (memory_slots.write_in_slot):
+    the newer entry of the same type, scope and topic replaces the older in
+    the same transaction; a rule the person taught holds its slot against a
+    plain preference. The words already held with no topic where this
+    conversation reads them are keyed instead of written twice."""
     from mastercode.memory_engine import SCOPE_EVERYWHERE_TYPES
     from mastercode.runtime.close_turn import _GLOBAL, held_already
+    if topic:
+        return await _curate_add_slot(pool, cons, entity_id, content, memory_type, sctx, stamp,
+                                      session_id, topic, scope_decision)
     rows = await pool.fetch(
         "SELECT id, metadata->'about' AS about, metadata->'source_context' AS sc, "
         "metadata->'held_in' AS held_in, metadata ? 'about' AS has_about, "
@@ -8124,14 +8276,92 @@ async def _curate_add(pool, cons, entity_id, content, memory_type, sctx, stamp, 
         if not r["has_about"] and await cons.note_held(entity_id, int(r["id"]), stamp):
             return {"action": "already_held", "memory_id": int(r["id"]), "now_read_here": True}
     from mastercode.memory_engine import _get_memory_embedding, classify_visibility
-    meta: dict = {"written_by": "memory_curate"}
+    meta: dict = {"written_by": "memory_curate", **_learned_in(stamp)}
     if sctx:
         meta["source_context"] = sctx
+    if isinstance(scope_decision, dict) and memory_type not in SCOPE_EVERYWHERE_TYPES:
+        _sd, _why = await _decided_about(pool, entity_id, scope_decision, decided_in=stamp)
+        if _why:
+            return {"error": _why}
+        meta.update(_sd)
     mid = int(await cons._insert_new_memory(
         entity_id, content, memory_type, 1.0, await _get_memory_embedding(content),
         None, None, source_session=str(session_id) if session_id else None,
         confidence=1.0, visibility=classify_visibility(content), metadata_extra=meta))
     return {"action": "add", "memory_id": mid, "new": True}
+
+
+def _learned_in(stamp) -> dict:
+    """{'from_turns': [...], 'from_turn_tokens': [...]} naming the turn a
+    curated row was learned in (the stamp's, scope_stamp: its message row
+    when known, and its token), or {} when no turn is known."""
+    from mastercode.memory_consolidation import turn_marks
+    return turn_marks(stamp)
+
+
+async def _decided_about(pool, entity_id, decision: dict, *,
+                         decided_in: dict | None = None) -> tuple[dict, str | None]:
+    """metadata for a scope the Host decided in the call (`scope`): about,
+    scoped_by, scoped_at, and the turn that decided it (scoped_in, the
+    stamp: circles_threads.carry_learned); or an error when it names nothing
+    this Host has."""
+    from datetime import datetime as _dt, timezone as _tz
+    if decision.get("kind") == "global":
+        about = {"kind": "global"}
+    else:
+        ref, why = await _memory_scope_ref(pool, entity_id, decision["kind"], str(decision.get("ref") or ""))
+        if why:
+            return {}, why
+        about = {"kind": decision["kind"], "ref": ref}
+    return {"about": about, "scoped_by": "host", "scoped_at": _dt.now(_tz.utc).isoformat(),
+            "scoped_in": decided_in}, None
+
+
+async def _curate_add_slot(pool, cons, entity_id, content, memory_type, sctx, stamp, session_id,
+                           topic, scope_decision) -> dict:
+    """memory_curate op='add' with a topic: the entry goes into its slot."""
+    from mastercode.memory_engine import _get_memory_embedding, classify_visibility
+    from mastercode.memory_slots import key_row, write_in_slot
+    scope, about, why = await _curate_slot_scope(pool, entity_id, memory_type, topic, sctx, scope_decision)
+    if why:
+        return {"error": why}
+    # The same words, live in this scope with no topic: a restatement, so
+    # that row takes the slot rather than a second copy beside it.
+    same = await pool.fetchval(
+        "SELECT id FROM entity_memory WHERE entity_id = $1 AND memory_type = $2 AND content = $3"
+        " AND slot_scope = $4 AND slot_topic IS NULL AND status = 'active' AND t_valid_until IS NULL"
+        " ORDER BY id DESC LIMIT 1", entity_id, memory_type, content, scope)
+    if same is not None:
+        res = await key_row(pool, entity_id, int(same), topic, restated=True, stamp=stamp)
+        await cons.note_held(entity_id, int(same), stamp)
+        out = {"action": "already_held", "memory_id": int(same), "topic": topic}
+        if res.get("replaced"):
+            out["replaced"] = res["replaced"]
+        return out
+    meta: dict = {"written_by": "memory_curate", **_learned_in(stamp)}
+    if sctx:
+        meta["source_context"] = sctx
+    if about is not None:
+        from datetime import datetime as _dt, timezone as _tz
+        meta.update({"about": about, "scoped_by": "host", "scoped_at": _dt.now(_tz.utc).isoformat(),
+                     "scoped_in": stamp})
+    from mastercode.memory_engine import turn_type_now
+    res = await write_in_slot(
+        pool, entity_id, content=content, memory_type=memory_type, scope=scope, topic=topic,
+        metadata=meta, embedding=await _get_memory_embedding(content),
+        source_session=str(session_id) if session_id else None,
+        visibility=classify_visibility(content), stamp=stamp, turn_type=turn_type_now(session_id))
+    if res["status"] == "already_held":
+        await cons.note_held(entity_id, res["id"], stamp)
+        return {"action": "already_held", "memory_id": res["id"], "topic": topic}
+    if res["status"] == "held_by_rule":
+        return {"error": (f"rule #{res['id']} holds topic '{topic}' here: what the person taught "
+                          "outranks an inferred preference, so nothing was stored. If they "
+                          f"changed it, correct the rule: op='replace' memory_id={res['id']}")}
+    out = {"action": "add", "memory_id": res["id"], "new": True, "topic": topic}
+    if res.get("replaced"):
+        out["replaced"] = res["replaced"][0] if len(res["replaced"]) == 1 else res["replaced"]
+    return out
 
 
 def _correction_scope(held) -> tuple[dict | None, str | None]:
@@ -8181,7 +8411,7 @@ _HELD_FOR_REPLACE = (
 
 
 async def _curate_replace(pool, cons, entity_id, target, content, asked_type, sctx,
-                          stamp, session_id) -> dict:
+                          stamp, session_id, *, topic=None) -> dict:
     """A correction of one row. The held row is read again here (a PII-mode
     write lands when the queue drains). The new row keeps the held row's
     type, project, share scope and weight, carries what the held row is
@@ -8232,7 +8462,7 @@ async def _curate_replace(pool, cons, entity_id, target, content, asked_type, sc
         return await _with_taught_places(pool, entity_id, int(dup), out)
     about, _err = _correction_scope(held)
     from datetime import datetime as _dt, timezone as _tz
-    meta: dict = {"edited_from": target, "written_by": "memory_curate"}
+    meta: dict = {"edited_from": target, "written_by": "memory_curate", **_learned_in(stamp)}
     if held_rule and "rule_kind" in old:
         meta["rule_kind"] = old["rule_kind"]
     if sctx:
@@ -8242,14 +8472,39 @@ async def _curate_replace(pool, cons, entity_id, target, content, asked_type, sc
     if about is not None:
         meta["about"] = about
         if held["has_about"]:
-            for k in ("scoped_by", "scoped_at", "scope_history"):
+            for k in ("scoped_by", "scoped_at", "scoped_in", "scope_history"):
                 if k in old:
                     meta[k] = old[k]
         else:
-            meta.update({"scoped_by": "memory_curate", "scoped_at": _dt.now(_tz.utc).isoformat()})
+            meta.update({"scoped_by": "memory_curate", "scoped_at": _dt.now(_tz.utc).isoformat(),
+                         "scoped_in": stamp})
     if taught:
         meta["held_in"] = [dict(e) for e in taught]
     from mastercode.memory_engine import _get_memory_embedding
+    held_topic = await pool.fetchval("SELECT slot_topic FROM entity_memory WHERE id = $1", target)
+    if topic or held_topic:
+        # The correction takes the slot: the held row and anything else in
+        # the slot are retired into it in one transaction (memory_slots).
+        from mastercode.memory_slots import slot_scope_for, write_in_slot
+        res = await write_in_slot(
+            pool, entity_id, content=content, memory_type=held["memory_type"],
+            scope=slot_scope_for(held["memory_type"], meta), topic=topic or held_topic,
+            metadata={**meta, "supersedes_id": target}, importance=float(held["importance"] or 1.0),
+            confidence=float(held["confidence"] or 1.0), visibility=held["visibility"] or "default",
+            embedding=await _get_memory_embedding(content),
+            source_session=str(session_id) if session_id else None, stamp=stamp,
+            rule=held_rule, also_retire=(target,), project_id=held["project_id"],
+            turn_type=__import__("mastercode.memory_engine", fromlist=["turn_type_now"]).turn_type_now(session_id))
+        if res["status"] == "held_by_rule":
+            return {"error": (f"rule #{res['id']} holds topic '{topic or held_topic}' there; a plain "
+                              f"preference never replaces it. Correct the rule: op='replace' "
+                              f"memory_id={res['id']}")}
+        if res["status"] == "already_held":
+            return {"action": "already_held", "memory_id": res["id"]}
+        out = {"action": "replace", "memory_id": res["id"],
+               "replaced": target if target in res["replaced"] else None, "new": True,
+               "topic": topic or held_topic}
+        return await _with_taught_places(pool, entity_id, res["id"], out)
     mid = int(await cons._insert_new_memory(
         entity_id, content, held["memory_type"], float(held["importance"] or 1.0),
         await _get_memory_embedding(content), None, target,
@@ -8463,13 +8718,19 @@ async def _memory_scope_ref(pool, entity_id, kind, ref):
     return ref, None
 
 
-async def apply_memory_scope(pool, entity_id: int, memory_id: int, kind: str, ref: str) -> dict:
+async def apply_memory_scope(pool, entity_id: int, memory_id: int, kind: str, ref: str, *,
+                             decided_in: dict | None = None) -> dict:
     """Set what one live preference is ABOUT (metadata.about) — the one writer
     of that decision, for memory_scope and close_turn alike. Where it was
     said (source_context, project_id) is provenance and is never changed.
-    Returns the tool-result shape; raises only on a database error."""
+    `decided_in` is the turn that decided it (scope_stamp: its conversation,
+    its message row and its token), kept as metadata.scoped_in: a decision
+    for "this conversation" made in a turn that later moves follows the turn
+    (circles_threads.carry_learned). None (a decision no turn made) clears
+    an earlier one's. Returns the tool-result shape; raises only on a
+    database error."""
     row = await pool.fetchrow(
-        "SELECT id, memory_type, status, t_valid_until, metadata FROM entity_memory "
+        "SELECT id, memory_type, status, t_valid_until, metadata, slot_topic FROM entity_memory "
         "WHERE id = $1 AND entity_id = $2", memory_id, entity_id)
     if not row:
         return _refused(f"memory {memory_id} not found")
@@ -8497,16 +8758,36 @@ async def apply_memory_scope(pool, entity_id: int, memory_id: int, kind: str, re
     undecided = "everywhere" if "rule_kind" in meta else "where said"
     history = (history + [{"from": prior or undecided, "at": now}])[-_SCOPE_HISTORY_KEEP:]
     patch = {"about": new_about, "scoped_by": "host", "scoped_at": now,
+             "scoped_in": decided_in if isinstance(decided_in, dict) else None,
              "scope_history": history}
     # A thread scope is written only while the thread is live, checked
     # under a share lock in the same statement: a delete in flight
     # finishes first (and its forget drops this decision), or waits for it.
-    res = await pool.execute(
-        "UPDATE entity_memory SET metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb, "
-        "updated_at = NOW() WHERE id = $1 AND entity_id = $2 AND ($4::text IS NULL OR EXISTS ("
-        "SELECT 1 FROM circles_threads WHERE id = $4::text::uuid AND entity_id = $2 "
-        "AND deleted_at IS NULL FOR SHARE))",
-        memory_id, entity_id, json.dumps(patch), ref if kind == "thread" else None)
+    # The row's slot_scope follows its new scope in the same statement; a row
+    # with a topic moves to that topic's slot there in the same transaction
+    # (memory_slots.move_scope), settled by the slot rule when another row
+    # holds it.
+    from mastercode.memory_slots import move_scope, slot_scope_for
+    new_scope = slot_scope_for(row["memory_type"], {**meta, **patch})
+    sql = ("UPDATE entity_memory SET metadata = COALESCE(metadata, '{}'::jsonb) || $3::jsonb, "
+           "slot_scope = CASE WHEN slot_topic IS NULL THEN $5 ELSE slot_scope END, "
+           "updated_at = NOW() WHERE id = $1 AND entity_id = $2 AND ($4::text IS NULL OR EXISTS ("
+           "SELECT 1 FROM circles_threads WHERE id = $4::text::uuid AND entity_id = $2 "
+           "AND deleted_at IS NULL FOR SHARE))")
+    sql_args = (memory_id, entity_id, json.dumps(patch), ref if kind == "thread" else None, new_scope)
+    moved = None
+    try:
+        topic = row["slot_topic"]
+    except (KeyError, IndexError):
+        topic = None
+    if not topic:
+        res = await pool.execute(sql, *sql_args)
+    else:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                res = await conn.execute(sql, *sql_args)
+                if not str(res).endswith(" 0"):
+                    moved = await move_scope(conn, entity_id, memory_id, new_scope)
     if str(res).endswith(" 0"):
         why = (f"thread {ref} was deleted" if kind == "thread" and not await pool.fetchval(
                    "SELECT 1 FROM circles_threads WHERE id = $1::uuid AND entity_id = $2 "
@@ -8514,6 +8795,8 @@ async def apply_memory_scope(pool, entity_id: int, memory_id: int, kind: str, re
                else f"memory {memory_id} changed while this ran")
         return _refused(f"{why}; nothing written")
     result = {"memory_id": memory_id, "from": prior or undecided, "to": new_about}
+    if moved and moved.get("replaced"):
+        result["replaced"] = moved["replaced"]
     # A rule rides where the person taught it, whatever place it is narrowed
     # to (memory_engine.rule_place_clause): the result names those places.
     kept = (_taught_places(meta, but=new_about)
@@ -8557,7 +8840,13 @@ async def _exec_memory_scope(args, *, session_id=None):
         entity_id = brain_service._entity_id
         if kind == "list":
             return await _memory_scope_list(pool, entity_id)
-        return await apply_memory_scope(pool, entity_id, memory_id, kind, ref)
+        # The turn deciding it: its conversation, its message and its token.
+        from mastercode.memory_consolidation import scope_stamp
+        from mastercode.memory_engine import (
+            session_source_context, turn_from_turns, turn_tokens_now)
+        decided_in = scope_stamp(await session_source_context(pool, entity_id, session_id),
+                                 await turn_from_turns(session_id), turn_tokens_now(session_id))
+        return await apply_memory_scope(pool, entity_id, memory_id, kind, ref, decided_in=decided_in)
     except Exception as e:
         return _refused_if_caller(e, f"memory_scope failed: {getattr(e, 'detail', None) or e}")
 
@@ -13140,7 +13429,7 @@ async def _exec_context_ingest(args: dict) -> dict:
             except (TypeError, ValueError):
                 per_page = 50
             # Tool results the host stashed for its own recall (source
-            # 'tool:<name>', thread_consolidator.stash_tool_artifacts) are NOT
+            # 'tool:<name>', the retired artifact capture) are NOT
             # the user's documents and are excluded by default — a fresh host
             # listed "personality_state result" beside the user's uploads and
             # described it as theirs. include_host_staged
@@ -20297,9 +20586,10 @@ async def _exec_archive_project(args: dict, entity_id: int, pool) -> dict:
 async def _exec_project_adopt_thread(args: dict, entity_id: int, pool) -> dict:
     """Move a chat thread (or one episode of it) into a project — retag,
     never delete. The user's 'that general conversation belongs in this
-    project' op: turns + their derived memories get project_id +
-    source_context {project, N}; a marker turn stays behind in the source
-    thread. Use chat_threads (op='list'/'episodes') to identify the source."""
+    project' op: the turns get project_id + source_context {project, N} and
+    what was learned from them is said in the project too
+    (adopt_thread_core); a marker turn stays behind in the source thread.
+    Use chat_threads (op='list'/'episodes') to identify the source."""
     a = args or {}
     try:
         project_id = int(a.get("project_id"))

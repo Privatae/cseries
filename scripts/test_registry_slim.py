@@ -251,7 +251,13 @@ PURPOSE_MAX = 160
 #   call carries is CORE_MAX below, and `data` does not change it.
 #   memory_curate op='alias': one enum word and one
 #   sentence on the same tool. Measured 162,735 -> 162,793, +58.
-WIRE_MAX = 162_793
+#   Memory slots (migrations/v241): one live entry per type, scope and topic,
+#   the topic named by the Host in its own call. close_turn's preferences and
+#   memory_curate each gain `topic` (memory_curate also `scope` and op='key'),
+#   with one clause each saying the newest in a topic replaces the older; the
+#   "a duplicate is kept once" clause was cut to pay part of it. No new tool.
+#   Measured 162,793 -> 163,056, +263.
+WIRE_MAX = 163_056
 OPERATOR_WIRE_MAX = 4_693
 # CORE_MAX: what a
 # search-mode Host sends on every call, per surface — the six verbs in search

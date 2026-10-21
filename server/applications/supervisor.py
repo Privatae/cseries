@@ -233,6 +233,19 @@ class SupervisorError(RuntimeError):
         self.status = status
 
 
+class WakeRefused(SupervisorError):
+    """This machine refused to start the app's container for a reason the
+    owner can act on (harness_backend.wake_refused): `code` is the refusal's
+    status (402, 429, 507) and `message` its one line of words. `status`
+    stays None: the caller asked for nothing wrong."""
+
+    def __init__(self, app_id: str, code: int, message: str):
+        super().__init__(f"{app_id} could not start: {message}")
+        self.app_id = app_id
+        self.code = int(code)
+        self.message = message
+
+
 def _pick_port() -> int:
     """Bind a temp socket to port 0, read the assigned port, close.
     Briefly racy with another listener — sidecars retry once on
@@ -338,6 +351,9 @@ class Supervisor:
             _hb.app_hold(manifest.id)
         host = await _hb.ensure_awake_app(manifest.id)
         if host is None:
+            why = _hb.wake_refused(manifest.id)
+            if why:
+                raise WakeRefused(manifest.id, why["code"], why["message"])
             raise SupervisorError(
                 f"runtime pod for {manifest.id} did not wake"
                 + (" yet — it is resident, so the lane keeps re-waking it "

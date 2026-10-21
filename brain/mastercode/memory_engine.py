@@ -1053,24 +1053,85 @@ def is_person_pattern(hit: dict) -> bool:
     return isinstance(meta, dict) and meta.get("source") == "consolidation_pattern"
 
 
-def format_memory_line(content: str, when=None, memory_type: str | None = None) -> str:
+def format_memory_line(content: str, when=None, memory_type: str | None = None,
+                       *, topic: str | None = None, row_id=None) -> str:
     """One prompt line for a memory row. Every row carries its DATE, and a
     row in the host's own words says so:
         - [2026-08-04] the fact
         - [2026-08-22, your own words then] what you replied that day
     A memory without a date is a claim with no provenance — the Host could not
-    tell which of five contradicting snapshots was current."""
+    tell which of five contradicting snapshots was current. A row with a
+    slot topic (memory_slots) names it, and a row's #id is given when known,
+    so the Host can reuse the topic, or key or correct the row by id:
+        - [2026-10-19, topic spelling, #41] the preference"""
     d = _memory_date(when)
     own = memory_type in OWN_WORDS_TYPES
     if d and own:
-        tag = f"[{d}, your own words then] "
+        head = f"{d}, your own words then"
     elif d:
-        tag = f"[{d}] "
+        head = d
     elif own:
-        tag = "[undated, your own words then] "
+        head = "undated, your own words then"
     else:
-        tag = "[undated] "
-    return f"\n- {tag}{content}"
+        head = "undated"
+    if topic:
+        head += f", topic {topic}"
+    if row_id is not None:
+        head += f", #{row_id}"
+    return f"\n- [{head}] {content}"
+
+
+# How many live rows of one type the standing list reads before it picks the
+# newest five: every row a Host realistically holds in one scope. Past it the
+# count it reports says "or more".
+STANDING_CANDIDATES = 200
+STANDING_SHOWN = 5
+TOPICS_LINE_MAX = 40
+
+
+def omitted_line(n: int, label: str, how: str, *, at_least: bool = False) -> str:
+    """The line a section ends with when its cap or the block's budget left
+    live entries out: how many, and how to read them. Nothing left out, no
+    line: an entry never leaves the prompt without the Host being told."""
+    if n <= 0:
+        return ""
+    more = f"{n}{'+' if at_least else ''} more {label}"
+    return f"\n- ({more} not shown here; {how})"
+
+async def topics_line(pool, entity_id: int, source_context: Optional[dict] = None) -> str:
+    """One line naming the slot topics in use per type (memory_slots) where
+    this turn reads them: global slots and the turn's own scope's (a
+    relationship note is read everywhere, so its slots are global). At most
+    TOPICS_LINE_MAX, '' when there are none. Never raises."""
+    from mastercode.memory_slots import slot_scope_for
+    scopes = ["global"]
+    if isinstance(source_context, dict) and source_context.get("kind"):
+        here = slot_scope_for("preference", {"source_context": source_context})
+        if here and here not in scopes:
+            scopes.append(here)
+    try:
+        rows = await pool.fetch(
+            "SELECT memory_type, slot_topic, count(*) AS n FROM entity_memory"
+            " WHERE entity_id = $1 AND slot_topic IS NOT NULL AND status = 'active'"
+            "   AND t_valid_until IS NULL AND memory_type IN ('preference', 'relationship')"
+            "   AND slot_scope = ANY($3::text[])"
+            " GROUP BY memory_type, slot_topic ORDER BY memory_type, max(created_at) DESC"
+            " LIMIT $2", entity_id, TOPICS_LINE_MAX, scopes)
+    except Exception as e:  # noqa: BLE001 — the block stands without it
+        log.debug("topics line skipped: %s", e)
+        return ""
+    if not rows or not isinstance(rows, list):
+        return ""
+    by: dict[str, list[str]] = {}
+    for r in rows:
+        try:
+            by.setdefault(r["memory_type"], []).append(r["slot_topic"])
+        except Exception:  # noqa: BLE001
+            return ""
+    said = "; ".join(f"{t}: {', '.join(v)}" for t, v in by.items())
+    return (f"\nTopics in use ({said}). A memory written with one of these topics, "
+            "in the same place, replaces the entry there.")
+
 
 
 _last_prefire_items: dict[int, list[str]] = {}
@@ -1551,7 +1612,9 @@ async def recall_recent_turns(
         # The Host's own words, and any platform notice as a note kind
         # (host_part).
         host, notes = host_part(content, md)
-        item = {"role": role, "content": host}
+        # row_id: where the window's front is, so what fell out of it can be
+        # read by id (evicted_record); history_messages never sends it.
+        item = {"role": role, "content": host, "row_id": r["id"]}
         if notes:
             item["platform_note"] = notes
         # The tools the turn called, by target (search mode's history notes,
@@ -2059,7 +2122,7 @@ OPEN_LOOP_HALF_LIFE_DAYS = 7.0
 #
 # The rest by the same test — is this row a belief the extractor is entitled to
 # revise?
-#   summary        thread_consolidator._store_summary owns its supersession
+#   summary        no writer now (the rolling summary is retired, v241)
 #                  chain and versions it. Two writers on one chain is how a
 #                  live row gets superseded twice.
 #   constitutional prescriptive guardrail text, never user-derived.
@@ -2394,6 +2457,65 @@ ABOUT_MACHINERY = "machinery"
 # user row lands later. A task started from the turn inherits a copy.
 CURRENT_TURN_SCOPE: "contextvars.ContextVar[dict | None]" = contextvars.ContextVar(
     "current_turn_scope", default=None)
+# ...and the turn itself, {"session_id", "task", "token"}: `token` is the id
+# the turn has from its start (session.py's turn_token, kept on every row of
+# the turn, its message row included, and through the PII queue's scrub), and
+# `task` the write of its message row (it returns the row's id). What the turn
+# learns (close_turn, memory_curate, memory_scope) names the turn in
+# metadata.from_turn_tokens, and the row in metadata.from_turns when the write
+# knows it, in its stamps too, as a rule taught in the message does
+# (session._keep_taught), so it follows the message wherever the message goes
+# (circles_threads.carry_learned) and leaves with it. In PII mode the row is
+# queued and its id is never known to the write: the token still is.
+CURRENT_TURN_ROW: "contextvars.ContextVar[dict | None]" = contextvars.ContextVar(
+    "current_turn_row", default=None)
+# How long a write in the turn waits for that row (seconds): the bound the
+# move at the turn's end waits for it with (thread_choice._await_row).
+TURN_ROW_WAIT = 30
+
+
+async def turn_from_turns(session_id) -> list[int]:
+    """[the running turn's message row id] for a write in that turn, waited
+    for (bounded, TURN_ROW_WAIT); [] outside a turn of `session_id`, for a
+    turn with no message row (a woken turn), or when the row is not written
+    (PII mode queues it; a failed write). Never raises."""
+    cur = CURRENT_TURN_ROW.get()
+    if not (isinstance(cur, dict) and session_id is not None
+            and str(cur.get("session_id")) == str(session_id)):
+        return []
+    task = cur.get("task")
+    if task is None:
+        return []
+    try:
+        rid = await asyncio.wait_for(asyncio.shield(task), timeout=TURN_ROW_WAIT)
+    except asyncio.CancelledError:
+        # The row's own write was cancelled: the write goes on without it. A
+        # cancellation of this caller is its own, and goes on up.
+        if task.done() and task.cancelled():
+            return []
+        raise
+    except Exception as e:  # noqa: BLE001 — the write stands without its link
+        log.info("turn row not known to the write (%s); stored without from_turns", e)
+        return []
+    try:
+        return [int(rid)] if rid else []
+    except (TypeError, ValueError):
+        return []
+
+
+def turn_tokens_now(session_id) -> list[str]:
+    """[the running turn's token] for a write in that turn (CURRENT_TURN_ROW),
+    known from the turn's start, so a queued write captures it before it is
+    queued; [] outside a turn of `session_id`. Read in the turn's own task: a
+    queued write lands in the drain worker, whose context is not the turn's."""
+    cur = CURRENT_TURN_ROW.get()
+    if not (isinstance(cur, dict) and session_id is not None
+            and str(cur.get("session_id")) == str(session_id)):
+        return []
+    tok = cur.get("token")
+    return [str(tok)] if tok else []
+
+
 # ...and the write-tag it runs under, {"session_id", "tag"}: a replay, an A/B
 # variant or a fired wake-up (HIDDEN_LANE_APP_IDS) runs in a conversation
 # without being part of it, so the memory tools write nothing from it — the
@@ -2433,6 +2555,25 @@ def current_turn_room() -> dict | None:
     """A copy of the running turn's room, or None outside a turn."""
     cur = CURRENT_TURN_ROOM.get()
     return dict(cur) if isinstance(cur, dict) and cur.get("app_id") else None
+
+
+# The turn type the turn running in THIS task resolved to, {"session_id",
+# "name"}: set by runtime/session.py once the type is known. Every memory row
+# the turn writes is stamped with it (entity_memory.turn_type, migrations/v241)
+# by the platform, never by the model.
+CURRENT_TURN_TYPE: "contextvars.ContextVar[dict | None]" = contextvars.ContextVar(
+    "current_turn_type", default=None)
+
+
+def turn_type_now(session_id=None) -> str | None:
+    """The running turn's type name for stamping, or None outside a turn (or
+    in another session's). 'untyped' for a turn with no type."""
+    cur = CURRENT_TURN_TYPE.get()
+    if not isinstance(cur, dict):
+        return None
+    if session_id is not None and str(cur.get("session_id")) != str(session_id):
+        return None
+    return str(cur.get("name") or "untyped")
 
 
 def taught_this_turn(session_id) -> list[str]:
@@ -2634,13 +2775,23 @@ class MemoryEngine:
         session_id: Optional[str] = None,
         source_context: Optional[dict] = None,
         from_turns: Optional[list] = None,
+        turn_type: Optional[str] = None,
+        turn_tokens: Optional[list] = None,
     ) -> Optional[dict]:
         """Store a teaching memory with max importance, personality-agnostic vector.
 
+        `turn_type` is the name of the turn type the teaching turn ran under,
+        stamped on the row (entity_memory.turn_type) by the platform. The rule
+        arrives with no topic (the words are the person's, kept as they came);
+        the Host keys it in its own turn (memory_curate op='key'), and a rule
+        then outranks a plain preference in its slot (memory_slots).
+
         `source_context` is the scope the teaching was said in and `from_turns`
-        the turn rows it came from, stamped like every other derived row's, so
-        deleting that thread (circles_threads.delete_thread) takes what was
-        taught in it too, and a Split carries it with its messages.
+        the turn rows it came from (`turn_tokens` the same turns by their
+        token, which is all a PII-mode write knows: CURRENT_TURN_ROW), stamped
+        like every other derived row's, so deleting that thread
+        (circles_threads.delete_thread) takes what was taught in it too, and a
+        Split carries it with its messages.
 
         A taught rule is a preference marked rule_kind='taught' (RULE_KINDS),
         and this insert is the one way one is taught; "Remember
@@ -2685,10 +2836,11 @@ class MemoryEngine:
             "skill_memory": True,
             "injection_flags": _teach_flags,  # C9: screening result (audit trail)
         }
+        from mastercode.memory_consolidation import turn_marks
+        turns = turn_marks({"from_turns": from_turns, "from_turn_tokens": turn_tokens})
         if source_context:
             metadata["source_context"] = source_context
-        if from_turns:
-            metadata["from_turns"] = [int(t) for t in from_turns]
+        metadata.update(turns)
         # Where the person taught it, marked as a repeat teaching marks its own
         # place (note_held taught=True): if the Host later narrows the rule,
         # it still rides here (rule_place_clause, memory_retrieval.
@@ -2697,9 +2849,7 @@ class MemoryEngine:
             from datetime import datetime as _dt, timezone as _tz
             _taught_here = {"kind": str(source_context["kind"]),
                             "ref": str(source_context.get("ref") or ""),
-                            "at": _dt.now(_tz.utc).isoformat(), "taught": True}
-            if from_turns:
-                _taught_here["from_turns"] = [int(t) for t in from_turns]
+                            "at": _dt.now(_tz.utc).isoformat(), "taught": True, **turns}
             metadata["held_in"] = [_taught_here]
         vec = [1.0] * 10  # Personality-agnostic — surfaces for any entity weight config
 
@@ -2716,7 +2866,7 @@ class MemoryEngine:
             # so deleting the rule's own thread keeps it. Gone by now (a
             # thread's delete took it), the rule is stored here instead.
             from mastercode.memory_consolidation import scope_stamp
-            stamp = scope_stamp(source_context, from_turns)
+            stamp = scope_stamp(source_context, from_turns, turn_tokens)
             holder = None
             if held_rule is not None and await self.consolidator.note_held(
                     entity_id, int(held_rule), stamp, taught=True):
@@ -2734,15 +2884,17 @@ class MemoryEngine:
                 await self._retire_into_rule(entity_id, plain_ids, holder, stamp)
                 return None
 
+            from mastercode.memory_slots import slot_scope_for
             row = await self.pool.fetchrow("""
                 INSERT INTO entity_memory (
                     entity_id, content, memory_type, source_session,
-                    importance, confidence, visibility, metadata
-                ) VALUES ($1, $2, 'preference', $3, $5, 1.0, 'default', $4::jsonb)
+                    importance, confidence, visibility, slot_scope, turn_type, metadata
+                ) VALUES ($1, $2, 'preference', $3, $4, 1.0, 'default', $5, $6, $7::jsonb)
                 RETURNING id, content, memory_type, importance
             """,
-                entity_id, content, session_id,
-                json.dumps(metadata), TAUGHT_IMPORTANCE,
+                entity_id, content, session_id, TAUGHT_IMPORTANCE,
+                slot_scope_for("preference", metadata), turn_type,
+                json.dumps(metadata),
             )
             log.info("Stored teaching memory for entity %d: %s", entity_id, content[:80])
             if row:
@@ -3112,7 +3264,7 @@ class MemoryEngine:
         sql = f"""
             SELECT
                 id, content, memory_type, importance, confidence,
-                access_count, created_at, visibility, metadata,
+                access_count, created_at, visibility, metadata, slot_topic,
                 {semantic_sim_expr}    AS semantic_sim,
                 {tier_expr}            AS tier_boost,
                 {recency_expr}         AS recency_factor,
@@ -3167,8 +3319,11 @@ class MemoryEngine:
                 except Exception:
                     meta = {}
             entry = {
+                "id": r["id"],
                 "content": r["content"],
                 "type": r["memory_type"],
+                "topic": r["slot_topic"],
+                "created_at": r["created_at"],
                 "importance": r["importance"],
                 # `relevance` = semantic similarity;
                 # neutral 0.5 when retrieval ran without a query embedding.
@@ -3434,8 +3589,11 @@ class MemoryEngine:
             # decides which ride. Relationship notes keep theirs.
             memories = []
             for _mtype in sorted(PROMPT_MEMORY_TYPES):
+                # The scope's whole live set of the type (bounded), so the
+                # section can show the NEWEST five and say how many it left
+                # out (below), never drop the rest unannounced.
                 memories += await self.retrieve(
-                    entity_id, personality_weights, limit=10,
+                    entity_id, personality_weights, limit=STANDING_CANDIDATES,
                     memory_types=[_mtype], consumer=consumer,
                     source_context=source_context, count_access=False,
                     min_importance=0.0 if _mtype == "preference" else 0.5,
@@ -3491,34 +3649,50 @@ class MemoryEngine:
             turn_place_sql, turn_place_args = typed_rule_clause(source_context, _typed_projects, 2)
             rows = await self.pool.fetch(f"""
                 SELECT id, content, memory_type, importance, confidence,
-                       access_count, created_at, visibility, metadata
+                       access_count, created_at, visibility, metadata, slot_topic,
+                       count(*) OVER () AS live_rules
                 FROM entity_memory
                 WHERE entity_id = $1 AND {rule_row_sql()}
                   AND status = 'active' AND (t_valid_until IS NULL OR t_valid_until > NOW())
                   AND {turn_place_sql}
-                ORDER BY importance DESC, created_at DESC
+                ORDER BY importance DESC, created_at DESC, id DESC
                 LIMIT 5
             """, entity_id, *turn_place_args)
             teaching_mems = [
                 {"content": r["content"], "type": "skill_memory", "importance": r["importance"],
                  "relevance": 1.0, "confidence": r["confidence"], "visibility": r["visibility"],
-                 "source": "skill_memory", "age": r["created_at"]}
+                 "source": "skill_memory", "age": r["created_at"], "id": r["id"],
+                 "topic": r["slot_topic"]}
                 for r in rows
             ]
+            _taught_live = int(rows[0]["live_rules"]) if rows else 0
         # Built here, before the pre-fire, and placed after it: its budget
         # comes first (highest priority), and the words it carries are known
         # before any preference section renders.
         taught_section, taught_keys = "", set()
+        # Every row the block shows, by id: the turn records which memories
+        # rode (prefire_sink["rode"]), so the owner can see it.
+        _rode: list[dict] = []
         if teaching_mems:
             section = "\n### Things You Were Taught"
             section_len = len(section)
+            _shown_taught = 0
             for item in teaching_mems[:5]:
-                line = format_memory_line(item["content"], item.get("age"), "skill_memory")
+                line = format_memory_line(item["content"], item.get("age"), "skill_memory",
+                                          topic=item.get("topic"), row_id=item.get("id"))
                 if section_len + len(line) + chars_used > char_budget:
                     break
                 section += line
                 section_len += len(line)
+                _shown_taught += 1
                 taught_keys.add(same_words_key(item.get("content")))
+                if item.get("id") is not None:
+                    _rode.append({"id": item["id"], "type": "rule", "section": "taught"})
+            if not ctx:
+                _left = omitted_line(max(_taught_live - _shown_taught, 0), "rules you were taught",
+                                     "memory_scope kind='list' lists every one")
+                section += _left
+                section_len += len(_left)
             if section_len > len("\n### Things You Were Taught"):
                 taught_section = section
                 chars_used += section_len
@@ -3577,7 +3751,12 @@ class MemoryEngine:
                                      # The words of the rules the taught block
                                      # carries are dropped before the limit too,
                                      # so a copy never takes a slot.
-                                     skip_words=set(taught_keys)),
+                                     skip_words=set(taught_keys),
+                                     # Two of the message's words, or the
+                                     # row's topic, are a match: every word
+                                     # of the message almost never is
+                                     # (memory_retrieval._lexical_arm).
+                                     any_words=True),
                     timeout=4.0)
                 for h in (fed.get("memory") or {}).get("hits", []):
                     matched = h.get("matched") or []
@@ -3623,7 +3802,8 @@ class MemoryEngine:
                         continue
                     if len(content) > 500:
                         content = content[:497] + "..."
-                    line = format_memory_line(content, h.get("created_at"), h.get("memory_type"))
+                    line = format_memory_line(content, h.get("created_at"), h.get("memory_type"),
+                                              topic=h.get("slot_topic"), row_id=h.get("id"))
                     if section_len + len(line) + chars_used > char_budget:
                         break
                     # Register the dedup key only once the line is actually
@@ -3637,6 +3817,9 @@ class MemoryEngine:
                     _fired_meta.append({"id": h.get("id"), "type": h.get("memory_type"),
                                         "scope": _hit_scope(h),
                                         "pattern": is_person_pattern(h)})
+                    if h.get("id") is not None:
+                        _rode.append({"id": h.get("id"), "type": h.get("memory_type"),
+                                      "section": "relevant"})
                 if section_len > len("\n### Relevant Right Now"):
                     parts.append(section)
                     chars_used += section_len
@@ -3667,6 +3850,8 @@ class MemoryEngine:
             parts.append(taught_section)
 
         if not memories and len(parts) == 1:
+            if isinstance(prefire_sink, dict):
+                prefire_sink["rode"] = _rode
             return "" if not teaching_mems else "\n".join(parts)
 
         # Group by type for clean formatting
@@ -3696,12 +3881,31 @@ class MemoryEngine:
                 it for it in items
                 if same_words_key(it.get("content")) not in prefired_keys
             ]
-            for item in items[:5]:  # Max 5 per type
-                line = format_memory_line(item["content"], item.get("age"), item.get("type"))
+            # Newest first within the type, ties to the newest row: of two
+            # entries that disagree, the later statement leads.
+            items.sort(key=lambda it: (str(it.get("age") or ""), int(it.get("id") or 0)),
+                       reverse=True)
+            shown = 0
+            for item in items[:STANDING_SHOWN]:  # the newest five per type
+                line = format_memory_line(item["content"], item.get("age"), item.get("type"),
+                                          topic=item.get("topic"), row_id=item.get("id"))
                 if section_len + len(line) + chars_used > char_budget:
                     break
                 section += line
                 section_len += len(line)
+                shown += 1
+                if item.get("id") is not None:
+                    _rode.append({"id": item["id"], "type": mem_type, "section": "standing"})
+            left = omitted_line(
+                len(items) - shown,
+                "preferences" if mem_type == "preference" else "relationship notes",
+                "recall finds them by topic or words" + (
+                    ", and memory_scope kind='list' lists every preference"
+                    if mem_type == "preference" else ""),
+                at_least=len(by_type.get(mem_type, [])) >= STANDING_CANDIDATES)
+            if left:
+                section += left
+                section_len += len(left)
 
             if section_len > len(f"\n### {label}"):
                 parts.append(section)
@@ -3710,9 +3914,19 @@ class MemoryEngine:
             if chars_used > char_budget:
                 break
 
+        if isinstance(prefire_sink, dict):
+            prefire_sink["rode"] = _rode
         if len(parts) == 1:
             return ""
-
+        # The topics already in use (memory_slots), so a close_turn
+        # preference reuses one instead of coining a near twin: the newest
+        # entry in a topic replaces the older there.
+        # A project-typed turn reads its projects' rows only, so it is shown
+        # no topic of anywhere else.
+        if _ctx_memory != "projects":
+            _topics = await topics_line(self.pool, entity_id, source_context)
+            if _topics:
+                parts.append(_topics)
         return "\n".join(parts)
 
     async def _build_teaching_block(self, entity_id: int, conversation_context: str,

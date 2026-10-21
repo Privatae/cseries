@@ -201,16 +201,50 @@ def main() -> int:
     real_exchange = oauth.exchange_code
     oauth.exchange_code = _fake_exchange
     try:
-        for state, expect in ((prefixed, "https://privatae.ai/api/integrations/"
-                                         "callback/gmail"),
-                              (signed, f"https://{BROWSER}/api/integrations/"
-                                       f"callback/gmail")):
+        minted = oauth.mint_state({"provider": "gmail", "user_id": "3"})
+        for state, expect in ((f"{BROWSER}{oauth.STATE_PREFIX_SEP}{minted}",
+                               "https://privatae.ai/api/integrations/callback/gmail"),
+                              (oauth.mint_state({"provider": "gmail", "user_id": "3"}),
+                               f"https://{BROWSER}/api/integrations/callback/gmail")):
             captured.clear()
             asyncio.run(g.handle_callback("gmail", "fake-code", state,
                                           f"https://{BROWSER}"))
             got = captured[0] if captured else None
             check(f"handle_callback exchanges against {expect.split('/')[2]}",
                   got == expect, f"got {got}")
+
+        # ── a state works once, and only one this Host minted ──────────
+        # The callback is reached without a session (on an https Host the
+        # SameSite=Strict cookie stays off the provider's redirect), so the
+        # state alone has to say this Host started this sign-in, just now.
+        def _exchanged(state: str) -> tuple[bool, str | None]:
+            captured.clear()
+            res = asyncio.run(g.handle_callback("gmail", "fake-code", state, f"https://{BROWSER}"))
+            return bool(captured), res.get("error")
+
+        once = oauth.mint_state({"provider": "gmail", "user_id": "3"})
+        first, second = _exchanged(once), _exchanged(once)
+        check("a minted state is exchanged once; the same state again is refused before "
+              "any exchange", first[0] and second == (False, "invalid_state"), f"{first} {second}")
+        check("a state signed with this Host's key but never minted is refused",
+              _exchanged(signed) == (False, "invalid_state"))
+        late = oauth.mint_state({"provider": "gmail", "user_id": "3"})
+        late_key = oauth._nonce_key(oauth.verify_state(late)["nonce"])
+        oauth._pending_states[late_key] = time.monotonic() - 1
+        check("a minted state past its fifteen minutes is refused",
+              _exchanged(late) == (False, "invalid_state"))
+        wrong = oauth.mint_state({"provider": "calendar", "user_id": "3"})
+        check("a state minted for another provider is refused",
+              _exchanged(wrong) == (False, "invalid_state"))
+        saved_max = oauth._PENDING_STATES_MAX
+        try:
+            oauth._PENDING_STATES_MAX = 4
+            states = [oauth.mint_state({"provider": "gmail", "user_id": "3"}) for _ in range(6)]
+            check("the minted states stay bounded; the oldest go",
+                  len(oauth._pending_states) <= 4 and _exchanged(states[0])[1] == "invalid_state"
+                  and _exchanged(states[-1])[0], len(oauth._pending_states))
+        finally:
+            oauth._PENDING_STATES_MAX = saved_max
     finally:
         oauth.exchange_code = real_exchange
 

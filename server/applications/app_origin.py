@@ -192,8 +192,10 @@ def response_csp(origin: Origin, path: str, existing: str) -> str:
 
 
 # An app origin's own session: redeeming the desktop's one-time join code,
-# and asking whether the session is live (server/routes/owner.py).
-APP_SESSION_PATHS = frozenset({"/__host/session", "/__host/renew"})
+# and asking whether the session is live (server/routes/owner.py); and the
+# front door's question about a request for this origin, which the door must
+# be able to ask on every name it serves (owner_session.door_decision).
+APP_SESSION_PATHS = frozenset({"/__host/session", "/__host/renew", "/__host/door"})
 
 # The shared files the first-party isolated apps load from their own origin
 # (grepped from their HTML/JS/CSS): the design stylesheets, the

@@ -2,17 +2,16 @@
 """Tool results the host stashes for itself are never the user's documents.
 
 WHAT THIS PROTECTS.
-thread_consolidator.stash_tool_artifacts saves a turn's tool results as
-user_context rows (source 'tool:<name>') so a follow-up question can recall
-them. A fresh entity's corpus held files named "personality_state result" and
+An earlier artifact capture saved a turn's tool results as user_context rows
+(source 'tool:<name>') so a follow-up question could recall them; the
+capture and its janitor are retired (migrations/v241), and Hosts that ran it
+still hold such rows. A fresh entity's corpus held files named "personality_state result" and
 "model_route result" — the host's own self-state reads — and the host's
 op='files' listed them beside the user's uploads and called them the user's
 documents. Three couplings:
 
-  1. WHAT GETS STASHED. The only gate was a 200-char size floor. Now the
-     registry's own `_meta.category` decides: only external-content categories
-     (ARTIFACT_CATEGORIES) are worthy; every host-introspection category and
-     every unknown tool is not.
+  1. NOTHING IS STASHED ANY MORE. No module defines the capture; the rows
+     already stashed are handled by 2 and 3.
   2. WHAT op='files' RETURNS. The host's listing passed source=None, so
      everything came back. It now excludes source 'tool:*' by default and
      labels them host_staged when asked for.
@@ -58,53 +57,13 @@ def main() -> int:
 
     print("tool artifacts — never the user's documents")
 
-    # ── 1. What gets stashed ────────────────────────────────────────────
-    # thread_consolidator.py: ARTIFACT_CATEGORIES / _tool_category /
-    # artifact_worthy are defined beside ARTIFACT_MIN_CHARS.
-    import mastercode.thread_consolidator as tc  # noqa: E402
-
-    # The two files the stranger interview found, plus the rest of the host's
-    # self-state surface: none may become a user document.
-    for name in ("personality_state", "model_route", "inference_catalog",
-                 "embedding_route", "coding_bench", "harness_costs",
-                 "list_projects", "get_project", "entity_tasks", "capabilities",
-                 "explore_environment", "describe_app", "context_ingest",
-                 "memory_curate", "tickets", "get_network"):
-        cat = tc._tool_category(name)
-        check(f"{name} ({cat}) is not artifact-worthy",
-              tc.artifact_worthy(name) is False, f"category={cat!r}")
-    # External content the user may ask about later IS worthy.
-    for name in ("research", "web_search", "read_url", "github", "local_grep",
-                 "workspace_file"):
-        cat = tc._tool_category(name)
-        check(f"{name} ({cat}) is artifact-worthy",
-              tc.artifact_worthy(name) is True, f"category={cat!r}")
-    # Unknown provenance never becomes a user document.
-    for name in ("", "unknown", "some_future_tool"):
-        check(f"unregistered tool {name!r} is not artifact-worthy",
-              tc.artifact_worthy(name) is False)
-    # The orchestration verbs have no registry schema: only dispatch (a
-    # delegated agent's report — external content) is worthy; the other four
-    # describe the host's own plumbing.
-    check("dispatch (delegated agent's report) is artifact-worthy",
-          tc.artifact_worthy("dispatch") is True)
-    for name in ("operate", "recall", "agent_status", "escalate"):
-        check(f"orchestration verb {name!r} is not artifact-worthy",
-              tc.artifact_worthy(name) is False)
-    check("ARTIFACT_TOOLS is exactly the dispatch verb",
-          tc.ARTIFACT_TOOLS == frozenset({"dispatch"}), str(sorted(tc.ARTIFACT_TOOLS)))
-    check("every ARTIFACT_CATEGORY names external content only",
-          not (tc.ARTIFACT_CATEGORIES & {"brain", "memory", "projects", "apps",
-                                         "environment", "system", "governance",
-                                         "vault", "network", "comms", "review",
-                                         "build", "settings", "community",
-                                         "context"}),
-          str(sorted(tc.ARTIFACT_CATEGORIES)))
-    src_tc = _read(repo, "brain/mastercode/thread_consolidator.py")
-    guard = 'artifact_worthy(str((a or {}).get("tool")'
-    check("stash_tool_artifacts consults artifact_worthy before the size floor",
-          guard in src_tc
-          and src_tc.find(guard) < src_tc.find("if len(content) < ARTIFACT_MIN_CHARS"))
+    # ── 1. Nothing is stashed any more ──────────────────────────────────
+    import pathlib as _pl
+    _defs = [str(f) for f in _pl.Path(repo, "brain").rglob("*.py")
+             if "def stash_tool_artifacts" in f.read_text(encoding="utf-8", errors="replace")]
+    check("no module defines the artifact capture (it and its janitor are retired)",
+          not _defs and not os.path.exists(os.path.join(repo, "brain/mastercode/thread_consolidator.py")),
+          str(_defs))
 
     # ── 2. What op='files' returns ──────────────────────────────────────
     src_tools = _read(repo, "brain/mastercode/runtime/tools.py")

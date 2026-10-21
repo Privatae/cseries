@@ -121,6 +121,45 @@ BACKSTOP_TOOL_ROUNDS = 200
 # their unpriced-route allowance down, with no second control to find.
 TOKEN_ALLOWANCE_MULTIPLIER = 20
 
+# THE DEFAULT, when nobody set a dollar figure (no per-thread dial, no
+# Host-wide turn_allowance_usd). Until 2026-10-19 the default was none: a turn
+# ran to BACKSTOP_TOOL_ROUNDS, 200 rounds of whatever the window held, with
+# nothing between a looping turn and the owner's bill. The default
+# is now the workflow ceiling this file already researched, in the unit every
+# route can meter: DEFAULT_TURN_ROUNDS full-context rounds, counted in tokens
+# (the context budget times the rounds), so a priced route, a subscription and
+# a local model are all bounded alike and no dollar figure is invented.
+#   DEFAULT_TURN_ROUNDS = TOKEN_ALLOWANCE_MULTIPLIER (20): the mode and median
+#     of the workflow ceilings listed above (LlamaIndex 20, smolagents 20,
+#     CrewAI 25, OpenAI Agents SDK 10).
+#   DEFAULT_SCHEDULED_ROUNDS = 10: a scheduled run has no person watching to
+#     say "go on", so it takes the low end of the same population (the OpenAI
+#     Agents SDK's DEFAULT_MAX_TURNS, which raises when reached).
+# With the default 32k history ceiling (context_budget.
+# DEFAULT_HISTORY_CEILING_TOKENS) a turn's default is about 20 x (32k history
+# + the system blocks) tokens. The owner changes both in dollars or rounds
+# (context_budget.read_turn_defaults); 0 rounds turns the default off.
+DEFAULT_TURN_ROUNDS = TOKEN_ALLOWANCE_MULTIPLIER
+DEFAULT_SCHEDULED_ROUNDS = 10
+
+
+def meter_budget(ctx_budget, *, allowance_usd, default_rounds, system_tokens,
+                 history_tokens) -> int | None:
+    """The context budget a turn's meter counts its rounds in (TurnSpend
+    ctx_budget). The turn's own when its window is known. When it is not
+    (context_budget.model_context_window: None, so the legacy history caps
+    ran and no context budget exists) and the built-in default is what
+    bounds the turn (no dollar figure, default_rounds on), one round is the
+    system blocks plus that legacy history: without a unit the default never
+    engages and the turn runs to BACKSTOP_TOOL_ROUNDS. None otherwise: an
+    owner's dollar figure on such a route keeps the basis it had."""
+    if ctx_budget:
+        return int(ctx_budget)
+    if (allowance_usd is None or allowance_usd <= 0) and default_rounds:
+        unit = max(0, int(system_tokens or 0)) + max(0, int(history_tokens or 0))
+        return unit or None
+    return None
+
 # A turn is "near the limit" while it can still afford the next round but not
 # two of them. At that point the loop says how much room is left — feedback,
 # never a cap.
@@ -223,12 +262,17 @@ class TurnSpend:
     def __init__(self, *, model: str | None, provider: str | None = None,
                  allowance_usd: float | None = None,
                  ctx_budget: int | None = None,
-                 price=None, priced: bool | None = None):
+                 price=None, priced: bool | None = None,
+                 default_rounds: int | None = None):
         self.model = model
         self.provider = provider
         self.allowance_usd = (float(allowance_usd)
                               if allowance_usd is not None else None)
         self.ctx_budget = int(ctx_budget) if ctx_budget else None
+        # The built-in default (DEFAULT_TURN_ROUNDS) when no dollar figure is
+        # set: that many full-context rounds, in tokens. None or 0: no default.
+        self.default_rounds = int(default_rounds) if default_rounds else None
+        self.default_in_force = False
         self.price = price
         self.calls = 0
         self.spent_usd = 0.0
@@ -293,6 +337,9 @@ class TurnSpend:
                  a token allowance from. The loop runs to the backstop.
         """
         if self.allowance_usd is None or self.allowance_usd <= 0:
+            if self.default_rounds and self.ctx_budget:
+                self.default_in_force = True
+                return "tokens"
             return "none"
         if priced:
             return "usd"
@@ -316,13 +363,14 @@ class TurnSpend:
 
     @classmethod
     def for_route(cls, model: str | None, provider: str | None, *,
-                  allowance_usd: float | None, ctx_budget: int | None):
+                  allowance_usd: float | None, ctx_budget: int | None,
+                  default_rounds: int | None = None):
         """Build against the live catalog for the ROUTED model. The served
         model can differ from round to round (failover), so this is only the
         opening position — note_call re-resolves per call."""
         return cls(model=model, provider=provider,
                    allowance_usd=allowance_usd, ctx_budget=ctx_budget,
-                   price=cls._lookup_price(model))
+                   price=cls._lookup_price(model), default_rounds=default_rounds)
 
     def _adopt_served(self, model: str | None, failed_over=None) -> None:
         """Re-point the meter at the model that ACTUALLY answered this round.
@@ -399,7 +447,8 @@ class TurnSpend:
     def allowance_tokens(self) -> int | None:
         if self.basis != "tokens" or not self.ctx_budget:
             return None
-        return int(self.ctx_budget) * TOKEN_ALLOWANCE_MULTIPLIER
+        rounds = self.default_rounds if self.default_in_force else TOKEN_ALLOWANCE_MULTIPLIER
+        return int(self.ctx_budget) * int(rounds or TOKEN_ALLOWANCE_MULTIPLIER)
 
     def note_call(self, res: dict, model: str | None = None) -> dict:
         """Price one completed model call and fold it into the turn.
@@ -802,6 +851,9 @@ class TurnSpend:
             out["turn_allowance_usd"] = self.allowance_usd
         if self.basis == "tokens":
             out["allowance_tokens"] = self.allowance_tokens
+        if self.default_in_force:
+            # No figure was set: the built-in default bounded this turn.
+            out["allowance_default_rounds"] = self.default_rounds
         if self.unpriced_calls:
             out["unpriced_calls"] = self.unpriced_calls
         if self.basis_changed_from:

@@ -1,0 +1,11 @@
+# One signed heartbeat out (cseries-cloud-heartbeat). Nothing connects in,
+# and a failed post changes nothing here.
+[Unit]
+Description=C-Series Cloud heartbeat
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cseries-cloud-heartbeat
+TimeoutStartSec=2min

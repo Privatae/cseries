@@ -37,6 +37,10 @@
         <div class="cseries-seam"></div>
 
         <main class="app-body">
+            <!-- What the store says about the catalog it reads (old, undated, or
+                 no rollback record): warnings only; installs still work. -->
+            <section id="store-notices" class="store-notices" hidden aria-live="polite"></section>
+
             <!-- The machine strip: what the plan gives this machine and what is
                  using it right now. Every number is read live from the pod's
                  own self-read; a section that reports nothing is simply not
@@ -64,6 +68,18 @@
                         this machine. Browse them here, deploy them from the Sites app's Catalog tab.</p>
                 </div>
                 <div id="sites-grid" class="catalog-grid"></div>
+            </section>
+
+            <!-- Data apps left on this machine when they were removed: kept until
+                 the owner deletes it here. Shown only when there is some. -->
+            <section id="kept-data-section" hidden>
+                <div class="section-head">
+                    <h2 class="section-title">Data kept from removed apps</h2>
+                    <p class="section-sub">When you remove an app, the data it kept on this machine
+                        stays, so putting it back finds it again. Nothing here is deleted unless you
+                        delete it.</p>
+                </div>
+                <div id="kept-data-list" class="kept-data-list"></div>
             </section>
 
             <div id="catalog-empty" class="cseries-empty" hidden>

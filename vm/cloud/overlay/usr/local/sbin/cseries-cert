@@ -1,0 +1,113 @@
+#!/usr/bin/python3 -I
+"""The box's wildcard certificate for *.<name>.<zone>, by lego with the
+acme-dns provider (cseries-cert.service, daily).
+
+With no certificate from lego yet, it asks for one (`lego run`); after that it
+renews within 30 days of expiry (`lego renew --days 30`). When lego's
+certificate differs from the one Caddy serves, it is copied to
+/etc/caddy/tls (root:caddy 0640) and Caddy reloads.
+
+/etc/cseries-cloud/acme-dns.json (0600) is the provisioner's acme-dns
+credential, keyed by <name>.<zone>; it can change that one name's
+_acme-challenge record and nothing else. Without it the box keeps the
+certificate it has (bootstrap's self-signed one) and this exits 0.
+
+The ACME account key stays in /var/lib/cseries-cloud/lego; its account URI is
+written to /var/lib/cseries-cloud/acme-account-uri for the bootstrap result.
+"""
+
+import glob
+import grp
+import json
+import os
+import subprocess
+import sys
+
+sys.path.insert(0, "/usr/local/lib/cseries-cloud")
+import cseries_cloud as cc  # noqa: E402
+
+LEGO = "/usr/bin/lego"
+
+
+def log(msg):
+    print(f"cert: {msg}", file=sys.stderr, flush=True)
+
+
+def lego_files(lego_dir, zone_host):
+    base = os.path.join(lego_dir, "certificates", "_." + zone_host)
+    return base + ".crt", base + ".key"
+
+
+def account_uri(lego_dir):
+    for p in sorted(glob.glob(os.path.join(lego_dir, "accounts", "*", "*", "account.json"))):
+        try:
+            with open(p, encoding="utf-8") as f:
+                uri = (json.load(f).get("registration") or {}).get("uri")
+        except (OSError, ValueError):
+            continue
+        if uri:
+            return uri
+    return None
+
+
+def install(paths, crt, key):
+    """Copy lego's files to Caddy's when they differ; True when they did."""
+    dest_c, dest_k = os.path.join(paths.tls, "cert.pem"), os.path.join(paths.tls, "key.pem")
+    with open(crt, "rb") as f:
+        c = f.read()
+    with open(key, "rb") as f:
+        k = f.read()
+    try:
+        with open(dest_c, "rb") as f1, open(dest_k, "rb") as f2:
+            if f1.read() == c and f2.read() == k:
+                return False
+    except FileNotFoundError:
+        pass
+    gid = grp.getgrnam("caddy").gr_gid
+    os.makedirs(paths.tls, exist_ok=True)
+    os.chown(paths.tls, 0, gid)
+    os.chmod(paths.tls, 0o750)
+    # The key first: a reload that reads a new certificate with the old key
+    # would fail, the other way round it cannot happen.
+    cc.atomic_write(dest_k, k, 0o640, 0, gid)
+    cc.atomic_write(dest_c, c, 0o640, 0, gid)
+    cc.write_json(os.path.join(paths.state, "cert.json"), {"source": "lego"})
+    return True
+
+
+def main():
+    paths = cc.Paths()
+    cfg = cc.load_cloud(paths)
+    if not os.path.exists(paths.acme_dns_json()):
+        log("no acme-dns credential on this box; keeping the certificate it has")
+        return 0
+    api = cc.read_json(os.path.join(paths.etc, "acme-dns-api.json"), {}) or {}
+    if not api.get("api_base"):
+        log("acme-dns-api.json names no api_base")
+        return 1
+    zone = cc.zone_host(cfg)
+    lego_dir = os.path.join(paths.state, "lego")
+    os.makedirs(lego_dir, mode=0o700, exist_ok=True)
+    crt, key = lego_files(lego_dir, zone)
+    env = dict(os.environ, ACME_DNS_API_BASE=api["api_base"],
+               ACME_DNS_STORAGE_PATH=paths.acme_dns_json())
+    args = [LEGO, "--accept-tos", "--path", lego_dir, "--email", cfg["acme_email"],
+            "--server", cfg["acme_server"], "--key-type", "ec256", "--dns", "acme-dns",
+            "--domains", "*." + zone]
+    args += ["renew", "--days", "30"] if os.path.exists(crt) else ["run"]
+    r = subprocess.run(args, capture_output=True, text=True, env=env, timeout=600, check=False)
+    sys.stderr.write(r.stderr[-4000:])
+    uri = account_uri(lego_dir)
+    if uri:
+        cc.atomic_write(os.path.join(paths.state, "acme-account-uri"), uri + "\n")
+    if r.returncode != 0:
+        log(f"lego exited {r.returncode}; the certificate Caddy has stays in place")
+        return 1
+    if os.path.exists(crt) and install(paths, crt, key):
+        log("new certificate installed; reloading Caddy")
+        subprocess.run(["systemctl", "reload", "caddy.service"], check=False)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

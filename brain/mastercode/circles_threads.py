@@ -25,6 +25,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid as _uuid
+from datetime import datetime, timezone
 
 from mastercode import memory_engine
 
@@ -588,19 +589,27 @@ async def live_thread_id(pool, entity_id: int, thread_id):
     agent's result still addressed to that thread lands in the original
     conversation instead of in a thread nobody can see; a turn addressed to it
     is refused (brain_service.send_message), since the delete cancelled the
-    wake-ups set in it. The legacy sentinels and an unreadable answer come
-    back unchanged."""
+    wake-ups set in it. A topic made for one message and folded into the
+    thread the Host picked for it in its turn (runtime/thread_choice,
+    merged_into) answers with that thread, live: a page that still names it
+    sends there. The legacy sentinels and an unreadable answer come back
+    unchanged."""
     if is_legacy(thread_id) or not _is_uuid(thread_id):
         return thread_id
     try:
-        gone = await pool.fetchval(
-            "SELECT deleted_at IS NOT NULL FROM circles_threads "
+        row = await pool.fetchrow(
+            "SELECT deleted_at IS NOT NULL AS gone, merged_into FROM circles_threads "
             " WHERE id = $1::uuid AND entity_id = $2", str(thread_id), entity_id)
     except Exception as exc:  # noqa: BLE001 - a read never blocks a delivery
         log.warning("deleted-thread check failed (entity %s, thread %s): %s",
                     entity_id, thread_id, exc)
         return thread_id
-    return None if gone else thread_id
+    if row is None or not row["gone"]:
+        return thread_id
+    into = str(row["merged_into"] or "")
+    if into.startswith("thread:") and into != f"thread:{thread_id}":
+        return await live_thread_id(pool, entity_id, into.split(":", 1)[1])
+    return None
 
 
 def home_title(text, fallback: str = "New topic") -> str:
@@ -865,7 +874,7 @@ async def _forget(conn, entity_id: int, tid: str) -> dict:
     # only where it was taught (memory_engine.rule_reach), not everywhere.
     await conn.execute(
         "UPDATE entity_memory"
-        "   SET metadata = metadata - 'about' - 'scoped_by' - 'scoped_at'"
+        "   SET metadata = metadata - 'about' - 'scoped_by' - 'scoped_at' - 'scoped_in'"
         " WHERE entity_id = $1 AND metadata->'about'->>'kind' = $2"
         "   AND metadata->'about'->>'ref' = $3"
         f"  AND NOT {_TAUGHT_ELSEWHERE_SQL}",
@@ -890,7 +899,7 @@ async def _forget(conn, entity_id: int, tid: str) -> dict:
     restored = await _restore_retired(conn, entity_id, kind, ref,
                                       [int(r["id"]) for r in learned], void_into, gone, cache)
     restored_n = len(restored) + held_back
-    # Tool results its turns stashed (thread_consolidator.stash_tool_artifacts)
+    # Tool results its turns stashed (the retired artifact capture)
     # are documents recall searches; dismissed like the rest. A file the person
     # uploaded is their own document and stays.
     await conn.execute(
@@ -913,6 +922,11 @@ async def _forget(conn, entity_id: int, tid: str) -> dict:
         "   AND metadata->'resolved_in'->>'ref' = $3"
         " RETURNING id",
         entity_id, kind, ref)
+    # Where each memory is read may have changed above (a decision naming the
+    # thread stripped, a row re-homed or written in a conversation's own
+    # words): its slot scope follows (memory_slots.resync_scopes).
+    from mastercode.memory_slots import resync_scopes
+    await resync_scopes(conn, entity_id)
     return {"messages": len(turns), "learned": len(learned),
             "restored": restored_n, "reopened": len(reopened), "kept": kept}
 
@@ -961,8 +975,8 @@ async def _keep_held(conn, entity_id: int, kind: str, ref: str,
     archived. For each row the thread learned (tagged with it, or learned
     from its messages) whose metadata.held_in names a conversation that still
     exists and said the row's own words, the row becomes that conversation's:
-    its source_context and from_turns are the record's, project_id follows a
-    project, and the record leaves held_in. A goal the thread closed whose
+    its source_context and from_turns are the record's (its project tag stays
+    as it was: carry_learned), and the record leaves held_in. A goal the thread closed whose
     metadata.resolved_also_in names a live conversation stays closed, its
     resolved_in now that conversation's. Returns how many rows it kept, and
     the rows whose live conversations said them only in other words, with
@@ -1043,33 +1057,30 @@ async def _keep_held(conn, entity_id: int, kind: str, ref: str,
                     md.pop("source_context", None)
                 else:
                     md["source_context"] = where_to
-                if home.get("from_turns"):
-                    md["from_turns"] = [int(t) for t in home["from_turns"]]
-                else:
-                    md.pop("from_turns", None)
+                from mastercode.memory_consolidation import TURN_KEYS, turn_marks
+                for _k in TURN_KEYS:
+                    md.pop(_k, None)
+                md.update(turn_marks(home))
                 md["rehomed_from"] = {"kind": kind, "ref": ref}
                 if (same_scope(md.get("about"), {"kind": kind, "ref": ref})
                         and not await _taught_elsewhere(conn, entity_id, md, kind, ref)):
                     # The Host's decision named the thread now deleted; the
                     # conversation that also said it holds it, undecided.
-                    for _k in ("about", "scoped_by", "scoped_at"):
+                    for _k in ("about", "scoped_by", "scoped_at", "scoped_in"):
                         md.pop(_k, None)
-                project = None
-                if where_to["kind"] == "project":
-                    try:
-                        project = int(where_to["ref"])
-                    except (TypeError, ValueError):
-                        project = None
             else:
                 md["resolved_in"] = dict(home)
             md[key] = rest
             if key == "held_in":
                 # Dated when that conversation said it, as its own row would be.
+                # Its project tag is left as it is (circles_threads.
+                # carry_learned): a row said in a project is never tagged with
+                # it by a fresh write, so taking a row over does not either.
                 await conn.execute(
-                    "UPDATE entity_memory SET metadata = $3::jsonb, project_id = $4,"
-                    " t_valid_from = COALESCE($5::timestamptz, t_valid_from),"
+                    "UPDATE entity_memory SET metadata = $3::jsonb,"
+                    " t_valid_from = COALESCE($4::timestamptz, t_valid_from),"
                     " updated_at = NOW() WHERE id = $1 AND entity_id = $2",
-                    r["id"], entity_id, json.dumps(md), project, _said_at(home))
+                    r["id"], entity_id, json.dumps(md), _said_at(home))
                 # What the thread changed with it is still undone: the rows it replaced are judged with it as the
                 # thread's (_restore_retired, void_into).
                 void_into.add(int(r["id"]))
@@ -1231,14 +1242,26 @@ def _marks_rule(md) -> bool:
 
 async def _live_twin(conn, entity_id: int, row: dict):
     """A live row of the same type, the same words and the same rule mark:
-    one live copy."""
-    return await conn.fetchval(
+    one live copy. Or a live row holding the row's slot (memory_slots: the
+    same type, scope and topic): one live entry per slot, so a row a delete
+    would bring back into a slot something else now holds stays retired,
+    pointing at the holder, and comes back if that row later goes."""
+    twin = await conn.fetchval(
         "SELECT id FROM entity_memory WHERE entity_id = $1 AND id <> $2"
         " AND content = $3 AND memory_type = $4 AND status = 'active'"
         " AND (t_valid_until IS NULL OR t_valid_until > NOW())"
         " AND " + _twin_rule_sql(5) +
         " ORDER BY id LIMIT 1", entity_id, int(row["id"]), row["content"], row["memory_type"],
         _marks_rule(row["metadata"]))
+    if twin is not None:
+        return twin
+    return await conn.fetchval(
+        "SELECT t.id FROM entity_memory r JOIN entity_memory t"
+        "   ON t.entity_id = r.entity_id AND t.memory_type = r.memory_type"
+        "  AND t.slot_scope = r.slot_scope AND t.slot_topic = r.slot_topic"
+        " WHERE r.entity_id = $1 AND r.id = $2 AND r.slot_topic IS NOT NULL AND t.id <> r.id"
+        "   AND t.status = 'active' AND t.t_valid_until IS NULL"
+        " ORDER BY t.id DESC LIMIT 1", entity_id, int(row["id"]))
 
 
 async def _bring_back(conn, entity_id: int, row, said: list) -> None:
@@ -1334,14 +1357,15 @@ async def _hold_on_twin(conn, entity_id: int, twin, where_to: dict, turns: list,
     tmd = json.loads(tmd) if isinstance(tmd, str) else dict(tmd or {})
     if same_scope(tmd.get("source_context"), where_to):
         return
+    from mastercode.memory_consolidation import merge_turns, turn_marks
+    marks = {**turn_marks(e), **({"from_turns": [int(t) for t in turns]} if turns else {})}
     held = [x for x in (tmd.get("held_in") or []) if isinstance(x, dict)]
     for x in held:
         if same_scope(x, where_to) and _verbatim(x):
-            x["from_turns"] = sorted({int(t) for t in (x.get("from_turns") or [])} | set(turns))
+            merge_turns(x, marks)
             break
     else:
-        held.append(dict(where_to, **({"from_turns": turns} if turns else {}),
-                         **({"at": e["at"]} if e.get("at") else {})))
+        held.append(dict(where_to, **marks, **({"at": e["at"]} if e.get("at") else {})))
     await conn.execute(
         "UPDATE entity_memory SET metadata = jsonb_set(COALESCE(metadata,"
         " '{}'::jsonb), '{held_in}', $3::jsonb), updated_at = NOW()"
@@ -1374,7 +1398,7 @@ async def _own_words(conn, entity_id: int, in_own_words: list, gone: set, void_i
     The new rows have no vector yet; the memory backfill embeds them
     (server.main._backfill_unembedded_memories). Returns how many records it
     kept and how many replaced rows it brought back holding them."""
-    from mastercode.memory_consolidation import UNSCOPED, same_scope
+    from mastercode.memory_consolidation import UNSCOPED, same_scope, turn_marks
     from mastercode.memory_engine import MEMORY_TYPES, NEVER_SUPERSEDED_TYPES
     given, held_back = 0, 0
 
@@ -1442,7 +1466,7 @@ async def _own_words(conn, entity_id: int, in_own_words: list, gone: set, void_i
             # dropper leaves it retired while that link stands.
             keys = (("superseded_in", "retired_also_in", "linked_by") if retired_live else ()) \
                 + ("resolved_in", "resolved_also_in") \
-                + ("about", "scoped_by", "scoped_at", "scope_history")  # the Host's decision
+                + ("about", "scoped_by", "scoped_at", "scoped_in", "scope_history")  # the Host's decision
             md = {k: bmd[k] for k in keys if k in bmd}
             if as_rule:
                 # A rule said again elsewhere stays a rule there
@@ -1451,19 +1475,15 @@ async def _own_words(conn, entity_id: int, in_own_words: list, gone: set, void_i
                 md["rule_kind"] = bmd["rule_kind"]
             if isinstance(md.get("about"), dict) and _of_gone(md["about"], gone):
                 # a decision naming a deleted thread is no place to be read
-                for _k in ("about", "scoped_by", "scoped_at"):
+                for _k in ("about", "scoped_by", "scoped_at", "scoped_in"):
                     md.pop(_k, None)
             if not same_scope(where_to, UNSCOPED):
                 md["source_context"] = where_to
-            if turns:
-                md["from_turns"] = turns
+            md.update(turn_marks(e))
             md["restated_from"] = int(row_id)
+            # No project tag, as that conversation's own write would have none
+            # (carry_learned).
             project = None
-            if where_to["kind"] == "project":
-                try:
-                    project = int(where_to["ref"])
-                except (TypeError, ValueError):
-                    project = None
             when = _said_at(e)
             if when is None and turns:
                 when = await conn.fetchval(
@@ -1568,33 +1588,73 @@ async def forget_if_deleted(pool, entity_id: int, scope) -> bool:
     return True
 
 
+def _turns_named(e: str) -> str:
+    """SQL: the turns `e` (a row's metadata, or a record in it) names, as one
+    jsonb array: its message rows' ids (from_turns) and its turns' tokens
+    (from_turn_tokens, memory_consolidation.TURN_KEYS)."""
+    return (f"(CASE WHEN jsonb_typeof({e}->'from_turns') = 'array'"
+            f" THEN {e}->'from_turns' ELSE '[]'::jsonb END"
+            f" || CASE WHEN jsonb_typeof({e}->'from_turn_tokens') = 'array'"
+            f" THEN {e}->'from_turn_tokens' ELSE '[]'::jsonb END)")
+
+
+def _all_moved(e: str, p: int) -> str:
+    """SQL: `e` names a turn, and every turn it names moved (${p}: the moved
+    turns in one jsonb array, the moved rows' ids and their turns' tokens,
+    _moved_tokens)."""
+    t = _turns_named(e)
+    return f"(jsonb_array_length({t}) > 0 AND {t} <@ ${p}::jsonb)"
+
+
+async def _moved_tokens(conn, entity_id: int, moved_ids: list[int]) -> list[str]:
+    """The tokens of the turns whose message rows are among `moved_ids`. A
+    turn's message row carries the turn's token from the turn's start
+    (metadata.turn_token, kept through the PII queue's scrub), and what the
+    turn wrote names it by that token when the row's id was not known to the
+    write (PII mode queues the row). A nudge's row is not the turn's message,
+    as from_turns never names one."""
+    if not moved_ids:
+        return []
+    rows = await conn.fetch(
+        "SELECT DISTINCT metadata->>'turn_token' AS t FROM entity_memory"
+        " WHERE entity_id = $1 AND id = ANY($2::int[]) AND memory_type = 'turn'"
+        "   AND metadata->>'role' = 'user' AND COALESCE(metadata->>'nudge', '') <> 'true'"
+        "   AND COALESCE(metadata->>'turn_token', '') <> ''",
+        entity_id, [int(i) for i in moved_ids])
+    return [str(r["t"]) for r in rows]
+
+
 async def carry_stamps(conn, entity_id: int, moved_ids: list[int], to_scope: dict, *,
-                       from_scope: dict | None = None) -> int:
+                       from_scope: dict | None = None,
+                       moved_tokens: list[str] | None = None) -> int:
     """Move the records of what the moved messages did with them, as the rows
     learned from them move: a retirement or goal close (metadata.superseded_in,
-    metadata.resolved_in: memory_consolidation.scope_stamp) and a restatement,
-    second completion or second retirement (the held_in / resolved_also_in /
-    retired_also_in lists: MemoryConsolidator.note_held). A record whose from_turns are all `moved_ids` is
-    re-pointed at `to_scope`. With `from_scope`, a record that names it and
-    carries no from_turns moves too, which is for a move that takes the whole
-    conversation (an adopt with no time window). Returns the rows changed."""
+    metadata.resolved_in: memory_consolidation.scope_stamp), a scope decision
+    (metadata.scoped_in) and a restatement, second completion or second
+    retirement (the held_in / resolved_also_in / retired_also_in lists:
+    MemoryConsolidator.note_held). A record every turn of which moved (its
+    from_turns among `moved_ids`, its from_turn_tokens among the moved turns'
+    tokens: _moved_tokens, read here when not given) is re-pointed at
+    `to_scope`. With `from_scope`, a record that names it and names no turn
+    moves too, which is for a move that takes the whole conversation (an
+    adopt with no time window). Returns the rows changed."""
     moved_ids = [int(i) for i in moved_ids or []]
+    if moved_tokens is None:
+        moved_tokens = await _moved_tokens(conn, entity_id, moved_ids)
     # As a jsonb array once, not converted again for every row compared.
-    moved = json.dumps(moved_ids)
+    moved = json.dumps(moved_ids + [str(t) for t in moved_tokens])
     target = json.dumps({"kind": to_scope.get("kind"),
                          "ref": str(to_scope.get("ref") or "")})
     fkind = str((from_scope or {}).get("kind") or "")
     fref = str((from_scope or {}).get("ref") or "")
 
     def moves(e: str) -> str:
-        return (f"((jsonb_typeof({e}->'from_turns') = 'array'"
-                f"  AND jsonb_array_length({e}->'from_turns') > 0"
-                f"  AND ({e}->'from_turns') <@ $2::jsonb)"
-                f" OR ($4 <> '' AND {e}->'from_turns' IS NULL"
+        return (f"({_all_moved(e, 2)}"
+                f" OR ($4 <> '' AND jsonb_array_length({_turns_named(e)}) = 0"
                 f"     AND {e}->>'kind' = $4 AND {e}->>'ref' = $5))")
 
     n = 0
-    for key in ("superseded_in", "resolved_in"):
+    for key in ("superseded_in", "resolved_in", "scoped_in"):
         stamp = f"metadata->'{key}'"
         res = await conn.execute(
             "UPDATE entity_memory"
@@ -1614,6 +1674,228 @@ async def carry_stamps(conn, entity_id: int, moved_ids: list[int], to_scope: dic
             f"                WHERE {moves('e')})",
             entity_id, moved, target, fkind, fref)
         n += _count(res)
+    n += await _split_records(conn, entity_id, moved_ids, to_scope, moved_tokens)
+    return n
+
+
+async def _split_records(conn, entity_id: int, moved_ids: list[int], to_scope: dict,
+                         moved_tokens: list[str] | None = None) -> int:
+    """A record in a held_in / resolved_also_in / retired_also_in list that
+    names moved messages and others too (a conversation that said a row
+    again in two turns, one of them moved): the moved messages' part becomes
+    a record of `to_scope` (merged into one already there for the same
+    words), and the rest stays where it was. A turn counts as moved by its
+    message row's id or by its token (`moved_tokens`, _moved_tokens). Run
+    after carry_stamps' whole records have moved. Returns the rows changed."""
+    from mastercode.memory_consolidation import TURN_KEYS, merge_turns, turn_marks
+    moved = {int(i) for i in moved_ids or []}
+    moved_toks = {str(t) for t in moved_tokens or []}
+    if not (moved or moved_toks):
+        return 0
+    tk, tr = str(to_scope.get("kind") or ""), str(to_scope.get("ref") or "")
+    n = 0
+    for key in ("held_in", "resolved_also_in", "retired_also_in"):
+        rows = await conn.fetch(
+            "SELECT id, metadata FROM entity_memory"
+            f" WHERE entity_id = $1 AND jsonb_typeof(metadata->'{key}') = 'array'"
+            f"   AND EXISTS (SELECT 1 FROM jsonb_array_elements(metadata->'{key}') e"
+            f"                WHERE EXISTS (SELECT 1 FROM jsonb_array_elements_text({_turns_named('e')}) t"
+            "                               WHERE t = ANY($2::text[])))"
+            " FOR UPDATE",
+            entity_id, [str(i) for i in sorted(moved)] + sorted(moved_toks))
+        for r in rows:
+            md = r["metadata"]
+            md = json.loads(md) if isinstance(md, str) else dict(md or {})
+            entries = [e for e in (md.get(key) or []) if isinstance(e, dict)]
+            out, changed = [], False
+            for i, e in enumerate(entries):
+                named = turn_marks(e)
+                ids, toks = named.get("from_turns") or [], named.get("from_turn_tokens") or []
+                part = {"from_turns": [t for t in ids if t in moved],
+                        "from_turn_tokens": [t for t in toks if t in moved_toks]}
+                rest = {"from_turns": [t for t in ids if t not in moved],
+                        "from_turn_tokens": [t for t in toks if t not in moved_toks]}
+                if (not turn_marks(part) or not turn_marks(rest)
+                        or (e.get("kind") == tk and str(e.get("ref") or "") == tr)):
+                    out.append(e)
+                    continue
+                changed = True
+                base = {k: v for k, v in e.items() if k not in TURN_KEYS}
+                out.append({**base, **turn_marks(rest)})
+                # One record per conversation, wording and mark (note_held):
+                # the place's own record, before or after this one, takes them.
+                twin = next((x for x in out + entries[i + 1:] if x.get("kind") == tk
+                             and str(x.get("ref") or "") == tr and x.get("words") == e.get("words")
+                             and x.get("about") == e.get("about")), None)
+                if twin is not None:
+                    merge_turns(twin, part)
+                    if e.get("taught"):
+                        twin["taught"] = True
+                else:
+                    out.append({**base, "kind": tk, "ref": tr, **turn_marks(part)})
+            if changed:
+                await conn.execute(
+                    f"UPDATE entity_memory SET metadata = jsonb_set(metadata, '{{{key}}}', $3::jsonb)"
+                    " WHERE id = $1 AND entity_id = $2", int(r["id"]), entity_id, json.dumps(out))
+                n += 1
+    return n
+
+
+# What a learned row's move records, by the act that moved its messages.
+LEARNED_MOVED_KEYS = ("adopted_from", "split_from")
+
+
+async def _turns_span(conn, entity_id: int, moved_ids: list[int], src: dict) -> tuple:
+    """(first, until) of the moved messages' turns: from the first moved
+    row's created_at until the first turn row of `src` said after the last
+    moved one (a turn that stayed), None when no turn stayed after them. A
+    decision made in that span was made by the moved turns."""
+    if not moved_ids:
+        return None, None
+    span = await conn.fetchrow(
+        "SELECT min(created_at) AS first, max(created_at) AS last FROM entity_memory"
+        " WHERE entity_id = $1 AND id = ANY($2::int[])", entity_id, [int(i) for i in moved_ids])
+    if span is None or span["first"] is None:
+        return None, None
+    until = await conn.fetchval(
+        "SELECT min(created_at) FROM entity_memory"
+        " WHERE entity_id = $1 AND memory_type = 'turn' AND NOT (id = ANY($2::int[]))"
+        "   AND created_at > $3 AND COALESCE(metadata->>'source_kind', '') <> 'thread_marker'"
+        "   AND metadata->'source_context'->>'kind' = $4 AND metadata->'source_context'->>'ref' = $5",
+        entity_id, [int(i) for i in moved_ids], span["last"],
+        str(src.get("kind") or ""), str(src.get("ref") or ""))
+    return span["first"], until
+
+
+def _decided_in(at, span: tuple) -> bool:
+    """A decision's scoped_at (ISO text) falls in `span` (_turns_span). A
+    decision with no readable time is not provably the moved turns'."""
+    first, until = span
+    if not at or first is None:
+        return False
+    try:
+        when = datetime.fromisoformat(str(at).replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    return when >= first and (until is None or when < until)
+
+
+async def carry_learned(conn, entity_id: int, moved_ids: list[int], src: dict, dst: dict, *,
+                        whole: bool = False, mark: str = "adopted_from",
+                        resync: bool = True) -> int:
+    """THE rule for what was learned from messages that move, on the move's
+    own connection inside its transaction — every move takes it: the Host's
+    pick (thread_choice.move_exchange, and the fold of a new topic), a turn
+    re-homed to the project its work touched (turn_home.rehome_turn), Split
+    (_split_in_transaction) and an adopt into a project (projects.
+    adopt_thread_core):
+
+      * a row learned only from moved messages (metadata.from_turns, every
+        one of them moved: a rule taught in the message, a preference, goal
+        or relationship note close_turn or memory_curate wrote in its turn)
+        is said in `dst` now (source_context), the place it came from kept
+        under `mark`. With `whole` (the whole conversation moved: an adopt
+        with no time window, a fold) every row still said in `src` goes too;
+      * its project tag (project_id) is never written: a fresh write is
+        never tagged with the project it is said in, so a row said in `dst`
+        has none either, and a tag a row has names where a copy it retired
+        was read (memory_engine._carry_typed_place), which a move does not
+        change;
+      * a row's turns are named by their message rows' ids (from_turns) and
+        by the turns' own tokens (from_turn_tokens: what a write knows when
+        its message row is queued, PII mode), and a turn moved when its
+        message row did (_moved_tokens);
+      * what the moved turns decided a row is ABOUT, when that is `src`
+        ("this conversation": close_turn's scope with no ref, memory_curate's,
+        memory_scope's), is about `dst` now — for a row the move takes, so it
+        is read where it is said, and for an older row it does not take,
+        which the turn narrowed to the conversation it was in, which is now
+        `dst`. A decision names the turn that made it (metadata.scoped_in);
+        one that names none is the moved turns' when the move takes its row
+        and it was made in their span (scoped_at); a decision made before
+        them or by a later turn that stayed is left as it is;
+      * the records of what those messages did (who retired or closed a
+        row, who said a row again, the place a rule was taught) follow
+        them (carry_stamps), a record naming moved and staying messages
+        split between the two places;
+      * the slot scope of every row follows where it is read now
+        (memory_slots.resync_scopes), unless the caller resyncs itself.
+
+    A task's products (a promoted cited_fact, a research row) are the
+    project's whose task made them, not learned from turns: a whole move
+    leaves them there. So deleting `dst` takes what was learned there, and
+    deleting `src` neither takes it nor brings back what it replaced. A row
+    learned from messages on both sides stays. Returns the learned rows
+    moved."""
+    if mark not in LEARNED_MOVED_KEYS:
+        raise ValueError(f"unknown move mark {mark!r}")
+    ids = [int(i) for i in moved_ids or []]
+    toks = await _moved_tokens(conn, entity_id, ids)
+    # The moved turns, ids and tokens in one jsonb array ($2 below).
+    moved = json.dumps(ids + toks)
+    s = {"kind": str(src.get("kind") or ""), "ref": str(src.get("ref") or "")}
+    d = {"kind": str(dst.get("kind") or ""), "ref": str(dst.get("ref") or "")}
+    def takes(w: int, k: int, r: int) -> str:
+        # A row the move takes ($2 the moved turns; $w whole, $k/$r the
+        # source's kind and ref): learned only in moved turns, or, the whole
+        # conversation moving, said there.
+        return (
+            f"({_all_moved('metadata', 2)}"
+            f"  OR (${w}::bool AND memory_type NOT IN ('cited_fact', 'research')"
+            f"      AND metadata->'source_context'->>'kind' = ${k}"
+            f"      AND (metadata->'source_context'->>'ref' = ${r}"
+            # an app's ref is kept in the case the turn gave it (derive_source_context)
+            f"           OR (${k} = 'app' AND lower(metadata->'source_context'->>'ref') = lower(${r})))))")
+    live = " entity_id = $1 AND memory_type <> 'turn' AND status = 'active'"
+    # Decisions about `src`: on a row the move takes, or made in a moved turn
+    # (scoped_in) on a row it does not take.
+    decider = "metadata->'scoped_in'"
+    decided = await conn.fetch(
+        f"SELECT id, metadata->>'scoped_at' AS at, {takes(3, 4, 5)} AS taken,"
+        f"       jsonb_array_length({_turns_named(decider)}) > 0 AS named,"
+        f"       {_all_moved(decider, 2)} AS in_moved"
+        " FROM entity_memory WHERE" + live
+        + "  AND metadata->'about'->>'kind' = $4 AND metadata->'about'->>'ref' = $5"
+        f"  AND ({takes(3, 4, 5)} OR {_all_moved(decider, 2)})",
+        entity_id, moved, bool(whole), s["kind"], s["ref"])
+    follow, span = [], None
+    for r in decided:
+        if r["taken"] and whole:
+            follow.append(int(r["id"]))
+        elif r["named"]:
+            if r["in_moved"]:
+                follow.append(int(r["id"]))
+        elif r["taken"]:
+            if span is None:
+                span = await _turns_span(conn, entity_id, ids, s)
+            if _decided_in(r["at"], span):
+                follow.append(int(r["id"]))
+    if follow:
+        await conn.execute(
+            "UPDATE entity_memory SET metadata = jsonb_set(metadata, '{about}', $3::jsonb)"
+            " WHERE entity_id = $1 AND id = ANY($2::int[])", entity_id, follow, json.dumps(d))
+    # A row already said in `dst` does not move, so it gets no `mark`: a
+    # move that brings a turn back (thread_choice._learned_stay) would
+    # otherwise mark the rows the turn wrote before its pick, which never
+    # left, as moved from a place they were never in.
+    n = _count(await conn.execute(
+        "UPDATE entity_memory"
+        "   SET metadata = metadata || jsonb_build_object("
+        "           'source_context', $3::jsonb, $5::text, $4::jsonb)"
+        " WHERE" + live + " AND " + takes(6, 7, 8)
+        + " AND NOT COALESCE(metadata->'source_context'->>'kind' = $9"
+        "       AND (metadata->'source_context'->>'ref' = $10"
+        "            OR ($9 = 'app' AND lower(metadata->'source_context'->>'ref') = lower($10))),"
+        "     false)",
+        entity_id, moved, json.dumps(d), json.dumps(s), mark, bool(whole),
+        s["kind"], s["ref"], d["kind"], d["ref"]))
+    await carry_stamps(conn, entity_id, ids, d, from_scope=s if whole else None,
+                       moved_tokens=toks)
+    if resync:
+        from mastercode.memory_slots import resync_scopes
+        await resync_scopes(conn, entity_id)
     return n
 
 
@@ -1626,15 +1908,16 @@ def _count(res) -> int:
 
 async def set_thread_topic(pool, entity_id: int, thread_id, topic: str | None,
                            *, title: str | None = None) -> bool:
-    """Record a thread's topic on the thread row — the consolidator's segment
-    topic, or the Host's own (close_turn).
+    """Record a thread's topic on the thread row, as the Host names it in its
+    own turn (close_turn), or the title of a topic it kept as a thread of its
+    own (runtime/thread_choice pick_thread new=true).
 
     A no-op for the legacy scope, which has no row. The title follows the
-    first topic when the user never set one (the title comes from the
-    user or, when absent, the first segment_topic the consolidator writes)
-    — COALESCE, so a user's title is never overwritten. `title` (close_turn)
-    is the title to use when the row has none, in place of the topic. An
-    empty topic leaves the stored one as it is. True when the UPDATE ran.
+    first topic when the user never set one (the title comes from the user
+    or, when absent, the first topic or title the Host names) — COALESCE,
+    so a user's title is never overwritten. `title` is the title to use when
+    the row has none, in place of the topic. An empty topic leaves the
+    stored one as it is. True when the UPDATE ran.
     """
     if is_legacy(thread_id) or not _is_uuid(thread_id):
         return False
@@ -1705,30 +1988,36 @@ async def write_link(pool, entity_id: int, from_thread, to_thread,
 
 # ---- Topic markers ----
 #
-# WHICH METADATA THE FLIP IS READ FROM, and why it is not `topic_changed`.
-# _store_summary (thread_consolidator.py) writes five keys plus two
-# optional: source_kind, source_context, summary_version, consolidated_at,
-# turns_covered, `segment_topic` when a topic was named, and `flip_turn_id`
-# when the topic CHANGED. `topic_changed` and `prev_topic` are PARAMETERS of that
-# function, not stored fields — a flip leaves two traces on the row instead:
-# the changed segment_topic, and a "Previously: <prev topic>" line prepended
-# to the content (:269-270). So a flip is derived by walking the summary
-# chain in summary_version order and comparing consecutive segment_topics,
-# with the "Previously:" line as the fallback source of prev_topic when the
-# predecessor row carried no topic of its own.
+# WHAT THE MARKERS ARE READ FROM. Nothing writes a summary row any more: the
+# rolling summary writer (a model call outside the Host's turn) is retired,
+# and migrations/v241 archived each chain's live row with
+# SUMMARY_RETIRED_REASON. markers() reads the chains it left behind
+# (memory_type 'summary', source_kind 'thread_consolidator'), so a thread
+# started after v241 has no markers, and an older thread keeps the flips its
+# chain recorded and gains none.
+#
+# WHICH METADATA THE FLIP IS READ FROM. Those rows carry source_kind,
+# source_context, summary_version, consolidated_at, turns_covered,
+# `segment_topic` when a topic was named, and `flip_turn_id` when the topic
+# changed. No row stores a "topic changed" flag or the previous topic: a flip
+# left two traces instead, the changed segment_topic and a
+# "Previously: <prev topic>" line at the head of the content. So a flip is
+# derived by walking the chain in summary_version order and comparing
+# consecutive segment_topics, with the "Previously:" line as the source of
+# prev_topic when the predecessor row carried no topic of its own.
 #
 # THE ANCHOR. `turns_covered` is a count and `consolidated_at` is when the
-# summarizer ran, so neither identifies a turn row.
-# _store_summary records `flip_turn_id` on a flip row — the newest turn the
-# summary covered, resolved through shown_where so it is a row the user can
-# see — and that is preferred here. It is the LAST turn of the new segment
-# rather than its first (the consolidator is handed role/content pairs;
-# recall_recent_turns returns role/content only), which is still
-# strictly earlier than the fallback: the summary row's own created_at, whose
-# first turn at-or-after lands on the turn AFTER the whole covered window.
-# Rows written before that key existed keep the time-based anchor.
+# summary was written, so neither identifies a turn row. A flip row's
+# `flip_turn_id` (the newest turn that summary covered, a row the user can
+# see) is preferred. It is the LAST turn of the new segment rather than its
+# first, which is still strictly earlier than the fallback for a row without
+# the key: the summary row's own created_at, whose first turn at-or-after
+# lands on the turn AFTER the whole covered window (_first_turn_at_or_after).
 
 _PREVIOUSLY = "Previously:"
+# The status_reason migrations/v241 archived each live rolling-summary row
+# with when the summary writer was retired (kept word for word with it).
+SUMMARY_RETIRED_REASON = "summary writer retired"
 
 
 async def _first_turn_at_or_after(pool, entity_id: int, thread_id, at) -> int | None:
@@ -1772,7 +2061,10 @@ async def markers(pool, entity_id: int, thread_id) -> list[dict]:
 
     The chain is every summary row the consolidator wrote for the scope —
     superseded rows included, since each supersede is what a flip looks like
-    in storage (t_valid_until + resolution_pointer, :298-313).
+    in storage (t_valid_until + resolution_pointer). The writer is retired
+    (migrations/v241), which archived each chain's live row with
+    SUMMARY_RETIRED_REASON: that row is still the chain's last link, so the
+    flip it recorded stays a marker.
     """
     src = descriptor_for(thread_id)
     try:
@@ -1782,14 +2074,14 @@ async def markers(pool, entity_id: int, thread_id) -> list[dict]:
               FROM entity_memory
              WHERE entity_id = $1
                AND memory_type = 'summary'
-               AND status = 'active'
+               AND (status = 'active' OR (status = 'archived' AND status_reason = $4))
                AND metadata->>'source_kind' = 'thread_consolidator'
                AND metadata->'source_context'->>'kind' = $2
                AND metadata->'source_context'->>'ref' = $3
              ORDER BY COALESCE((metadata->>'summary_version')::int, 0) ASC,
                       id ASC
             """,
-            entity_id, str(src.get("kind")), str(src.get("ref") or ""),
+            entity_id, str(src.get("kind")), str(src.get("ref") or ""), SUMMARY_RETIRED_REASON,
         )
     except Exception as exc:  # noqa: BLE001
         log.warning("thread markers read failed (entity %s, thread %s): %s",
@@ -1845,18 +2137,11 @@ async def split_thread(pool, entity_id: int, source_thread_id, *,
     point, since you split in order to keep talking. Refusing here would be
     the one inconsistent gate on the surface.
 
-    THE SOURCE'S ROLLING SUMMARY IS RETIRED, not rewritten. Moving rows
-    out leaves a live summary describing
-    content that now lives elsewhere, and the consolidator would not notice
-    for a long time: its trigger counts turns since `prev_summary.created_at`
-    and needs TURNS_SINCE_TRIGGER=60 of them (thread_consolidator.
-    maybe_consolidate, :879-889). Superseding the
-    row instead means the next turn is assembled with no summary rather than
-    a wrong one, and the next consolidation sees no `prev` and counts the
-    whole scope. The destination needs nothing — it was created in this call,
-    so no summary row can carry its ref.
+    NO SUMMARY TO RETIRE. No rolling summary is written any more: what fell
+    out of a thread's window is read from its own close_turn notes when the
+    next turn reads it (evicted_record), so a split leaves nothing stale.
 
-    ONE TRANSACTION. Create → move → marker → link → supersede all run on one
+    ONE TRANSACTION. Create → move → marker → link all run on one
     connection inside one transaction, so a crash or a raise anywhere in the
     sequence leaves the database exactly as it was. That is also why the
     concurrent-split case needs no cleanup: the raise rolls the new thread
@@ -1890,10 +2175,10 @@ async def _split_in_transaction(conn, entity_id: int, source_thread_id, *,
                                 from_turn_id: int, title: str | None,
                                 legacy_source: bool, src_ctx: dict) -> dict:
     """split_thread's body, on ONE connection inside its transaction. Every
-    helper it calls (create_thread, write_link, get_thread) takes the pool
-    positionally and only ever calls fetch/fetchrow/fetchval/execute on it,
-    which an asyncpg Connection provides with the same signatures — the same
-    substitution thread_consolidator._store_summary already makes."""
+    helper it calls with the connection in the pool's place (create_thread,
+    write_link) takes the pool positionally and only ever calls
+    fetch/fetchrow/fetchval/execute on it, which an asyncpg Connection
+    provides with the same signatures."""
     # "From that point" is a moment, not an id: the two rows of one exchange
     # race on insert while created_at is the utterance time
     # (memory_engine.write_turn_row), so a later-said row can hold a smaller
@@ -1989,24 +2274,16 @@ async def _split_in_transaction(conn, entity_id: int, source_thread_id, *,
         # any other failure path either.
         raise ValueError("nothing to move")
 
-    # What was learned from the moved messages goes with them: a row whose
-    # metadata.from_turns (batch_consolidator) are all moved rows is retagged to
-    # the new thread, so deleting that thread takes it too. A row learned from
-    # messages on both sides of the split stays where it is, and a row learned
-    # before from_turns existed carries none and stays as well. What those
-    # messages retired or closed follows the same rule (carry_stamps).
+    # What was learned from the moved messages goes with them, by the one
+    # rule every move takes (carry_learned): a row whose metadata.from_turns
+    # are all moved rows is the new thread's, so deleting that thread takes it
+    # too; what those messages retired, closed or said again follows; a moved
+    # row's slot scope follows, so a correction made there replaces it. A row
+    # learned from messages on both sides of the split stays where it is, and
+    # a row that names no messages stays as well.
     moved_ids = [int(r["id"]) for r in moved]
-    await conn.execute(
-        "UPDATE entity_memory"
-        "   SET metadata = metadata || jsonb_build_object("
-        "           'source_context', $3::jsonb, 'split_from', $4::jsonb)"
-        " WHERE entity_id = $1 AND memory_type <> 'turn' AND status = 'active'"
-        "   AND jsonb_typeof(metadata->'from_turns') = 'array'"
-        "   AND jsonb_array_length(metadata->'from_turns') > 0"
-        "   AND (metadata->'from_turns') <@ $2::jsonb",
-        entity_id, json.dumps(moved_ids),
-        json.dumps(descriptor_for(new_id)), json.dumps(src_ctx))
-    await carry_stamps(conn, entity_id, moved_ids, descriptor_for(new_id))
+    await carry_learned(conn, entity_id, moved_ids, src_ctx, descriptor_for(new_id),
+                        mark="split_from")
 
     # A messaging connector's map rows follow the turns they belong to, so a
     # reply in the messaging app to a moved message lands in the new thread
@@ -2061,19 +2338,12 @@ async def _split_in_transaction(conn, entity_id: int, source_thread_id, *,
         # whole split rolls back rather than landing without its link.
         await write_link(conn, entity_id, str(source_thread_id), new_id, "split")
 
-    # The source's live summary now describes content that moved out. Retire
-    # it in this same transaction (see the docstring): superseded, with no
-    # successor to point at, so get_live_summary stops returning it and the
-    # consolidator's next pass sees no `prev`. Any failure propagates and
-    # rolls the split back — a split that leaves the stale summary in place
-    # is the bug this is here to fix, so landing one is not a better outcome.
-    from mastercode.thread_consolidator import supersede_live_summary
-    retired = await supersede_live_summary(conn, entity_id, src_ctx)
+    # No summary to retire: no rolling summary is written any more (the
+    # thread's own close_turn notes are read when turns fall out of its
+    # window, evicted_record), so nothing describes the content that moved.
 
-    log.info("circles split entity=%d src=%s:%s -> thread %s turns=%d "
-             "retired_summary=%s",
-             entity_id, src_ctx.get("kind"), src_ctx.get("ref"), new_id,
-             len(moved), retired)
+    log.info("circles split entity=%d src=%s:%s -> thread %s turns=%d",
+             entity_id, src_ctx.get("kind"), src_ctx.get("ref"), new_id, len(moved))
     # No read that swallows its own error runs inside the transaction: a
     # failed statement here would abort the transaction while the swallowed
     # exception let it "commit" (Postgres turns that COMMIT into a ROLLBACK

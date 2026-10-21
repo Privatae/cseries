@@ -1,0 +1,205 @@
+#!/usr/bin/python3 -I
+"""One signed heartbeat from the cloud box, every 5 minutes
+(cseries-cloud-heartbeat.timer). Push only: nothing connects in, and a failed
+post changes nothing here.
+
+  cseries-cloud-heartbeat [--print]     --print shows the body and does not post
+
+The body, compact JSON:
+
+  {machine_id, ts, version, host:{health, deep_status},
+   disk:{state_free_bytes, root_free_bytes}, cert:{not_after},
+   backup:{last_ok_at, paused}, patches:{pending_security, reboot_required,
+   last_upgrade_at}, uptime_s}
+
+backup.paused is true when the Host's newest finished backup run took no
+backup because it had nobody to encrypt to (no_recipient) or nowhere it may
+go (no_destination), false after any other outcome or before any run.
+
+ts and every time are UTC, RFC 3339 to the second (2026-01-02T03:04:05Z).
+A value this box cannot read is null. It is posted to cloud.json's
+heartbeat_url with
+
+  X-Machine-Signature: base64 Ed25519 signature, by the key in
+  /var/lib/cseries-cloud/heartbeat.key, over
+  "privatae-machine-heartbeat-v1\\n<machine_id>\\n<ts>\\n<sha256 hex of the body>\\n"
+"""
+
+import datetime
+import json
+import os
+import re
+import subprocess
+import sys
+import time
+import urllib.request
+
+sys.path.insert(0, "/usr/local/lib/cseries-cloud")
+import cseries_cloud as cc  # noqa: E402
+
+HEALTH_URL = f"http://{cc.HOST_IP}:{cc.HOST_PORT}/api/system/health"
+DEEP_IN_CONTAINER = ("import json,urllib.request\n"
+                     "try:\n"
+                     "    r=urllib.request.urlopen('http://127.0.0.1:8800/api/system/health/deep',timeout=10)\n"
+                     "    print(json.load(r).get('status'))\n"
+                     "except urllib.error.HTTPError as e:\n"
+                     "    print(json.load(e).get('status'))\n")
+LAST_BACKUP_SQL = "SELECT to_char(max(finished_at) AT TIME ZONE 'UTC','YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"') " \
+                  "FROM host_backup_runs WHERE state = 'ok'"
+# The newest finished backup run, as server/host_backup.py records runs: a
+# run not attempted (NOT_ATTEMPTED: no_recipient, no_destination) is written
+# finished; a run under way has no finished_at; a restore's own row
+# (reason 'restore') is not a backup. 't' or 'f', and 'f' with no run yet.
+BACKUP_PAUSED_SQL = "SELECT coalesce((SELECT state IN ('no_recipient', 'no_destination') " \
+                    "FROM host_backup_runs WHERE finished_at IS NOT NULL AND reason <> 'restore' " \
+                    "ORDER BY finished_at DESC, id DESC LIMIT 1), false)"
+UU_STAMP = "/var/lib/apt/periodic/unattended-upgrades-stamp"
+STATE_VOLUME = "cseries_state"
+
+
+def rfc3339(t):
+    return datetime.datetime.fromtimestamp(t, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _quiet(cmd, timeout=20):
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return r.stdout.strip() if r.returncode == 0 else None
+
+
+def host_health():
+    try:
+        with urllib.request.urlopen(HEALTH_URL, timeout=5) as r:
+            return "ok" if r.status == 200 else "down"
+    except OSError:
+        return "down"
+
+
+def deep_status():
+    # From inside the container: /health/deep answers loopback callers only.
+    out = _quiet(["podman", "exec", "cseries-host", "python3", "-c", DEEP_IN_CONTAINER])
+    return out if out in ("ready", "degraded") else None
+
+
+def free_bytes(path):
+    try:
+        st = os.statvfs(path)
+    except OSError:
+        return None
+    return st.f_bavail * st.f_frsize
+
+
+def state_free():
+    mp = _quiet(["podman", "volume", "inspect", "--format", "{{.Mountpoint}}", STATE_VOLUME])
+    return free_bytes(mp) if mp else None
+
+
+def cert_not_after(path):
+    try:
+        from cryptography import x509
+        with open(path, "rb") as f:
+            c = x509.load_pem_x509_certificate(f.read())
+        return c.not_valid_after_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+    except (OSError, ValueError):
+        return None
+
+
+RFC3339_RE = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\dZ")
+
+
+def last_backup_ok():
+    # The Host's own database answers this, and the Host can shape what its
+    # database returns (a view or a function earlier on the search path). The
+    # box signs the body, so it reports only the one shape LAST_BACKUP_SQL
+    # makes, and anything else as unknown.
+    out = _quiet(["podman", "exec", "cseries-postgres", "psql", "-h", "/var/run/postgresql",
+                  "-U", "entity", "-d", "hostmem", "-Atqc", LAST_BACKUP_SQL])
+    return out if out and RFC3339_RE.fullmatch(out) else None
+
+
+def backup_paused():
+    # Read the way last_backup_ok reads: the Host can shape its database's
+    # answer, so only the query's own two answers are reported, anything
+    # else as unknown.
+    out = _quiet(["podman", "exec", "cseries-postgres", "psql", "-h", "/var/run/postgresql",
+                  "-U", "entity", "-d", "hostmem", "-Atqc", BACKUP_PAUSED_SQL])
+    return {"t": True, "f": False}.get(out)
+
+
+def pending_security():
+    out = _quiet(["apt-get", "-s", "-o", "Debug::NoLocking=1", "upgrade"], timeout=120)
+    if out is None:
+        return None
+    return sum(1 for line in out.splitlines() if line.startswith("Inst ") and "-security" in line)
+
+
+def mtime(path):
+    try:
+        return rfc3339(os.stat(path).st_mtime)
+    except OSError:
+        return None
+
+
+def uptime_s():
+    try:
+        with open("/proc/uptime", encoding="ascii") as f:
+            return int(float(f.read().split()[0]))
+    except (OSError, ValueError, IndexError):
+        return None
+
+
+def collect(paths, cfg, now=None):
+    st = cc.read_json(paths.update_state(), {}) or {}
+    return {
+        "machine_id": cfg["machine_id"],
+        "ts": rfc3339(now if now is not None else time.time()),
+        "version": st.get("version"),
+        "host": {"health": host_health(), "deep_status": deep_status()},
+        "disk": {"state_free_bytes": state_free(), "root_free_bytes": free_bytes(paths.p("/"))},
+        "cert": {"not_after": cert_not_after(os.path.join(paths.tls, "cert.pem"))},
+        "backup": {"last_ok_at": last_backup_ok(), "paused": backup_paused()},
+        "patches": {
+            "pending_security": pending_security(),
+            "reboot_required": os.path.exists(paths.p("run/reboot-required")),
+            "last_upgrade_at": mtime(paths.p(UU_STAMP)),
+        },
+        "uptime_s": uptime_s(),
+    }
+
+
+def encode(body):
+    return json.dumps(body, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def signed_request(url, key, body):
+    raw = encode(body)
+    sig = cc.sign_heartbeat(key, body["machine_id"], body["ts"], raw)
+    return urllib.request.Request(url, data=raw, method="POST", headers={
+        "Content-Type": "application/json",
+        "User-Agent": cc.USER_AGENT,
+        "X-Machine-Signature": sig,
+    })
+
+
+def main(argv):
+    paths = cc.Paths()
+    cfg = cc.load_cloud(paths)
+    body = collect(paths, cfg)
+    if argv == ["--print"]:
+        print(encode(body).decode("utf-8"))
+        return 0
+    key = cc.load_or_create_key(paths.heartbeat_key())
+    req = signed_request(cfg["heartbeat_url"], key, body)
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            print(f"heartbeat: {r.status}", file=sys.stderr)
+    except OSError as e:
+        # Nothing on the box depends on the platform hearing this.
+        print(f"heartbeat: not delivered ({e})", file=sys.stderr)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

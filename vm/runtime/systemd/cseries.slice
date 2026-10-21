@@ -1,0 +1,24 @@
+# What the local runtime starts: every app's containers, the browser, the
+# coding engines and their engine builds (podman --cgroup-parent,
+# cseries_runtime/common.py CGROUP_PARENT). The Host, its database, the door
+# and the bastion are services in system.slice, beside this one.
+#
+# CPU: a weight, never a ceiling. When the processors are busy the kernel
+# shares them between this slice and system.slice in proportion to their
+# weights, 20 here against systemd's default 100 there, so the Host and what
+# it needs get at least five sixths of every processor they ask for, and the
+# containers, however many and however busy, at least one sixth. When the
+# Host leaves processors idle the containers may use all of them: a weight
+# takes nothing from anyone until two sides want the same processor. 20 is
+# also what podman gives a container's --cpu-shares 512 in cgroup v2, the
+# share the runtime meant for its containers against the Host from the start.
+#
+# A top-level slice on purpose: in "a-b.slice" systemd nests b under a.slice,
+# and a weight counts only against siblings.
+[Unit]
+Description=C-Series runtime containers (apps, browser, coding engines)
+Documentation=man:systemd.slice(5) man:systemd.resource-control(5)
+Before=slices.target
+
+[Slice]
+CPUWeight=20

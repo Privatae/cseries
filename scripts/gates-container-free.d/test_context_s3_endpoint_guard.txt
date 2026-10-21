@@ -1,0 +1,2 @@
+# 2026-10-20: the context store's S3 endpoint comes from stored rows (the host's config, a route, a file's recorded location), which a restored backup supplies. S3Backend checks it the way the backup bucket is checked (backup_stores.check_endpoint: https, every address public) before the vault is opened, and registers the per-request guard; saving such an endpoint is refused. Real boto3 client; name resolution and the vault replaced. No DB, no network.
+test_context_s3_endpoint_guard.py

@@ -1,10 +1,9 @@
 # The public wiki — how to write a page
 
 The pages in `pages/` are published at `https://privatae.ai/wiki/<slug>`, where
-anyone can read them and ask questions of them. Search engines index them, AI
-answer engines (ChatGPT search, Perplexity, Claude, Google's AI answers) read
-them to answer questions about Privatae, and every Host reads the same pages
-through its `capabilities` tool. This file is the guide for writing them; it
+anyone can read them and ask questions of them. Search engines and AI answer
+engines read them to answer questions about Privatae, and every Host reads the
+same pages through its `capabilities` tool. This file is the guide for writing them; it
 is not a page and is not in the image.
 
 ## What a page may say
@@ -76,11 +75,11 @@ one to the code behind it:
 ```yaml
 what-a-host-is:
   sources:
-    - server/network/nac_egress.py::resolve_exit
+    - brain/mastercode/runtime/agent_grant.py::parse_grant
     - system-apps/network/app.yaml
     - external:<repo>/<path>        # only for code in another repository
   verified:                          # written by --verify; never by hand
-    date: '2026-09-30'
+    date: 'YYYY-MM-DD'
     digest: sha256:…
 ```
 

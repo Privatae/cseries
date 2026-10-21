@@ -4,14 +4,21 @@ description: Full cost-and-usage analytics for your Host — what each project c
 icon: icon.png
 icon_small: icon-64.png
 entrypoint: index.html
+# 0.3.1 (2026-10-20): text only. The Billing view (was Billables) and the fee
+#   labels say billing is not part of this release and nothing is charged;
+#   the platform-ledger and plan wording is gone. No behaviour change. Carries
+#   0.3.0's inference view unchanged.
+# 0.3.0 (2026-10-19): the inference view lists every model call the Host made
+#   in the last day, newest first — its own turns and everything it ran beside
+#   them — each with what it cost, or "unpriced"/"flat plan"/"local" where no
+#   per-call dollar figure exists. Reads GET /api/inference/activity
+#   (read:inference_log, already held) with include_turns. It lists the newest
+#   50 and says so when the day had more.
 # 0.2.5 (2026-10-18): prompt_behavior is one paragraph saying what the app is
 #   and what lives in it; do_when_active is gone from the manifest contract,
 #   and its how-to lines live in skills and tool descriptions the Host reads on
 #   demand. Manifest-only; bundle repacked.
-# 0.2.6 (2026-10-20): text only. The Billing view (was Billables) and the fee
-#   labels say billing is not part of this release and nothing is charged;
-#   the platform-ledger and plan wording is gone. No behaviour change.
-version: "0.2.6"
+version: "0.3.1"
 # 0.2.4 (2026-10-07): the vendor estimate says how many runs it covers. It sums
 # only the runs that reported a vendor cost, so with fewer than all of them it
 # is a floor. The project and harness cells show "N/M" with a tooltip, and the

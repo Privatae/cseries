@@ -7,18 +7,19 @@ these routes only carry the form and set or clear the cookie.
 
 from __future__ import annotations
 
+import html
 import logging
 
 from urllib.parse import urlencode, urlsplit
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from server import owner_login, trusted_proxies
+from server import owner_login, owner_passkeys, trusted_proxies
 from server.home_origin import HOME
-from server.middleware.localhost_only import _unmap_v4
-from server.middleware.owner_session import (_cookie, join_url, live_session, own_app_origin,
-                                              request_host)
+from server.middleware.localhost_only import DOOR_PATH, _unmap_v4
+from server.middleware.owner_session import (_cookie, door_decision, join_url, live_session,
+                                              own_app_origin, request_host)
 
 router = APIRouter()
 logger = logging.getLogger("cseries.owner_login")
@@ -32,22 +33,175 @@ _PAGE = """<!doctype html>
  h1{{font-size:1.4rem}} label{{display:block;margin:.8rem 0 .2rem}}
  input{{width:100%;padding:.55rem;font-size:1rem;box-sizing:border-box}}
  button{{margin-top:1.2rem;padding:.6rem 1rem;font-size:1rem;width:100%}}
- p.note{{color:#555;font-size:.9rem}} p#err{{color:#b00020}}
+ p.note{{color:#555;font-size:.9rem}} p#err{{color:#b00020}} p#done{{color:#1b5e20}}
+ details{{margin-top:1.4rem}} summary{{cursor:pointer;color:#333}}
+ ol.codes{{font-family:ui-monospace,monospace;font-size:1.05rem;line-height:1.8;background:#f4f4f4;
+          padding:.6rem 1rem .6rem 2.4rem}}
+ ul.keys{{list-style:none;padding:0}} ul.keys li{{border-top:1px solid #ddd;padding:.6rem 0}}
+ ul.keys button{{margin-top:.4rem;width:auto}}
 </style></head><body>
 <h1>{title}</h1>
 {intro}
-<form id="f">{fields}<button type="submit">{button}</button></form>
+{body}
+<p id="done" role="status"></p>
 <p id="err" role="alert"></p>
-<script>
-document.getElementById('f').addEventListener('submit', async (e) => {{
-  e.preventDefault();
-  const body = Object.fromEntries(new FormData(e.target));
-  const r = await fetch('{action}', {{method: 'POST', headers: {{'Content-Type': 'application/json'}},
-                                      body: JSON.stringify(body), credentials: 'same-origin'}});
-  const j = await r.json().catch(() => ({{}}));
-  if (r.ok) {{ location.href = '/'; }} else {{ document.getElementById('err').textContent = j.error || 'Something went wrong.'; }}
-}});
-</script></body></html>"""
+<script>{script}</script></body></html>"""
+
+# The pages' script, passed to _PAGE as a value, so its braces are its own.
+# Every form with data-action posts its fields as JSON and, when the answer
+# is ok, goes where the answer's `next` says. The passkey half turns the
+# server's options (the webauthn library's JSON, base64url fields) into what
+# navigator.credentials takes, and the browser's answer back.
+_SCRIPT = r"""
+const $ = (id) => document.getElementById(id);
+const say = (id, msg) => { const el = $(id); if (el) el.textContent = msg || ''; };
+const fail = (msg) => { say('done', ''); say('err', msg || 'Something went wrong.'); };
+async function post(url, body) {
+  const r = await fetch(url, {method: 'POST', headers: {'Content-Type': 'application/json'},
+                              body: JSON.stringify(body || {}), credentials: 'same-origin'});
+  const j = await r.json().catch(() => ({}));
+  return {ok: r.ok, j: j};
+}
+document.querySelectorAll('form[data-action]').forEach((form) => {
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    say('err', '');
+    const res = await post(form.dataset.action, Object.fromEntries(new FormData(form)));
+    if (res.ok) { location.href = res.j.next || '/'; } else { fail(res.j.error); }
+  });
+});
+const b64u = {
+  dec(s) {
+    s = s.replace(/-/g, '+').replace(/_/g, '/');
+    s += '==='.slice((s.length + 3) % 4);
+    return Uint8Array.from(atob(s), (c) => c.charCodeAt(0)).buffer;
+  },
+  enc(buf) {
+    let s = '';
+    new Uint8Array(buf).forEach((x) => { s += String.fromCharCode(x); });
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  },
+};
+const ids = (list) => (list || []).map((c) => Object.assign({}, c, {id: b64u.dec(c.id)}));
+function creationOptions(o) {
+  if (window.PublicKeyCredential && PublicKeyCredential.parseCreationOptionsFromJSON) {
+    return PublicKeyCredential.parseCreationOptionsFromJSON(o);
+  }
+  return Object.assign({}, o, {challenge: b64u.dec(o.challenge),
+    user: Object.assign({}, o.user, {id: b64u.dec(o.user.id)}),
+    excludeCredentials: ids(o.excludeCredentials)});
+}
+function requestOptions(o) {
+  if (window.PublicKeyCredential && PublicKeyCredential.parseRequestOptionsFromJSON) {
+    return PublicKeyCredential.parseRequestOptionsFromJSON(o);
+  }
+  return Object.assign({}, o, {challenge: b64u.dec(o.challenge), allowCredentials: ids(o.allowCredentials)});
+}
+function credentialJSON(c) {
+  if (typeof c.toJSON === 'function') { try { return c.toJSON(); } catch (e) { /* below */ } }
+  const r = c.response;
+  const out = {id: c.id, rawId: b64u.enc(c.rawId), type: c.type,
+               clientExtensionResults: c.getClientExtensionResults ? c.getClientExtensionResults() : {},
+               response: {clientDataJSON: b64u.enc(r.clientDataJSON)}};
+  if (c.authenticatorAttachment) out.authenticatorAttachment = c.authenticatorAttachment;
+  if (r.attestationObject) {
+    out.response.attestationObject = b64u.enc(r.attestationObject);
+    out.response.transports = r.getTransports ? r.getTransports() : [];
+  }
+  if (r.authenticatorData) {
+    out.response.authenticatorData = b64u.enc(r.authenticatorData);
+    out.response.signature = b64u.enc(r.signature);
+    if (r.userHandle) out.response.userHandle = b64u.enc(r.userHandle);
+  }
+  return out;
+}
+async function ceremony(name, create) {
+  if (!window.PublicKeyCredential) {
+    return {ok: false, j: {error: 'This browser has no passkey support.'}};
+  }
+  const a = await post('/api/owner/passkey/' + name + '/options', {});
+  if (!a.ok) return a;
+  let cred;
+  try {
+    cred = create ? await navigator.credentials.create({publicKey: creationOptions(a.j.options)})
+                  : await navigator.credentials.get({publicKey: requestOptions(a.j.options)});
+  } catch (e) {
+    return {ok: false, j: {error: 'The passkey was not used.'}};
+  }
+  return post('/api/owner/passkey/' + name + '/verify', {ceremony: a.j.ceremony, credential: credentialJSON(cred)});
+}
+async function withCheck(run) {
+  let res = await run();
+  if (!res.ok && res.j.step_up) {
+    const check = await ceremony('stepup', false);
+    if (!check.ok) return check;
+    res = await run();
+  }
+  return res;
+}
+function showCodes(codes) {
+  if (!codes || !codes.length) return;
+  const list = $('code-list');
+  list.textContent = '';
+  codes.forEach((code) => { const li = document.createElement('li'); li.textContent = code; list.appendChild(li); });
+  $('codes').hidden = false;
+}
+function on(id, handler) { const el = $(id); if (el) el.addEventListener('click', handler); }
+on('passkey', async () => {
+  say('err', '');
+  const res = await ceremony('login', false);
+  if (res.ok) { location.href = res.j.next || '/'; } else { fail(res.j.error); }
+});
+const ended = (n) => n ? ' ' + n + ' other session' + (n === 1 ? ' was' : 's were') + ' signed out.' : '';
+on('add', async () => {
+  say('err', '');
+  const res = await withCheck(() => ceremony('register', true));
+  if (!res.ok) { fail(res.j.error); return; }
+  say('done', (res.j.recovery_codes ? 'Passkey added. Your password no longer signs in to this Host.'
+                                    : 'Passkey added.') + ended(res.j.sessions_ended));
+  showCodes(res.j.recovery_codes);
+});
+document.querySelectorAll('button[data-remove]').forEach((btn) => {
+  btn.addEventListener('click', async () => {
+    say('err', '');
+    const res = await withCheck(() => post('/api/owner/passkey/remove', {id: btn.dataset.remove}));
+    if (!res.ok) { fail(res.j.error); return; }
+    const li = btn.closest('li');
+    if (li) li.remove();
+    say('done', 'Passkey removed.' + ended(res.j.sessions_ended));
+  });
+});
+on('end-others', async () => {
+  say('err', '');
+  const res = await withCheck(() => post('/api/owner/sessions/end-others', {}));
+  if (!res.ok) { fail(res.j.error); return; }
+  say('done', res.j.sessions_ended ? ended(res.j.sessions_ended).trim()
+                                   : 'No other session was signed in.');
+});
+on('confirm', async () => {
+  say('err', '');
+  const res = await ceremony('stepup', false);
+  if (res.ok) { say('done', 'Done. For the next five minutes this Host can open its pairing port for you.'); }
+  else { fail(res.j.error); }
+});
+on('new-codes', async () => {
+  say('err', '');
+  const res = await withCheck(() => post('/api/owner/recovery/new', {}));
+  if (!res.ok) { fail(res.j.error); return; }
+  say('done', 'New recovery codes made. The earlier ones no longer work.');
+  showCodes(res.j.recovery_codes);
+});
+"""
+
+
+def _form_html(action: str, fields: str, button: str) -> str:
+    return f'<form data-action="{action}">{fields}<button type="submit">{button}</button></form>'
+
+
+def _page(title: str, intro: str, body: str) -> HTMLResponse:
+    return HTMLResponse(_PAGE.format(title=title, intro=intro, body=body, script=_SCRIPT),
+                        headers={"Cache-Control": "no-store"})
+
 
 _EMAIL = '<label for="email">Email</label><input id="email" name="email" type="email" autocomplete="username" required>'
 
@@ -58,27 +212,23 @@ def _client(request: Request) -> str:
     let one attacker lock the owner out. When the peer is a trusted proxy, the
     nearest X-Forwarded-For address that is not itself a trusted proxy is used
     instead. Never used to decide access: the gates read the socket peer."""
-    peer = _unmap_v4(request.client.host if request.client else "") or "?"
-    proxies = trusted_proxies.networks()
-    if not proxies or not trusted_proxies.contains(peer, proxies):
-        return peer
-    hops = [h.strip() for h in (request.headers.get("x-forwarded-for") or "").split(",") if h.strip()]
-    for hop in reversed(hops):
-        hop = _unmap_v4(hop) or hop
-        if not trusted_proxies.contains(hop, proxies):
-            return hop
-    return peer
+    return trusted_proxies.visitor(request.client.host if request.client else None,
+                                   request.headers.get("x-forwarded-for"))
 
 
 def _browser_used_https(request: Request) -> bool:
-    """Whether the browser reached this Host over HTTPS. Behind a proxy that
-    terminates TLS this hop is plain HTTP, and only the proxy's header says
-    otherwise (server/launch.py turns uvicorn's own reading of it off). The
-    header is believed from anyone because it can only add Secure: a cookie
-    marked Secure on a plain-HTTP page is dropped by the browser, which costs
-    a forger their own sign-in and nothing else."""
-    if request.url.scheme == "https":
+    """Whether the session cookie is marked Secure. Always on an https Host
+    (CSERIES_URL): its cookie is __Host- named, which a browser keeps only
+    with Secure. Otherwise when this hop is HTTPS, or a trusted proxy
+    (CSERIES_TRUSTED_PROXIES) says the browser's was: behind a proxy that
+    terminates TLS this hop is plain HTTP and only the proxy's header says
+    otherwise (server/launch.py turns uvicorn's own reading of it off).
+    Anyone else's X-Forwarded-Proto or Forwarded is a header the visitor
+    wrote, and is not read."""
+    if owner_login.secure_cookie() or request.url.scheme == "https":
         return True
+    if not trusted_proxies.peer_is_trusted(_unmap_v4(request.client.host if request.client else None)):
+        return False
     xfp = (request.headers.get("x-forwarded-proto") or "").split(",")[0].strip().lower()
     if xfp == "https":
         return True
@@ -113,29 +263,109 @@ def _text(body: dict, key: str) -> str:
 async def setup_page():
     if not owner_login.needs_setup():
         return RedirectResponse("/login", status_code=303)
-    return HTMLResponse(_PAGE.format(
-        title="Set up C-Series",
-        intro=('<p class="note">Create the owner account. The setup code is printed '
-               "in this Host's log (for example <code>docker compose logs host</code>).</p>"),
-        fields=('<label for="code">Setup code</label><input id="code" name="code" '
-                'autocomplete="one-time-code" required>' + _EMAIL +
-                f'<label for="password">Password (at least {owner_login.MIN_PASSWORD_LEN} '
-                'characters)</label><input id="password" name="password" type="password" '
-                'autocomplete="new-password" required>'),
-        button="Create owner", action="/api/owner/setup"),
-        headers={"Cache-Control": "no-store"})
+    return _page(
+        "Set up C-Series",
+        ('<p class="note">Create the owner account. The setup code is printed '
+         "in this Host's log (for example <code>docker compose logs host</code>), or was "
+         "given to you with the Host.</p>"),
+        _form_html("/api/owner/setup",
+                   '<label for="code">Setup code</label><input id="code" name="code" '
+                   'autocomplete="one-time-code" required>' + _EMAIL +
+                   f'<label for="password">Password (at least {owner_login.MIN_PASSWORD_LEN} '
+                   'characters)</label><input id="password" name="password" type="password" '
+                   'autocomplete="new-password" required>',
+                   "Create owner"))
+
+
+async def _passkeys_and_codes() -> tuple[int, int]:
+    pool = owner_login._pool()
+    if pool is None:
+        return 0, 0
+    return await owner_passkeys.passkey_count(pool), await owner_passkeys.unused_recovery_codes(pool)
 
 
 @router.get("/login", include_in_schema=False)
 async def login_page():
     if owner_login.needs_setup():
         return RedirectResponse("/setup", status_code=303)
-    return HTMLResponse(_PAGE.format(
-        title="Sign in to C-Series", intro="",
-        fields=(_EMAIL + '<label for="password">Password</label><input id="password" '
-                'name="password" type="password" autocomplete="current-password" required>'),
-        button="Sign in", action="/api/owner/login"),
-        headers={"Cache-Control": "no-store"})
+    passkeys, _codes = await _passkeys_and_codes()
+    if passkeys:
+        body = ('<button id="passkey" type="button">Sign in with a passkey</button>'
+                '<details><summary>Sign in with a recovery code instead</summary>'
+                + _form_html("/api/owner/recovery/login",
+                             '<label for="code">Recovery code</label><input id="code" name="code" '
+                             'autocomplete="one-time-code" required>',
+                             "Sign in with the code")
+                + '<p class="note">Each recovery code works once.</p></details>')
+    else:
+        body = _form_html("/api/owner/login",
+                          _EMAIL + '<label for="password">Password</label><input id="password" '
+                          'name="password" type="password" autocomplete="current-password" required>',
+                          "Sign in")
+    return _page("Sign in to C-Series", "", body)
+
+
+@router.get("/passkey", include_in_schema=False)
+async def passkey_page(request: Request):
+    """The owner's passkeys: add one (walked to after setup or a password
+    sign-in on an https Host), confirm with one before pairing a machine, and
+    make new recovery codes. Signed-in owners only, on the desktop's name."""
+    if request_host(request.scope) != HOME.host:
+        return _no_store(JSONResponse({"error": "not the desktop"}, status_code=404))
+    email, _token = await live_session(request.scope)
+    if not email:
+        return _no_store(RedirectResponse("/setup" if owner_login.needs_setup() else "/login",
+                                          status_code=303))
+    passkeys, codes = await _passkeys_and_codes()
+    codes_html = ('<div id="codes" hidden><p>Your recovery codes. Each one signs you in once, '
+                  'if you no longer have a passkey. Keep them somewhere safe: this Host shows them '
+                  'only now.</p><ol id="code-list" class="codes"></ol></div>')
+    end_others = ('<button id="end-others" type="button">Sign out every other session</button>'
+                  '<p class="note">Every browser signed in to this Host but this one is signed '
+                  'out.</p>')
+    if not passkeys:
+        intro = ('<p>A passkey signs you in with this device&#39;s own lock: a fingerprint, your '
+                 'face or a PIN. Once you add one, your password no longer signs in, so a password '
+                 'someone learns is not enough to get in, and every other session is signed '
+                 'out.</p>')
+        body = '<button id="add" type="button">Add a passkey</button>' + codes_html + end_others
+    else:
+        intro = (f'<p class="note">This Host has {passkeys} passkey{"" if passkeys == 1 else "s"} '
+                 f'and {codes} unused recovery code{"" if codes == 1 else "s"}.</p>')
+        body = ('<button id="confirm" type="button">Confirm with your passkey</button>'
+                '<p class="note">Pairing a machine from outside needs this in the last five '
+                'minutes.</p>'
+                '<button id="add" type="button">Add another passkey</button>'
+                '<button id="new-codes" type="button">Make new recovery codes</button>' + codes_html
+                + await _passkey_list(passkeys) + end_others)
+    body += '<p><a href="/">Continue to C-Series</a></p>'
+    return _page("Passkeys", intro, body)
+
+
+def _day(when) -> str:
+    return when.strftime("%Y-%m-%d") if hasattr(when, "strftime") else "unknown"
+
+
+async def _passkey_list(count: int) -> str:
+    """The passkeys, each with a Remove button while there is more than one."""
+    rows = await owner_passkeys.list_passkeys(owner_login._pool())
+    items = []
+    for r in rows:
+        used = f'last used {_day(r["last_used_at"])}' if r["last_used_at"] else "not used yet"
+        button = (f'<button type="button" data-remove="{html.escape(r["id"], quote=True)}">Remove'
+                  '</button>' if count > 1 else "")
+        items.append(f'<li>{html.escape(r["label"] or "passkey")} · added {_day(r["created_at"])} · '
+                     f'{used}<br>{button}</li>')
+    note = ('<p class="note">Removing a passkey also signs out every other session. The only '
+            'passkey stays until you add another.</p>')
+    return '<h2>Your passkeys</h2><ul class="keys">' + "".join(items) + "</ul>" + note
+
+
+def _after_password() -> str:
+    """Where a password sign-in (or setup) goes next: on an https Host, to
+    add a passkey, since a password alone is what a Host the internet
+    reaches should not rely on; else the desktop."""
+    return "/passkey" if owner_login.secure_cookie() else "/"
 
 
 @router.get("/api/owner/status", include_in_schema=False)
@@ -149,12 +379,13 @@ async def owner_setup(request: Request):
     body = await _form(request)
     try:
         await owner_login.create_owner(_text(body, "code"), _text(body, "email"),
-                                       _text(body, "password"))
+                                       _text(body, "password"), client=_client(request))
         token = await owner_login.sign_in(_text(body, "email"), _text(body, "password"),
                                           _client(request), request_host(request.scope))
     except owner_login.LoginError as exc:
         return JSONResponse({"error": str(exc)}, status_code=400)
-    return _with_cookie(JSONResponse({"ok": True}), token, request)
+    owner_passkeys.note_password_sign_in(token)
+    return _with_cookie(JSONResponse({"ok": True, "next": _after_password()}), token, request)
 
 
 @router.post("/api/owner/login", include_in_schema=False)
@@ -165,14 +396,160 @@ async def owner_sign_in(request: Request):
                                           _client(request), request_host(request.scope))
     except owner_login.LoginError as exc:
         return JSONResponse({"error": str(exc)}, status_code=401)
-    return _with_cookie(JSONResponse({"ok": True}), token, request)
+    # Opens adding the first passkey for a few minutes (owner_passkeys._may_add).
+    owner_passkeys.note_password_sign_in(token)
+    return _with_cookie(JSONResponse({"ok": True, "next": _after_password()}), token, request)
+
+
+# ── passkeys and recovery codes (server/owner_passkeys.py) ─────────────────
+
+def _refusal(exc: owner_login.LoginError, status: int) -> JSONResponse:
+    body = {"error": str(exc)}
+    if isinstance(exc, owner_passkeys.StepUpNeeded):
+        body["step_up"] = True
+    return _no_store(JSONResponse(body, status_code=status))
+
+
+async def _signed_in(request: Request) -> str | None:
+    """The live session's token on this request's host, or None."""
+    email, token = await live_session(request.scope)
+    return token if email else None
+
+
+_SIGN_IN_FIRST = {"error": "Sign in first."}
+
+
+@router.post("/api/owner/passkey/login/options", include_in_schema=False)
+async def passkey_login_options(request: Request):
+    try:
+        return _no_store(JSONResponse(await owner_passkeys.login_options(
+            _client(request), request_host(request.scope))))
+    except owner_login.LoginError as exc:
+        return _refusal(exc, 400)
+
+
+@router.post("/api/owner/passkey/login/verify", include_in_schema=False)
+async def passkey_login_verify(request: Request):
+    body = await _form(request)
+    try:
+        token = await owner_passkeys.passkey_sign_in(body.get("ceremony"), body.get("credential"),
+                                                     _client(request), request_host(request.scope))
+    except owner_login.LoginError as exc:
+        return _refusal(exc, 401)
+    return _with_cookie(JSONResponse({"ok": True, "next": "/"}), token, request)
+
+
+@router.post("/api/owner/recovery/login", include_in_schema=False)
+async def recovery_login(request: Request):
+    body = await _form(request)
+    try:
+        token = await owner_passkeys.recovery_sign_in(_text(body, "code"), _client(request),
+                                                      request_host(request.scope))
+    except owner_login.LoginError as exc:
+        return _refusal(exc, 401)
+    # Someone signing in with a code has usually lost their passkey.
+    return _with_cookie(JSONResponse({"ok": True, "next": "/passkey"}), token, request)
+
+
+@router.post("/api/owner/passkey/register/options", include_in_schema=False)
+async def passkey_register_options(request: Request):
+    token = await _signed_in(request)
+    if not token:
+        return _no_store(JSONResponse(_SIGN_IN_FIRST, status_code=401))
+    try:
+        return _no_store(JSONResponse(await owner_passkeys.registration_options(
+            token, request_host(request.scope))))
+    except owner_login.LoginError as exc:
+        return _refusal(exc, 403)
+
+
+@router.post("/api/owner/passkey/register/verify", include_in_schema=False)
+async def passkey_register_verify(request: Request):
+    token = await _signed_in(request)
+    if not token:
+        return _no_store(JSONResponse(_SIGN_IN_FIRST, status_code=401))
+    body = await _form(request)
+    try:
+        got = await owner_passkeys.register(token, request_host(request.scope), body.get("ceremony"),
+                                            body.get("credential"), body.get("label"))
+    except owner_login.LoginError as exc:
+        return _refusal(exc, 400)
+    return _no_store(JSONResponse({"ok": True, "recovery_codes": got["recovery_codes"],
+                                   "sessions_ended": got["sessions_ended"]}))
+
+
+@router.post("/api/owner/passkey/stepup/options", include_in_schema=False)
+async def passkey_step_up_options(request: Request):
+    token = await _signed_in(request)
+    if not token:
+        return _no_store(JSONResponse(_SIGN_IN_FIRST, status_code=401))
+    try:
+        return _no_store(JSONResponse(await owner_passkeys.step_up_options(
+            token, request_host(request.scope))))
+    except owner_login.LoginError as exc:
+        return _refusal(exc, 400)
+
+
+@router.post("/api/owner/passkey/stepup/verify", include_in_schema=False)
+async def passkey_step_up_verify(request: Request):
+    token = await _signed_in(request)
+    if not token:
+        return _no_store(JSONResponse(_SIGN_IN_FIRST, status_code=401))
+    body = await _form(request)
+    try:
+        await owner_passkeys.step_up(token, body.get("ceremony"), body.get("credential"),
+                                     _client(request), request_host(request.scope))
+    except owner_login.LoginError as exc:
+        return _refusal(exc, 401)
+    return _no_store(JSONResponse({"ok": True, "fresh_for_s": int(owner_passkeys.STEP_UP_S)}))
+
+
+@router.post("/api/owner/passkey/remove", include_in_schema=False)
+async def passkey_remove(request: Request):
+    token = await _signed_in(request)
+    if not token:
+        return _no_store(JSONResponse(_SIGN_IN_FIRST, status_code=401))
+    body = await _form(request)
+    try:
+        ended = await owner_passkeys.remove_passkey(token, request_host(request.scope),
+                                                    body.get("id"))
+    except owner_login.LoginError as exc:
+        return _refusal(exc, 403)
+    return _no_store(JSONResponse({"ok": True, "sessions_ended": ended}))
+
+
+@router.post("/api/owner/sessions/end-others", include_in_schema=False)
+async def sessions_end_others(request: Request):
+    token = await _signed_in(request)
+    if not token:
+        return _no_store(JSONResponse(_SIGN_IN_FIRST, status_code=401))
+    try:
+        ended = await owner_passkeys.end_other_sessions(token, request_host(request.scope))
+    except owner_login.LoginError as exc:
+        return _refusal(exc, 403)
+    return _no_store(JSONResponse({"ok": True, "sessions_ended": ended}))
+
+
+@router.post("/api/owner/recovery/new", include_in_schema=False)
+async def recovery_new(request: Request):
+    token = await _signed_in(request)
+    if not token:
+        return _no_store(JSONResponse(_SIGN_IN_FIRST, status_code=401))
+    try:
+        codes = await owner_passkeys.replace_recovery_codes(token, request_host(request.scope))
+    except owner_login.LoginError as exc:
+        return _refusal(exc, 403)
+    return _no_store(JSONResponse({"ok": True, "recovery_codes": codes}))
 
 
 @router.post("/api/owner/logout", include_in_schema=False)
 async def owner_sign_out(request: Request):
     await owner_login.sign_out(_cookie(request.scope))
     resp = JSONResponse({"ok": True})
-    resp.delete_cookie(owner_login.cookie_name(), path="/")
+    # The same attributes it was set with: a browser ignores a clearing
+    # Set-Cookie for a __Host- name that lacks Secure or path /.
+    resp.delete_cookie(owner_login.cookie_name(), path="/", secure=_browser_used_https(request),
+                       httponly=True, samesite="strict")
     return resp
 
 
@@ -205,6 +582,31 @@ async def host_renew(request: Request):
     """204 while this origin's session is live, else 401 (app-frame-init.js)."""
     email, _token = await live_session(request.scope)
     return _no_store(Response(status_code=204 if email else 401))
+
+
+@router.get(DOOR_PATH, include_in_schema=False)
+async def host_door(request: Request):
+    """The front door's question about a request it holds: the session
+    gate's own answer (owner_session.door_decision)."""
+    status, location = await door_decision(request.scope)
+    resp = Response(status_code=status)
+    if location:
+        resp.headers["Location"] = location
+    return _no_store(resp)
+
+
+@router.websocket(DOOR_PATH)
+async def host_door_ws(websocket: WebSocket):
+    """The same question for a WebSocket handshake. The front door asks it
+    with a handshake of its own (measured on Caddy 2.6.2), which the server
+    routes here; it is answered with a plain HTTP status and no socket is
+    ever opened."""
+    status, _location = await door_decision(websocket.scope)
+    try:
+        await websocket.send_denial_response(_no_store(Response(status_code=status)))
+    except RuntimeError:
+        # A server without the denial-response extension: a refusal either way.
+        await websocket.close(code=1008)
 
 
 @router.get("/__host/join", include_in_schema=False)

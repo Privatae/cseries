@@ -1169,6 +1169,21 @@ def collect(root: Path) -> dict:
         # rows below record. Classified in the change that adds the area so it
         # never reads as unreviewed and never touches the ratchet floor.
         "/api/applications/sites/data": [],
+        # The apps' kept data on this machine (the local runtime). The GET
+        # list is reached through kernel_op (kernel_ops._EXPOSED_PREFIXES) on
+        # execute:install, so the Host can tell the person what data removed
+        # apps left behind. DELETE .../app-data/{app_id} is permanent and the
+        # person's Delete in the App Store: walled by path in
+        # kernel_ops._WALLED_PATHS, so it derives WALLED. Without this row the
+        # ratchet reads the area as unreviewed.
+        "/api/applications/runtime": [],
+        # MCP sign-in (server/routes/mcp_oauth.py): start, sign-out and the
+        # authorization server's callback decide which account the Host acts
+        # as on that server, so all three are the person's, in the Network
+        # app, and walled by path in kernel_ops._WALLED_PATHS. resolve:decision
+        # has entity bits and the callback declares no scope, so [] without the
+        # walls would read them as unreachable against the floor of 0.
+        "/api/mcp": [],
         # Peer app lane: the six /api/peer/app routes are
         # reached through kernel_op (kernel_ops._EXPOSED_PREFIXES) with
         # read:peer_app / write:peer_app in ENTITY_SCOPE_TO_BITS — no named

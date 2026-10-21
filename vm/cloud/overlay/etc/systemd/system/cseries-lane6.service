@@ -1,0 +1,17 @@
+[Unit]
+Description=C-Series Cloud IPv6 relay to the Host's port 8811
+Requires=cseries-lane6.socket
+After=cseries-lane6.socket
+
+[Service]
+ExecStart=/usr/lib/systemd/systemd-socket-proxyd --connections-max=1024 10.89.77.2:8811
+DynamicUser=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectHome=yes
+ProtectSystem=strict
+NoNewPrivileges=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+SystemCallArchitectures=native
+SystemCallFilter=@system-service

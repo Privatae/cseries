@@ -204,10 +204,18 @@
             <section id="view-backup" class="app-view" hidden>
                 <div class="view-heading">
                     <h2>Backup</h2>
-                    <p class="view-sub">When your host backs itself up. Each backup is encrypted on your host before it leaves, to your recovery key and your bastions' keys; Privatae holds no key that opens it. Backups taken here use the optional Privatae network: the recovery key comes from your Privatae account, and the encrypted file is stored on Privatae storage by default. Times are in your own time zone.</p>
+                    <p class="view-sub">When your host backs itself up. Each backup is encrypted on your host before it leaves, to your recovery key and your bastions' keys; no key that opens it is kept anywhere but with you. A host on its own keeps its backups in a folder on this machine, and a host on the optional Privatae network sends them to the network's storage, unless you choose another place below. Times are in your own time zone.</p>
                 </div>
 
-                <div class="cseries-card">
+                <!-- The verdict first: are backups working, and when did the
+                     last one finish (GET /api/backup/runs status). -->
+                <div class="cseries-card" id="bk-verdict-card" data-state="">
+                    <div id="bk-verdict" role="status" style="font-weight: 600;">Checking your backups…</div>
+                    <div class="label-sys" id="bk-verdict-when" style="margin-top: var(--space-1);"></div>
+                    <div class="label-sys" id="bk-verdict-detail" style="margin-top: var(--space-1);"></div>
+                </div>
+
+                <div class="cseries-card" style="margin-top: var(--space-3);">
                     <label class="label-sys" for="bk-frequency">How often</label>
                     <select id="bk-frequency" class="cseries-input" style="max-width: 240px;">
                         <option value="daily">Every day</option>
@@ -234,7 +242,7 @@
 
                 <div class="view-heading" style="margin-top: var(--space-5);">
                     <h3 class="bundle-title">Your keys</h3>
-                    <p class="view-sub">Every backup is encrypted to your Host recovery key, and to the key of any bastion you add, and to nothing else. If you use the optional Privatae network, your recovery key is made in your browser on your Privatae account page, and you keep it: Privatae never has it. Without it your host takes no backups, because there would be nobody to encrypt them to.</p>
+                    <p class="view-sub">Every backup is encrypted to your Host recovery key, and to the key of any bastion you add, and to nothing else. Your recovery key is made in your browser, in the Backups app on this host or, if you use the optional Privatae network, on your Privatae account page, and you keep it: nobody else has it. Without it your host takes no backups, because there would be nobody to encrypt them to.</p>
                 </div>
                 <div class="cseries-card">
                     <div class="label-sys" id="bk-key-state">Checking…</div>
@@ -332,19 +340,29 @@
 
                 <div class="view-heading" style="margin-top: var(--space-5);">
                     <h3 class="bundle-title">Where backups go</h3>
-                    <p class="view-sub">Platform storage keeps your encrypted backups for you; it holds only what your keys open. You can also keep a copy somewhere you control, sent after each backup exactly as encrypted — we never hold the password for your storage; it stays in the Keys app and your host reads it when it sends.</p>
+                    <p class="view-sub">Wherever they go, your backups leave your host already encrypted to your keys, so the place that keeps them cannot open them.</p>
                 </div>
                 <div class="cseries-card">
-                    <label class="label-sys" style="display: flex; gap: var(--space-2); align-items: flex-start;">
-                        <input id="bk-platform" type="checkbox" style="margin-top: 3px;" checked />
-                        <span>Keep my encrypted backups in platform storage</span>
-                    </label>
-                    <label class="label-sys" for="bk-target-kind" style="margin-top: var(--space-3);">Also send a copy to</label>
-                    <select id="bk-target-kind" class="cseries-input" style="max-width: 300px;">
-                        <option value="">Nowhere else</option>
-                        <option value="s3">Storage I rent (S3-compatible)</option>
-                        <option value="machine">My own machine</option>
+                    <label class="label-sys" for="bk-where">Keep my backups in</label>
+                    <select id="bk-where" class="cseries-input" style="max-width: 360px;">
+                        <option value="network">The network's storage</option>
+                        <option value="s3">My own S3-compatible bucket</option>
+                        <option value="local">A folder on this machine</option>
                     </select>
+                    <div class="label-sys" id="bk-where-note" style="margin-top: var(--space-2);"></div>
+
+                    <div id="bk-where-network" style="margin-top: var(--space-3);">
+                        <label class="label-sys" style="display: flex; gap: var(--space-2); align-items: flex-start;">
+                            <input id="bk-platform" type="checkbox" style="margin-top: 3px;" checked />
+                            <span id="bk-platform-text">Keep my encrypted backups in the network's storage</span>
+                        </label>
+                        <label class="label-sys" for="bk-target-kind" style="margin-top: var(--space-3);">Also send a copy to</label>
+                        <select id="bk-target-kind" class="cseries-input" style="max-width: 300px;">
+                            <option value="">Nowhere else</option>
+                            <option value="s3">Storage I rent (S3-compatible)</option>
+                            <option value="machine">My own machine</option>
+                        </select>
+                    </div>
 
                     <div id="bk-target-s3" hidden style="margin-top: var(--space-3);">
                         <label class="label-sys" for="bk-target-address">Bucket</label>
@@ -353,12 +371,28 @@
                         <label class="label-sys" for="bk-target-endpoint" style="margin-top: var(--space-2);">Address (leave blank for Amazon S3)</label>
                         <input id="bk-target-endpoint" class="cseries-input" style="max-width: 420px;"
                                placeholder="https://s3.example.com" />
-                        <label class="label-sys" for="bk-target-cred" style="margin-top: var(--space-2);">Key name (from the Keys app)</label>
-                        <input id="bk-target-cred" class="cseries-input" style="max-width: 280px;" placeholder="e.g. my-backup-store" />
+                        <label class="label-sys" for="bk-target-region" style="margin-top: var(--space-2);">Region (if your storage asks for one)</label>
+                        <input id="bk-target-region" class="cseries-input" style="max-width: 200px;" placeholder="us-east-1" />
+                        <label class="label-sys" for="bk-target-prefix" style="margin-top: var(--space-2);">Folder in the bucket (optional)</label>
+                        <input id="bk-target-prefix" class="cseries-input" style="max-width: 300px;" placeholder="host-backups" />
+                        <label class="label-sys" for="bk-target-keyid" style="margin-top: var(--space-3);">Access key</label>
+                        <input id="bk-target-keyid" class="cseries-input" style="max-width: 360px;"
+                               autocomplete="off" spellcheck="false" />
+                        <label class="label-sys" for="bk-target-secret" style="margin-top: var(--space-2);">Secret key</label>
+                        <input id="bk-target-secret" type="password" class="cseries-input" style="max-width: 360px;"
+                               autocomplete="new-password" spellcheck="false" />
+                        <div class="label-sys" id="bk-target-cred-state" style="margin-top: var(--space-2);"></div>
+                        <details style="margin-top: var(--space-2);">
+                            <summary class="label-sys">Use a key already in the Keys app</summary>
+                            <label class="label-sys" for="bk-target-cred" style="margin-top: var(--space-2);">Its name</label>
+                            <input id="bk-target-cred" class="cseries-input" style="max-width: 280px;" placeholder="backup-storage" />
+                            <p class="view-sub" style="margin-top: var(--space-2);">
+                                A key saved as JSON like <code>{"access_key_id": "…", "secret_access_key": "…"}</code>.
+                            </p>
+                        </details>
                         <p class="view-sub" style="margin-top: var(--space-2);">
-                            Store the access key in the Keys app first, as JSON like
-                            <code>{"access_key_id": "…", "secret_access_key": "…"}</code>, then name it here.
-                            It is never copied into this setting — that would put it in every backup.
+                            Your host keeps the key in its vault, sealed to it, and reads it only to send a backup.
+                            It is never copied into this setting, which would put it in every backup.
                         </p>
                     </div>
 
@@ -375,6 +409,21 @@
                             this machine covering the operation named <code>backup_fetch</code>. Without
                             it the machine will refuse the transfer, which is the point of the grant.
                         </p>
+                    </div>
+
+                    <div id="bk-where-local" hidden style="margin-top: var(--space-3);">
+                        <label class="label-sys" for="bk-local-keep">How many backups to keep</label>
+                        <input id="bk-local-keep" type="number" min="1" max="90" step="1" class="cseries-input" style="max-width: 120px;" />
+                        <p class="view-sub" style="margin-top: var(--space-2);">
+                            The newest ones stay and older ones are removed. They are on the same machine as your
+                            host, so they do not help if the machine itself is lost: download one now and then and
+                            keep it somewhere else. The Backups app restores a downloaded file, here or on another
+                            C-Series machine.
+                        </p>
+                        <div class="bundle-actions" style="margin-top: var(--space-2);">
+                            <button id="bk-local-download" class="cseries-btn">Download the latest backup</button>
+                        </div>
+                        <div class="label-sys" id="bk-local-download-state" style="margin-top: var(--space-2);"></div>
                     </div>
                 </div>
 

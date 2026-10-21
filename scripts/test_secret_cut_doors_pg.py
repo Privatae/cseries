@@ -10,8 +10,9 @@ endpoint (memory_engine._embed_text_config_driven, the dialer every text embed
 of the Host's goes through, with _entity_embedding_config saying a model is set
 up), the media model's text tower (media_engine.embed_media), the code index's
 embed and rerank (codesearch.bridge_embed), and the Host's chat model
-(runtime/tools._call_entity_model, which the pick dials, and
-provider_gateway.call_model, which the factory's planner dials). A made-up key
+(runtime/tools._call_entity_model, and provider_gateway.call_model, which
+the factory's planner dials; no door before a connector message's turn dials
+either: the Host picks its thread in the turn). A made-up key
 in a shape brain/mastercode/secret_shapes.json knows is planted in what is sent.
 Each "planted key" check is that the endpoint was called (a word only that
 door's input carries reached it) and never with the key.
@@ -29,9 +30,13 @@ door's input carries reached it) and never with the key.
   K  code search (GET /api/codesearch/search): the embed and the rerank.
   O  words with no hard shape reach each search door's endpoint, and shape's
      and recall's, exactly as typed.
-  C  a connector message: the Host's pick (its one model call) never carries
-     the key; /new <text> names the thread without it, so the next pick,
-     which lists that thread, never carries it either.
+  C  a connector message no thread claims: no model call places it; the
+     placement's search (the embedding call) is never handed the key, the
+     thread made for it is named without it, and the turn it starts reads its
+     words and the open threads its frame lists (where the Host picks) without
+     it. /new <text> names the thread without it, so the next message's frame,
+     which lists that thread, never carries it either. F: a forward, its
+     author's name and id carrying keys, through the same doors.
   X  the Synaptive MCP doors an outside client calls: shape(message) and
      recall(query) (the embedding call), and signal(user_message,
      model_response) (the embedding call and the rows kept). order_software
@@ -452,34 +457,55 @@ async def run(dsn):
               sorted(set((e, t[:60]) for e, t in got)))
 
         # ── C: a connector message ──────────────────────────────────────────
+        # No model call places it (thread_pick.place_connector): a clear match
+        # joins its thread, else it lands in the chat's last thread or a new
+        # one named after its first line, and the Host picks in its own turn
+        # from the open threads its frame lists (runtime/thread_choice). The
+        # doors before that turn: the placement's search (the embedding call),
+        # the new thread's name, and the turn's words and frame.
         print("-- C: a connector message (POST /api/connector/messages)")
         caller = NC.ConnectorCaller(app_id="telegram-gate", stages=frozenset({"active"}), grant_id=1,
                                     platform="telegram", account_id=CALLER_ACCOUNT)
 
         def body(mid, text, chat="100"):
             return {"account_id": CALLER_ACCOUNT, "chat_id": chat, "message_id": mid, "text": text}
-        m = mark()
+
+        def choice_of(call) -> str:
+            return json.dumps(((call.get("frame") or {}).get("thread_choice")) or {})
+
+        async def titles() -> list:
+            return [t for (t,) in await pool.fetch("SELECT title FROM circles_threads WHERE entity_id = $1", E)]
+        m, n0 = mark(), len(INNER_CALLS)
         msg = T.parse_message(caller, body("c1", f"quokka-c1 can you rotate this one {GITHUB} please"))
         r = await T.route(pool, caller, msg)
-        door_check("C the Host's pick of a connector message", m, "quokka-c1", GITHUB,
-                   endpoints={"chat model"})
-        check("C the failed pick asks which thread and starts no turn",
-              getattr(r, "state", None) == "ask" and not INNER_CALLS, (getattr(r, "state", r), INNER_CALLS))
+        door_check("C the placement's search of a message no thread claims", m, "quokka-c1", GITHUB,
+                   endpoints={"embedding endpoint"})
+        check("C no model call places the message before its turn (the Host picks in the turn)",
+              not handed(m, "chat model", "quokka-c1"), [t[:200] for t in handed(m, "chat model", "quokka-c1")])
+        started = INNER_CALLS[n0:]
+        check("C the message starts its turn in the thread made for it (the check below is not vacuous)",
+              getattr(r, "state", None) == "started" and len(started) == 1
+              and "quokka-c1" in started[0].get("message", ""), (getattr(r, "state", r), started))
+        check("C planted key — the turn the message started reads its words and its frame without the key",
+              bool(started) and not any(BODIES[GITHUB] in json.dumps(c, default=str) for c in started), started)
+        named = [t for t in await titles() if "quokka-c1" in (t or "")]
+        check("C planted key — the thread made for the message is named after it without the key",
+              bool(named) and not any(BODIES[GITHUB] in t for t in named), await titles())
         m = mark()
         msg = T.parse_message(caller, body("c2", f"/new fix the deploy {GITHUB}", chat="101"))
         await T.route(pool, caller, msg)
-        titles = [t for (t,) in await pool.fetch("SELECT title FROM circles_threads WHERE entity_id = $1", E)]
         check("C /new <text> made the thread (the check below is not vacuous)",
-              any("fix the deploy" in (t or "") for t in titles), titles)
+              any("fix the deploy" in (t or "") for t in await titles()), await titles())
         check("C planted key — /new <text> names the thread without the key",
-              not any(BODIES[GITHUB] in (t or "") for t in titles), titles)
+              not any(BODIES[GITHUB] in (t or "") for t in await titles()), await titles())
+        n0 = len(INNER_CALLS)
         msg = T.parse_message(caller, body("c3", "quokka-c3 and the deploy?", chat="102"))
         await T.route(pool, caller, msg)
-        listed = handed(m, "chat model", "quokka-c3")
-        check("C the next pick lists that thread (the check below is not vacuous)",
-              any("fix the deploy" in t for t in listed), [t[:200] for t in listed])
-        check("C planted key — the next pick, which lists that thread, is never handed the key",
-              bool(listed) and not any(BODIES[GITHUB] in t for t in listed), [t[:200] for t in listed])
+        listed = [choice_of(c) for c in INNER_CALLS[n0:] if "quokka-c3" in c.get("message", "")]
+        check("C the next message's turn lists that thread in its frame (the check below is not vacuous)",
+              any("fix the deploy" in f for f in listed), listed)
+        check("C planted key — the frame that lists that thread never holds the key",
+              bool(listed) and not any(BODIES[GITHUB] in f for f in listed), listed)
         check("C the turn /new started read the words without the key",
               bool(INNER_CALLS) and not any(BODIES[GITHUB] in json.dumps(c, default=str) for c in INNER_CALLS),
               INNER_CALLS[-1:])
@@ -499,14 +525,19 @@ async def run(dsn):
 
         def keyless(t) -> bool:
             return BODIES[GITHUB] not in t and BODIES[AWS] not in t
-        m = mark()
+        m, n0 = mark(), len(INNER_CALLS)
         r = await T.route(pool, caller, T.parse_message(caller, forward("f1", "quokka-f1 the deploy is green", "110")))
-        picked = handed(m, "chat model", "quokka-f1")
-        check("F the Host's pick read the forward and its author (the check below is not vacuous)",
-              bool(picked) and any("Deploy bot" in t for t in picked) and getattr(r, "state", None) == "ask",
-              (getattr(r, "state", r), [t[:300] for t in picked]))
-        check("F planted key — the pick of a forward is never handed its author's name or id",
-              bool(picked) and all(keyless(t) for t in picked), [t[:300] for t in picked])
+        searched = handed(m, "embedding endpoint", "quokka-f1")
+        check("F the placement's search read the forward and its author (the check below is not vacuous)",
+              bool(searched) and any("Deploy bot" in t for t in searched), [t[:300] for t in searched])
+        check("F planted key — the placement's search of a forward is never handed its author's name or id",
+              bool(searched) and all(keyless(t) for t in searched), [t[:300] for t in searched])
+        started = json.dumps(INNER_CALLS[n0:], default=str)
+        check("F the forward starts its turn, with its author (the check below is not vacuous)",
+              getattr(r, "state", None) == "started" and "quokka-f1" in started and "Deploy bot" in started,
+              (getattr(r, "state", r), INNER_CALLS[n0:]))
+        check("F planted key — the turn a forward started, and its frame, hold neither its author's key nor id",
+              keyless(started), INNER_CALLS[n0:])
         n0 = len(INNER_CALLS)
         await T.route(pool, caller, T.parse_message(caller, body("f2", "/new", chat="111")))
         msg = T.parse_message(caller, forward("f3", f"quokka-f3 ship notes {GITHUB}", "111"))

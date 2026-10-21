@@ -17,7 +17,7 @@ Two sources, one block:
     project row (+ "created N minutes ago"), the turn count in this thread's
     own scope (the same scope recall_recent_turns reads, so "new thread"
     means what the history window means), the attachment kinds, the
-    handler, the clock in the user's timezone, the rolling-summary age.
+    handler, the clock in the user's timezone.
 
 The block is PER_TURN and rides first after the cache split. Nothing in it
 is inferred by the host; everything in it is typed data from the request or
@@ -97,8 +97,21 @@ async def frame_facts(pool, sess, *, user_message: str | None = None,
         # this message and the related topics the search found, set by the
         # send route (routes/circles.py), never by the page.
         "topic": fr.get("topic") if isinstance(fr.get("topic"), dict) else None,
+        # Where the message landed and the threads it may continue, when
+        # nothing matched it clearly: the Host picks in this turn
+        # (runtime/thread_choice). Set by the send routes, never by the page.
+        "thread_choice": fr.get("thread_choice") if isinstance(fr.get("thread_choice"), dict) else None,
         "now": now,
     }
+    # A rule the person taught in this message is kept word for word with no
+    # topic (memory_engine._store_teaching_memory): the Host gives it one in
+    # its own turn (memory_curate op='key'), and it then outranks an
+    # inferred preference in that slot (memory_slots).
+    try:
+        from mastercode.memory_engine import taught_this_turn
+        facts["taught"] = taught_this_turn(getattr(sess, "session_id", None))
+    except Exception:  # noqa: BLE001
+        facts["taught"] = []
 
     # What the Host keeps in its own database, so a conversation that never
     # names a table still sees it. Bounded and silent on failure
@@ -312,6 +325,16 @@ def render_frame(facts: dict) -> str:
                      + "; ".join(f"\"{r['title']}\"" + (f" (last active {str(r['last_active'])[:10]})"
                                                           if r.get("last_active") else "")
                                  for r in related[:5]) + ".")
+    if f.get("thread_choice"):
+        from mastercode.runtime.thread_choice import from_frame, render_block
+        _choice = from_frame({"thread_choice": f["thread_choice"]})
+        if _choice is not None:
+            lines.append(render_block(_choice))
+    for _t in (f.get("taught") or [])[:3]:
+        lines.append(f"The person taught a rule in this message, kept word for word with no topic: "
+                     f"\"{' '.join(str(_t).split())[:200]}\". Give it one: memory_curate op='key', "
+                     "content=<those words>, topic=<what it is about>; it then replaces an older entry "
+                     "there and holds against an inferred preference.")
     if f.get("world_line"):
         lines.append(f["world_line"])
     if f.get("artifact_id"):

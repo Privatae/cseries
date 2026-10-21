@@ -6,10 +6,15 @@ user controlling their own keys if a platform breach compromises all their
 data. So:
 
   * The Host takes the backup inside its own container: its database
-    (pg_dump), its apps tree (/var/lib/cseries, with the excludes below) and the
-    Git repositories it owns (mirror clones with its own Gitea credential).
+    (pg_dump), its apps tree (/var/lib/cseries, with the excludes below), the
+    Git repositories it owns (mirror clones with its own Gitea credential),
+    and, on a machine with the local runtime, each app's own data: the kept
+    data volume the runtime keeps outside the Host's container for every
+    installed app and every removed one whose data the owner kept, as
+    podman's `volume export` writes it (the runtime streams it,
+    _add_app_data).
   * They leave as ONE file, streamed with nothing written to disk:
-        tar (db chunks, apps/, gitea-repos/, manifest.json, README.txt)
+        tar (db chunks, apps/, app-data/, gitea-repos/, manifest.json, README.txt)
           | zstd | age -r <recipients>  -> upload in parts
     README.txt inside the file says how it is laid out and how to open it.
   * THE RULE: the platform holds a backup OR a key, never both. The file is
@@ -24,16 +29,31 @@ data. So:
     doing the restore (server/host_restore.py).
   * Without a saved recovery key there is nobody to encrypt to, so no backup
     is written; the run says so ("no_recipient") and Settings says where to
-    save one.
+    save one. The owner makes it in the Backups app on this Host
+    (make_own_recovery_key: their browser makes the key pair and sends only
+    the public half), or confirms one their account page offers
+    (adopt_recovery_offer). A key made here stays the active one until the
+    owner replaces it: an offer never displaces it.
 
-WHERE IT GOES. Platform storage holds ciphertext only. The platform gives the
-Host upload-only URLs for exactly one object at a time in its own folder
-(bridge ops backup.upload.*, backup.put_url): the Host can add a backup, never
-read another Host's, never delete one of its retained backups. Retention runs
-on the platform over object names, which needs no key. When the user turned
-platform storage off, the file is staged there instead (s/), the second copy
-(their bastion, or their own S3) is sent from it by server/backup_ship.py, and
-then the staged copy is dropped.
+WHERE IT GOES: the place the owner chose in Settings, Backup (destination_of),
+else the network's storage for a Host on the network or the platform, and a
+folder on this machine for a standalone Host.
+  * The network's storage (the platform's, or the member door's for a network
+    member) holds ciphertext only. It gives the Host upload-only URLs for
+    exactly one object at a time in its own folder (bridge ops backup.upload.*,
+    backup.put_url): the Host can add a backup, never read another Host's,
+    never delete one of its retained backups. Retention runs there over object
+    names, which needs no key. When the user turned that storage off, the file
+    is staged there instead (s/), the second copy (their bastion, or their own
+    S3) is sent from it by server/backup_ship.py, and then the staged copy is
+    dropped.
+  * The owner's own S3-compatible bucket, or a folder on this machine
+    (LOCAL_DIR), take the same stream directly (server/backup_stores.py); the
+    folder keeps the newest local_keep() backups. A Host told to use the
+    network while it is not on one writes nothing anywhere else and says so
+    (STATE_NO_DESTINATION).
+The run is reported to the network (backup.report) only by a Host that is on
+it; a standalone Host tells nobody.
 
 WHEN. On the schedule in Settings (default daily; a Host that never set one
 runs in the 02 UTC hour, spread by id), catching up after a wake if it slept
@@ -84,6 +104,17 @@ KIND_BACKUP = "backup"          # retained in platform storage (b/)
 KIND_STAGED = "staged"          # staged for a second copy (s/), then dropped
 KIND_EXPORT = "export"          # an export the user asked for (exports/)
 SIDECAR_KIND = {KIND_BACKUP: "sidecar", KIND_STAGED: "staged_sidecar"}
+
+# Where backups go (destination_of), and who this Host is (host_mode).
+WHERE_NETWORK, WHERE_S3, WHERE_LOCAL = "network", "s3", "local"
+WHERES = (WHERE_NETWORK, WHERE_S3, WHERE_LOCAL)
+MODE_PLATFORM, MODE_MEMBER, MODE_STANDALONE = "platform", "member", "standalone"
+# The folder on this machine. Inside the apps volume by default, which every
+# install has, and left out of the backups it holds (APPS_EXCLUDES); an
+# install that mounts a volume of its own for it names it here.
+LOCAL_DIR = Path(os.environ.get("CSERIES_BACKUP_DIR") or f"{APPS_ROOT}/.host-backups")
+LOCAL_KEEP_DEFAULT = 7          # a week of daily backups
+LOCAL_KEEP_MAX = 90
 # tar needs a member's size before its bytes, and pg_dump's output length is
 # not known up front, so the dump is cut into members of at most this size.
 DB_CHUNK = 16 * 1024 * 1024
@@ -106,6 +137,9 @@ STAMP_RE = re.compile(r"^[0-9]{8}T[0-9]{6}Z$")
 APPS_EXCLUDES = (
     # A restore's staged copy (server/host_restore.py), never itself backed up.
     f"{APPS_ROOT}/.host-restore",
+    # The backups kept on this machine (LOCAL_DIR): a backup never holds the
+    # backups before it, and a restore leaves them where they are.
+    f"{APPS_ROOT}/.host-backups",
     f"{APPS_ROOT}/host-sdk/scratch",
     f"{APPS_ROOT}/host-sdk/python-libs",
     f"{APPS_ROOT}/.vscode-server",
@@ -154,6 +188,11 @@ EXPIRE_TICKS = 24 * 60
 
 STATE_OK, STATE_PARTIAL, STATE_FAILED = "ok", "partial", "failed"
 STATE_NO_RECIPIENT = "no_recipient"
+# Told to back up to the network's storage while not on the network: nothing
+# is written anywhere, once per scheduled time, like STATE_NO_RECIPIENT.
+STATE_NO_DESTINATION = "no_destination"
+# The run states that record a backup not attempted.
+NOT_ATTEMPTED = (STATE_NO_RECIPIENT, STATE_NO_DESTINATION)
 
 _run_lock = asyncio.Lock()
 _last_request_at: Optional[dt.datetime] = None
@@ -363,6 +402,76 @@ def platform_on(bp: dict) -> bool:
     return bool(_stored(bp).get("platform", True))
 
 
+_LOOK_UP = object()
+
+
+def host_mode(bc: Any = _LOOK_UP) -> str:
+    """Who this Host is to its backups: on the platform (its cloud bridge), a
+    network member (the member door's client), or standalone (NoPlatform, or
+    no client yet). `bc` is the client to judge; by default the current one."""
+    if bc is _LOOK_UP:
+        # The connected client, else the one there is (a member whose door is
+        # down for a moment is still a member).
+        bc = _bridge() or _raw_bridge()
+    if bc is None:
+        return MODE_STANDALONE
+    from server.bridge.no_platform import NoPlatform
+    if isinstance(bc, NoPlatform):
+        return MODE_STANDALONE
+    if getattr(bc, "network_member", False):
+        return MODE_MEMBER
+    return MODE_PLATFORM
+
+
+def destination_of(bp: dict, mode: str) -> str:
+    """Where this Host's backups go: the owner's choice in Settings, Backup
+    (`where`), else the network's storage for a Host on the network or the
+    platform and a folder on this machine for a standalone Host."""
+    where = str(_stored(bp).get("where") or "").strip().lower()
+    if where in WHERES:
+        return where
+    return WHERE_NETWORK if mode in (MODE_PLATFORM, MODE_MEMBER) else WHERE_LOCAL
+
+
+def local_keep(bp: dict) -> int:
+    """How many backups the folder on this machine keeps: 1 to LOCAL_KEEP_MAX."""
+    raw = _stored(bp).get("local_keep", LOCAL_KEEP_DEFAULT)
+    try:
+        n = int(raw)
+    except (TypeError, ValueError):
+        return LOCAL_KEEP_DEFAULT
+    return max(1, min(n, LOCAL_KEEP_MAX))
+
+
+def local_store(sub: str = ""):
+    from server import backup_stores
+    return backup_stores.LocalStore(LOCAL_DIR, sub=sub)
+
+
+def _s3_client_for(creds: dict, target: dict):
+    """The client for the owner's bucket (a seam the gate replaces)."""
+    from server import backup_stores
+    return backup_stores.s3_client(creds, target)
+
+
+async def s3_store(pool, eid: int, bp: dict):
+    """The owner's own bucket, as saved in Settings, Backup, with its key
+    read from the vault. Raises BackupError saying what is missing."""
+    from server import backup_ship, backup_stores
+    try:
+        target = backup_ship.validate_target(_stored(bp).get("target"))
+    except ValueError as e:
+        raise BackupError(f"the bucket saved for backups cannot be used: {e}") from None
+    if not target or target.get("kind") != backup_ship.KIND_S3:
+        raise BackupError("your backups go to your own bucket, and no bucket is saved: save one in "
+                          "Settings, Backup")
+    try:
+        creds = await backup_ship._s3_credential(pool, eid, target["cred_name"])
+    except backup_ship.ShipError as e:
+        raise BackupError(f"{backup_ship.REASONS.get(e.reason, e.reason)}: {e.detail}") from None
+    return backup_stores.S3Store(creds, target, client=_s3_client_for(creds, target))
+
+
 async def recipients(pool, eid: int, bp: Optional[dict] = None) -> list[dict]:
     """Everyone a backup is encrypted to, besides the per-backup key, as
     {kind, label, fingerprint, recipient}: the pinned Host recovery key and any
@@ -407,6 +516,39 @@ def _owner_since(got: Optional[dict]) -> Optional[dt.datetime]:
     return when
 
 
+# How the last ask for the recovery key went, logged only when that changes:
+# the backup loop asks every minute while a backup is due and there is no key
+# (next_action), and a standalone Host has no platform to answer it, ever. None
+# before the first ask, RECOVERY_FETCHED once the platform answered, else
+# why not: standalone, not connected, or failed.
+_recovery_fetch: Optional[str] = None
+RECOVERY_FETCHED = "fetched"
+
+
+def _note_recovery_fetch(failure: Optional[Exception]) -> None:
+    """Log the recovery key's fetch once per change of how it went: an
+    expected state (no platform, or not connected to it) at INFO, a platform
+    that is there and did not answer at WARNING, and an answer again after
+    either at INFO."""
+    global _recovery_fetch
+    if failure is None:
+        if _recovery_fetch not in (None, RECOVERY_FETCHED):
+            log.info("backup: the recovery key is fetched from the platform again")
+        _recovery_fetch = RECOVERY_FETCHED
+        return
+    if host_mode() == MODE_STANDALONE:
+        state, level, why = MODE_STANDALONE, logging.INFO, (
+            "; this Host runs without the platform, so its owner makes their recovery key on the Host")
+    elif _bridge() is None:
+        state, level, why = "not connected", logging.INFO, ""
+    else:
+        state, level, why = "failed", logging.WARNING, ""
+    if state != _recovery_fetch:
+        log.log(level, "backup: recovery key not fetched: %s%s (said again only when that changes)",
+                failure, why)
+    _recovery_fetch = state
+
+
 async def pin_recovery_key(pool, eid: int) -> dict:
     """Ask the platform for this Host's recovery key (the public half of the
     key made in the owner's browser; bridge op backup.recovery_key, answered
@@ -432,16 +574,24 @@ async def pin_recovery_key(pool, eid: int) -> dict:
     Host holds (a transfer cannot reach them on the platform). Without that
     the new owner's backups and exports would be sealed to the previous
     owner's bastions as soon as the new owner confirmed a recovery key.
-    Returns {pinned, offer} as fingerprints and labels."""
+
+    A key the owner made on this Host (make_own_recovery_key) is not the
+    platform's to retire: the platform never saw it, so its saying the owner
+    holds no key, or holds another one, says nothing about this one. It stays
+    the active key; another key the platform holds waits as an offer, which
+    the owner may adopt in its place. A transfer still retires it.
+    Returns {pinned, offer} as fingerprints and labels; pinned.made_on_host
+    says which kind the active key is."""
     from server import backup_key
     from server.vault import identity as vault_identity
     ident = vault_identity.user_identity(str(eid))
     try:
         got: Optional[dict] = await call("backup.recovery_key", {})
+        _note_recovery_fetch(None)
     except Exception as e:
         # No answer (not connected, or the platform failed): nothing is known,
         # so nothing changes.
-        log.info("backup: recovery key not fetched: %s", e)
+        _note_recovery_fetch(e)
         got = None
     since = _owner_since(got)
     if since is not None:
@@ -450,6 +600,7 @@ async def pin_recovery_key(pool, eid: int) -> dict:
                         "at %s; nothing more is sealed to it", r["kind"], r["label"],
                         r["fingerprint"], since.isoformat())
     pinned = await backup_key.get_active(pool, ident, backup_key.KIND_HOST_RECOVERY)
+    own = await made_on_host(pool, pinned)
     offer = None
     # Only a key the owner confirmed they saved counts: the platform answers
     # {} until there is one (privatae bridge op_backup_recovery_key).
@@ -458,7 +609,8 @@ async def pin_recovery_key(pool, eid: int) -> dict:
         # they retired it, or the Host changed hands (a transfer retires the
         # previous owner's key). The key pinned here is nobody's now, so
         # nothing more is sealed to it; the owner saves and confirms a new one.
-        if pinned is not None:
+        # Unless the owner made it here: the platform knows nothing of it.
+        if pinned is not None and not own:
             await backup_key.retire_recovery(pool, ident)
             log.warning("backup: the owner holds no recovery key any more; %s is no longer used",
                         backup_key.fingerprint(bytes(pinned["pubkey"])))
@@ -476,7 +628,7 @@ async def pin_recovery_key(pool, eid: int) -> dict:
             log.warning("backup: the platform sent a recovery key that does not match its fingerprint")
             await _drop_state(pool, "recovery_offer")
         elif pinned is None or bytes(pinned["pubkey"]) != raw:
-            if pinned is not None:
+            if pinned is not None and not own:
                 # The owner's key is a different one now (they made a new
                 # one, or the Host changed hands): the pinned one is not
                 # their current key, so it receives nothing more. The new one
@@ -496,9 +648,75 @@ async def pin_recovery_key(pool, eid: int) -> dict:
         offer = await _state(pool, "recovery_offer")
     return {"pinned": ({"fingerprint": backup_key.fingerprint(bytes(pinned["pubkey"])),
                         "label": pinned["label"],
-                        "created_at": pinned["created_at"].isoformat() if pinned.get("created_at") else None}
+                        "created_at": pinned["created_at"].isoformat() if pinned.get("created_at") else None,
+                        "made_on_host": own}
                        if pinned else None),
             "offer": offer}
+
+
+# The owner's own key, made on this Host: its fingerprint, in
+# host_backup_state (carried over a restore with the keys themselves:
+# host_restore.CARRIED_STATE). It counts only while it names the active key.
+OWN_KEY_STATE = "recovery_own"
+OWN_LABEL_DEFAULT = "Recovery key made on this Host"
+
+
+async def made_on_host(pool, active: Optional[dict]) -> bool:
+    """Is `active` (the active host-recovery row) the key the owner made on
+    this Host?"""
+    if not active:
+        return False
+    from server import backup_key
+    mark = await _state(pool, OWN_KEY_STATE)
+    return bool(mark) and mark.get("fingerprint") == backup_key.fingerprint(bytes(active["pubkey"]))
+
+
+def _clean_label(label: Optional[str]) -> str:
+    from server import backup_key
+    text = " ".join(str(label or "").split())[:backup_key.MAX_LABEL]
+    if "AGE-SECRET-KEY-" in text.upper() or unshowable(text):
+        return OWN_LABEL_DEFAULT
+    return text or OWN_LABEL_DEFAULT
+
+
+async def make_own_recovery_key(pool, eid: int, recipient: str, fingerprint: Optional[str],
+                                label: str = "", replace: bool = False) -> dict:
+    """The owner made a recovery key in their browser on this Host and kept
+    its private half; this is its public half. It becomes the active recovery
+    key: every backup and export from now on is encrypted to it. The caller
+    has checked their second factor (routes/backup.py own_recovery_key).
+
+    Refused: anything that is not an age recipient, a fingerprint that is not
+    its own, this Host's own vault key (a key the Host holds would let it
+    open its own backups), and a second key without `replace` (the backups
+    already taken stay encrypted to the old key, so replacing it is asked
+    for, never slipped in). The key before it stays listed: older backups
+    open only with it."""
+    from server import backup_key
+    from server.vault import identity as vault_identity
+    try:
+        raw = age_keys.recipient_bytes(recipient)
+    except ValueError:
+        raise BackupError("that is not a recovery key's public half (age1...)") from None
+    fp = backup_key.fingerprint(raw)
+    if fingerprint is not None and (fingerprint or "").strip() != fp:
+        raise BackupError("the fingerprint sent is not this key's: nothing was changed")
+    if raw == bytes(await vault_identity.host_pubkey(pool)):
+        raise BackupError("that is this Host's own key; a recovery key must be one only you hold")
+    ident = vault_identity.user_identity(str(eid))
+    prev = await backup_key.get_active(pool, ident, backup_key.KIND_HOST_RECOVERY)
+    prev_fp = backup_key.fingerprint(bytes(prev["pubkey"])) if prev else None
+    if prev is not None and prev_fp != fp and not replace:
+        raise BackupError(f"this Host already has a recovery key (fingerprint {prev_fp}). Replacing it "
+                          "does not re-encrypt the backups you have: keep that key too, because it is "
+                          "what opens them")
+    if prev_fp != fp:
+        await backup_key.put_active(pool, ident=ident, pub_raw=raw, sealed=None,
+                                    origin="owner-browser", kind=backup_key.KIND_HOST_RECOVERY,
+                                    label=_clean_label(label))
+    await _set_state(pool, OWN_KEY_STATE, {"fingerprint": fp, "made_at": _now().isoformat()})
+    log.info("backup: recovery key %s made on this Host by the owner", fp)
+    return {"fingerprint": fp, "first": prev is None, "replaced": prev_fp if prev_fp != fp else None}
 
 
 async def adopt_recovery_offer(pool, eid: int, fingerprint: str) -> dict:
@@ -533,12 +751,17 @@ def public_recipients(recips: list[dict]) -> list[dict]:
 
 # ── the bridge ───────────────────────────────────────────────────────────────
 
-def _bridge():
+def _raw_bridge():
+    """The current platform client, connected or not (host_mode judges it)."""
     try:
         from server.main import get_bridge_client
-        bc = get_bridge_client()
+        return get_bridge_client()
     except Exception:
         return None
+
+
+def _bridge():
+    bc = _raw_bridge()
     return bc if bc is not None and getattr(bc, "_connected", True) else None
 
 
@@ -711,16 +934,23 @@ WHAT IS INSIDE
                          pg_restore -d <database> hostmem.dump restores it.
   apps/                  your Host's apps volume: installed apps, project files,
                          its workspace and saved state
+  app-data/<app>.tar.NNNNN
+                         each app's own data (what it keeps between runs, kept
+                         too for an app you removed and chose to keep the data
+                         of), as podman volume export writes it, cut into
+                         pieces. Join them first:
+                           cat app-data/<app>.tar.* > <app>.tar
+                         then tar -tvf <app>.tar lists it
   gitea-repos/           mirrors of your Host's own Git repositories, when there
                          are any; git clone gitea-repos/<name>.git gives a copy
-  manifest.json          every file above with its size and sha256, and every
-                         link with its target
+  manifest.json          every file above with its size and sha256, every link
+                         with its target, and each app's data with its sha256
 """
 
 
 def write_file(*, upload: "Uploader", recips: list[str], eid: int, stamp: str, kind: str,
                dbname: str, git_dir: Optional[Path], apps_root: Optional[str] = None,
-               who: Optional[list[dict]] = None) -> dict:
+               who: Optional[list[dict]] = None, app_data: Optional[dict] = None) -> dict:
     """Stream one backup file into `upload`. Synchronous; runs in a worker
     thread. Raises (and the caller aborts the upload) if the database dump or
     age fails: a backup without its database is not a backup."""
@@ -773,6 +1003,8 @@ def write_file(*, upload: "Uploader", recips: list[str], eid: int, stamp: str, k
     try:
         parts["db"] = _add_database(tout, dbname, procs)
         parts["apps"] = _add_apps(tout, apps_root or APPS_ROOT, files)
+        if app_data is not None:
+            parts["app_data"] = _add_app_data(tout, app_data, procs)
         parts["gitea"] = _add_tree(tout, git_dir, "gitea-repos", files) if git_dir else {"repos": 0}
         listed = json.dumps(manifest)
         # The running count left out only `parts`, which is small; this is exact.
@@ -1017,6 +1249,99 @@ def _add_apps(tout: Optional[tarfile.TarFile], root: str, files: list) -> dict:
     return notes
 
 
+# The runtime's answer for an app's data a restore would refuse
+# (cseries_runtime/server.py _export_app_data runs the restore's tar check).
+UNRESTORABLE = 422
+
+
+def _add_app_data(tout: tarfile.TarFile, listing: dict, procs: Optional[list] = None) -> dict:
+    """Each app's kept data volume, streamed from the local runtime (podman's
+    volume tar, local_runtime.export_app_data) into tar members of at most
+    DB_CHUNK bytes, app-data/<app>.tar.NNNNN, one app after another. Each
+    app's entry carries its pieces, bytes and sha256, which a restore checks
+    (host_restore._check_app_data). An app whose data could not be read
+    whole is listed with ok false and why, and the run is partial; one whose
+    data was deleted between the listing and its turn is not listed at all.
+
+    `listing`: {"apps": the runtime's workspace.app_data list} or {"error":
+    why it could not be listed}. The volume is read while the app may run,
+    as the apps tree is: an app writing at that moment can leave a file in
+    its data as it was part way through a write."""
+    from server.applications import local_runtime
+    if listing.get("error"):
+        return {"ok": False, "apps": [], "bytes": 0, "error": listing["error"]}
+    out: list[dict] = []
+    total = 0
+    buf = bytearray(DB_CHUNK)
+    for app in sorted(listing.get("apps") or [], key=lambda a: str(a.get("app_id"))):
+        aid = str(app.get("app_id") or "")
+        st = {"h": hashlib.sha256(), "n": 0, "fill": 0, "bytes": 0}
+
+        def flush(st=st, aid=aid):
+            if not st["fill"]:
+                return
+            ti = tarfile.TarInfo(f"app-data/{aid}.tar.{st['n']:05d}")
+            ti.size, ti.mtime, ti.mode = st["fill"], int(time.time()), 0o600
+            tout.addfile(ti, _View(buf, st["fill"]))
+            st["n"] += 1
+            st["fill"] = 0
+
+        def write(b: bytes, st=st, flush=flush):
+            st["h"].update(b)
+            st["bytes"] += len(b)
+            view = memoryview(b)
+            while view:
+                k = min(len(view), DB_CHUNK - st["fill"])
+                buf[st["fill"]:st["fill"] + k] = view[:k]
+                st["fill"] += k
+                view = view[k:]
+                if st["fill"] == DB_CHUNK:
+                    flush()
+
+        entry: dict[str, Any] = {"app_id": aid, "installed": bool(app.get("installed"))}
+        try:
+            head = local_runtime.export_app_data(aid, write, procs)
+            flush()
+            entry.update(ok=True, uid_base=head.get("uid_base"), chunks=st["n"], bytes=st["bytes"],
+                         sha256=st["h"].hexdigest())
+        except local_runtime.RuntimeRefusal as e:
+            flush()
+            if e.code == 404 and not st["bytes"]:
+                continue                # deleted since it was listed: nothing of it is here
+            entry.update(ok=False, chunks=st["n"], bytes=st["bytes"], error=e.text[:600])
+            if e.code == UNRESTORABLE:
+                # Read whole, but the runtime's restore check refuses it (a
+                # link out of its volume, say): the runtime's words name the
+                # app and what in its data a restore refuses.
+                entry["refused"] = True
+        except OSError as e:
+            flush()
+            entry.update(ok=False, chunks=st["n"], bytes=st["bytes"],
+                         error=f"the connection to the runtime broke ({type(e).__name__})")
+        total += st["bytes"]
+        out.append(entry)
+    bad = [a for a in out if not a.get("ok")]
+    part: dict[str, Any] = {"ok": not bad, "apps": out, "bytes": total}
+    if bad:
+        part["error"] = "; ".join(str(a.get("error")) if a.get("refused")
+                                  else f"{a['app_id']}'s data could not be read: {a.get('error')}"
+                                  for a in bad[:5])[:RUN_ERROR_MAX]
+    return part
+
+
+async def app_data_listing() -> Optional[dict]:
+    """What _add_app_data takes, from this machine's local runtime: None
+    where there is none (a platform Host's apps keep their data elsewhere)."""
+    from server.applications import local_runtime
+    if not local_runtime.in_use():
+        return None
+    env = await local_runtime.runtime_client().request_full("workspace.app_data", {})
+    if not env.get("ok"):
+        return {"error": f"the apps' data could not be listed: {env.get('error') or 'no answer'}"[:300]}
+    return {"apps": [a for a in (env.get("data") or {}).get("apps") or []
+                     if isinstance(a, dict) and isinstance(a.get("app_id"), str)]}
+
+
 def precount(apps_root: str, git_dir: Optional[Path], files: "_Listing") -> None:
     """List the apps tree and the Git mirrors as the writer will, into
     `files`, reading no file: TooManyFiles as soon as the list passes
@@ -1255,13 +1580,29 @@ async def run_once(pool, eid: int, reason: str) -> dict:
         return await _run(pool, eid, reason)
 
 
+async def _store_uploader(store, stamp: Optional[str]):
+    """An uploader into `store` for `stamp`, or for now. Two backups started
+    in the same second would share a stamp; the second waits for the next."""
+    for attempt in range(3):
+        st = stamp or stamp_of(_now())
+        try:
+            return await asyncio.to_thread(store.uploader, st)
+        except BackupError as e:
+            if stamp or attempt == 2 or "already there" not in str(e):
+                raise
+            await asyncio.sleep(1.0)
+    raise BackupError("no time stamp was free for this backup")
+
+
 async def write_object(pool, eid: int, *, kind: str, name: Optional[str] = None,
                        stamp: Optional[str] = None, recips: list[str], who: list[dict],
                        with_git: bool = True, on_stamp=None,
-                       on_counted=None) -> tuple[dict, dict]:
+                       on_counted=None, store=None) -> tuple[dict, dict]:
     """Capture and upload one file: (upload result with its stamp, parts).
     A backup's stamp is the platform's (Uploader); an export passes its own
-    name and stamp. `on_stamp(stamp)` is awaited as soon as the stamp is
+    name and stamp. With a `store` (server/backup_stores.py: a folder on this
+    machine, or the owner's bucket) the file goes there instead, stamped by
+    this Host's clock. `on_stamp(stamp)` is awaited as soon as the stamp is
     known, and `on_counted()` called once the list's limit is checked and
     passed. Aborts the upload on any failure, so a half-written object is never
     left looking whole. Callers hold _run_lock."""
@@ -1283,15 +1624,22 @@ async def write_object(pool, eid: int, *, kind: str, name: Optional[str] = None,
         if on_counted is not None:
             on_counted()
         dbname = await pool.fetchval("SELECT current_database()")
-        sync = _syncer(asyncio.get_running_loop())
-        up = await asyncio.to_thread(Uploader, sync, kind, name)
-        stamp = up.stamp if name is None else stamp
+        # Listed before the stamp and the upload: what each app's data takes
+        # is not known until it is read, so nothing here waits on it.
+        app_data = await app_data_listing()
+        if store is not None:
+            up = await _store_uploader(store, stamp)
+            stamp = up.stamp
+        else:
+            sync = _syncer(asyncio.get_running_loop())
+            up = await asyncio.to_thread(Uploader, sync, kind, name)
+            stamp = up.stamp if name is None else stamp
         try:
             if on_stamp is not None:
                 await on_stamp(stamp)
             written = await asyncio.to_thread(
                 write_file, upload=up, recips=recips, eid=eid, stamp=stamp, kind=kind,
-                dbname=dbname, git_dir=git_dir, who=who)
+                dbname=dbname, git_dir=git_dir, who=who, app_data=app_data)
             result = dict(await asyncio.to_thread(up.complete), stamp=stamp)
         except BaseException:
             await asyncio.to_thread(up.abort)
@@ -1353,14 +1701,16 @@ RUN_ERROR_MAX = 800     # the longest error a run records
 
 
 def _partial_error(parts: dict) -> str:
-    """A partial run's error: one clause for each part not whole, apps then
-    gitea. Together they fit RUN_ERROR_MAX, each clause getting its share, so
+    """A partial run's error: one clause for each part not whole, apps, the
+    apps' own data, then gitea. Together they fit RUN_ERROR_MAX, each clause getting its share, so
     a long list of paths in one cannot push out the other; a clause that
     names left-out paths is shortened by spelling out fewer of them
     (_left_out_text), never by cutting its instruction."""
-    bad = [p for p in ("apps", "gitea") if not (parts.get(p) or {}).get("ok")]
+    bad = [p for p in ("apps", "app_data", "gitea")
+           if not (parts.get(p) or {"ok": p == "app_data"}).get("ok")]
     texts = {p: (parts.get(p) or {}).get("error") or "some files could not be read" for p in bad}
-    room = RUN_ERROR_MAX - len("; ") * (len(bad) - 1) - sum(len(f"{p}: ") for p in bad)
+    label = {"app_data": "app data"}
+    room = RUN_ERROR_MAX - len("; ") * (len(bad) - 1) - sum(len(f"{label.get(p, p)}: ") for p in bad)
     for i, p in enumerate(sorted(bad, key=lambda q: len(texts[q]))):
         share = room // (len(bad) - i)
         if len(texts[p]) > share:
@@ -1370,7 +1720,7 @@ def _partial_error(parts: dict) -> str:
                 texts[p] = _left_out_text(part, root, share)
             texts[p] = texts[p][:share]
         room -= len(texts[p])
-    return "; ".join(f"{p}: {texts[p]}" for p in bad)[:RUN_ERROR_MAX]
+    return "; ".join(f"{label.get(p, p)}: {texts[p]}" for p in bad)[:RUN_ERROR_MAX]
 
 
 RESTORE_IN_PROGRESS_TEXT = ("a restore has not finished yet, so backups are paused. They start "
@@ -1403,12 +1753,22 @@ async def _run(pool, eid: int, reason: str, keep: tuple = ()) -> dict:
     keys = [r["recipient"] for r in recips]
     if not recips:
         return await _record_no_recipient(pool, reason)
-    kind = KIND_BACKUP if platform_on(bp) else KIND_STAGED
+    mode = host_mode()
+    where = destination_of(bp, mode)
+    if where == WHERE_NETWORK and mode == MODE_STANDALONE:
+        return await _record_no_destination(pool, reason)
+    if where == WHERE_NETWORK:
+        kind = KIND_BACKUP if platform_on(bp) else KIND_STAGED
+        stored = kind
+    else:
+        # The file goes straight to the owner's bucket or this machine's
+        # folder: a backup in every respect, recorded by where it went.
+        kind, stored = KIND_BACKUP, where
     stamp = None
     run_id = await pool.fetchval(
         "INSERT INTO host_backup_runs (reason, state, stored, recipients) "
         "VALUES ($1, 'running', $2, $3::jsonb) RETURNING id",
-        reason, kind, json.dumps(who))
+        reason, stored, json.dumps(who))
 
     async def got_stamp(st):
         nonlocal stamp
@@ -1424,11 +1784,19 @@ async def _run(pool, eid: int, reason: str, keep: tuple = ()) -> dict:
     try:
         # Made before the dump, so the dump carries it.
         tag_key = await auth_key(pool)
+        store = None
+        if where == WHERE_S3:
+            store = await s3_store(pool, eid, bp)
+        elif where == WHERE_LOCAL:
+            store = local_store()
+            # What the run may drop to make room on a full disk (make_room):
+            # never a copy a restore may be reading.
+            store.protect = set(keep) | await _staged_in_use(pool)
         identity, pb_recipient = age_keys.new_pair()
         try:
             obj, parts = await write_object(
                 pool, eid, kind=kind, recips=[pb_recipient] + keys, who=who,
-                on_stamp=got_stamp, on_counted=lambda: counted.append(True))
+                on_stamp=got_stamp, on_counted=lambda: counted.append(True), store=store)
             sealed = make_sidecar(keys, eid=eid, stamp=stamp,
                                   object_name=obj["key"].split("/", 1)[-1], identity=identity,
                                   data=obj, key=tag_key)
@@ -1436,8 +1804,15 @@ async def _run(pool, eid: int, reason: str, keep: tuple = ()) -> dict:
             # From here on the per-backup key's private half exists only inside
             # the sealed sidecar.
             identity = None  # noqa: F841
-        side = await put_small(SIDECAR_KIND[kind], stamp, sealed)
-        if kind == KIND_STAGED:
+        if store is not None:
+            side = await asyncio.to_thread(store.put_sidecar, stamp, sealed)
+        else:
+            side = await put_small(SIDECAR_KIND[kind], stamp, sealed)
+        if where == WHERE_LOCAL:
+            # The folder keeps the newest; never one a restore may be reading.
+            protect = {stamp, *keep} | await _staged_in_use(pool)
+            await asyncio.to_thread(store.prune, local_keep(bp), protect)
+        elif kind == KIND_STAGED:
             await _drop_older_staged(pool, stamp, keep)
     except Exception as e:  # the run's own failure, recorded and reported
         error = str(e)[:RUN_ERROR_MAX] or type(e).__name__
@@ -1456,7 +1831,8 @@ async def _run(pool, eid: int, reason: str, keep: tuple = ()) -> dict:
             await awake
     if error or not side:
         state = STATE_FAILED
-    elif all((parts.get(p) or {}).get("ok") for p in ("db", "apps", "gitea")):
+    elif (all((parts.get(p) or {}).get("ok") for p in ("db", "apps", "gitea"))
+          and (parts.get("app_data") or {"ok": True}).get("ok")):
         state = STATE_OK
     else:
         state = STATE_PARTIAL
@@ -1471,29 +1847,171 @@ async def _run(pool, eid: int, reason: str, keep: tuple = ()) -> dict:
         obj.get("size") if kept else None, obj.get("sha256") if kept else None,
         side.get("sha256"), side.get("size"), json.dumps(parts), error)
     report = {"run_id": run_id, "reason": reason, "state": state, "stamp": stamp,
-              "stored": kind, "object": obj.get("key") if kept else None,
+              "stored": stored, "object": obj.get("key") if kept else None,
               "parts": parts, "error": error, "finished_at": finished.isoformat()}
     await _report(pool, report)
     return report
 
 
-NO_RECIPIENT_TEXT = ("not backed up until you save your recovery key and confirm it here: make "
-                     "it on your account page (Hosts, this Host), save it, then in Settings, "
-                     "Backup, check its fingerprint against the one on the key you saved and "
-                     "use it with a code from your second factor (none yet? set one up in the "
+NO_RECIPIENT_TEXT = ("not backed up until this Host has a recovery key. Make one in the Backups "
+                     "app: your browser makes it, shows it to you once, and you save it. Or, if "
+                     "your account page holds one for this Host, check its fingerprint in "
+                     "Settings, Backup against the one on the key you saved and use it there. "
+                     "Either takes a code from your second factor (none yet? set one up in the "
                      "Network app: \"Second factor: Enroll\" at the top). Your Host backs up "
                      "from then on")
+
+NO_DESTINATION_TEXT = ("not backed up: your backups are set to go to the network's storage, and "
+                       "this Host is not on the network. Join it in Settings, Network, or choose "
+                       "another place for your backups in Settings, Backup")
+
+
+async def _record_not_attempted(pool, reason: str, state: str, text: str) -> dict:
+    rid = await pool.fetchval(
+        "INSERT INTO host_backup_runs (reason, state, finished_at, error, recipients) "
+        "VALUES ($1, $2, now(), $3, '[]'::jsonb) RETURNING id",
+        reason, state, text)
+    return {"run_id": rid, "reason": reason, "state": state, "parts": {},
+            "error": text, "object": None}
 
 
 async def _record_no_recipient(pool, reason: str) -> dict:
     """Nobody to encrypt to: nothing is written. One row says so, so the run
     list and Settings can say why there is no backup."""
-    rid = await pool.fetchval(
-        "INSERT INTO host_backup_runs (reason, state, finished_at, error, recipients) "
-        "VALUES ($1, $2, now(), $3, '[]'::jsonb) RETURNING id",
-        reason, STATE_NO_RECIPIENT, NO_RECIPIENT_TEXT)
-    return {"run_id": rid, "reason": reason, "state": STATE_NO_RECIPIENT, "parts": {},
-            "error": NO_RECIPIENT_TEXT, "object": None}
+    return await _record_not_attempted(pool, reason, STATE_NO_RECIPIENT, NO_RECIPIENT_TEXT)
+
+
+async def _record_no_destination(pool, reason: str) -> dict:
+    """Told to use the network's storage while not on the network: nothing is
+    written, here or anywhere else (a backup that went somewhere the owner did
+    not choose is one they do not know about). One row says so."""
+    return await _record_not_attempted(pool, reason, STATE_NO_DESTINATION, NO_DESTINATION_TEXT)
+
+
+async def destination_problem(pool, eid: int) -> Optional[str]:
+    """Why this Host cannot back up to where its backups go, or None."""
+    bp = await _behavioral_params(pool, eid)
+    if destination_of(bp, host_mode()) == WHERE_NETWORK and host_mode() == MODE_STANDALONE:
+        return NO_DESTINATION_TEXT
+    return None
+
+
+# ── how the backups are going, in one line ───────────────────────────────────
+#
+# What Settings, Backup and the Backups app open with, and what the Host reads
+# (GET /api/backup/runs `status`): one verdict, said plainly, and when the last
+# backup finished. An owner who had just keyed a Host could not tell from the
+# tab whether backups were working, and a Host restored onto a
+# new machine stops backing up until its owner adds their recovery key again,
+# because a restore keeps this machine's keys and a new machine has none
+# (host_restore.CARRIED_STATE): that state is named here, not left to a run
+# list that shows nothing new.
+PAUSED_HEADLINE = "Backups are paused: add your recovery key"
+PAUSED_TEXT = ("This Host has no recovery key, so it has nobody to encrypt a backup to and takes "
+               "none. Add yours in the Backups app: \"Make a recovery key\", or \"I already have a "
+               "recovery key\" for the key you keep. Backups start again at the next scheduled time")
+RESTORED_WITHOUT_KEY = ("It was restored from a backup onto this machine, and a restore keeps this "
+                        "machine's own keys, which had no recovery key yet.")
+# A message in the Host's own list (context store inbox/messages.json), read
+# into its next turn as "Messages For You" (runtime/session.py), once per
+# pause: keyed to the last good backup before it (PAUSED_TOLD_STATE).
+PAUSED_TOLD_STATE = "paused_told"
+
+
+def _iso(t) -> Optional[str]:
+    return t.isoformat() if t else None
+
+
+async def backup_status(pool, eid: int) -> dict:
+    """{state, headline, detail, last_finished_at, last_ok_at, running}.
+
+    state is one of: unavailable, restoring, off, paused (no recovery key),
+    no_destination, failing (the newest backup failed), working (the newest
+    succeeded, or partly: `partial`), none_yet. last_finished_at is when the
+    newest backup that kept anything finished; last_attempt_at when the newest
+    one of any outcome did. A restore is not a backup and counts as neither.
+    While a restore is in progress the runs table is not read: it is the
+    restored one from the swap on, and the restore is what there is to say."""
+    base = {"last_finished_at": None, "last_ok_at": None, "last_attempt_at": None,
+            "running": _run_lock.locked(), "partial": False}
+    problem = configured()
+    if problem:
+        return dict(base, state="unavailable", headline="Backups cannot run on this Host", detail=problem)
+    if restore_in_progress():
+        return dict(base, state="restoring", headline="Backups are paused while a restore finishes",
+                    detail=RESTORE_IN_PROGRESS_TEXT[0].upper() + RESTORE_IN_PROGRESS_TEXT[1:] + ".")
+    last_ok = await pool.fetchrow(
+        "SELECT finished_at, state FROM host_backup_runs "
+        "WHERE state IN ('ok', 'partial') AND reason <> 'restore' "
+        "ORDER BY started_at DESC, id DESC LIMIT 1")
+    last = await pool.fetchrow(
+        "SELECT finished_at, state, error FROM host_backup_runs "
+        "WHERE state IN ('ok', 'partial', 'failed') AND reason <> 'restore' "
+        "ORDER BY started_at DESC, id DESC LIMIT 1")
+    out = dict(base,
+               last_finished_at=_iso(last_ok["finished_at"]) if last_ok else None,
+               last_ok_at=(_iso(last_ok["finished_at"])
+                           if last_ok and last_ok["state"] == STATE_OK else None),
+               last_attempt_at=_iso(last["finished_at"]) if last else None)
+
+    def says(state: str, headline: str, detail: str = "") -> dict:
+        return dict(out, state=state, headline=headline, detail=detail)
+
+    bp = await _behavioral_params(pool, eid)
+    if schedule_of(bp, eid) is None:
+        return says("off", "Backups are off",
+                    "This Host takes no backups until you turn them on again below.")
+    if not await recipients(pool, eid, bp):
+        return says("paused", PAUSED_HEADLINE, PAUSED_TEXT + ".")
+    if await destination_problem(pool, eid):
+        return says("no_destination", "Backups are paused: choose where they go",
+                    NO_DESTINATION_TEXT[0].upper() + NO_DESTINATION_TEXT[1:] + ".")
+    if last is None:
+        return says("none_yet", "No backup yet",
+                    "Your Host takes its first one at its next scheduled time, or when you press "
+                    "Back up now.")
+    if last["state"] == STATE_FAILED:
+        return says("failing", "The last backup failed",
+                    (last["error"] or "it did not finish") + ". Your Host tries again on its own.")
+    out["partial"] = last["state"] == STATE_PARTIAL
+    return says("working", "Backups are working",
+                "The last one saved only part of the Host." if out["partial"] else "")
+
+
+async def tell_host_paused(pool, eid: int, why: str = "") -> bool:
+    """Tell the Host, once per pause, that backups are paused for want of a
+    recovery key, so it tells its owner on its next turn. Only a Host that has
+    backed up before is paused; one that never had a key reads the same
+    verdict in GET /api/backup/runs. Best effort; True when a message was
+    written."""
+    after = await pool.fetchval(
+        "SELECT max(id) FROM host_backup_runs WHERE state IN ('ok', 'partial') "
+        "AND reason <> 'restore'")
+    if after is None:
+        return False
+    mark = await _state(pool, PAUSED_TOLD_STATE)
+    if mark and mark.get("after_run") == after:
+        return False
+    import uuid
+    from mastercode.context_store import ContextStore
+    text = ("Your backups are paused: you have no recovery key, so you take no backups. "
+            + (why + " " if why else "")
+            + "Tell the owner now, plainly, and that they add their recovery key in the Backups "
+              "app (\"Make a recovery key\", or \"I already have a recovery key\" for the key they "
+              "keep). You cannot do it for them: the key is made and kept in their browser. Backups "
+              "start again at the next scheduled time after they do.")
+    await ContextStore(pool, eid).append_to_list("inbox/messages.json", {
+        "id": str(uuid.uuid4()),
+        "content": text,
+        "source": "backups",
+        "action": "backups_paused",
+        "timestamp": _now().isoformat(),
+        "delivered_to_session": None,
+        "read": False,
+    }, max_items=50)
+    await _set_state(pool, PAUSED_TOLD_STATE, {"after_run": after, "at": _now().isoformat()})
+    log.info("backup: paused for want of a recovery key; the Host was told")
+    return True
 
 
 # The stamp of a staged object, from the name the platform lists it by:
@@ -1570,8 +2088,11 @@ async def host_key(pool) -> str:
 async def _report(pool, report: dict) -> None:
     """Tell the platform how the run ended, so a Host whose backups stop is
     noticed without anyone reading its data. Best effort. A run with nobody
-    to encrypt to is not reported: nothing was attempted."""
+    to encrypt to is not reported: nothing was attempted. Nor is any run of a
+    standalone Host: it is on no network, and tells nobody."""
     if report["state"] not in (STATE_OK, STATE_PARTIAL, STATE_FAILED):
+        return
+    if host_mode() == MODE_STANDALONE:
         return
     bc = _bridge()
     if bc is None:
@@ -1643,6 +2164,79 @@ async def last_runs(pool, limit: int = 5) -> list[dict]:
     return out
 
 
+# ── an export: the whole Host as one file, to take anywhere ──────────────────
+#
+# The owner asks for it in the Backups app; it is a backup in every respect
+# (the same stream, encrypted to the same keys, with its key file), written to
+# this machine's folder under exports/ whatever place the backups go, and
+# downloaded from there as one file (server/backup_stores.py bundle). Any
+# C-Series Host restores it (Backups app, "Restore from a file"). It is not a
+# backup run: it is recorded in host_backup_state (EXPORT_STATE), so the
+# schedule, the heartbeat's last good backup and the second copy never count
+# it. One is kept at a time, for EXPORT_KEEP_DAYS.
+EXPORT_STATE = "local_export"
+EXPORT_KEEP_DAYS = 7
+
+
+async def export_to_file(pool, eid: int) -> dict:
+    """Write one export now. Returns {state, stamp, size} or raises
+    BackupError saying why there is none."""
+    async with _run_lock:
+        if restore_in_progress():
+            raise BackupError(RESTORE_IN_PROGRESS_TEXT)
+        await pin_recovery_key(pool, eid)
+        recips = await recipients(pool, eid)
+        if not recips:
+            raise BackupError("there is no export until this Host has a recovery key to encrypt it "
+                              "to: make one first")
+        keys = [r["recipient"] for r in recips]
+        who = public_recipients(recips)
+        store = local_store("exports")
+        await _set_state(pool, EXPORT_STATE, {"state": "running", "at": _now().isoformat()})
+        try:
+            tag_key = await auth_key(pool)
+            identity, pb_recipient = age_keys.new_pair()
+            try:
+                obj, parts = await write_object(pool, eid, kind=KIND_BACKUP,
+                                                recips=[pb_recipient] + keys, who=who, store=store)
+                sealed = make_sidecar(keys, eid=eid, stamp=obj["stamp"],
+                                      object_name=obj["key"].split("/", 1)[-1], identity=identity,
+                                      data=obj, key=tag_key)
+            finally:
+                identity = None  # noqa: F841
+            await asyncio.to_thread(store.put_sidecar, obj["stamp"], sealed)
+            await asyncio.to_thread(store.prune, 1, {obj["stamp"]})
+        except Exception as e:
+            error = str(e)[:RUN_ERROR_MAX] or type(e).__name__
+            await _set_state(pool, EXPORT_STATE, {"state": "failed", "error": error,
+                                                  "at": _now().isoformat()})
+            raise BackupError(error) from None
+        done = {"state": "ok", "stamp": obj["stamp"], "size": obj["size"], "at": _now().isoformat(),
+                "partial": not all((parts.get(p) or {}).get("ok") for p in ("apps", "gitea"))}
+        await _set_state(pool, EXPORT_STATE, done)
+        return done
+
+
+def expire_local(now: Optional[dt.datetime] = None, protect: Optional[set] = None) -> list[str]:
+    """Drop exports and uploaded files older than EXPORT_KEEP_DAYS, except
+    `protect` (a restore may be reading one). Returns what was dropped."""
+    from server import backup_stores
+    now = now or _now()
+    gone = []
+    for sub in ("exports", "uploads"):
+        store = local_store(sub)
+        for stamp in list(store.pairs()):
+            try:
+                mtime = (store.folder / f"{stamp}{backup_stores.DATA_SUFFIX}").stat().st_mtime
+            except OSError:
+                continue
+            made = dt.datetime.fromtimestamp(mtime, dt.timezone.utc)
+            if now - made >= dt.timedelta(days=EXPORT_KEEP_DAYS) and stamp not in (protect or set()):
+                store.drop(stamp)
+                gone.append(f"{sub}/{stamp}")
+    return gone
+
+
 # ── the loop ─────────────────────────────────────────────────────────────────
 
 def configured() -> Optional[str]:
@@ -1653,21 +2247,24 @@ def configured() -> Optional[str]:
 
 
 async def next_action(pool, eid: int, now: dt.datetime, booted: dt.datetime) -> Optional[tuple[str, str]]:
-    """What the loop does this minute: ("run", why), ("no_recipient", why) or
-    None. Pure over the database, so the gate can drive it."""
+    """What the loop does this minute: ("run", why), ("no_recipient", why),
+    ("no_destination", why) or None. Pure over the database, so the gate can
+    drive it."""
     if restore_in_progress():
         return None
     bp = await _behavioral_params(pool, eid)
     sched = schedule_of(bp, eid)
     last = await pool.fetchrow(
         "SELECT started_at, state FROM host_backup_runs "
-        "WHERE state NOT IN ('running', 'no_recipient') ORDER BY started_at DESC LIMIT 1")
+        "WHERE state NOT IN ('running', 'no_recipient', 'no_destination') "
+        "ORDER BY started_at DESC LIMIT 1")
     last_ok = await pool.fetchval(
         "SELECT max(started_at) FROM host_backup_runs WHERE state IN ('ok', 'partial')")
     retry = RETRY_AFTER
     if last and last["state"] == "failed":
         retry = retry_after(await pool.fetch(
-            "SELECT parts FROM host_backup_runs WHERE state NOT IN ('running', 'no_recipient') "
+            "SELECT parts FROM host_backup_runs "
+            "WHERE state NOT IN ('running', 'no_recipient', 'no_destination') "
             "ORDER BY started_at DESC LIMIT 16"))
     why = due(sched, now, last_ok=last_ok,
               last_attempt=last["started_at"] if last else None,
@@ -1677,18 +2274,25 @@ async def next_action(pool, eid: int, now: dt.datetime, booted: dt.datetime) -> 
         return None
     if not why:
         return None
-    if await recipients(pool, eid, bp):
+    has_key = bool(await recipients(pool, eid, bp))
+    if not has_key:
+        # Maybe the owner saved their recovery key since the last look.
+        await pin_recovery_key(pool, eid)
+        has_key = bool(await recipients(pool, eid, bp))
+    mode = host_mode()
+    blocked = None
+    if not has_key:
+        blocked = STATE_NO_RECIPIENT
+    elif destination_of(bp, mode) == WHERE_NETWORK and mode == MODE_STANDALONE:
+        blocked = STATE_NO_DESTINATION
+    if blocked is None:
         return ("run", why)
-    # Maybe the owner saved their recovery key since the last look.
-    await pin_recovery_key(pool, eid)
-    if await recipients(pool, eid, bp):
-        return ("run", why)
-    # Nobody to encrypt to. One row per scheduled slot says so; checking every
-    # minute adds nothing.
+    # Nothing can be written. One row per scheduled slot says so; checking
+    # every minute adds nothing.
     seen = await pool.fetchval(
-        "SELECT max(started_at) FROM host_backup_runs WHERE state = 'no_recipient'")
+        "SELECT max(started_at) FROM host_backup_runs WHERE state = $1", blocked)
     if seen is None or seen < last_slot(sched, now):
-        return ("no_recipient", why)
+        return (blocked, why)
     return None
 
 
@@ -1709,15 +2313,26 @@ async def run_host_backup_loop(pool, eid: int) -> None:
             await asyncio.sleep(LOOP_SECONDS)
             tick += 1
             if tick % EXPIRE_TICKS == 0:
-                from server import host_export
-                await host_export.expire_old(pool, eid)
+                if host_mode() != MODE_STANDALONE:
+                    from server import host_export
+                    with contextlib.suppress(Exception):
+                        await host_export.expire_old(pool, eid)
+                protect = await _staged_in_use(pool)
+                for gone in await asyncio.to_thread(expire_local, None, protect):
+                    log.info("backup: dropped %s, older than %d days", gone, EXPORT_KEEP_DAYS)
             if _run_lock.locked():
                 continue
             act = await next_action(pool, eid, _now(), booted)
             if act is None:
                 continue
-            if act[0] == "no_recipient":
+            if act[0] == STATE_NO_RECIPIENT:
                 await _record_no_recipient(pool, act[1])
+                try:
+                    await tell_host_paused(pool, eid)
+                except Exception as e:  # noqa: BLE001 — the record above is what counts
+                    log.warning("backup: the Host could not be told backups are paused: %s", e)
+            elif act[0] == STATE_NO_DESTINATION:
+                await _record_no_destination(pool, act[1])
             else:
                 await run_once(pool, eid, act[1])
         except asyncio.CancelledError:

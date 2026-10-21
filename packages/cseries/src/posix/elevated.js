@@ -77,14 +77,14 @@ function preamble(p) {
     'ca=""',
     'tmp=""',
     'text=""',
-    'say() { printf \'%s\\n\' "$1"; }',
-    'quit() { say "error=$(printf \'%s\' "$2" | tr \'\\n\' \' \')"; say "exit=$1"; [ -z "$tmp" ] || rm -rf "$tmp"; exit "$1"; }',
+    'emit() { printf \'%s\\n\' "$1"; }',
+    'quit() { emit "error=$(printf \'%s\' "$2" | tr \'\\n\' \' \')"; emit "exit=$1"; [ -z "$tmp" ] || rm -rf "$tmp"; exit "$1"; }',
     darwin ? 'sha() { shasum -a 256 "$1" | cut -d" " -f1; }' : 'sha() { sha256sum "$1" | cut -d" " -f1; }',
     // A bastion command: its name, then its output marked, never its args.
     'bastion() {',
     '  c=$1; w=$2; shift 2',
-    '  say "step=$w"',
-    '  say "> privatae-bastion $w"',
+    '  emit "step=$w"',
+    '  emit "> privatae-bastion $w"',
     '  text=$("$exe" "$@" </dev/null 2>&1); rc=$?',
     '  [ -z "$text" ] || printf \'%s\\n\' "$text" | sed \'s/^/> /\'',
     '  [ "$rc" -eq 0 ] || quit "$c" "privatae-bastion $w exited with $rc"',
@@ -93,22 +93,22 @@ function preamble(p) {
     // builtin printf (see THE PAIRING TOKEN above), and never in its args.
     'bastion_in() {',
     '  c=$1; w=$2; input=$3; shift 3',
-    '  say "step=$w"',
-    '  say "> privatae-bastion $w"',
+    '  emit "step=$w"',
+    '  emit "> privatae-bastion $w"',
     '  case $(command -V printf 2>/dev/null) in *builtin*) ;; *) quit "$c" "this /bin/sh has no builtin printf, so the pairing token cannot reach privatae-bastion $w without a command line" ;; esac',
     '  text=$(printf \'%s\\n\' "$input" | "$exe" "$@" 2>&1); rc=$?',
     '  input=""',
     '  [ -z "$text" ] || printf \'%s\\n\' "$text" | sed \'s/^/> /\'',
     '  [ "$rc" -eq 0 ] || quit "$c" "privatae-bastion $w exited with $rc"',
     '}',
-    `say ${shq(`run=${p.nonce}`)}`,
+    `emit ${shq(`run=${p.nonce}`)}`,
   ];
 }
 
 function installBlock(p) {
   const darwin = p.platform === 'darwin';
   const owner = darwin ? 'root:wheel' : 'root:root';
-  const lines = ["say 'step=install'"];
+  const lines = ["emit 'step=install'"];
   if (darwin) {
     lines.push(
       `mkdir -p "$dir" || quit ${EXIT.install} "cannot make $dir"`,
@@ -133,16 +133,16 @@ function installBlock(p) {
     // than following it into a folder.
     lines.push('mkdir -p /usr/local/bin && ln -sfn "$exe" /usr/local/bin/privatae-bastion || true');
   }
-  lines.push('say "installed=$exe"');
+  lines.push('emit "installed=$exe"');
   return lines;
 }
 
 function serviceBlock(p) {
   if (p.platform === 'darwin') {
-    return [`bastion ${EXIT.serviceInstall} 'service install' service install`, "say 'service=yes'"];
+    return [`bastion ${EXIT.serviceInstall} 'service install' service install`, "emit 'service=yes'"];
   }
   return [
-    "say 'step=service install'",
+    "emit 'step=service install'",
     `[ -d /run/systemd/system ] || quit ${EXIT.serviceInstall} "this Linux does not run systemd, which the bastion's service needs"`,
     `cat > ${UNIT}.new <<'CSERIES_UNIT'`,
     p.unit.replace(/\n$/, ''),
@@ -150,13 +150,13 @@ function serviceBlock(p) {
     `chmod 644 ${UNIT}.new && mv -f ${UNIT}.new ${UNIT} || quit ${EXIT.serviceInstall} "cannot write ${UNIT}"`,
     `systemctl daemon-reload || quit ${EXIT.serviceInstall} "systemctl daemon-reload failed"`,
     `systemctl enable privatae-bastion.service >/dev/null 2>&1 || quit ${EXIT.serviceInstall} "systemctl enable privatae-bastion.service failed"`,
-    "say 'service=yes'",
+    "emit 'service=yes'",
   ];
 }
 
 function hostCaBlock(p) {
   return [
-    "say 'step=host-ca'",
+    "emit 'step=host-ca'",
     `tmp=$(mktemp -d "$HOME/cseries-ca.XXXXXX") || quit ${EXIT.hostCa} "cannot make a folder for the Host CA"`,
     'ca="$tmp/host-ca.pem"',
     `cp ${shq(p.hostCa.file)} "$ca" || quit ${EXIT.hostCa} "cannot copy the Host CA"`,
@@ -168,13 +168,13 @@ function hostCaBlock(p) {
 function commandBlock(c) {
   if (c.console) {
     return [
-      `say 'step=${c.what}'`,
+      `emit 'step=${c.what}'`,
       `[ -n "$hostName" ] || quit ${c.code} 'no pairing to enrol an authenticator for'`,
       `{ : </dev/tty >/dev/tty; } 2>/dev/null || quit ${c.code} 'no terminal to show the authenticator code on: run npx cseries in a terminal window'`,
       "printf '\\n%s\\n' 'Approvals: the bastion shows a code for your authenticator app next. It is shown only in this terminal.' >/dev/tty",
       `"$exe" ${c.args.map(arg).join(' ')} </dev/tty >/dev/tty 2>&1; rc=$?`,
       `[ "$rc" -eq 0 ] || quit ${c.code} "privatae-bastion ${c.what} exited with $rc"`,
-      "say 'enrolled=yes'",
+      "emit 'enrolled=yes'",
     ];
   }
   const lines = c.stdin === undefined
@@ -186,12 +186,12 @@ function commandBlock(c) {
       'hostName=$(printf \'%s\\n\' "$text" | sed -n \'s/.*Paired with \\([^ ]*\\).*/\\1/p\' | head -n 1)',
       'hostName=${hostName%.}',
       `[ -n "$hostName" ] || quit ${c.code} 'pair did not say which Host it paired with'`,
-      'say "paired_host=$hostName"',
+      'emit "paired_host=$hostName"',
     );
   } else if (c.args[0] === 'release-anchor') {
-    lines.push(`say ${shq(`released=${c.args[2]}`)}`);
+    lines.push(`emit ${shq(`released=${c.args[2]}`)}`);
   } else if (c.args[0] === 'claim-anchor') {
-    lines.push("say 'anchored=yes'");
+    lines.push("emit 'anchored=yes'");
   }
   return lines;
 }
@@ -201,10 +201,10 @@ function restartBlock(p) {
     ? `launchctl kickstart -k system/${LAUNCHD_LABEL}`
     : 'systemctl restart privatae-bastion';
   return [
-    "say 'step=restart'",
+    "emit 'step=restart'",
     `${cmd} || quit ${EXIT.restart} "${cmd} failed"`,
     '[ -z "$tmp" ] || rm -rf "$tmp"',
-    "say 'result=ok'",
+    "emit 'result=ok'",
     'exit 0',
   ];
 }

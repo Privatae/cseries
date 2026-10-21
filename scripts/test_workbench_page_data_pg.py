@@ -57,6 +57,7 @@ import asyncio
 import contextlib
 import json
 import os
+from datetime import timezone as _dt_tz
 import pathlib
 import re
 import subprocess
@@ -245,32 +246,45 @@ class BrokenForge(FakeForge):
         return out
 
 
-# thread_state() exactly as it stood on main 41f8837fc
+# thread_state() as it stood on main 41f8837fc
 # (brain/mastercode/runtime/close_turn.py:832-884), before this change moved
-# its two queries into _goal_row_sql/_handoff_row_sql for thread_state_parts.
-# Section E runs it and today's thread_state() on the same rows: the text goes
-# into every Host prompt ("Where this thread stands"), so a refactor that
-# changed one byte of it would change prompts and break their cache.
+# its two queries into _goal_row_sql/_handoff_row_sql for thread_state_parts,
+# with one change made on purpose since: the goal and the next step carry the
+# day their row was written ("Goal (set Oct 19, 2026): ..."), so a goal set
+# months ago never reads like today's. Section E runs it and today's
+# thread_state() on the same rows: the text goes into every Host prompt
+# ("Where this thread stands"), so a refactor that changed one byte of it
+# would change prompts and break their cache.
+def _day_main(ts):
+    if ts is None:
+        return ""
+    if ts.tzinfo is None:
+        ts = ts.replace(tzinfo=_dt_tz.utc)
+    ts = ts.astimezone(_dt_tz.utc)
+    return f"{ts:%b} {ts.day}, {ts.year}"
+
+
 async def _thread_state_main(pool, entity_id: int, scope):
     if not (isinstance(scope, dict) and scope.get("kind")):
         return None
     kind, ref = str(scope["kind"]), str(scope.get("ref") or "")
-    goal = await pool.fetchval(
+    g = await pool.fetchrow(
         """
-        SELECT content FROM entity_memory
+        SELECT content, created_at FROM entity_memory
          WHERE entity_id = $1 AND memory_type = 'goal' AND status = 'active'
            AND resolved_at IS NULL AND t_valid_until IS NULL
            AND metadata->'source_context'->>'kind' = $2
            AND metadata->'source_context'->>'ref' = $3
          ORDER BY created_at DESC, id DESC LIMIT 1
         """, entity_id, kind, ref)
+    goal = g["content"] if g else None
     # A replay, an A/B variant or a fired wake-up runs under this descriptor
     # without being part of the conversation: its handoff is never the last
     # turn's (memory_engine.NOT_HIDDEN_LANE_ROW, the transcript's own filter).
     from mastercode.memory_engine import NOT_HIDDEN_LANE_ROW
-    ho = await pool.fetchval(
+    h = await pool.fetchrow(
         f"""
-        SELECT metadata->'close_turn'->'handoff' FROM entity_memory
+        SELECT metadata->'close_turn'->'handoff' AS handoff, created_at FROM entity_memory
          WHERE entity_id = $1 AND memory_type = 'turn'
            AND metadata->>'role' = 'assistant' AND metadata ? 'close_turn'
            AND metadata->'source_context'->>'kind' = $2
@@ -278,6 +292,7 @@ async def _thread_state_main(pool, entity_id: int, scope):
            AND {NOT_HIDDEN_LANE_ROW}
          ORDER BY created_at DESC, id DESC LIMIT 1
         """, entity_id, kind, ref)
+    ho = h["handoff"] if h else None
     if isinstance(ho, str):
         try:
             ho = json.loads(ho)
@@ -286,9 +301,9 @@ async def _thread_state_main(pool, entity_id: int, scope):
     ho = ho if isinstance(ho, dict) else {}
     lines = []
     if goal:
-        lines.append(f"Goal: {goal}")
+        lines.append(f"Goal (set {_day_main(g['created_at'])}): {goal}")
     if ho.get("next_step"):
-        lines.append(f"Next step (from the last turn): {ho['next_step']}")
+        lines.append(f"Next step (from the last turn, {_day_main(h['created_at'])}): {ho['next_step']}")
     if ho.get("open_work"):
         lines.append("Open work: " + "; ".join(str(x) for x in ho["open_work"]))
     if ho.get("identifiers"):
@@ -969,9 +984,9 @@ async def behaviour(dsn):
                 return {"kind": "project", "ref": str(await project(pool, name))}
             scopes = {}
             sc = scopes["everything"] = await scope_of("E everything")
-            await goal(sc, "Ship the book of pages")
+            g_all = await goal(sc, "Ship the book of pages")
             await said(sc, role="user", secs_ago=500)
-            await said(sc, secs_ago=400, close={"handoff": {
+            h_all = await said(sc, secs_ago=400, close={"handoff": {
                 "next_step": "wire the tabs", "open_work": ["seen mark", "totals", 3],
                 "identifiers": ["ABC-110", "  /srv/a b.txt", "ü/ä.md"]}})
             sc = scopes["goal only"] = await scope_of("E goal only")
@@ -992,7 +1007,7 @@ async def behaviour(dsn):
             await goal(sc, "first of the tie", at=tie)
             await goal(sc, "second of the tie (the higher id)", at=tie)
             sc = scopes["a close_turn with no handoff leads"] = await scope_of("E empty close")
-            await goal(sc, "goal stays")
+            g_stays = await goal(sc, "goal stays")
             await said(sc, secs_ago=300, close={"handoff": {"next_step": "an older step"}})
             await said(sc, secs_ago=100, close={"type": {"name": "chat"}})
             th = {"kind": "thread", "ref": "7b2e1d3f-2222-4c5d-8e9f-0a1b2c3d4e5f"}
@@ -1042,18 +1057,22 @@ async def behaviour(dsn):
             finally:
                 await decoding.close()
             plain = "the platform's pool (JSON as text)"
+
+            async def day_of(rid):
+                return _day_main(await pool.fetchval("SELECT created_at FROM entity_memory WHERE id = $1", rid))
             check(f"E thread_state() is main's text byte for byte on every scope ({len(texts)} reads: "
                   f"{len(scopes) + len(edge)} scopes on two pool codecs), and thread_state_parts' text is it too",
                   not differ, differ)
             check("E ...and the rows reached every branch: a full state, the newest live goal, the id tie, "
                   "an empty close_turn, the hidden lanes, a string handoff, nothing at all",
                   texts[(plain, "everything")] == (
-                      THREAD_STATE_PREFIX + "\nGoal: Ship the book of pages\n"
-                      "Next step (from the last turn): wire the tabs\nOpen work: seen mark; totals; 3\n"
-                      "Identifiers: ABC-110,   /srv/a b.txt, ü/ä.md")
-                  and "Goal: the live one" in texts[(plain, "goals that are not the goal")]
+                      THREAD_STATE_PREFIX + f"\nGoal (set {await day_of(g_all)}): Ship the book of pages\n"
+                      f"Next step (from the last turn, {await day_of(h_all)}): wire the tabs\n"
+                      "Open work: seen mark; totals; 3\nIdentifiers: ABC-110,   /srv/a b.txt, ü/ä.md")
+                  and "): the live one" in texts[(plain, "goals that are not the goal")]
                   and "second of the tie" in texts[(plain, "goal tie")]
-                  and texts[(plain, "a close_turn with no handoff leads")] == THREAD_STATE_PREFIX + "\nGoal: goal stays"
+                  and texts[(plain, "a close_turn with no handoff leads")]
+                  == THREAD_STATE_PREFIX + f"\nGoal (set {await day_of(g_stays)}): goal stays"
                   and "visible step" in texts[(plain, "hidden lanes")]
                   and "hidden" not in texts[(plain, "hidden lanes")]
                   and "kept" in texts[(plain, "not a reply, or no signal")]

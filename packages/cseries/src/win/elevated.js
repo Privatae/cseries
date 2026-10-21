@@ -66,16 +66,16 @@ function preamble(p) {
     "$ProgressPreference = 'SilentlyContinue'",
     `$log = ${psQuote(p.log)}`,
     '$code = 1',
-    'function Say([string]$line) { Add-Content -LiteralPath $log -Value $line -Encoding UTF8 }',
-    "function Quit([int]$c, [string]$why) { Say ('error=' + ($why -replace '[\\r\\n]+', ' ')); Say \"exit=$c\"; exit $c }",
+    'function Emit([string]$line) { Add-Content -LiteralPath $log -Value $line -Encoding UTF8 }',
+    "function Quit([int]$c, [string]$why) { Emit ('error=' + ($why -replace '[\\r\\n]+', ' ')); Emit \"exit=$c\"; exit $c }",
     // A bastion command: its name and its output go to the log, never its
     // arguments. PowerShell 5.1 turns a native program's stderr into errors
     // under 2>&1, which 'Stop' would throw on; the exit code decides instead.
     // With $stdin given, it is piped to the command's standard input (pair's
     // token), as UTF-8 without a byte order mark, and never in its args.
     'function Bastion([int]$c, [string]$what, [string[]]$a, [string]$stdin) {',
-    '  Say "step=$what"',
-    '  Say "> privatae-bastion $what"',
+    '  Emit "step=$what"',
+    '  Emit "> privatae-bastion $what"',
     "  $ErrorActionPreference = 'Continue'",
     "  if ($PSBoundParameters.ContainsKey('stdin')) {",
     '    $OutputEncoding = New-Object System.Text.UTF8Encoding $false',
@@ -85,7 +85,7 @@ function preamble(p) {
     '  }',
     '  $rc = $LASTEXITCODE',
     "  $ErrorActionPreference = 'Stop'",
-    '  if ($text) { Say $text }',
+    '  if ($text) { Emit $text }',
     '  if ($rc -ne 0) { Quit $c "privatae-bastion $what exited with $rc" }',
     '  return $text',
     '}',
@@ -110,7 +110,7 @@ function preamble(p) {
 function installBlock(p) {
   return [
     `$code = ${EXIT.install}`,
-    "Say 'step=install'",
+    "Emit 'step=install'",
     'New-Item -ItemType Directory -Force -Path $dir | Out-Null',
     '$new = "$exe.new"',
     `Copy-Item -LiteralPath ${psQuote(p.install.file)} -Destination $new -Force`,
@@ -122,7 +122,7 @@ function installBlock(p) {
     "  $svc.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))",
     '}',
     'Move-Item -LiteralPath $new -Destination $exe -Force',
-    'Say "installed=$exe"',
+    'Emit "installed=$exe"',
   ];
 }
 
@@ -133,7 +133,7 @@ function installBlock(p) {
 function oldInstallBlock(p) {
   const lines = [
     `$code = ${EXIT.install}`,
-    "Say 'step=old-install'",
+    "Emit 'step=old-install'",
     `if (Get-ScheduledTask -TaskName ${psQuote(SERVICE)} -ErrorAction SilentlyContinue) { Unregister-ScheduledTask -TaskName ${psQuote(SERVICE)} -Confirm:$false }`,
     "Get-Process -Name 'privatae-bastion' -ErrorAction SilentlyContinue | Where-Object { $_.Path -and ($_.Path -ne $exe) } | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }",
     `if (Test-Path -LiteralPath ${psQuote(p.old.exe)}) { Start-Sleep -Milliseconds 500; Remove-Item -LiteralPath ${psQuote(p.old.exe)} -Force -ErrorAction SilentlyContinue }`,
@@ -154,7 +154,7 @@ function oldInstallBlock(p) {
       '}',
     );
   }
-  lines.push("Say 'old_install=removed'");
+  lines.push("Emit 'old_install=removed'");
   return lines;
 }
 
@@ -164,7 +164,7 @@ function serviceBlock() {
   return [
     `$code = ${EXIT.serviceInstall}`,
     `Bastion ${EXIT.serviceInstall} 'service install' @('service','install') | Out-Null`,
-    "Say 'service=yes'",
+    "Emit 'service=yes'",
     "$envKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment', $true)",
     'try {',
     "  $raw = [string]$envKey.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)",
@@ -178,7 +178,7 @@ function serviceBlock() {
 function hostCaBlock(p) {
   return [
     `$code = ${EXIT.hostCa}`,
-    "Say 'step=host-ca'",
+    "Emit 'step=host-ca'",
     'New-Item -ItemType Directory -Force -Path $dir | Out-Null',
     "$ca = Join-Path $dir 'host-ca.pem'",
     `Copy-Item -LiteralPath ${psQuote(p.hostCa.file)} -Destination $ca -Force`,
@@ -193,7 +193,7 @@ function commandBlock(c) {
     // shown here and typed back here. Only the exit code is logged.
     return [
       `$code = ${c.code}`,
-      `Say 'step=${c.what}'`,
+      `Emit 'step=${c.what}'`,
       `if (-not $hostName) { Quit ${c.code} 'no pairing to enrol an authenticator for' }`,
       "Write-Host ''",
       "Write-Host 'Approvals: the bastion shows a code for your authenticator app next. It is shown only in this window.'",
@@ -202,7 +202,7 @@ function commandBlock(c) {
       '$rc = $LASTEXITCODE',
       "$ErrorActionPreference = 'Stop'",
       `if ($rc -ne 0) { Quit ${c.code} "privatae-bastion ${c.what} exited with $rc" }`,
-      "Say 'enrolled=yes'",
+      "Emit 'enrolled=yes'",
     ];
   }
   const stdin = c.stdin === undefined ? '' : ` ${psQuote(c.stdin)}`;
@@ -213,14 +213,14 @@ function commandBlock(c) {
       "$m = [regex]::Match([string]$text, 'Paired with (\\S+)')",
       `if (-not $m.Success) { Quit ${c.code} 'pair did not say which Host it paired with' }`,
       "$hostName = $m.Groups[1].Value.TrimEnd('.')",
-      'Say "paired_host=$hostName"',
+      'Emit "paired_host=$hostName"',
     );
   } else if (c.args[0] === 'approvals-owner') {
-    lines.push("Say 'owner=yes'");
+    lines.push("Emit 'owner=yes'");
   } else if (c.args[0] === 'release-anchor') {
-    lines.push(`Say ${psQuote(`released=${c.args[2]}`)}`);
+    lines.push(`Emit ${psQuote(`released=${c.args[2]}`)}`);
   } else if (c.args[0] === 'claim-anchor') {
-    lines.push("Say 'anchored=yes'");
+    lines.push("Emit 'anchored=yes'");
   }
   return lines;
 }
@@ -237,9 +237,9 @@ function bastionInstallScript(p) {
   for (const c of p.commands) body.push(...commandBlock(c));
   body.push(
     `$code = ${EXIT.restart}`,
-    "Say 'step=restart'",
+    "Emit 'step=restart'",
     `Restart-Service -Name ${psQuote(SERVICE)} -Force`,
-    "Say 'result=ok'",
+    "Emit 'result=ok'",
     'exit 0',
   );
   return [

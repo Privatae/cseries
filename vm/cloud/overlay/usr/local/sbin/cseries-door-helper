@@ -1,0 +1,239 @@
+#!/usr/bin/python3 -I
+"""The pairing window: lets one address reach the Host's enroll port (8810)
+for 15 minutes.
+
+Runs as root under cseries-door-helper.socket, which listens on
+/run/cseries-door/helper.sock (root:cseries 0660; the Host container mounts
+/run/cseries-door and holds the cseries group). Only a process with uid 1000,
+the Host's user, is answered.
+
+One JSON line in, one JSON line out, then the connection closes:
+
+  {"op":"pairing.open","addr":"<ip>"}  ->  {"ok":true,"expires_in":900}
+  {"op":"pairing.status"}              ->  {"ok":true,"open":[{"addr":"<ip>","expires_in":<s>}]}
+  anything else                        ->  {"ok":false,"error":"..."}
+
+pairing.open accepts only a global unicast address (an IPv4-mapped IPv6
+address counts as its IPv4 address), adds it to door.nft's pairing_v4 or
+pairing_v6 set with a 15-minute timeout, and refuses past 10 opens in an hour.
+It can do nothing else: it opens the window for one address, and the window
+closes by itself.
+
+Standard library only.
+"""
+
+import ipaddress
+import json
+import os
+import socket
+import struct
+import subprocess
+import sys
+import time
+
+TABLE = "inet cseries_door"
+# A test machine may shorten the window (cseries-door-helper.service drop-in)
+# to watch it close; never longer than 15 minutes.
+TEST_WINDOW_ENV = "CSERIES_DOOR_TEST_WINDOW_S"
+WINDOW_S = 900
+MAX_OPENS = 10
+PER_S = 3600
+HOST_UID = 1000
+MAX_LINE = 4096
+READ_TIMEOUT_S = 5
+STATE = "/run/cseries-door-helper/opens.json"
+NFT = "/usr/sbin/nft"
+# Extra networks treated as outside addresses, for a test machine whose
+# "outside" is a documentation range. Set only by a test's unit drop-in.
+TEST_NETS_ENV = "CSERIES_DOOR_TEST_NETS"
+
+
+class Refused(Exception):
+    pass
+
+
+def test_nets(raw=None):
+    raw = os.environ.get(TEST_NETS_ENV, "") if raw is None else raw
+    out = []
+    for part in raw.split(","):
+        part = part.strip()
+        if part:
+            out.append(ipaddress.ip_network(part, strict=False))
+    return out
+
+
+def outside_address(text, extra=()):
+    """The address as nft takes it, when text is one global unicast address;
+    raises Refused otherwise."""
+    if not isinstance(text, str) or len(text) > 64:
+        raise Refused("addr must be one IP address")
+    try:
+        ip = ipaddress.ip_address(text.strip())
+    except ValueError:
+        raise Refused("addr is not an IP address") from None
+    if ip.version == 6 and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    if any(ip.version == n.version and ip in n for n in extra):
+        return ip
+    if ip.is_multicast or not ip.is_global:
+        raise Refused("addr must be a global unicast address")
+    return ip
+
+
+def window_s(raw=None):
+    raw = os.environ.get(TEST_WINDOW_ENV, "") if raw is None else raw
+    try:
+        return max(10, min(WINDOW_S, int(raw))) if raw.strip() else WINDOW_S
+    except ValueError:
+        return WINDOW_S
+
+
+def set_name(ip):
+    return "pairing_v4" if ip.version == 4 else "pairing_v6"
+
+
+def open_script(ip, seconds=WINDOW_S):
+    """The nft transaction that (re)opens the window for ip: adding then
+    deleting the element makes sure it exists, so the final add always
+    starts a fresh window, in one atomic transaction."""
+    s = set_name(ip)
+    return (f"add element {TABLE} {s} {{ {ip} }}\n"
+            f"delete element {TABLE} {s} {{ {ip} }}\n"
+            f"add element {TABLE} {s} {{ {ip} timeout {seconds}s }}\n")
+
+
+class Limiter:
+    """At most MAX_OPENS successful opens in any PER_S seconds, kept in a file
+    under /run so a restart of the helper does not reset it."""
+
+    def __init__(self, path=STATE, now=time.time):
+        self.path = path
+        self.now = now
+
+    def _load(self):
+        try:
+            with open(self.path, encoding="utf-8") as f:
+                stamps = json.load(f)
+            return [float(t) for t in stamps if isinstance(t, (int, float))]
+        except (OSError, ValueError):
+            return []
+
+    def check(self):
+        t = self.now()
+        stamps = [s for s in self._load() if t - s < PER_S]
+        if len(stamps) >= MAX_OPENS:
+            wait = int(PER_S - (t - min(stamps))) + 1
+            raise Refused(f"{MAX_OPENS} pairing windows were opened in the last hour; "
+                          f"the next can open in {wait} seconds")
+        return stamps
+
+    def record(self, stamps):
+        stamps = stamps + [self.now()]
+        d = os.path.dirname(self.path)
+        os.makedirs(d, exist_ok=True)
+        tmp = self.path + ".new"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(stamps[-MAX_OPENS:], f)
+        os.replace(tmp, self.path)
+
+
+def nft(script=None, args=None):
+    cmd = [NFT] + (args or ["-f", "-"])
+    r = subprocess.run(cmd, input=script, capture_output=True, text=True, timeout=10, check=False)
+    if r.returncode != 0:
+        raise Refused("the firewall refused the change: " + (r.stderr.strip() or "nft failed"))
+    return r.stdout
+
+
+def list_open(runner=nft):
+    out = []
+    for s in ("pairing_v4", "pairing_v6"):
+        raw = runner(args=["-j", "list", "set"] + TABLE.split() + [s])
+        for item in json.loads(raw).get("nftables", []):
+            for el in (item.get("set") or {}).get("elem", []) or []:
+                if isinstance(el, dict) and "elem" in el:
+                    el = el["elem"]
+                    addr, left = el.get("val"), el.get("expires", WINDOW_S)
+                else:
+                    addr, left = el, None
+                out.append({"addr": str(addr), "expires_in": left})
+    return out
+
+
+def handle(line, peer_uid, limiter, runner=nft, extra=None):
+    """One request line and the peer's uid -> the answer object."""
+    if peer_uid != HOST_UID:
+        return {"ok": False, "error": "only the Host may ask for a pairing window"}
+    try:
+        req = json.loads(line)
+    except ValueError:
+        return {"ok": False, "error": "the request is not JSON"}
+    if not isinstance(req, dict):
+        return {"ok": False, "error": "the request is not an object"}
+    op = req.get("op")
+    try:
+        if op == "pairing.open":
+            if set(req) != {"op", "addr"}:
+                raise Refused("pairing.open takes op and addr only")
+            ip = outside_address(req["addr"], test_nets() if extra is None else extra)
+            stamps = limiter.check()
+            seconds = window_s()
+            runner(open_script(ip, seconds))
+            limiter.record(stamps)
+            print(f"pairing window open for {ip} ({seconds}s)", file=sys.stderr, flush=True)
+            return {"ok": True, "expires_in": seconds}
+        if op == "pairing.status":
+            if set(req) != {"op"}:
+                raise Refused("pairing.status takes op only")
+            return {"ok": True, "open": list_open(runner)}
+        raise Refused("unknown op")
+    except Refused as e:
+        return {"ok": False, "error": str(e)}
+
+
+def peer_uid(conn):
+    creds = conn.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+    _pid, uid, _gid = struct.unpack("3i", creds)
+    return uid
+
+
+def read_line(conn):
+    buf = b""
+    while b"\n" not in buf and len(buf) <= MAX_LINE:
+        chunk = conn.recv(MAX_LINE + 1 - len(buf))
+        if not chunk:
+            break
+        buf += chunk
+    if len(buf) > MAX_LINE:
+        raise Refused("the request is too long")
+    return buf.split(b"\n", 1)[0].decode("utf-8", "replace")
+
+
+def serve(listener, limiter):
+    while True:
+        conn, _ = listener.accept()
+        with conn:
+            conn.settimeout(READ_TIMEOUT_S)
+            try:
+                uid = peer_uid(conn)
+                try:
+                    answer = handle(read_line(conn), uid, limiter)
+                except Refused as e:
+                    answer = {"ok": False, "error": str(e)}
+                conn.sendall((json.dumps(answer) + "\n").encode("utf-8"))
+            except OSError as e:
+                print(f"connection dropped: {e}", file=sys.stderr, flush=True)
+
+
+def main():
+    # Socket activation: systemd passes the listening socket as fd 3.
+    if os.environ.get("LISTEN_FDS") != "1" or os.environ.get("LISTEN_PID") != str(os.getpid()):
+        print("cseries-door-helper runs under cseries-door-helper.socket", file=sys.stderr)
+        return 2
+    listener = socket.socket(fileno=3)
+    serve(listener, Limiter())
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

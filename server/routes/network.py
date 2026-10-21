@@ -12,6 +12,7 @@ The user owns their outbound; this only lets them choose to limit it.
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -344,17 +345,97 @@ async def setup_bastion(request: Request):
     """Mint a short-lived single-use PAIRING TOKEN for a new bastion. Shown once on
     the dashboard; the user installs the cseries-bastion binary and runs
     `cseries-bastion pair <token>`, which generates its own keys and redeems the token
-    for its cert + routing. No bundle, no file to ship, no Docker."""
+    for its cert + routing. No bundle, no file to ship, no Docker.
+
+    A Host with no platform also answers its CA (host_ca_pem), the redeem URL on
+    its enroll port and the lane's address: a bastion on another machine pairs
+    over TCP and trusts that CA alone. On a server of its own (CSERIES_LANE_HOST)
+    the pair command shown is that TCP pairing; and where the server's firewall
+    keeps the enroll port closed (CSERIES_DOOR_HELPER), a fresh passkey check is
+    needed first, and the port is opened to the requester's address for the
+    pairing window, which the answer gives (pairing_window)."""
     pool = brain_service.get_pool()
     if not pool:
         raise HTTPException(503, "brain pool not ready")
     eid = brain_service._entity_id
     body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
-    from server.network import nac_commit
+    from server.network import door_helper, local_bastion, nac_commit
+    standalone = local_bastion.standalone()
+    window = await _open_pairing_window(request) if standalone and door_helper.helper_path() else None
     try:
-        return await nac_commit.setup_bastion(pool, eid, (body.get("name") or ""))
+        minted = await nac_commit.setup_bastion(pool, eid, (body.get("name") or ""))
     except nac_commit.CommitError as e:
         raise HTTPException(e.status, e.detail)
+    if standalone:
+        await _tcp_pairing(pool, minted, window)
+    return minted
+
+
+async def _open_pairing_window(request: Request) -> dict:
+    """Open the enroll port to the requester for the pairing window, after
+    the owner's passkey check in the last five minutes. The requester is the
+    socket peer, or behind a trusted proxy the address it forwarded for."""
+    from server import owner_passkeys, trusted_proxies
+    from server.home_origin import HOME
+    from server.middleware.owner_session import live_session
+    from server.network import door_helper
+    _email, token = await live_session(request.scope)
+    if not owner_passkeys.fresh_step_up(token):
+        raise HTTPException(403, "Pairing a machine needs your passkey in the last five minutes: "
+                                 f"open {HOME.origin}/passkey, confirm there with your passkey, then "
+                                 "set up the bastion again.")
+    seen = trusted_proxies.visitor(request.client.host if request.client else None,
+                                   request.headers.get("x-forwarded-for"))
+    addr = door_helper.public_address(seen)
+    if not addr:
+        raise HTTPException(400, "The pairing port opens only to a public address, and this "
+                                 f"request came from {seen}.")
+    try:
+        expires = await door_helper.open_pairing(addr)
+    except door_helper.HelperError as e:
+        raise HTTPException(502, f"The pairing port did not open: {e}")
+    logger.info("pairing port opened to %s for %ds", addr, expires)
+    return {"address": addr, "expires_in_s": expires}
+
+
+async def _tcp_pairing(pool, minted: dict, window: Optional[dict]) -> None:
+    """Add what a bastion on another machine needs to `minted`: the Host CA,
+    the redeem URL and the lane's address; on a server of its own, the TCP pair
+    command in place of the socket one, and the window it must run in."""
+    from server.network import host_ca, local_bastion
+    await host_ca.ensure(pool)
+    ca = await host_ca.ca_cert_pem(pool)
+    minted["host_ca_pem"] = ca
+    minted["enroll"] = local_bastion.enroll_url()
+    minted["lane_address"] = local_bastion.lane_address()
+    if window:
+        minted["pairing_window"] = window
+    if not local_bastion.remote_lane():
+        return
+    command = (f"{bastion_enroll.BASTION_BINARY} pair --redeem-url {minted['enroll']} "
+               f"--host-ca host-ca.pem {minted['token']}")
+    minted["pair_command"] = command
+    run = minted.setdefault("run", {})
+    run["pair"] = command
+    # The Network app shows install, pair and note as they come, so the CA
+    # the pair command names is saved in the install step. The card runs a
+    # value's lines together, which would break a PEM copied from it, so the
+    # CA travels base64-encoded inside one command per kind of machine.
+    b64 = base64.b64encode(ca.encode("ascii")).decode("ascii")
+    run["install"] = ((run.get("install") or "").rstrip()
+                      + "\n\nThen save this Host's certificate as host-ca.pem, in the folder you "
+                        "run the pair command from:\n"
+                      + f"macOS / Linux:  echo {b64} | base64 -d > host-ca.pem\n"
+                      + "Windows (PowerShell):  [IO.File]::WriteAllBytes((Join-Path $PWD 'host-ca.pem'), "
+                        f"[Convert]::FromBase64String('{b64}'))")
+    note = ("Run the pair command on the machine you want as a bastion. It trusts this Host's "
+            "certificate and nothing else, generates its own keys and opens the lanes this Host "
+            "uses to reach that machine. The token is single-use and expires in 15 minutes.")
+    if window:
+        minutes = max(1, round(window["expires_in_s"] / 60))
+        note += (f" This Host's pairing port is open to {window['address']} for {minutes} minutes: "
+                 "pair from a machine at that address within that time.")
+    run["note"] = note
 
 
 @router.post("/bastions/redeem")

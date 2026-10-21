@@ -243,6 +243,15 @@ const AppRunner = (() => {
                 holdWindow(appId, appWindowId, launchData.window_beat_s);
             } else {
                 console.warn(`AppRunner: launch endpoint returned ${tr.status} for ${appId}`);
+                // This machine would not start the app (a short disk, no
+                // room): say why and open nothing, since the window could
+                // not work. The words come from the kernel and can name app
+                // ids, so they go out as one line of text (notify escapes).
+                const refused = await refusalOf(tr);
+                if (refused) {
+                    notify('Could not open ' + oneLine(manifest.name || appId), refused, 'error');
+                    return;
+                }
             }
         } catch (err) {
             console.warn('AppRunner: token mint failed (continuing without token):', err);
@@ -516,6 +525,23 @@ const AppRunner = (() => {
         if (geo && geo.minimized && typeof window.WindowManager.minimize === 'function') {
             window.WindowManager.minimize(winId);
         }
+    }
+
+    // Control characters and the ones that reorder text become spaces: the
+    // same as Settings' oneLine().
+    function oneLine(s) {
+        return String(s == null ? '' : s).replace(/[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]/g, ' ');
+    }
+
+    // The launch route's refusal ({detail: {error: "wake_refused", message}})
+    // as one line, or "" for any other failure.
+    async function refusalOf(res) {
+        try {
+            const body = await res.json();
+            const d = body && body.detail;
+            if (d && d.error === 'wake_refused' && d.message) return oneLine(d.message);
+        } catch (_) { /* not JSON: not a refusal */ }
+        return '';
     }
 
     function notify(title, message, level) {

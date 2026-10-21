@@ -1,0 +1,33 @@
+# Opens 8810 for one address for 15 minutes (cseries-door-helper). Root, but
+# with only the capability nft needs, and nothing it could write except its
+# own counter under /run.
+[Unit]
+Description=C-Series Cloud pairing-window helper
+Requires=cseries-door-helper.socket
+After=cseries-door-helper.socket cseries-firewall.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/cseries-door-helper
+RuntimeDirectory=cseries-door-helper
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelModules=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictAddressFamilies=AF_UNIX AF_NETLINK
+RestrictNamespaces=yes
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+SystemCallArchitectures=native
+SystemCallFilter=@system-service
+UMask=0077

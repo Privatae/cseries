@@ -511,8 +511,8 @@ gitea_client.gitea_creds = lambda: None      # no Git server here until the Git 
 print("== nobody to encrypt to")
 pool = Pool()
 res = run(hb.run_once(pool, 7, "manual"))
-check("no recovery key saved: nothing is written, and the run says so",
-      res["state"] == "no_recipient" and "save your recovery key" in res["error"]
+check("no recovery key saved: nothing is written, and the run says where to make one",
+      res["state"] == "no_recipient" and "Make one in the Backups app" in res["error"]
       and not any(o.startswith("backup.upload") for o in bridge.ops()), res)
 keyrows.append({"kind": "bastion", "label": "nas-box", "pubkey": raw(nas_rec), "origin": "self-generated"})
 res = run(hb.run_once(pool, 7, "manual"))

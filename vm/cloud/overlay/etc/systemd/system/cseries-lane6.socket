@@ -1,0 +1,15 @@
+# The Host's port 8811 for IPv6 callers. The quadlet's 127.0.0.1:8811 publish
+# holds the port on the box's IPv4 side, so this listens on a v6-only socket
+# and relays to the container (cseries-lane6.service). door.nft decides who
+# may connect.
+[Unit]
+Description=C-Series Cloud IPv6 relay to the Host's port 8811
+After=cseries-firewall.service
+
+[Socket]
+ListenStream=[::]:8811
+BindIPv6Only=ipv6-only
+FreeBind=yes
+
+[Install]
+WantedBy=sockets.target

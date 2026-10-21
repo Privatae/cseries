@@ -7,9 +7,11 @@ loopback (the connector's own wire: NDJSON read line by line as it streams);
 the grant, the pairing and the capability (nac_connector: propose, the wake's
 creds, the code, the person's approval with the authenticator code);
 brain_service.initialize and brain_service.send_message, the turn registry,
-the runtime's whole turn (session.py) and its turn rows; the Host's thread
-pick (thread_pick.choose_thread through runtime/tools._call_entity_model and
-the provider gateway); the reply builder and the picture renderer's own
+the runtime's whole turn (session.py) and its turn rows; the placement of a
+message no reply or platform thread places (thread_pick.place_connector, no
+model call) and the Host's own pick in its turn (runtime/thread_choice,
+pick_thread through the provider gateway); the reply builder and the picture
+renderer's own
 refusals; Circles' split and the project adopt; the kernel's schema
 (scripts/kernel_schema.py, migrations included) on a real PostgreSQL.
 
@@ -22,20 +24,23 @@ turn holding for its card ends in a second instead of four minutes.
 
   A  the picture guidance the Host reads names only what the renderer draws
   B  a stranger's message runs no turn, writes no row and reaches no model
-  C  a message that points nowhere makes exactly ONE pick call; a new thread
-     is a circles_threads row with the pick's title and the pick line in it;
-     the thread and turn parts arrive while the model has not answered; the
-     reply's first text names the thread; the turn is the person's own chat
-     turn in that thread (app circles, the thread's descriptor) and the
-     message carries the visible header
+  C  a message that points nowhere from a chat the map has never seen makes
+     NO pick call: it starts a thread of its own, titled from its first line,
+     with the placement line in it; the thread and turn parts arrive while the
+     model has not answered; the reply's first text names the thread; the turn
+     is the person's own chat turn in that thread (app circles, the thread's
+     descriptor) and the message carries the visible header
   D  /sent records each message once; a reattach streams the same parts from
      the start without those reported sent
-  E  a reply to a mapped message and a mapped native thread need no pick
+  E  a reply to a mapped message and a mapped native thread need no pick; a
+     native thread the map has never seen lands in the chat's last thread
   F  a re-delivered message starts no second turn and no second pick
-  G  a failed pick (no call; a thread not in the list; a model error) runs no
-     turn, writes no row and asks which thread
+  G  the Host's own pick in its turn: its frame lists the open threads and
+     its tools hold pick_thread; a pick of another thread moves the exchange
+     there (both rows, a marker each side, the map and the reply follow); a
+     thread not in the list is refused in the turn and the exchange stays
   G2 two quick messages that point nowhere are placed in order: the second
-     pick sees the thread the first opened, and joins its turn as a nudge
+     lands where the first did and joins its turn as a nudge
   H  a message while the same thread runs in Circles is a nudge into that
      turn: one turn, the running turn's id, `nudged`, mine false and a note
   I  a second connector message while its own turn runs is a nudge (mine);
@@ -50,7 +55,8 @@ turn holding for its card ends in a second instead of four minutes.
      thread) is never handed to the connector
   L  commands: /threads lists, /thread <n> switches, /new and /new <text>
      start a new thread with no pick
-  M  a closed thread is not a landing place: a reply into it goes to the pick
+  M  a closed thread is not a landing place: a reply into it is placed as any
+     message is (the chat's last thread), and the Host may move it in its turn
   N  the map follows a Split and a project adopt; a project turn is the
      person's own Workbench-visible turn
   O  no turn ever writes an app:<connector> scope or the connector's app id;
@@ -529,11 +535,11 @@ async def main(dsn: str) -> int:
         check("B a wrong capability is refused by the gate", s.status == 403, s.status)
 
         # ── C ──
-        print("[C] a message that points nowhere: the Host picks; the parts come early")
+        print("[C] a message that points nowhere: placed with no pick call; the parts come early")
         E1 = asyncio.Event()
         VISUAL = ('<div style="display:flex;padding:16px;background-color:#123456;border-radius:8px">'
                   '<h2 style="color:#ffffff">Rome budget</h2></div>')
-        PICKS[:] = [pick_new("Rome trip")]
+        PICKS[:] = []
         TURNS[:] = [("hold", E1, _sse_text("Here is the plan.\n\n```visual\n", VISUAL, "\n```\n\nEnjoy."))]
         n_pick = picks_made()
         s1 = post(msg(100, "Plan my trip to Rome"))
@@ -541,30 +547,32 @@ async def main(dsn: str) -> int:
         tu = await s1.next(10) or {}
         asked = await wait_for(lambda: turns_asked() >= 1, 30)
         early = await s1.next(1.5)
-        check("C the thread part comes first: a new thread, named by the pick",
-              th.get("type") == "thread" and th.get("kind") == "thread" and th.get("title") == "Rome trip"
+        check("C the thread part comes first: a new thread, titled from the message",
+              th.get("type") == "thread" and th.get("kind") == "thread"
+              and th.get("title") == "Plan my trip to Rome"
               and th.get("changed") is True, (th, s1.status, s1.text, s1.error))
         check("C the turn part comes at once: started, with a turn id",
               tu.get("type") == "turn" and tu.get("state") == "started" and tu.get("turn_id"), tu)
         check("C both arrived while the model had been asked and had NOT answered",
               asked and not E1.is_set() and early is None, (asked, early))
-        check("C exactly one pick call", picks_made() - n_pick == 1, picks_made() - n_pick)
+        check("C no pick call: the message was placed in software", picks_made() == n_pick,
+              picks_made() - n_pick)
         T_B = th.get("ref") or "00000000-0000-4000-8000-000000000001"
         TURN1 = tu.get("turn_id") or ""
         trow = await pool.fetchrow("SELECT title, origin FROM circles_threads WHERE id=$1::uuid", T_B)
-        check("C the new thread is a circles_threads row, origin user, the pick's title",
-              trow and trow["title"] == "Rome trip" and trow["origin"] == "user", trow)
+        check("C the new thread is a circles_threads row, origin user, titled from the message",
+              trow and trow["title"] == "Plan my trip to Rome" and trow["origin"] == "user", trow)
         marker = await pool.fetchrow(
             "SELECT content FROM entity_memory WHERE metadata->>'source_kind' = $1 "
             "AND metadata->'source_context'->>'ref' = $2", tp.PICK_MARKER_KIND, T_B)
-        check("C the pick line is in that thread, in the Host's words",
+        check("C the placement line is in that thread",
               marker and marker["content"].startswith("Telegram message, started this thread"), marker)
         E1.set()
         lines1 = await s1.all()
         p1 = parts(lines1)
         check("C the stream ends with done", lines1 and lines1[-1].get("type") == "done", lines1[-2:])
         check("C the first text names the thread", p1 and p1[0]["type"] == "text"
-              and p1[0]["text"].startswith("New thread: Rome trip\n\nHere is the plan."), p1[:1])
+              and p1[0]["text"].startswith("New thread: Plan my trip to Rome\n\nHere is the plan."), p1[:1])
         check("C parts are numbered in order", [p["seq"] for p in p1] == list(range(len(p1))), p1)
         drew = any(p["type"] == "image" for p in p1)
         undrawn = any(p["type"] == "text" and "picture I couldn't draw" in p["text"] for p in p1)
@@ -625,37 +633,27 @@ async def main(dsn: str) -> int:
               and parts(l2)[0].get("text") == "Second answer.", parts(l2))
         TURN2 = of(l2, "turn").get("turn_id") or ""
         await sent(TURN2, [(0, 503)])
-        # The old original conversation is no thread: a
-        # pick naming app:circles is refused like a thread not in the list
-        # (G below) and nothing lands in the legacy scope.
-        TURNS[:] = [_sse_text("Native zero.")]
-        PICKS[:] = [pick_thread("app:circles")]
-        n_turns, n_asked = len(reg.list_turns()), turns_asked()
-        lo = await post(msg(102, "a note for the main chat", native_thread_id="nt-0")).all()
-        check("E a pick naming the old original conversation asks which thread and runs no turn",
-              [p.get("text") for p in parts(lo)] == [tp.ASK_WHICH_THREAD]
-              and of(lo, "turn").get("state") == "ask" and not of(lo, "thread")
-              and len(reg.list_turns()) == n_turns and turns_asked() == n_asked, lo)
-        check("E ...and nothing is written in the legacy app:circles scope",
-              await pool.fetchval(
-                  "SELECT count(*) FROM entity_memory WHERE content ILIKE '%a note for the main chat%'"
-                  " AND metadata->'source_context'->>'kind' = 'app'"
-                  " AND metadata->'source_context'->>'ref' = 'circles'") == 0)
+        # A native thread the map has never seen is placed like any message:
+        # the chat's last thread (T_B), with no pick call.
         TURNS[:] = [_sse_text("Native one.")]
-        PICKS[:] = [pick_thread(f"thread:{T_B}")]
         n_pick = picks_made()
         l3 = await post(msg(104, "a note for the trip", native_thread_id="nt-1")).all()
-        check("E a native thread the map has never seen goes to the pick, once",
-              picks_made() - n_pick == 1 and of(l3, "thread").get("kind") == "thread"
+        check("E a native thread the map has never seen lands in the chat's last thread, no pick call",
+              picks_made() == n_pick and of(l3, "thread").get("kind") == "thread"
               and of(l3, "thread").get("ref") == T_B, l3[:2])
         check("E ...the chat was already in that thread, so no line names it",
               of(l3, "thread").get("changed") is False and parts(l3)
               and parts(l3)[0].get("text") == "Native one.", parts(l3)[:1])
         o_row = await turn_row("[Telegram message]%a note for the trip%") or {}
         md = o_row.get("metadata") or {}
-        check("E the turn is the picked thread's, with no project",
+        check("E the turn is that thread's, with no project",
               md.get("source_context") == {"kind": "thread", "ref": T_B}
               and o_row.get("project_id") is None, md)
+        check("E ...and nothing is written in the legacy app:circles scope",
+              await pool.fetchval(
+                  "SELECT count(*) FROM entity_memory WHERE content ILIKE '%a note for the trip%'"
+                  " AND metadata->'source_context'->>'kind' = 'app'"
+                  " AND metadata->'source_context'->>'ref' = 'circles'") == 0)
         n_pick = picks_made()
         TURNS[:] = [_sse_text("Native two.")]
         l4 = await post(msg(105, "more for the trip", native_thread_id="nt-1")).all()
@@ -674,61 +672,95 @@ async def main(dsn: str) -> int:
               of(l5, "turn").get("state") == "done", l5)
 
         # ── G ──
-        print("[G] a failed pick runs no turn")
-        for i, (label, step) in enumerate((
-                ("no pick_thread call", _sse_text("I think it is about Rome.")),
-                ("a thread not in the list", pick_thread("thread:00000000-0000-4000-8000-000000000000")),
-                ("a model error", (400, '{"type":"error","error":{"type":"invalid_request_error",'
-                                        '"message":"refused"}}')))):
-            PICKS[:] = [step]
-            n_turns, n_asked, n_rows = len(reg.list_turns()), turns_asked(), len(await map_rows())
-            lg = await post(msg(110 + i, f"something new, {label}")).all()
-            check(f"G {label}: asks which thread, runs no turn, writes no row",
-                  [p.get("text") for p in parts(lg)] == [tp.ASK_WHICH_THREAD]
-                  and of(lg, "turn").get("state") == "ask" and not of(lg, "thread")
-                  and len(reg.list_turns()) == n_turns and turns_asked() == n_asked
-                  and len(await map_rows()) == n_rows, lg)
-        PICKS[:] = []
+        print("[G] the Host's own pick, in its turn")
+        # A second thread, so the chat's last thread has another to move to.
+        TURNS[:] = [_sse_text("Budget noted.")]
+        lnb = await post(msg(108, "/new Budget sheet for the office")).all()
+        T_N = of(lnb, "thread").get("ref") or ""
+        check("G fixture: /new opened a second thread for the chat", T_N and T_N != T_B, lnb[:2])
+
+        def _turn_tools(body):
+            return [t.get("name") for t in (body or {}).get("tools") or []]
+
+        seen_g: dict = {}
+
+        def _pick_trip(body):
+            seen_g["tools"] = _turn_tools(body)
+            seen_g["text"] = json.dumps(body)
+            return _sse_tool(f"toolu_pick_{time.monotonic_ns()}", "pick_thread",
+                             {"thread": f"thread:{T_B}", "reason": "it is about the Rome trip"})
+        TURNS[:] = [_pick_trip, _sse_text("Booked the train to Rome.")]
+        n_pick = picks_made()
+        lg = await post(msg(110, "Also book the train for that week")).all()
+        TURN_G = of(lg, "turn").get("turn_id") or ""
+        check("G no pick call before the turn: the message landed in the chat's last thread",
+              picks_made() == n_pick and of(lg, "thread").get("ref") == T_N, lg[:2])
+        _gt = seen_g.get("text", "")
+        _gi = _gt.find("This Turn")
+        check("G the turn holds pick_thread, and its frame lists the other open threads",
+              "pick_thread" in seen_g.get("tools", []) and "Thread choice" in _gt
+              and f"thread:{T_B}" in _gt, (seen_g.get("tools"), _gt[_gi:_gi + 900] if _gi >= 0 else _gt[:600]))
+        urow_g = await turn_row("[Telegram message]%book the train for that week%") or {}
+        check("G the person's message moved to the picked thread",
+              (urow_g.get("metadata") or {}).get("source_context") == {"kind": "thread", "ref": T_B},
+              urow_g.get("metadata"))
+        arow_g = await pool.fetchrow(
+            "SELECT metadata FROM entity_memory WHERE memory_type = 'turn' AND content = 'Booked the train to Rome.'")
+        amd = json.loads(arow_g["metadata"]) if arow_g and isinstance(arow_g["metadata"], str) else (
+            dict(arow_g["metadata"]) if arow_g else {})
+        check("G the reply was written there too",
+              amd.get("source_context") == {"kind": "thread", "ref": T_B}, amd)
+        mk_to = await pool.fetchval(
+            "SELECT content FROM entity_memory WHERE metadata->>'source_kind' = $1"
+            " AND metadata->'source_context'->>'ref' = $2 AND content LIKE '%picked this thread%'",
+            tp.PICK_MARKER_KIND, T_B)
+        mk_from = await pool.fetchval(
+            "SELECT content FROM entity_memory WHERE metadata->>'source_kind' = 'thread_marker'"
+            " AND metadata->'source_context'->>'ref' = $1", T_N)
+        check("G a marker in each: the pick in the thread it went to, the move where it landed",
+              bool(mk_to) and "it is about the Rome trip" in mk_to and bool(mk_from)
+              and mk_from.startswith("→ This exchange moved to"), (mk_to, mk_from))
+        rows_g = await map_rows("turn_id = $1", TURN_G)
+        check("G the map follows: this turn's messages are in the picked thread",
+              rows_g and all((r["scope_kind"], r["scope_ref"]) == ("thread", T_B) for r in rows_g),
+              [dict(r) for r in rows_g])
+        pg_ = parts(lg)
+        check("G the reply says where it went", pg_ and pg_[0].get("text", "").startswith("Moved to: "),
+              pg_[:1])
+        # A pick of a thread the frame did not list is refused in the turn.
+        TURNS[:] = [lambda body: _sse_tool(f"toolu_pick_{time.monotonic_ns()}", "pick_thread",
+                                           {"thread": "thread:00000000-0000-4000-8000-000000000000",
+                                            "reason": "a guess"}),
+                    _sse_text("Staying here.")]
+        lq = await post(msg(111, "/thread 1")).all()  # back in a thread with others listed
+        T_Q = of(lq, "thread").get("ref") or ""
+        lr = await post(msg(112, "a quick word on something else")).all()
+        urow_r = await turn_row("[Telegram message]%a quick word on something else%") or {}
+        check("G a thread not in the list: refused in the turn, the exchange stays where it landed",
+              (urow_r.get("metadata") or {}).get("source_context") == {"kind": "thread", "ref": T_Q}
+              and of(lr, "thread").get("ref") == T_Q, (urow_r.get("metadata"), lr[:2]))
 
         # ── G2 ──
         print("[G2] two quick messages that point nowhere are placed in order")
-        import re
-        EP, EB = asyncio.Event(), asyncio.Event()
-        shown2: dict = {}
-
-        def _second_pick(body):
-            # The Host picks the first message's thread when its pick shows it.
-            shown2["text"] = json.dumps(body)
-            m = re.search(r"\[(thread:[0-9a-f-]{36})\] Burst plan", shown2["text"])
-            return pick_thread(m.group(1)) if m else pick_new("Burst blind")
-        PICKS[:] = [("hold", EP, pick_new("Burst plan")), _second_pick]
+        EB = asyncio.Event()
         TURNS[:] = [("hold", EB, _sse_text("Burst answer.")), _sse_text(" With the second line.")]
         n_pick = picks_made()
+        n_threads = await pool.fetchval("SELECT count(*) FROM circles_threads")
         sga = post(msg(120, "Plan a burst"))
-        await wait_for(lambda: picks_made() >= n_pick + 1, 30)
-        sgb = post(msg(121, "in two lines"))
-        await asyncio.sleep(1.0)              # time for a pick made alongside to arrive
-        blind = picks_made() >= n_pick + 2    # the second pick ran before the first landed
-        EP.set()
-        # Bounded: placed blind, the second message starts a turn of its own,
-        # which takes the first's held model reply and never ends until EB.
-        await wait_for(lambda: of(sgb.lines, "turn") or sgb.closed.is_set(), 30)
-        if not sgb.closed.is_set():
-            EB.set()
-        with contextlib.suppress(asyncio.TimeoutError):
-            await sgb.all(60)
-        lgb = list(sgb.lines)
         tga = (of(sga.lines, "turn") if await wait_for(lambda: of(sga.lines, "turn"), 30) else {})
-        check("G2 the second message's pick waited until the first had landed",
-              not blind and picks_made() - n_pick == 2, (blind, picks_made() - n_pick))
-        check("G2 ...so it was shown the thread the first one opened",
-              "Burst plan" in shown2.get("text", ""), shown2.get("text", "")[:400])
-        check("G2 the second joined the first's running turn (nudged, mine), no second thread",
+        sgb = post(msg(121, "in two lines"))
+        await wait_for(lambda: of(sgb.lines, "turn") or sgb.closed.is_set(), 30)
+        lgb = list(sgb.lines)
+        check("G2 no pick call for either", picks_made() == n_pick, picks_made() - n_pick)
+        check("G2 the second landed where the first did and joined its running turn (nudged, mine)",
               of(lgb, "turn").get("state") == "nudged" and of(lgb, "turn").get("mine") is True
               and of(lgb, "turn").get("turn_id") == tga.get("turn_id")
-              and await pool.fetchval("SELECT count(*) FROM circles_threads WHERE title IN "
-                                      "('Burst plan', 'Burst blind')") == 1, lgb)
+              and of(lgb, "thread").get("ref") == of(sga.lines, "thread").get("ref"), lgb)
+        check("G2 ...and no thread was made for either",
+              await pool.fetchval("SELECT count(*) FROM circles_threads") == n_threads)
         EB.set()
+        with contextlib.suppress(asyncio.TimeoutError):
+            await sgb.all(60)
         with contextlib.suppress(asyncio.TimeoutError):
             await sga.all(60)
         lga = list(sga.lines)
@@ -736,7 +768,6 @@ async def main(dsn: str) -> int:
         check("G2 one reply, on the first stream, with both lines in it",
               "Burst answer." in said_g and "With the second line." in said_g
               and lga and lga[-1] == {"type": "done"}, parts(lga))
-        PICKS[:] = []
 
         # ── H ──
         print("[H] Circles is running that thread: a nudge, not a second turn")
@@ -920,14 +951,14 @@ async def main(dsn: str) -> int:
         ll = await post(msg(160, "/threads")).all()
         lt = parts(ll)[0].get("text", "") if parts(ll) else ""
         check("L /threads lists the open threads, numbered, newest first, with no turn",
-              lt.startswith("Your open threads, newest first:\n1. ") and "Rome trip" in lt
+              lt.startswith("Your open threads, newest first:\n1. ") and "Plan my trip to Rome" in lt
               and turns_asked() == n_asked, lt)
         check("L ...and the old original conversation is not one of them",
               "The original conversation" not in lt, lt)
-        num = next((x.split(".")[0] for x in lt.splitlines() if "Rome trip" in x), "1")
+        num = next((x.split(".")[0] for x in lt.splitlines() if "Plan my trip to Rome" in x), "1")
         ls = await post(msg(161, f"/thread {num}")).all()
         check("L /thread <n> switches and says where",
-              parts(ls) and parts(ls)[0].get("text") == "Back in: Rome trip"
+              parts(ls) and parts(ls)[0].get("text") == "Back in: Plan my trip to Rome"
               and of(ls, "thread").get("ref") == T_B and turns_asked() == n_asked, ls)
         lb = await post(msg(162, "/new")).all()
         check("L a bare /new says the next message starts a thread",
@@ -953,13 +984,17 @@ async def main(dsn: str) -> int:
         # ── M ──
         print("[M] a closed thread is not a landing place")
         await cth.patch_thread(pool, EID, T_TAX, closed=True)
-        PICKS[:] = [pick_thread(f"thread:{T_B}")]
-        TURNS[:] = [_sse_text("Back to the trip.")]
+        TURNS[:] = [lambda body: _sse_tool(f"toolu_pick_{time.monotonic_ns()}", "pick_thread",
+                                           {"thread": f"thread:{T_B}", "reason": "back to the trip"}),
+                    _sse_text("Back to the trip.")]
         n_pick = picks_made()
         lm = await post(msg(170, "one more tax thing", reply_to_message_id="163")).all()
-        check("M a reply into a closed thread falls through to exactly one pick",
-              picks_made() - n_pick == 1 and of(lm, "thread").get("kind") == "thread"
-              and of(lm, "thread").get("ref") == T_B, lm[:2])
+        rows_m = await map_rows("external_message_id = '170'")
+        check("M a reply into a closed thread is placed with no pick call, never in the closed one",
+              picks_made() == n_pick and of(lm, "thread").get("ref") != T_TAX, lm[:2])
+        check("M ...and the Host's pick in its turn moved it to the trip",
+              rows_m and (rows_m[0]["scope_kind"], rows_m[0]["scope_ref"]) == ("thread", T_B),
+              [dict(r) for r in rows_m])
 
         # ── N ──
         print("[N] the map follows a Split and an adopt")

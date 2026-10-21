@@ -1,0 +1,10 @@
+# The box's own update: a signed cloud release (cseries-cloud-update).
+[Unit]
+Description=C-Series Cloud update
+Wants=network-online.target
+After=network-online.target cseries-firewall.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cseries-cloud-update
+TimeoutStartSec=45min

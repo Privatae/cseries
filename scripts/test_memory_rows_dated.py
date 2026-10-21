@@ -44,25 +44,33 @@ check("summary rows are own-words too", "summary" in OWN_WORDS_TYPES and "turn" 
 check("no date → says undated, never silent", format_memory_line("x", None, "fact").startswith("\n- [undated] "))
 check("garbage date → undated", format_memory_line("x", "yesterday", "fact").startswith("\n- [undated] "))
 check("skill_memory is not own-words", "your own words" not in format_memory_line("rule", dt, "skill_memory"))
+check("a slotted row names its topic and #id after the date (memory_slots)",
+      format_memory_line("the rule", dt, "preference", topic="spelling", row_id=41)
+      == "\n- [2026-08-04, topic spelling, #41] the rule")
 check("own words never ride the prompt unasked", not (set(OWN_WORDS_TYPES) & PROMPT_MEMORY_TYPES))
 check("facts never ride the prompt unasked", "fact" not in PROMPT_MEMORY_TYPES)
 
 src = (ROOT / "brain/mastercode/memory_engine.py").read_text()
 check("Relevant Right Now renders through format_memory_line",
-      'format_memory_line(content, h.get("created_at"), h.get("memory_type"))' in src)
+      'format_memory_line(content, h.get("created_at"), h.get("memory_type"),' in src)
 check("Things You Were Taught renders through format_memory_line",
-      'format_memory_line(item["content"], item.get("age"), "skill_memory")' in src)
+      'format_memory_line(item["content"], item.get("age"), "skill_memory",' in src)
 check("standing sections render through format_memory_line",
-      'format_memory_line(item["content"], item.get("age"), item.get("type"))' in src)
+      'format_memory_line(item["content"], item.get("age"), item.get("type"),' in src)
 check("boot-path teachings carry created_at as age", '"source": "skill_memory", "age": r["created_at"]' in src)
 # The documents section (user_context, the last bare line) left the memory
 # pre-fire: documents are recall's. So no bare line is left at
-# all; the one `\n- ` line builder is format_memory_line's own return.
-_bare = [i for i in range(len(src)) if src.startswith('f"\\n- {', i)]
+# all; the one `\n- ` memory-row builder is format_memory_line's own return,
+# and the one other `\n- ` line is omitted_line's note saying how many rows a
+# section left out (it carries no row).
+_bare = [i for i in range(len(src)) if src.startswith('f"\\n- ', i)]
 _fml = src.index("def format_memory_line(")
 _fml_end = src.index("\ndef ", _fml + 1)
-check("no bare memory line is left: the only line builder is format_memory_line's own",
-      len(_bare) == 1 and _fml < _bare[0] < _fml_end, f"{len(_bare)} builders")
+_om = src.index("def omitted_line(")
+_om_end = src.index("\ndef ", _om + 1) if "\ndef " in src[_om + 1:] else len(src)
+check("no bare memory line is left: the only row builder is format_memory_line's own",
+      len(_bare) == 2 and any(_fml < b < _fml_end for b in _bare)
+      and any(_om < b < _om_end for b in _bare), f"{len(_bare)} builders")
 check("the documents section is out of the memory pre-fire (left to recall)",
       'line = f"\\n- {content}"' not in src and "### From Your Research & Documents" not in src)
 

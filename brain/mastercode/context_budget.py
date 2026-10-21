@@ -297,14 +297,29 @@ MIN_HISTORY_TOKENS = 1000
 # slightly less history than would strictly fit.
 TRIM_BLOCK_DIVISOR = 4
 
-# Fill-to-fit: the default history budget is the derived
-# ceiling — no fixed verbatim cap. The 2048-token default that preceded
-# this came from the conv-bench LoCoMo sweep, whose own table put `full`
-# at F1 0.577 against curated-4k's 0.357 on a 16k-token thread that fits
-# every mainstream window; capping at 2k threw that quality away on
-# large-window models. The consolidator now engages only when the thread
-# stops fitting (pressure against the REAL budget, thread_consolidator).
-# The per-thread dial lets a cost-sensitive user turn depth down.
+# The default history ceiling: 32,000 tokens of verbatim history per call,
+# well under every window a Host is routed to (3% of a 1M window, 16% of
+# 200k, 25% of 128k), unless the window itself leaves less (the derived
+# ceiling below always holds).
+#
+# WHY THIS NUMBER. The conv-bench LoCoMo sweep (scripts/conv-bench/README.md)
+# is the code's one measurement of history depth: on a ~16k-token thread the
+# whole verbatim thread scored F1 0.577 against the best curated arm's 0.357,
+# a margin far outside its ~0.1 noise floor. That measured the regime where
+# the whole thread fits; it measured nothing above it. 32k keeps that winning
+# shape — every word verbatim — for any thread up to twice the measured one.
+# Above it the oldest turns leave in blocks and their own close_turn notes
+# ride in their place (evicted_record), and recall reaches the rest.
+# THE TOKEN BUDGET. Fill-to-fit (the default until now) let a long thread's
+# history grow to the derived ceiling on every call of every round: about
+# 950k tokens per call on a 1M-window route (derive_turn_budget's own
+# arithmetic), so up to ~19M for a 20-round turn. At 32k a call's history is
+# bounded at 32k tokens and a 20-round turn's at 640k, and a thread's cost
+# per message stops growing with its length.
+# The owner changes it per Host (behavioral_params.history_ceiling_tokens,
+# PUT /api/brain/turn-defaults; 0 or less = fill-to-fit, the old default) and
+# per thread (the dial, which may go up to the derived ceiling).
+DEFAULT_HISTORY_CEILING_TOKENS = 32_000
 
 # Trim step 3: a tool result larger than this is replaced by a truncation
 # envelope (never sliced — host_sdk_engine._bound_tool_result documents why:
@@ -342,12 +357,14 @@ _STATIC_WINDOWS: tuple[tuple[str, int], ...] = (
     ("claude", 200_000),
 )
 
-# Prefix marking the rolling-summary history message (also used by the trim
-# to spare it — it is the densest context in the window).
-SUMMARY_PREFIX = "## Earlier in this conversation (rolling summary)"
-# ...and the thread-level message that takes its place when the consolidator
-# is off (runtime/close_turn.thread_state): the thread's goal and the last
-# turn's handoff. Spared by the trim for the same reason.
+# Prefix marking the history message that carries the Host's own close_turn
+# notes on the turns that fell out of the window (evicted_record). The trim
+# spares it: it is the densest context in the window, and the only account of
+# what fell out.
+RECORD_PREFIX = "## Earlier in this conversation (your own end-of-turn notes)"
+# ...and the thread-level message (runtime/close_turn.thread_state): the
+# thread's goal and the last turn's handoff. Spared by the trim for the same
+# reason.
 THREAD_STATE_PREFIX = "## Where this thread stands"
 
 # Overflow-shaped provider errors (the 4xx the design's retry-once handler
@@ -498,14 +515,16 @@ def derive_turn_budget(
     output_reserve: int,
     system_tokens: int,
     override: int | None = None,
+    ceiling: int | None = None,
 ) -> int:
     """The effective per-turn history budget (tokens).
 
-    derived = the ceiling: (window − output reserve − measured system
-    blocks) × 0.95. Fill-to-fit: with no per-thread override
-    the budget IS the derived ceiling — verbatim history fills the window
-    until the thread stops fitting. An override (the dial) can only turn
-    depth DOWN; it never exceeds the ceiling."""
+    derived = what the window can carry: (window − output reserve −
+    measured system blocks) × 0.95. An override (the per-thread dial) is the
+    budget, never above `derived`. Without one, `ceiling` (the Host's default
+    history ceiling, read_turn_defaults: DEFAULT_HISTORY_CEILING_TOKENS unless
+    the owner changed it) caps `derived`; None or 0 is fill-to-fit, the
+    budget IS `derived`."""
     derived = int((int(window) - int(output_reserve) - int(system_tokens)) * 0.95)
     if derived < MIN_HISTORY_TOKENS:
         derived = MIN_HISTORY_TOKENS
@@ -516,7 +535,64 @@ def derive_turn_budget(
             ov = 0
         if ov > 0:
             return min(derived, ov)
+    if ceiling:
+        try:
+            cap = int(ceiling)
+        except (TypeError, ValueError):
+            cap = 0
+        if cap > 0:
+            return max(min(derived, cap), MIN_HISTORY_TOKENS)
     return derived
+
+
+async def read_turn_defaults(pool, entity_id: int) -> dict:
+    """The Host's bounded defaults, as the owner set them
+    (behavioral_params, PUT /api/brain/turn-defaults) over the built-in ones:
+
+      history_ceiling_tokens  the default history ceiling
+                              (DEFAULT_HISTORY_CEILING_TOKENS; 0 = fill-to-fit)
+      turn_allowance_usd      the default spend per turn in dollars, None for
+                              the built-in default below
+      scheduled_task_allowance_usd   the same for a scheduled run
+      turn_rounds             the built-in default when no dollar figure is
+                              set: this many full-context rounds, metered in
+                              tokens (turn_allowance.DEFAULT_TURN_ROUNDS;
+                              0 = none)
+      scheduled_rounds        the same for a scheduled run
+                              (turn_allowance.DEFAULT_SCHEDULED_ROUNDS)
+
+    A per-thread dial (read_thread_budget, read_thread_allowance) wins over
+    every one of these. Never raises: an unreadable store is the built-ins."""
+    from mastercode.runtime.turn_allowance import DEFAULT_SCHEDULED_ROUNDS, DEFAULT_TURN_ROUNDS
+    out = {"history_ceiling_tokens": DEFAULT_HISTORY_CEILING_TOKENS,
+           "turn_allowance_usd": None, "scheduled_task_allowance_usd": None,
+           "turn_rounds": DEFAULT_TURN_ROUNDS, "scheduled_rounds": DEFAULT_SCHEDULED_ROUNDS}
+    try:
+        row = await pool.fetchrow(
+            "SELECT behavioral_params FROM entity_registry WHERE id=$1", entity_id)
+        bp = (row and row["behavioral_params"]) or {}
+        if isinstance(bp, str):
+            bp = json.loads(bp)
+    except Exception as e:  # noqa: BLE001
+        log.debug("read_turn_defaults failed (built-ins apply): %s", e)
+        return out
+    if not isinstance(bp, dict):
+        return out
+    for key, cast in (("history_ceiling_tokens", int), ("turn_rounds", int),
+                      ("scheduled_rounds", int)):
+        if bp.get(key) is not None:
+            try:
+                out[key] = max(0, cast(bp[key]))
+            except (TypeError, ValueError):
+                pass
+    for key in ("turn_allowance_usd", "scheduled_task_allowance_usd"):
+        if bp.get(key) is not None:
+            try:
+                v = float(bp[key])
+                out[key] = v if v > 0 else None
+            except (TypeError, ValueError):
+                pass
+    return out
 
 
 def clamp_output_reserve(window: int | None, max_tokens: int) -> int:
@@ -845,7 +921,7 @@ def _msg_chars(m: dict) -> int:
 
 def _is_summary(m: dict) -> bool:
     c = m.get("content")
-    return isinstance(c, str) and c.startswith((SUMMARY_PREFIX, THREAD_STATE_PREFIX))
+    return isinstance(c, str) and c.startswith((RECORD_PREFIX, THREAD_STATE_PREFIX))
 
 
 def _tool_groups(messages: list[dict]) -> list[list[int]]:
@@ -1975,26 +2051,16 @@ async def build_thread_context(
     except Exception as e:
         log.debug("thread-context projection failed (non-fatal): %s", e)
 
-    # Where the thread stands, as the next turn gets it: the rolling summary
-    # while the consolidator runs; with it off the summary
-    # no longer rides, and the thread's goal and last handoff do
-    # (close_turn.thread_state, the same call the turn makes).
+    # Where the thread stands, as the next turn gets it: the thread's goal
+    # and last handoff (close_turn.thread_state, the same call the turn
+    # makes). No rolling summary rides any scope (evicted_record).
     try:
-        from mastercode import summary_policy as _tcm
-        if _tcm.summary_on(src_ctx):
-            from mastercode.thread_consolidator import get_live_summary
-            summary = await get_live_summary(pool, entity_id, src_ctx)
-            if summary:
-                out["summary_version"] = summary.get("version")
-                out["consolidated_at"] = summary.get("created_iso")
-                out["summary_excerpt"] = (summary.get("content") or "")[:200] or None
-        else:
-            from mastercode.runtime.close_turn import thread_state
-            state = await thread_state(pool, entity_id, src_ctx)
-            if state:
-                out["thread_state"] = state[len(THREAD_STATE_PREFIX):].strip() or None
+        from mastercode.runtime.close_turn import thread_state
+        state = await thread_state(pool, entity_id, src_ctx)
+        if state:
+            out["thread_state"] = state[len(THREAD_STATE_PREFIX):].strip() or None
     except Exception as e:
-        log.debug("thread-context summary failed (non-fatal): %s", e)
+        log.debug("thread-context state failed (non-fatal): %s", e)
 
     # History preview: the turns the scope would recall, excerpted, as the
     # next turn's model gets them (memory_engine.history_messages): the Host's

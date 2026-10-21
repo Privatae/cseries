@@ -1251,13 +1251,24 @@ async def main(dsn: str) -> int:
         check("M2 the table refuses an active sign-in with no issuer (or no connection)",
               "violates" in bad.stderr, bad.stderr[-200:])
         # As the kernel creates it: the table owner is `entity`, whose default
-        # privileges hand host_recall SELECT on every new table.
-        fresh = _psql(dsn, "-v", "ON_ERROR_STOP=1", "-tA",
-                      "-c", "DROP TABLE mcp_oauth_pending", "-c", "SET ROLE entity", "-f", str(MIGRATION),
-                      "-c", "RESET ROLE",
-                      "-c", "SELECT has_table_privilege('host_recall', 'mcp_oauth_pending', 'SELECT')")
+        # privileges hand host_recall SELECT on every new table. The
+        # migration's own text runs as entity on a copy of its two tables under
+        # the gate's own names (rig_*), so they are born now, under those
+        # default privileges, and the kernel's own tables stay as the boot made
+        # them. rig_mcp_oauth, which v239 does not take back, shows the default
+        # privilege was there to take.
+        with tempfile.NamedTemporaryFile("w", suffix=".sql", delete=False) as rig:
+            rig.write(MIGRATION.read_text().replace("mcp_oauth", "rig_mcp_oauth"))
+        try:
+            fresh = _psql(dsn, "-v", "ON_ERROR_STOP=1", "-tA",
+                          "-c", "SET ROLE entity", "-f", rig.name, "-c", "RESET ROLE",
+                          "-c", "SELECT has_table_privilege('host_recall', 'rig_mcp_oauth', 'SELECT')",
+                          "-c", "SELECT has_table_privilege('host_recall', 'rig_mcp_oauth_pending', 'SELECT')",
+                          "-c", "DROP TABLE rig_mcp_oauth_pending, rig_mcp_oauth")
+        finally:
+            os.unlink(rig.name)
         check("M3 the AI's read lane cannot read a sign-in in flight (its PKCE verifier) once v239 has run",
-              fresh.returncode == 0 and fresh.stdout.strip().splitlines()[-1:] == ["f"],
+              fresh.returncode == 0 and fresh.stdout.strip().splitlines()[-2:] == ["t", "f"],
               (fresh.returncode, fresh.stdout[-300:], fresh.stderr[-300:]))
         await service_checks(dsn)
     finally:

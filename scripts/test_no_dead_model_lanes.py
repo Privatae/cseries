@@ -104,7 +104,9 @@ KERNEL_ROOTS = ("brain", "server")
 
 # Separate processes with their own container entry points. No call_model caller
 # is expected here today; if one lands, the gate says so instead of not looking.
-NON_KERNEL_ROOTS = ("cli", "services", "sidecars", "system-apps")
+# vm/ is the machines the Host runs in: the cloud box's own programs, which run
+# on the box beside the containers (vm/cloud/overlay), and the VM test's.
+NON_KERNEL_ROOTS = ("cli", "services", "sidecars", "system-apps", "vm")
 
 # Run directly by the gate runner, never imported, and they name call_model in
 # assertions about other modules — so neither sweep applies.

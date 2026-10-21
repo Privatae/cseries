@@ -16,11 +16,11 @@
             <div class="app-brand">
                 <img src="/system-apps/backups/icon-64.png" alt="" class="app-brand-icon" aria-hidden="true">
                 <div class="app-brand-text">
-                    <div class="app-brand-title">Your memory backup</div>
-                    <div class="app-brand-sub label-sys">Encrypted on your machine. Only you hold the key.</div>
+                    <div class="app-brand-title">Your backups</div>
+                    <div class="app-brand-sub label-sys">Encrypted on your Host to a key only you hold.</div>
                 </div>
             </div>
-            <button type="button" id="refresh-btn" class="cseries-btn ghost" aria-label="Refresh status">Refresh</button>
+            <button type="button" id="refresh-btn" class="cseries-btn ghost" aria-label="Refresh">Refresh</button>
         </header>
 
         <div class="cseries-seam"></div>
@@ -28,39 +28,112 @@
         <main class="app-body">
             <section class="app-view">
 
-                <div class="view-heading">
-                    <h2>Status</h2>
-                    <p class="view-sub">Your bastion encrypts your memory on your own machine. The encrypted copy is kept in this Host&rsquo;s database, and this Host never holds the keys.</p>
+                <!-- How the backups are going (GET /api/backup/files status):
+                     shown when they are not working, a restore onto a new
+                     machine above all, which leaves the Host with no key. -->
+                <div class="cseries-card status-banner" id="bk-status" role="status" hidden>
+                    <div class="say strong" id="bk-status-head"></div>
+                    <div class="label-sys say" id="bk-status-when"></div>
+                    <div class="label-sys say" id="bk-status-detail"></div>
                 </div>
 
+                <!-- The recovery key -->
+                <div class="view-heading">
+                    <h2>Your recovery key</h2>
+                    <p class="view-sub">Every backup of your Host is encrypted to your recovery key, and opens only with it. Your browser makes it, here, and shows it to you once; your Host receives only its public half, which opens nothing. Keep the key somewhere away from this machine: on paper, or in a password manager.</p>
+                </div>
+                <div class="cseries-card" id="key-card">
+                    <div class="label-sys say" id="key-state">Checking…</div>
+                    <div class="actions" id="key-actions" hidden>
+                        <button type="button" id="key-make" class="cseries-btn primary">Make a recovery key</button>
+                        <button type="button" id="key-have" class="cseries-btn ghost">I already have a recovery key</button>
+                    </div>
+
+                    <div id="key-new" hidden>
+                        <p class="say strong">Save this key now. It is shown only this once.</p>
+                        <div class="key-show" id="key-show">
+                            <div class="key-qr" id="key-qr" data-private></div>
+                            <div class="key-text-wrap">
+                                <pre class="key-text" id="key-text" data-private></pre>
+                                <div class="label-sys" id="key-fp"></div>
+                            </div>
+                        </div>
+                        <div class="actions">
+                            <button type="button" id="key-save" class="cseries-btn">Save the key file</button>
+                            <button type="button" id="key-print" class="cseries-btn ghost">Print it</button>
+                        </div>
+                        <label class="tick"><input type="checkbox" id="key-saved"> I saved it somewhere away from this machine</label>
+                        <p class="say" id="key-confirm" hidden>The key is hidden now. Untick the box to see it again.</p>
+                    </div>
+
+                    <div id="key-existing" hidden>
+                        <p class="say">Paste the recovery key you already have, or choose its key file. It stays in this page: only its public half goes to your Host.</p>
+                        <input id="key-paste" type="password" class="cseries-input" autocomplete="off" spellcheck="false"
+                               placeholder="AGE-SECRET-KEY-1…" aria-label="Your recovery key">
+                        <input type="file" id="key-paste-file" class="file" accept=".txt,text/plain" aria-label="Your recovery key file">
+                    </div>
+
+                    <div id="key-use" hidden>
+                        <label class="label-sys" for="key-code">Your six-digit code</label>
+                        <input id="key-code" class="cseries-input short" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000">
+                        <div class="actions">
+                            <button type="button" id="key-go" class="cseries-btn primary">Use this key</button>
+                            <button type="button" id="key-cancel" class="cseries-btn ghost">Cancel</button>
+                        </div>
+                    </div>
+                    <div class="label-sys say" id="key-status"></div>
+                </div>
+
+                <!-- The backups on this machine -->
+                <div class="view-heading spaced">
+                    <h2>Backups on this machine</h2>
+                    <p class="view-sub" id="files-where">Checking…</p>
+                </div>
+                <div class="cseries-card">
+                    <div id="files-list" class="stack"><div class="label-sys">Checking…</div></div>
+                    <div class="label-sys say" id="files-dl" role="status"></div>
+                    <div class="sep"></div>
+                    <p class="say">An export is your whole Host as one file, encrypted to your recovery key: take it to another machine and restore it there with "Restore from a file".</p>
+                    <div class="actions">
+                        <button type="button" id="export-go" class="cseries-btn">Make an export</button>
+                    </div>
+                    <div class="label-sys say" id="export-state"></div>
+                </div>
+
+                <!-- Restore from a file -->
+                <div class="view-heading spaced">
+                    <h2>Restore from a file</h2>
+                    <p class="view-sub">Put this Host back the way a backup file has it: a backup you downloaded here, or an export from another C-Series Host. Your browser checks your recovery key opens the file before anything is sent, then sends the file to this Host. Your recovery key never leaves this page.</p>
+                </div>
+                <div class="cseries-card">
+                    <label class="label-sys" for="rf-files">The file (cseries-backup-….tar), or a backup and its key file together</label>
+                    <input type="file" id="rf-files" class="file" multiple accept=".tar,.age">
+                    <label class="label-sys" for="rf-key">Your recovery key</label>
+                    <input id="rf-key" type="password" class="cseries-input" autocomplete="off" spellcheck="false" placeholder="AGE-SECRET-KEY-1…">
+                    <input type="file" id="rf-key-file" class="file" accept=".txt,text/plain" aria-label="Or choose your recovery key file">
+                    <div class="actions">
+                        <button type="button" id="rf-upload" class="cseries-btn">Check and send it to this Host</button>
+                    </div>
+                    <div id="rf-restore" hidden>
+                        <label class="tick"><input type="checkbox" id="rf-ack"> <span id="rf-ack-text"></span></label>
+                        <label class="label-sys" for="rf-code">Your six-digit code</label>
+                        <input id="rf-code" class="cseries-input short" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000">
+                        <div class="actions">
+                            <button type="button" id="rf-go" class="cseries-btn primary">Restore</button>
+                        </div>
+                    </div>
+                    <div class="label-sys say" id="rf-status"></div>
+                </div>
+
+                <!-- The bastion's own copy -->
+                <div class="view-heading spaced">
+                    <h2>Your bastion's copy</h2>
+                    <p class="view-sub">A bastion on a machine you own can keep its own encrypted copy of your memory, which only you can open: your bastion encrypts it on its own machine, the encrypted copy is kept in this Host&rsquo;s database, and this Host never holds the keys. A different copy from the backups above.</p>
+                </div>
                 <div id="status-card" class="status-card cseries-row">
                     <div class="status-loading">Loading status&hellip;</div>
                 </div>
-
-                <div class="view-heading" style="margin-top: var(--space-5);">
-                    <h2>What's backed up</h2>
-                    <p class="view-sub">Counted by row, per resource. Embeddings stay local and are recomputed on restore.</p>
-                </div>
-
-                <div id="by-kind-list" class="stack">
-                    <div class="cseries-empty">
-                        <span class="empty-title">Waiting on first sync&hellip;</span>
-                    </div>
-                </div>
-
-                <div class="service-note">
-                    <div class="service-note-title">About this page</div>
-                    <p>
-                        This page shows only the copy your bastion keeps of your
-                        memory. The Host's scheduled backups, their keys and
-                        restore are in Settings, under Backup.
-                    </p>
-                    <p class="service-note-sub">
-                        Source files (PDFs, audio, video you upload) are not held
-                        by Privatae. Configure your own target in your gateway if
-                        you want them preserved.
-                    </p>
-                </div>
+                <div id="by-kind-list" class="stack"></div>
 
             </section>
         </main>
@@ -71,6 +144,9 @@
         </footer>
     </div>
 
+    <script src="/system-apps/backups/vendor/qrcode.js"></script>
     <script src="/system-apps/backups/app.js"></script>
+    <script type="module" src="/system-apps/backups/recovery-key.js"></script>
+    <script type="module" src="/system-apps/backups/restore-file.js"></script>
 </body>
 </html>

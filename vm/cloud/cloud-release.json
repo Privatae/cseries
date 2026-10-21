@@ -1,0 +1,16 @@
+{
+  "version": "dev",
+  "images": {
+    "host": {"ref": "dev", "digest": "dev"},
+    "postgres": {"ref": "dev", "digest": "dev"}
+  },
+  "overlay": {"url": "dev", "sha256": "dev"},
+  "runtime": {
+    "python": {"ref": "dev", "digest": "dev"},
+    "browser": {"ref": "dev", "digest": "dev"},
+    "helper": {"ref": "dev", "digest": "dev"},
+    "creative": {"ref": "dev", "digest": "dev"},
+    "harness_src": {"url": "dev", "sha256": "dev"}
+  },
+  "bastion": {"min_version": "0.53.2"}
+}

@@ -603,51 +603,13 @@ async def main(dsn: str | None = None) -> int:
               legacy_post_split["count"] == legacy_before["count"],
               f"{legacy_before['count']} -> {legacy_post_split['count']}")
 
-        # ── e2. split retires the SOURCE's rolling summary ────────────────
-        # The source's live summary describes content that just moved out,
-        # and the consolidator's trigger counts turns since that row's
-        # created_at, so it would keep being served for ~60 more turns.
-        from mastercode.thread_consolidator import get_live_summary as _live
-        thread_j = await ct.create_thread(pool, TEST_EID, title="Thread J")
-        j_id = thread_j["id"]
-        j_ids = await _seed_via_writer(pool, 4, thread_id=j_id, label="thread-J")
-        j_src = ct.descriptor_for(j_id)
-        j_summary_id = await pool.fetchval(
-            """
-            INSERT INTO entity_memory
-              (entity_id, content, memory_type, importance, status,
-               source_session, metadata)
-            VALUES ($1, $2, 'summary', 1.0, 'active', $3, $4::jsonb)
-            RETURNING id
-            """,
-            TEST_EID, "J rolling summary v1", SESSION,
-            json.dumps({"source_kind": "thread_consolidator",
-                        "source_context": j_src,
-                        "summary_version": 1, "turns_covered": 4,
-                        "segment_topic": "invoices"}))
-        check("e2. fixture: the source thread has a live summary before the "
-              "split",
-              ((await _live(pool, TEST_EID, j_src)) or {}).get("id")
-              == j_summary_id,
-              str(await _live(pool, TEST_EID, j_src)))
-        thread_k = await ct.split_thread(
-            pool, TEST_EID, j_id, from_turn_id=j_ids[2], title="Thread K")
-        k_id = thread_k["id"]
-        check("e2. after a split the SOURCE scope has no live summary",
-              (await _live(pool, TEST_EID, j_src)) is None,
-              str(await _live(pool, TEST_EID, j_src)))
-        j_retired = await pool.fetchrow(
-            "SELECT status, t_valid_until, resolution_pointer FROM entity_memory"
-            " WHERE id=$1", j_summary_id)
-        check("e2. the summary row is SUPERSEDED, not deleted, and points at "
-              "no successor",
-              j_retired is not None and j_retired["status"] == "active"
-              and j_retired["t_valid_until"] is not None
-              and j_retired["resolution_pointer"] is None,
-              str(dict(j_retired) if j_retired else None))
-        check("e2. the DESTINATION thread has no summary of its own",
-              (await _live(pool, TEST_EID, ct.descriptor_for(k_id))) is None,
-              str(await _live(pool, TEST_EID, ct.descriptor_for(k_id))))
+        # ── e2. a split has no rolling summary to retire ──────────────────
+        # No summary writer ships (migrations/v241 retired it and archived the
+        # live rows): what falls out of a thread's window rides as its own
+        # close_turn notes (evicted_record), so a split leaves nothing stale.
+        check("e2. no rolling summary writer ships, so a split has none to retire",
+              not (pathlib.Path(__file__).resolve().parents[1]
+                   / "brain/mastercode/thread_consolidator.py").exists())
 
         # ── e3. split is ONE transaction ──────────────────────────────────
         # A failure AFTER the thread row is created must leave nothing. The
@@ -1104,7 +1066,6 @@ async def main(dsn: str | None = None) -> int:
         from mastercode.runtime import close_turn as _close
         from mastercode.runtime.tools import _exec_memory_curate
         from mastercode.runtime.turn_types import ensure_type_thread
-        from mastercode.thread_consolidator import _store_summary
         from server.routes.projects import adopt_thread_core
 
         async def _plain(src, mtype: str, text: str, meta: dict | None = None) -> int:
@@ -1178,8 +1139,14 @@ async def main(dsn: str | None = None) -> int:
         name_x = await _fix("sess-x", name_old, "the person name is bob per namemarker66")
         home_x = await _fix("sess-x", home_old, "the person lives in utah near hometownmarker55")
         x_goal = ((await _goal(x_id, "sess-x", set="learned in X: goal")).get("set") or {}).get("id")
-        x_summary, _ = await _store_summary(pool, TEST_EID, "sess-x", X, "learned in X: summary",
-                                            None, len(x_turns))
+        # A rolling summary of X as a Host from before v241 holds one (the
+        # writer is retired; its rows stay until a delete takes them).
+        x_summary = await pool.fetchval(
+            "INSERT INTO entity_memory (entity_id, content, memory_type, importance, status,"
+            " source_session, metadata) VALUES ($1, 'learned in X: summary', 'summary', 1.0, 'active',"
+            " 'sess-x', $2::jsonb) RETURNING id", TEST_EID,
+            json.dumps({"source_kind": "thread_consolidator", "source_context": X,
+                        "summary_version": 1, "turns_covered": len(x_turns)}))
         dropped = await _drop("sess-x", tea_old)
         st = {i: await _row(i) for i in (name_old, home_old, tea_old)}
         check("x. the in-turn writers stamp what X retired with X",
@@ -1448,11 +1415,16 @@ async def main(dsn: str | None = None) -> int:
               and {k: v for k, v in (moved[1].get("superseded_in") or {}).items() if k != "from_turns"} == P_SCOPE,
               str(moved))
         out_a = await ct.delete_thread(pool, TEST_EID, a_id)
+        # The correction is the project's now (said there), and carries the
+        # project tag a row written there has: none (circles_threads.
+        # carry_learned).
+        truck_row = await _row(truck) if truck is not None else {}
         check("x. deleting the emptied thread after an adopt restores and reopens nothing",
               out_a["restored"] == 0 and out_a["reopened"] == 0
               and not await _live(car_old) and not await _live(pet_old)
               and truck is not None and await _live(truck)
-              and (await _row(truck))["project_id"] == proj, str(out_a))
+              and (truck_row.get("metadata") or {}).get("source_context") == P_SCOPE
+              and truck_row.get("project_id") is None, f"{out_a} {truck_row}")
 
         # ── y/z. A deleted thread stops its own work and refuses new work ──
         # (Kept from the earlier gate: these four test the

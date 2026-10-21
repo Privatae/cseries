@@ -733,9 +733,13 @@ async def send_message(*args, **kwargs) -> AsyncIterator[str]:
     # reaches.
     if kwargs.get("thread_id") and entity_id is not None and get_pool() is not None:
         from mastercode.circles_threads import DELETED_THREAD_REFUSAL, live_thread_id
-        if await live_thread_id(get_pool(), entity_id, kwargs["thread_id"]) is None:
+        _live = await live_thread_id(get_pool(), entity_id, kwargs["thread_id"])
+        if _live is None:
             yield f'3:{json.dumps(DELETED_THREAD_REFUSAL)}\n'
             return
+        # A topic folded into the thread the Host picked for its message
+        # (runtime/thread_choice) sends to that thread.
+        kwargs["thread_id"] = _live
     # The root thread takes only the person's own words (runtime/root_turn):
     # a send there, a new turn or a nudge into the running one, needs
     # `from_person` (set only by a route that checked its caller's app token)
@@ -1171,6 +1175,9 @@ async def _send_message_inner(
             # Turn re-homing (runtime/turn_home.py): the turn's
             # work landed in a different project than the window it was typed
             # into, so the exchange was filed there and a marker left here.
+            # Or the Host picked, in its turn, the thread the message belongs
+            # to (runtime/thread_choice.py): from/to name both places as
+            # {kind, ref}, beside the project fields the Workbench reads.
             # The client follows (switches to that project, reloads both
             # threads). Same 2: contract — older clients ignore the type.
             return "2:" + json.dumps([{
@@ -1178,6 +1185,9 @@ async def _send_message_inner(
                 "from_project_id": event.get("from_project_id"),
                 "to_project_id": event.get("to_project_id"),
                 "to_project_name": event.get("to_project_name"),
+                "from": event.get("from"),
+                "to": event.get("to"),
+                "to_title": event.get("to_title"),
             }]) + "\n"
         if kind == "reasoning_delta":
             # Live thinking from the reasoning engine: while the three dots show

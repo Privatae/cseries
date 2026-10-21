@@ -35,11 +35,14 @@ Asserts, container-free (fake pool, real functions):
      admin ship recipe; the frame names "this project" in a
      project thread.
   6. rehome_turn awaits the user row, retags it to the target with the
-     source recorded, and leaves a marker in the source project.
+     source recorded, carries what was learned from it, and leaves a marker
+     in the source project (the carry on a real database:
+     test_thread_choice_pg R).
 """
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import os
 import sys
 
@@ -175,14 +178,52 @@ class FakePool:
 
     async def fetch(self, sql, *args):
         self.calls.append(("fetch", sql, args))
+        if "slot_scope IS DISTINCT FROM" in sql:
+            # memory_slots.resync_scopes after an adoption: no row's slot is
+            # out of step in this fake.
+            return []
+        if "jsonb_array_elements_text(e->'from_turns')" in sql or "jsonb_array_elements_text((CASE" in sql:
+            # circles_threads._split_records: no record names moved and
+            # staying messages in this fake.
+            return []
+        if "metadata->>'turn_token' AS t" in sql:
+            # circles_threads._moved_tokens: no moved row carries a turn
+            # token in this fake (its rows name their turns by id).
+            return []
+        if "JOIN entity_memory n" in sql:
+            # thread_choice.turn_rows: nobody sent words into the turn.
+            return []
+        if "AS in_moved" in sql:
+            # circles_threads.carry_learned: no decision about the source.
+            return []
+        if "'rehomed'" in sql and "RETURNING id" in sql:
+            # turn_home.rehome_turn's retag: every row it names is there.
+            return [_Row(id=int(i)) for i in args[0]]
         return list(self._fetch)
 
     async def execute(self, sql, *args):
         self.calls.append(("execute", sql, args))
         return "UPDATE 1"
 
+    @contextlib.asynccontextmanager
+    async def acquire(self):
+        # One connection of the pool, recording into the same calls.
+        yield _FakeConn(self)
+
     def sql(self, verb=None):
         return [s for v, s, _ in self.calls if verb is None or v == verb]
+
+
+class _FakeConn:
+    def __init__(self, pool):
+        self._pool = pool
+
+    def __getattr__(self, name):
+        return getattr(self._pool, name)
+
+    @contextlib.asynccontextmanager
+    async def transaction(self):
+        yield self
 
 
 # ── 2. create_project refuses inside a project thread ──────────────────────
@@ -310,6 +351,14 @@ _check(any("links back" in ln and ("stays" in ln or "never moved" in ln) for ln 
 
 # ── 4. adopt_thread_core with a PROJECT source ─────────────────────────────
 from server.routes.projects import adopt_thread_core  # noqa: E402
+from mastercode.circles_threads import _all_moved  # noqa: E402
+
+# How carry_learned takes a row learned in the moved turns: every turn the
+# row names (its message rows' ids, its turns' tokens) among the moved ones.
+_BY_TURNS = _all_moved("metadata", 2)
+_check("metadata->'from_turns'" in _BY_TURNS and "metadata->'from_turn_tokens'" in _BY_TURNS
+       and "<@ $2::jsonb" in _BY_TURNS,
+       "a row is taken by the turns it names, by id and by token, all among the moved ones")
 
 
 async def _t4():
@@ -322,9 +371,16 @@ async def _t4():
     _check(len(upd) == 1 and "project_id = $2::int" in upd[0] and "IS NULL" not in upd[0],
            "project-source adoption scopes by the project_id column, never IS NULL")
     _check("thread_marker" in upd[0], "a source marker is never carried across")
-    mem = [s for s in pool.sql("execute") if "memory_type <> 'turn'" in s]
-    _check(len(mem) == 1 and "project_id = $3::int" in mem[0],
-           "derived memories are retagged from the source PROJECT")
+    mem = [(s, a) for v, s, a in pool.calls if v == "execute" and "memory_type <> 'turn'" in s]
+    _check(len(mem) == 1 and _BY_TURNS in mem[0][0]
+           and mem[0][1][1] == "[1, 2]" and mem[0][1][5] is True
+           and '"ref": "9228"' in mem[0][1][3] and mem[0][1][7] == "9228",
+           "what was learned from the moved turns follows them out of the source PROJECT "
+           "(circles_threads.carry_learned: by the turns, and the whole conversation moving)")
+    _check("project_id" not in mem[0][0].split("WHERE")[0],
+           "...and is never given a project tag (a row written in the project has none)")
+    _check(any("slot_scope IS DISTINCT FROM" in s for s in pool.sql("fetch")),
+           "moved memories take their slot scope with them (memory_slots.resync_scopes)")
     ins = [(s, a) for v, s, a in pool.calls if v == "execute" and "INSERT INTO entity_memory" in s]
     _check(len(ins) == 1 and "project_id" in ins[0][0] and 9228 in ins[0][1],
            "the marker is filed in the SOURCE project's thread")
@@ -381,16 +437,18 @@ async def _t4():
            "renders (app_id-or-untagged, no thread rows, no regenerate rows, "
            "superseded rows in; ref matched case-insensitively)")
     mem4 = [(s, a) for v, s, a in pool4.calls
-            if v == "execute" and "memory_type <> 'turn'" in s]
-    _check(len(mem4) == 1 and "source_context' IS NULL" in mem4[0][0]
-           and mem4[0][1][-1] is True,
+            if v == "execute" and "memory_type <> 'turn'" in s and "source_context' IS NULL" in s]
+    _check(len(mem4) == 1 and mem4[0][1][1] == ["s1"] and "project_id" not in mem4[0][0],
            "knowledge derived from a pre-descriptor Circles session follows "
-           "its turns into the project")
+           "its turns into the project, with no project tag")
+    carried4 = [a for v, s, a in pool4.calls
+                if v == "execute" and _BY_TURNS in s and "memory_type <> 'turn'" in s]
+    _check(len(carried4) == 1 and carried4[0][6] == "app" and carried4[0][7] == "circles",
+           "the original conversation's learned rows follow it by its own descriptor (app:circles)")
     mem2 = [(s, a) for v, s, a in pool2.calls
-            if v == "execute" and "memory_type <> 'turn'" in s]
-    _check(not mem2 or mem2[0][1][-1] is False,
-           "every other app source keeps the exact descriptor match for "
-           "derived memories")
+            if v == "execute" and "source_context' IS NULL" in s]
+    _check(not mem2,
+           "every other app source never sweeps in rows that name no conversation")
 
 
 asyncio.run(_t4())
@@ -445,20 +503,27 @@ async def _t6():
         return 8191
     task = asyncio.create_task(_user_row())
     res = await rehome_turn(pool, 3, from_project=9228, to_project=9229,
-                            user_row_task=task, session_id="s", user_content="hi")
+                            user_row_task=task, session_id="s", turn_token="t6")
     _check(res["moved_user_row"] is True and res["to_name"] == "Fern LCSW Test Prep",
            f"rehome moves the user row and names the target: {res}")
-    upd = [(s, a) for v, s, a in pool.calls if v == "execute" and "UPDATE entity_memory" in s]
-    _check(len(upd) == 1 and upd[0][1][0] == 8191 and upd[0][1][1] == 9229
+    # The retag returns the rows it moved (the message, and the words sent
+    # into the turn, thread_choice.turn_rows: none here).
+    upd = [(s, a) for v, s, a in pool.calls if v == "fetch" and "UPDATE entity_memory" in s
+           and "'rehomed'" in s]
+    _check(len(upd) == 1 and upd[0][1][0] == [8191] and upd[0][1][1] == 9229
            and '"ref": "9228"' in upd[0][1][3],
            "the user row is retagged to the target with the source recorded")
+    carried = [a for v, s, a in pool.calls if v == "execute" and _BY_TURNS in s
+               and "memory_type <> 'turn'" in s]
+    _check(len(carried) == 1 and carried[0][1] == "[8191]" and '"ref": "9229"' in carried[0][2],
+           "what was learned from the user row is carried to the target (thread_choice._carry_learned)")
     ins = [(s, a) for v, s, a in pool.calls if v == "execute" and "INSERT INTO entity_memory" in s]
     _check(len(ins) == 1 and 9228 in ins[0][1] and marker_text(9229, "Fern LCSW Test Prep") in ins[0][1],
            "the marker lands in the SOURCE project with the target named")
     _check(upd[0][1][5] == 9228 and "AND project_id = $6" in upd[0][0],
            "the retag is fenced to a row still in the source project")
-    # No user task and no locate hint (PII mode returns no row id): nothing
-    # moves and NO marker lands — half a move is the split.
+    # No user task and no turn token to find the row by: nothing moves and
+    # NO marker lands — half a move is the split.
     pool2 = FakePool(fetchrow={"SELECT name FROM projects": _Row(name="T")})
     res2 = await rehome_turn(pool2, 3, from_project=1, to_project=2, user_row_task=None, session_id="s")
     _check(res2["moved_user_row"] is False and res2["marker"] is False,

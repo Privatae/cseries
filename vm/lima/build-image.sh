@@ -10,8 +10,9 @@
 #
 # The WSL guest's package list (vm/wsl/packages), its overlay of units and
 # cseries-guest (vm/wsl/rootfs), its Debian snapshot and its builder image
-# (vm/wsl/build-rootfs.sh) are read from there, so the two guests cannot drift
-# apart. Like that build, this one needs Docker on Linux and nothing else, and
+# (vm/wsl/build-rootfs.sh) are read from there, and the local runtime
+# (vm/runtime) is installed as the WSL guest installs it, so the two guests
+# cannot drift apart. Like that build, this one needs Docker on Linux and nothing else, and
 # builds the machine's own architecture unless qemu-user is registered.
 set -euo pipefail
 
@@ -44,7 +45,8 @@ here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../.." && pwd)
 wsl="$repo/vm/wsl"
 seccomp="$repo/seccomp-personal.json"
-for f in "$seccomp" "$wsl/packages" "$wsl/build-rootfs.sh" "$wsl/rootfs/usr/local/bin/cseries-guest"; do
+for f in "$seccomp" "$repo/seccomp-browser.json" "$repo/vm/runtime/sbin/cseries-runtime" \
+    "$wsl/packages" "$wsl/build-rootfs.sh" "$wsl/rootfs/usr/local/bin/cseries-guest"; do
     [ -f "$f" ] || { echo "missing $f" >&2; exit 1; }
 done
 command -v docker >/dev/null || { echo "docker is needed to build the guest image" >&2; exit 1; }
@@ -77,6 +79,8 @@ docker run --rm --privileged \
     -v "$here:/src:ro" \
     -v "$wsl:/src-wsl:ro" \
     -v "$seccomp:/src-seccomp/seccomp-personal.json:ro" \
+    -v "$repo/seccomp-browser.json:/src-seccomp/seccomp-browser.json:ro" \
+    -v "$repo/vm/runtime:/src-runtime:ro" \
     -v "$out:/out" \
     "$BUILDER_IMAGE" \
     bash /src/mkimage.sh

@@ -173,6 +173,14 @@ def main() -> int:
     host_backup._state = _state
     host_backup._drop_state = _drop_state
     host_backup.pin_recovery_key = pin
+    # This file's Host runs on the platform, as every Host did when it was
+    # written. With no platform client a Host is standalone, and a standalone
+    # Host keeps its backups in a folder on its machine unless told otherwise
+    # (host_backup.destination_of), so "platform storage off" is not "nowhere"
+    # there; scripts/test_backup_files_routes.py holds the standalone Host.
+    import types as _types_p
+    _platform_client = _types_p.SimpleNamespace(_connected=True)
+    host_backup._raw_bridge = lambda: _platform_client
 
     def reg(**kw):
         base = {"stepup_code": "123456", "pubkey_b64": b64(USER_PUB), "label": "nas-box"}

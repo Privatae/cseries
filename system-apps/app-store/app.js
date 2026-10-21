@@ -30,6 +30,11 @@
  *   POST /api/applications/install              — JSON {app_id, version}
  *   GET  /api/applications/sites/catalog/templates — zone catalog (browse only)
  *   GET  /api/system/resources                  — the machine's own memory numbers
+ *   GET  /api/applications/runtime/app-data     — each app's kept data on this
+ *                                                 machine and its size (local runtime)
+ *   DELETE /api/applications/runtime/app-data/:id — delete a removed app's kept data
+ *   DELETE /api/applications/:id[?purge=true]   — uninstall; purge only when the
+ *                                                 owner ticks "Also delete this app's data"
  * ================================================================ */
 
 (function () {
@@ -51,6 +56,12 @@
         loaded: false,
         query: '',       // free-text search over both lanes
         modalAppId: null,// app_id currently shown in the detail modal
+        // What the store says about its catalog: [{kind, text}] (old, undated,
+        // or no rollback record). Warnings; installs still work.
+        notices: [],
+        // /api/applications/runtime/app-data: {available, apps: [{app_id,
+        // bytes, complete, installed}]}; null until read or when unreadable.
+        appData: null,
     };
 
     // ── Boot ────────────────────────────────────────────
@@ -95,6 +106,18 @@
         }
 
         document.addEventListener('click', function (e) {
+            // The "Also delete this app's data" box sits inside a card, whose
+            // own click opens the detail: ticking it must do only that.
+            if (e.target.closest && e.target.closest('[data-uninstall-data-box]')) {
+                e.stopPropagation();
+                return;
+            }
+            var keptBtn = e.target.closest && e.target.closest('[data-kept-delete]');
+            if (keptBtn) {
+                e.stopPropagation();
+                armDeleteKept(keptBtn, keptBtn.getAttribute('data-kept-delete'));
+                return;
+            }
             // Buy button (paid app) — purchase + install in one flow.
             var buyBtn = e.target.closest && e.target.closest('[data-app-buy]');
             if (buyBtn) {
@@ -159,7 +182,9 @@
         loadCatalog();
         loadZones();
         loadResources();
+        loadAppData();
         setInterval(loadCatalog, 60000);
+        setInterval(loadAppData, 60000);
         setInterval(loadResources, 30000);
         tickClock();
         setInterval(tickClock, 30000);
@@ -185,6 +210,7 @@
         try {
             var data = await fetchJSON('/api/applications/store/catalog');
             state.apps = (data && data.apps) || [];
+            state.notices = (data && data.notices) || [];
             state.loaded = true;
             render();
             updateSubtitle();
@@ -233,6 +259,99 @@
             if (!state.res) state.resError = true; // keep the last good read if we had one
         }
         renderMachineStrip();
+    }
+
+    // Each app's kept data on this machine. A Host with no local runtime has
+    // none (available false); an unreadable answer keeps the last good one.
+    async function loadAppData() {
+        try {
+            state.appData = await fetchJSON('/api/applications/runtime/app-data');
+        } catch (err) {
+            /* keep what was read before; the next poll tries again */
+        }
+        renderKeptData();
+    }
+
+    function keptFor(appId) {
+        var apps = (state.appData && state.appData.apps) || [];
+        for (var i = 0; i < apps.length; i++) {
+            if (apps[i].app_id === appId) return apps[i];
+        }
+        return null;
+    }
+
+    function dataSize(d) {
+        return (d.complete === false ? 'at least ' : '') + fmtBytes(d.bytes);
+    }
+
+    // ── Notices about the catalog ───────────────────────
+    function renderNotices() {
+        var box = document.getElementById('store-notices');
+        if (!box) return;
+        var list = (state.notices || []).filter(function (n) { return n && n.text; });
+        box.hidden = !list.length;
+        box.innerHTML = list.map(function (n) {
+            return '<div class="store-notice" role="status">' + esc(n.text) + '</div>';
+        }).join('');
+    }
+
+    // ── Data kept from removed apps ─────────────────────
+    function renderKeptData() {
+        var section = document.getElementById('kept-data-section');
+        var list = document.getElementById('kept-data-list');
+        if (!section || !list) return;
+        var kept = ((state.appData && state.appData.apps) || []).filter(function (d) {
+            return d.installed === false;
+        });
+        var show = state.filter !== 'sites' && state.filter !== 'updates' && kept.length > 0;
+        section.hidden = !show;
+        if (!show) return;
+        list.innerHTML = kept.map(function (d) {
+            var known = state.apps.find(function (a) { return a.app_id === d.app_id; });
+            return '<div class="kept-data-row">' +
+                '<span class="kept-data-name">' + esc((known && known.name) || d.app_id) +
+                    ' <span class="kept-data-size">' + esc(dataSize(d)) + '</span></span>' +
+                '<button class="cseries-btn ghost" data-kept-delete="' + attr(d.app_id) +
+                    '">Delete</button>' +
+            '</div>';
+        }).join('');
+    }
+
+    var keptArmed = {};
+    function armDeleteKept(btn, appId) {
+        if (keptArmed[appId]) {
+            clearTimeout(keptArmed[appId].timer);
+            delete keptArmed[appId];
+            deleteKept(btn, appId);
+            return;
+        }
+        btn.textContent = 'Delete for good';
+        btn.classList.add('danger');
+        var d = keptFor(appId);
+        setFooter('Delete the ' + (d ? dataSize(d) + ' of ' : '') + 'data ' + appId +
+                  ' kept on this machine? It cannot be undone. Click again to confirm.');
+        keptArmed[appId] = {
+            timer: setTimeout(function () {
+                delete keptArmed[appId];
+                if (btn.isConnected) { btn.textContent = 'Delete'; btn.classList.remove('danger'); }
+                setFooter('');
+            }, 8000),
+        };
+    }
+
+    async function deleteKept(btn, appId) {
+        btn.disabled = true;
+        btn.textContent = 'Deleting…';
+        try {
+            var r = await fetchJSON('/api/applications/runtime/app-data/' + encodeURIComponent(appId),
+                                    { method: 'DELETE' });
+            setFooter('The data ' + appId + ' kept is deleted' +
+                      (r && r.freed_bytes ? ' (' + fmtBytes(r.freed_bytes) + ' freed).' : '.'));
+        } catch (err) {
+            setFooter('Could not delete it: ' + (err.message || err));
+        }
+        await loadAppData();
+        setTimeout(function () { setFooter(''); }, 6000);
     }
 
     function updateSubtitle() {
@@ -318,8 +437,10 @@
             return [a.name, a.summary, a.app_id];
         }));
 
+        renderNotices();
         renderMachineStrip();
         renderFeatured();
+        renderKeptData();
 
         var machineSection = document.getElementById('machine-section');
         var machineGrid = document.getElementById('machine-grid');
@@ -1040,43 +1161,78 @@
     var uninstallArmed = {};
     function armUninstall(btn, appId) {
         if (state.busy[appId]) return;
-        if (uninstallArmed[appId]) {
-            if (uninstallArmed[appId].timer) clearTimeout(uninstallArmed[appId].timer);
+        if (uninstallArmed[appId] && !uninstallArmed[appId].box.isConnected) {
+            // The list re-rendered under the confirm (it reloads every minute):
+            // what the owner sees now is a plain Uninstall again, so this click
+            // arms it again rather than acting on a box no longer on screen.
+            clearTimeout(uninstallArmed[appId].timer);
             delete uninstallArmed[appId];
-            uninstallApp(appId);
+        }
+        if (uninstallArmed[appId]) {
+            var armed = uninstallArmed[appId];
+            if (armed.timer) clearTimeout(armed.timer);
+            delete uninstallArmed[appId];
+            var tick = armed.box && armed.box.querySelector('input[type="checkbox"]');
+            var deleteData = !!(tick && tick.checked);
+            if (armed.box && armed.box.isConnected) armed.box.remove();
+            uninstallApp(appId, deleteData);
             return;
         }
         var original = btn.textContent;
         btn.textContent = 'Confirm remove';
         btn.classList.add('danger');
-        setFooter('Remove ' + appId + '? Workspace + settings are kept. Click again to confirm.');
+        // "Also delete this app's data", unticked: the owner's data goes only
+        // when they choose it. Its size is what this machine keeps for the app.
+        var d = keptFor(appId);
+        var box = document.createElement('label');
+        box.className = 'uninstall-data';
+        box.setAttribute('data-uninstall-data-box', appId);
+        box.innerHTML = '<input type="checkbox" data-uninstall-data="' + attr(appId) + '"> ' +
+            'Also delete this app\u2019s data' +
+            (d ? ' (' + esc(dataSize(d)) + ' on this machine)' : '');
+        btn.insertAdjacentElement('afterend', box);
+        setFooter('Remove ' + appId + '? Its data is kept unless you tick the box. ' +
+                  'Click again to confirm.');
         uninstallArmed[appId] = {
+            box: box,
             timer: setTimeout(function () {
                 delete uninstallArmed[appId];
                 // The list may have re-rendered; only reset if this node survives.
                 if (btn.isConnected) { btn.textContent = original; btn.classList.remove('danger'); }
+                if (box.isConnected) box.remove();
                 setFooter('');
-            }, 5000),
+            }, 10000),
         };
     }
-    async function uninstallApp(appId) {
+    async function uninstallApp(appId, deleteData) {
         if (state.busy[appId]) return;
         state.busy[appId] = true;
         setFooter('Removing ' + appId + '…');
         render();
         repaintDetailIfOpen(appId);
         try {
-            await fetchJSON('/api/applications/' + encodeURIComponent(appId), {
+            var r = await fetchJSON('/api/applications/' + encodeURIComponent(appId) +
+                                    (deleteData ? '?purge=true' : ''), {
                 method: 'DELETE',
             });
-            setFooter(appId + ' removed.');
+            if (deleteData && r && r.app_data_error) {
+                setFooter(appId + ' removed. Its data could not be deleted (' + r.app_data_error +
+                          '); it is listed under Data kept from removed apps.');
+            } else if (deleteData) {
+                setFooter(appId + ' removed, and its data deleted' +
+                          (r && r.app_data_freed_bytes ? ' (' + fmtBytes(r.app_data_freed_bytes) +
+                           ' freed).' : '.'));
+            } else {
+                setFooter(appId + ' removed. Its data is kept on this machine.');
+            }
         } catch (err) {
             setFooter('Failed: ' + (err.message || err));
         } finally {
             state.busy[appId] = false;
             await loadCatalog();
+            await loadAppData();
             repaintDetailIfOpen(appId);
-            setTimeout(function () { setFooter(''); }, 4000);
+            setTimeout(function () { setFooter(''); }, 6000);
         }
     }
 

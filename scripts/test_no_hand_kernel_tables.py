@@ -149,6 +149,13 @@ ALLOW = {
     ("scripts/test_host_restore.py", "integration_grants", "defines"):
         "builds a backup's retired SQLite store file, which _carry_integration_grants reads "
         "connections from and must NOT take grants from",
+    # An older backup's own shape, made in the pre-v235 clone the gate builds
+    # (kernel_schema_db upto=235) and drops: a column no migration drops, and
+    # columns of types the restore must refuse to add for the load.
+    **{("scripts/test_restore_older_backup_pg.py", "entity_memory", f"patches (ALTER TABLE ADD COLUMN {c})"):
+       "the older backup's own column, added in the pre-v235 clone it is dumped from, which the restore "
+       "must add for the load (or refuse, for a type that is not a built-in one)"
+       for c in ("invented_extra", "invented_dom_col", "invented_row")},
     # The credential audit rollup test's crash trigger, on its own copy
     # (tables from init-db.sql and v205).
     **{("scripts/test_vault_audit_rollup_pg.py", "vault_audit_rollup", a):

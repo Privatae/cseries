@@ -190,6 +190,48 @@
         loadTimezone();
     }
 
+    // The newest backup in the folder on this machine, as one file to keep
+    // (a plain tar of a README, the backup's key file and the backup, all as
+    // encrypted as they were kept). This window asks for a one-time link to
+    // it (POST /api/backup/files/{stamp}/link, which carries its token) and
+    // the browser downloads the link like any file, writing it to disk as it
+    // arrives: a backup is never held whole in this page's memory, which a
+    // fetch handed over as a Blob would do. The Backups app restores it, here
+    // or on another C-Series machine.
+    async function downloadLatestBackup() {
+        var btn = document.getElementById('bk-local-download');
+        var out = document.getElementById('bk-local-download-state');
+        btn.disabled = true;
+        out.textContent = 'Looking for the newest backup…';
+        try {
+            var files = await fetchJSON('/api/backup/files');
+            var b = (files.backups || [])[0];
+            if (!b) {
+                out.textContent = 'There is no backup on this machine yet. Press Back up now above, or wait for '
+                    + 'the next scheduled one.';
+                return;
+            }
+            var link = await fetchJSON('/api/backup/files/' + encodeURIComponent(b.stamp) + '/link',
+                { method: 'POST' });
+            if (!/^\/api\/backup\/files\/download\/dl_[A-Za-z0-9_-]+$/.test(link.url || '')) {
+                throw new Error('the host did not give a download link');
+            }
+            var a = document.createElement('a');
+            a.href = link.url;
+            a.download = link.name || ('cseries-backup-' + b.stamp + '.tar');
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            out.textContent = 'Your browser is downloading the backup of ' + new Date(b.taken_at).toLocaleString()
+                + ' (it shows in its downloads). Keep it somewhere away from this machine; it opens only '
+                + 'with your recovery key.';
+        } catch (e) {
+            out.textContent = 'Could not download it: ' + (e && (e.detail || e.message) || e);
+        } finally {
+            btn.disabled = false;
+        }
+    }
+
     // ── Backup — the user's own schedule, keys and copies. ──
     //    Times shown and saved in the user's OWN time zone (the backend
     //    stores them that way): "3am" has to mean their 3am or the control
@@ -201,36 +243,60 @@
         var wday = document.getElementById('bk-weekday');
         var time = document.getElementById('bk-time');
         var tzNote = document.getElementById('bk-tz-note');
+        var where = document.getElementById('bk-where');
+        var whereNote = document.getElementById('bk-where-note');
+        var netbox = document.getElementById('bk-where-network');
+        var localbox = document.getElementById('bk-where-local');
+        var keep = document.getElementById('bk-local-keep');
         var kind = document.getElementById('bk-target-kind');
         var s3box = document.getElementById('bk-target-s3');
         var mbox = document.getElementById('bk-target-machine');
         var addr = document.getElementById('bk-target-address');
         var addr2 = document.getElementById('bk-target-address2');
         var endp = document.getElementById('bk-target-endpoint');
+        var region = document.getElementById('bk-target-region');
+        var prefix = document.getElementById('bk-target-prefix');
+        var keyId = document.getElementById('bk-target-keyid');
+        var secret = document.getElementById('bk-target-secret');
+        var credState = document.getElementById('bk-target-cred-state');
         var cred = document.getElementById('bk-target-cred');
         var save = document.getElementById('bk-save');
         var st = document.getElementById('bk-status');
         var plat = document.getElementById('bk-platform');
         if (!freq || !save) return;
 
+        // Where the backups themselves go (server/host_backup.py
+        // destination_of): the network's storage, the owner's own bucket, or
+        // a folder on this machine. The bucket's fields serve both the bucket
+        // the backups go to and a bucket a second copy is sent to.
+        function bucketShown() {
+            return where.value === 's3' || (where.value === 'network' && kind.value === 's3');
+        }
+
         function syncVisibility() {
             when.hidden = freq.value === 'off';
             wday.parentNode.querySelector('label[for="bk-weekday"]').hidden = freq.value !== 'weekly';
             wday.hidden = freq.value !== 'weekly';
-            s3box.hidden = kind.value !== 's3';
-            mbox.hidden = kind.value !== 'machine';
+            netbox.hidden = where.value !== 'network';
+            localbox.hidden = where.value !== 'local';
+            s3box.hidden = !bucketShown();
+            mbox.hidden = !(where.value === 'network' && kind.value === 'machine');
         }
 
-        // One place that builds the target, so the two shapes cannot drift from
-        // what the backend's validate_target accepts.
-        function buildTarget() {
-            if (kind.value === 's3') {
+        // One place that builds the target, so the shapes cannot drift from
+        // what the backend's validate_target accepts. Backups in the folder on
+        // this machine have no second copy: that is sent from the network's
+        // storage.
+        function buildTarget(credName) {
+            if (bucketShown()) {
                 return { kind: 's3',
                          address: (addr.value || '').trim(),
                          endpoint: (endp.value || '').trim() || null,
-                         cred_name: (cred.value || '').trim() };
+                         region: (region.value || '').trim() || null,
+                         prefix: (prefix.value || '').trim() || null,
+                         cred_name: credName };
             }
-            if (kind.value === 'machine') {
+            if (where.value === 'network' && kind.value === 'machine') {
                 return { kind: 'machine',
                          address: (addr2.value || '').trim(),
                          dir: 'privatae-backups' };
@@ -238,20 +304,48 @@
             return null;
         }
 
+        // The bucket's key goes straight into the vault (POST
+        // /api/backup/storage-key); the setting holds only its name.
+        async function saveBucketKey() {
+            var name = (cred.value || '').trim() || 'backup-storage';
+            var id = (keyId.value || '').trim();
+            var sec = (secret.value || '').trim();
+            if (!id && !sec) return name;
+            if (!id || !sec) throw new Error('enter both the access key and the secret key, or neither to keep the key saved before');
+            var r = await fetchJSON('/api/backup/storage-key', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ access_key_id: id, secret_access_key: sec, name: name }),
+            });
+            keyId.value = '';
+            secret.value = '';
+            cred.value = r.cred_name;
+            credState.textContent = 'The key is saved in your host\'s vault as "' + r.cred_name + '".';
+            return r.cred_name;
+        }
+
         if (!_bkLoaded) {
             freq.onchange = syncVisibility;
             kind.onchange = syncVisibility;
+            where.onchange = syncVisibility;
+            var dl = document.getElementById('bk-local-download');
+            if (dl) dl.onclick = downloadLatestBackup;
             save.onclick = async function () {
-                var body = {
-                    frequency: freq.value,
-                    hour: parseInt((time.value || '02:30').split(':')[0], 10),
-                    minute: parseInt((time.value || '02:30').split(':')[1], 10),
-                    weekday: parseInt(wday.value, 10),
-                    target: buildTarget(),
-                    platform: plat ? !!plat.checked : true,
-                };
+                var keepN = parseInt(keep.value, 10);
                 st.textContent = 'Saving…';
                 try {
+                    var credName = (cred.value || '').trim() || 'backup-storage';
+                    if (bucketShown()) credName = await saveBucketKey();
+                    var body = {
+                        frequency: freq.value,
+                        hour: parseInt((time.value || '02:30').split(':')[0], 10),
+                        minute: parseInt((time.value || '02:30').split(':')[1], 10),
+                        weekday: parseInt(wday.value, 10),
+                        where: where.value,
+                        target: buildTarget(credName),
+                        platform: plat ? !!plat.checked : true,
+                    };
+                    if (!isNaN(keepN)) body.local_keep = keepN;
                     var saved;
                     try {
                         saved = await fetchJSON('/api/backup/settings', {
@@ -261,10 +355,11 @@
                         });
                     } catch (e) {
                         // A change that weakens your backups (turning them
-                        // off, weekly instead of daily, out of platform
-                        // storage, the second copy removed or moved) or sends
-                        // them somewhere new takes your six-digit code. Asked
-                        // only then, in the host's own words.
+                        // off, weekly instead of daily, out of the network's
+                        // storage, moved somewhere else, fewer kept, the
+                        // second copy removed or moved) or sends them
+                        // somewhere new takes your six-digit code. Asked only
+                        // then, in the host's own words.
                         if (!e || e.status !== 428) throw e;
                         var code = window.prompt('Enter your six-digit code to '
                             + String(e.detail || '').replace(/^enter your six-digit code to /, '') + '.');
@@ -277,26 +372,38 @@
                         });
                     }
                     st.textContent = describe(saved);
+                    setTimeout(loadBackup, 500);
                 } catch (e) {
                     // Surface the backend's reason verbatim — every rejection it
                     // sends names the field, and a generic "failed" would leave
                     // the user believing a schedule that is not stored.
-                    st.textContent = 'Could not save: ' + (e && e.message || e);
+                    st.textContent = 'Could not save: ' + (e && (e.detail || e.message) || e);
                 }
             };
             _bkLoaded = true;
+        }
+
+        function networkName(mode) {
+            return mode === 'platform' ? 'platform storage' : 'the network\'s storage';
         }
 
         function describe(s) {
             if (!s || s.frequency === 'off') return 'Backups are turned off for this host.';
             var t = String(s.hour).padStart(2, '0') + ':' + String(s.minute).padStart(2, '0');
             var days = ['Monday','Tuesday','Wednesday','Thursday','Friday','Saturday','Sunday'];
-            var copy = s.target
-                ? (s.target.kind === 'machine' ? s.target.address : 'your bucket (' + s.target.address + ')')
-                : null;
-            var wheref = s.platform === false
-                ? (copy ? ' Backups go to ' + copy + ' only, not to platform storage.' : '')
-                : ' Kept in platform storage' + (copy ? ', with a copy sent to ' + copy : '') + '.';
+            var wheref;
+            if (s.where === 'local') {
+                wheref = ' Kept in a folder on this machine, the newest ' + s.local_keep + '.';
+            } else if (s.where === 's3') {
+                wheref = ' Sent to your bucket' + (s.target ? ' (' + s.target.address + ')' : '') + '.';
+            } else {
+                var copy = s.target
+                    ? (s.target.kind === 'machine' ? s.target.address : 'your bucket (' + s.target.address + ')')
+                    : null;
+                wheref = s.platform === false
+                    ? (copy ? ' Backups go to ' + copy + ' only, not to ' + networkName(s.mode) + '.' : '')
+                    : ' Kept in ' + networkName(s.mode) + (copy ? ', with a copy sent to ' + copy : '') + '.';
+            }
             var zone = s.timezone ? ' (' + s.timezone + ')' : ' (UTC — no time zone set)';
             return (s.frequency === 'weekly'
                 ? 'Every ' + days[s.weekday] + ' at ' + t
@@ -314,11 +421,33 @@
         wday.value = String(cur.weekday == null ? 0 : cur.weekday);
         time.value = String(cur.hour == null ? 2 : cur.hour).padStart(2, '0') + ':'
                    + String(cur.minute == null ? 30 : cur.minute).padStart(2, '0');
-        kind.value = (cur.target && cur.target.kind) || '';
-        addr.value = (cur.target && cur.target.kind === 's3' && cur.target.address) || '';
-        addr2.value = (cur.target && cur.target.kind === 'machine' && cur.target.address) || '';
-        endp.value = (cur.target && cur.target.endpoint) || '';
-        cred.value = (cur.target && cur.target.cred_name) || '';
+        // The network is a choice only for a host on it.
+        var netOpt = where.querySelector('option[value="network"]');
+        var onNetwork = cur.mode === 'platform' || cur.mode === 'member';
+        netOpt.textContent = cur.mode === 'platform' ? 'Platform storage'
+            : (onNetwork ? 'The network\'s storage' : 'The network\'s storage (this host is not on the network)');
+        netOpt.disabled = !onNetwork;
+        document.getElementById('bk-platform-text').textContent =
+            'Keep my encrypted backups in ' + networkName(cur.mode);
+        where.value = cur.where || (onNetwork ? 'network' : 'local');
+        whereNote.textContent = (!onNetwork && cur.where === 'network')
+            ? 'Your backups are set to go to the network\'s storage, and this host is not on the network, '
+              + 'so it takes none. Choose another place for them and save.'
+            : (cur.where_chosen ? '' : 'Your host uses this unless you choose another place.');
+        keep.value = String(cur.local_keep || 7);
+        var t = cur.target || null;
+        kind.value = (cur.where === 'network' && t && t.kind) || '';
+        addr.value = (t && t.kind === 's3' && t.address) || '';
+        addr2.value = (t && t.kind === 'machine' && t.address) || '';
+        endp.value = (t && t.endpoint) || '';
+        region.value = (t && t.region) || '';
+        prefix.value = (t && t.prefix) || '';
+        cred.value = (t && t.cred_name) || '';
+        keyId.value = '';
+        secret.value = '';
+        credState.textContent = (t && t.kind === 's3' && t.cred_name)
+            ? 'Using the key saved in your host\'s vault as "' + t.cred_name + '". Enter a new one above to replace it.'
+            : '';
         if (plat) plat.checked = cur.platform !== false;
         tzNote.textContent = cur.timezone
             ? 'Times are in ' + cur.timezone + ', your host\'s time zone.'
@@ -594,6 +723,9 @@
         var btn = document.getElementById('bk-ship-now');
         if (!card || !el) return;
         if (!cur || (!cur.target && !cur.target_problem)) { card.hidden = true; return; }
+        // A second copy is sent from the network's storage; backups that go
+        // straight to a bucket or a folder have none.
+        if (cur.where && cur.where !== 'network') { card.hidden = true; return; }
         card.hidden = false;
 
         var sh = cur.ship || {};
@@ -679,9 +811,10 @@
     }
 
     // What a host with no saved recovery key is told, everywhere it matters.
-    var NO_KEY = 'Not backed up until you save your recovery key and confirm it here: make it on your '
-        + 'Privatae account page (Hosts, this host; this needs the optional Privatae network), save it, then check its fingerprint below against the one on '
-        + 'the key you saved and use it, with a code from your second factor. Your host backs up from then on.';
+    var NO_KEY = 'Not backed up until this host has your recovery key: make one in the Backups app on this '
+        + 'host (your browser makes it and shows it to you once), or, if you use the optional Privatae network '
+        + 'and your Privatae account page (Hosts, this host) holds one, check its fingerprint below against the '
+        + 'one on the key you saved and use it, with a code from your second factor. Your host backs up from then on.';
 
     // Using a recovery key takes a code from the second factor; the owner
     // enrols one in the Network app (its banner's "Second factor: Enroll").
@@ -723,7 +856,10 @@
             var lo = leftOut(rs.links_left_out, rs.links_left_out_count);
             return when + ' — ' + (r.state === 'ok'
                 ? 'Restored to the backup of ' + (from ? new Date(from).toLocaleString() : 'an earlier time') + '.'
-                    + (lo ? ' ' + lo : '')
+                    + (lo ? ' ' + lo : '') + (rs.owner ? ' ' + rs.owner : '')
+                    + (rs.apps_note ? ' ' + oneLine(rs.apps_note) : '')
+                    + (rs.app_data_note ? ' ' + oneLine(rs.app_data_note) : '')
+                    + (rs.database_note ? ' ' + oneLine(rs.database_note) : '')
                 : 'A restore did not happen.' + (r.error ? ' ' + r.error + '.' : ''));
         }
         if (r.state === 'running') return when + ' — Backing up now (' + why + ').';
@@ -733,6 +869,12 @@
         var saved = [];
         if (p.db && p.db.ok) saved.push('memory and data ' + sizeOf(p.db.bytes));
         if (p.apps && (p.apps.ok || p.apps.files)) saved.push('apps and files ' + sizeOf(p.apps.bytes));
+        // Each app's own data, from this machine's local runtime
+        // (server/host_backup.py _add_app_data): the apps that were read whole.
+        if (p.app_data && (p.app_data.apps || []).length) {
+            var whole = (p.app_data.apps || []).filter(function (a) { return a && a.ok; });
+            saved.push(whole.length + ' app' + (whole.length === 1 ? "'s" : "s'") + ' own data ' + sizeOf(p.app_data.bytes));
+        }
         if (p.gitea && p.gitea.repos) saved.push(p.gitea.repos + ' Git repositor' + (p.gitea.repos === 1 ? 'y' : 'ies'));
         if (r.state === 'failed') {
             return when + ' — The backup did not happen (' + why + ')' + (r.error ? ': ' + r.error : '') + '.'
@@ -746,6 +888,31 @@
             + (r.state === 'partial' && r.error ? ' Not everything was saved: ' + r.error + '.' : '');
     }
 
+    // The line the Backup tab opens with: whether backups are working, in
+    // the host's words (server/host_backup.py backup_status), and when the
+    // last one finished, in this browser's time.
+    function renderVerdict(v) {
+        var card = document.getElementById('bk-verdict-card');
+        var head = document.getElementById('bk-verdict');
+        var whenEl = document.getElementById('bk-verdict-when');
+        var detail = document.getElementById('bk-verdict-detail');
+        if (!card || !head) return;
+        if (!v || !v.headline) {
+            head.textContent = 'Your host did not say how its backups are going.';
+            whenEl.textContent = '';
+            detail.textContent = '';
+            card.setAttribute('data-state', 'unknown');
+            return;
+        }
+        card.setAttribute('data-state', v.state || '');
+        head.textContent = oneLine(v.headline) + '.';
+        var last = v.last_finished_at ? new Date(v.last_finished_at).toLocaleString() : '';
+        whenEl.textContent = v.state === 'failing'
+            ? (last ? 'The last good backup finished ' + last + '.' : 'No backup has finished yet.')
+            : (last ? 'The last backup finished ' + last + '.' : 'No backup has finished yet.');
+        detail.textContent = oneLine(v.detail || '') + (v.running ? ' A backup is running now.' : '');
+    }
+
     async function renderRuns(cur) {
         var box = document.getElementById('bk-runs');
         var btn = document.getElementById('bk-run-now');
@@ -755,8 +922,11 @@
             data = await fetchJSON('/api/backup/runs');
         } catch (e) {
             box.textContent = 'Could not read your backups: ' + (e && e.message || e);
+            renderVerdict({ state: 'unknown', headline: 'Could not read how your backups are going',
+                            detail: (e && e.message) || String(e) });
             return;
         }
+        renderVerdict(data.status);
         var runs = data.runs || [];
         var lines = runs.slice(0, 5).map(runLine);
         if (data.problem) {
@@ -794,8 +964,9 @@
     // agrees to it (server/host_restore.py CARRIED_TABLES and its list of
     // what is deliberately left as the backup had it).
     var RESTORE_ACK = 'I understand that my host goes back to this backup and restarts to do it. '
-        + 'Its memory, files and credentials (the Keys app, /app/secrets) come back as they were in '
-        + 'the backup, including any credential I deleted since, and apps I uninstalled since come back. '
+        + 'Its memory, files, credentials (the Keys app, /app/secrets) and the data of every app come back '
+        + 'as they were in the backup, including any credential I deleted since, and apps I uninstalled '
+        + 'since come back. '
         + 'Access stays as it is now: my bastions, grants, second factor and backup keys are not '
         + 'changed by the restore.';
 
@@ -846,6 +1017,18 @@
             lines.push('Restored to the backup of ' + at(p.taken_at) + '.');
             var lo = leftOut(p.links_left_out, p.links_left_out_count);
             if (lo) lines.push(lo);
+            if (p.owner) lines.push(p.owner);
+            // After a backup this host could not confirm it made: which apps
+            // were installed again, and which need reinstalling and why
+            // (server/host_restore.py apps_note).
+            if (p.apps_note) lines.push(oneLine(p.apps_note));
+            // An app whose data the restore did not put back, and why
+            // (server/host_restore.py app_data_note).
+            if (p.app_data_note) lines.push(oneLine(p.app_data_note));
+            // What the restore says about the backup's database: what its
+            // load left out, and what the boot's migrations dropped or left
+            // unchecked (server/host_restore.py db_note, settle).
+            if (p.database_note) lines.push(oneLine(p.database_note));
         }
         if (p.state === 'failed' && p.error) lines.push('The last restore did not happen: ' + p.error + '.');
         (data.problems || []).forEach(function (m) { lines.push(m.charAt(0).toUpperCase() + m.slice(1) + '.'); });
@@ -861,7 +1044,8 @@
             var o = document.createElement('option');
             o.value = b.stamp;
             var where = b.where === 'machine' ? ' — on ' + (b.machine || 'your machine')
-                : (b.where === 's3' ? ' — in your own storage' : '');
+                : (b.where === 's3' ? ' — in your own storage'
+                    : (b.where === 'local' ? ' — on this machine' : ''));
             o.textContent = at(b.taken_at) + ' — ' + sizeOf(b.bytes) + where
                 + (b.key_ready ? (b.verified === false ? ' — key ready, not confirmed as this host\'s' : ' — key ready') : '');
             pick.appendChild(o);

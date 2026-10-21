@@ -466,11 +466,29 @@ async def launch_app(app_id: str, request: Request) -> dict:
                 manifest=manifest,
                 window_id=decoded.window_id,
             )
+        except supervisor.WakeRefused as e:
+            # This machine would not start it (a short disk, no room): the
+            # refusal's own status and its words, which the desktop shows as
+            # one line of text instead of opening a window that cannot work.
+            raise HTTPException(e.code, {
+                "error": "wake_refused",
+                "app_id": e.app_id,
+                "message": e.message,
+            }) from None
         except supervisor.SupervisorError as e:
             raise HTTPException(
                 status.HTTP_502_BAD_GATEWAY,
                 f"sidecar launch failed: {e}",
             ) from None
+    elif manifest.runtime.kind == "helper":
+        why = await _helper_refused(app.id)
+        if why:
+            # The same answer a pod app's refused open gets (above).
+            raise HTTPException(why["code"], {
+                "error": "wake_refused",
+                "app_id": app.id,
+                "message": why["message"],
+            })
 
     # An app whose server side runs in its own pod: the open window holds
     # that pod while its client beats (harness_backend.app_window_opened /
@@ -503,6 +521,28 @@ async def launch_app(app_id: str, request: Request) -> dict:
         "entrypoint": f"/system-apps/{app.id}/{app.entrypoint}",
         **({"window_beat_s": window_beat_s} if window_beat_s else {}),
     }
+
+
+async def _helper_refused(app_id: str) -> dict | None:
+    """A helper app's launch does not wake it; the window's own requests do.
+    When the last wake of its container was REFUSED (a short disk, no room:
+    harness_backend.wake_refused), the window would open on requests that all
+    answer that refusal, so the wake is asked once more here: {code, message}
+    when it is refused again, None when it lands or no refusal is on record.
+    With none on record nothing is woken here, so a launch is as fast as
+    before; the record is never trusted alone, so space freed since cannot
+    keep the app shut. Inside the lane's cold-wake backoff the answer is the
+    one the window's requests would get, with no new wake."""
+    from server.applications import harness_backend
+    if not harness_backend.wake_refused(app_id):
+        return None
+    try:
+        if await harness_backend.ensure_awake_app(app_id):
+            return None
+    except Exception as e:  # noqa: BLE001 — the window's requests ask again
+        log.debug("helper %s launch wake: %s", app_id, type(e).__name__)
+        return None
+    return harness_backend.wake_refused(app_id)
 
 
 def _from_browser(request: Request) -> bool:
@@ -1087,16 +1127,17 @@ class _StoreError(Exception):
 
 
 async def _fetch_bundle_from_store(app_id: str, version: str | None) -> bytes:
-    """Pull a signed .cseries bundle from the central app store via the
-    bridge. Returns the raw bytes ready to pass to installer.install_bundle."""
+    """Pull a signed .cseries bundle from the App Store: the network's door
+    when it answers, else the free public catalog (applications/
+    public_store.py, which checks the catalog's signature and the bundle's
+    sha256 first). Returns the raw bytes ready to pass to
+    installer.install_bundle, which verifies the bundle's own signature."""
     import base64
-    try:
-        from server.main import get_bridge_client
-    except Exception as e:
-        raise _StoreError(f"bridge unavailable: {e}") from None
-    bc = get_bridge_client()
-    if bc is None or not getattr(bc, "_connected", False):
-        raise _StoreError("bridge not connected")
+    from server.applications.public_store import store_client
+    bc = store_client()
+    if not bc._connected:
+        raise _StoreError("no App Store is reachable: the network's door is not "
+                          "connected and the public App Store is turned off")
     # Fetched in slices: one answer has to fit
     # this kernel's 10 MiB bridge reader line as base64, so a bundle over
     # ~7.5 MiB could never be installed. A bridge or store without slices
@@ -1150,18 +1191,15 @@ _STORE_SLICE_BYTES = 6 * 1024 * 1024
 
 @router.get("/store/icon/{app_id}")
 async def store_icon(app_id: str):
-    """Proxy the catalog icon for an app through the bridge so the
-    Settings → Apps tab can render it without exposing the platform
-    operator directly to the dashboard."""
+    """The catalog icon for an app, from the App Store (the network's door
+    when it answers, else the free public catalog), so the Apps tab can
+    render it without the page reaching any store itself."""
     import base64
     from fastapi.responses import Response
-    try:
-        from server.main import get_bridge_client
-    except Exception as e:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"bridge: {e}")
-    bc = get_bridge_client()
-    if bc is None or not getattr(bc, "_connected", False):
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "bridge not connected")
+    from server.applications.public_store import store_client
+    bc = store_client()
+    if not bc._connected:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "no App Store is reachable")
     try:
         envelope = await bc.request_full("appstore.icon", {"app_id": app_id})
     except Exception as e:
@@ -1257,13 +1295,10 @@ async def store_catalog(request: Request) -> dict:
     pool = brain_service.get_pool()
     if pool is None:
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "brain pool down")
-    try:
-        from server.main import get_bridge_client
-    except Exception as e:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"bridge: {e}")
-    bc = get_bridge_client()
-    if bc is None or not getattr(bc, "_connected", False):
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "bridge not connected")
+    from server.applications.public_store import store_client
+    bc = store_client()
+    if not bc._connected:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "no App Store is reachable")
     try:
         envelope = await bc.request_full("appstore.list", {})
     except Exception as e:
@@ -1272,6 +1307,10 @@ async def store_catalog(request: Request) -> dict:
         raise HTTPException(status.HTTP_502_BAD_GATEWAY,
                             envelope.get("error") or "store error")
     catalog = (envelope.get("data") or {}).get("apps", [])
+    # What the store says about its own catalog (public_store.PublicStore.notices:
+    # old, undated, or no rollback record), for the App Store to show above it.
+    notices = [n for n in ((envelope.get("data") or {}).get("notices") or [])
+               if isinstance(n, dict) and isinstance(n.get("text"), str)]
     # Join with local install state.
     installed_rows = await registry.list_active(pool)
     installed_by_id = {a.id: a for a in installed_rows}
@@ -1394,7 +1433,7 @@ async def store_catalog(request: Request) -> dict:
             "icon_url": (f"/system-apps/{app.id}/{icon}" if icon else None),
             **_cost_fields(app.id),
         })
-    return {"apps": out}
+    return {"apps": out, "notices": notices}
 
 
 @router.post(
@@ -1437,13 +1476,10 @@ async def store_purchase(request: Request):
             f"{app_id!r} is a platform tool; this host is not in the install allow-list",
         )
 
-    try:
-        from server.main import get_bridge_client
-    except Exception as e:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"bridge: {e}")
-    bc = get_bridge_client()
-    if bc is None or not getattr(bc, "_connected", False):
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "bridge not connected")
+    from server.applications.public_store import store_client
+    bc = store_client()
+    if not bc._connected:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "no App Store is reachable")
 
     try:
         envelope = await bc.request_full("appstore.purchase", {"app_id": app_id})
@@ -1723,13 +1759,10 @@ async def store_entitlement(request: Request) -> dict:
     app_id = str(request.query_params.get("app_id") or "").strip()
     if not app_id:
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "app_id required")
-    try:
-        from server.main import get_bridge_client
-    except Exception as e:
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, f"bridge: {e}")
-    bc = get_bridge_client()
-    if bc is None or not getattr(bc, "_connected", False):
-        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "bridge not connected")
+    from server.applications.public_store import store_client
+    bc = store_client()
+    if not bc._connected:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "no App Store is reachable")
     try:
         envelope = await bc.request_full("appstore.entitlement.check", {"app_id": app_id})
     except Exception as e:
@@ -2787,6 +2820,71 @@ async def sites_domain_record_delete(request: Request) -> dict:
     })
 
 
+# ── The apps' kept data on this machine (the local runtime) ───────────────
+#
+# An app's runtime keeps a data volume across releases and uninstalls, and the
+# machine's local runtime never deletes one on its own: nothing an owner kept
+# goes unless the owner chooses it. These two routes are where they see what
+# each app's data takes and delete a removed app's; uninstall with ?purge=true
+# deletes the app's own as it goes. A Host with no local runtime (the
+# platform's) has none of these volumes here.
+
+_DATA_APP_ID_RE = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}\Z")
+
+
+async def _runtime_data_op(op: str, params: dict) -> dict | None:
+    """The local runtime's answer to a data op, or None when this Host's
+    machine has no local runtime."""
+    from server.applications import local_runtime
+    if not local_runtime.in_use():
+        return None
+    return await local_runtime.runtime_client().request_full(op, params)
+
+
+@router.get(
+    "/runtime/app-data",
+    dependencies=[Depends(requires_permission("execute:install"))],
+)
+async def runtime_app_data() -> dict:
+    """Every app's kept data on this machine, installed or removed, with its
+    size, and the disk's free space and floors (cseries_runtime.guard)."""
+    env = await _runtime_data_op("workspace.app_data", {})
+    if env is None:
+        return {"available": False, "apps": []}
+    if not env.get("ok"):
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY,
+                            env.get("error") or "the machine's runtime did not answer")
+    d = env.get("data") or {}
+    return {"available": True, "apps": d.get("apps") or [], "free_bytes": d.get("free_bytes"),
+            "wake_floor_bytes": d.get("wake_floor_bytes"),
+            "stop_floor_bytes": d.get("stop_floor_bytes")}
+
+
+@router.delete(
+    "/runtime/app-data/{app_id}",
+    dependencies=[Depends(requires_permission("execute:install"))],
+)
+async def delete_runtime_app_data(app_id: str) -> dict:
+    """Delete the data a REMOVED app left on this machine. An installed app's
+    data goes only with its uninstall (?purge=true), so this route can never
+    take data from under an app that is still there."""
+    if not _DATA_APP_ID_RE.match(app_id or ""):
+        raise HTTPException(status.HTTP_400_BAD_REQUEST, "not an app id")
+    pool = brain_service.get_pool()
+    if pool is None:
+        raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "brain pool down")
+    if await registry.get(pool, app_id) is not None:
+        raise HTTPException(status.HTTP_409_CONFLICT,
+                            f"{app_id} is installed: uninstall it and choose to delete its data")
+    env = await _runtime_data_op("workspace.delete_app_data", {"app_id": app_id})
+    if env is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "this machine keeps no app data")
+    if not env.get("ok"):
+        code = env.get("code") if env.get("code") in (400, 404, 409) else status.HTTP_502_BAD_GATEWAY
+        raise HTTPException(code, env.get("error") or "the machine's runtime did not answer")
+    return env.get("data") or {}
+
+
 @router.delete(
     "/{app_id}",
     dependencies=[Depends(requires_permission("execute:install"))],
@@ -2798,7 +2896,9 @@ async def uninstall(app_id: str, purge: bool = False) -> dict:
     workspace dir survive so a reinstall reattaches them.
 
     With ?purge=true: also deletes every survivable artifact (config
-    rows + workspace dir). No undo.
+    rows + workspace dir, and on a machine with a local runtime the app's
+    kept data volume). No undo. The App Store sends it only when the owner
+    ticks "Also delete this app's data".
     """
     pool = brain_service.get_pool()
     if pool is None:
@@ -2816,7 +2916,7 @@ async def uninstall(app_id: str, purge: bool = False) -> dict:
                 sup._refs.pop(app_id, None)
 
     try:
-        return await installer.uninstall_app(pool, app_id, purge=purge)
+        out = await installer.uninstall_app(pool, app_id, purge=purge)
     except installer.UninstallError as e:
         msg = str(e)
         code = (
@@ -2824,6 +2924,18 @@ async def uninstall(app_id: str, purge: bool = False) -> dict:
             else status.HTTP_403_FORBIDDEN
         )
         raise HTTPException(code, msg) from None
+    if purge:
+        # The uninstall already removed its runtime descriptor (sync_app_runtime),
+        # so the runtime takes the delete; it refuses one whose descriptor is
+        # still kept, and says so here rather than failing the uninstall.
+        env = await _runtime_data_op("workspace.delete_app_data", {"app_id": app_id})
+        if env is not None:
+            d = env.get("data") or {}
+            out["app_data_deleted"] = bool(env.get("ok") and d.get("deleted"))
+            out["app_data_freed_bytes"] = int(d.get("freed_bytes") or 0)
+            if not env.get("ok"):
+                out["app_data_error"] = str(env.get("error") or "")[:300]
+    return out
 
 
 # ── Per-app config storage ────────────────────────────────────────

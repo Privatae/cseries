@@ -215,7 +215,7 @@ def main() -> int:
 
     async def fake_fed(pool, entity_id, query, *, scope="all", limit=10, context=None,
                        memory_types=None, turn_scope=None, scope_everywhere_types=None,
-                       exclude_rules=False, skip_words=None):
+                       exclude_rules=False, skip_words=None, any_words=False):
         fed_types.append(memory_types)
         fed_scopes.append((turn_scope, scope_everywhere_types))
         fed_rules.append(exclude_rules)

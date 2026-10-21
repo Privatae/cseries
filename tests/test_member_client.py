@@ -1476,11 +1476,12 @@ def test_a_staged_key_the_certificate_on_disk_needs_is_never_replaced(pki, tmp_p
 # ── the op table matches the door's ─────────────────────────────────────────
 
 def test_network_ops_are_the_doors_phase_1_table(pki, tmp_path):
-    """The member door's MEMBER_OPS for phase 1 plus its three own ops. Three
-    App Store ops the door leaves out are answered here without a byte sent:
-    appstore.yank_version (until the store checks that the caller published
-    the app) and appstore.checkout.create and appstore.refund (the door holds
-    no Stripe key in phase 1)."""
+    """The member door's MEMBER_OPS for phase 1 plus its three own ops and
+    the backup ops. Three App Store ops the door leaves out are answered here
+    without a byte sent: appstore.yank_version (until the store checks that
+    the caller published the app) and appstore.checkout.create and
+    appstore.refund (the door holds no Stripe key in phase 1); so is
+    backup.recovery_key, until the door answers it."""
     assert mc.NETWORK_OPS == frozenset({
         "heartbeat.ping", "passport.renew", "passport.revoke",
         "appstore.list", "appstore.icon", "appstore.fetch_bundle", "appstore.purchase",
@@ -1493,6 +1494,9 @@ def test_network_ops_are_the_doors_phase_1_table(pki, tmp_path):
         "community.vote", "community.flag", "community.search", "community.digest",
         "community.set_proposal_ref", "community.group.join",
         "rendezvous.list", "rendezvous.withdraw",
+        "backup.upload.start", "backup.upload.part", "backup.upload.complete",
+        "backup.upload.abort", "backup.put_url", "backup.list", "backup.get_url",
+        "backup.drop", "backup.report",
     })
     p = _enrolled(pki, tmp_path / "passport")
 
@@ -1500,10 +1504,36 @@ def test_network_ops_are_the_doors_phase_1_table(pki, tmp_path):
         c = mc.MemberClient(p)
         c._writer = _Writer()
         c._connected = True
-        for op in ("appstore.yank_version", "appstore.checkout.create", "appstore.refund"):
+        for op in ("appstore.yank_version", "appstore.checkout.create", "appstore.refund",
+                   "backup.recovery_key"):
             env = await asyncio.wait_for(c.request_full(op, {"app_id": "x"}), timeout=1)
             assert env["ok"] is False and env["error_kind"] == "infra", (op, env)
         assert c._writer.buf == b""
+
+    asyncio.run(run())
+
+
+def test_backup_ops_go_to_the_door(pki, tmp_path):
+    """A member Host's backups travel through the door: each backup op the
+    Host's backup code sends is written to the connection, not answered
+    "not offered" here."""
+    p = _enrolled(pki, tmp_path / "passport")
+    ops = ("backup.upload.start", "backup.upload.part", "backup.upload.complete",
+           "backup.upload.abort", "backup.put_url", "backup.list", "backup.get_url",
+           "backup.drop", "backup.report")
+
+    async def run():
+        c = mc.MemberClient(p)
+        c._writer = _Writer()
+        c._connected = True
+        for op in ops:
+            c._writer.buf = b""
+            try:
+                await asyncio.wait_for(c.request_full(op, {"key": "k"}), timeout=0.3)
+            except asyncio.TimeoutError:
+                pass      # sent, and nothing answers in this test
+            sent = [json.loads(x) for x in c._writer.buf.splitlines() if x.strip()]
+            assert any(f.get("op") == op for f in sent), (op, c._writer.buf[:200])
 
     asyncio.run(run())
 

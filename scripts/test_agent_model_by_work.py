@@ -530,7 +530,7 @@ def main() -> int:
                 {"id": 1, "source_module": "scoped_agent", "model_id": "m", "provider": "p",
                  "purpose": "inference", "tokens_in": 1, "tokens_out": 1, "latency_ms": 1,
                  "metadata": json.dumps({"task_id": 446}), "created_at": now},
-                {"id": 2, "source_module": "thread_consolidator", "model_id": "m", "provider": "p",
+                {"id": 2, "source_module": "web_search", "model_id": "m", "provider": "p",
                  "purpose": "inference", "tokens_in": 1, "tokens_out": 1, "latency_ms": 1,
                  "metadata": json.dumps({"task_id": 9}), "created_at": now}]
             saved_bs = BS.get_pool
@@ -543,7 +543,7 @@ def main() -> int:
             check("F4 background activity names the agent by its task; other lanes are unchanged",
                   len(acts) == 2 and acts[0].get("detail") == "Agent 446, at work"
                   and acts[0].get("task_id") == 446 and acts[1].get("task_id") is None
-                  and acts[1].get("detail") == "Summarising a long conversation", acts)
+                  and acts[1].get("detail") == "Searching the web", acts)
         except Exception as e:  # noqa: BLE001 — a part that cannot run fails
             check("F ran", False, repr(e))
 

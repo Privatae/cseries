@@ -141,10 +141,12 @@ _hm = ME.history_messages([{"role": "assistant", "content": "", "platform_note":
 check("a cut that starts on a note-only reply drops the leading note (no history-first system note)",
       _hm and _hm[0] == {"role": "user", "content": "Go on."}, _hm)
 
-# ── the rolling summary's input carries the note ───────────────────────
-_tc_src = open(os.path.join(APP_ROOT, "brain/mastercode/thread_consolidator.py")).read()
-check("the rolling summary reads recalled turns through history_messages (the platform note rides along)",
-      "turns = _hm(turns)" in _tc_src)
+# ── no rolling summary reads the turns any more ─────────────────────────
+# The summary writer is retired (migrations/v241): what falls out of a
+# window rides as the Host's own close_turn notes (evicted_record), which
+# carry no platform note to keep apart.
+check("no rolling summary module ships (it read the turns outside the Host's turn)",
+      not os.path.exists(os.path.join(APP_ROOT, "brain/mastercode/thread_consolidator.py")))
 
 # ── a local route stores server text only for vLLM's templates ──────────
 from mastercode import provider_gateway as PG  # noqa: E402

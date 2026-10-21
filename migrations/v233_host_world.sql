@@ -236,6 +236,8 @@ GRANT USAGE ON SCHEMA public TO host_world;
 --   owner_account           the owner's sign-in: the scrypt hash of the password (v228)
 --   owner_sessions          the SHA-256 of every session cookie (v228)
 --   mcp_oauth_pending       an MCP sign-in in flight: its PKCE verifier (v239)
+--   owner_passkeys          the owner's passkeys: who can sign in to this Host (v240)
+--   owner_recovery_codes    the SHA-256 of each of the owner's recovery codes (v240)
 --
 -- CLOSED — not shown to be a secret, not shown to be safe. Unreadable until a
 -- reason moves it to READABLE or SECRET:
@@ -302,7 +304,8 @@ DECLARE
        'kernel_secrets', 'nac_agent_delegations', 'nac_agent_activity', 'vault_envelope',
        'local_backup_envelope', 'local_backup_blob', 'backup_user_key',
        'nac_connector_grants', 'nac_connector_caps',
-       'owner_account', 'owner_sessions', 'mcp_oauth_pending'
+       'owner_account', 'owner_sessions', 'mcp_oauth_pending',
+       'owner_passkeys', 'owner_recovery_codes'
     ];
     closed text[] := ARRAY[
        'app_config', 'host_backup_state', 'host_backup_runs', 'entity_registry', 'mcp_oauth'

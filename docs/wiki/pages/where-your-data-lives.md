@@ -36,4 +36,4 @@ On its own, a Host has no connection to a Privatae service, so it sends nothing.
 
 ## How are backups handled?
 
-The Backup tab in [Settings](wiki:settings-app) describes how backups are meant to work: encrypted on the Host, to keys you hold, before they leave. In this release a standalone Host cannot yet write or restore its own backups, so until that is finished the volumes on your machine are the only copy. Copying them is your own responsibility.
+Your Host backs itself up on the schedule in [Settings](wiki:settings-app), Backup: its database, its apps, files and settings, each app's own data and copies of its Git repositories, as one file encrypted on the Host to the recovery key you make in the Backups app and to any bastion you add. A Host on its own keeps the backups in a folder on your machine, or in your own S3-compatible bucket if you choose one; nothing goes to Privatae. A folder on the same machine does not protect against losing the machine, so download a backup now and then, or choose a bucket.

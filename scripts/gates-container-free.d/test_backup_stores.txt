@@ -1,0 +1,9 @@
+# 2026-10-20: where backups land besides the network (server/backup_stores.py).
+# The folder on this machine writes a hidden .part and renames it only when
+# whole, refuses a part that would leave the disk under its reserve, prunes in
+# pairs and never a protected stamp, and opens nothing through a link; the
+# owner's bucket sends each part with its MD5, retries, aborts the upload on
+# any failure and checks the object's size at the end (a stand-in S3 client);
+# the one-file download is a tar whose key file comes first and whose size is
+# known up front. Temp folders only; no network.
+test_backup_stores.py

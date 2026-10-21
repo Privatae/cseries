@@ -918,11 +918,15 @@ async def adopt_thread_core(
     leaves the conversation whole where it was typed and opens the project's
     thread with a marker linking back (tools.py _exec_create_project; the
     carry-forward it replaced moved the request and left the reply behind).
-    This is a retag, never a delete: rows get project_id + source_context
-    {project, N}, and every scoped view (general thread, project thread,
-    recall, threads/episodes) follows the tags. A marker turn stays behind
-    in the source thread so the move never reads as a disappearance —
-    that exact trust break is what this closes.
+    This is a retag, never a delete, in one transaction: the turns get
+    project_id + source_context {project, N}; what was learned from them
+    follows by the one rule every move takes (circles_threads.carry_learned:
+    said in the project, the records of what they did, slot scopes; no
+    project tag, as a row written in the project has none); every scoped
+    view (general thread, project thread, recall, threads/episodes) follows
+    the tags. A marker turn stays behind in the source thread so the move
+    never reads as a disappearance — that exact trust break is what this
+    closes.
 
     `kind` is the source scope's descriptor kind: 'app' (the original
     Circles conversation, 'circles'), 'thread' (a Circles thread the user
@@ -1029,168 +1033,122 @@ async def adopt_thread_core(
     params.append(project_id)
     pid_idx = len(params)
 
-    moved = await pool.fetch(
-        f"""
-        UPDATE entity_memory
-           SET project_id = ${pid_idx},
-               metadata = metadata
-                   || jsonb_build_object(
-                          'source_context', ${sctx_idx}::jsonb,
-                          'adopted_from',   ${from_idx}::jsonb,
-                          'adopted_at',     to_jsonb(now()::timestamptz))
-         WHERE {' AND '.join(where)}
-        RETURNING id, source_session, created_at
-        """, *params)
-
-    if moved and kind in ("thread", "project", "app"):
-        # A messaging connector's map rows follow the turns they belong to, so
-        # a reply in the messaging app to a moved message lands in the project
-        # (messaging connectors design 4.3).
-        from mastercode.circles_threads import canonical_id
-        from server.connectors.message_map import retag_moved
-
-        async def _staying() -> list:
-            return [r["created_at"] for r in await pool.fetch(
-                f"SELECT created_at FROM entity_memory WHERE {' AND '.join(scope_where)}",
-                *scope_params)]
-        src_ref = (str(ref).strip().lower() if kind == "app"
-                   else canonical_id(str(ref)) if kind == "thread" else str(ref))
-        await retag_moved(pool, entity_id, src=(kind, src_ref),
-                          dst=("project", str(project_id)), moved_rows=moved,
-                          staying_times=_staying)
-
+    # One transaction: the turns, what was learned from them, the connector
+    # map and the marker move together or not at all, so a failure halfway
+    # never leaves a turn in the project with what it taught still in the
+    # conversation it left (or the reverse).
+    from mastercode import circles_threads as _ct
     moved_memories = 0
-    if moved:
-        # Derived typed memories thread under the SAME source_context as the
-        # turns they were extracted from (memory_engine pass-through)
-        # and link back via source_session — retag those too, so project
-        # memory recall sees the knowledge, not just the transcript.
-        sessions = sorted({r["source_session"] for r in moved if r["source_session"]})
-        if sessions and source_project is not None:
-            res = await pool.execute(
-                """
+    async with pool.acquire() as conn:
+        async with conn.transaction():
+            moved = await conn.fetch(
+                f"""
                 UPDATE entity_memory
-                   SET project_id = $4,
+                   SET project_id = ${pid_idx},
                        metadata = metadata
                            || jsonb_build_object(
-                                  'source_context', $5::jsonb,
-                                  'adopted_from',   $6::jsonb)
-                 WHERE entity_id = $1
-                   AND memory_type <> 'turn'
-                   AND project_id = $3::int
-                   AND source_session = ANY($2::text[])
-                """,
-                entity_id, sessions, source_project, project_id, new_sctx, adopted_from)
-        elif sessions:
-            # A memory derived from a pre-descriptor session carries no
-            # source_context at all (memory_engine stamps one only when a
-            # turn in that session has one). The original Circles
-            # conversation's arm moves those sessions' turns, so their
-            # extracted knowledge follows them ($7); every other app source
-            # keeps the exact descriptor match.
-            follow_untagged = (kind == "app"
-                               and str(ref).strip().lower() == "circles")
-            res = await pool.execute(
-                """
-                UPDATE entity_memory
-                   SET project_id = $4,
-                       metadata = metadata
-                           || jsonb_build_object(
-                                  'source_context', $5::jsonb,
-                                  'adopted_from',   $6::jsonb)
-                 WHERE entity_id = $1
-                   AND memory_type <> 'turn'
-                   AND project_id IS NULL
-                   AND source_session = ANY($2::text[])
-                   AND (metadata->'source_context'->>'kind' = $3
-                        OR ($7::bool AND metadata->'source_context' IS NULL))
-                """,
-                entity_id, sessions, kind, project_id, new_sctx, adopted_from,
-                follow_untagged)
-        else:
-            res = "UPDATE 0"
-        if sessions:
-            try:
-                moved_memories = int(res.split()[-1])
-            except (ValueError, IndexError):
-                moved_memories = 0
-        if kind == "thread":
-            # A Circles thread's rows also move by what they were learned
-            # from: every row whose from_turns are all moved messages, and —
-            # the whole thread moving — every row still tagged with it. A row
-            # a delete of another thread moved INTO this one
-            # (circles_threads._keep_held) keeps the session it was learned
-            # in, which the match above goes by.
-            from mastercode import circles_threads as _ct
-            res2 = await pool.execute(
-                """
-                UPDATE entity_memory
-                   SET project_id = $2,
-                       metadata = metadata
-                           || jsonb_build_object(
-                                  'source_context', $3::jsonb,
-                                  'adopted_from',   $4::jsonb)
-                 WHERE entity_id = $1
-                   AND memory_type <> 'turn'
-                   AND project_id IS NULL
-                   AND ((jsonb_typeof(metadata->'from_turns') = 'array'
-                         AND jsonb_array_length(metadata->'from_turns') > 0
-                         AND (metadata->'from_turns') <@ $5::jsonb)
-                        OR ($6::bool
-                            AND metadata->'source_context'->>'kind' = 'thread'
-                            AND metadata->'source_context'->>'ref' = $7))
-                """,
-                entity_id, project_id, new_sctx, adopted_from,
-                json.dumps([int(r["id"]) for r in moved]), _since is None and _until is None,
-                str(_ct.descriptor_for(ref)["ref"]))
-            try:
-                moved_memories += int(str(res2).split()[-1])
-            except (ValueError, IndexError):
-                pass
+                                  'source_context', ${sctx_idx}::jsonb,
+                                  'adopted_from',   ${from_idx}::jsonb,
+                                  'adopted_at',     to_jsonb(now()::timestamptz))
+                 WHERE {' AND '.join(where)}
+                RETURNING id, source_session, created_at
+                """, *params)
 
-        # What the moved messages retired or closed moves with them, as the
-        # memories derived from them just did, so deleting the thread they
-        # left cannot restore a row the project's corrections still replace
-        # (circles_threads.carry_stamps, delete_thread). With no time window
-        # the whole conversation moved, so a stamp that records no messages
-        # (the Host's <outdated> skill event) moves too.
-        from mastercode import circles_threads as _ct
-        _src_scope = (_ct.descriptor_for(ref) if kind == "thread"
-                      else {"kind": kind, "ref": str(ref)})
-        await _ct.carry_stamps(
-            pool, entity_id, [int(r["id"]) for r in moved],
-            {"kind": "project", "ref": str(project_id)},
-            from_scope=_src_scope if _since is None and _until is None else None)
+            if moved and kind in ("thread", "project", "app"):
+                # A messaging connector's map rows follow the turns they belong
+                # to, so a reply in the messaging app to a moved message lands
+                # in the project (messaging connectors design 4.3).
+                from server.connectors.message_map import retag_moved
 
-        # The marker: one synthetic assistant turn left in the SOURCE thread.
-        # extracted_at is pre-stamped so the consolidator never mines it, and
-        # it deliberately carries no embedding — it's furniture, not knowledge.
-        marker_md = {
-            "role": "assistant",
-            "source_kind": "thread_marker",
-            "source_context": {"kind": kind, "ref": ref},
-            "marker": {"project_id": project_id, "project_name": proj["name"],
-                       "moved_turns": len(moved)},
-        }
-        if kind == "app":
-            marker_md["app_id"] = ref
-        if source_project is not None:
-            # The source is a project thread, which is read by project_id —
-            # the marker must carry it or it renders nowhere.
-            marker_md["app_id"] = "workbench"
-        await pool.execute(
-            """
-            INSERT INTO entity_memory
-              (entity_id, content, memory_type, importance, status,
-               source_session, project_id, metadata)
-            VALUES ($1, $2, 'turn', 0.1, 'active', $3, $4, $5::jsonb)
-            """,
-            entity_id,
-            f"→ Moved {len(moved)} messages into the project “{proj['name']}” "
-            f"— nothing was deleted; the conversation continues in that project's thread.",
-            f"adopt:{project_id}",
-            source_project,
-            json.dumps(marker_md))
+                async def _staying() -> list:
+                    return [r["created_at"] for r in await conn.fetch(
+                        f"SELECT created_at FROM entity_memory WHERE {' AND '.join(scope_where)}",
+                        *scope_params)]
+                src_ref = (str(ref).strip().lower() if kind == "app"
+                           else _ct.canonical_id(str(ref)) if kind == "thread" else str(ref))
+                await retag_moved(conn, entity_id, src=(kind, src_ref),
+                                  dst=("project", str(project_id)), moved_rows=moved,
+                                  staying_times=_staying)
+
+            if moved:
+                # What was learned from the moved messages follows them by the
+                # one rule every move takes (circles_threads.carry_learned): a
+                # row whose from_turns are all moved messages (a rule taught in
+                # one, what close_turn or memory_curate learned in its turn),
+                # and — the whole conversation moving, no time window — every
+                # row still said in it; the records of what those messages did
+                # (retired, closed, said again, taught); slot scopes. Never a
+                # project tag: a row said in the project by a fresh write has
+                # none, so a row moved there has none either.
+                whole = _since is None and _until is None
+                if kind == "thread":
+                    src_scope = _ct.descriptor_for(ref)
+                elif kind == "project":
+                    src_scope = {"kind": "project", "ref": str(source_project)}
+                elif kind == "app" and str(ref).strip().lower() == "circles":
+                    src_scope = {"kind": "app", "ref": "circles"}
+                else:
+                    src_scope = {"kind": kind, "ref": str(ref)}
+                moved_memories = await _ct.carry_learned(
+                    conn, entity_id, [int(r["id"]) for r in moved], src_scope,
+                    {"kind": "project", "ref": str(project_id)}, whole=whole, resync=False)
+                sessions = sorted({r["source_session"] for r in moved if r["source_session"]})
+                if sessions and kind == "app" and str(ref).strip().lower() == "circles":
+                    # A memory derived from a pre-descriptor session carries no
+                    # source_context at all (memory_engine stamps one only when
+                    # a turn in that session has one) and names no messages:
+                    # the original Circles conversation's arm moves those
+                    # sessions' turns, so what was derived there follows them.
+                    res = await conn.execute(
+                        """
+                        UPDATE entity_memory
+                           SET metadata = metadata
+                                   || jsonb_build_object(
+                                          'source_context', $3::jsonb,
+                                          'adopted_from',   $4::jsonb)
+                         WHERE entity_id = $1
+                           AND memory_type <> 'turn'
+                           AND status = 'active'
+                           AND source_session = ANY($2::text[])
+                           AND metadata->'source_context' IS NULL
+                           AND metadata->'from_turns' IS NULL
+                           AND metadata->'from_turn_tokens' IS NULL
+                        """,
+                        entity_id, sessions, new_sctx, adopted_from)
+                    moved_memories += _ct._count(res)
+                from mastercode.memory_slots import resync_scopes
+                await resync_scopes(conn, entity_id)
+
+                # The marker: one synthetic assistant turn left in the SOURCE
+                # thread. It deliberately carries no embedding — it's
+                # furniture, not knowledge.
+                marker_md = {
+                    "role": "assistant",
+                    "source_kind": "thread_marker",
+                    "source_context": {"kind": kind, "ref": ref},
+                    "marker": {"project_id": project_id, "project_name": proj["name"],
+                               "moved_turns": len(moved)},
+                }
+                if kind == "app":
+                    marker_md["app_id"] = ref
+                if source_project is not None:
+                    # The source is a project thread, which is read by
+                    # project_id — the marker must carry it or it renders
+                    # nowhere.
+                    marker_md["app_id"] = "workbench"
+                await conn.execute(
+                    """
+                    INSERT INTO entity_memory
+                      (entity_id, content, memory_type, importance, status,
+                       source_session, project_id, metadata)
+                    VALUES ($1, $2, 'turn', 0.1, 'active', $3, $4, $5::jsonb)
+                    """,
+                    entity_id,
+                    f"→ Moved {len(moved)} messages into the project “{proj['name']}” "
+                    f"— nothing was deleted; the conversation continues in that project's thread.",
+                    f"adopt:{project_id}",
+                    source_project,
+                    json.dumps(marker_md))
 
     logger.info("adopt_thread entity=%d project=%d src=%s:%s turns=%d memories=%d",
                 entity_id, project_id, kind, ref, len(moved), moved_memories)

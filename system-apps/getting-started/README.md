@@ -1,36 +1,38 @@
 # Getting Started
 
-The first-run walkthrough: six slides, one action each. An app slide has
-one button that opens the real app; when that app's window closes (or the
-user clicks back into the tour) the slide's live check runs, and a pass
-moves to the next slide. Skip is always there; nothing is a dead end.
+The first-run walkthrough: a short set of slides, one action each. An app
+slide has one button that opens the real app; when that app's window closes
+(or the user clicks back into the tour) the slide's live check runs, and a
+pass moves to the next slide. Every app slide can be skipped, and "Leave the
+tour" is always there.
 
-Auto-launches on boot until the user finishes or leaves the tour (see
-`dashboard/base/js/walkthrough-autolaunch.js`). Reopen from the dock any
-time; it picks up where things stand — a step already done on the host
-passes on its own.
+The shell opens it on boot until the tour is marked done, by finishing it or
+leaving it (`dashboard/base/js/walkthrough-autolaunch.js`). It can be reopened
+from the dock at any time; a step already done on the Host passes on its own.
 
 ## Files
 
-- `steps.js` — `GS_SLIDES`: every word and every check. Reorder freely.
+- `steps.js` — `GS_SLIDES`: every slide's words and its check.
 - `app.js` — the engine: render a slide → open the app → on the shell's
-  `window:closed` (carries `appId`, `dashboard/base/js/desktop.js`) or
-  window focus, run the check → pass advances, "not yet" keeps the slide.
+  `window:closed` event (which carries `appId`, `dashboard/base/js/desktop.js`)
+  or window focus, run the check → a pass advances, "not yet" keeps the slide.
 
 ## State
 
-The shell-trusted appearance lane, unchanged from v1:
+Progress is stored in the appearance settings:
 
 - read: `GET /api/appearance` → `desktop_layout.walkthrough`
-- write: `PUT /api/appearance/layout` with ONLY `{walkthrough: {done, step, steps}}`
+- write: `PUT /api/appearance/layout` with only `{walkthrough: {done, step, steps}}`
 
 ## Permissions
 
-Each scope backs one declared check; `scripts/test_app_manifest_scopes.py`
-proves the manifest covers every `endpoint:` in `steps.js`.
+The `read:` scopes in `app.yaml` back the slides' checks, and
+`write:appearance` covers saving progress. `scripts/test_app_manifest_scopes.py`
+checks that the manifest covers every `endpoint:` in `steps.js`.
 
 ## Distribution
 
-Image-baked (category 2 — NOT kernel-required): the id is in
-`scripts/image_baked_apps.txt`. Bump `version` in `app.yaml` and re-pack
-with `scripts/rebuild_factory_bundles.sh` on every change.
+The bundle ships inside the image (its id is in
+`scripts/image_baked_apps.txt`), but it is not kernel-required. On every
+change, bump `version` in `app.yaml` and re-pack with
+`scripts/rebuild_factory_bundles.sh`.

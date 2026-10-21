@@ -1,0 +1,2 @@
+# 2026-10-20: a backup this Host cannot confirm it made brings back no installed code (apps/, sdk/) and no installed_applications row; each app is installed again from the image, its project (the normal ship path) or the App Store, or marked to reinstall with why; each app's data still comes back. Crafted staged tree, forged rows, stand-in installs; no DB.
+test_restore_unverified_code.py

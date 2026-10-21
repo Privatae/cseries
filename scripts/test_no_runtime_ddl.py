@@ -322,6 +322,159 @@ NON_EXECUTED_DDL_MODULES: tuple[str, ...] = (
     "brain/mastercode/sandbox/test_sql_proxy.py",
 )
 
+# ── one named exception: a restore's load, in the restore's own database ──
+# A restore (server/host_restore.py) builds a SECOND database, hostmem_restore,
+# from this tree's own schema, loads a backup's rows into it, and swaps it in at
+# the next boot. Loading an older backup changes that database's shape for the
+# load and back: the columns the backup's COPY names that this version dropped
+# are added (_add_load_columns), the CHECKs are set aside (_set_checks_aside),
+# the rows the schema step put in are emptied (_load_rows), and at the boot,
+# once the migrations have run over the restored rows, what is left of the
+# load's own columns is dropped (settle). None of it touches the database the
+# Host is serving from, and none of it is schema a migration could declare: it
+# is the shape of one backup, for one load. So these four functions, and only
+# the DDL kinds named for each, are exempt, and only while every statement they
+# send goes through host_restore._psql to the named database:
+#   RESTORE_DB  the restore's own database, by its constant;
+#   db          settle's parameter, which is the restored database: settle is
+#               called only from carry() (checked below), which entrypoint.sh
+#               runs at boot after the swap and before the server starts, with
+#               the columns the restore's own plan says it added.
+# Re-validated every run (restore_load_faults): a function that holds other
+# DDL, sends a statement anywhere but _psql to that database, runs an
+# execute- or fetch-shaped call, holds no DDL any more, or (settle) is called
+# from anywhere but carry() fails the gate, and DDL anywhere else in the file
+# is counted like any other.
+RESTORE_LOAD_DDL: dict[tuple[str, str], tuple[frozenset[str], str, frozenset[str]]] = {
+    # (file, function): (DDL kinds, the db= its _psql calls must name,
+    #                    the functions of the file that may call it; empty = any)
+    ("server/host_restore.py", "_add_load_columns"): (frozenset({"ALTER TABLE"}), "RESTORE_DB", frozenset()),
+    ("server/host_restore.py", "_set_checks_aside"): (frozenset({"ALTER TABLE"}), "RESTORE_DB", frozenset()),
+    ("server/host_restore.py", "_load_rows"): (frozenset({"TRUNCATE"}), "RESTORE_DB", frozenset()),
+    ("server/host_restore.py", "settle"): (frozenset({"ALTER TABLE"}), "db", frozenset({"carry"})),
+}
+
+
+def _hits_in(tree: ast.AST) -> list[tuple[ast.AST, int, str, str]]:
+    """(literal node, statement line, kind, object) for every DDL statement,
+    as scan_source counts them."""
+    out = []
+    for node, raw in literal_texts(tree):
+        text = strip_sql_comments(raw)
+        for kind, rx in DDL_PATTERNS:
+            for m in rx.finditer(text):
+                out.append((node, _statement_line(node, text, m.start()), kind,
+                            _object_name(m.group(1))))
+    return out
+
+
+def _enclosing_function(tree: ast.Module, node: ast.AST) -> str | None:
+    """The module-level function a node sits in, by its lines."""
+    line = getattr(node, "lineno", 0)
+    for f in tree.body:
+        if (isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and f.lineno <= line <= (f.end_lineno or f.lineno)):
+            return f.name
+    return None
+
+
+def restore_load_faults(src: str, rel: str, filename: str = "<probe>",
+                        table: dict | None = None
+                        ) -> tuple[list[tuple[int, str, str]], list[tuple[int, str, str]], list[str]]:
+    """(exempt hits, counted hits, faults) of one file under RESTORE_LOAD_DDL.
+    A fault means an entry no longer holds what earned it: the gate fails."""
+    table = RESTORE_LOAD_DDL if table is None else table
+    tree = ast.parse(src, filename=filename)
+    entries = {fn: v for (path, fn), v in table.items() if path == rel}
+    funcs = {f.name: f for f in tree.body if isinstance(f, (ast.FunctionDef, ast.AsyncFunctionDef))}
+    faults: list[str] = []
+    psql = funcs.get("_psql")
+    if entries and (psql is None or "db" not in {a.arg for a in psql.args.args + psql.args.kwonlyargs}):
+        faults.append("it has no module-level _psql(..., db=...) for the exempt statements to go through")
+    for fn, (kinds, db_name, callers) in entries.items():
+        f = funcs.get(fn)
+        if f is None:
+            faults.append(f"{fn}() is gone: remove it from RESTORE_LOAD_DDL")
+            continue
+        for call in ast.walk(f):
+            if not isinstance(call, ast.Call):
+                continue
+            name = (call.func.id if isinstance(call.func, ast.Name)
+                    else call.func.attr if isinstance(call.func, ast.Attribute) else None)
+            if name == "_psql":
+                db = next((k.value for k in call.keywords if k.arg == "db"), None)
+                if not (isinstance(db, ast.Name) and db.id == db_name):
+                    faults.append(f"{fn}() line {call.lineno} sends a statement to another database "
+                                  f"than {db_name}")
+            elif isinstance(call.func, ast.Attribute) and name in _ANY_EXEC_METHODS:
+                faults.append(f"{fn}() line {call.lineno} runs .{name}(): its statements must all go "
+                              f"through _psql to {db_name}")
+        if callers:
+            for call in ast.walk(tree):
+                if (isinstance(call, ast.Call) and isinstance(call.func, ast.Name) and call.func.id == fn
+                        and _enclosing_function(tree, call) not in callers):
+                    faults.append(f"{fn}() is called at line {call.lineno}, outside "
+                                  f"{', '.join(sorted(callers))}()")
+    exempt, counted = [], []
+    held: dict[str, int] = {}
+    for node, line, kind, obj in _hits_in(tree):
+        fn = _enclosing_function(tree, node)
+        entry = entries.get(fn) if fn else None
+        if entry and kind in entry[0]:
+            exempt.append((line, kind, obj))
+            held[fn] = held.get(fn, 0) + 1
+        else:
+            counted.append((line, kind, obj))
+    for fn in entries:
+        if fn in funcs and not held.get(fn):
+            faults.append(f"{fn}() holds no exempt DDL any more: remove it from RESTORE_LOAD_DDL")
+    return exempt, counted, faults
+
+
+def restore_load_callers_elsewhere(files: list[Path]) -> list[str]:
+    """Files under ROOTS, other than the exempt functions' own, that call a
+    caller-restricted exempt function as an attribute (host_restore.settle)."""
+    restricted = {(path, fn) for (path, fn), (_, _, callers) in RESTORE_LOAD_DDL.items() if callers}
+    out = []
+    for p in files:
+        rel = p.relative_to(_ROOT).as_posix()
+        try:
+            src = p.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        for path, fn in restricted:
+            if rel == path or Path(path).stem not in src:
+                continue
+            try:
+                tree = ast.parse(src, filename=str(p))
+            except SyntaxError:
+                continue
+            module = path[:-3].replace("/", ".")
+            stem = Path(path).stem
+            bound: set[str] = set()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.ImportFrom):
+                    for a in node.names:
+                        if node.module == module and a.name == fn:
+                            bound.add("")       # the function itself, imported
+                        elif a.name == stem and (node.module or "") == module.rsplit(".", 1)[0]:
+                            bound.add(a.asname or a.name)
+                elif isinstance(node, ast.Import):
+                    for a in node.names:
+                        if a.name == module:
+                            bound.add(a.asname or a.name)
+            for call in ast.walk(tree):
+                if not isinstance(call, ast.Call):
+                    continue
+                if "" in bound and isinstance(call.func, ast.Name) and call.func.id == fn:
+                    out.append(f"{rel}:{call.lineno} calls {fn}() ({path} allows only "
+                               f"{', '.join(sorted(RESTORE_LOAD_DDL[(path, fn)][2]))}())")
+                elif (isinstance(call.func, ast.Attribute) and call.func.attr == fn
+                        and (_dotted(call.func.value) or "") in bound):
+                    out.append(f"{rel}:{call.lineno} calls .{fn}() ({path} allows only "
+                               f"{', '.join(sorted(RESTORE_LOAD_DDL[(path, fn)][2]))}())")
+    return out
+
 # What "the Postgres lane" looks like in this repo: 20 modules under server/
 # import asyncpg (89 repo-wide), and get_pool appears 397 times under server/.
 _PG_IMPORTS = {"asyncpg", "psycopg", "psycopg2"}
@@ -1150,6 +1303,49 @@ def _self_test() -> int:
         print("FAIL: the fixture classifier ACCEPTED DDL that IS executed. "
               "Fix fixture_faults().")
         return 2
+    return _self_test_restore_load()
+
+
+def _self_test_restore_load() -> int:
+    """RESTORE_LOAD_DDL's negative controls: the exception holds only for the
+    named functions, the named kinds, and statements sent through _psql to the
+    named database; everything else in the file is counted."""
+    rel = "server/probe_restore.py"
+    table = {(rel, "_load_rows"): (frozenset({"TRUNCATE"}), "RESTORE_DB", frozenset()),
+             (rel, "settle"): (frozenset({"ALTER TABLE"}), "db", frozenset({"carry"}))}
+    head = ("RESTORE_DB = 'r'\n"
+            "def _psql(*c, db='postgres'):\n    return c\n")
+    good = (head
+            + "def _load_rows(t):\n    _psql(f'TRUNCATE {t} RESTART IDENTITY', db=RESTORE_DB)\n"
+            + "def settle(db, t, c):\n    _psql(f'ALTER TABLE {t} DROP COLUMN IF EXISTS {c}', db=db)\n"
+            + "def carry(live):\n    return settle(live, 't', 'c')\n")
+    exempt, counted, faults = restore_load_faults(good, rel, table=table)
+    if len(exempt) != 2 or counted or faults:
+        print(f"FAIL: RESTORE_LOAD_DDL refused its own good case ({exempt}, {counted}, {faults}). "
+              "Fix restore_load_faults().")
+        return 2
+    bad = {
+        "a statement sent to the live database": good.replace(
+            "RESTART IDENTITY', db=RESTORE_DB", "RESTART IDENTITY', db=LIVE"),
+        "a statement run on a pool": good.replace(
+            "def _load_rows(t):\n", "def _load_rows(t, pool=None):\n    pool.execute('SELECT 1')\n"),
+        "settle called from outside carry": good + "def boot():\n    settle('x', 't', 'c')\n",
+        "the exempt function gone": good.replace("def settle(db, t, c)", "def settled(db, t, c)"),
+    }
+    for why, src in bad.items():
+        if not restore_load_faults(src, rel, table=table)[2]:
+            print(f"FAIL: RESTORE_LOAD_DDL accepted {why}. Fix restore_load_faults().")
+            return 2
+    counted_cases = {
+        "a kind the function is not named for (CREATE ROLE)": good.replace(
+            "def _load_rows(t):\n", "def _load_rows(t):\n    _psql('CREATE ROLE x LOGIN', db=RESTORE_DB)\n"),
+        "DDL in a function that is not named": good + "def other(t):\n    _psql(f'ALTER TABLE {t} ADD COLUMN c int', db=RESTORE_DB)\n",
+        "DDL at module level": good + "SQL = 'CREATE TABLE IF NOT EXISTS y (i int)'\n",
+    }
+    for why, src in counted_cases.items():
+        if not restore_load_faults(src, rel, table=table)[1]:
+            print(f"FAIL: RESTORE_LOAD_DDL exempted {why}: it must be counted. Fix restore_load_faults().")
+            return 2
     return 0
 
 
@@ -1264,11 +1460,21 @@ def main() -> int:
     ddl_by_file: dict[str, list[tuple[int, str, str]]] = {}
     total = 0
     skipped_statements = 0
+    restore_load_statements = 0
+    restore_files = {p for p, _ in RESTORE_LOAD_DDL}
+    for rel in sorted(restore_files):
+        if not (_ROOT / rel).is_file():
+            broken_skips.append((rel, ["the file does not exist: remove it from RESTORE_LOAD_DDL"]))
     for path in files:
         rel = path.relative_to(_ROOT).as_posix()
         try:
             src = path.read_text(encoding="utf-8")
             hits = scan_source(src, filename=str(path))
+            if rel in restore_files:
+                exempt, hits, faults = restore_load_faults(src, rel, filename=str(path))
+                restore_load_statements += len(exempt)
+                if faults:
+                    broken_skips.append((rel, [f"RESTORE_LOAD_DDL: {f}" for f in faults]))
         except (OSError, SyntaxError, UnicodeDecodeError) as exc:
             print(f"FAIL: cannot read or parse {rel}: {exc!r}")
             print("      A file under a scanned root that this gate cannot parse is a "
@@ -1281,6 +1487,10 @@ def main() -> int:
             continue
         ddl_by_file[rel] = hits
         total += len(hits)
+
+    elsewhere = restore_load_callers_elsewhere(files)
+    if elsewhere:
+        broken_skips.append(("RESTORE_LOAD_DDL callers", elsewhere))
 
     unclaimed, rc = _unclaimed_roots()
     if rc:
@@ -1433,6 +1643,9 @@ def main() -> int:
         skipped = (f" {skipped_statements} more in {len(skipped_ok)} re-validated "
                    "skip-list module(s) — SQLite, and DDL that is inert test data — "
                    "are out of scope.")
+    if restore_load_statements:
+        skipped += (f" {restore_load_statements} more are a restore's load in its own database "
+                    "(RESTORE_LOAD_DDL, re-validated).")
 
     if not allowed:
         print(f"PASSED: no PostgreSQL runtime DDL anywhere in {scanned} and the allowlist "

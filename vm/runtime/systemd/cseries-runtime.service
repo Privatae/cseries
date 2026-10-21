@@ -1,0 +1,22 @@
+# The local runtime: starts the containers the Host asks for (its connectors,
+# creative engines, browser and coding engines) with podman, as root, because
+# rootful podman is. Its defence is that every request is checked and every
+# podman argument list is built from constants (/usr/local/lib/cseries-runtime).
+# The socket starts it; on start it removes every container it left before.
+[Unit]
+Description=C-Series local runtime
+Requires=cseries-runtime.socket cseries-apps-network.service
+After=cseries-runtime.socket cseries-apps-network.service cseries-runtime-firewall.service
+Wants=cseries-squid.service cseries-runtime-firewall.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/cseries-runtime
+SyslogIdentifier=cseries-runtime
+Restart=on-failure
+RestartSec=5
+UMask=0077
+ProtectClock=yes
+# Containers it started stop with it (KillMode=control-group would reach
+# them only through conmon; startup removes whatever is left anyway).
+TimeoutStopSec=60

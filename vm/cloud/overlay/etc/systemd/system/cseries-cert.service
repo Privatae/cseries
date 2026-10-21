@@ -1,0 +1,16 @@
+# The box's wildcard certificate, from Let's Encrypt by DNS-01 through
+# acme-dns (cseries-cert). With no certificate yet it asks for one; after
+# that it renews within 30 days of expiry. A failed attempt is tried again
+# 20 minutes later, which stays under Let's Encrypt's five failed
+# validations per hour for a name.
+[Unit]
+Description=C-Series Cloud certificate
+Wants=network-online.target
+After=network-online.target cseries-firewall.service
+StartLimitIntervalSec=0
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/cseries-cert
+Restart=on-failure
+RestartSec=20min

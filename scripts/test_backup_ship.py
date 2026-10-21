@@ -364,6 +364,11 @@ class Pool:
                     src = None
             if not src:
                 return None
+            # The places a run's file may be sent FROM, as the query names them.
+            if "STORED IN (" in u:
+                allowed = u.split("STORED IN (", 1)[1].split(")", 1)[0]
+                if f"'{str(src.get('stored')).upper()}'" not in allowed:
+                    return None
             SIGNED["url"] = src.get("url")
             return {"id": src["export_id"], "object_key": src["s3_key"],
                     "sidecar_key": src.get("sidecar_key"),
@@ -487,16 +492,28 @@ def _main() -> int:
     srv.socket = ctx.wrap_socket(srv.socket, server_side=True)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     base = f"https://127.0.0.1:{port}"
+    # The bucket's address must be on the public internet (backup_stores
+    # endpoint_problem, held before the client is made and before each request
+    # it sends). This gate's destination is on loopback, so that one address,
+    # and only it, is let through for the transfers; "the bucket's address"
+    # below puts the whole check back.
+    from server import backup_stores as _stores
+    _real_problem = _stores.endpoint_problem
+
+    def _fixture_only(host, port_=None):
+        return None if (host, port_) == ("127.0.0.1", port) else _real_problem(host, port_)
+    _stores.endpoint_problem = _fixture_only
 
     # An artifact bigger than one part, so multipart is genuinely exercised.
     artifact = os.urandom(BS.PART_BYTES + 5_000_000)
     sha = hashlib.sha256(artifact).hexdigest()
     STATE.objects["source/artifact.tar.zst.age"] = artifact
 
+    # stored: every run with a file records where it is (host_backup._run).
     source = {"export_id": 42, "s3_key": "entity-9003/exports/42-x.tar.zst.age",
               "url": f"{base}/src/source/artifact.tar.zst.age",
               "url_expires_at": None, "size_bytes": len(artifact),
-              "sha256": sha, "snapshot_time": None}
+              "sha256": sha, "snapshot_time": None, "stored": "backup"}
     target = {"kind": "s3", "address": "bucket", "cred_name": "k",
               "endpoint": base, "prefix": "backups"}
 
@@ -585,6 +602,57 @@ def _main() -> int:
     check("  and the multipart upload was ABORTED, not abandoned",
           len(STATE.aborted) == 1, f"aborted={STATE.aborted}")
     STATE.fail_on_complete = False
+
+    # THE BUCKET'S ADDRESS. The second copy goes to an address the owner
+    # typed, from inside the Host, beside services no Host may reach: it is
+    # held to the public internet as the owner's bucket is for the backups
+    # (backup_stores.check_endpoint), before the client is made and again
+    # before each request. No request leaves this gate: the HTTP layer is
+    # stopped, and names are answered here.
+    print("the bucket's address:")
+    import botocore.httpsession as _hs
+    _stores.endpoint_problem = _real_problem
+    _real_resolve, _real_send = _stores._resolve, _hs.URLLib3Session.send
+    asked: dict = {}
+    ADDRS = {"inside.ship.test": [["10.20.30.40"]],
+             "turns.ship.test": [["34.120.0.20"], ["10.9.8.7"]]}
+
+    def _resolve(host, port_):
+        n = asked[host] = asked.get(host, 0) + 1
+        answers = ADDRS.get(host) or [[]]
+        return list(answers[min(n, len(answers)) - 1])
+    sent: list = []
+
+    def _no_send(self, request):
+        sent.append(request.url)
+        raise RuntimeError("no request leaves this gate")
+    _stores._resolve, _hs.URLLib3Session.send = _resolve, _no_send
+    try:
+        for endpoint, label, why in (
+                (base, "this machine (the gate's own bucket, on loopback)", "127.0.0.1"),
+                ("https://inside.ship.test", "a name for an address on a private network", "10.20.30.40"),
+                ("https://169.254.169.254", "the cloud machine's metadata service", "169.254.169.254"),
+                ("https://turns.ship.test", "a name that answers a private address once the client is made",
+                 "10.9.8.7")):
+            STATE.objects.clear()
+            STATE.objects["source/artifact.tar.zst.age"] = artifact
+            sent.clear()
+            pool = Pool(source)
+            try:
+                asyncio.run(BS.ship_now(pool, 3, dict(target, endpoint=endpoint)))
+                check(f"the second copy is not sent to {label}", False, "it shipped")
+            except BS.ShipError as e:
+                check(f"the second copy is not sent to {label}",
+                      e.reason == "egress_blocked" and why in e.detail, (e.reason, e.detail[:200]))
+            check("  nothing was sent to it, and the attempt is logged failed with that class",
+                  not sent and not any(k.startswith("backups/") for k in STATE.objects)
+                  and pool.rows[-1]["state"] == "failed" and pool.rows[-1]["reason"] == "egress_blocked",
+                  (sent, sorted(STATE.objects), pool.rows[-1]))
+        check("the name was asked again before the request, not only when the client was made",
+              asked.get("turns.ship.test") == 2, asked)
+    finally:
+        _stores._resolve, _hs.URLLib3Session.send = _real_resolve, _real_send
+        _stores.endpoint_problem = _fixture_only
 
     # ── the "my own machine" kind: the dispatch half ─────────────────────
     # The bastion half has its own 12 tests in the gateway source
@@ -990,7 +1058,18 @@ def _main() -> int:
     finally:
         _hb.call = _real_call
 
+    # A backup written straight to the owner's bucket or to a folder on the
+    # machine (server/host_backup.py, where s3 / local) is already where it
+    # goes: there is nothing in the network's storage to send it from.
+    print("written where it goes:")
+    for stored in ("local", "s3"):
+        got = asyncio.run(BS.get_source(Pool(dict(source, stored=stored))))
+        check(f"a run stored {stored!r} is never taken as something to send", got is None, got)
+    check("a run in the network's storage still is",
+          asyncio.run(BS.get_source(Pool(dict(source, stored="backup")))) is not None)
+
     srv.shutdown()
+    _stores.endpoint_problem = _real_problem
     return FAILED
 
 

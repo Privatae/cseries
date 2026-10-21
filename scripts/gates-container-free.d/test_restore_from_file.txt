@@ -1,0 +1,7 @@
+# 2026-10-20: a backup file the owner uploads to restore from
+# (server/host_restore.py receive_upload). Key file whole, then the backup in
+# pieces at the offset the Host already holds (a dropped connection carries on
+# from there); a body carrying a private key is refused wherever it falls,
+# across a piece boundary too; the room the machine needs to run is kept; one
+# upload at a time, never one a restore is reading. Temp folders only.
+test_restore_from_file.py

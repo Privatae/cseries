@@ -162,6 +162,7 @@ async def run_classify_phase(job_dir: Path, meta: dict) -> AsyncIterator[dict]:
                 if status.get("processing_status") == "ended":
                     break
             results_text = await _fetch_results_byok(http, api_key, status["results_url"])
+        await _log_batch_spend(results_text, meta.get("entity_id"))
         all_recs, not_classified = _persist_results(classified_path, pairs, results_text)
     else:
         # The platform-billed batch lane is RETIRED (compute-only billing — the bridge's inference.batches.classify op
@@ -508,6 +509,40 @@ async def _poll_batch_byok(http, api_key, batch_id):
         if d.get("processing_status") == "ended":
             break
         await asyncio.sleep(15)
+
+
+async def _log_batch_spend(results_text: str, entity_id) -> None:
+    """The classifier batch's model calls, in the one cost ledger
+    (inference_cost_log, source 'training_memory'), so the owner's activity
+    feed and the Compute app show what the run spent: the usage every result
+    line reports, summed into one row per batch. Priced at the model's list
+    rate (the gateway's estimator); the Message Batches API bills less, which
+    the row's metadata says. Never raises: a run is never failed by its
+    record."""
+    tin = tout = n = 0
+    for line in (results_text or "").splitlines():
+        try:
+            rec = json.loads(line)
+        except (TypeError, ValueError):
+            continue
+        usage = ((rec.get("result") or {}).get("message") or {}).get("usage") or {}
+        if not usage:
+            continue
+        n += 1
+        tin += (int(usage.get("input_tokens") or 0) + int(usage.get("cache_read_input_tokens") or 0)
+                + int(usage.get("cache_creation_input_tokens") or 0))
+        tout += int(usage.get("output_tokens") or 0)
+    if not n:
+        return
+    try:
+        from mastercode.provider_gateway import _log_inference
+        await _log_inference("training_memory", HAIKU_MODEL, "anthropic", tin + tout,
+                             prompt_tokens=tin, completion_tokens=tout,
+                             entity_id=int(entity_id) if entity_id is not None else None,
+                             metadata={"requests": n, "batch": True,
+                                       "note": "Message Batches API; priced here at the list rate"})
+    except Exception as e:  # noqa: BLE001
+        logger.warning("training memory: batch spend not logged: %s", e)
 
 
 async def _fetch_results_byok(http, api_key, url):

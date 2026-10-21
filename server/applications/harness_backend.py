@@ -126,7 +126,15 @@ def known_image(app_id: str) -> str | None:
 def _entity_broker_addr() -> str:
     """The entity pod's own address a workload on the harness pool dials.
     StatefulSet pod DNS: <pod>.<svc>.<ns>.svc — pod/svc/ns all = entity-<id>. The
-    kernel serves on 8800 (same port the kubelet health-probes)."""
+    kernel serves on 8800 (same port the kubelet health-probes).
+
+    On a machine whose local runtime starts the containers, they dial this
+    Host on its fixed address on the runtime's network instead
+    (CSERIES_RUNTIME_KERNEL_ADDR): the cluster name means nothing there."""
+    from server.applications.local_runtime import kernel_addr
+    local = kernel_addr()
+    if local:
+        return local
     eid = os.environ.get("ENTITY_ID", "").strip()
     if not eid:
         return ""
@@ -145,9 +153,11 @@ def kernel_routable_base() -> str:
 
 
 def _bridge():
+    """Where this lane's container operations go: the machine's local runtime
+    when it has one, the bridge otherwise (local_runtime.runtime_client)."""
     try:
-        from server.main import get_bridge_client
-        return get_bridge_client()
+        from server.applications.local_runtime import runtime_client
+        return runtime_client()
     except Exception:
         return None
 
@@ -193,7 +203,9 @@ async def _wake(harness_id: str, creds: dict | None = None) -> dict:
     except Exception as e:
         return {"ok": False, "error": str(e)}
     if not env.get("ok"):
-        return {"ok": False, "error": env.get("error") or "wake failed"}
+        # `code` is the refusal's own status (the operator's through the
+        # bridge, the local runtime's): wake_refused reads it.
+        return {"ok": False, "error": env.get("error") or "wake failed", "code": env.get("code")}
     # This lane holds the pod now (cold open or a lease re-stamp): a release
     # retry still waiting on it must abandon, not scale it to 0 under us.
     from server.bridge.bridge_client import note_harness_wake
@@ -512,6 +524,12 @@ async def _release_and_bill(app_id: str, harness_id: str) -> None:
             return
         data = env.get("data") or {}
         dur = data.get("ready_duration_s")
+        if data.get("billing") == "none":
+            # The owner's own machine ran it (the local runtime): nothing is
+            # billed, and nothing is left unbilled.
+            log.info("harness %s released (app %s) after %.0fs on this machine", harness_id,
+                     app_id, dur or 0)
+            return
         # What the pod RAN AT. The operator reports the vCPU limit of the
         # window it just closed (the per-run bump annotation, else the limit
         # rendered into the Deployment); the bridge prices compute_s × vcpus.
@@ -606,9 +624,9 @@ async def ensure_awake(app_id: str, harness_id: str) -> str | None:
             # Kept for a caller that has to tell a person WHY (wake_refusal):
             # "no browser" because the plan is full reads very differently
             # from "no browser" because something broke.
-            st["wake_error"] = str(res.get("error") or "")[:2000]
+            _note_wake_failure(st, res)
             return None
-        st.pop("wake_error", None)
+        _note_wake_failure(st, None)
         st["url"] = res["url"]
         if isinstance(res.get("image"), str) and res["image"]:
             _last_image[app_id] = res["image"]
@@ -649,10 +667,20 @@ _OVER_PLAN_RE = re.compile(r"/harness/wake 402: (\{.*\})\s*$", re.S)
 _OVER_PLAN_RE_ANY = re.compile(r"\b402\b.*capability_over_plan", re.S)
 
 
-def wake_refusal(app_id: str) -> dict | None:
-    """Why the last wake of this app's harness failed, when the PLAN refused
-    it: {needs_mi, headroom_mi, upgrade_to, pool_add_mi}. None when the last
-    wake did not fail that way (or never failed)."""
+def _note_wake_failure(st: dict, res: dict | None) -> None:
+    """Keep the last failed wake's error and status on the lane's state, or
+    clear them (res None) when a wake lands."""
+    if res is None:
+        st.pop("wake_error", None)
+        st.pop("wake_code", None)
+        return
+    st["wake_error"] = str(res.get("error") or "")[:2000]
+    st["wake_code"] = res.get("code")
+
+
+def _over_plan(app_id: str) -> dict | None:
+    """The 402 payload of the last wake's refusal, when the plan or this
+    machine had no room ({error: capability_over_plan, needs_mi, ...})."""
     err = (_state.get(app_id) or {}).get("wake_error") or ""
     m = _OVER_PLAN_RE.search(err)
     if not m:
@@ -664,7 +692,80 @@ def wake_refusal(app_id: str) -> dict | None:
     d = d.get("detail") if isinstance(d, dict) and isinstance(d.get("detail"), dict) else d
     if not isinstance(d, dict) or d.get("error") != "capability_over_plan":
         return None
-    return {k: d.get(k) for k in ("needs_mi", "headroom_mi", "upgrade_to", "pool_add_mi")}
+    return d
+
+
+def wake_refusal(app_id: str) -> dict | None:
+    """Why the last wake of this app's harness failed, when the plan or this
+    machine had no room: {needs_mi, headroom_mi, upgrade_to, pool_add_mi,
+    scope}; scope "machine" is this machine's local runtime, anything else a
+    plan. None when the last wake did not fail that way (or never failed)."""
+    d = _over_plan(app_id)
+    if d is None:
+        return None
+    return {k: d.get(k) for k in ("needs_mi", "headroom_mi", "upgrade_to", "pool_add_mi", "scope")}
+
+
+# Refusals whose text the local runtime writes for the owner to read: a short
+# disk (507: the floor, and each app's data, largest first) and a machine that
+# started or runs too many containers (429). The bridge relays an operator's
+# refusal as "operator /<path> <code>: <body>", which is not written for a
+# person, so only the runtime's own text is passed on.
+_PEOPLE_CODES = frozenset({429, 507})
+
+# Control characters, and the ones that reorder text: the same set Settings'
+# oneLine() replaces before it shows what the Host says.
+_UNSHOWABLE_RE = re.compile(
+    "[\u0000-\u001f\u007f-\u009f\u061c\u200e\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069]")
+_REFUSAL_MAX = 1000
+
+
+def one_line(text: str, limit: int = _REFUSAL_MAX) -> str:
+    """Text made one line and plain: every control or reordering character a
+    space, runs of spaces one, at most `limit` characters. The refusal's text
+    can carry app ids, and is shown as text only."""
+    s = re.sub(r" {2,}", " ", _UNSHOWABLE_RE.sub(" ", str(text or ""))).strip()
+    return s if len(s) <= limit else s[:limit - 1].rstrip() + "…"
+
+
+def wake_refused(app_id: str) -> dict | None:
+    """Why the last wake of this app's container was refused, in words the
+    owner and the Host can act on: {"code": 402|429|507, "message": one line}.
+    402 is a plan or this machine with no room for it (the sentence is
+    composed here from the numbers, as installer.AppRuntimeOverPlan does);
+    429 and 507 carry the local runtime's own text. None when the last wake
+    did not fail that way (or never failed): still starting, or broken."""
+    st = _state.get(app_id) or {}
+    err = str(st.get("wake_error") or "")
+    if not err:
+        return None
+    d = _over_plan(app_id)
+    if d is not None:
+        need, free = d.get("needs_mi"), d.get("headroom_mi")
+        where = "this machine" if d.get("scope") == "machine" else "this plan"
+        if d.get("reason") == "pressure":
+            text = (f"{app_id} was not started: {where}'s memory is under pressure right now"
+                    + (f" and it needs {need} MiB" if need is not None else ""))
+        else:
+            text = (f"{where} has no room for {app_id} right now"
+                    + (f": it needs {need} MiB and {free} MiB are free" if need is not None else ""))
+        if d.get("upgrade_to"):
+            text += f" (the {d['upgrade_to']} plan has room for it)"
+        return {"code": 402, "message": one_line(text)}
+    try:
+        code = int(st.get("wake_code"))
+    except (TypeError, ValueError):
+        return None
+    if code in _PEOPLE_CODES and not err.startswith("operator /"):
+        return {"code": code, "message": one_line(err)}
+    return None
+
+
+def wake_refused_words(app_id: str) -> str:
+    """": <why>" for a caller's sentence about a wake that did not land, or
+    "" when the last wake was not refused that way (wake_refused)."""
+    why = wake_refused(app_id)
+    return f": {why['message']}" if why else ""
 
 
 def upstream_host(app_id: str) -> str | None:
@@ -755,7 +856,7 @@ async def _wake_app_once(bc, app_id: str, creds: dict | None, nac_connector) -> 
     except Exception as e:
         return {"ok": False, "error": str(e)}
     if not env.get("ok"):
-        return {"ok": False, "error": env.get("error") or "wake failed"}
+        return {"ok": False, "error": env.get("error") or "wake failed", "code": env.get("code")}
     # Same as _wake: a pending release retry for this pod must yield to us.
     from server.bridge.bridge_client import note_harness_wake
     note_harness_wake({"app_rt": app_id})
@@ -789,6 +890,13 @@ async def ensure_awake_app(app_id: str) -> str | None:
     if rt and not rt.done():
         rt.cancel()
         st["release_task"] = None
+    from server.applications import local_runtime
+    if local_runtime.exporting_app_data(app_id):
+        # Paused while a backup copies its data: the cached address below
+        # would be dialled straight into a frozen process, and the request
+        # would wait until the copy ends. Not a failed wake (no backoff, the
+        # address kept): the caller answers still starting (proxy._not_awake).
+        return None
     if st.get("url"):
         now = time.monotonic()
         if now - (st.get("stamped_at") or 0) > HARNESS_LEASE_HEARTBEAT_S:
@@ -843,7 +951,11 @@ async def ensure_awake_app(app_id: str) -> str | None:
         if not res.get("ok") or not res.get("url"):
             log.warning("app-rt %s wake failed: %s", app_id, res.get("error"))
             st["cold_failed_at"] = time.monotonic()
+            # Kept, as the harness lane keeps it, for whoever asked for the
+            # wake to say why (wake_refused); read through the backoff above.
+            _note_wake_failure(st, res)
             return None
+        _note_wake_failure(st, None)
         st["url"] = res["url"]
         st["stamped_at"] = time.monotonic()
         st["cold_failed_at"] = None
@@ -902,6 +1014,9 @@ async def _release_and_bill_app(app_id: str) -> None:
             return
         data = env.get("data") or {}
         dur = data.get("ready_duration_s")
+        if data.get("billing") == "none":
+            log.info("app-rt %s released after %.0fs on this machine", app_id, dur or 0)
+            return
         # What the pod RAN AT: an app may declare a CPU ceiling above 1
         # (manifest resources.vcpus), and the operator reports the
         # ceiling of the window it closed, as it does for a harness. Dropping

@@ -510,6 +510,16 @@ async def executor_checks(dsn, snapdir: pathlib.Path):
         check("C a snapshot without the guard is never replayed",
               r["status"] == "error" and "17.6" in r["result"], str(r))
         bare.unlink()
+        # A snapshot file is on the state volume, which a restored backup brings
+        # back: one that lifts its own guard and then runs a program.
+        ran = snapdir / "planted-program-ran"
+        planted = snapdir / "20261016T000000000001Z-manual.sql"
+        planted.write_text("\\restrict Inv3nted0Key\n--\n\\unrestrict Inv3nted0Key\n"
+                           f"\\! touch {ran}\nSELECT 1;\n")
+        r = world_db.restore(planted.stem, hw_dsn, snapdir)
+        check("C a snapshot that lifts its own guard runs no program, and is refused",
+              not ran.exists() and r["status"] == "error", str(r))
+        planted.unlink()
         async with pool.acquire() as c:
             await c.execute("CALL world_admin.empty_world()")
         n = len(list(snapdir.glob("*.sql")))
@@ -608,7 +618,7 @@ async def restore_checks(dsn):
         if port:
             os.environ["PGPORT"] = port
         try:
-            note = hr._load_database(spool)
+            note = (hr._load_database(spool) or {}).get("note")
             loaded = True
         except Exception as e:      # noqa: BLE001 — reported as the check's detail
             loaded, note = False, repr(e)

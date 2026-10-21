@@ -112,6 +112,10 @@ _ALLOWLIST_PREFIXES = (
     # An MCP server's sign-in coming back (server/mcp_oauth.py): the same kind
     # of top-level redirect, bound by the pending sign-in its state names.
     "/api/mcp/oauth/callback",
+    # A data provider's sign-in coming back (routes/integrations.py): the same
+    # kind of redirect, bound by a state this Host minted and spends there
+    # (integrations/core/oauth.claim_state).
+    "/api/integrations/callback/",
     # A messaging connector app's own pod: no app window, so no app token. Every route under it
     # checks the connector capability in its dependency
     # (routes/connector.require_connector_cap); mirrors its exemption from the
@@ -131,6 +135,15 @@ _ALLOWLIST_PREFIXES = (
     # ticket the host minted for that machine and that row. The route takes no
     # ctx_id, so this exemption grants no read of anything.
     "/api/network/bastions/context-source",
+    # A one-time download link for one backup on this machine (routes/backup.py
+    # download_backup_link): the browser follows it as a plain navigation, which
+    # carries no app token. The link authenticates itself: minted only for a
+    # window holding read:backup_settings, spent on first use, good for a
+    # minute, and only on the origin of the window that asked for it. The
+    # trailing slash keeps every other /api/backup/files route behind its token
+    # (and /files/{stamp}/download, which a path under this prefix can also
+    # name, has its own scope check).
+    "/api/backup/files/download/",
 )
 
 _ID_SEG = re.compile(r"^(?:[0-9]+|[0-9a-fA-F]{16,}|[0-9a-fA-F-]{32,})$")

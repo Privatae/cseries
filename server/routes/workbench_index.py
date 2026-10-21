@@ -13,14 +13,18 @@ types something they remember, or simply their message.
        time. The route is in routes/projects.py, beside the Start dialog's
        /search: registered there before /{project_id}, and in the area the
        Host's project tools cover, as /search is.
-  POST /api/workbench/index/send    Enter in "send" mode: the Host picks the
-       page (connectors/thread_pick.choose_page) from the pages this search
-       ranks first for the message and the open page, an archived pick is
-       restored, a "new" pick is a new project, the pick is written on the
-       page, and the person's turn starts there through the call POST
-       /api/brain/messages makes. A failed pick starts nothing and hands the
-       pages back so the person can say which. The person's own message:
-       walled from the Host (runtime/kernel_ops._WALLED_PATHS).
+  POST /api/workbench/index/send    Enter in "send" mode: the message is
+       placed in software, with no model call. A page among the ones this
+       search ranks first whose conversation clearly matches the message
+       (connectors/thread_pick.page_scores, clear_match) takes it, an
+       archived one restored; otherwise the page the person has open takes
+       it, and the Host's own turn may move the exchange to one of those
+       pages (runtime/thread_choice). The placement is written on the page,
+       and the person's turn starts there through the call POST
+       /api/brain/messages makes. With no clear match and no page open
+       nothing starts, and the pages go back so the person can say which.
+       The person's own message: walled from the Host
+       (runtime/kernel_ops._WALLED_PATHS).
 
 Both read the person's words only after the secret shapes the turn cuts are
 cut (server/secret_cut.py): the search's embedding call and the pick's model
@@ -30,8 +34,8 @@ Enter in "open" mode opens the top page of the search; it needs no route.
 
 The book's Index settles three things: a message the search finds fewer than
 INDEX_PICK_K pages for is shown with the most recently active pages besides
-(pick_pages); the pick reads at most the opening of a long message
-(thread_pick.index_pick_copy); and a send carries the client's request id, so a
+(pick_pages); the search reads at most the opening of a long message
+(thread_pick.INDEX_PICK_MESSAGE_CHARS); and a send carries the client's request id, so a
 double Enter or a retry is one pick and one turn (index_send_once), also across
 a restart of the server: the id is kept on the marker and on the user row the
 words become, and a retry whose id the process does not hold is answered from
@@ -497,7 +501,7 @@ async def index_search_service(pool, entity_id: int, q, limit: int = P.INDEX_LIM
 
 async def start_page_turn(entity_id: int, project_id: int, text: str, *,
                           app_id: Optional[str], app_permissions: Optional[list],
-                          client_id: Optional[str] = None) -> tuple:
+                          client_id: Optional[str] = None, frame: Optional[dict] = None) -> tuple:
     """The person's turn on the page: brain_service.send_message with the
     arguments POST /api/brain/messages passes for a Workbench project (the
     calling app's id and permissions, the project, the words whole). Reads
@@ -523,7 +527,8 @@ async def start_page_turn(entity_id: int, project_id: int, text: str, *,
         agen = brain_service.send_message(entity_id=entity_id, message=text, app_id=app_id,
                                           project_id=project_id, app_permissions=app_permissions,
                                           **({"client_id": client_id, "follow_by_id": False}
-                                             if client_id else {}))
+                                             if client_id else {}),
+                                          **({"frame": frame} if frame else {}))
         try:
             async for frame in agen:
                 if frame.startswith("3:"):
@@ -563,8 +568,8 @@ async def _ask(pool, entity_id: int, failure: str, shown: list, pages: list, cur
 
 
 async def pick_pages(pool, entity_id: int, message: str) -> list[int]:
-    """The pages the Host is shown for `message`, best first (choose_page
-    adds the open page): the first INDEX_PICK_K of the Index's own search for
+    """The pages scored and offered for `message`, best first (the open page
+    is added beside them, thread_pick.list_index_candidates): the first INDEX_PICK_K of the Index's own search for
     it, open or archived; and when the search found fewer, the most recently
     active open pages after them, as the Index lists pages before anything is
     typed, up to INDEX_PICK_K. A message the search finds little or nothing
@@ -593,13 +598,15 @@ async def index_send_service(pool, entity_id: int, text, *, current_project_id=N
     0. The person's words with their secret shapes cut
        (secret_cut.redact_words): the search, the pick and the turn all read
        them so.
-    1. The Host picks the page: one call, shown the first INDEX_PICK_K pages
-       of this Index's own search for the message, open or archived, filled
-       up to INDEX_PICK_K with the most recently active open pages when the
-       search found fewer (pick_pages), and the open page, marked
-       (thread_pick.choose_page). The call reads at most the message's
-       opening (thread_pick.index_pick_copy). A failed pick starts nothing:
-       200 {state: ask, failure, candidates}.
+    1. The page, placed in software over the first INDEX_PICK_K pages of
+       this Index's own search for the message, open or archived, filled up
+       to INDEX_PICK_K with the most recently active open pages when the
+       search found fewer (pick_pages), and the open page: a clear match
+       (thread_pick.page_scores, clear_match) takes it; else the open page
+       does, with the others in the turn's frame for the Host's own pick
+       (runtime/thread_choice); with neither nothing starts: 200 {state:
+       ask, failure, candidates}. `call_model` and `route` are accepted and
+       unused: no model call places a message.
     2. The pick lands in one transaction (thread_pick.land_index_pick): an
        archived page is restored (status active, the Workbench's own restore,
        update_project_service), a "new" pick is a project inserted as POST
@@ -625,14 +632,39 @@ async def index_send_service(pool, entity_id: int, text, *, current_project_id=N
     current = None
     if current_project_id is not None:
         current = ("project", str(int(current_project_id)))
-    # The Host is shown what the Index ranks first for the same words, never
-    # every page: the call's input, which the person pays for, stays the
-    # same whatever the number of pages.
+    # Placed in software, never by a separate model call: a clear match
+    # among what the Index ranks first for the same words (thread_pick.
+    # page_scores, clear_match) goes there; otherwise the page the person has
+    # open takes the message, and the Host's own turn may move it to one of
+    # those pages (runtime/thread_choice); with no page open the person is
+    # asked which, from the same pages.
     pages = await pick_pages(pool, entity_id, message)
-    pick, shown = await tp.choose_page(pool, entity_id, message=message, pages=pages, current=current,
-                                       call_model=call_model, route=route)
-    if not pick.ok:
-        return 200, await _ask(pool, entity_id, pick.failure, shown, pages, current)
+    shown = await tp.list_index_candidates(pool, entity_id, pages, budget_tokens=tp.CHOICE_BUDGET_TOKENS,
+                                           current=current)
+    keys = {c.key for c in shown}
+    join = tp.clear_match(await tp.page_scores(pool, entity_id, message, [int(c.ref) for c in shown]), keys)
+    choice = None
+    if join:
+        c = next(c for c in shown if c.key == join)
+        pick = tp.Pick(ok=True, kind="project", ref=c.ref, title=c.title,
+                       reason="the conversation on this page matches the message clearly")
+    elif current is not None and current[0] == "project":
+        c = next((c for c in shown if c.key == f"project:{current[1]}"), None)
+        if c is None:
+            return 200, await _ask(pool, entity_id, "the open page is not one of your pages", shown, pages, current)
+        pick = tp.Pick(ok=True, kind="project", ref=c.ref, title=c.title,
+                       reason="no page matched clearly, so it went to the open page")
+        # An archived page is not offered: a move in the turn does not
+        # restore one (only a clear match here does).
+        others = [x for x in shown if x.key != c.key and not x.archived]
+        if others:
+            from mastercode.runtime.thread_choice import frame_value
+            choice = frame_value(surface="index", candidates=tp.candidate_dicts(others),
+                                 landed={"kind": "project", "ref": c.ref, "title": c.title,
+                                         "provisional": False})
+    else:
+        return 200, await _ask(pool, entity_id, "no page matched clearly and no page is open", shown,
+                               pages, current)
 
     async def new_project(conn, title: str):
         return await conn.fetchrow(P.NEW_PROJECT_SQL, entity_id, title, "")
@@ -669,7 +701,8 @@ async def index_send_service(pool, entity_id: int, text, *, current_project_id=N
     out = {"project_id": pid, "project_name": landing.title, "restored": restored,
            "created": landing.new, "marker": marker, "reason": pick.reason}
     meta, error = await start_page_turn(entity_id, pid, message, app_id=app_id,
-                                        app_permissions=app_permissions, client_id=request_id)
+                                        app_permissions=app_permissions, client_id=request_id,
+                                        frame={"thread_choice": choice} if choice else None)
     if meta is None:
         return 200, dict(out, state="refused", error=error)
     # "reattached": the same words are already running on the page, and that

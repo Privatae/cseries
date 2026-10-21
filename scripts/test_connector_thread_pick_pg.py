@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Gate: the thread pick's SQL against a real kernel schema
+"""Gate: the thread placement's SQL against a real kernel schema
 (server/connectors/thread_pick.py).
 
   L. the Host is shown its OPEN threads and nothing else: the original
@@ -19,8 +19,9 @@
   K. a marker in a project, a Circles thread and the original conversation
      is read back by exactly that conversation's own clause, and by no
      other;
-  X. end to end: choose_thread on the real pool with a scripted model lands
-     where the model said, and the model saw only listed ids;
+  X. end to end: place_connector on the real pool lands a message no thread
+     clearly matches in the chat's last thread, and offers the turn only
+     listed threads (the Host picks among them in its own turn);
   T. landing is one transaction: a marker that cannot be written leaves no
      new thread, and a thread closed or deleted (a project archived) while
      the Host chose is never landed in, with nothing written.
@@ -245,21 +246,18 @@ async def main(dsn):
         check("E a pick marker is never shown as the thread's last exchange",
               ca2.last_host == "Here is the Q3 draft", ca2)
 
-        seen = {}
-
-        async def model(messages, **kw):
-            seen["system"] = messages[0]["content"]
-            return {"tool_calls": [{"function": {"name": "pick_thread",
-                                                 "arguments": json.dumps({"thread": f"project:{p}",
-                                                                          "reason": "it is about the site"})}}]}
-        pick = await tp.choose_thread(pool, E, message="did the site deploy?", platform="telegram",
-                                      call_model=model, route={"provider": "anthropic", "model": "claude-opus-5-5"})
-        check("X choose_thread on the real pool lands where the model said",
-              pick.ok and (pick.kind, pick.ref) == ("project", str(p)), pick)
-        check("X the model saw no closed, deleted, artifact, archived, ticket or other-Host thread",
-              all(f"[{k}]" not in seen.get("system", "") for k in
-                  (f"thread:{b}", f"thread:{c}", f"thread:{x}", f"project:{q}", f"project:{r}", f"project:{s}"))
-              and "Not yours" not in seen.get("system", ""), seen.get("system", "")[:400])
+        pl = await tp.place_connector(pool, E, message="did the site deploy?", platform="telegram",
+                                      current=("thread", a))
+        check("X place_connector on the real pool: no clear match lands in the chat's last thread",
+              pl and (pl.kind, pl.ref, pl.new) == ("thread", str(a), False), pl)
+        offered = [f"{c['kind']}:{c['ref']}" for c in (pl.choice if pl else ())]
+        listed = [cd.key for cd in await tp.list_candidates(pool, E, budget_tokens=1_000_000)]
+        never = {f"thread:{b}", f"thread:{c}", f"thread:{x}", f"project:{q}", f"project:{r}", f"project:{s}",
+                 f"thread:{a}"}
+        check("X the turn is offered the listed threads only: no closed, deleted, artifact, archived, ticket "
+              "or other-Host one, and never the one it landed in",
+              offered and set(offered) == set(listed) - {f"thread:{a}"} and not set(offered) & never,
+              (offered, listed))
 
         # A wake-up's own reply (the hidden lane) is the newest row of thread
         # A; the transcript never shows it, so neither does the list.

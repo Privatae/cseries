@@ -1,0 +1,23 @@
+# The Host on a cloud box (bootstrap renders this file). A Quadlet drop-in's
+# Environment= replaces the unit's value for the same name, so these win over
+# cseries-host.container's local defaults.
+#
+# CSERIES_TRUSTED_PROXIES is the address the Host sees Caddy's connections
+# come from: Caddy, on this machine, connects to the container's fixed
+# address, so they arrive from the box's own end of the containers' bridge.
+[Container]
+Environment=CSERIES_URL=https://@HOST_NAME@
+Environment=CSERIES_TRUSTED_PROXIES=@TRUSTED_PROXIES@
+Environment=CSERIES_LANE_HOST=@HOST_NAME@
+Environment=CSERIES_DOOR_HELPER=/run/cseries-door/helper.sock
+# The door key (cseries_cloud.ensure_door_key), read-only: the Host answers
+# Caddy's forward_auth question at /__host/door only when it carries this key.
+Volume=/etc/cseries-cloud/door-secret:/run/cseries-cloud/door-secret:ro
+Environment=CSERIES_DOOR_SECRET_FILE=/run/cseries-cloud/door-secret
+# The bastion on this machine pairs and dials in through unix sockets here
+# (etc/tmpfiles.d/privatae-host.conf), and the pairing-window helper listens
+# in /run/cseries-door. The two groups are the ones those directories belong to.
+Volume=/run/privatae-host:/run/privatae-host
+Volume=/run/cseries-door:/run/cseries-door
+GroupAdd=@PRIVATAE_HOST_GID@
+GroupAdd=@CSERIES_GID@

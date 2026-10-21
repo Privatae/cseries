@@ -40,3 +40,28 @@ def contains(addr: str | None, nets: list) -> bool:
 
 def peer_is_trusted(addr: str | None) -> bool:
     return contains(addr, networks())
+
+
+def _unmapped(addr: str) -> str:
+    try:
+        a = ipaddress.ip_address(addr)
+    except ValueError:
+        return addr
+    return str(a.ipv4_mapped) if a.version == 6 and a.ipv4_mapped else addr
+
+
+def visitor(peer: str | None, forwarded_for: str | None) -> str:
+    """The address of whoever sent a request: the socket peer, or, when the
+    peer is a trusted proxy, the nearest X-Forwarded-For hop that is not
+    itself a trusted proxy (hops nearer the visitor are theirs to write).
+    "?" when there is no peer."""
+    peer = _unmapped(peer or "") or "?"
+    nets = networks()
+    if not nets or not contains(peer, nets):
+        return peer
+    hops = [h.strip() for h in (forwarded_for or "").split(",") if h.strip()]
+    for hop in reversed(hops):
+        hop = _unmapped(hop)
+        if not contains(hop, nets):
+            return hop
+    return peer

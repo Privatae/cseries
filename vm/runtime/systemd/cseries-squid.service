@@ -1,0 +1,19 @@
+# The coding engines' plain proxy: what the platform's node proxy was for them.
+# A destination no signed egress rule names goes out here rather than through
+# the Host's own event loop. Its own squid on its own config, so Debian's
+# default squid (masked) never listens. Only the coding engines and their
+# builds may use it, never an app or the browser (squid's ACL and the
+# firewall both name their addresses, cseries_runtime/common.py PROXY_CLIENTS).
+[Unit]
+Description=C-Series plain proxy for the coding engines
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/sbin/squid -N -f /etc/cseries-runtime/squid.conf
+ExecReload=/usr/sbin/squid -k reconfigure -f /etc/cseries-runtime/squid.conf
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -159,7 +159,7 @@ test('a run that stopped at claim-anchor is finished by the next one, which only
   const { ctx: c2 } = ctxFor({}, { m, p });
   assert.equal(await both(c2), 'ran');
   const script = m.bastionScripts.at(-1);
-  assert.ok(!/Say 'step=install'/.test(script), 'the program is not installed again');
+  assert.ok(!/Emit 'step=install'/.test(script), 'the program is not installed again');
   assert.ok(!/@\('pair'/.test(script), 'not paired again');
   assert.match(script, /@\('claim-anchor'\)/);
   assert.match(script, /& \$exe 'stepup-enroll' '--console-only' '--host' \$hostName/);
@@ -198,7 +198,7 @@ test('the bastion command sequence is the same on macOS and Linux as in the Wind
       assert.match(script, /^ExecStart=\/usr\/local\/bin\/privatae-bastion run$/m);
       assert.match(script, /^Environment=HOME=\/root$/m);
       assert.match(script, /systemctl restart privatae-bastion/);
-      assert.ok(!/service install/.test(script.replace("say 'step=service install'", '')), 'Linux writes the unit; `service install` does nothing there');
+      assert.ok(!/service install/.test(script.replace("emit 'step=service install'", '')), 'Linux writes the unit; `service install` does nothing there');
     }
   }
 });

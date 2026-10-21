@@ -6,8 +6,10 @@ code to create the owner account, which keeps a Host whose port was published
 too early from being claimed by the first visitor.
 
 After that the owner signs in with email and password and gets a session
-cookie. A session ends after SESSION_IDLE of no use or SESSION_MAX in total,
-whichever comes first.
+cookie; once the owner adds a passkey, with the passkey or a recovery code
+instead, and the password no longer signs in (server/owner_passkeys.py). A
+session ends after SESSION_IDLE of no use or SESSION_MAX in total, whichever
+comes first. On an https address the cookie is a __Host- cookie.
 
 A session is bound to the host name it was issued on. Each origin-isolated
 app (apps-<key>-<handle><zone>) gets a session of its own through a one-time
@@ -26,15 +28,27 @@ import asyncio
 import base64
 import hashlib
 import hmac
+import ipaddress
 import logging
+import os
+import re
 import secrets
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from server.home_origin import HOME
+
 logger = logging.getLogger("cseries.owner_login")
 
 COOKIE_PREFIX = "cseries_session"
+# On an https address the cookie's name starts with __Host-: a browser keeps
+# such a cookie only when it came Secure, for path / and with no Domain, so no
+# other name under the same registrable domain (another Host, one of this
+# Host's app origins, a network service) can set one this Host would read.
+HOST_ONLY_PREFIX = "__Host-"
+# The setup code's shape: three groups of six hex characters, 72 bits.
+SETUP_CODE_RE = re.compile(r"[0-9a-f]{6}-[0-9a-f]{6}-[0-9a-f]{6}")
 SESSION_IDLE = timedelta(hours=1)
 SESSION_MAX = timedelta(hours=24)
 MIN_PASSWORD_LEN = 12
@@ -56,7 +70,27 @@ _cookie_suffix: Optional[str] = None
 # token hash -> (email, checked at, origin, parent hash or None)
 _cache: dict[str, tuple[str, float, str, Optional[str]]] = {}
 _touched: dict[str, float] = {}               # token hash -> last write
-_failures: dict[str, tuple[int, float]] = {}  # client -> (count, locked until)
+# who -> (wrong tries, locked until, last wrong try), oldest first. Bounded:
+# an entry is forgotten _FAILURE_FORGET_S after its wait ends, and past
+# _FAILURES_MAX the oldest go, so a stream of sources cannot grow it without
+# end on a Host the internet reaches.
+_failures: dict[str, tuple[int, float, float]] = {}
+_FAILURES_MAX = 10_000
+_FAILURE_FORGET_S = 3600.0
+# Every wrong password on this Host, whoever sent it: (wrong tries, locked
+# until, last wrong try). The record above bounds one source, and an
+# attacker has many (one /48 is 65,536 /64s, five free tries each); a Host
+# has one account, so the guessing that counts is the total. Past
+# GLOBAL_FREE wrong passwords, each one doubles a wait that holds every
+# password sign-in, capped at 15 minutes: about four guesses an hour from the
+# whole internet, under NIST SP 800-63B 5.2.2's limit of 100 failed attempts
+# on one account. Forgotten _FAILURE_FORGET_S after its wait ends, like the
+# rest. Only the password counts here and only the password waits: a passkey
+# or a recovery code signs in whatever this says, so a flood of wrong
+# passwords never keeps the owner out once a passkey exists.
+_password_failures: tuple[int, float, float] = (0, 0.0, 0.0)
+GLOBAL_FREE = 20
+_GLOBAL_WAIT_MAX = 900
 # Sessions signed out in this process -> when. A check that read the row just
 # before the sign-out deleted it must not then cache it as live.
 _signed_out: dict[str, float] = {}
@@ -142,11 +176,42 @@ async def init() -> None:
         _setup_code = None
         logger.info("owner login: owner account present")
         return
+    from_file = _setup_code_from_file()
+    if from_file:
+        # The code whoever installed this Host already holds; it stays the
+        # same across restarts until the owner exists, and is not logged.
+        _setup_code = from_file
+        logger.warning("owner login: no owner yet; the setup code is the one in "
+                       "CSERIES_SETUP_CODE_FILE — open /setup in a browser to create the owner account")
+        return
     _setup_code = "-".join(secrets.token_hex(3) for _ in range(3))
     # WARNING so it shows at the default log level. This is the one place the
     # code is ever written; it changes on every boot until the owner exists.
     logger.warning("CSERIES SETUP CODE: %s — open /setup in a browser and enter it "
                    "to create the owner account", _setup_code)
+
+
+def _setup_code_from_file() -> Optional[str]:
+    """The setup code in CSERIES_SETUP_CODE_FILE, when that is set, readable
+    and holds one code of the usual shape; else None, and a fresh code is
+    made as without it. A Host installed for someone else gets its code this
+    way, so the code handed over before the first boot is the one it takes."""
+    path = os.environ.get("CSERIES_SETUP_CODE_FILE", "").strip()
+    if not path:
+        return None
+    try:
+        with open(path, encoding="utf-8") as f:
+            raw = f.read(256)
+    except (OSError, UnicodeDecodeError) as exc:
+        logger.error("owner login: CSERIES_SETUP_CODE_FILE %s cannot be read (%s); "
+                     "a new setup code is made instead", path, exc)
+        return None
+    code = raw.strip().lower()
+    if not SETUP_CODE_RE.fullmatch(code):
+        logger.error("owner login: CSERIES_SETUP_CODE_FILE %s does not hold a setup code "
+                     "(three groups of six hex characters); a new one is made instead", path)
+        return None
+    return code
 
 
 def owner_email() -> Optional[str]:
@@ -157,11 +222,19 @@ def needs_setup() -> bool:
     return _owner_email is None
 
 
+def secure_cookie() -> bool:
+    """Whether the session cookie is Secure and __Host- named: CSERIES_URL is
+    an https address. A plain-http Host (the local default) keeps its cookie
+    as it was; a browser would drop a Secure cookie set over plain HTTP."""
+    return HOME.scheme == "https"
+
+
 def cookie_name() -> str:
     """The session cookie's name for this Host. Cookies are shared by every
     port of a host name, so the name carries a suffix chosen when the owner was
     created: a second Host on the same machine uses a different cookie."""
-    return f"{COOKIE_PREFIX}_{_cookie_suffix}" if _cookie_suffix else COOKIE_PREFIX
+    name = f"{COOKIE_PREFIX}_{_cookie_suffix}" if _cookie_suffix else COOKIE_PREFIX
+    return HOST_ONLY_PREFIX + name if secure_cookie() else name
 
 
 # ── setup and sign-in ───────────────────────────────────────────────────────
@@ -182,12 +255,22 @@ def _check_new_password(password: str) -> None:
         raise LoginError(f"Use a password of at least {MIN_PASSWORD_LEN} characters.")
 
 
-async def create_owner(code: str, email: str, password: str) -> None:
+async def create_owner(code: str, email: str, password: str, client: str = "") -> None:
+    """Make the owner account with the setup code. A wrong code counts
+    against `client` like a wrong password, so the code cannot be guessed at
+    the rate requests arrive."""
     global _owner_email, _setup_code, _cookie_suffix
-    if not needs_setup():
-        raise LoginError("This Host already has an owner. Sign in instead.")
-    if not _setup_code or not _same((code or "").strip().lower(), _setup_code):
-        raise LoginError("That setup code is not right. It is printed in the Host's log.")
+    async with _sign_in_lock:
+        wait = _locked_for(client)
+        if wait > 0:
+            raise LoginError(f"Too many wrong tries. Wait {int(wait) + 1} seconds.")
+        if not needs_setup():
+            raise LoginError("This Host already has an owner. Sign in instead.")
+        if not _setup_code or not _same((code or "").strip().lower(), _setup_code):
+            _note_failure(client)
+            raise LoginError("That setup code is not right. It is printed in the Host's log, "
+                             "or was given to you with the Host.")
+        _forget_failures(client)
     email = _normal_email(email)
     _check_new_password(password)
     pw_hash = await hash_password(password)
@@ -203,17 +286,74 @@ async def create_owner(code: str, email: str, password: str) -> None:
     logger.warning("owner login: owner account created")
 
 
+def _failure_key(client: str) -> str:
+    """Whose wrong tries these are: the address, or for IPv6 its /64, the
+    block one home or one server is given, so stepping through the addresses
+    of one's own block does not reset the count."""
+    try:
+        addr = ipaddress.ip_address(client)
+    except ValueError:
+        return client
+    if addr.version == 6 and addr.ipv4_mapped:
+        return str(addr.ipv4_mapped)
+    if addr.version == 6:
+        return str(ipaddress.ip_network(f"{addr}/64", strict=False))
+    return client
+
+
 def _locked_for(client: str) -> float:
-    count, until = _failures.get(client, (0, 0.0))
+    _count, until, _last = _failures.get(_failure_key(client), (0, 0.0, 0.0))
     return max(0.0, until - time.monotonic())
 
 
 def _note_failure(client: str) -> None:
-    count, _ = _failures.get(client, (0, 0.0))
+    key = _failure_key(client)
+    now_m = time.monotonic()
+    count, until, last = _failures.pop(key, (0, 0.0, 0.0))
+    if now_m - max(until, last) > _FAILURE_FORGET_S:
+        count = 0           # forgotten, as the others below are
+    for old in [k for k, (_c, until, last) in _failures.items()
+                if now_m - max(until, last) > _FAILURE_FORGET_S]:
+        del _failures[old]
+    while len(_failures) >= _FAILURES_MAX:
+        del _failures[next(iter(_failures))]
     count += 1
     # Five tries free, then a wait that doubles per failure, capped at 15 min.
     wait = 0.0 if count < 5 else min(2 ** (count - 5), 900)
-    _failures[client] = (count, time.monotonic() + wait)
+    _failures[key] = (count, now_m + wait, now_m)
+
+
+def _forget_failures(client: str) -> None:
+    _failures.pop(_failure_key(client), None)
+
+
+def _password_locked_for() -> float:
+    _count, until, _last = _password_failures
+    return max(0.0, until - time.monotonic())
+
+
+def _note_password_failure() -> None:
+    global _password_failures
+    now_m = time.monotonic()
+    count, until, last = _password_failures
+    if now_m - max(until, last) > _FAILURE_FORGET_S:
+        count = 0
+    count += 1
+    wait = 0.0 if count < GLOBAL_FREE else min(2 ** (count - GLOBAL_FREE), _GLOBAL_WAIT_MAX)
+    _password_failures = (count, now_m + wait, now_m)
+
+
+async def _new_session(pool, origin: str) -> str:
+    """A new desktop session valid on host `origin` only; the token to set
+    as its cookie. Every way of signing in ends here, so each issues the
+    same session."""
+    token = secrets.token_urlsafe(32)
+    now = datetime.now(timezone.utc)
+    await pool.execute(
+        "INSERT INTO owner_sessions (token_hash, created_at, last_seen_at, expires_at, origin) "
+        "VALUES ($1, $2, $2, $3, $4)", _token_hash(token), now, now + SESSION_MAX,
+        (origin or "").lower())
+    return token
 
 
 async def sign_in(email: str, password: str, client: str, origin: str) -> str:
@@ -224,7 +364,17 @@ async def sign_in(email: str, password: str, client: str, origin: str) -> str:
         wait = _locked_for(client)
         if wait > 0:
             raise LoginError(f"Too many wrong tries. Wait {int(wait) + 1} seconds.")
+        # A passkey replaces the password (server/owner_passkeys.py).
+        if await pool.fetchval("SELECT EXISTS (SELECT 1 FROM owner_passkeys)"):
+            raise LoginError("This Host signs in with a passkey now. Use the passkey "
+                             "button, or one of your recovery codes.")
         row = await pool.fetchrow("SELECT email, password_hash FROM owner_account WHERE id = 1")
+        # Every visitor's wrong passwords together (_password_failures). Only
+        # once there is an owner: before that no password can be right, and
+        # setup signs the new owner in through here.
+        wait = _password_locked_for() if row else 0.0
+        if wait > 0:
+            raise LoginError(f"Too many wrong passwords on this Host. Wait {int(wait) + 1} seconds.")
         email = (email or "").strip().lower()
         ok = bool(row) and _same(email, row["email"])
         # Always run the hash, so a wrong email takes as long as a wrong password.
@@ -232,15 +382,11 @@ async def sign_in(email: str, password: str, client: str, origin: str) -> str:
                                      f"scrypt${_SCRYPT_N}${_SCRYPT_R}${_SCRYPT_P}$AAAA$AAAA")
         if not (ok and pw_ok):
             _note_failure(client)
+            if row:
+                _note_password_failure()
             raise LoginError("Wrong email or password.")
-        _failures.pop(client, None)
-    token = secrets.token_urlsafe(32)
-    now = datetime.now(timezone.utc)
-    await pool.execute(
-        "INSERT INTO owner_sessions (token_hash, created_at, last_seen_at, expires_at, origin) "
-        "VALUES ($1, $2, $2, $3, $4)", _token_hash(token), now, now + SESSION_MAX,
-        (origin or "").lower())
-    return token
+        _forget_failures(client)
+    return await _new_session(pool, origin)
 
 
 async def sign_out(token: Optional[str]) -> None:
@@ -265,6 +411,40 @@ async def sign_out(token: Optional[str]) -> None:
             del _signed_out[old]
         _signed_out[h] = now_m
         _cache.pop(h, None)
+
+
+async def end_other_sessions(keep: str) -> int:
+    """End every session but the desktop session `keep` and the app-origin
+    sessions joined from it; how many ended. An app-origin session joined
+    from an ended one ends with it (ON DELETE CASCADE, and named here too, so
+    each is remembered). Each ended session is remembered as signed out, so a
+    check reading one right now does not cache it as live, and a join code
+    made from one is dropped."""
+    pool = _pool()
+    keep_h = _token_hash(keep)
+    row = await pool.fetchrow("SELECT parent FROM owner_sessions WHERE token_hash = $1", keep_h)
+    if row is not None and row["parent"] is not None:
+        # An app origin's session: ending "the others" would end its own
+        # desktop session, and this one with it. (A `keep` that has already
+        # ended keeps nothing: every session ends.)
+        raise LoginError("Sign in on this Host's own address first.")
+    rows = await pool.fetch(
+        "DELETE FROM owner_sessions WHERE token_hash <> $1 AND parent IS DISTINCT FROM $1 "
+        "RETURNING token_hash", keep_h)
+    gone = {r["token_hash"] for r in rows}
+    now_m = time.monotonic()
+    for old in [k for k, at in _signed_out.items() if now_m - at > _SIGNED_OUT_KEEP_S]:
+        del _signed_out[old]
+    for h in gone:
+        _signed_out[h] = now_m
+        _touched.pop(h, None)
+    for h in [h for h, v in _cache.items() if h in gone or (v[3] is not None and v[3] in gone)]:
+        del _cache[h]
+    for code in [c for c, v in _joins.items() if v[0] in gone]:
+        del _joins[code]
+    if gone:
+        logger.warning("owner login: %d other session(s) signed out", len(gone))
+    return len(gone)
 
 
 def _gone(h: str, parent: Optional[str]) -> bool:

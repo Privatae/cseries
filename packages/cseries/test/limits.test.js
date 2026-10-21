@@ -159,6 +159,77 @@ for (const size of [2, 3, 4, 8]) {
   });
 }
 
+// With the local runtime on the guest, the Host and the runtime's containers
+// share one budget: the runtime admits containers only into what the
+// reserve, the database's ceiling and the Host's ceiling leave
+// (vm/runtime guard.py; scripts/test_runtime_guard.py checks the two agree).
+async function effectiveWithRuntime(sysBytes) {
+  const { m, run } = machine({ distro: true, memKb: sysBytes / 1024, runtime: true });
+  const r = await run();
+  assert.equal(r.code, 0, r.err);
+  const sent = /^memory_max=(.+)$/m.exec(m.images || '');
+  assert.ok(sent, 'a guest with the runtime is sent a memory ceiling');
+  return { value: sent[1], text: r.text };
+}
+
+for (const size of [2, 3, 4, 8, 16, 32]) {
+  test(`a ${size} GiB Linux system with the local runtime: the Host, the database, the containers and the system's reserve fit in it together`, async () => {
+    const sys = size * GiB;
+    const { value, text } = await effectiveWithRuntime(sys);
+    const pg = bytes(unit('cseries-postgres.container').Service.MemoryMax, sys);
+    const hostB = bytes(value, sys);
+    const apps = host.containersMax(sys / 1024) * 1024 ** 2;
+    assert.ok(hostB >= 512 * 1024 ** 2 && hostB <= 2 * GiB, `${size} GiB: the Host's ${value} is within 512 MB and 2 GiB`);
+    assert.ok(hostB + pg + apps + systemReserve(sys) <= sys,
+      `${size} GiB: Host ${value} + database + containers ${apps / 1024 ** 2} MB is more than the system has past its reserve`);
+    // And nothing is left over: what the Host does not get, the containers do.
+    if (size >= 3) assert.ok(sys - hostB - pg - apps - systemReserve(sys) < 2 * 1024 ** 2, `${size} GiB: memory left unused`);
+    assert.match(text, new RegExp(`The Host may use up to ${parseInt(value, 10)} MB of this Linux system's ${size * 1024} MB of memory\\.`));
+    assert.match(text, new RegExp(`Its apps, browser and coding engines may use up to ${host.containersMax(sys / 1024)} MB beside it\\.`));
+  });
+}
+
+test('with the local runtime the Host gets a share of the room, not all of it, and the containers room for the browser from 4 GiB', () => {
+  for (const size of [4, 8]) {
+    const kb = size * 1024 * 1024;
+    assert.ok(parseInt(host.memoryMax(kb, { runtime: true }), 10) < parseInt(host.memoryMax(kb), 10), `${size} GiB`);
+    assert.ok(host.containersMax(kb) >= 1024, `${size} GiB: the browser's 1 GiB fits`);
+  }
+  assert.ok(host.containersMax(8 * 1024 * 1024) >= 2048, '8 GiB: the browser and a coding engine fit together');
+  assert.equal(host.memoryMax(1024 * 1024, { runtime: true }), '512M', 'the floor holds on a tiny system');
+  assert.equal(host.containersMax(1024 * 1024), 0, 'and leaves the containers nothing, not a negative number');
+  assert.equal(host.memoryMax(64 * 1024 * 1024, { runtime: true }), '2048M', 'the cap holds on a big system');
+  assert.equal(host.hasRuntime({ runtime: 'active' }), true);
+  assert.equal(host.hasRuntime({ runtime: 'inactive' }), true, 'installed but stopped is still the runtime\'s share');
+  assert.equal(host.hasRuntime({ cpus: '8' }), false);
+});
+
+test('with the local runtime the Host\'s ceiling holds the busiest measured Host from a 3 GiB system up', () => {
+  // The busiest live Host's largest working set over 7 days was 901 MiB
+  // (host.js HOST_NEED's derivation); every other one stayed under 200 MiB.
+  const BUSIEST_MI = 901;
+  for (const size of [3, 4, 6, 8, 16, 64]) {
+    const kb = size * 1024 * 1024;
+    const hostMi = parseInt(host.memoryMax(kb, { runtime: true }), 10);
+    assert.ok(hostMi >= BUSIEST_MI, `${size} GiB: the Host's ${hostMi} MB holds ${BUSIEST_MI} MB`);
+    assert.ok(hostMi <= 2048, `${size} GiB: never over the cap`);
+  }
+  // Below that the Host takes all the room and the containers none, never
+  // more than the room unless that is under the floor.
+  assert.equal(host.memoryMax(2 * 1024 * 1024, { runtime: true }), '924M');
+  assert.equal(host.containersMax(2 * 1024 * 1024), 0);
+  assert.equal(host.memoryMax(4 * 1024 * 1024, { runtime: true }), '1024M');
+  assert.equal(host.containersMax(4 * 1024 * 1024), 1436, '4 GiB: the browser or a coding engine beside it');
+});
+
+test('a guest without the local runtime still gives the Host all the room, and says nothing of containers', async () => {
+  const { m, run } = machine({ distro: true, memKb: 4 * 1024 * 1024 });
+  const r = await run();
+  assert.equal(r.code, 0, r.err);
+  assert.match(m.images, new RegExp(`^memory_max=${host.memoryMax(4 * 1024 * 1024)}$`, 'm'));
+  assert.doesNotMatch(r.text, /coding engines may use/);
+});
+
 test('a Linux system too small for the reserve still gives the Host its floor, and says how much it may use', async () => {
   const { value, text } = await effectiveHostMax(1 * GiB);
   assert.equal(value, '512M');

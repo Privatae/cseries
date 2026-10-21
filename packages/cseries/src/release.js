@@ -17,6 +17,8 @@ const REF = /^[a-z0-9]+(?:[._-][a-z0-9]+)*(?::[0-9]+)?(?:\/[a-z0-9]+(?:[._-][a-z
 // The guest image for each VM driver and CPU: WSL's root filesystem, Lima's
 // qcow2 disk (macOS and Linux).
 const GUEST_KEYS = ['wsl-x64', 'wsl-arm64', 'lima-x64', 'lima-arm64'];
+// The local runtime's image families, as the guest's configure takes them.
+const RUNTIME_FAMILIES = ['python', 'creative', 'helper', 'browser'];
 
 function defaultPath() {
   return path.join(__dirname, '..', 'release.json');
@@ -50,6 +52,29 @@ function validate(m) {
   }
   const minV = (m.bastion || {}).min_version;
   if (typeof minV !== 'string' || !isVersion(minV)) problems.push('bastion.min_version');
+  // The local runtime's images by family, and the coding engines' sources:
+  // optional, and when present pinned like the Host's (placeholders allowed
+  // in the committed copy, as everywhere else).
+  if (m.runtime !== undefined) {
+    const rt = m.runtime;
+    if (!rt || typeof rt !== 'object') problems.push('runtime');
+    else {
+      for (const key of Object.keys(rt)) {
+        if (!RUNTIME_FAMILIES.includes(key) && key !== 'harness_src') problems.push(`runtime.${key}`);
+      }
+      for (const fam of RUNTIME_FAMILIES) {
+        if (rt[fam] === undefined) continue;
+        const img = rt[fam] || {};
+        field(`runtime.${fam}.ref`, img.ref, (v) => REF.test(v));
+        field(`runtime.${fam}.digest`, img.digest, (v) => DIGEST.test(v));
+      }
+      if (rt.harness_src !== undefined) {
+        const hs = rt.harness_src || {};
+        field('runtime.harness_src.url', hs.url, (v) => /^https:\/\/[A-Za-z0-9._~:/%+-]+$/.test(v));
+        field('runtime.harness_src.sha256', hs.sha256, (v) => SHA256.test(v));
+      }
+    }
+  }
   if (problems.length) {
     throw new Error(`release.json has invalid fields: ${problems.join(', ')}`);
   }
@@ -95,4 +120,15 @@ function requirePinned(loaded) {
   }
 }
 
-module.exports = { load, validate, pinnedImage, requirePinned, defaultPath, GUEST_KEYS };
+// The guest's configure lines for the release's runtime section ('' without one).
+function runtimeLines(release) {
+  const rt = release.runtime || {};
+  let out = '';
+  for (const fam of RUNTIME_FAMILIES) {
+    if (rt[fam]) out += `${fam}=${rt[fam].ref}@${rt[fam].digest}\n`;
+  }
+  if (rt.harness_src) out += `harness_src_url=${rt.harness_src.url}\nharness_src_sha256=${rt.harness_src.sha256}\n`;
+  return out;
+}
+
+module.exports = { load, validate, pinnedImage, requirePinned, defaultPath, runtimeLines, GUEST_KEYS, RUNTIME_FAMILIES };

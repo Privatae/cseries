@@ -6,18 +6,21 @@ Apache-2.0 components require us to carry are in `NOTICE`.
 
 Not included because nothing from them reaches a user: devDependencies of
 the *-web projects, the gate toolchain (scripts/toolchain,
-scripts/requirements-gates.txt), and the sidecar images, which are
-published as Dockerfiles only.
+scripts/requirements-gates.txt), and the coding engines' images, which are
+published as Dockerfiles only and built on each machine. The four runtime
+images are published; section 5 lists what each carries, and every release
+attaches one notices file per runtime image and architecture with its full
+package lists.
 
 ### 1. Files vendored in the repo (24)
 
-- qrcode-generator (Kazuhiko Arase) 1.4.4: MIT
-- age-encryption (typage) 0.3.1: BSD-3-Clause
-- @noble/ciphers 2.4.0: MIT
-- @noble/curves 2.4.0 and 2.0.1 (nested under @noble/post-quantum): MIT
-- @noble/hashes 2.4.0 and 2.0.1 (nested): MIT
-- @noble/post-quantum 0.5.4: MIT
-- @scure/base 2.4.0: MIT
+- qrcode-generator (Kazuhiko Arase) 1.4.4: MIT; dashboard/base/js/qrcode.js and system-apps/backups/vendor/qrcode.js; text: qrcode-generator-1.4.4.LICENSE
+- age-encryption (typage) 0.3.1: BSD-3-Clause; bundled with the five packages below into system-apps/settings/vendor/age-encryption.js and system-apps/backups/vendor/age-encryption.js; text: age-encryption-0.3.1.LICENSE
+- @noble/ciphers 2.4.0: MIT; in that bundle; text: noble-ciphers-2.4.0.LICENSE
+- @noble/curves 2.4.0 and 2.0.1 (nested under @noble/post-quantum): MIT; in that bundle; texts: noble-curves-2.4.0.LICENSE, noble-curves-2.0.1.LICENSE
+- @noble/hashes 2.4.0 and 2.0.1 (nested): MIT; in that bundle; texts: noble-hashes-2.4.0.LICENSE, noble-hashes-2.0.1.LICENSE
+- @noble/post-quantum 0.5.4: MIT; in that bundle; text: noble-post-quantum-0.5.4.LICENSE
+- @scure/base 2.4.0: MIT; in that bundle; text: scure-base-2.4.0.LICENSE
 - xterm.js (@xterm/xterm) 5.5.0: MIT
 - @xterm/addon-fit 0.10.0: MIT
 - Inter font (Google Fonts subset via fontsource) Google Fonts v20 / font revision 4.001 (fc-scan fontversion 262210): OFL-1.1
@@ -471,7 +474,7 @@ Counts by licence: MIT 365, ISC 37, Apache-2.0 17, BSD-3-Clause 6, (MPL-2.0 OR A
 - zod 4.4.3: MIT (circles-web, workbench-web)
 - zwitch 2.0.4: MIT (circles-web, community-web, workbench-web)
 
-### 3. Kernel image: Python and other software (94)
+### 3. Kernel image: Python and other software (99)
 
 - age (FiloSottile/age) binary 1.3.2, built from its release module with Go 1.27.2: BSD-3-Clause (age and the Go toolchain and modules compiled in); texts: age-1.3.2.LICENSE, age-1.3.2-go-deps/
 - aiohappyeyeballs 2.7.1: PSF-2.0
@@ -485,6 +488,7 @@ Counts by licence: MIT 365, ISC 37, Apache-2.0 17, BSD-3-Clause 6, (MPL-2.0 OR A
 - babel 2.18.0: BSD-3-Clause
 - boto3 1.40.72: Apache-2.0
 - botocore 1.40.76: Apache-2.0
+- cbor2 6.1.5: MIT; text: cbor2-6.1.5.LICENSE
 - certifi 2026.7.22: MPL-2.0
 - cffi 2.1.1: MIT-0
 - charset-normalizer 3.5.2: MIT
@@ -529,11 +533,14 @@ Counts by licence: MIT 365, ISC 37, Apache-2.0 17, BSD-3-Clause 6, (MPL-2.0 OR A
 - pillow 12.3.0: MIT-CMU; bundled libs incl. FreeType (FTL), libjpeg (IJG), libpng, xz, libtiff, libwebp, etc.
 - pip 26.2.1: MIT
 - propcache 0.5.4: Apache-2.0
+- pyasn1 0.6.4: BSD-2-Clause; text: pyasn1-0.6.4.LICENSE
+- pyasn1-modules 0.4.2: BSD-2-Clause; text: pyasn1-modules-0.4.2.LICENSE
 - pycparser 3.11: BSD-3-Clause
 - pydantic 2.14.1: MIT
 - pydantic-settings 2.16.0: MIT
 - pydantic_core 2.50.1: MIT
 - PyNaCl 1.5.0: Apache-2.0
+- pyOpenSSL 26.4.0: Apache-2.0; text: pyOpenSSL-26.4.0.LICENSE (no NOTICE file in the wheel or at the upstream tag)
 - pytakumi 0.1.5: MIT OR Apache-2.0 (an unofficial Python binding of Takumi). Its native module compiles in Takumi 2.14.0 (MIT OR Apache-2.0) and the 165 crates.io crates its own SBOM lists (pytakumi-0.1.5.dist-info/sboms/), all permissive except cssparser 0.37.0, cssparser-macros 0.7.0, dtoa-short 0.3.5 and selectors 0.40.0 (MPL-2.0; where their source is: NOTICE), and it embeds the Geist font 1.500 (Latin subset, OFL-1.1); texts: pytakumi-0.1.5.LICENSE-MIT, pytakumi-0.1.5.LICENSE-APACHE, takumi-2.14.0.LICENSE-MIT, takumi-2.14.0.LICENSE-APACHE, pytakumi-0.1.5-crates.txt, geist-1.5.0.OFL.txt
 - python-dateutil 2.9.0.post0: Apache-2.0 AND BSD-3-Clause
 - python-dotenv 1.2.4: BSD-3-Clause
@@ -564,6 +571,7 @@ Counts by licence: MIT 365, ISC 37, Apache-2.0 17, BSD-3-Clause 6, (MPL-2.0 OR A
 - uvicorn 0.34.0: BSD-3-Clause
 - uvloop 0.23.0: MIT OR Apache-2.0
 - watchfiles 1.3.0: MIT
+- webauthn 3.0.1: BSD-3-Clause; text: webauthn-3.0.1.LICENSE
 - websockets 16.0: BSD-3-Clause
 - yarl 1.25.1: Apache-2.0
 - zipp 4.1.1: MIT
@@ -732,3 +740,51 @@ These licence lists come from each package's Debian copyright file in /usr/share
 - util-linux [cseries-postgres:dev, cseries:dev]: BSD-3-clause; BSD-4-clause; BSLA; GPL-2; GPL-2+; GPL-3+; LGPL; LGPL-2+; LGPL-2.1+; LGPL-3+; MIT; public-domain
 - util-linux-extra [cseries-postgres:dev, cseries:dev]: BSD-3-clause; BSD-4-clause; BSLA; GPL-2; GPL-2+; GPL-3+; LGPL; LGPL-2+; LGPL-2.1+; LGPL-3+; MIT; public-domain
 - zlib1g [cseries-postgres:dev, cseries:dev]: Zlib
+
+### 5. Runtime images (4)
+
+Each release attaches `<image>-X.Y.Z-<arch>-notices.txt` for every runtime
+image and architecture, written inside the published image itself
+(.github/scripts/release.py notices): every Debian package with its source
+package and the licences its copyright file names, and every Python
+distribution with the licence its metadata names. What each image adds
+beside those packages:
+
+- ghcr.io/privatae/cseries-app-runtime-python: the C-Series runtime files in
+  /opt/app-runtime (fetch.py, run.py, egress.py), AGPL-3.0-only; CPython and
+  the Debian toolchain packages from its python:3.14-slim-bookworm base and
+  its own apt layer (the notices file lists them).
+- ghcr.io/privatae/cseries-browser: the C-Series browser control service in
+  /app, AGPL-3.0-only; Debian's chromium and its fonts, and the Python
+  distributions its Dockerfile pins (fastapi 0.115.0, uvicorn 0.32.0,
+  playwright 1.48.0, pydantic 2.9.2) with what they depend on, each listed
+  with its licence in the notices file.
+- ghcr.io/privatae/cseries-app-helper: a static Go binary built from
+  sidecars/app-helper, AGPL-3.0-only, with the Go standard library compiled
+  in (BSD-3-Clause), and the CA bundle copied from the Alpine build image's
+  ca-certificates package (MPL-2.0). No other file is in the image.
+- ghcr.io/privatae/cseries-app-runtime-creative (amd64 only): the python
+  image's contents and runtime files, plus Blender, unpacked whole from its
+  release archive into /opt/blender with the licence files the archive
+  carries (GNU GPL; the source for exactly that version is attached to the
+  same release as blender-<version>.tar.xz), the ArtCraft command-line
+  programs listed in sidecars/app-runtime-creative/crafts.txt (each one's
+  licence and NOTICE kept in /opt/craft/<name>/doc), and Mesa's software
+  OpenGL from Debian.
+
+### 6. The WSL guest image and a cloud box's packages
+
+The WSL guest image is a Debian root filesystem built from the packages
+vm/wsl/packages lists; each package's own copyright file is in the image at
+/usr/share/doc/<package>/copyright. A cloud box installs the packages
+vm/cloud/bootstrap.sh lists from Debian on the machine itself. For the local
+runtime (vm/runtime) both now carry two more Debian packages:
+
+- python3 (Debian's CPython 3): Python Software Foundation License, as its
+  copyright file states.
+- squid: GPL-2.0-or-later. The runtime runs it with its own configuration
+  (vm/runtime/squid.conf) as the coding engines' plain proxy; it is Debian's
+  binary, unmodified.
+
+The runtime itself is C-Series code, AGPL-3.0-only, and uses only the Python
+standard library.

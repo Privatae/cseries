@@ -283,14 +283,15 @@ _BY_APP = "app:"
 _FAILURES_ID_BY = {BY_OWNER: _TOTP_FAILURES_ID, BY_HOST: _TOTP_HOST_FAILURES_ID}
 
 # The system apps whose windows ask the owner for a code: Settings (backups
-# and restores), Network (NAC widens, grants, the factor itself), Keys (vault
+# and restores), Backups (the recovery key made on the Host, a restore from a
+# file), Network (NAC widens, grants, the factor itself), Keys (vault
 # reveal), Context Manager (store grants), and Circles and Workbench (ticket
 # decisions). Their codes stay on the owner's record. The app id alone is not
 # enough: a Host-built app could take one of these ids, so the installed row
 # must also carry a provenance only the platform's key can sign
 # (installer.install_bundle's provenance gate).
 OWNER_UI_APP_IDS: frozenset[str] = frozenset(
-    {"settings", "network", "keys", "context-manager", "circles", "workbench"})
+    {"settings", "backups", "network", "keys", "context-manager", "circles", "workbench"})
 _OWNER_UI_PROVENANCES = frozenset({"native", "standard"})
 
 # Who is trying a code. Set to BY_HOST around every Host tool call

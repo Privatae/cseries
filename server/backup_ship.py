@@ -217,11 +217,14 @@ async def get_source(pool: asyncpg.Pool) -> Optional[dict]:
     """The newest backup this Host took that can be sent: its encrypted file
     and its sidecar, as the platform named them. `export_id` is the run's id,
     so a send is keyed to one immutable file. The download links are signed
-    when the send starts (_signed), not here."""
+    when the send starts (_signed), not here. Only a run kept in the network's
+    storage: one written straight to the owner's bucket or to a folder on the
+    machine (stored 's3' / 'local') is already where it goes."""
     row = await pool.fetchrow(
         "SELECT id, stamp, stored, object_key, sidecar_key, size_bytes, sha256, "
         "       sidecar_sha256, sidecar_bytes, started_at "
         "FROM host_backup_runs WHERE state IN ('ok', 'partial') "
+        "  AND stored IN ('backup', 'staged') "
         "  AND object_key IS NOT NULL AND sidecar_key IS NOT NULL "
         "ORDER BY id DESC LIMIT 1")
     return _source_of(row)
@@ -448,6 +451,18 @@ def _open_source(url: str):
         raise ShipError("source_unreachable", str(e)) from None
 
 
+def _guard_request(request, **_kw) -> None:
+    """botocore's before-send: the address of each request, as sent, held to
+    backup_stores.endpoint_problem like the owner's bucket client's."""
+    from urllib.parse import urlsplit
+
+    from server import backup_stores
+    parts = urlsplit(getattr(request, "url", "") or "")
+    why = backup_stores.endpoint_problem(parts.hostname or "", parts.port)
+    if why:
+        raise ShipError("egress_blocked", f"the bucket's address cannot be used: {why}")
+
+
 def _ship_to_s3_blocking(creds: dict, target: dict, src, name: str,
                          size: int, want_sha: str,
                          progress: Optional[dict] = None) -> dict:
@@ -465,6 +480,16 @@ def _ship_to_s3_blocking(creds: dict, target: dict, src, name: str,
     import boto3
     from botocore.config import Config
 
+    # The bucket's address must be on the public internet, as the owner's
+    # bucket must for the backups themselves (server/backup_stores.py
+    # check_endpoint says why: loopback, the metadata service, the cluster's
+    # and the LAN's addresses): checked before the client is made and again
+    # before each request it sends, since a name can answer differently later.
+    from server import backup_stores
+    try:
+        backup_stores.check_endpoint(target.get("endpoint"))
+    except ValueError as e:
+        raise ShipError("egress_blocked", str(e)) from None
     session = boto3.session.Session(
         aws_access_key_id=creds.get("access_key_id"),
         aws_secret_access_key=creds.get("secret_access_key"),
@@ -490,6 +515,7 @@ def _ship_to_s3_blocking(creds: dict, target: dict, src, name: str,
             # the destination afterwards.
             request_checksum_calculation="when_required",
         ))
+    client.meta.events.register("before-send", _guard_request)
     bucket = target["address"]
     key = f"{target['prefix']}/{name}" if target.get("prefix") else name
 

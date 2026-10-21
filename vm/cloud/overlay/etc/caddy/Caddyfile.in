@@ -1,0 +1,59 @@
+# The cloud box's front door (bootstrap renders this file). One site: every
+# name under @ZONE_HOST@, which is the Host and its app origins, on 443 with
+# TLS 1.3 only and the box's wildcard certificate. Nothing reaches the Host
+# before the Host itself has answered forward_auth for that request, and
+# nothing from outside reaches the door that answers it.
+{
+	admin unix//run/caddy/admin.sock
+	# The certificate is the box's own (cseries-cert); Caddy fetches none
+	# and listens on nothing but 443.
+	auto_https disable_redirects
+	ocsp_stapling off
+	servers {
+		protocols h1 h2
+		timeouts {
+			read_header 10s
+			idle 5m
+		}
+	}
+}
+
+https://*.@ZONE_HOST@ {
+	tls /etc/caddy/tls/cert.pem /etc/caddy/tls/key.pem {
+		protocols tls1.3
+	}
+	# The Host sets its own framing, CSP and Referrer-Policy.
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+	# The Host's door answers Caddy's forward_auth question and nobody else:
+	# a request from outside for it ends here, before it is asked about or
+	# passed on. The path matcher compares the decoded, lower-cased path, so
+	# /__host%2Fdoor and /__HOST/door end here too.
+	@door path /__host/door /__host/door/*
+	handle @door {
+		respond 404
+	}
+	handle {
+		forward_auth @HOST_UPSTREAM@ {
+			uri /__host/door
+			# The door key tells the Host this is Caddy's own question, so
+			# it believes X-Forwarded-Method and -Uri only here. Set, not
+			# added: a value a client sent is replaced. The key comes from
+			# /etc/cseries-cloud/door-secret.env (caddy.service.d/cloud.conf)
+			# when the Caddyfile is read, at each start and reload.
+			header_up X-Cseries-Door {$CSERIES_DOOR_SECRET}
+		}
+		reverse_proxy @HOST_UPSTREAM@ {
+			# Caddy sets these two on the forward_auth question only. A
+			# client's own copies are removed, so the Host never reads a
+			# request's method or URI from a header the client wrote.
+			header_up -X-Forwarded-Method
+			header_up -X-Forwarded-Uri
+			# Nor the door key: a request passed on never carries it.
+			header_up -X-Cseries-Door
+		}
+	}
+}

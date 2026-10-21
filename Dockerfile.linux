@@ -552,15 +552,13 @@ COPY --chown=privatae:privatae scripts/test_memory_recall_engine.py /app/scripts
 # live user message drives a hybrid recall that leads the memory block, prefired
 # rows dedup out of the standing sections, no-query/no-match render no section.
 COPY --chown=privatae:privatae scripts/test_memory_prefire_recall.py /app/scripts/test_memory_prefire_recall.py
-# test_context_budget.py + test_thread_consolidator.py prove conversation-depth
-# token budgeting against the model window (derivation,
-# per-thread overrides, the ONE trim order, overflow retry seams) and the
-# thread consolidator (full-window input, atomic supersede, in-flight guard).
+# test_context_budget.py proves conversation-depth token budgeting against the
+# model window (derivation, the default history ceiling, per-thread
+# overrides, the ONE trim order, overflow retry seams).
 COPY --chown=privatae:privatae scripts/test_context_budget.py /app/scripts/test_context_budget.py
-COPY --chown=privatae:privatae scripts/test_thread_consolidator.py /app/scripts/test_thread_consolidator.py
-# test_context_janitor.py proves conversation depth: artifact
-# capture, janitor KEEP/DROP + embed submission, federated pre-fire, topic
-# segments, idle-gap trigger. Same COPY discipline as every gate above.
+# test_context_janitor.py proves the pre-fire vs recall split for documents
+# and captured tool results (the janitor it was named for is retired). Same
+# COPY discipline as every gate above.
 COPY --chown=privatae:privatae scripts/test_context_janitor.py /app/scripts/test_context_janitor.py
 COPY --chown=privatae:privatae scripts/test_memory_integrity_db.py /app/scripts/test_memory_integrity_db.py
 COPY --chown=privatae:privatae scripts/test_live_context_db.py /app/scripts/test_live_context_db.py

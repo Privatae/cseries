@@ -452,6 +452,9 @@ ALLOWED_USES = {
     ("workbench-web/src/components/ai-elements/prompt-input.tsx", "blob URL"):
         (2, "the person's own attached files, held as blob: URLs until sent (turned into data: URLs at "
             "submit) and revoked on removal; workbench-web mounts no frame but version-view's"),
+    ("system-apps/backups/app.js", "blob URL"):
+        (1, "the recovery key file the owner saves: text/plain made in the page, handed to an <a download> "
+            "and revoked; the page renders nothing from it, and the key is never sent"),
     ("app-web-kit/visuals/visual-block.tsx", "blob URL"):
         (1, "a visual's Download: the Host's page handed to an <a download> as application/octet-stream "
             "and revoked — never text/html, so even a navigation to the blob: URL could only save it"),

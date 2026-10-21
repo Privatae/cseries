@@ -1,0 +1,2 @@
+# Every model call the Host makes outside its own turn names its source, so the activity feed shows it with its cost: every call_model / _call_entity_model outside runtime/session.py passes its own _source; GET /api/inference/activity returns each call's cost_usd and cost_basis and can include the turn's own calls; Training Memory's classifier batch is logged under its own source. Reads the source; no pod, no DB.
+test_background_calls_labelled.py

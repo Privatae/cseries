@@ -21,7 +21,9 @@ the same registered keys. So a restore starts with the user:
      restored only when the owner says so, seeing why.
   2. STAGE, while the Host runs. Back up how it is now (so a restore can be
      undone from the same list), then stream the chosen file from where it is
-     kept (platform storage, or the user's own S3) through age, zstd and tar:
+     kept (the network's storage, the user's own S3, or the folder on this
+     machine, which also holds exports and a file the owner uploaded:
+     receive_upload) through age, zstd and tar:
      the database pieces go into pg_restore into a second database
      (hostmem_restore), the apps into .host-restore/apps on the apps volume.
      Write the plan; restart the kernel.
@@ -72,6 +74,7 @@ from pathlib import Path
 from typing import Any, NamedTuple, Optional
 
 from server import age_keys
+from server import backup_stores
 from server import host_backup as hb
 
 log = logging.getLogger("privatae.pc.host_restore")
@@ -79,6 +82,10 @@ log = logging.getLogger("privatae.pc.host_restore")
 LIVE = Path(hb.APPS_ROOT)             # the apps volume
 RESTORE_DIR = LIVE / ".host-restore"
 STAGED = RESTORE_DIR / "apps"          # the restored apps, staged here first
+# Each app's kept data from the backup (host_backup._add_app_data), one tar a
+# app, staged beside the apps and put back by the local runtime once the
+# kernel has started on the restored database (finish, _restore_app_data).
+APP_DATA = RESTORE_DIR / "app-data"
 PREVIOUS = RESTORE_DIR / "previous"    # what the swap moved out of the way
 PLAN = RESTORE_DIR / "plan.json"
 MANIFEST = RESTORE_DIR / "manifest"    # every path the staged tree holds
@@ -98,7 +105,7 @@ FINISHING = "finishing"   # the kernel started on the restored data: never undon
 UNDOING = "undoing"       # putting the previous data back; resumed until done
 FAILED = "failed"
 
-WHERE = ("platform", "s3")
+WHERE = ("platform", "s3", "local")
 DATA_SUFFIX = ".tar.zst.age"
 SIDECAR_SUFFIX = ".key.age"
 # A stamp at the end of an object name: b/<stamp>.tar.zst.age, or the second
@@ -171,33 +178,63 @@ def _share(name: str) -> float:
     return v
 
 
+def in_cluster() -> bool:
+    """Does this Host run as a pod on a Kubernetes node? The kubelet puts
+    KUBERNETES_SERVICE_HOST into every pod's environment, service links or
+    not. A C-Series machine runs the Host under podman (vm/wsl,
+    cseries-host.container), where nothing sets it."""
+    return bool(os.environ.get("KUBERNETES_SERVICE_HOST"))
+
+
 def _reserve(room: Room) -> tuple[int, int | None, str]:
     """(bytes, inodes, where the shares came from) a restore must leave free.
 
-    The apps volume is a folder on the node's own disk, shared with every Host
-    on the node and the kubelet. Below its eviction threshold the kubelet
-    starts evicting pods, other Hosts' included, and the restored data stays
-    (it is on a persistent volume, which eviction does not count or free). So
-    a restore stays above that threshold: the larger of SPACE_MARGIN and the
-    threshold's share of the disk, and the same for inodes.
+    IN THE CLUSTER (in_cluster) the apps volume is a folder on the node's own
+    disk, shared with every Host on the node and the kubelet. Below its
+    eviction threshold the kubelet starts evicting pods, other Hosts'
+    included, and the restored data stays (it is on a persistent volume,
+    which eviction does not count or free). So a restore stays above that
+    threshold: the larger of SPACE_MARGIN and the threshold's share of the
+    disk, and the same for inodes. The shares come from Kubernetes'
+    documented defaults: bytes 0.15, because nodefs.available<10% and
+    imagefs.available<15% are one signal when images and the kubelet share a
+    disk, as they do here (the Host nodes' kubelets run nodefs<10%,
+    imagefs<15%); inodes 0.05, nodefs.inodesFree<5% (those kubelets do not
+    watch inodes at all, so this reserve is the only thing keeping a node's
+    inodes).
 
-    The shares come from CSERIES_NODE_EVICTION_FREE / CSERIES_NODE_EVICTION_INODES_FREE
-    (fractions, for the operator to set from the node's kubelet config, which
-    this pod cannot read), else from Kubernetes' documented defaults: bytes
-    0.15, because nodefs.available<10% and imagefs.available<15% are one
-    signal when images and the kubelet share a disk, as they do here (the
-    Host nodes' kubelets run nodefs<10%, imagefs<15%); inodes
-    0.05, nodefs.inodesFree<5% (those kubelets do not watch inodes at all, so
-    this reserve is the only thing keeping a node's inodes)."""
-    src = "Kubernetes' documented eviction defaults"
-    share, ishare = EVICTION_FREE_SHARE, INODE_MARGIN
+    ON ONE MACHINE (a C-Series machine, a managed VPS) there is no kubelet and
+    nothing is evicted: the disk holds one Host, its database and the system.
+    What must not run out is the database's room for its write-ahead log and
+    the system's own. A restore keeps the larger of SINGLE_DISK_FREE_MIN and
+    SINGLE_DISK_FREE_SHARE of the disk:
+      * 2 GiB covers the most write-ahead log this image's PostgreSQL may hold
+        (entrypoint-postgres.sh: max_wal_size 256MB, and up to
+        max_slot_wal_keep_size 1024MB more for the owner's memory mirror),
+        with room left for the system's logs and an image pull;
+      * 5% is the share ext4 itself reserves on a new filesystem (mke2fs -m's
+        default) for the same reason, so it scales the floor on a large disk.
+    15% would refuse a restore that fits on a small disk: 15 GB of a 100 GB
+    disk kept empty for a kubelet that is not there. Inodes keep 5%, as in the
+    cluster.
+
+    CSERIES_NODE_EVICTION_FREE / CSERIES_NODE_EVICTION_INODES_FREE (fractions,
+    for the operator to set from the node's kubelet config, which this pod
+    cannot read) replace the share in either case."""
+    if in_cluster():
+        src = "Kubernetes' documented eviction defaults"
+        share, floor = EVICTION_FREE_SHARE, SPACE_MARGIN
+    else:
+        src = "the reserve for one machine's disk"
+        share, floor = SINGLE_DISK_FREE_SHARE, SINGLE_DISK_FREE_MIN
+    ishare = INODE_MARGIN
     if "CSERIES_NODE_EVICTION_FREE" in os.environ:
         share = _share("CSERIES_NODE_EVICTION_FREE")
         src = "CSERIES_NODE_EVICTION_FREE"
     if "CSERIES_NODE_EVICTION_INODES_FREE" in os.environ:
         ishare = _share("CSERIES_NODE_EVICTION_INODES_FREE")
         src += ", CSERIES_NODE_EVICTION_INODES_FREE"
-    nbytes = max(SPACE_MARGIN, int(room.total * share))
+    nbytes = max(floor, int(room.total * share))
     inodes = int(room.inodes * ishare) if room.inodes else None
     return nbytes, inodes, src
 
@@ -214,6 +251,9 @@ def _reserve(room: Room) -> tuple[int, int | None, str]:
 # and takes no unit (ext4, measured: 59 bytes took none, 60 took one).
 EVICTION_FREE_SHARE = 0.15
 INODE_MARGIN = 0.05
+# On one machine's disk (_reserve says why).
+SINGLE_DISK_FREE_SHARE = 0.05
+SINGLE_DISK_FREE_MIN = 2 * 1024 * 1024 * 1024
 LINK_INLINE = 60
 
 
@@ -300,6 +340,27 @@ def _write_plan(plan: dict) -> None:
     os.replace(tmp, PLAN)
 
 
+# The states in which the restored database is in place (or being put in
+# place) and an app's data from the backup may still be waiting to go back.
+_APP_DATA_WAITS = (DB_DONE, ASIDE_DONE, SWAPPED, FINISHING)
+APP_DATA_PENDING = "pending"
+APP_DATA_RESTORED = "restored"
+APP_DATA_NOT_RESTORED = "not restored"
+
+
+def app_data_pending() -> frozenset:
+    """The apps whose kept data this restore has yet to put back: from the
+    database swap until finish() has handed each one to the local runtime.
+    Their wakes wait (local_runtime.LocalRuntimeClient), so no app starts on
+    the data it is about to lose. Empty with no plan, or a staged one (the
+    Host still runs as it was)."""
+    plan = read_plan()
+    if not plan or plan.get("state") not in _APP_DATA_WAITS:
+        return frozenset()
+    return frozenset(a.get("app_id") for a in plan.get("app_data") or []
+                     if isinstance(a, dict) and a.get("state") == APP_DATA_PENDING and a.get("app_id"))
+
+
 def _drop_plan() -> None:
     for p in (PLAN, MANIFEST):
         with contextlib.suppress(FileNotFoundError):
@@ -361,15 +422,12 @@ async def _s3_target(pool, eid: int) -> Optional[dict]:
 
 
 def _s3_client(creds: dict, target: dict):
-    import boto3
-    from botocore.config import Config
-    return boto3.session.Session(
-        aws_access_key_id=creds.get("access_key_id"),
-        aws_secret_access_key=creds.get("secret_access_key"),
-        aws_session_token=creds.get("session_token") or None,
-        region_name=target.get("region"),
-    ).client("s3", endpoint_url=target.get("endpoint"),
-             config=Config(signature_version="s3v4", request_checksum_calculation="when_required"))
+    """The owner's bucket, through the one client that checks its address
+    (backup_stores.s3_client): a restore reads from where backups go."""
+    try:
+        return backup_stores.s3_client(creds, target)
+    except hb.BackupError as e:
+        raise RestoreError(str(e)) from None
 
 
 async def _s3_backups(pool, eid: int) -> dict[str, dict]:
@@ -395,9 +453,19 @@ async def _s3_backups(pool, eid: int) -> dict[str, dict]:
     return pair_objects(await asyncio.to_thread(listing), "s3")
 
 
+def _local_backups() -> dict[str, dict]:
+    """The backups in the folder on this machine: a file the owner uploaded,
+    then the exports, then the folder's own backups (which win on a stamp
+    they share)."""
+    found: dict[str, dict] = {}
+    for sub in ("uploads", "exports", ""):
+        found.update(hb.local_store(sub).pairs())
+    return found
+
+
 async def list_backups(pool, eid: int) -> tuple[list[dict], list[str]]:
     """Every backup this Host could restore, newest first, and what could not
-    be listed."""
+    be listed. The network's storage is asked only by a Host on a network."""
     found: dict[str, dict] = {}
     problems = []
     try:
@@ -405,9 +473,16 @@ async def list_backups(pool, eid: int) -> tuple[list[dict], list[str]]:
     except Exception as e:
         problems.append(f"your own storage could not be listed: {e}")
     try:
-        found.update(await _platform_backups())
+        found.update(await asyncio.to_thread(_local_backups))
     except Exception as e:
-        problems.append(f"platform storage could not be listed: {e}")
+        problems.append(f"the backup folder on this machine could not be listed: {e}")
+    mode = hb.host_mode()
+    if mode != hb.MODE_STANDALONE:
+        try:
+            found.update(await _platform_backups())
+        except Exception as e:
+            where = "the network's storage" if mode == hb.MODE_MEMBER else "platform storage"
+            problems.append(f"{where} could not be listed: {e}")
     return [dict(v, stamp=k) for k, v in sorted(found.items(), reverse=True)], problems
 
 
@@ -487,6 +562,11 @@ async def _host_identity(pool) -> str:
 async def _fetch_small(pool, eid: int, entry: dict, key_field: str) -> bytes:
     """A sidecar's bytes, from wherever the backup is kept."""
     key = entry[key_field]
+    if entry["where"] == "local":
+        try:
+            return await asyncio.to_thread(hb.local_store().read_small, key)
+        except hb.BackupError as e:
+            raise RestoreError(str(e)) from None
     if entry["where"] == "platform":
         url = (await hb.call("backup.get_url", {"key": key}))["url"]
 
@@ -506,7 +586,17 @@ async def _fetch_small(pool, eid: int, entry: dict, key_field: str) -> bytes:
     return await asyncio.to_thread(get_s3)
 
 
-async def _entry(pool, eid: int, stamp: str) -> dict:
+async def _entry(pool, eid: int, stamp: str, where: Optional[str] = None) -> dict:
+    """The listed backup of `stamp`, from `where` when given. A file the
+    owner uploaded or exported shares the list with the network's storage,
+    which wins on a stamp both hold (list_backups), so a restore from a file
+    names its place: the backup restored is the one the owner chose, the one
+    whose key file their browser resealed."""
+    if where == "local":
+        local = await asyncio.to_thread(_local_backups)
+        if stamp in local:
+            return dict(local[stamp], stamp=stamp)
+        raise RestoreError("that backup is not on this machine any more: upload it again")
     backups, problems = await list_backups(pool, eid)
     found = next((b for b in backups if b["stamp"] == stamp), None)
     if found is None:
@@ -649,6 +739,190 @@ async def poll_reseal(pool, eid: int, stamp: str) -> Optional[dict]:
                                               else "the bastion lost the job; ask again"))
     await hb._set_state(pool, f"reseal:{stamp}", job)
     return job
+
+
+# ── a file the owner uploads, to restore from ────────────────────────────────
+#
+# A backup the owner holds as a file (one this Host's Backups app let them
+# download, or an export from another C-Series Host) comes back through their
+# browser: its key file first, then the backup itself in chunks, each sent at
+# the offset this Host already holds, so a dropped connection carries on from
+# there. It lands in the folder on this machine, under uploads/, and is
+# restored from there like any other backup (the owner's browser reseals its
+# key file to this Host first, as always). Ciphertext only: a body carrying a
+# private key is refused, wherever it falls. One upload is kept at a time
+# (a new one replaces it, never one a restore is reading), for
+# host_backup.EXPORT_KEEP_DAYS, and never past the room the machine needs.
+UPLOAD_REQUEST_MAX = 256 * 1024 * 1024      # what one request may carry
+_SECRET_MARK = b"AGE-SECRET-KEY-"
+_ARMOR_HEAD = b"-----BEGIN AGE ENCRYPTED FILE-----"
+
+
+def upload_status(stamp: str) -> dict:
+    """How much of an upload this Host holds."""
+    store = hb.local_store("uploads")
+    data = store.folder / f"{stamp}{DATA_SUFFIX}"
+    part = store.folder / f".{stamp}{DATA_SUFFIX}.part"
+    done = data.is_file()
+    size = data.stat().st_size if done else (part.stat().st_size if part.is_file() else 0)
+    return {"stamp": stamp, "key_file": (store.folder / f"{stamp}{SIDECAR_SUFFIX}").is_file(),
+            "size": int(size), "done": done}
+
+
+def _uploads_in_use() -> set[str]:
+    out: set[str] = set()
+    plan = read_plan()
+    if plan and plan.get("stamp"):
+        out.add(str(plan["stamp"]))
+    with contextlib.suppress(OSError):
+        if RESEALED_DIR.is_dir():
+            out |= {p.name[:-len(".age")] for p in RESEALED_DIR.iterdir()
+                    if hb.STAMP_RE.match(p.name[:-len(".age")])}
+    return out
+
+
+def _other_uploads(folder: Path, stamp: str) -> tuple[list[str], int]:
+    """One upload at a time: the files of any other upload, which this one
+    replaces once it is accepted, and the bytes they hold. Raises when a
+    restore is reading one of them."""
+    if not folder.is_dir():
+        return [], 0
+    names = [n for n in os.listdir(folder) if stamp not in n]
+    held = {s for s in (backup_stores.stamp_of_key(n.lstrip(".").removesuffix(".part")) for n in names) if s}
+    if held & _uploads_in_use():
+        raise RestoreError("a restore is reading the file uploaded before this one; wait for it "
+                           "to finish, or cancel it, then upload again")
+    size = 0
+    for n in names:
+        with contextlib.suppress(OSError):
+            size += os.lstat(folder / n).st_size
+    return names, size
+
+
+def _drop_uploads(folder: Path, names: list[str]) -> None:
+    for n in names:
+        with contextlib.suppress(OSError):
+            (folder / n).unlink()
+
+
+def _scan(carry: bytes, chunk: bytes) -> bytes:
+    """Raise if a private key's mark is in `chunk`, counting the end of the
+    bytes before it (`carry`); the new carry."""
+    seen = (carry + chunk).upper()
+    if _SECRET_MARK in seen:
+        raise RestoreError("that file carries a private key. Keep your recovery key to yourself: "
+                           "upload only the backup and its key file, never the key that opens them")
+    return seen[-(len(_SECRET_MARK) - 1):]
+
+
+async def receive_upload(stamp: str, part: str, offset: int, total: int, chunks,
+                         final: bool) -> dict:
+    """Take one request's worth of an upload. `part` is "key" (the key file,
+    whole, in one request) or "data" (the backup, from `offset`, which must be
+    what this Host already holds; 0 starts it again). `total` is the whole
+    file's size, announced up front: the room is checked against it, and on
+    `final` the file must be exactly that long. `chunks` yields the bytes."""
+    if not hb.STAMP_RE.match(stamp or ""):
+        raise RestoreError("name the backup by its time stamp, as its file is named")
+    if part not in ("key", "data"):
+        raise RestoreError("part must be key or data")
+    try:
+        total, offset = int(total), int(offset)
+    except (TypeError, ValueError):
+        raise RestoreError("total and offset are whole numbers") from None
+    if total <= 0 or offset < 0 or offset > total:
+        raise RestoreError("total must be the file's size, and offset within it")
+    for sub in ("", "exports"):
+        if stamp in hb.local_store(sub).pairs():
+            raise RestoreError("this Host already holds that backup: restore it from the list")
+    store = hb.local_store("uploads")
+    folder = store.folder
+    folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if part == "key":
+        if offset != 0 or total > backup_stores.SIDECAR_MAX:
+            raise RestoreError("a key file is sent whole, and is small")
+        data, carry = b"", b""
+        async for c in chunks:
+            carry = _scan(carry, c)
+            data += c
+            if len(data) > total:
+                raise RestoreError(f"the key file is longer than the {total} bytes announced")
+        if len(data) != total:
+            raise RestoreError(f"the key file is {len(data)} bytes, not the {total} announced")
+        if not data.lstrip().startswith(_ARMOR_HEAD):
+            raise RestoreError("that is not a backup's key file (it begins -----BEGIN AGE "
+                               "ENCRYPTED FILE-----)")
+        others, _ = _other_uploads(folder, stamp)
+        await asyncio.to_thread(store.put_sidecar, stamp, data)
+        _drop_uploads(folder, others)
+        return upload_status(stamp)
+
+    final_path = folder / f"{stamp}{DATA_SUFFIX}"
+    tmp = folder / f".{stamp}{DATA_SUFFIX}.part"
+    if final_path.exists():
+        raise RestoreError("this file is already here whole: restore it from the list")
+    have = tmp.stat().st_size if tmp.is_file() else 0
+    others: list[str] = []
+    if offset == 0:
+        # The upload this one replaces is dropped once this one is accepted;
+        # its room counts as free for this one.
+        others, others_bytes = _other_uploads(folder, stamp)
+        st = os.statvfs(folder)
+        free = st.f_bavail * st.f_frsize + others_bytes
+        keep = backup_stores.local_reserve(st.f_blocks * st.f_frsize)
+        if free - total < keep:
+            raise RestoreError(f"this machine has {free >> 20} MiB free and must keep {keep >> 20} MiB "
+                               f"free to run, so a file of {total >> 20} MiB cannot be uploaded to it. "
+                               "Free some space and try again")
+        have = 0
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW | os.O_CLOEXEC
+    elif offset != have:
+        raise RestoreError(f"this Host holds {have} bytes of that file: send it on from there")
+    else:
+        flags = os.O_WRONLY | os.O_APPEND | os.O_NOFOLLOW | os.O_CLOEXEC
+    carry = b""
+    if have:
+        with open(tmp, "rb") as f:
+            f.seek(max(0, have - (len(_SECRET_MARK) - 1)))
+            carry = f.read().upper()
+    fd = os.open(tmp, flags, 0o600)
+    sent = 0
+    try:
+        async for c in chunks:
+            carry = _scan(carry, c)
+            sent += len(c)
+            if have + sent > total or sent > UPLOAD_REQUEST_MAX:
+                raise RestoreError(f"more was sent than the {total} bytes announced"
+                                   if have + sent > total else "send the file in smaller pieces")
+            view = memoryview(c)
+            while view:
+                n = await asyncio.to_thread(os.write, fd, view)
+                view = view[n:]
+        os.fsync(fd)
+    except RestoreError:
+        # Refused: nothing of it is kept.
+        os.close(fd)
+        with contextlib.suppress(OSError):
+            tmp.unlink()
+        raise
+    except BaseException:
+        # The connection dropped: what arrived stays, and the next request
+        # carries on from it (upload_status says where).
+        with contextlib.suppress(OSError):
+            os.fsync(fd)
+        os.close(fd)
+        raise
+    os.close(fd)
+    _drop_uploads(folder, others)
+    size = have + sent
+    if final:
+        if size != total:
+            with contextlib.suppress(OSError):
+                tmp.unlink()
+            raise RestoreError(f"the file arrived as {size} bytes, not the {total} announced: "
+                               "upload it again")
+        os.replace(tmp, final_path)
+    return upload_status(stamp)
 
 
 # ── a copy kept only on the user's bastion ───────────────────────────────────
@@ -859,6 +1133,20 @@ CARRIED_TABLES = (
     "application_signing_keys",        # the app trust store and its revocations
     # who a backup and a sealed credential go to
     "backup_user_key", "vault_identity_pubkey",
+    # the owner's passkeys and recovery codes (v240): a backup's would bring
+    # back a passkey the owner removed or a recovery code already spent
+    "owner_passkeys", "owner_recovery_codes",
+    # and the owner they sign in (v228), with the owner's sessions. The
+    # passkeys and codes name no account (owner_passkeys.USER_HANDLE is one
+    # constant) and sign in only while there is one (owner_login.needs_setup).
+    # A backup's account is another password and another cookie name
+    # (cookie_suffix), or, taken before the owner was made, no account at all:
+    # the owner signed out and sent to /setup, whose code only the kernel's
+    # log shows. Kept, the browser that asked for the restore stays signed in
+    # while its session lasts, and the owner signs in as before the restore;
+    # the backup's sessions do not come back. owner_note says so when the
+    # backup's owner had another email.
+    "owner_account", "owner_sessions",
 )
 # Carried as single rows: the second factor (server/network/nac_stepup.py:51,
 # 52, 147) and the app-token signing secret (server/applications/tokens.py:187;
@@ -884,15 +1172,20 @@ CARRIED_SECRETS = ("nac_stepup_totp", "nac_stepup_enrolled", "nac_stepup_last_co
 # none now is dropped with them. Like the records above: a restore must not
 # hand a guesser back the free tries its wrong codes since the backup used up.
 CARRIED_SECRET_PREFIXES = ("nac_stepup_failures_app:",)
-# A recovery key the account page offers (server/host_backup.py pin_recovery_key).
-CARRIED_STATE = ("recovery_offer",)
+# A recovery key the account page offers (server/host_backup.py pin_recovery_key),
+# and which key the owner made on this Host (host_backup.OWN_KEY_STATE): both
+# say who backups go to, so they follow the live keys (backup_user_key, above).
+CARRIED_STATE = ("recovery_offer", "recovery_own")
 # DELIBERATELY LEFT AS THE BACKUP HAD THEM:
 #  - kernel_secrets vault_host_x25519 (server/vault/identity.py:30): it opens
 #    the credentials the vault holds (vault_envelope), which are restored with
 #    it; a live key would open none of them.
-#  - kernel_secrets entity_sign (server/applications/entity_signing.py:35): the
-#    Host's signing identity, which peers pinned; it does not change unless the
-#    Host is re-made (a backup from another Host number: it is carried, below).
+#  - kernel_secrets entity_sign (server/applications/entity_signing.py:35), after
+#    a verified restore: the Host's signing identity, which peers pinned; it
+#    does not change unless the Host is re-made (a backup from another Host
+#    number: it is carried, below). After an unverified restore it is carried
+#    too (carry_rows): the trust store that must hold its public key is the
+#    live one, and the backup's key could be anyone's.
 #    The Hub's WireGuard key, which machines pin the same way, is carried
 #    always instead (hub_wg in CARRIED_SECRETS): no restored data depends on it,
 #    and every live machine needs the live one.
@@ -902,8 +1195,10 @@ CARRIED_STATE = ("recovery_offer",)
 #    After an unverified restore the live keys replace the backup's.
 #  - vault_envelope and the credentials the integrations store holds
 #    (connections): user data, restored as of the backup.
-#  - installed_applications: apps and their manifest permissions come back
-#    with the app files they describe.
+#  - installed_applications: after a verified restore, apps and their manifest
+#    permissions come back with the app files they describe. After an
+#    unverified one neither comes back: each app is installed again
+#    (leave_code_out, _reinstall_apps).
 #  - audit trails (app_token_audit, nac_mgmt_audit, nac_agent_audit, vault_audit)
 #    and contacts, peer_cards: records, not grants.
 # The integrations store's grants (which app may use which connection,
@@ -913,6 +1208,30 @@ CARRIED_STATE = ("recovery_offer",)
 
 def _qi(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
+
+
+async def _owner_email(conn) -> Optional[str]:
+    """The email of the owner account in `conn` (v228; one row), or None."""
+    if "email" not in await _columns(conn, "owner_account"):
+        return None
+    rows = await conn.fetch('SELECT "email" FROM "owner_account"')
+    return str(rows[0]["email"]) if rows else None
+
+
+def owner_note(live: Optional[str], backup: Optional[str]) -> Optional[str]:
+    """What the restore says about the owner's sign-in, given the owner's
+    email live until the swap and the one the backup held; None when the
+    owner signs in as before and nothing needs saying. The live account is
+    the one kept either way (CARRIED_TABLES)."""
+    if live and backup and live.strip().lower() != backup.strip().lower():
+        return (f"This backup came from a Host whose owner signed in with another email. A restore "
+                f"keeps this Host's own sign-in, so you still sign in as {live}, with the password "
+                f"or passkey you used before the restore.")
+    if not live and backup:
+        return ("This Host had no owner account when it was restored, so it has none now: a restore "
+                "keeps this Host's own sign-in and does not bring back the backup's. Create the owner "
+                "account at /setup.")
+    return None
 
 
 async def _columns(conn, table: str) -> list[str]:
@@ -1128,6 +1447,17 @@ async def carry_rows(src, dst, renumber_from: Optional[int] = None,
             done["renumbered"] = await renumber(dst, int(renumber_from), int(renumber_to))
             secrets = CARRIED_SECRETS + RENUMBER_CARRIED_SECRETS
             touched.add("entity_registry")
+        elif not verified:
+            # The trust store is the live one (application_signing_keys, in
+            # CARRIED_TABLES), so the signing identity is too: a backup this
+            # Host cannot confirm it made could carry any key, and every
+            # project built here after it (the restore's own reinstall among
+            # them) would be signed with a key the trust store does not hold.
+            secrets = CARRIED_SECRETS + RENUMBER_CARRIED_SECRETS
+        # Read before the owner's account is replaced with the live one.
+        owner = owner_note(await _owner_email(src), await _owner_email(dst))
+        if owner:
+            done["owner_note"] = owner
         for table in CARRIED_TABLES:
             s_cols = await _columns(src, table)
             d_cols = await _columns(dst, table)
@@ -1182,10 +1512,13 @@ async def carry_rows(src, dst, renumber_from: Optional[int] = None,
         done["keys"] = await _settle_keys(src, dst, touched)
         await dst.execute("SET LOCAL session_replication_role = origin")
         if stamp is not None and await _columns(dst, "host_backup_state"):
+            # With what the restore says about the owner's sign-in, which
+            # finish() reads into the restore's result: written in this
+            # transaction, so a boot killed after the commit still says it.
             await dst.execute(
                 "INSERT INTO host_backup_state (k, v) VALUES ($1, $2::jsonb) "
                 "ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v", CARRIED_MARKER,
-                json.dumps({"stamp": stamp}))
+                json.dumps({"stamp": stamp, **({"owner": owner} if owner else {})}))
     return done
 
 
@@ -1332,6 +1665,20 @@ def carry(live: str) -> int:
         return 0
     live = plan.get("live_db") or live
     before = f"{live}_before_restore"
+    if not plan.get("settled"):
+        # The migrations newer than the backup have just run over its rows:
+        # what they left of the load's own columns and checks is settled
+        # before anything serves.
+        try:
+            said = settle(live, plan.get("load_columns") or [], plan.get("deferred_checks") or [])
+        except Exception as e:
+            print(f"restore: could not settle the restored database: {e}", file=sys.stderr)
+            return 1
+        if said:
+            plan["db_note"] = " ".join(n for n in (plan.get("db_note"), said) if n)
+            print(f"restore: {said}")
+        plan["settled"] = True
+        _write_plan(plan)
 
     async def go():
         src, dst = await _connect(before), await _connect(live)
@@ -1356,6 +1703,8 @@ def carry(live: str) -> int:
     plan.update(carried=True, carried_at=hb._now().isoformat())
     _write_plan(plan)
     print(f"restore: kept the live access and second factor ({len(done)} tables)")
+    if done.get("owner_note"):
+        print(f"restore: {done['owner_note']}")
     return 0
 
 
@@ -1365,19 +1714,28 @@ def _progress(pool, **v):
     return hb._set_state(pool, "restore", {**v, "at": hb._now().isoformat()})
 
 
-async def stage(pool, eid: int, stamp: str, unverified_ok: bool = False) -> dict:
+async def stage(pool, eid: int, stamp: str, unverified_ok: bool = False,
+                where: Optional[str] = None) -> dict:
     """Stage a restore and restart the kernel to swap it in. Runs as a
     background task from the route; progress is in host_backup_state
     'restore'. Serialized with backups (host_backup._run_lock).
     `unverified_ok`: the owner said to restore a backup this Host cannot
-    verify as its own (UNVERIFIED_TEXT)."""
+    verify as its own (UNVERIFIED_TEXT). `where`: "local" for a file on this
+    machine the owner chose (_entry)."""
     async with hb._run_lock:
+        try:
+            # First, whatever else happens: a restore killed in the middle of
+            # its load left LOAD_ROLE able to log in.
+            await asyncio.to_thread(lock_load_role)
+        except RestoreError as e:
+            await _progress(pool, state=FAILED, error=str(e), stamp=stamp)
+            return {"state": FAILED, "error": str(e)}
         if read_plan() is not None:
             # Checked before anything is cleared: the staged copy belongs to it.
             return {"state": FAILED,
                     "error": "a restore is already waiting for this Host to restart"}
         try:
-            return await _stage(pool, eid, stamp, unverified_ok)
+            return await _stage(pool, eid, stamp, unverified_ok, where)
         except Exception as e:
             msg = str(e)[:600] or type(e).__name__
             log.warning("restore: staging failed: %s", msg)
@@ -1390,6 +1748,11 @@ async def stage(pool, eid: int, stamp: str, unverified_ok: bool = False) -> dict
 
 async def _open_source(pool, eid: int, entry: dict):
     """A readable stream of the encrypted file."""
+    if entry["where"] == "local":
+        try:
+            return await asyncio.to_thread(hb.local_store().open, entry["key"])
+        except hb.BackupError as e:
+            raise RestoreError(str(e)) from None
     if entry["where"] == "platform":
         url = (await hb.call("backup.get_url", {"key": entry["key"]}))["url"]
         return await asyncio.to_thread(urllib.request.urlopen, url, None, hb.RUN_TIMEOUT_S)
@@ -1459,10 +1822,13 @@ async def new_plan(pool, eid: int, stamp: str, entry: dict, got: dict) -> dict:
             "files": got.get("files"), "db_bytes": got.get("db_bytes"),
             # The Host the backup was taken on, and this one. They differ when
             # a Host that replaced a lost one (with a new number) restores it.
-            "backup_entity_id": got.get("entity_id"), "live_entity_id": int(eid)}
+            "backup_entity_id": got.get("entity_id"), "live_entity_id": int(eid),
+            # Each app's kept data from the backup, put back at finish.
+            "app_data": got.get("app_data") or []}
 
 
-async def _stage(pool, eid: int, stamp: str, unverified_ok: bool = False) -> dict:
+async def _stage(pool, eid: int, stamp: str, unverified_ok: bool = False,
+                 where: Optional[str] = None) -> dict:
     missing = hb.configured()
     if missing:
         raise RestoreError(missing)
@@ -1480,7 +1846,7 @@ async def _stage(pool, eid: int, stamp: str, unverified_ok: bool = False) -> dic
               if body.get("data_sha256") else None)
     drop_resealed(stamp)            # read once; the key lives on in memory until unpacked
     await _progress(pool, state="staging", step="finding the backup", stamp=stamp)
-    entry = await _entry(pool, eid, stamp)
+    entry = await _entry(pool, eid, stamp, where)
     listed = entry.get("sha256")
     if listed and expect and listed != expect["sha256"]:
         raise RestoreError("the platform's record of this backup names another file than its key "
@@ -1523,12 +1889,31 @@ async def _stage(pool, eid: int, stamp: str, unverified_ok: bool = False) -> dic
         with contextlib.suppress(Exception):
             src.close()
     body = None  # noqa: F841 - the backup's key is not kept past this point
+    code_left_out, apps_wanted = [], []
+    if not is_own:
+        # No installed code and no app row from a backup this Host cannot
+        # confirm it made (leave_code_out, below).
+        code_left_out = await asyncio.to_thread(leave_code_out, STAGED)
+        conn = await _connect(RESTORE_DB)
+        try:
+            apps_wanted = await leave_app_rows_out(conn)
+        finally:
+            await conn.close()
     await asyncio.to_thread(_write_manifest)
 
     plan = await new_plan(pool, eid, stamp, entry, got)
     plan["verified"] = is_own
+    plan["code_left_out"] = code_left_out
+    # This Host's own, through the swap (set_aside), after an unverified one.
+    plan["live_kept"] = [] if is_own else list(LIVE_KEPT_DIRS)
+    plan["apps_reinstall"] = apps_wanted
     plan["links_refused"] = got.get("links_refused") or []
     plan["links_refused_count"] = int(got.get("links_refused_count") or len(plan["links_refused"]))
+    # What the load left out (said to the owner at finish), and what the
+    # boot settles once its migrations have run over the rows (carry, settle).
+    plan["db_note"] = got.get("world_note")
+    plan["load_columns"] = got.get("load_columns") or []
+    plan["deferred_checks"] = got.get("deferred_checks") or []
     if undo_point:
         plan["undo_point"] = undo_point
     _write_plan(plan)
@@ -1683,7 +2068,12 @@ def _link_escapes(staged_real: str, live_root: str, parts: list[str], target: st
     cur = list(parts[:-1])
     pending: list[str] = []          # names still to walk, next one last
     hops = 0
-    if any(_kept("/".join(cur[:i])) for i in range(1, len(cur) + 1)):
+    def kept(rel: str) -> bool:
+        # Only an unverified restore checks its links here (unpack
+        # trust_links), and it takes these from the image or this Host.
+        return _kept(rel) or _left_out_unverified(rel)
+
+    if any(kept("/".join(cur[:i])) for i in range(1, len(cur) + 1)):
         return True                  # the link itself sits in a kept path
 
     def follow(t: str) -> bool:
@@ -1707,7 +2097,7 @@ def _link_escapes(staged_real: str, live_root: str, parts: list[str], target: st
             cur.pop()
             continue
         cur.append(name)
-        if _kept("/".join(cur)):
+        if kept("/".join(cur)):
             return True
         here = os.path.join(staged_real, *cur)
         if os.path.islink(here):
@@ -1718,12 +2108,70 @@ def _link_escapes(staged_real: str, live_root: str, parts: list[str], target: st
     return False
 
 
+APP_DATA_PREFIX = "app-data/"
+# One piece of an app's data, as host_backup._add_app_data names it: the app
+# id as the runtime checks one (cseries_runtime/validate.py APP_ID_RE), then
+# the piece's number.
+_APP_DATA_MEMBER = re.compile(r"^app-data/([a-z0-9][a-z0-9-]{0,63})\.tar\.([0-9]{5})\Z")
+_APP_ID = re.compile(r"^[a-z0-9][a-z0-9-]{0,63}\Z")
+
+
+def _check_app_data(manifest: dict, got: dict, app_dir: Path, staged: bool) -> list[dict]:
+    """Each app's data in the backup against its manifest entry, both ways:
+    every piece is listed, every app the manifest says was read whole is
+    there, piece for piece, byte for byte. An app the manifest says was cut
+    short when the backup was made is not put back (its staged tar goes) and
+    is listed so with why. Returns the apps, each {app_id, installed,
+    uid_base, bytes, state[, error]}: state pending when it is staged to go
+    back, not restored otherwise."""
+    part = (manifest.get("parts") or {}).get("app_data") or {}
+    listed: dict[str, dict] = {}
+    for a in (part.get("apps") or []) if isinstance(part, dict) else []:
+        if not isinstance(a, dict) or not isinstance(a.get("app_id"), str) or not _APP_ID.match(a["app_id"]):
+            raise RestoreError("the backup's manifest lists an app's data without an app id")
+        listed[a["app_id"]] = a
+    out: list[dict] = []
+    for aid in sorted(set(got) | set(listed)):
+        w, g = listed.get(aid), got.get(aid)
+        if w is None:
+            raise RestoreError(f"the backup holds data of {aid} that its manifest does not list")
+        base = w.get("uid_base")
+        entry: dict[str, Any] = {"app_id": aid, "installed": bool(w.get("installed")),
+                                 "uid_base": base if isinstance(base, int) and not isinstance(base, bool)
+                                 else None}
+        if not w.get("ok"):
+            with contextlib.suppress(FileNotFoundError):
+                (app_dir / f"{aid}.tar").unlink()
+            entry.update(bytes=0, state=APP_DATA_NOT_RESTORED,
+                         error=(str(w.get("error") or "") if w.get("refused") and w.get("error")
+                                else "it could not be read whole when this backup was made: "
+                                + str(w.get("error") or "no reason was kept"))[:600])
+            out.append(entry)
+            continue
+        if (g is None or g["h"].hexdigest() != w.get("sha256") or g["chunks"] != w.get("chunks")
+                or g["bytes"] != w.get("bytes")):
+            raise RestoreError(f"the data of {aid} in the backup does not match its manifest")
+        entry["bytes"] = g["bytes"]
+        if staged:
+            entry["state"] = APP_DATA_PENDING
+        else:
+            entry.update(state=APP_DATA_NOT_RESTORED,
+                         error="this machine runs no local runtime for an app's data to go back to")
+        out.append(entry)
+    return out
+
+
 def unpack(src, identity: str, staged: Path, *, expect: Optional[dict] = None,
-           trust_links: bool = False, spool: Optional[Path] = None) -> dict:
-    """Decrypt, check and unpack one backup file: apps/ into `staged`, the
-    database into RESTORE_DB, only after everything checked (above).
-    `expect`: {"sha256", "bytes"} of the encrypted file, from its sidecar.
-    Synchronous; runs in a worker thread."""
+           trust_links: bool = False, spool: Optional[Path] = None,
+           stage_app_data: Optional[bool] = None) -> dict:
+    """Decrypt, check and unpack one backup file: apps/ into `staged`, each
+    app's kept data into app-data/ beside it (one tar an app, put back by the
+    local runtime at finish), the database into RESTORE_DB, only after
+    everything checked (above). `expect`: {"sha256", "bytes"} of the
+    encrypted file, from its sidecar. `stage_app_data`: write the apps' data
+    out (default: when this machine runs the local runtime, the only place it
+    can go back to); otherwise it is still read and checked, and listed as
+    not restored. Synchronous; runs in a worker thread."""
     from compression import zstd
 
     staged.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -1732,6 +2180,11 @@ def unpack(src, identity: str, staged: Path, *, expect: Optional[dict] = None,
     spool = spool or staged.parent / SPOOL_NAME
     with contextlib.suppress(FileNotFoundError):
         spool.unlink()
+    if stage_app_data is None:
+        from server.applications import local_runtime
+        stage_app_data = local_runtime.in_use()
+    app_dir = staged.parent / APP_DATA.name
+    shutil.rmtree(app_dir, ignore_errors=True)
     staged_real = os.path.realpath(staged)
     room = _room(staged)
     unit = max(1, _alloc_unit(staged, room.unit))
@@ -1796,6 +2249,9 @@ def unpack(src, identity: str, staged: Path, *, expect: Optional[dict] = None,
     watchdog.daemon = True
     watchdog.start()
     db_hash, db_bytes, next_chunk = hashlib.sha256(), 0, 0
+    # app id -> {h, chunks, bytes, f (the staged tar, open while its pieces come)}
+    app_data: dict[str, dict] = {}
+    app_cur: list = [None]          # the app whose pieces are arriving
     files: dict[str, str] = {}
     links: list[tuple[list[str], str]] = []
     seen: dict[str, str] = {}       # rel -> d (folder named), i (folder implied), f, l
@@ -1842,6 +2298,41 @@ def unpack(src, identity: str, staged: Path, *, expect: Optional[dict] = None,
                         raise RestoreError("the backup's manifest is not readable") from None
                     if not isinstance(manifest, dict):
                         raise RestoreError("the backup's manifest is not readable")
+                elif name.startswith(APP_DATA_PREFIX):
+                    got_app = _APP_DATA_MEMBER.match(name)
+                    if not got_app or not m.isfile():
+                        raise RestoreError(f"the backup holds {name}, which is not a piece of an app's data")
+                    aid, idx = got_app.group(1), int(got_app.group(2))
+                    one = app_data.get(aid)
+                    if aid != app_cur[0]:
+                        # The writer sends one app's pieces together, in order.
+                        if one is not None or idx != 0:
+                            raise RestoreError(f"the pieces of {aid}'s data are out of order at {name}")
+                        if app_cur[0] is not None and app_data[app_cur[0]].get("f"):
+                            app_data[app_cur[0]].pop("f").close()
+                        one = app_data[aid] = {"h": hashlib.sha256(), "chunks": 0, "bytes": 0}
+                        if stage_app_data:
+                            if not app_dir.exists():
+                                app_dir.mkdir(mode=0o700)
+                            make(f"{APP_DATA.name}/{aid}.tar", unit)
+                            fd = os.open(app_dir / f"{aid}.tar",
+                                         os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+                            one["f"] = os.fdopen(fd, "wb")
+                        app_cur[0] = aid
+                    if idx != one["chunks"]:
+                        raise RestoreError(f"the pieces of {aid}'s data are out of order at {name}")
+                    if stage_app_data:
+                        spend(m.size, name)
+                    f = tin.extractfile(m)
+                    while True:
+                        b = f.read(READ_CHUNK)
+                        if not b:
+                            break
+                        one["h"].update(b)
+                        one["bytes"] += len(b)
+                        if one.get("f"):
+                            one["f"].write(b)
+                    one["chunks"] += 1
                 elif name.startswith("apps/"):
                     parts = _safe_rel(name, "apps/")
                     if parts[0] == RESTORE_DIR.name:
@@ -1910,6 +2401,10 @@ def unpack(src, identity: str, staged: Path, *, expect: Optional[dict] = None,
     except BaseException as e:
         failure = e
     finally:
+        for one in app_data.values():
+            if one.get("f"):
+                with contextlib.suppress(Exception):
+                    one.pop("f").close()
         if failure is None:
             with contextlib.suppress(Exception):
                 while age.stdout.read(READ_CHUNK):
@@ -1967,6 +2462,7 @@ def unpack(src, identity: str, staged: Path, *, expect: Optional[dict] = None,
         for p in sorted(set(got_links) | set(want_links)):
             if got_links.get(p) != want_links.get(p):
                 raise RestoreError(f"the link {p} does not match the manifest")
+        restored_apps = _check_app_data(manifest, app_data, app_dir, stage_app_data)
         # Checked. Now the links, then the database.
         for parts, t in links:
             _make_dirs(staged, parts[:-1])
@@ -1985,13 +2481,92 @@ def unpack(src, identity: str, staged: Path, *, expect: Optional[dict] = None,
                         left.remove((parts, t))
                         refused.append("/".join(parts))
                         changed = True
-        world_note = _load_database(spool)
+        git_dirs = defuse_git(staged)
+        loaded = _load_database(spool) or {}
     finally:
         with contextlib.suppress(FileNotFoundError):
             spool.unlink()
     return {"files": len(files), "db_bytes": db_bytes, "links_refused": sorted(refused)[:50],
-            "links_refused_count": len(refused), "world_note": world_note,
+            "links_refused_count": len(refused), "world_note": loaded.get("note"),
+            "load_columns": loaded.get("columns") or [], "deferred_checks": loaded.get("checks") or [],
+            "app_data": restored_apps, "git_dirs_reset": git_dirs,
             "entity_id": manifest.get("entity_id") if isinstance(manifest.get("entity_id"), int) else None}
+
+
+# A Git directory's own settings can make git run a program (a filter's clean
+# or smudge command, gpg.program, core.sshCommand, a credential helper, a
+# merge or diff driver, uploadpack), work on another folder (core.worktree),
+# or read objects or settings from another folder (alternates, commondir,
+# config.worktree, include.path). The Host runs git in its projects (commit,
+# status, diff, push) with only the hooks, fsmonitor and external diff turned
+# off (routes/project_git.py HARDENED_GIT_CONFIG), and a backup's projects are
+# anyone's. So every folder of the staged tree that git would take for a Git
+# directory (HEAD, and objects and refs or a commondir: git's own test) gets a
+# config of only the format it is written in, and loses what points elsewhere
+# and its hooks. The Host sets origin itself before it pushes
+# (project_git._sync_blocking), and each fetch and push names its URL. A
+# pointer reached through a link to a folder is left: removing it would write
+# outside the staged tree before the swap.
+_GIT_POINTERS = ("config.worktree", "commondir", "objects/info/alternates",
+                 "objects/info/http-alternates")
+
+
+def _git_object_format(config: Path) -> str:
+    """The object format a Git directory's config says (sha1 or sha256), read
+    without following anything it includes."""
+    if not config.is_file() or config.is_symlink():
+        return "sha1"
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "GIT_CONFIG_NOSYSTEM": "1",
+           "GIT_CONFIG_GLOBAL": "/dev/null", "HOME": "/nonexistent"}
+    try:
+        r = subprocess.run(["git", "config", "--file", str(config), "--no-includes",
+                            "--get", "extensions.objectformat"],
+                           capture_output=True, text=True, timeout=30, env=env)
+    except (OSError, subprocess.SubprocessError):
+        return "sha1"
+    return "sha256" if r.returncode == 0 and r.stdout.strip().lower() == "sha256" else "sha1"
+
+
+def defuse_git(staged: Path) -> list[str]:
+    """Reset every Git directory in the staged tree (above). Returns their paths
+    relative to it, sorted."""
+    found: list[str] = []
+    for dirpath, dirnames, filenames in os.walk(staged):
+        names = set(dirnames) | set(filenames)
+        if "HEAD" not in names or not ({"objects", "refs"} <= names or "commondir" in names):
+            continue
+        d = Path(dirpath)
+        fmt = _git_object_format(d / "config")
+        for rel in ("config", *_GIT_POINTERS):
+            p = d / rel
+            if any((d / up).is_symlink() for up in Path(rel).parents if str(up) != "."):
+                continue
+            with contextlib.suppress(FileNotFoundError):
+                if p.is_dir() and not p.is_symlink():
+                    shutil.rmtree(p)
+                else:
+                    p.unlink()
+        hooks = d / "hooks"
+        if hooks.is_symlink() or (hooks.exists() and not hooks.is_dir()):
+            hooks.unlink()
+        elif hooks.is_dir():
+            for h in hooks.iterdir():
+                if h.is_dir() and not h.is_symlink():
+                    shutil.rmtree(h)
+                else:
+                    h.unlink()
+        # A Git directory named anything but .git is a bare repository: said
+        # so, git never takes the folder around it for its work tree.
+        bare = "false" if d.name == ".git" else "true"
+        text = (f"[core]\n\trepositoryformatversion = 1\n\tbare = {bare}\n"
+                "[extensions]\n\tobjectformat = sha256\n" if fmt == "sha256"
+                else f"[core]\n\trepositoryformatversion = 0\n\tbare = {bare}\n")
+        fd = os.open(d / "config", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o644)
+        with os.fdopen(fd, "w") as w:
+            w.write(text)
+        rel_d = os.path.relpath(dirpath, staged)
+        found.append("" if rel_d == "." else rel_d)
+    return sorted(found)
 
 
 # The Host's own schema and its role (migrations/v233_host_world.sql).
@@ -2001,43 +2576,529 @@ WORLD_ROLE = "host_world"
 WORLD_ROLE_SQL = Path(__file__).resolve().parents[1] / "migrations" / "v233_host_world.sql"
 
 
-def _load_database(spool: Path) -> Optional[str]:
-    """pg_restore of the checked dump into RESTORE_DB, in two passes.
+# The kernel's schema is built from this tree's own files by the boot's own
+# schema step (entrypoint.sh, between these two markers), never from a dump.
+APP_ROOT = Path(__file__).resolve().parents[1]
+ENTRYPOINT = APP_ROOT / "entrypoint.sh"
+SCHEMA_SECTION = ("# >>> kernel schema section >>>", "# <<< kernel schema section <<<")
+# The kernel's tables, the only place a backup's rows go besides `world`.
+CORE_SCHEMA = "public"
+# The role the backup's rows are loaded as: no superuser, a member of no
+# role, INSERT on the kernel's tables and UPDATE on their sequences in the
+# restore database while it loads, nothing after.
+LOAD_ROLE = "host_restore"
+# One line of `pg_restore -l` for a row entry: "<id>; <tableoid> <oid> TABLE
+# DATA public <table> <owner>". Only a line of exactly this shape is read.
+_ROW_ENTRY = re.compile(r"(\d+); \d+ \d+ (TABLE DATA|SEQUENCE SET) (\S+) (\S+)(?: \S*)?")
+# The same for a table's own entry: "<id>; <tableoid> <oid> TABLE public <table> <owner>".
+_TABLE_ENTRY = re.compile(r"(\d+); \d+ \d+ TABLE (\S+) (\S+)(?: \S*)?")
+# An identifier as pg_dump writes one: plain, or in double quotes.
+_IDENT = r'(?:"(?:[^"]|"")+"|[a-z_][a-z0-9_$]*)'
+_CREATE_TABLE = re.compile(rf"CREATE (?:UNLOGGED )?TABLE ({_IDENT})\.({_IDENT}) \(")
+_COLUMN_LINE = re.compile(rf"    ({_IDENT}) (.+?),?")
+# Where a column's type ends in pg_dump's text of it.
+_TYPE_END = re.compile(r" (?:COLLATE|DEFAULT|NOT NULL|NULL|GENERATED|CONSTRAINT|CHECK)\b")
+# The characters a built-in type's name and modifier are written in. Anything
+# else in the dump's text of a type is refused before it reaches a query.
+_TYPE_TEXT = re.compile(r'[A-Za-z0-9_ ."(),\[\]]{1,200}')
 
-    `world` holds the Host's own tables, views and functions. Loading them as
-    the superuser would run the Host's code as the superuser: building an index
-    or refreshing a materialized view runs its expressions as the object's
-    owner, and after --no-owner that owner is whoever loads it; loading rows
-    checks constraints as the loader too. So:
-      1. everything except `world`, as `entity`, as before (strict);
-      2. `world` and its role from the declared file, as `entity`, in the
-         restore database (strict), so the schema exists owned by host_world;
-      3. `world`'s objects and rows, connected as host_world. Not strict: a
+
+def _run_quiet(args: list[str], env: Optional[dict] = None) -> tuple[int, str]:
+    """(exit code, the tail of what it said) of a client run."""
+    with tempfile.TemporaryFile() as out:
+        rc = subprocess.run(args, stdout=out, stderr=subprocess.STDOUT, env=env,
+                            timeout=hb.RUN_TIMEOUT_S).returncode
+        out.seek(0)
+        return rc, _tail(out.read().decode(errors="replace"))
+
+
+def _schema_section() -> str:
+    text = ENTRYPOINT.read_text()
+    start = text.index(SCHEMA_SECTION[0])
+    return text[start:text.index(SCHEMA_SECTION[1], start)]
+
+
+def _build_own_schema() -> None:
+    """The boot's own schema step, run against RESTORE_DB: init-db.sql, every
+    migration in this tree, and the two roles' files, as a fresh Host gets
+    them. Entity id 0, so the step renumbers nothing: the rows that step puts
+    in are emptied before the backup's go in."""
+    with tempfile.TemporaryDirectory(prefix="host-restore-schema-") as tmp:
+        script = Path(tmp) / "schema.sh"
+        script.write_text(_schema_section())
+        env = {"PATH": os.environ.get("PATH") or "/usr/bin:/bin", "HOME": tmp, "PGSYSCONFDIR": tmp,
+               "PG_SOCKET": hb.PG_SOCKET, "ENTITY_DB": RESTORE_DB, "ENTITY_ID": "0",
+               "KERNEL_SCHEMA_APP": str(APP_ROOT), "KERNEL_SCHEMA_TMP": tmp}
+        if os.environ.get("PGPORT"):
+            env["PGPORT"] = os.environ["PGPORT"]
+        rc, said = _run_quiet(["sh", "-eu", str(script)], env=env)
+    if rc != 0:
+        raise RestoreError(f"could not build this Host's own schema to restore into: {said}")
+
+
+def lock_load_role() -> None:
+    """LOAD_ROLE as it stands between restores: it cannot log in, it is a
+    member of no role and no role is a member of it, it has no setting in any
+    database, and it holds nothing in the restore's database or the Host's.
+
+    _load_rows gives it a login and its grants for the load and takes them
+    back after; a restore killed in between (the machine off, the container
+    stopped) leaves them. So every restore runs this first (stage), and the
+    database container's boot does the same before it serves
+    (entrypoint-postgres.sh, lock_restore_role). Raises RestoreError when it
+    cannot."""
+    r = _psql(f"""DO $$ DECLARE r record; BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{LOAD_ROLE}') THEN RETURN; END IF;
+          ALTER ROLE "{LOAD_ROLE}" NOLOGIN NOBYPASSRLS;
+          ALTER ROLE "{LOAD_ROLE}" RESET ALL;
+          FOR r IN SELECT d.datname FROM pg_db_role_setting s JOIN pg_database d ON d.oid = s.setdatabase
+                    WHERE s.setrole = '{LOAD_ROLE}'::regrole LOOP
+              EXECUTE format('ALTER ROLE %I IN DATABASE %I RESET ALL', '{LOAD_ROLE}', r.datname);
+          END LOOP;
+          FOR r IN SELECT g.rolname AS granted, u.rolname AS member, w.rolname AS grantor
+                     FROM pg_auth_members m JOIN pg_roles g ON g.oid = m.roleid
+                     JOIN pg_roles u ON u.oid = m.member JOIN pg_roles w ON w.oid = m.grantor
+                    WHERE m.member = '{LOAD_ROLE}'::regrole OR m.roleid = '{LOAD_ROLE}'::regrole LOOP
+              EXECUTE format('REVOKE %I FROM %I GRANTED BY %I CASCADE', r.granted, r.member, r.grantor);
+          END LOOP;
+        END $$""", db="postgres")
+    if r.returncode != 0:
+        raise RestoreError(f"could not lock the role a restore loads as: {_tail(r.stderr)}")
+    have = _databases()
+    for db in (RESTORE_DB, *LIVE_DBS):
+        if db not in have:
+            continue
+        r = _psql(f"""DO $$ BEGIN
+              IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '{LOAD_ROLE}') THEN
+                  EXECUTE 'DROP OWNED BY "{LOAD_ROLE}"';
+              END IF;
+            END $$""", db=db)
+        if r.returncode != 0:
+            raise RestoreError(f"could not take back what the restore's role holds in {db}: {_tail(r.stderr)}")
+
+
+def _row_entries(listing: str) -> list[tuple[str, str, str, str]]:
+    """(id, kind, schema, name) of each row entry `pg_restore -l` lists."""
+    out = []
+    for ln in listing.splitlines():
+        m = _ROW_ENTRY.fullmatch(ln.rstrip())
+        if m:
+            out.append(m.groups())
+    return out
+
+
+def _unident(s: str) -> str:
+    return s[1:-1].replace('""', '"') if s.startswith('"') else s
+
+
+def _dump_columns(spool: Path, listing: str, tables: set) -> dict[str, list[tuple[str, str]]]:
+    """Each of `tables` (kernel tables the backup holds rows of) with its
+    columns as the dump's CREATE TABLE names them: (name, type as written).
+
+    Read as text: `pg_restore -f -` writes the archive's SQL out and connects
+    to nothing, and nothing read here is run. A generated column is left out,
+    as the dump holds no values for it."""
+    ids = []
+    for ln in listing.splitlines():
+        m = _TABLE_ENTRY.fullmatch(ln.rstrip())
+        if m and m.group(2) == CORE_SCHEMA and m.group(3) in tables:
+            ids.append(m.group(1))
+    if not ids:
+        return {}
+    with tempfile.NamedTemporaryFile("w", suffix=".list", delete=False) as lf:
+        lf.write("".join(f"{i};\n" for i in ids))
+        list_path = lf.name
+    try:
+        r = subprocess.run(["pg_restore", "--schema-only", "-f", "-", "-L", list_path, str(spool)],
+                           capture_output=True, text=True, errors="replace", timeout=hb.RUN_TIMEOUT_S)
+    finally:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(list_path)
+    if r.returncode != 0:
+        raise RestoreError("could not read the backup's table definitions: " + _tail(r.stderr))
+    out: dict[str, list[tuple[str, str]]] = {}
+    cur = None
+    for ln in r.stdout.splitlines():
+        if cur is None:
+            m = _CREATE_TABLE.fullmatch(ln)
+            if m and _unident(m.group(1)) == CORE_SCHEMA and _unident(m.group(2)) in tables:
+                cur = out.setdefault(_unident(m.group(2)), [])
+            continue
+        if ln.startswith(")"):
+            cur = None
+            continue
+        m = _COLUMN_LINE.fullmatch(ln)
+        if not m or m.group(1) == "CONSTRAINT":
+            continue
+        rest = m.group(2)
+        if " GENERATED ALWAYS AS (" in rest:
+            continue
+        end = _TYPE_END.search(rest)
+        cur.append((_unident(m.group(1)), rest[:end.start()] if end else rest))
+    return out
+
+
+def _load_type(written: str) -> str:
+    """The type a column added for the load is made with: `written` (a type
+    as the dump's CREATE TABLE writes it) as this database names it.
+
+    Only a base type PostgreSQL itself defines (pg_catalog), or one an
+    extension of this Host's own schema defines (pgvector's vector, which
+    every backup from before v235 holds a column of), or an array of either.
+    Nothing else: a domain carries CHECK expressions, and the dump's own
+    types never reach this database, so any other name is one this Host's
+    schema made for its own columns. The name is resolved with an empty
+    search path, as pg_dump wrote it, and what is returned is the
+    database's own spelling of the type, never the dump's text."""
+    if not _TYPE_TEXT.fullmatch(written):
+        raise RestoreError(f"the backup names a column type this version cannot add for the load: {written!r}")
+    lit = "'" + written.replace("'", "''") + "'"
+    r = _psql("SET search_path = ''",
+              f"""SELECT CASE
+                     WHEN to_regtype({lit}) IS NULL THEN 'refused' || chr(9) || 'no such type here'
+                     ELSE (SELECT CASE
+                         WHEN b.typtype <> 'b' THEN 'refused' || chr(9) || 'not a built-in base type'
+                         WHEN b.typnamespace = 'pg_catalog'::regnamespace
+                              OR EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid = 'pg_type'::regclass
+                                           AND d.objid = b.oid AND d.deptype = 'e')
+                           THEN 'ok' || chr(9) || format_type(t.oid, to_regtypemod({lit}))
+                         ELSE 'refused' || chr(9) || 'a type made in the database, not a built-in one' END
+                       FROM pg_type t
+                       JOIN pg_type b ON b.oid = CASE WHEN t.typcategory = 'A' AND t.typelem <> 0
+                                                      THEN t.typelem ELSE t.oid END
+                      WHERE t.oid = to_regtype({lit}))
+                   END""", db=RESTORE_DB)
+    said = r.stdout.strip().split("\t", 1)
+    if r.returncode != 0 or len(said) != 2 or said[0] != "ok" or not _TYPE_TEXT.fullmatch(said[1]):
+        why = said[1] if len(said) == 2 else _tail(r.stderr) or "it could not be read"
+        raise RestoreError(f"the backup holds a column of type {written!r}, which this version no longer "
+                           f"has and cannot add for the load: {why}")
+    return said[1]
+
+
+def _add_load_columns(spool: Path, listing: str, tables: set) -> list[list[str]]:
+    """Each column a table's COPY in the dump names that this version's table
+    no longer has, added to RESTORE_DB for the load: the type the dump gives
+    it (_load_type), no default, no constraint, no collation. A migration
+    newer than the backup moves its contents where this version keeps them
+    when the boot runs it; settle() drops what is left. Returns [table,
+    column, type] for each one added."""
+    if not tables:
+        return []
+    wanted = _dump_columns(spool, listing, tables)
+    if not wanted:
+        return []
+    r = _psql("SELECT json_agg(json_build_array(c.relname, a.attname)) FROM pg_attribute a "
+              "JOIN pg_class c ON c.oid = a.attrelid "
+              f"WHERE c.relnamespace = '{CORE_SCHEMA}'::regnamespace AND c.relkind IN ('r', 'p') "
+              "AND a.attnum > 0 AND NOT a.attisdropped", db=RESTORE_DB)
+    if r.returncode != 0:
+        raise RestoreError("could not read the restore database's columns: " + _tail(r.stderr))
+    have = {(t, c) for t, c in json.loads(r.stdout.strip() or "null") or []}
+    added, alters = [], []
+    for table in sorted(wanted):
+        for col, written in wanted[table]:
+            if (table, col) in have:
+                continue
+            # Every column this Host's schema ever made is named this way.
+            if not _TABLE_NAME.fullmatch(col):
+                raise RestoreError(f"the backup names a column of {table} this version cannot add "
+                                   "for the load: its name is not one this Host's schema gives")
+            typ = _load_type(written)
+            alters.append(f'ALTER TABLE "{CORE_SCHEMA}".{_qi(table)} ADD COLUMN {_qi(col)} {typ}')
+            added.append([table, col, typ])
+            have.add((table, col))
+    if alters:
+        r = _psql(*alters, db=RESTORE_DB)
+        if r.returncode != 0:
+            raise RestoreError("could not add the columns the backup's rows need for the load: "
+                               + _tail(r.stderr))
+        log.info("restore: columns this version no longer has, added for the load: %s",
+                 ", ".join(f"{t}.{c}" for t, c, _ in added[:50]))
+    return added
+
+
+def _set_checks_aside() -> list[list[str]]:
+    """Every CHECK constraint of the kernel's tables, dropped from RESTORE_DB
+    for the load: an older backup's rows may hold values this version's
+    checks no longer allow (a memory type v235 retires), which the migrations
+    newer than the backup change when the boot runs them over these rows.
+    Returns [table, name, definition] for each, as this database's own
+    catalog writes it."""
+    r = _psql("SELECT json_agg(json_build_array(t.relname, c.conname, pg_get_constraintdef(c.oid))) "
+              "FROM pg_constraint c JOIN pg_class t ON t.oid = c.conrelid "
+              f"WHERE c.contype = 'c' AND c.coninhcount = 0 AND t.relkind IN ('r', 'p') "
+              f"AND t.relnamespace = '{CORE_SCHEMA}'::regnamespace", db=RESTORE_DB)
+    if r.returncode != 0:
+        raise RestoreError("could not read the restore database's checks: " + _tail(r.stderr))
+    checks = [list(c) for c in json.loads(r.stdout.strip() or "null") or []]
+    if checks:
+        r = _psql(*[f'ALTER TABLE "{CORE_SCHEMA}".{_qi(t)} DROP CONSTRAINT {_qi(n)}' for t, n, _ in checks],
+                  db=RESTORE_DB)
+        if r.returncode != 0:
+            raise RestoreError("could not set the checks aside for the load: " + _tail(r.stderr))
+    return checks
+
+
+def _put_checks_back(db: str, checks: list, not_valid_after: bool) -> list[list[str]]:
+    """Each of `checks` ([table, name, definition], _set_checks_aside) added
+    back to `db`, checked over its rows, unless the table already has a
+    constraint of that name (a migration put it back). Returns the ones the
+    rows did not meet: left out, or with `not_valid_after` added NOT VALID,
+    so new rows meet it and the rows the backup brought stay as they were."""
+    if not checks:
+        return []
+    fallback = ("EXECUTE format('ALTER TABLE %I.%I ADD CONSTRAINT %I %s NOT VALID', "
+                f"'{CORE_SCHEMA}', c->>0, c->>1, c->>2);" if not_valid_after else "")
+    body = json.dumps(checks).replace("'", "''")
+    r = _psql("SET standard_conforming_strings = on",
+              f"SELECT set_config('cseries_restore.checks', '{body}', false)",
+              f"""DO $$ DECLARE c jsonb; unmet jsonb := '[]'; BEGIN
+                    FOR c IN SELECT * FROM jsonb_array_elements(current_setting('cseries_restore.checks')::jsonb) LOOP
+                        CONTINUE WHEN EXISTS (SELECT 1 FROM pg_constraint k
+                                               WHERE k.conrelid = format('%I.%I', '{CORE_SCHEMA}', c->>0)::regclass
+                                                 AND k.conname = c->>1);
+                        BEGIN
+                            EXECUTE format('ALTER TABLE %I.%I ADD CONSTRAINT %I %s',
+                                           '{CORE_SCHEMA}', c->>0, c->>1, c->>2);
+                        EXCEPTION WHEN check_violation THEN
+                            unmet := unmet || jsonb_build_array(c);
+                            {fallback}
+                        END;
+                    END LOOP;
+                    PERFORM set_config('cseries_restore.unmet', unmet::text, false);
+                  END $$""",
+              "SELECT current_setting('cseries_restore.unmet')", db=db, timeout=hb.RUN_TIMEOUT_S)
+    if r.returncode != 0:
+        raise RestoreError("could not put this version's checks back: " + _tail(r.stderr))
+    return [list(c) for c in json.loads(r.stdout.strip().splitlines()[-1])]
+
+
+def settle(db: str, columns: list, checks: list) -> Optional[str]:
+    """After the boot's migrations ran over a restore's rows (carry, below the
+    schema step): each column added for the load that the migrations left
+    behind is dropped, and each check the backup's rows did not meet at the
+    load is put back, NOT VALID when they still do not. Idempotent. Returns a
+    note naming what was dropped or left unchecked, or None."""
+    notes = []
+    cols = [(str(t), str(c)) for t, c, *_ in columns or []]
+    if cols:
+        body = json.dumps(cols).replace("'", "''")
+        r = _psql("SELECT json_agg(x) FROM jsonb_array_elements("
+                  f"'{body}'::jsonb) x JOIN pg_attribute a ON a.attrelid = to_regclass("
+                  f"format('%I.%I', '{CORE_SCHEMA}', x->>0)) AND a.attname = x->>1 AND NOT a.attisdropped",
+                  db=db)
+        if r.returncode != 0:
+            raise RestoreError("could not read the restored database's columns: " + _tail(r.stderr))
+        left = [(t, c) for t, c in json.loads(r.stdout.strip() or "null") or []]
+        if left:
+            r = _psql(*[f'ALTER TABLE "{CORE_SCHEMA}".{_qi(t)} DROP COLUMN IF EXISTS {_qi(c)}'
+                        for t, c in left], db=db)
+            if r.returncode != 0:
+                raise RestoreError("could not drop the columns added for the load: " + _tail(r.stderr))
+            names = ", ".join(f"{t}.{c}" for t, c in left[:50])
+            log.warning("restore: columns no update moved, dropped: %s", names)
+            notes.append("The backup held columns this version of your Host no longer has, and no "
+                         f"update moved what they held, so they were left out: {names}.")
+    unmet = _put_checks_back(db, checks or [], not_valid_after=True)
+    if unmet:
+        names = ", ".join(f"{t} ({n})" for t, n, _ in unmet[:20])
+        log.warning("restore: rows that do not meet this version's checks, kept as they were: %s", names)
+        notes.append("Some of the backup's rows do not meet rules this version of your Host keeps for "
+                     f"new rows, and were kept as they were: {names}.")
+    return " ".join(notes) or None
+
+
+def _load_rows(spool: Path, listing: str) -> dict:
+    """The backup's rows of the kernel's tables and its sequences' positions,
+    into the schema _build_own_schema made, and nothing else of the dump.
+
+    Every other entry is left out: a function, trigger, index, view, rule,
+    policy, extension, default privilege or event trigger in a backup never
+    reaches the database. Leaving them out is not enough on its own, since
+    pg_restore sends some of the archive's own text as it stands (the search
+    path line before anything, and each table's COPY statement), and anyone can
+    write an archive that decrypts here. So the rows load as LOAD_ROLE, which
+    can insert into the kernel's tables and do nothing a superuser alone may
+    do (run a program, read or write a server file, make an extension or an
+    event trigger), and whose session runs as a replica: no trigger and no
+    foreign-key check fires while the rows go in, as when the dump made its
+    keys after its rows. The keys are checked after, by this Host's own
+    catalog.
+
+    A backup from before a migration that dropped a column still names that
+    column in its COPY: the column is added for the load (_add_load_columns)
+    and the boot's migrations move what it holds. Its rows may hold values a
+    check of this version no longer allows: the checks are set aside for the
+    load and put back after it; one the rows do not meet yet is put back by
+    settle() once the migrations have run.
+
+    Returns {"gone": the tables the backup holds rows of that this Host's
+    schema no longer has (those rows are left out and named), "columns":
+    [table, column, type] added for the load, "checks": [table, name,
+    definition] the rows did not meet at the load}."""
+    q = f'"{CORE_SCHEMA}"'
+    r = _psql("SELECT c.relkind::text || ' ' || c.relname FROM pg_class c "
+              f"JOIN pg_namespace n ON n.oid = c.relnamespace WHERE n.nspname = '{CORE_SCHEMA}' "
+              "AND c.relkind IN ('r', 'p', 'S')", db=RESTORE_DB)
+    if r.returncode != 0:
+        raise RestoreError("could not read the restore database's tables: " + _tail(r.stderr))
+    have = {tuple(ln.split(" ", 1)) for ln in r.stdout.splitlines() if " " in ln}
+    keep, gone, loaded = [], [], set()
+    for dump_id, kind, schema, name in _row_entries(listing):
+        if schema != CORE_SCHEMA:
+            continue
+        want = ("S",) if kind == "SEQUENCE SET" else ("r", "p")
+        if any((k, name) in have for k in want):
+            keep.append(dump_id)
+            if kind == "TABLE DATA":
+                loaded.add(name)
+        elif kind == "TABLE DATA":
+            gone.append(name)
+    added = _add_load_columns(spool, listing, loaded)
+    checks = _set_checks_aside()
+    role = f'"{LOAD_ROLE}"'
+    # The role is the boot's (migrations/v242_host_restore_role.sql, which
+    # _build_own_schema ran just now): made there, unable to log in, holding
+    # nothing. The load only lends it a login and its grants, here.
+    made = _psql(f"SELECT 1 FROM pg_roles WHERE rolname = '{LOAD_ROLE}'", db=RESTORE_DB)
+    if made.returncode != 0 or made.stdout.strip() != "1":
+        raise RestoreError(f"the database has no {LOAD_ROLE} role for the load (its schema step makes "
+                           "it: migrations/v242_host_restore_role.sql)")
+    # The rows the schema step put in go: every row comes from the backup.
+    tables = ", ".join(f'{q}."{n}"' for k, n in sorted(have) if k in ("r", "p"))
+    setup = [
+        f"ALTER ROLE {role} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION BYPASSRLS NOINHERIT",
+        f"""DO $$ DECLARE r record; BEGIN
+              FOR r IN SELECT g.rolname FROM pg_auth_members m JOIN pg_roles g ON g.oid = m.roleid
+                        WHERE m.member = '{LOAD_ROLE}'::regrole LOOP
+                  EXECUTE format('REVOKE %I FROM {LOAD_ROLE}', r.rolname);
+              END LOOP;
+            END $$""",
+        f"ALTER ROLE {role} RESET ALL",
+        f'ALTER ROLE {role} IN DATABASE "{RESTORE_DB}" SET session_replication_role = replica',
+        f"GRANT USAGE ON SCHEMA {q} TO {role}",
+        f"GRANT INSERT ON ALL TABLES IN SCHEMA {q} TO {role}",
+        f"GRANT UPDATE ON ALL SEQUENCES IN SCHEMA {q} TO {role}",
+    ]
+    if tables:
+        setup.append(f"TRUNCATE {tables} RESTART IDENTITY")
+    r = _psql(*setup, db=RESTORE_DB, timeout=hb.RUN_TIMEOUT_S)
+    if r.returncode != 0:
+        raise RestoreError("could not make the restore database ready for the backup's rows: "
+                           + _tail(r.stderr))
+    loaded_ok = False
+    try:
+        if keep:
+            with tempfile.NamedTemporaryFile("w", suffix=".list", delete=False) as lf:
+                lf.write("\n".join(f"{i};" for i in keep) + "\n")
+                list_path = lf.name
+            try:
+                rc, said = _run_quiet(["pg_restore", "-h", hb.PG_SOCKET, "-U", LOAD_ROLE, "-d", RESTORE_DB,
+                                       "--no-owner", "--no-privileges", "--exit-on-error",
+                                       "-L", list_path, str(spool)])
+            finally:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(list_path)
+            if rc != 0:
+                raise RestoreError(f"could not load the database backup: {said}")
+        loaded_ok = True
+    finally:
+        # Nothing of the role is left in the database the Host will run on:
+        # its grants, its replica setting, and anything it made (a large
+        # object, say) go; it cannot log in until the next restore.
+        done = _psql(f"DROP OWNED BY {role}",
+                     f'ALTER ROLE {role} IN DATABASE "{RESTORE_DB}" RESET ALL',
+                     f"ALTER ROLE {role} NOLOGIN NOBYPASSRLS", db=RESTORE_DB)
+        if done.returncode != 0:
+            log.warning("restore: could not take back what %s held: %s", LOAD_ROLE, _tail(done.stderr))
+            if loaded_ok:
+                # This database becomes the Host's: it is never swapped in
+                # with a role in it that can log in and write every table.
+                raise RestoreError(f"could not take back what {LOAD_ROLE} held after the load: "
+                                   + _tail(done.stderr))
+    # Each foreign key, as this Host's catalog declares it, holds over the rows.
+    r = _psql(f"""DO $$ DECLARE fk record; bad boolean; BEGIN
+          FOR fk IN SELECT c.conname, c.conrelid::regclass AS child, c.confrelid::regclass AS parent,
+                           ARRAY(SELECT format('%I', a.attname) FROM unnest(c.conkey) WITH ORDINALITY k(n, o)
+                                 JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = k.n
+                                 ORDER BY k.o) AS cc,
+                           ARRAY(SELECT format('%I', a.attname) FROM unnest(c.confkey) WITH ORDINALITY k(n, o)
+                                 JOIN pg_attribute a ON a.attrelid = c.confrelid AND a.attnum = k.n
+                                 ORDER BY k.o) AS pc
+                      FROM pg_constraint c JOIN pg_namespace n ON n.oid = c.connamespace
+                     WHERE c.contype = 'f' AND n.nspname = '{CORE_SCHEMA}' LOOP
+              EXECUTE format('SELECT EXISTS (SELECT 1 FROM %s x WHERE %s AND NOT EXISTS '
+                             '(SELECT 1 FROM %s p WHERE %s))', fk.child,
+                             (SELECT string_agg('x.' || c || ' IS NOT NULL', ' AND ') FROM unnest(fk.cc) c),
+                             fk.parent,
+                             (SELECT string_agg('p.' || fk.pc[i] || ' = x.' || fk.cc[i], ' AND ')
+                                FROM generate_subscripts(fk.cc, 1) i)) INTO bad;
+              IF bad THEN
+                  RAISE EXCEPTION 'rows of % name rows of % that are not there (%)',
+                      fk.child, fk.parent, fk.conname;
+              END IF;
+          END LOOP;
+        END $$""", db=RESTORE_DB, timeout=hb.RUN_TIMEOUT_S)
+    if r.returncode != 0:
+        raise RestoreError("the database backup's rows do not fit together: " + _tail(r.stderr))
+    unmet = _put_checks_back(RESTORE_DB, checks, not_valid_after=False)
+    if unmet:
+        log.info("restore: checks the backup's rows meet only after the migrations: %s",
+                 ", ".join(f"{t}.{n}" for t, n, _ in unmet[:20]))
+    return {"gone": sorted(set(gone)), "columns": added, "checks": unmet}
+
+
+def _load_database(spool: Path) -> dict:
+    """The checked dump into RESTORE_DB.
+
+    Everything that runs in a database is this Host's own code or runs
+    without a superuser's rights:
+      1. the kernel's schema from this tree's files (_build_own_schema), as a
+         fresh Host gets it, `world` and its role included;
+      2. the backup's rows of the kernel's tables, and nothing else of the
+         dump, loaded as LOAD_ROLE (_load_rows). Its schema_migrations rows
+         come with them, so the boot after the swap runs the migrations the
+         backup had not had, over these rows, as it always has;
+      3. `world`'s objects and rows, connected as host_world. Building an
+         index or refreshing a materialized view runs its expressions as the
+         object's owner, and after --no-owner that owner is whoever loads it,
+         so the Host's own code runs as the Host's own role. Not strict: a
          Host object that will not build as host_world is left out and named,
          and the kernel's restore still lands.
-    Returns a note naming what step 3 left out, or None."""
-    def run(args: list[str], what: str, strict: bool) -> Optional[str]:
-        with tempfile.TemporaryFile() as err:
-            rc = subprocess.run(args, stdout=subprocess.DEVNULL, stderr=err,
-                                timeout=hb.RUN_TIMEOUT_S).returncode
-            if rc == 0:
-                return None
-            err.seek(0)
-            msg = _tail(err.read().decode(errors="replace"))
-        if strict:
-            raise RestoreError(f"could not load {what}: {msg}")
-        return msg
+    Returns {"note": what was left out, or None; "columns" and "checks":
+    what settle() takes up at the boot (_load_rows)}."""
+    listed = subprocess.run(["pg_restore", "-l", str(spool)],
+                            capture_output=True, text=True, timeout=hb.RUN_TIMEOUT_S)
+    if listed.returncode != 0:
+        raise RestoreError("could not read the backup's database listing: " + _tail(listed.stderr))
+    _build_own_schema()
+    rows = _load_rows(spool, listed.stdout)
+    gone = rows["gone"]
+    notes = []
+    if gone:
+        log.warning("restore: the backup holds rows of tables this version no longer has: %s",
+                    ", ".join(gone[:50]))
+        # Only a name of the shape this Host gives its tables is repeated: the
+        # note reaches the owner and the Host's next turn (finish).
+        shown = [g for g in gone if _TABLE_NAME.fullmatch(g)]
+        more = len(gone) - len(shown[:50])
+        notes.append("The backup holds rows of tables this version of your Host no longer has, "
+                     f"which were left out: {', '.join(shown[:50]) or 'tables'}"
+                     + (f" and {more} more" if more and shown else "") + ".")
+    left_out = _load_world(spool)
+    if left_out:
+        notes.append(left_out)
+    return {"note": " ".join(notes) or None, "columns": rows["columns"], "checks": rows["checks"]}
 
-    base = ["-h", hb.PG_SOCKET, "-d", RESTORE_DB, "--no-owner", "--no-privileges"]
-    run(["pg_restore", "-U", hb.PG_USER, *base, "--exit-on-error",
-         "--exclude-schema", WORLD_SCHEMA, str(spool)], "the database backup", True)
-    run(["psql", "-h", hb.PG_SOCKET, "-U", hb.PG_USER, "-d", RESTORE_DB, "-X", "-q",
-         "-v", "ON_ERROR_STOP=1", "-f", str(WORLD_ROLE_SQL)], "the Host's own schema", True)
+
+def _load_world(spool: Path) -> Optional[str]:
+    """Step 3 of _load_database: `world`'s entries, as host_world."""
     listed = subprocess.run(["pg_restore", "-l", "--schema", WORLD_SCHEMA, str(spool)],
                             capture_output=True, text=True, timeout=hb.RUN_TIMEOUT_S)
     if listed.returncode != 0:
         raise RestoreError("could not read the backup's own-schema listing: " + _tail(listed.stderr))
-    # The schema itself now exists, owned by host_world; its CREATE would fail.
+    # The schema itself exists, owned by host_world (step 1); its CREATE would fail.
     entries = [ln for ln in listed.stdout.splitlines()
                if ln.strip() and not ln.startswith(";")
                and ln.split()[3:6] != ["SCHEMA", "-", WORLD_SCHEMA]]
@@ -2047,17 +3108,39 @@ def _load_database(spool: Path) -> Optional[str]:
         lf.write("\n".join(entries) + "\n")
         list_path = lf.name
     try:
-        left_out = run(["pg_restore", "-U", WORLD_ROLE, *base, "-L", list_path, str(spool)],
-                       "the Host's own tables", False)
+        with tempfile.TemporaryFile() as out:
+            rc = subprocess.run(["pg_restore", "-h", hb.PG_SOCKET, "-U", WORLD_ROLE, "-d", RESTORE_DB,
+                                 "--no-owner", "--no-privileges", "-L", list_path, str(spool)],
+                                stdout=out, stderr=subprocess.STDOUT, timeout=hb.RUN_TIMEOUT_S).returncode
+            out.seek(0)
+            said = out.read(1 << 20).decode(errors="replace")
     finally:
         with contextlib.suppress(FileNotFoundError):
             os.unlink(list_path)
-    if left_out:
+    if rc != 0:
         log.warning("restore: some of the Host's own objects did not load as %s: %s",
-                    WORLD_ROLE, left_out)
-        return ("Some of your Host's own tables or functions did not come back from the "
-                f"backup: {left_out}")
+                    WORLD_ROLE, _tail(said))
+        # Named by the kind and name of each command that failed, and nothing
+        # else of it: the rest quotes the dump's text, which goes to the owner
+        # and the Host's next turn (finish) and is the backup's to write.
+        failed = []
+        for m in _FAILED_CMD.finditer(said):
+            what = f"{(m.group(1) or m.group(2) or m.group(3)).lower()} {m.group(4)}"
+            if _SHOWABLE.fullmatch(what) and what not in failed:
+                failed.append(what)
+        named = f": {', '.join(failed[:20])}" if failed else ""
+        return f"Some of your Host's own tables or functions did not come back from the backup{named}."
     return None
+
+
+# pg_restore's "Command was: ..." after a failed command: its kind and the
+# name it acts on.
+_FAILED_CMD = re.compile(r"Command was: (?:CREATE (?:OR REPLACE )?(?:UNIQUE )?((?:MATERIALIZED )?[A-Z]+)"
+                         r"(?: IF NOT EXISTS)?|ALTER (TABLE)(?: ONLY)?|(COPY)) ([A-Za-z0-9_.]{1,120})")
+# What may be shown of a name from a backup: a kind, then letters, digits,
+# dots and underscores; nothing that reads as words of its own.
+_SHOWABLE = re.compile(r"[a-z]{1,20}(?: view)? [A-Za-z0-9_.]{1,120}")
+_TABLE_NAME = re.compile(r"[a-z_][a-z0-9_]{0,62}")
 
 
 def _tail(text: str, n: int = 300) -> str:
@@ -2089,6 +3172,7 @@ def _manifest_files() -> set[str]:
 async def _clear_staging(pool) -> None:
     await pool.execute(f'DROP DATABASE IF EXISTS "{RESTORE_DB}" WITH (FORCE)')
     await asyncio.to_thread(shutil.rmtree, STAGED, True)
+    await asyncio.to_thread(shutil.rmtree, APP_DATA, True)
     with contextlib.suppress(FileNotFoundError):
         (STAGED.parent / SPOOL_NAME).unlink()
 
@@ -2166,11 +3250,15 @@ def _remove_empty_folders(path: Path) -> None:
         os.rmdir(dirpath)
 
 
-def set_aside(root: Path, manifest_files: set[str]) -> int:
-    """Move every live file the backup does not hold into previous/. Folders
-    stay where they are (bind mounts). Idempotent."""
+def set_aside(root: Path, manifest_files: set[str], keep=()) -> int:
+    """Move every live file the backup does not hold into previous/, except
+    under the top-level folders `keep` names (an unverified restore's
+    LIVE_KEPT_DIRS). Folders stay where they are (bind mounts). Idempotent."""
     moved = 0
+    keep = tuple(keep or ())
     for rel, full in _files(root, skip_kept=True):
+        if rel.split("/", 1)[0] in keep:
+            continue
         if rel not in manifest_files:
             _move(full, PREVIOUS / rel)
             moved += 1
@@ -2210,12 +3298,12 @@ def move_in(root: Path) -> int:
     return moved
 
 
-def _psql(*commands: str, db: str = "postgres") -> subprocess.CompletedProcess:
+def _psql(*commands: str, db: str = "postgres", timeout: float = 120) -> subprocess.CompletedProcess:
     args = ["psql", "-h", hb.PG_SOCKET, "-U", hb.PG_USER, "-d", db,
             "-v", "ON_ERROR_STOP=1", "-Atq"]
     for c in commands:
         args += ["-c", c]
-    return subprocess.run(args, capture_output=True, text=True, timeout=120)
+    return subprocess.run(args, capture_output=True, text=True, timeout=timeout)
 
 
 def _databases() -> set[str]:
@@ -2291,7 +3379,7 @@ def swap(live: str) -> int:
         manifest = _manifest_files()
         root = LIVE
         if plan["state"] == DB_DONE:
-            plan["set_aside"] = set_aside(root, manifest)
+            plan["set_aside"] = set_aside(root, manifest, keep=plan.get("live_kept") or ())
             plan["state"] = ASIDE_DONE
             _write_plan(plan)
         if plan["state"] == ASIDE_DONE:
@@ -2407,19 +3495,57 @@ async def finish(pool, eid: int) -> Optional[dict]:
             _write_plan(plan)
             state = FINISHING
         started = plan.get("staged_at") or hb._now().isoformat()
+        if state == FINISHING and plan.get("stamp"):
+            # The backup this came from is in the restored database as its
+            # own dump caught it: 'running' (its row is written before the
+            # dump and finished after), which the backup loop's boot sweep
+            # makes "interrupted". It did finish: it was just restored whole.
+            # Recorded so, or the Host reads its one good backup as a failure
+            # (backup_status, tell_host_paused) right after every restore.
+            taken = plan.get("taken_at")
+            await pool.execute(
+                "UPDATE host_backup_runs SET state = 'ok', error = NULL, finished_at = $2::timestamptz "
+                "WHERE stamp = $1 AND reason <> 'restore' AND (state = 'running' "
+                "OR (state = 'failed' AND error LIKE 'interrupted:%'))",
+                plan["stamp"], dt.datetime.fromisoformat(taken) if taken else hb._now())
         if state == FINISHING:
             live = plan.get("live_db") or "hostmem"
+            # Each app's data first: until it is back the app is not woken
+            # (app_data_pending), and the backup lock held here keeps a backup
+            # from reading it half put back. A runtime that cannot be reached
+            # raises, and finish_soon tries again with what is still pending.
+            await _restore_app_data(plan)
+            await asyncio.to_thread(shutil.rmtree, APP_DATA, True)
+            # After a backup this Host could not confirm as its own: each app
+            # it had, installed again from where this Host trusts code from.
+            await _reinstall_apps(pool, plan)
             await _keep_undo_point(pool, plan)
             await pool.execute(f'DROP DATABASE IF EXISTS "{live}_before_restore" WITH (FORCE)')
             await asyncio.to_thread(shutil.rmtree, PREVIOUS, True)
             await asyncio.to_thread(shutil.rmtree, STAGED, True)
+            # What the carry said about the owner's sign-in (carry_rows), from
+            # its marker in this database, before the marker is dropped below.
+            carried = await hb._state(pool, CARRIED_MARKER)
+            owner = carried.get("owner") if isinstance(carried, dict) else None
+            app_note = app_data_note(plan.get("app_data") or [])
             parts: dict[str, Any] = {"restored": {"taken_at": plan.get("taken_at"),
+                                                  "owner": owner,
+                                                  "code_left_out": plan.get("code_left_out") or [],
+                                                  "apps": {a["app_id"]: {k: a.get(k) for k in
+                                                                         ("state", "source", "project", "error")}
+                                                           for a in plan.get("apps_reinstall") or []
+                                                           if isinstance(a, dict) and a.get("app_id")},
+                                                  "apps_note": apps_note(plan),
+                                                  "app_data": {a["app_id"]: a.get("state")
+                                                               for a in plan.get("app_data") or []},
+                                                  "app_data_note": app_note,
                                                   "stamp": plan.get("stamp"),
                                                   "files": plan.get("moved_in"),
                                                   "verified": plan.get("verified"),
                                                   "links_left_out": plan.get("links_refused") or [],
                                                   "links_left_out_count": plan.get("links_refused_count")
-                                                  or len(plan.get("links_refused") or [])}}
+                                                  or len(plan.get("links_refused") or []),
+                                                  "database_note": plan.get("db_note")}}
             outcome, error = "ok", None
         else:
             # FAILED: nothing was moved (a stage or swap that failed before the
@@ -2447,10 +3573,378 @@ async def finish(pool, eid: int) -> Optional[dict]:
         restored = parts.get("restored") or {}
         await _progress(pool, state=outcome, taken_at=plan.get("taken_at"), error=error,
                         verified=restored.get("verified"),
+                        app_data_note=restored.get("app_data_note"),
                         links_left_out=restored.get("links_left_out") or [],
-                        links_left_out_count=restored.get("links_left_out_count") or 0)
+                        links_left_out_count=restored.get("links_left_out_count") or 0,
+                        owner=restored.get("owner"),
+                        database_note=restored.get("database_note"),
+                        apps_note=restored.get("apps_note"))
         log.info("restore: %s (%s)", outcome, error or plan.get("taken_at"))
+        if outcome == "ok" and restored.get("apps_note"):
+            try:
+                await _tell_host_apps_note(pool, eid, restored["apps_note"])
+            except Exception as e:  # noqa: BLE001 — the restore itself is done
+                log.warning("restore: the Host could not be told which apps came back: %s", e)
+        if outcome == "ok" and restored.get("owner"):
+            try:
+                await _tell_host_sign_in(pool, eid, restored["owner"])
+            except Exception as e:  # noqa: BLE001 — the restore itself is done
+                log.warning("restore: the Host could not be told about the owner's sign-in: %s", e)
+        if outcome == "ok" and restored.get("database_note"):
+            try:
+                await _tell_host_database_note(pool, eid, restored["database_note"])
+            except Exception as e:  # noqa: BLE001 — the restore itself is done
+                log.warning("restore: the Host could not be told what the restore left out: %s", e)
+        if outcome == "ok":
+            # Restored onto a machine with no recovery key (a new one): the
+            # restore kept this machine's keys (CARRIED_STATE), so nothing is
+            # encrypted, and nothing backed up, until the owner adds theirs.
+            # Said to the Host now, so its next turn tells them.
+            try:
+                if not await hb.recipients(pool, eid):
+                    await hb.tell_host_paused(pool, eid, why=hb.RESTORED_WITHOUT_KEY)
+            except Exception as e:  # noqa: BLE001 — the restore itself is done
+                log.warning("restore: the Host could not be told backups are paused: %s", e)
         return {"state": outcome, "error": error, "parts": parts}
+
+
+# ── a backup this Host cannot confirm brings back no installed code ──────────
+#
+# A backup that does not verify (provenance) is a file anyone who can write
+# where backups are kept could have made, and the code in it would run here as
+# this Host: an installed app's files (apps/, installer.INSTALL_ROOT: the
+# supervisor runs a process app beside the kernel from there, and the boot's
+# image install keeps a built-in app whose restored .factory-fingerprint and
+# row match) and the installed App SDK (sdk/, served into every app window and
+# checked only against a hash kept beside it). Its installed_applications rows
+# say what each app is (provenance decides whether an app is served on the
+# Host's own origin, applications/proxy.py is_isolated), where it lives and
+# which version it is. So after such a restore none of that comes back:
+#   * apps/ and sdk/ are left out of the staged tree, so the swap sets the live
+#     ones aside as well, and the boot installs every built-in app and the SDK
+#     floor from the image (no fingerprint is left to match);
+#   * so is skills/, the platform's skills (skill_loader.get_location): only
+#     the image's seeders write there, and what is there rides a turn as the
+#     platform's own text ("source": "platform", host_skills.load_type_skill),
+#     without the skill standard's check or a mark, and the boot's seeding
+#     keeps a file whose seed marker disagrees with it as the owner's edit.
+#     The boot seeds it again from the image, and each app's install its own;
+#   * passport/ (server/bridge/passport.py) is this Host's network membership:
+#     its key, the certificate it presents, and root.crt, the one root the
+#     member door is verified against (member_client.MemberClient). The
+#     backup's is not brought back and the live one is not set aside
+#     (LIVE_KEPT_DIRS, plan live_kept): this Host stays the member it was;
+#   * a link the backup holds into any of these leads to what this Host has
+#     there, not to the backup's, so it is left out (_link_escapes);
+#   * the restored database keeps no installed_applications row: each is
+#     written again by the install that puts its app back;
+#   * once the kernel has started, every other app the backup had is installed
+#     again from where this Host takes code from (_reinstall_apps): its own
+#     project, through the normal ship path, for an app it built; the App
+#     Store's signed bundle for the rest. One that cannot be is named for the
+#     owner, with why (apps_note);
+#   * each app's data (its volume, appdata/, its config rows) comes back as
+#     from any backup.
+# A backup that verifies carries a tag only a key this Host holds can make,
+# over a body naming the encrypted file's sha256 (host_backup, 'proof that a
+# backup is this Host's own'), so it is byte for byte one this Host wrote, and
+# comes back whole.
+CODE_DIRS = ("apps", "sdk", "skills")
+LIVE_KEPT_DIRS = ("passport",)
+APPS_PENDING = "pending"
+APPS_REINSTALLED = "reinstalled"
+APPS_NEEDS_REINSTALL = "needs reinstall"
+APPS_WANTED_MAX = 500
+_APP_YAML_MAX = 256 * 1024
+
+
+def _left_out_unverified(rel: str) -> bool:
+    """A path an unverified restore takes from the image or from this Host,
+    never from the backup (CODE_DIRS, LIVE_KEPT_DIRS)."""
+    top = rel.split("/", 1)[0]
+    return top in CODE_DIRS or top in LIVE_KEPT_DIRS
+
+
+def leave_code_out(staged: Path) -> list[str]:
+    """Remove the installed code and trust (CODE_DIRS, LIVE_KEPT_DIRS) from a
+    staged tree; returns the names removed. A link in its place is removed,
+    never followed."""
+    out = []
+    for name in CODE_DIRS + LIVE_KEPT_DIRS:
+        p = staged / name
+        if p.is_symlink() or p.is_file():
+            p.unlink()
+        elif p.is_dir():
+            shutil.rmtree(p)
+        else:
+            continue
+        out.append(name)
+    return out
+
+
+async def leave_app_rows_out(conn) -> list[dict]:
+    """The apps a restored database's installed_applications names, then every
+    row of it deleted. Only an app id is taken from a row, and whether the row
+    said the Host built the app (provenance custom), which decides only which
+    trusted place it is installed from again: the gates of that install decide
+    what it is."""
+    cols = await _columns(conn, "installed_applications")
+    if not cols or "id" not in cols:
+        return []
+    sel = ", ".join(_qi(c) for c in ("id", "provenance", "status") if c in cols)
+    wanted = []
+    for r in await conn.fetch(f'SELECT {sel} FROM "installed_applications" ORDER BY "id"'):
+        aid = r["id"]
+        if not isinstance(aid, str) or not _APP_ID.match(aid):
+            continue
+        if "status" in cols and r["status"] != "active":
+            continue
+        wanted.append({"app_id": aid, "state": APPS_PENDING,
+                       "built_here": "provenance" in cols and r["provenance"] == "custom"})
+        if len(wanted) >= APPS_WANTED_MAX:
+            break
+    await conn.execute('DELETE FROM "installed_applications"')
+    return wanted
+
+
+def _declared_id(folder: Path) -> Optional[str]:
+    """The id a project folder's app.yaml declares, read as data."""
+    import yaml
+    p = folder / "app.yaml"
+    try:
+        if p.is_symlink() or not p.is_file() or p.stat().st_size > _APP_YAML_MAX:
+            return None
+        doc = yaml.safe_load(p.read_text(encoding="utf-8"))
+    except (OSError, ValueError, yaml.YAMLError):
+        return None
+    aid = doc.get("id") if isinstance(doc, dict) else None
+    return aid if isinstance(aid, str) else None
+
+
+async def _project_for_app(pool, app_id: str) -> Optional[dict]:
+    """The Host's project (and module) whose app.yaml declares `app_id`, from
+    the project files the restore brought back."""
+    root = LIVE / "projects"
+    for p in await pool.fetch("SELECT id, name FROM projects ORDER BY id"):
+        folder = root / str(int(p["id"]))
+        if folder.is_symlink():
+            continue
+        if _declared_id(folder) == app_id:
+            return {"id": int(p["id"]), "name": p["name"], "module": None}
+        for m in await pool.fetch("SELECT name FROM project_modules WHERE project_id = $1 ORDER BY name",
+                                  int(p["id"])):
+            name = str(m["name"])
+            if not re.fullmatch(r"[a-z0-9][a-z0-9-]{0,39}", name) or (folder / name).is_symlink():
+                continue
+            if _declared_id(folder / name) == app_id:
+                return {"id": int(p["id"]), "name": p["name"], "module": name}
+    return None
+
+
+async def _install_from_project(pool, project_id: int, module: Optional[str]) -> None:
+    """The normal ship path (validate, pack, sign with this Host's key,
+    install), without the post-ship proof."""
+    from server.routes.applications import ShipError, ship_project_service
+    try:
+        await ship_project_service(pool, project_id, verify=False, module=module)
+    except ShipError as e:
+        raise RestoreError(str(e.detail)) from None
+
+
+async def _install_from_store(pool, app_id: str) -> None:
+    """The App Store's signed bundle for `app_id`, through the one install
+    path (installer.install_bundle checks its signature and its signer)."""
+    from server.applications import installer
+    from server.routes.applications import _fetch_bundle_from_store, _StoreError
+    try:
+        bundle = await _fetch_bundle_from_store(app_id, None)
+    except _StoreError as e:
+        raise RestoreError(f"the App Store did not give it: {e}") from None
+    try:
+        await installer.install_bundle(pool, bundle, source="store")
+    except installer.InstallError as e:
+        raise RestoreError(f"the App Store's copy did not install: {e}") from None
+
+
+async def _reinstall_apps(pool, plan: dict) -> None:
+    """Each app an unverified restore left out (plan apps_reinstall), installed
+    again, its outcome written to the plan as it lands: from the image (the
+    boot already did, so it is only looked up), from the Host's own project
+    when the backup said the Host built it, else from the App Store. One that
+    cannot be is marked to reinstall, with why."""
+    apps = [a for a in plan.get("apps_reinstall") or [] if isinstance(a, dict)]
+    if not apps:
+        return
+    from server.applications import installer, registry
+    baked = installer.image_baked_ids()
+    for a in apps:
+        if a.get("state") != APPS_PENDING:
+            continue
+        aid = str(a.get("app_id") or "")
+        try:
+            if not _APP_ID.match(aid):
+                raise RestoreError("its name is not an app id")
+            if aid in baked:
+                a["source"] = "image"
+                if await registry.get(pool, aid) is None:
+                    raise RestoreError("this Host's image did not install it at this start")
+            elif a.get("built_here"):
+                a["source"] = "project"
+                proj = await _project_for_app(pool, aid)
+                if proj is None:
+                    raise RestoreError("no project of this Host declares it")
+                a["project"] = proj["name"]
+                await _install_from_project(pool, proj["id"], proj["module"])
+            else:
+                a["source"] = "store"
+                await _install_from_store(pool, aid)
+        except Exception as e:  # noqa: BLE001 — that app's outcome, said to the owner
+            a.update(state=APPS_NEEDS_REINSTALL, error=(str(e) or type(e).__name__)[:300])
+        else:
+            a.update(state=APPS_REINSTALLED, error=None)
+        _write_plan(plan)
+        log.info("restore: app %s: %s%s", aid, a.get("state"), f" ({a['error']})" if a.get("error") else "")
+
+
+def apps_note(plan: dict) -> Optional[str]:
+    """For the owner, after a restore that brought back no installed code:
+    that it did not, which apps were installed again and from where, and which
+    need reinstalling and why. None after any other restore."""
+    if not plan.get("code_left_out") and not plan.get("apps_reinstall"):
+        return None
+    apps = [a for a in plan.get("apps_reinstall") or [] if isinstance(a, dict)]
+    where = {"image": "from this Host's image", "store": "from the App Store"}
+
+    def src(a):
+        return f"from project {a.get('project')}" if a.get("project") else where.get(a.get("source"), "")
+
+    back = [f"{a.get('app_id')} ({src(a)})" for a in apps if a.get("state") == APPS_REINSTALLED]
+    left = [f"{a.get('app_id')}: reinstall it {src(a)}".rstrip() + f" ({a.get('error') or 'no reason was kept'})"
+            for a in apps if a.get("state") != APPS_REINSTALLED]
+    text = ("This Host could not confirm it made this backup, so no app's installed code came back from "
+            "it, only each app's data.")
+    if back:
+        text += " Installed again: " + "; ".join(back[:20]) + ("; and more" if len(back) > 20 else "") + "."
+    if left:
+        text += (f" {len(left)} app(s) need reinstalling: " + "; ".join(left[:10])
+                 + (f"; and {len(left) - 10} more" if len(left) > 10 else "") + ".")
+    if "passport" in (plan.get("code_left_out") or []):
+        text += (" Its network passport did not come back either: this Host is a member of the "
+                 "network only if it was one before the restore.")
+    return text[:1500]
+
+
+async def _tell_host_apps_note(pool, eid: int, note: str) -> None:
+    """apps_note, told to the Host the way _tell_host_database_note is, so it
+    tells the owner; the restore's result says it too."""
+    import uuid
+    from mastercode.context_store import ContextStore
+    await ContextStore(pool, eid).append_to_list("inbox/messages.json", {
+        "id": str(uuid.uuid4()),
+        "content": ("You were restored from a backup, and its apps were installed again rather than "
+                    "brought back. Tell the owner this now, plainly, in these words or your own: "
+                    f"\"{note[:1500]}\""),
+        "source": "backups",
+        "action": "restore_apps",
+        "timestamp": hb._now().isoformat(),
+        "delivered_to_session": None,
+        "read": False,
+    }, max_items=50)
+
+
+def app_data_note(apps: list) -> Optional[str]:
+    """One sentence for the owner naming each app whose data the restore did
+    not put back, and why; None when every app's data went back."""
+    left = [a for a in apps if isinstance(a, dict) and a.get("state") == APP_DATA_NOT_RESTORED]
+    if not left:
+        return None
+    said = "; ".join(f"{a.get('app_id')}: {a.get('error') or 'no reason was kept'}" for a in left[:10])
+    more = f"; and {len(left) - 10} more" if len(left) > 10 else ""
+    return (f"The data of {len(left)} app(s) was not put back, and is as it was on this machine: "
+            f"{said}{more}.")[:1200]
+
+
+async def _restore_app_data(plan: dict) -> None:
+    """Hand each app's staged data to the local runtime, which replaces the
+    app's kept data volume with it (cseries_runtime/server.py
+    import_app_data). Each app's outcome is written to the plan as it lands,
+    so a finish cut short carries on with the apps still pending. A refusal
+    (the disk too short, the data refused) is that app's outcome, said to the
+    owner (app_data_note), and its staged copy goes; a runtime that cannot be
+    reached is raised, so finish_soon tries again."""
+    from server.applications import local_runtime as LR
+    apps = [a for a in plan.get("app_data") or [] if isinstance(a, dict)]
+    for a in apps:
+        if a.get("state") != APP_DATA_PENDING:
+            continue
+        aid = str(a.get("app_id") or "")
+        path = APP_DATA / f"{aid}.tar"
+        if not _APP_ID.match(aid):
+            a.update(state=APP_DATA_NOT_RESTORED, error="its name is not an app id")
+        elif not LR.in_use():
+            a.update(state=APP_DATA_NOT_RESTORED,
+                     error="this machine runs no local runtime for an app's data to go back to")
+        else:
+            try:
+                fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+            except FileNotFoundError:
+                a.update(state=APP_DATA_NOT_RESTORED, error="its staged copy was gone")
+            else:
+                with os.fdopen(fd, "rb") as f:
+                    try:
+                        got = await asyncio.to_thread(LR.import_app_data, aid, f, int(a.get("bytes") or 0),
+                                                      a.get("uid_base"))
+                    except LR.RuntimeRefusal as e:
+                        if e.code in (502, 503):
+                            raise RestoreError(f"the data of {aid} could not be put back yet: {e.text}") from None
+                        a.update(state=APP_DATA_NOT_RESTORED, error=e.text[:300])
+                    else:
+                        a.update(state=APP_DATA_RESTORED, data_bytes=got.get("data_bytes"))
+        _write_plan(plan)
+        if a.get("state") != APP_DATA_PENDING:
+            with contextlib.suppress(FileNotFoundError):
+                path.unlink()
+        log.info("restore: the data of %s: %s%s", aid, a.get("state"),
+                 f" ({a['error']})" if a.get("error") else "")
+
+
+async def _tell_host_sign_in(pool, eid: int, note: str) -> None:
+    """What the restore said about the owner's sign-in (owner_note), as a
+    message in the Host's own list, read into its next turn as Messages For
+    You (host_backup.tell_host_paused writes the same kind), so the Host tells
+    the owner; the restore's result says it too."""
+    import uuid
+    from mastercode.context_store import ContextStore
+    await ContextStore(pool, eid).append_to_list("inbox/messages.json", {
+        "id": str(uuid.uuid4()),
+        "content": ("You were restored from a backup, and the restore kept the owner's sign-in. Tell "
+                    f"the owner this now, plainly, in these words or your own: \"{note}\""),
+        "source": "backups",
+        "action": "restore_sign_in",
+        "timestamp": hb._now().isoformat(),
+        "delivered_to_session": None,
+        "read": False,
+    }, max_items=50)
+
+
+async def _tell_host_database_note(pool, eid: int, note: str) -> None:
+    """What the restore left out of the backup's database (tables and
+    columns this version no longer has, rows kept that do not meet a rule, the
+    Host's own objects that did not load), told to the Host the same way, so
+    it tells the owner; the restore's result says it too."""
+    import uuid
+    from mastercode.context_store import ContextStore
+    await ContextStore(pool, eid).append_to_list("inbox/messages.json", {
+        "id": str(uuid.uuid4()),
+        "content": ("You were restored from a backup, and the restore could not bring back all of "
+                    "it. Tell the owner this now, plainly, in these words or your own: "
+                    f"\"{note[:1500]}\""),
+        "source": "backups",
+        "action": "restore_left_out",
+        "timestamp": hb._now().isoformat(),
+        "delivered_to_session": None,
+        "read": False,
+    }, max_items=50)
 
 
 async def finish_soon(pool, eid: int, tries: int = 30, every_s: float = 60.0) -> None:

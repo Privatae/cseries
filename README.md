@@ -3,31 +3,14 @@
 C-Series is an open-source AI agent that runs on your own machine. We call
 each running instance a Host: one AI with its own memory, its own PostgreSQL
 database, its own apps and its own rules, used from a browser. It runs
-sandboxed in a small Linux virtual machine as two containers (the Host and its
-database), and a separate program, the bastion, runs on the machine itself
-and decides what the Host may touch there.
+sandboxed in a small Linux virtual machine, in containers: the Host, its
+database, and the apps that need a container of their own. A separate
+program, the bastion, runs on the machine itself and decides what the Host
+may touch there.
 
 The person brings the models: a key from OpenRouter, Anthropic, OpenAI or
 another provider, or a local model server. C-Series does not sell or proxy
 model usage.
-
-## Status
-
-Pre-release. The code in this repository builds and runs from source (see
-[Building from source](#building-from-source)). The one-command installer
-(`npx cseries`) is written and tested for Windows but not yet published, and
-the macOS and Linux driver is in progress. Work under way before the first
-release:
-
-- a local runtime, so apps that run in their own container (the Telegram,
-  Discord and Slack connectors, the browser, the coding agents, the creative
-  engines) start on the person's machine instead of asking a hosted platform;
-- backups a standalone Host can write and restore by itself;
-- memory and context defaults for long-running use;
-- memory and CPU limits for the virtual machine.
-
-This repository is published as a single snapshot commit. Development history
-lives in a private forge.
 
 ## For reviewers: where to look
 
@@ -38,17 +21,13 @@ lives in a private forge.
 | The Host's own data | `brain/mastercode/world_db.py` | The `data` tool: the Host designs and queries its own tables in a schema of its own, under a restricted database role |
 | Safety floor | `brain/mastercode/runtime/crisis.py` | The crisis floor: a deterministic phrase check plus an embedding-based check on the incoming message |
 | HTTP API | `server/` (FastAPI), `server/route_table.py` | The dashboard API; the route table is read through FastAPI's public route API so contract checks survive framework upgrades |
-| Apps | `system-apps/` (47 apps, each with an `app.yaml` manifest) | Chat (Circles), Workbench, Orchestrator, Keys, Settings, connectors, creative engines |
+| Apps | `system-apps/` (each app with an `app.yaml` manifest) | Chat (Circles), Workbench, Orchestrator, Keys, Settings, connectors, creative engines |
+| Local runtime | `vm/runtime/`, `server/applications/local_runtime.py` | The service in the virtual machine that starts, stops and limits the containers apps and coding agents run in, on a socket only the Host can use |
 | Coding agents | `sidecars/harness-*` | Container images that run Claude Code, Codex, Cursor and other coding agents under the Host's control |
 | Sandboxing | `seccomp-*.json`, `sidecars/app-egress/`, `server/connectors/_picture_child.py` | Seccomp profiles, the egress gate every app's traffic goes through, and a renderer child process locked down with seccomp and Landlock |
-| Installer | `packages/cseries/` (Node, tests in `packages/cseries/test`) | `npx cseries`: preflight, the WSL virtual machine, the bastion as a Windows service installed with one admin prompt, pairing and approvals |
+| Installer | `packages/cseries/` (Node, tests in `packages/cseries/test`) | `npx cseries`: preflight, the virtual machine (WSL on Windows, Lima on macOS and Linux), the bastion as a system service installed with one administrator prompt, pairing and approvals |
 | Release pipeline | `.github/workflows/release.yml` | Multi-arch images, vulnerability scan gate, npm publish with provenance |
 | Personal-data and term gates | `scripts/test_public_source_clean.py`, `scripts/release_term_check.py` | Checks that keep real people's data and private names out of public source |
-
-Scale: about 620,000 lines of Python, about 110,000 lines of TypeScript and
-JavaScript (including the web apps), 232 database migrations, and 626 test
-and gate scripts under `scripts/` plus the suites under `tests/` and
-`packages/cseries/test`.
 
 The bastion is a separate Go program with its own repository, licensed
 GPL-3.0-or-later.
@@ -70,24 +49,28 @@ IMAGE=cseries:dev PG_IMAGE=cseries-postgres:dev bash scripts/smoke_test.sh
 
 ## What you need
 
-- Windows 10 (build 19041 or later) or Windows 11, with hardware
-  virtualisation turned on. macOS and Linux are coming next.
+- Windows 10 (build 19041 or later) or Windows 11; macOS 13.5 or later; or
+  Linux with `/dev/kvm`. An x64 or Arm64 machine with hardware
+  virtualisation turned on.
 - Node.js 18 or later, for `npx`.
-- About 10 GB of free disk.
+- About 10 GB of free disk. The virtual machine gets half the machine's
+  memory, so 8 GB or more works best.
 - A browser that sends `*.localhost` names to your own machine: Chrome, Edge
   or Firefox.
 
-## Install (once published)
+## Install
 
 ```
 npx cseries
 ```
 
-It checks the machine, installs the bastion as this machine's system service (one administrator prompt), sets up a Linux
-virtual machine named `cseries` in WSL, pulls the published Host images into
-it, starts the Host, pairs the bastion with it, and opens the setup page with
-a one-time setup code. If WSL is not installed yet it asks for administrator
-rights once and for a restart, then carries on after the restart by itself.
+It checks the machine, installs the bastion as this machine's system service
+(one administrator prompt), sets up a Linux virtual machine named `cseries`
+(in WSL on Windows, in Lima on macOS and Linux), pulls the published Host
+images into it, starts the Host, pairs the bastion with it, and opens the
+setup page with a one-time setup code. On Windows without WSL it asks for
+administrator rights once and for a restart, then carries on after the
+restart by itself.
 
 The virtual machine sees none of your folders. Only the Host's own ports
 (8800 for the dashboard, 8810 and 8811 for the bastion) reach your machine,
@@ -110,11 +93,11 @@ Keys, then apply the recommended setup in the Orchestrator.
 |---|---|
 | Open the dashboard | `npx cseries open` |
 | See whether it is running | `npx cseries status` |
-| Update to the latest release | `npx cseries update` |
+| Update to the latest release | `npx cseries@latest update` |
 | Stop / start | `npx cseries stop`, `npx cseries start` |
 | Read the logs | `npx cseries logs` (`host` or `postgres`) |
-| Remove it, keep the data | `npx cseries uninstall` |
-| Remove it and its data | `npx cseries uninstall --delete-data` (permanent) |
+| Stop it and stop it starting at login, keeping its data | `npx cseries uninstall` |
+| Delete the Host and its data | `npx cseries uninstall --delete-data` (permanent) |
 
 ## Building from source
 
@@ -127,6 +110,10 @@ cd cseries
 docker compose up -d --build
 docker compose logs host | grep "SETUP CODE"
 ```
+
+This runs the Host and its database only. Apps that need a container of
+their own start through the local runtime, which the installer sets up in
+the virtual machine.
 
 ## Why it opens on a name
 
@@ -145,7 +132,42 @@ publishing the port on a network address:
 2. Set `CSERIES_URL` to that address, for example `https://home.cseries.lan`.
 3. Set `CSERIES_TRUSTED_PROXIES` to the proxy's address. A wrong-password
    lockout then applies to the visitor rather than to everyone behind the
-   proxy, and the proxy's `X-Forwarded-Host` is believed.
+   proxy, and the proxy's `X-Forwarded-Host` and `X-Forwarded-Proto` are
+   believed. Nobody else's are.
+4. Have the proxy ask the Host about each request before passing it on, at
+   `GET /__host/door` (Caddy's `forward_auth`). The Host answers 200, a
+   redirect to its sign-in page, or 401, so nothing but the sign-in pages
+   and the OAuth returns reaches it without the owner's session. Another
+   proxy must send the request's method and URI in `X-Forwarded-Method` and
+   `X-Forwarded-Uri` and hand a redirect back to the browser as it is;
+   nginx's `auth_request` does neither by itself, and treats a redirect as
+   an error.
+5. Give the proxy and the Host one door key: a random value of 32 to 512
+   characters (letters, digits and `._~+/=-`) in a file only the two of
+   them read, for example from `openssl rand -hex 32`. Point
+   `CSERIES_DOOR_SECRET_FILE` at the file, and have the proxy send the key in
+   an `X-Cseries-Door` header on its question to `/__host/door` and on
+   nothing else (in Caddy, `header_up X-Cseries-Door {$CSERIES_DOOR_SECRET}`
+   inside the `forward_auth` block). The Host answers only a question that
+   carries it, since the proxy also passes the browser's own requests on;
+   without the file every request is refused. A new key in the file is used
+   without a restart.
+
+On an https address the session cookie is a `__Host-` cookie, and the owner
+signs in with a passkey: after setup and after a password sign-in the Host
+walks the owner through adding one and shows ten recovery codes, each good
+once. From then on the password no longer signs in, and adding the first
+passkey signs out every other session. The `/passkey` page removes a lost
+passkey (never the last one) and signs out every other session, each after
+a fresh check with a passkey or a recovery code.
+
+To pair a bastion on another machine, set `CSERIES_LANE_HOST` to the name or
+address that machine reaches the Host's ports 8810 and 8811 at; the Network
+app then shows the pair command for it. Where a server's firewall keeps 8810
+shut, `CSERIES_DOOR_HELPER` names the unix socket of a helper on that server
+that opens it to the owner's address for the 15-minute pairing window, after
+a fresh passkey check. `CSERIES_SETUP_CODE_FILE` names a file holding the
+setup code, for a Host someone else installs.
 
 ## The Privatae network
 

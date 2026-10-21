@@ -527,3 +527,32 @@ html, body {
 .dev-link:hover, .dev-link:focus {
     border-bottom-color: currentColor;
 }
+
+/* ── Notices about the catalog, and kept app data ─────── */
+.store-notices { display: flex; flex-direction: column; gap: var(--space-2); }
+.store-notice {
+    padding: var(--space-3) var(--space-4);
+    border: 1px solid var(--cseries-gold);
+    border-radius: var(--radius-lg);
+    color: var(--cseries-linen);
+    font-size: var(--text-sm);
+    line-height: var(--leading-relaxed);
+}
+.kept-data-list { display: flex; flex-direction: column; }
+.kept-data-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-2) 0;
+    border-top: 1px solid var(--cseries-seam);
+}
+.kept-data-name { color: var(--cseries-paper); }
+.kept-data-size { color: var(--cseries-ash); font-size: var(--text-sm); }
+.uninstall-data {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
+    font-size: var(--text-xs);
+    color: var(--cseries-linen);
+}

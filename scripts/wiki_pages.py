@@ -35,7 +35,7 @@ explanation to the code behind it:
 
   what-a-host-is:
     sources:
-      - server/network/nac_egress.py::resolve_exit
+      - brain/mastercode/runtime/agent_grant.py::parse_grant
       - external:privatae-bastion/client-go/session.go
     verified: {date: 2026-09-30, digest: sha256:...}
 

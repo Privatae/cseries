@@ -385,9 +385,9 @@ memory:
   - brain/mastercode/memory_engine.py::write_turn_row
   - brain/mastercode/memory_engine.py::MemoryEngine.build_memory_context
   - brain/mastercode/memory_engine.py::_detect_teaching
-  - brain/mastercode/summary_policy.py
   - brain/mastercode/memory_consolidation.py
-  - brain/mastercode/thread_consolidator.py
+  - brain/mastercode/memory_slots.py
+  - brain/mastercode/evicted_record.py
   - server/routes/brain.py::edit_single_memory
   - server/routes/brain.py::delete_single_memory
   - server/routes/embedding.py::apply_embedding_switch

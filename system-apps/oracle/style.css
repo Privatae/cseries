@@ -599,3 +599,21 @@ html, body { margin: 0; height: 100%; overflow: hidden;
     border-bottom: 1px solid var(--cseries-seam); font-size: var(--text-sm); color: var(--cseries-linen);
 }
 .data-snap .data-restore { margin-left: auto; }
+
+/* Slots lens: one live entry per type, place and topic, with what it replaced. */
+.slot {
+    border: 1px solid var(--cseries-seam); border-radius: var(--radius-md);
+    padding: var(--space-3) var(--space-4); margin-bottom: var(--space-3);
+    display: grid; gap: var(--space-2);
+}
+.slot-head { color: var(--cseries-ash); }
+.slot-head b { color: var(--cseries-paper); font-weight: 600; }
+.slot-chain { display: grid; gap: var(--space-1); padding-left: var(--space-4); border-left: 2px solid var(--cseries-seam); }
+.slot-loose { display: grid; gap: var(--space-2); margin-top: var(--space-6); }
+.slot-key { display: inline-flex; gap: var(--space-2); margin-left: auto; }
+.slot-key .slot-topic { width: 11rem; }
+.tt-rode { margin-top: var(--space-1); color: var(--cseries-ash); font-size: var(--text-xs); }
+.tt-rode-id {
+    background: none; border: 1px solid var(--cseries-seam); border-radius: var(--radius-sm);
+    color: var(--cseries-silk); font: inherit; padding: 0 var(--space-1); cursor: pointer;
+}

@@ -147,16 +147,38 @@ def marker_text(to_project_id: int, to_name: str | None) -> str:
 
 async def rehome_turn(pool, entity_id: int, *, from_project: int, to_project: int,
                       user_row_task: "asyncio.Task | None", session_id: str,
-                      user_content: str | None = None,
-                      turn_started_at: datetime | None = None) -> dict:
-    """Retag the turn's USER row to `to_project` and leave a marker in
-    `from_project`. The assistant row is written by the caller with the new
-    home directly; only the user row (already queued before the tools ran)
-    needs moving. Awaits the user row's write so the retag cannot race it.
+                      turn_token: str | None = None,
+                      learned_task: "asyncio.Task | None" = None,
+                      nudge_row_tasks=None) -> dict:
+    """Retag the turn's USER row to `to_project`, carry what was learned from
+    it, and leave a marker in `from_project`, in one transaction. The
+    assistant row is written by the caller with the new home directly; only
+    the user row (already queued before the tools ran) needs moving, with
+    the words the person sent into the turn (thread_choice.turn_rows).
+    Everything the turn wrote before the re-home is waited for first,
+    bounded (thread_choice.turn_settled: the user row's write, the taught
+    rule's, the nudge rows', and in PII mode every write the turn queued),
+    so none of it lands afterwards in the project the turn left, and the
+    user row is found by the turn's token (`turn_token`, thread_choice.
+    turn_message_row), never by its words: in PII mode its write returns no
+    id and the row holds the tokenized words. When a bound passes, nothing
+    moves.
+
+    What was learned from the message goes with it, as when the Host's
+    pick_thread files a message elsewhere (thread_choice._carry_learned,
+    circles_threads.carry_learned): a rule taught in it, the preference, goal
+    and notes close_turn and memory_curate kept in the turn (which ran before
+    the re-home was decided), the place a rule was taught, what they retired,
+    what the turn decided "this project" means for them, and their slots are
+    the new project's. `learned_task` is the write of a rule
+    taught in the message (session._keep_taught), awaited (bounded) first:
+    it waits on the same user row, so unawaited it can land after the move,
+    tagged with the project the turn left.
 
     Returns {moved_user_row: bool, marker: bool, to_name}. Never raises: a
     failure here leaves the thread where it was typed, which is the pre-2026-09
-    behaviour, and logs why.
+    behaviour, and logs why. The transaction means a carry or marker that
+    fails leaves the user row where it was too.
     """
     out = {"moved_user_row": False, "marker": False, "to_name": None}
     try:
@@ -165,66 +187,84 @@ async def rehome_turn(pool, entity_id: int, *, from_project: int, to_project: in
         to_name = (row["name"] or "").strip() if row else None
         out["to_name"] = to_name or None
 
-        user_row_id = None
-        if user_row_task is not None:
-            try:
-                user_row_id = await asyncio.wait_for(asyncio.shield(user_row_task), timeout=30)
-            except Exception as e:  # noqa: BLE001 - fall back to a bounded lookup
-                log.info("rehome: user row task did not resolve (%s); locating by content", e)
-        if user_row_id is None and user_content is not None and turn_started_at is not None:
-            user_row_id = await pool.fetchval(
-                """
-                SELECT id FROM entity_memory
-                 WHERE entity_id=$1 AND memory_type='turn' AND project_id=$2
-                   AND metadata->>'role'='user' AND content=$3
-                   AND created_at >= $4
-                 ORDER BY created_at DESC LIMIT 1
-                """, entity_id, from_project, user_content, turn_started_at)
-
-        new_sctx = json.dumps({"kind": "project", "ref": str(to_project)})
-        adopted_from = json.dumps({"kind": "project", "ref": str(from_project)})
-        if user_row_id is not None:
-            res = await pool.execute(
-                """
-                UPDATE entity_memory
-                   SET project_id = $2,
-                       metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
-                           'source_context', $3::jsonb,
-                           'adopted_from',   $4::jsonb,
-                           'adopted_at',     to_jsonb(now()::timestamptz),
-                           'rehomed',        true)
-                 WHERE id = $1 AND entity_id = $5 AND project_id = $6
-                """, user_row_id, to_project, new_sctx, adopted_from, entity_id, from_project)
-            out["moved_user_row"] = str(res).endswith(" 1")
-        if not out["moved_user_row"]:
-            # Nothing moved (PII mode returns no row id; the row was not where
-            # it was expected; the DB refused) → no marker, and the caller
-            # keeps the whole turn in the source. Half a move is the split.
-            log.info("rehome: entity=%d user row not moved (%s) — turn stays in project %d",
-                     entity_id, user_row_id, from_project)
+        from mastercode.runtime.thread_choice import (
+            _NotMoved, _await_row, _carry_learned, turn_message_row, turn_rows, turn_settled)
+        user_row_id = await _await_row(user_row_task)
+        unsettled = await turn_settled(turn_token, learned_task, nudge_row_tasks)
+        if unsettled:
+            log.info("rehome: entity=%d %s — turn stays in project %d", entity_id, unsettled, from_project)
             return out
+        if user_row_id is None:
+            user_row_id = await turn_message_row(pool, entity_id, turn_token, project_id=from_project)
 
+        src = {"kind": "project", "ref": str(from_project)}
+        dst = {"kind": "project", "ref": str(to_project)}
         marker_md = {
             "role": "assistant",
             "source_kind": "thread_marker",
-            "source_context": {"kind": "project", "ref": str(from_project)},
+            "source_context": src,
             "app_id": "workbench",
             "marker": {"project_id": to_project, "project_name": to_name,
                        "moved_turns": 2, "rehomed": True},
         }
-        await pool.execute(
-            """
-            INSERT INTO entity_memory
-              (entity_id, content, memory_type, importance, status,
-               source_session, project_id, metadata, created_at)
-            VALUES ($1, $2, 'turn', 0.1, 'active', $3, $4, $5::jsonb, $6)
-            """,
-            entity_id, marker_text(to_project, to_name),
-            f"rehome:{to_project}", from_project, json.dumps(marker_md),
-            datetime.now(timezone.utc))
-        out["marker"] = True
+        moved = False
+        if user_row_id is not None:
+            async with pool.acquire() as conn:
+                async with conn.transaction():
+                    ids = [int(user_row_id)] + await turn_rows(conn, entity_id, int(user_row_id), src)
+                    res = await conn.fetch(
+                        """
+                        UPDATE entity_memory
+                           SET project_id = $2,
+                               metadata = COALESCE(metadata, '{}'::jsonb) || jsonb_build_object(
+                                   'source_context', $3::jsonb,
+                                   'adopted_from',   $4::jsonb,
+                                   'adopted_at',     to_jsonb(now()::timestamptz),
+                                   'rehomed',        true)
+                         WHERE id = ANY($1::int[]) AND entity_id = $5 AND project_id = $6
+                        RETURNING id
+                        """, ids, to_project, json.dumps(dst), json.dumps(src),
+                        entity_id, from_project)
+                    if int(user_row_id) not in {int(r["id"]) for r in res}:
+                        # The message row is not where it was expected: the
+                        # raise rolls back the rows the statement did move.
+                        raise _NotMoved()
+                    # A row learned from the message keeps its project tag
+                    # (project_id): a fresh write never tags one with the
+                    # project it was said in (memory_engine.
+                    # _store_teaching_memory, close_turn), so a rule taught
+                    # in the new project has none either, and a tag a rule
+                    # has names where a copy it retired was read
+                    # (memory_engine._carry_typed_place).
+                    await _carry_learned(conn, entity_id, ids, src, dst)
+                    # The rows moved and the reply written there.
+                    marker_md["marker"]["moved_turns"] = len(ids) + 1
+                    await conn.execute(
+                        """
+                        INSERT INTO entity_memory
+                          (entity_id, content, memory_type, importance, status,
+                           source_session, project_id, metadata, created_at)
+                        VALUES ($1, $2, 'turn', 0.1, 'active', $3, $4, $5::jsonb, $6)
+                        """,
+                        entity_id, marker_text(to_project, to_name),
+                        f"rehome:{to_project}", from_project, json.dumps(marker_md),
+                        datetime.now(timezone.utc))
+                    moved = True
+        if not moved:
+            # Nothing moved (no row carries the turn's token in the project;
+            # the row was not where it was expected; the DB refused) → no
+            # marker, and the caller keeps the whole turn in the source. Half
+            # a move is the split.
+            log.info("rehome: entity=%d user row not moved (%s) — turn stays in project %d",
+                     entity_id, user_row_id, from_project)
+            return out
+        out["moved_user_row"] = out["marker"] = True
         log.info("rehome: entity=%d turn moved project %d -> %d (user_row=%s)",
                  entity_id, from_project, to_project, user_row_id)
     except Exception as e:  # noqa: BLE001 - never a failed turn
+        if type(e).__name__ == "_NotMoved":
+            log.info("rehome: entity=%d user row not in project %d — turn stays there",
+                     entity_id, from_project)
+            return out
         log.warning("rehome failed (turn stays in project %s): %s", from_project, e)
     return out

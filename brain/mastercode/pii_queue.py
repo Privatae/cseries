@@ -27,6 +27,7 @@ Counter semantics:
 
 import asyncio
 import collections
+import contextlib
 import hashlib
 import logging
 import os
@@ -193,15 +194,42 @@ def scrub_metadata(md):
 
 
 class _Item:
-    __slots__ = ("writer", "text", "scope", "verify", "pool", "entity_id")
+    __slots__ = ("writer", "text", "scope", "verify", "pool", "entity_id", "turn", "landed")
 
-    def __init__(self, writer, text, scope, verify, pool, entity_id):
+    def __init__(self, writer, text, scope, verify, pool, entity_id, turn=None):
         self.writer = writer      # async callable(tokenized_text) — lands the row
-        self.text = text          # raw text, in-memory only, never persisted
+        self.text = text          # raw text, in-memory only, never persisted;
+        #                           None for a step (after_turn): nothing to sterilize
         self.scope = scope        # thread:<session_id> | entity:<id>:memory | doc:<uuid>
         self.verify = verify      # verify:true for durable memory (design §3)
         self.pool = pool          # for endpoint resolution at drain time
         self.entity_id = entity_id
+        self.turn = turn          # the token of the turn that queued it (_turn_now)
+        self.landed = asyncio.Event()   # set once it landed, or was dropped (never to land)
+
+
+def _turn_now() -> str | None:
+    """The token of the turn running in the caller's task (memory_engine.
+    CURRENT_TURN_ROW, set from the turn's start), read as a write is queued:
+    a move of the turn waits for what the turn queued (wait_turn). None
+    outside a turn."""
+    try:
+        from mastercode.memory_engine import CURRENT_TURN_ROW
+        cur = CURRENT_TURN_ROW.get()
+    except Exception:  # noqa: BLE001 — an untagged item is only not waited for
+        return None
+    tok = cur.get("token") if isinstance(cur, dict) else None
+    return str(tok) if tok else None
+
+
+def _append(item: _Item) -> None:
+    if len(_queue) >= _BOUND:
+        _queue.popleft().landed.set()
+        _counts["dropped"] += 1
+        log.error("pii queue full (%d) — dropped OLDEST item unlanded "
+                  "(dropped total=%d)", _BOUND, _counts["dropped"])
+    _queue.append(item)
+    _ensure_worker()
 
 
 async def submit(text, scope: str, writer, verify: bool = False,
@@ -213,19 +241,65 @@ async def submit(text, scope: str, writer, verify: bool = False,
     writer errors surface on the direct path exactly as before."""
     if not enabled() or not (text or "").strip():
         return await writer(text)
-    if len(_queue) >= _BOUND:
-        _queue.popleft()
-        _counts["dropped"] += 1
-        log.error("pii queue full (%d) — dropped OLDEST item unlanded "
-                  "(dropped total=%d)", _BOUND, _counts["dropped"])
-    _queue.append(_Item(writer, text, scope, verify, pool, entity_id))
-    _ensure_worker()
+    _append(_Item(writer, text, scope, verify, pool, entity_id, turn=_turn_now()))
     return None
+
+
+def _queued_for(token) -> list:
+    return [it for it in list(_queue) if token and it.turn == str(token) and not it.landed.is_set()]
+
+
+async def wait_turn(token, timeout: float) -> bool:
+    """Wait, at most `timeout` seconds, until every write the turn `token`
+    queued so far has landed (or was dropped, and so never lands): True then,
+    at once when it has none queued (mode OFF queues nothing). False when the
+    bound passed with one still queued. A move of the turn waits here, so
+    nothing the turn queued before it lands afterwards in the place the turn
+    left (runtime/thread_choice.move_exchange, turn_home.rehome_turn). A
+    write queued after the call is not waited for."""
+    waits = [it.landed.wait() for it in _queued_for(token)]
+    if not waits:
+        return True
+    try:
+        await asyncio.wait_for(asyncio.gather(*waits), timeout=timeout)
+    except TimeoutError:
+        return False
+    return True
+
+
+async def after_turn(token, step, *, pool=None, entity_id: int | None = None) -> None:
+    """Run `step()` (async, no arguments) once every write the turn `token`
+    queued so far has landed: at once when none is queued, else as the
+    queue's own item behind them (one drain worker, oldest first), with no
+    words for the service. In memory like every item: a restart drops it
+    with the writes it follows. A step that raises is logged and dropped,
+    so it never holds the queue. Never raises."""
+    async def _run(_text=None):
+        try:
+            await step()
+        except Exception as e:  # noqa: BLE001
+            log.error("pii queue step after a turn's writes raised: %s", type(e).__name__)
+    if not _queued_for(token):
+        await _run()
+        return
+    _append(_Item(_run, None, "step", False, pool, entity_id, turn=str(token)))
 
 
 def stats() -> dict:
     """The honest surface: {pending, sterilized, failed, dropped}."""
     return {"pending": len(_queue), **_counts}
+
+
+def _landed(item: _Item) -> None:
+    """`item` landed: off the queue (the head, unless an overflow dropped it
+    while it was landing, and then not some other item in its place), and
+    no longer waited for."""
+    if _queue and _queue[0] is item:
+        _queue.popleft()
+    else:
+        with contextlib.suppress(ValueError):
+            _queue.remove(item)
+    item.landed.set()
 
 
 async def drain_once() -> int:
@@ -238,6 +312,11 @@ async def drain_once() -> int:
         return 0
     try:
         item = _queue[0]
+        if item.text is None:
+            # A step (after_turn): it runs in queue order, and never raises.
+            await item.writer(None)
+            _landed(item)
+            return 1
         from mastercode import pii_client
         res = await pii_client.sterilize(
             item.text, item.scope, verify=item.verify,
@@ -258,7 +337,7 @@ async def drain_once() -> int:
             log.error("pii writer raised (scope=%s) — item stays queued: %s",
                       item.scope, type(e).__name__)
             return 0
-        _queue.popleft()
+        _landed(item)
         _counts["sterilized"] += 1
         log.info("pii drain landed tokenized write (scope=%s, %dms, findings=%d)",
                  item.scope, res.latency_ms, res.findings)

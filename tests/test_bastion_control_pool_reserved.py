@@ -263,8 +263,10 @@ def _recall_lane_recorder(monkeypatch):
         seen["vector_priv"] = priv_pool
         return [], False, "no embedder in this test"
 
+    # The real arm's keywords (memory_retrieval._lexical_arm), so the
+    # recorder takes every call recall_memories makes of it.
     async def fake_lexical_arm(pool, entity_id, query, *, where_sql, params,
-                               candidates):
+                               candidates, any_words=False):
         seen["lexical_rows"] = pool
         return [{"id": 1, "content": "a row", "importance": 1.0}], True, None
 

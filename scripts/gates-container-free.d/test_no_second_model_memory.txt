@@ -1,0 +1,2 @@
+# No model outside the Host's own turn writes what the Host remembers: no module that writes entity_memory, user_context or a thread's topic calls a model, except the turn itself and the tools the Host started in it; the rolling summary writer, its policy and the post-turn dispatch are gone and nothing imports them; a thread's topic has one writer, close_turn. Reads the source; no pod, no DB.
+test_no_second_model_memory.py

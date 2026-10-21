@@ -764,8 +764,8 @@ async def refresh_browser_image() -> None:
         return
     _image_refreshed[0] = now
     try:
-        from server.main import get_bridge_client
-        bc = get_bridge_client()
+        from server.applications.local_runtime import runtime_client
+        bc = runtime_client()
         if bc is None or not getattr(bc, "_connected", False):
             return
         env = await bc.request_full("harness.capacity", {"harnesses": [_BROWSER_APP]})
@@ -967,6 +967,12 @@ def room_sentence(over_plan: Optional[dict]) -> str:
     harness, every app machine — across every Host when the plan's memory is a
     shared pool). States the facts; it never changes an allowance."""
     o = over_plan or {}
+    if o.get("scope") == "machine":
+        # This machine's local runtime refused (no plan is involved): the
+        # same things free its memory, on this machine only.
+        return ("Room comes back when something else holding this machine's memory "
+                "stops: a coding engine finishing and going to sleep, the Browser app "
+                "being closed, or an app being stopped.")
     text = ("Room comes back when something else holding the plan's memory stops: a "
             "coding engine or the code editor finishing and going to sleep, the "
             "Browser app being closed, or an app that runs on a machine of its own "

@@ -83,8 +83,9 @@ check("schema: faster.kind enum", props["faster"]["items"]["properties"]["kind"]
 check("schema: preference scope.kind enum",
       props["preferences"]["items"]["properties"]["scope"]["properties"]["kind"]["enum"]
       == ["global", "project", "app", "thread"])
-check("schema: a preference needs text, reason and scope",
-      set(props["preferences"]["items"]["required"]) == {"text", "reason", "scope"})
+check("schema: a preference needs text, reason, topic and scope (memory slots: the topic is "
+      "the Host's own word for what it is about)",
+      set(props["preferences"]["items"]["required"]) == {"text", "reason", "topic", "scope"})
 check("schema: type.name required when type is sent", props["type"]["required"] == ["name"])
 check("schema: handoff carries next_step / open_work / identifiers",
       set(props["handoff"]["properties"]) == {"next_step", "open_work", "identifiers"})
@@ -420,9 +421,9 @@ class FakePool:
         if s.startswith("INSERT INTO entity_memory"):
             self._next += 1
             return {"id": self._next}
-        if s.startswith("SELECT id, memory_type, status, t_valid_until, metadata FROM entity_memory"):
+        if s.startswith("SELECT id, memory_type, status, t_valid_until, metadata, slot_topic FROM entity_memory"):
             h = next((r for r in self.held_rows if r["id"] == args[0]), {})
-            return {"id": args[0], "memory_type": "preference", "status": "active",
+            return {"id": args[0], "memory_type": "preference", "status": "active", "slot_topic": None,
                     "t_valid_until": None, "metadata": json.dumps({"about": h.get("about")} if h.get("about") else {})}
         raise AssertionError(f"unexpected fetchrow: {s[:80]}")
 

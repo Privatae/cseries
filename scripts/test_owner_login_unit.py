@@ -18,6 +18,21 @@ races, and inputs that used to raise instead of refusing.
      the visitor, not the proxy; X-Forwarded-For from anyone else is ignored.
   8. The loopback lane: its Host must name this machine and an Origin must
      carry the dashboard's port.
+  9. On an https Host (CSERIES_URL) the cookie is __Host- named and always
+     Secure, Path=/, no Domain; sign-out clears it with the same attributes.
+     On a plain-http Host it is as before, and X-Forwarded-Proto adds Secure
+     only from a trusted proxy.
+ 10. The wrong-try record stays bounded: an IPv6 visitor counts by its /64,
+     an entry is forgotten an hour after its wait ends, and past the cap the
+     oldest go.
+ 11. A wrong setup code counts like a wrong password.
+ 12. CSERIES_SETUP_CODE_FILE gives the setup code when it holds one of the
+     usual shape; otherwise, or once an owner exists, it is not used.
+ 13. Every visitor's wrong passwords count together: past GLOBAL_FREE of
+     them, from as many addresses, every password sign-in waits, without a
+     hash, the right password included; the wait doubles to 15 minutes and is
+     forgotten an hour after it ends. Before there is an owner nothing counts
+     there.
 
 No database or container: the pool is a stand-in.
 
@@ -77,6 +92,7 @@ def reset(pool):
     L._cache.clear()
     L._touched.clear()
     L._failures.clear()
+    L._password_failures = (0, 0.0, 0.0)
 
 
 async def burst():
@@ -265,8 +281,246 @@ def ws_origin():
           "owner WebSocket from an opaque origin is refused")
 
 
+
+def _request(peer, headers=(), cookie=None, scheme="http"):
+    from starlette.requests import Request
+    h = [(k.encode(), v.encode()) for k, v in headers]
+    if cookie:
+        h.append((b"cookie", cookie.encode()))
+    return Request({"type": "http", "method": "POST", "path": "/api/owner/logout", "scheme": scheme,
+                    "headers": h, "client": (peer, 5000), "server": ("10.88.0.5", 8800),
+                    "query_string": b"", "root_path": ""})
+
+
+def _set_cookies(resp):
+    return [v.decode() for k, v in resp.raw_headers if k == b"set-cookie"]
+
+
+async def https_cookie():
+    from fastapi.responses import JSONResponse
+    from server import home_origin
+    from server.routes import owner as R
+    saved = (L.HOME, L._cookie_suffix, os.environ.get("CSERIES_TRUSTED_PROXIES"))
+    try:
+        os.environ.pop("CSERIES_TRUSTED_PROXIES", None)
+        L.HOME = home_origin.parse("https://home.box.example")
+        L._cookie_suffix = None
+        check(L.cookie_name() == "__Host-cseries_session", "an https Host's cookie is __Host- named",
+              L.cookie_name())
+        L._cookie_suffix = "0a1b2c3d"
+        check(L.cookie_name() == "__Host-cseries_session_0a1b2c3d", "and carries the Host's suffix")
+        sc = _set_cookies(R._with_cookie(JSONResponse({}), "tok", _request("203.0.113.5")))
+        parts = [p.strip().lower() for p in sc[0].split(";")] if sc else []
+        check(len(sc) == 1 and sc[0].startswith("__Host-cseries_session_0a1b2c3d=tok;")
+              and "secure" in parts and "path=/" in parts and "httponly" in parts
+              and "samesite=strict" in parts and not any(p.startswith("domain") for p in parts),
+              "on an https Host the cookie is Secure, Path=/, HttpOnly, SameSite=Strict, no Domain", sc)
+        pool = Pool()
+        reset(pool)
+        resp = await R.owner_sign_out(_request("203.0.113.5", cookie="__Host-cseries_session_0a1b2c3d=tok"))
+        sc = _set_cookies(resp)
+        parts = [p.strip().lower() for p in sc[0].split(";")] if sc else []
+        check(len(sc) == 1 and sc[0].startswith("__Host-cseries_session_0a1b2c3d=")
+              and "secure" in parts and "path=/" in parts and "max-age=0" in parts,
+              "sign-out clears it with Secure and Path=/, which a __Host- name needs", sc)
+
+        L.HOME = home_origin.parse("http://home.cseries.localhost:8800")
+        check(L.cookie_name() == "cseries_session_0a1b2c3d", "a plain-http Host's cookie is unchanged")
+        xfp = [("x-forwarded-proto", "https")]
+        sc = _set_cookies(R._with_cookie(JSONResponse({}), "tok", _request("203.0.113.5", xfp)))
+        check(sc and "secure" not in sc[0].lower(),
+              "X-Forwarded-Proto from a peer that is not a trusted proxy adds no Secure", sc)
+        sc = _set_cookies(R._with_cookie(JSONResponse({}), "tok",
+                                         _request("203.0.113.5", [("forwarded", "for=x;proto=https")])))
+        check(sc and "secure" not in sc[0].lower(), "nor does Forwarded", sc)
+        os.environ["CSERIES_TRUSTED_PROXIES"] = "10.88.0.1"
+        sc = _set_cookies(R._with_cookie(JSONResponse({}), "tok", _request("10.88.0.1", xfp)))
+        check(sc and "secure" in sc[0].lower(), "from a trusted proxy it does", sc)
+        sc = _set_cookies(R._with_cookie(JSONResponse({}), "tok", _request("203.0.113.5", scheme="https")))
+        check(sc and "secure" in sc[0].lower(), "a request that came in over HTTPS gets Secure", sc)
+    finally:
+        L.HOME, L._cookie_suffix = saved[0], saved[1]
+        if saved[2] is None:
+            os.environ.pop("CSERIES_TRUSTED_PROXIES", None)
+        else:
+            os.environ["CSERIES_TRUSTED_PROXIES"] = saved[2]
+
+
+def failure_record():
+    import time as _time
+    L._failures.clear()
+    for i in range(5):
+        L._note_failure(f"2001:db8:1:2::{i + 1:x}")
+    check(L._locked_for("2001:db8:1:2:ffff::9") > 0,
+          "five wrong tries from one IPv6 /64, each from another address, lock that /64")
+    check(L._locked_for("2001:db8:1:3::1") == 0 and L._locked_for("198.51.100.2") == 0,
+          "another /64 and an IPv4 visitor are not locked")
+    L._note_failure("::ffff:198.51.100.40")
+    check("198.51.100.40" in L._failures, "a v4-mapped address counts as its IPv4 address")
+
+    L._failures.clear()
+    old = _time.monotonic() - 2 * L._FAILURE_FORGET_S
+    L._failures["198.51.100.50"] = (3, old, old)
+    L._note_failure("198.51.100.51")
+    check("198.51.100.50" not in L._failures and "198.51.100.51" in L._failures,
+          "an entry is forgotten an hour after its wait ended")
+    # The same holds for the visitor's own record when nobody else has failed
+    # since: one typo weeks after a bad day starts the count afresh.
+    L._failures.clear()
+    L._failures["198.51.100.52"] = (9, old, old)
+    L._note_failure("198.51.100.52")
+    check(L._failures["198.51.100.52"][0] == 1 and L._locked_for("198.51.100.52") == 0,
+          "a returning visitor's own record an hour past its wait starts again at one try, "
+          "with no wait", L._failures.get("198.51.100.52"))
+
+    saved = L._FAILURES_MAX
+    try:
+        L._FAILURES_MAX = 50
+        L._failures.clear()
+        for i in range(200):
+            L._note_failure(f"198.18.{i // 250}.{i % 250}")
+        check(len(L._failures) <= 50 and "198.18.0.199" in L._failures and "198.18.0.0" not in L._failures,
+              "past the cap the oldest entries go and the newest stay", len(L._failures))
+    finally:
+        L._FAILURES_MAX = saved
+        L._failures.clear()
+
+
+async def setup_code_lockout():
+    pool = Pool()
+    reset(pool)
+    L._owner_email, L._setup_code = None, "abc123-def456-789abc"
+    results = []
+    for _ in range(7):
+        try:
+            await L.create_owner("000000-000000-000000", "owner@example.com", "x" * 20,
+                                 client="198.51.100.60")
+            results.append("created")
+        except L.LoginError as e:
+            results.append("held" if "Too many" in str(e) else "wrong")
+    check(results == ["wrong"] * 5 + ["held"] * 2,
+          "wrong setup codes count: five tries, then a wait", results)
+    try:
+        await L.create_owner("abc123-def456-789abc", "owner@example.com", "x" * 20, client="198.51.100.61")
+        outcome = "created"
+    except L.LoginError as e:
+        outcome = str(e)
+    check(outcome == "created", "the right code from another visitor still works", outcome)
+    L._owner_email, L._setup_code, L._cookie_suffix = None, None, None
+
+
+async def setup_code_file():
+    import tempfile
+
+    class InitPool(Pool):
+        def __init__(self, owner=None):
+            super().__init__(row=owner)
+
+    saved = os.environ.get("CSERIES_SETUP_CODE_FILE")
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "setup-code")
+            with open(path, "w") as f:
+                f.write("  ABC123-DEF456-789ABC\n")
+            os.environ["CSERIES_SETUP_CODE_FILE"] = path
+            reset(InitPool())
+            await L.init()
+            check(L._setup_code == "abc123-def456-789abc",
+                  "the setup code is the file's, stripped and lower-cased", L._setup_code)
+            await L.init()
+            check(L._setup_code == "abc123-def456-789abc", "and stays the same across restarts")
+            with open(path, "w") as f:
+                f.write("not-a-code\n")
+            await L.init()
+            check(L._setup_code != "not-a-code" and bool(L.SETUP_CODE_RE.fullmatch(L._setup_code or "")),
+                  "a file without a code of the usual shape: a fresh code instead", L._setup_code)
+            os.environ["CSERIES_SETUP_CODE_FILE"] = os.path.join(d, "missing")
+            await L.init()
+            check(bool(L.SETUP_CODE_RE.fullmatch(L._setup_code or "")), "an unreadable file: a fresh code")
+            with open(path, "w") as f:
+                f.write("abc123-def456-789abc")
+            os.environ["CSERIES_SETUP_CODE_FILE"] = path
+            reset(InitPool(owner={"email": "owner@example.com", "cookie_suffix": "0a1b2c3d"}))
+            await L.init()
+            check(L._setup_code is None and L._owner_email == "owner@example.com",
+                  "once there is an owner the file is not used")
+    finally:
+        if saved is None:
+            os.environ.pop("CSERIES_SETUP_CODE_FILE", None)
+        else:
+            os.environ["CSERIES_SETUP_CODE_FILE"] = saved
+        L._owner_email, L._setup_code, L._cookie_suffix = None, None, None
+
+
+async def password_budget():
+    import time as _time
+    hashed = []
+
+    async def counting(password, stored):
+        hashed.append(password)
+        return password == "the right password"
+    real = L.check_password
+    L.check_password = counting
+    try:
+        reset(Pool(row={"email": "owner@example.com", "password_hash": "x"}))
+        outcomes = []
+        for i in range(L.GLOBAL_FREE + 5):
+            try:
+                await L.sign_in("owner@example.com", "guess", f"198.18.{i // 250}.{i % 250}", "h")
+            except L.LoginError as e:
+                outcomes.append("held" if "on this Host" in str(e) else "wrong")
+        check(outcomes == ["wrong"] * L.GLOBAL_FREE + ["held"] * 5
+              and len(hashed) == L.GLOBAL_FREE,
+              f"{L.GLOBAL_FREE} wrong passwords from as many addresses, then every password "
+              "sign-in waits, with no hash", (outcomes, len(hashed)))
+        try:
+            await L.sign_in("owner@example.com", "the right password", "203.0.113.200", "h")
+            got = "signed in"
+        except L.LoginError as e:
+            got = str(e)
+        check("on this Host" in got, "while it waits the right password from a fresh address waits too",
+              got)
+        now_m = _time.monotonic()
+        L._password_failures = (L.GLOBAL_FREE + 30, now_m - 1, now_m - 1)
+        L._note_password_failure()
+        check(abs(L._password_locked_for() - 900) < 2, "the wait doubles up to 15 minutes, no further",
+              L._password_locked_for())
+        old = now_m - 2 * L._FAILURE_FORGET_S
+        L._password_failures = (L.GLOBAL_FREE + 30, old, old)
+        L._note_password_failure()
+        check(L._password_failures[0] == 1 and L._password_locked_for() == 0,
+              "an hour after its wait ended the count starts again", L._password_failures)
+        L._password_failures = (0, 0.0, 0.0)
+        hashed.clear()
+        tok = await L.sign_in("owner@example.com", "the right password", "203.0.113.201", "h")
+        check(bool(tok) and len(hashed) == 1, "with nothing held the right password signs in")
+
+        # A burst from many addresses at once checks GLOBAL_FREE passwords.
+        reset(Pool(row={"email": "owner@example.com", "password_hash": "x"}))
+        hashed.clear()
+        results = await asyncio.gather(*(L.sign_in("owner@example.com", "guess", f"198.19.0.{i}", "h")
+                                         for i in range(L.GLOBAL_FREE + 15)), return_exceptions=True)
+        held = sum(1 for r in results if isinstance(r, L.LoginError) and "on this Host" in str(r))
+        check(len(hashed) == L.GLOBAL_FREE and held == 15,
+              "a burst from many addresses at once checks only the free tries", (len(hashed), held))
+
+        # Before there is an owner no password can be right; nothing counts.
+        reset(Pool(row=None))
+        for i in range(L.GLOBAL_FREE + 5):
+            try:
+                await L.sign_in("owner@example.com", "guess", f"198.20.0.{i}", "h")
+            except L.LoginError:
+                pass
+        check(L._password_failures[0] == 0 and L._password_locked_for() == 0,
+              "before there is an owner, wrong passwords do not count together", L._password_failures)
+    finally:
+        L.check_password = real
+        L._password_failures = (0, 0.0, 0.0)
+
+
 async def main():
     await burst()
+    await password_budget()
     await sign_out_race()
     await non_ascii()
     cookies()
@@ -274,6 +528,10 @@ async def main():
     trusted_proxies()
     loopback_lane()
     ws_origin()
+    await https_cookie()
+    failure_record()
+    await setup_code_lockout()
+    await setup_code_file()
 
 
 asyncio.run(main())

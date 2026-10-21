@@ -31,6 +31,7 @@ Defense-in-depth — port :8800 is also bound only to 127.0.0.1 on the host.
 
 import ipaddress
 import os
+import re
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -219,19 +220,56 @@ _PROBE_EXEMPT_PATHS = {
 # one-time join code the desktop made (or sends the frame to get one), the
 # second answers whether this origin's session is live. Both check the
 # session themselves (server/routes/owner.py).
+# /__host/door is the front door's question about a request it holds
+# (server/middleware/owner_session.py door_decision): answered only to a
+# trusted proxy, and only with a status.
+# The passkey and recovery-code sign-ins are sign-ins like the password's:
+# each checks its own credential (server/owner_passkeys.py).
+DOOR_PATH = "/__host/door"
+PASSKEY_PUBLIC_PATHS = frozenset({"/api/owner/passkey/login/options",
+                                  "/api/owner/passkey/login/verify",
+                                  "/api/owner/recovery/login"})
 OWNER_PUBLIC_PATHS = frozenset({"/login", "/setup", "/api/owner/login", "/api/owner/setup",
                                 "/api/owner/status", "/api/owner/logout",
-                                "/__host/session", "/__host/renew"})
+                                "/__host/session", "/__host/renew", DOOR_PATH}
+                               | PASSKEY_PUBLIC_PATHS)
 
-# An MCP server's sign-in coming back (server/mcp_oauth.py). The authorization
-# server sends the browser to the loopback address (http://127.0.0.1:<port>),
-# where it has no session: an authorization server sends a code back only to
-# https or to the loopback, and the desktop's *.localhost name is neither. The
-# handler acts only on a pending sign-in this Host started, found by the hash
-# of its state, used once, within ten minutes; the code is useless without
-# that sign-in's PKCE verifier. server/middleware/owner_session.py reads this
-# too, so the browser is not sent to the sign-in page instead.
-OAUTH_CALLBACK_PATHS = frozenset({"/api/mcp/oauth/callback"})
+# The OAuth returns: a provider sends the browser back here with a code and
+# the state this Host sent with it. Each is reachable without a session,
+# because none can count on one: on the default address an MCP server's
+# authorization server sends the browser to the loopback address
+# (http://127.0.0.1:<port>), where it has no session (an authorization server
+# sends a code back only to https or to the loopback, and the desktop's
+# *.localhost name is neither); and on an https Host the session cookie is
+# SameSite=Strict, which a browser leaves off a navigation that another site
+# started, so a provider's redirect arrives without it. A path is here only
+# when its handler acts on nothing but a state this Host made itself, kept on
+# this Host, unguessable and good once:
+#   /api/mcp/oauth/callback           a pending sign-in found by the sha-256 of
+#                                     its state, deleted as it is read, ten
+#                                     minutes (server/mcp_oauth.finish); the
+#                                     code is useless without its PKCE verifier.
+#   /api/gitea/oauth/callback         the PKCE entry its state names, taken out
+#                                     as it is read, ten minutes
+#                                     (server/routes/gitea.py oauth_callback).
+#   /api/integrations/callback/<key>  a state signed with this Host's key whose
+#                                     nonce this Host remembers, forgotten as it
+#                                     is used, fifteen minutes
+#                                     (integrations/core/oauth.claim_state).
+# server/middleware/owner_session.py reads this too, so the browser is not
+# sent to the sign-in page instead, and the front door lets them through.
+OAUTH_CALLBACK_PATHS = frozenset({"/api/mcp/oauth/callback", "/api/gitea/oauth/callback"})
+_INTEGRATION_CALLBACK_PREFIX = "/api/integrations/callback/"
+# A provider's key, one path segment (server/integrations/providers/<key>.py).
+_PROVIDER_KEY_RE = re.compile(r"[a-z][a-z0-9_]{0,63}")
+
+
+def is_oauth_callback(path: str) -> bool:
+    """Whether `path` (the routed path) is one of the OAuth returns above."""
+    if path in OAUTH_CALLBACK_PATHS:
+        return True
+    return path.startswith(_INTEGRATION_CALLBACK_PREFIX) and bool(
+        _PROVIDER_KEY_RE.fullmatch(path[len(_INTEGRATION_CALLBACK_PREFIX):]))
 
 _MCP_CLIENT_PATHS = {"/mcp", "/api/network/bastions/heartbeat",
                      "/api/network/bastions/dcn-propose",
@@ -251,6 +289,73 @@ _MCP_CLIENT_PATHS = {"/mcp", "/api/network/bastions/heartbeat",
 # the per-app capability constant-time checked against the grant in the database
 # (scripts/test_connector_gates.py fails a route under it that does not).
 _SELF_AUTH_PREFIXES = ("/api/connector/",)
+
+# The local runtime's containers (server/applications/local_runtime.py), from
+# their addresses on the runtime's network (CSERIES_RUNTIME_NET) and nowhere
+# else. Each of these routes checks its own capability in its handler; the gate
+# only stops refusing them for the caller's address:
+#   * an app's own container pulls its install dir and ships what it prints:
+#     GET /api/applications/<id>/source and POST .../runtime-log, with the
+#     per-app source token (routes/applications.py, constant-time);
+#   * a coding engine reaches this Host's /mcp with the control capability
+#     the Host minted at its wake, in X-CSeries-Harness-Cap (routes/mcp.py,
+#     review.control_cap_is_current); a bare /mcp is still refused here;
+#   * the ship proof's browser loads the app under proof with the one-shot
+#     capability for THAT app in X-CSeries-Verify-Cap (proxy.serve_app checks
+#     it against the app id), and the App SDK the page loads first, which is
+#     a public file, only while some verify is live.
+# Off the runtime's network, or with the variable unset, none of this applies.
+_RUNTIME_NET_ENV = "CSERIES_RUNTIME_NET"
+_RUNTIME_SHAPES = (("/api/applications/", "/source"), ("/api/applications/", "/runtime-log"))
+_HARNESS_CAP_HEADER = "x-cseries-harness-cap"
+_VERIFY_CAP_HEADER = "x-cseries-verify-cap"
+_VERIFY_CAP_PREFIX = "/system-apps/"
+_VERIFY_SDK_PATH = "/js/app-sdk.js"
+
+
+def runtime_peer(host: str | None) -> bool:
+    """Whether `host` is a container on the local runtime's network. The
+    network's gateway (its first address) is the machine itself: anything
+    running there, including the machine's 127.0.0.1 port forward when podman
+    points it at this network, arrives from it, and none of it is a
+    container (measured: a request from the machine reached the source route's
+    handler)."""
+    raw = (os.environ.get(_RUNTIME_NET_ENV) or "").strip()
+    host = _unmap_v4(host)
+    if not raw or not host:
+        return False
+    try:
+        net = ipaddress.ip_network(raw, strict=False)
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    return addr in net and addr != net.network_address + 1
+
+
+def _one_segment(path: str, prefix: str, suffix: str) -> bool:
+    if not (path.startswith(prefix) and path.endswith(suffix)):
+        return False
+    mid = path[len(prefix):len(path) - len(suffix)]
+    return bool(mid) and "/" not in mid
+
+
+def runtime_exempt(path: str, method: str, headers) -> bool:
+    """Whether a request from the runtime's network may pass to its handler."""
+    if any(_one_segment(path, p, s) for p, s in _RUNTIME_SHAPES):
+        return True
+    if path == "/mcp" and method == "POST" and headers.get(_HARNESS_CAP_HEADER):
+        return True
+    cap = headers.get(_VERIFY_CAP_HEADER)
+    if cap and method in ("GET", "HEAD"):
+        if path.startswith(_VERIFY_CAP_PREFIX):
+            return True
+        if path == _VERIFY_SDK_PATH:
+            try:
+                from mastercode.runtime.app_verify import verify_cap_is_live
+                return bool(verify_cap_is_live(cap))
+            except Exception:  # noqa: BLE001 — no verify module, no pass
+                return False
+    return False
 
 
 class LocalhostOnlyMiddleware(BaseHTTPMiddleware):
@@ -291,15 +396,20 @@ class LocalhostOnlyMiddleware(BaseHTTPMiddleware):
 
         # The messaging connectors authenticate themselves in the handler
         # (routes/connector.require_connector_cap). The other cross-pod
-        # surfaces the platform used (an app runtime pod's source and log, a
-        # harness's capability, the ship proof's browser) have no caller on a
-        # standalone Host, so they are not exempt here.
+        # surfaces the platform used (an app runtime's source and log, a
+        # harness's capability, the ship proof's browser) have a caller here
+        # only when this Host's machine runs the local runtime, and only from
+        # its network (runtime_exempt).
         if path.startswith(_SELF_AUTH_PREFIXES):
             return await call_next(request)
 
-        # The OAuth callback authenticates itself by its state (above). GET
-        # only: it is a browser navigation and nothing else.
-        if path in OAUTH_CALLBACK_PATHS and request.method == "GET":
+        # The local runtime's containers, from its network only (above).
+        if runtime_peer(client_host) and runtime_exempt(path, request.method, request.headers):
+            return await call_next(request)
+
+        # The OAuth callbacks authenticate themselves by their state (above).
+        # GET only: each is a browser navigation and nothing else.
+        if is_oauth_callback(path) and request.method == "GET":
             return await call_next(request)
 
         # The loopback lane needs no session, so a page whose DNS name was
@@ -359,6 +469,31 @@ def _header(scope, name: bytes) -> str | None:
     return None
 
 
+_VERIFY_CAP_COOKIE = "cseries_verify_cap"
+
+
+def _verify_cap_opens(path: str, scope) -> bool:
+    """A ship proof's page opening its own app's WebSocket: the proof browser
+    cannot set a header on a handshake, so the cap rides a cookie
+    (sidecars/browser/control/verify.py). The cap minted for THAT app id,
+    checked constant-time as serve_app checks the header."""
+    raw = _header(scope, b"cookie")
+    if not raw or not path.startswith(_VERIFY_CAP_PREFIX):
+        return False
+    # Split by hand: the app under proof may set cookies of its own on the
+    # page host, and one a strict parser rejects would drop the cap with it.
+    caps = [part.split("=", 1)[1].strip().strip('"') for part in raw.split(";")
+            if "=" in part and part.split("=", 1)[0].strip() == _VERIFY_CAP_COOKIE]
+    app_id = path[len(_VERIFY_CAP_PREFIX):].split("/", 1)[0]
+    if not caps or not app_id:
+        return False
+    try:
+        from mastercode.runtime.app_verify import verify_cap_is_current
+        return any(verify_cap_is_current(app_id, cap) for cap in caps)
+    except Exception:  # noqa: BLE001 — no verify module, no pass
+        return False
+
+
 def websocket_refusal(scope) -> str | None:
     """Why a WebSocket upgrade is refused, or None to let it through."""
     client_host = _unmap_v4((scope.get("client") or (None,))[0])
@@ -371,6 +506,14 @@ def websocket_refusal(scope) -> str | None:
             return None
         return "cross-tenant cert"
     if path.startswith(_SELF_AUTH_PREFIXES):
+        return None
+    if runtime_peer(client_host) and _verify_cap_opens(path, scope):
+        return None
+    if path == DOOR_PATH:
+        # The front door asks about a WebSocket handshake with a handshake of
+        # its own (measured on Caddy 2.6.2: the question carries Upgrade).
+        # The handler answers it with a plain HTTP status and never opens a
+        # socket, and answers only a trusted proxy (routes/owner.py).
         return None
     if (scope.get("state") or {}).get("owner_session"):
         # The owner's cookie rides any same-site handshake, and a WebSocket

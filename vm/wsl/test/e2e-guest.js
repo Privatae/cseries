@@ -96,7 +96,11 @@ async function pass(n) {
   assert.match(dropIn, new RegExp(`^CPUQuota=${Math.max(1, cpus - 1) * 100}%$`, 'm'), 'configure wrote the processor ceiling from the guest\'s count');
   const memKb = /^MemTotal:\s*(\d+) kB$/m.exec(require('node:fs').readFileSync('/proc/meminfo', 'utf8'))[1];
   const memDropIn = require('node:fs').readFileSync('/etc/containers/systemd/cseries-host.container.d/10-memory.conf', 'utf8');
-  assert.match(memDropIn, new RegExp(`^MemoryMax=${host.memoryMax(memKb)}$`, 'm'), 'configure wrote the memory ceiling from the guest\'s MemTotal');
+  // This guest carries the local runtime (its status names it), so the Host
+  // gets its share of the room and the runtime's containers the rest.
+  const guestSt = execFileSync('cseries-guest', ['status']).toString();
+  assert.match(guestSt, /^runtime=/m, 'the guest\'s status names the local runtime');
+  assert.match(memDropIn, new RegExp(`^MemoryMax=${host.memoryMax(memKb, { runtime: true })}$`, 'm'), 'configure wrote the memory ceiling from the guest\'s MemTotal');
 
   const two = await pass(2);
   assert.equal(two.result.setup.code, one.result.setup.code, 'same Host run, same code');

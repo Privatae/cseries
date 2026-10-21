@@ -67,9 +67,12 @@ async def _check_once(bc: "BridgeClient | None") -> dict:
         log.debug("update-check: bridge not connected yet")
         return {"status": "bridge_not_ready"}
 
-    # Fetch catalog.
+    # Fetch catalog: the network's list with the free public catalog's apps
+    # added (applications/public_store.py). The notification below still
+    # needs the bridge, which is why the check above stays on it.
+    from server.applications.public_store import store_client
     try:
-        envelope = await bc.request_full("appstore.list", {})
+        envelope = await store_client(bc).request_full("appstore.list", {})
     except Exception as exc:
         log.warning("update-check: appstore.list failed: %s", exc)
         return {"status": "store_unreachable", "error": str(exc)}

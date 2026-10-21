@@ -33,7 +33,6 @@ Pure: no network, no DB (fake pools and fake model_fns throughout).
 Run from the repo root:
     PYTHONPATH=.:brain python3 scripts/test_background_effort_and_json_budgets.py
 """
-import asyncio
 import json
 import os
 import sys
@@ -44,7 +43,6 @@ sys.path.insert(0, _root)
 sys.path.insert(0, os.path.join(_root, "brain"))
 
 from mastercode import inference_config as ic          # noqa: E402
-from mastercode import thread_consolidator as thc      # noqa: E402
 from mastercode.runtime import agent_grant as ag       # noqa: E402
 from mastercode.runtime import scoped_agent as sa      # noqa: E402
 from mastercode.runtime import tools as rt             # noqa: E402
@@ -103,52 +101,14 @@ ROUTES = {
 }
 
 
-# ── 1. thread consolidator — effort only; 700 stays ────────────────────────
-print("\n== 1. thread_consolidator._default_model_fn forwards the effort ==")
-TH_CALLS: list[dict] = []
-
-
-async def _fake_role_route(pool, entity_id, role, **kw):
-    assert role == "chat", role   # the Memory role is retired
-    return dict(ROUTES.get(entity_id) or {})
-
-
-async def _fake_entity_model(messages, **kw):
-    TH_CALLS.append(dict(kw))
-    return {"content": "a summary"}
-
-
+# ── 1. no thread summary call remains ───────────────────────────────────────
+# The rolling summary's call (thread_consolidator._default_model_fn) is
+# retired with its module (migrations/v241); the wrapper check below stays.
+print("\n== 1. no thread summary call remains ==")
 _orig_role_route = ic.resolve_role_route
 _orig_entity_model = rt._call_entity_model
-ic.resolve_role_route = _fake_role_route
-rt._call_entity_model = _fake_entity_model
-
-asyncio.run(thc._default_model_fn(FakePool(), 3, [{"role": "user", "content": "x"}]))
-check("the route's effort reaches _call_entity_model",
-      bool(TH_CALLS) and TH_CALLS[0].get("reasoning_effort") == "high",
-      str(TH_CALLS[:1]))
-# The summary's wire budget and its window reservation are two constants:
-# SUMMARY_MAX_TOKENS is what the
-# call asks for (8000, headroom for a reasoning model that spends its thinking
-# out of the same max_tokens on the OpenAI wire) and CONSOLIDATOR_OUTPUT_RESERVE
-# (1200) is what the window is budgeted against. This check used to pin the
-# wire budget at a 700 literal "because effort is the fix"; effort still rides
-# the call (asserted above), and the budget is pinned to the module constant
-# so the two cannot drift apart again. A ship once stopped on the stale
-# literal — this gate runs only inside the smoke container.
-check("the summary call forwards the module's wire budget",
-      TH_CALLS[0].get("max_tokens") == thc.SUMMARY_MAX_TOKENS,
-      str(TH_CALLS[:1]))
-# The wire budget is the route's own output
-# limit (None — the gateway resolves it and holds it to half the window), so
-# it can no longer collapse into the window reservation.
-check("the summary wire budget is the model's own limit (None), split from the reservation",
-      thc.SUMMARY_MAX_TOKENS is None and isinstance(thc.CONSOLIDATOR_OUTPUT_RESERVE, int),
-      f"reserve={thc.CONSOLIDATOR_OUTPUT_RESERVE} wire={thc.SUMMARY_MAX_TOKENS}")
-TH_CALLS.clear()
-asyncio.run(thc._default_model_fn(FakePool(), 4, [{"role": "user", "content": "x"}]))
-check("an unset role sends an explicit low here too",
-      TH_CALLS[0].get("reasoning_effort") == "low", str(TH_CALLS[:1]))
+check("no thread summary module ships",
+      not (Path(_root) / "brain/mastercode/thread_consolidator.py").exists())
 
 ic.resolve_role_route = _orig_role_route
 rt._call_entity_model = _orig_entity_model

@@ -9,13 +9,15 @@ routes/circles.py feed/topic/send, circles-web's Host back).
   C. a message about a topic last discussed 14 days ago, behind more than a
      dozen newer topics, goes to that topic, and that topic's history is the
      history the turn loads;
-  D. a message sent to the root thread never enters topic picking (no model
-     call), and the root thread is never offered to a pick;
-  N. conservative picking: a near miss (same broad area, another subject)
-     starts a new topic and loads none of the other topic's turns; a clear
-     continuation joins; a short follow-on reply stays on the topic in use;
-     anything unclear (a failed pick) starts a new topic; a switch leaves a
-     marker saying which way it went;
+  D. a message sent to the root thread never enters topic placement, and the
+     root thread is never offered to the Host's pick;
+  N. conservative placement, with no model call: a near miss (same broad
+     area, another subject) starts a new topic and loads none of the other
+     topic's turns; a clear continuation joins; a short follow-on reply stays
+     on the topic in use; anything unclear starts a topic of its own and
+     carries the topics it may continue for the Host to pick in its own turn
+     (runtime/thread_choice); a switch leaves a marker saying which way it
+     went;
   F. the feed reads every topic as one conversation, newest page last, each
      row naming its topic, and pages back by its cursor;
   R. related topics reach the turn only as one-line pointers (title, date);
@@ -28,12 +30,10 @@ routes/circles.py feed/topic/send, circles-web's Host back).
      its step; the cards read every topic's open questions at once (not the
      topic of the latest message), and "Where this stands" shows the topic the
      person last wrote to, naming it on its line;
-  S. after a Circles turn, its topic's summary of what overflowed is written
-     to the database when the topic's history is past its budget
-     (session.dispatch_topic_summary; the turn is the one writer since the
-     batch consolidator went), from that topic's turns only, and is
-     what the topic's next history read gets (summary_policy.summary_on);
-     never for the root thread, a turn with no history or a Workbench project.
+  S. nothing writes a summary after a Circles turn: what fell out of a long
+     topic's window rides as that topic's own close_turn notes
+     (evicted_record), from that topic's rows only, and a root turn reads
+     none.
 
 Fresh clone of the KERNEL's schema (scripts/kernel_schema.py) on TEST_DSN /
 PEER_TEST_DSN, else a throwaway cseries-postgres through docker.
@@ -147,21 +147,9 @@ async def turn(pool, content, role, *, mins=0, days=0, thread=None, app_id="circ
         E, content, json.dumps(md), days, mins)
 
 
-class Model:
-    """A scripted Host: joins the topic it is shown, else starts one titled
-    `title`. Counts its calls and keeps what it was shown."""
-    def __init__(self, title="Fresh topic", join=True, fail=False):
-        self.calls, self.system, self.title, self.join, self.fail = 0, "", title, join, fail
-
-    async def __call__(self, messages, **kw):
-        self.calls += 1
-        self.system = messages[0]["content"]
-        if self.fail:
-            return {"error": "the model is down"}
-        ids = re.findall(r"^\[((?:thread|app):[^\]]+)\]", self.system, re.M)
-        args = ({"topic": ids[0], "reason": "it continues it"} if ids and self.join
-                else {"new": True, "title": self.title, "reason": "nothing matches"})
-        return {"tool_calls": [{"function": {"name": tp.TOPIC_PICK_TOOL_NAME, "arguments": json.dumps(args)}}]}
+def offered(landing):
+    """The topics a landing hands the Host's turn to pick from."""
+    return [c["ref"] for c in (landing.choice or ())]
 
 
 async def history_of(pool, thread_id):
@@ -192,12 +180,10 @@ async def main(dsn):
         await turn(pool, "restart the nginx service on mgmt", "user", mins=5, thread=root)
 
         # C: 14 days ago, behind 14 newer topics.
-        m = Model()
         land = await tp.pick_topic(pool, E, "greenhouse heater thermostat settings",
-                                   current_thread_id=newer[0], call_model=m, route=ROUTE)
-        check("C a topic last active 14 days ago, behind 14 newer ones, is the one the Host is shown",
-              f"[thread:{old}]" in m.system and m.system.count("[thread:") == 1, m.system[:300])
-        check("C the message goes to that topic", land.picked and land.thread_id == old and not land.new, land)
+                                   current_thread_id=newer[0])
+        check("C a topic last active 14 days ago, behind 14 newer ones, is the clear match: the message "
+              "goes there, nothing offered", land.thread_id == old and not land.new and not land.choice, land)
         hist = await history_of(pool, land.thread_id)
         check("C the turn's history is that topic's turns",
               any("12C at night" in h for h in hist) and not any("tomato" in h.lower() or "errand" in h for h in hist),
@@ -210,70 +196,58 @@ async def main(dsn):
         check("N the marker is written in the topic it went to", shown == [land.marker], shown)
 
         # N: a clear continuation joins; a near miss starts a new topic.
-        m = Model()
-        join = await tp.pick_topic(pool, E, "tomato blight treatment options", current_thread_id=old,
-                                   call_model=m, route=ROUTE)
+        join = await tp.pick_topic(pool, E, "tomato blight treatment options", current_thread_id=old)
         check("N a clear continuation joins its topic", join.thread_id == tom and not join.new, join)
-        m = Model(title="Garden fence")
         near = await tp.pick_topic(pool, E, "plan a new fence around the vegetable garden",
-                                   current_thread_id=tom, call_model=m, route=ROUTE)
-        check("N a near miss (same garden, another subject) is shown no topic to join",
-              "[thread:" not in m.system and "[app:" not in m.system, m.system[:300])
-        check("N ...and starts a new topic", near.new and near.thread_id not in (tom, old) and near.moved
-              and near.marker == "new topic: Garden fence", near)
+                                   current_thread_id=tom)
+        check("N a near miss (same garden, another subject) starts a topic of its own, offered none to join",
+              near.new and near.thread_id not in (tom, old) and near.moved and near.marker == "new topic"
+              and not near.choice, near)
         check("N ...whose history holds none of the other topic's turns",
               not any("tomato" in h.lower() for h in await history_of(pool, near.thread_id)))
-        m = Model()
-        stay = await tp.pick_topic(pool, E, "yes do that", current_thread_id=tom, call_model=m, route=ROUTE)
-        check("N a short follow-on reply stays on the topic in use, with no pick and no marker",
-              stay.thread_id == tom and stay.follow_on and m.calls == 0 and not stay.marker, (stay, m.calls))
-        m = Model()
-        stay2 = await tp.pick_topic(pool, E, "ok go ahead with the copper spray", current_thread_id=tom,
-                                    call_model=m, route=ROUTE)
-        check("N an acknowledging reply stays too: the Host is shown only the topic in use, and joins it",
-              stay2.thread_id == tom and m.calls == 1 and f"[thread:{tom}]" in m.system
-              and len(re.findall(r"^\[(?:thread|app):", m.system, re.M)) == 1 and not stay2.new, (stay2, m.system[:300]))
+        stay = await tp.pick_topic(pool, E, "yes do that", current_thread_id=tom)
+        check("N a short follow-on reply stays on the topic in use, with no marker and nothing offered",
+              stay.thread_id == tom and stay.follow_on and not stay.marker and not stay.choice, stay)
+        stay2 = await tp.pick_topic(pool, E, "ok go ahead with the copper spray", current_thread_id=tom)
+        check("N an acknowledging reply starts a topic of its own and offers the Host only the topic in use",
+              stay2.new and stay2.thread_id != tom and offered(stay2) == [tom], stay2)
+        check("N ...kept on that topic's marker, for a send that asked first",
+              [c["ref"] for c in await tp.pending_choice(pool, E, stay2.thread_id)] == [tom])
         # Longer than a bare reply and opening like one, but about something
-        # else: never assumed to continue the topic in use. The Host decides,
-        # and unsure is a new topic.
-        m = Model(title="Call mom", join=False)
-        aside = await tp.pick_topic(pool, E, "also remind me to call mom tomorrow", current_thread_id=tom,
-                                    call_model=m, route=ROUTE)
-        check("N a subject of its own after an opener ('also ...') is no follow-on: the Host picks, and it is new",
-              m.calls == 1 and aside.new and aside.thread_id != tom, (aside, m.calls))
-        m = Model(fail=True)
-        aside2 = await tp.pick_topic(pool, E, "this weekend plan a trip to Rome", current_thread_id=tom,
-                                     call_model=m, route=ROUTE)
-        check("N ...and with no answer from the Host it is a new topic, never the topic in use",
-              aside2.new and aside2.thread_id != tom, aside2)
-        m = Model()
-        blank = await tp.pick_topic(pool, E, "yes", current_thread_id=None, current_known=False,
-                                    call_model=m, route=ROUTE)
-        check("N on a blank page there is nothing to follow on from: the Host picks", m.calls == 1, blank)
-        m = Model(fail=True)
-        bad = await tp.pick_topic(pool, E, "tomato blight treatment options", current_thread_id=tom,
-                                  call_model=m, route=ROUTE)
-        check("N a failed pick starts a new topic, never a guess",
-              bad.new and bad.thread_id not in (tom, old) and bad.marker.startswith("new topic: "), bad)
+        # else: never assumed to continue the topic in use. The Host decides
+        # in its turn; until then it is a topic of its own.
+        aside = await tp.pick_topic(pool, E, "also remind me to call mom tomorrow", current_thread_id=tom)
+        check("N a subject of its own after an opener ('also ...') is no follow-on: a topic of its own, "
+              "the topic in use offered", aside.new and aside.thread_id != tom and offered(aside) == [tom], aside)
+        aside2 = await tp.pick_topic(pool, E, "this weekend plan a trip to Rome", current_thread_id=tom)
+        check("N ...as is one opening 'this ...': the Host decides whether it continues the topic in use",
+              aside2.new and aside2.thread_id != tom and offered(aside2) == [tom], aside2)
+        alone = await tp.pick_topic(pool, E, "book a table for four on Friday evening", current_thread_id=tom)
+        check("N a message with nothing to continue starts a topic of its own with nothing offered",
+              alone.new and alone.thread_id != tom and not alone.choice, alone)
+        blank = await tp.pick_topic(pool, E, "yes", current_thread_id=None, current_known=False)
+        check("N on a blank page there is nothing to follow on from: a topic of its own",
+              blank.new and not blank.follow_on, blank)
+        again = await tp.pick_topic(pool, E, "tomato blight treatment options", current_thread_id=tom)
+        check("N a clear match for the topic in use stays there with no marker",
+              again.thread_id == tom and not again.new and not again.marker, again)
         check("N a score at the bar with no lead over the runner-up joins nothing",
               tp.clear_match([("thread:a", 0.9), ("thread:b", 0.85)]) is None
               and tp.clear_match([("thread:a", 0.55)]) is None
               and tp.clear_match([("thread:a", 0.7), ("thread:b", 0.5)]) == "thread:a")
+        src_tp = src("server/connectors/thread_pick.py")
+        check("N placement calls no model", "call_model" not in src_tp and "_call_entity_model" not in src_tp)
 
         # D: the root thread.
-        m = Model()
-        r = await tp.pick_topic(pool, E, "and now restart postgres too", current_thread_id=root,
-                                call_model=m, route=ROUTE)
-        check("D a message sent to the root thread stays there and no pick runs",
-              r.root and r.thread_id == root and m.calls == 0 and not r.marker, (r, m.calls))
-        m = Model()
-        r2 = await tp.pick_topic(pool, E, "restart the nginx service on mgmt", current_thread_id=tom,
-                                 call_model=m, route=ROUTE)
-        check("D the root thread is never offered to a pick, even when its words match",
-              f"thread:{root}" not in m.system and r2.thread_id != root, (m.system[:200], r2))
+        r = await tp.pick_topic(pool, E, "and now restart postgres too", current_thread_id=root)
+        check("D a message sent to the root thread stays there: no placement, no marker, nothing offered",
+              r.root and r.thread_id == root and not r.marker and not r.choice, r)
+        r2 = await tp.pick_topic(pool, E, "restart the nginx service on mgmt", current_thread_id=tom)
+        check("D the root thread is never joined or offered, even when its words match",
+              r2.thread_id != root and root not in offered(r2), r2)
         n_root = await pool.fetchval(
             "SELECT count(*) FROM entity_memory WHERE metadata->'source_context'->>'ref' = $1", root)
-        check("D nothing is written into the root thread by a pick", n_root == 1, n_root)
+        check("D nothing is written into the root thread by placement", n_root == 1, n_root)
 
         # R: related topics are pointers.
         rel = await tp.related_topics(pool, E, "invoices and receipts errand", thread_id=newer[0])
@@ -319,12 +293,8 @@ async def main(dsn):
         check("F the root thread's rows are in the feed, named as root",
               any(m_["feed_topic"].get("root") for m_ in everything))
 
-        # S: after a turn, the topic's summary of what overflowed is written
-        # to the database (session.dispatch_topic_summary, the turn's own call;
-        # nothing else writes one), and it is what the topic's next history
-        # read gets (thread_consolidator.get_live_summary, which session's
-        # history read calls when summary_policy.summary_on).
-        await summary_after_turn(pool, root)
+        # S: no summary writer; what fell out rides as the topic's own notes.
+        await record_not_summary(pool, root)
 
         # L: the cards' read is the whole conversation (tickets.CONVERSATION_ROOM).
         from server.routes import tickets as tk
@@ -350,70 +320,30 @@ async def main(dsn):
         await pool.close()
 
 
-async def summary_after_turn(pool, root):
-    """S: the overflow summary a Circles turn asks for once it ends."""
-    import types
-    from mastercode import thread_consolidator as tc
-    from mastercode import summary_policy as sp
+async def record_not_summary(pool, root):
+    """S: no summary is written after a turn; a long topic's evicted turns
+    ride as their own close_turn notes."""
+    from mastercode import evicted_record as er
     from mastercode.runtime import session as S
-    from mastercode.runtime.root_turn import ROOT as ROOT_BUILTIN
 
-    shown = []
-
-    async def model(pool_, eid, messages):
-        # The Host's own model, scripted: it is shown the topic's turns and
-        # answers with the summary in the consolidator's shape.
-        shown.append("\n".join(str(m_.get("content") or "") for m_ in messages))
-        return {"content": json.dumps({"summary": "The kiln firing schedule is cone 6, held 15 minutes.",
-                                       "topic_changed": False, "topic": "Kiln firing"})}
-    real_model = tc._default_model_fn
-    tc._default_model_fn = model
-    try:
-        kiln = str((await ct.create_thread(pool, E, title="Kiln firing"))["id"])
-        for i in range(12):
-            await turn(pool, f"kiln firing step {i}: " + "ramp and hold detail " * 40, "user",
-                       mins=200 - 2 * i, thread=kiln)
-            await turn(pool, f"noted kiln step {i}: " + "the schedule as agreed " * 40, "assistant",
-                       mins=199 - 2 * i, thread=kiln)
-        ctx = {"kind": "thread", "ref": kiln}
-        before = await tc.get_live_summary(pool, E, ctx)
-
-        def sess(thread_id, **kw):
-            base = dict(entity_id=E, session_id="s-sum", interaction_context="circles", thread_id=thread_id,
-                        turn_type=None, _history_budget_tokens=2000)
-            base.update(kw)
-            return types.SimpleNamespace(**base)
-
-        task = S.dispatch_topic_summary(pool, sess(kiln))
-        res = await task if task is not None else None
-        after = await tc.get_live_summary(pool, E, ctx)
-        check("S after a Circles turn whose topic's history is past its budget, the turn asks for the summary",
-              task is not None and isinstance(res, dict) and res.get("status") == "consolidated", res)
-        check("S ...the summary is written to the database for that topic, from that topic's turns",
-              before is None and after is not None and "cone 6" in (after.get("content") or "")
-              and shown and "kiln firing step" in shown[0] and "tomato" not in shown[0].lower(),
-              (before, after))
-        check("S ...and the topic's next history read gets it (summary_policy.summary_on)",
-              sp.summary_on(ctx) and not sp.summary_on(ctx, root=True))
-
-        small = str((await ct.create_thread(pool, E, title="Short chat"))["id"])
-        await turn(pool, "a short question", "user", mins=3, thread=small)
-        task = S.dispatch_topic_summary(pool, sess(small))
-        res = await task if task is not None else None
-        check("S a topic well within its budget gets no summary written",
-              isinstance(res, dict) and res.get("status") == "skipped"
-              and await tc.get_live_summary(pool, E, {"kind": "thread", "ref": small}) is None, res)
-
-        n0 = len(shown)
-        check("S the root thread never asks for one",
-              S.dispatch_topic_summary(pool, sess(root, turn_type={"builtin": ROOT_BUILTIN})) is None)
-        check("S a turn that read no history (no budget) asks for none",
-              S.dispatch_topic_summary(pool, sess(kiln, _history_budget_tokens=None)) is None)
-        check("S a Workbench project turn asks for none",
-              S.dispatch_topic_summary(pool, sess(None, interaction_context="project:7")) is None)
-        check("S none of those called the model", len(shown) == n0, len(shown))
-    finally:
-        tc._default_model_fn = real_model
+    check("S no summary is dispatched after a turn", not hasattr(S, "dispatch_topic_summary"))
+    kiln = str((await ct.create_thread(pool, E, title="Kiln firing"))["id"])
+    ids = []
+    for i in range(12):
+        ids.append(await turn(pool, f"kiln firing step {i}: ramp and hold", "user", mins=200 - 2 * i, thread=kiln))
+        ids.append(await turn(pool, f"noted kiln step {i}", "assistant", mins=199 - 2 * i, thread=kiln,
+                              extra={"close_turn": {"handoff": {"next_step": f"fire step {i + 1}"}}}))
+    n_summ = await pool.fetchval("SELECT count(*) FROM entity_memory WHERE memory_type = 'summary'")
+    rec = await er.evicted_record(pool, E, {"kind": "thread", "ref": kiln}, "s-sum", oldest_kept_id=ids[12])
+    check("S the turns that fell out ride as the topic's own notes, newest first",
+          rec and rec.splitlines()[1].endswith("next step: fire step 6") and "fire step 7" not in rec, rec)
+    check("S ...from that topic's rows only", rec and "tomato" not in rec.lower() and "errand" not in rec)
+    check("S ...and nothing was written to build it", n_summ == await pool.fetchval(
+        "SELECT count(*) FROM entity_memory WHERE memory_type = 'summary'") == 0, n_summ)
+    hist = (ROOT / "brain/mastercode/runtime/session.py").read_text()
+    check("S a root turn reads no record",
+          "_record_ok = bool(_src_ctx) and not getattr(sess, \"history_before\", None) \\\n"
+          "                and not _work_lane and not _root_turn" in hist)
 
 
 async def concurrency():

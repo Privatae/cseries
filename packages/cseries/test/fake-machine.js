@@ -37,11 +37,14 @@ function signer() {
 //        from before `status` reported it, whose configure refuses the key),
 //        memKb: the guest's MemTotal in kB (default 8 GiB; null as for cpus,
 //        and the default when cpus is null),
+//        runtime: the guest carries the local runtime, so its status names it
+//        (default false: a guest image from before it did),
 //        tokenPrefix (the pairing tokens minted are <it>-1, <it>-2, ...)}
 function fakeMachine(paths, opts = {}) {
   const m = {
     cpus: opts.cpus === undefined ? 8 : opts.cpus,
     memKb: opts.memKb !== undefined ? opts.memKb : (opts.cpus === null ? null : 8 * 1024 * 1024),
+    runtime: opts.runtime === true,
     wsl: opts.wsl !== false,
     distros: opts.distro ? ['cseries'] : [],
     running: false,
@@ -109,7 +112,7 @@ function fakeMachine(paths, opts = {}) {
       case 'restart': m.hostStarted = true; m.restarts++; return {};
       case 'stop': m.hostStarted = false; return {};
       case 'health': return { code: m.hostStarted ? 0 : 1 };
-      case 'status': return { stdout: `guest=1.2.3\nrelease=1.2.3\nhost=${m.hostStarted ? 'active' : 'inactive'}\npostgres=active\nhealth=ok\n${m.cpus === null ? '' : `cpus=${m.cpus}\n`}${m.memKb === null ? '' : `mem_total_kb=${m.memKb}\n`}` };
+      case 'status': return { stdout: `guest=1.2.3\nrelease=1.2.3\nhost=${m.hostStarted ? 'active' : 'inactive'}\npostgres=active\nhealth=ok\n${m.cpus === null ? '' : `cpus=${m.cpus}\n`}${m.memKb === null ? '' : `mem_total_kb=${m.memKb}\n`}${m.runtime ? 'runtime=active\n' : ''}` };
       case 'host-log': return { stdout: 'boot\nCSERIES SETUP CODE: 111111-222222-333333 old\nCSERIES SETUP CODE: abc123-def456-0789ab — open /setup\n' };
       case 'pair-token':
         m.tokens++;
@@ -247,18 +250,18 @@ function fakeMachine(paths, opts = {}) {
       while ((x = re.exec(list))) out.push(x[1] !== undefined ? unq(x[1]) : (x[0] === '$ca' ? caCopy : hostName));
       return out;
     };
-    const re = /Say 'step=install'|Say 'step=old-install'|Bastion (\d+) '([^']*)' @\(([^\n]*?)\)(?: ('(?:[^']|'')*'))?|Say 'step=host-ca'|& \$exe ('stepup-enroll'[^\n]*)|Restart-Service/g;
+    const re = /Emit 'step=install'|Emit 'step=old-install'|Bastion (\d+) '([^']*)' @\(([^\n]*?)\)(?: ('(?:[^']|'')*'))?|Emit 'step=host-ca'|& \$exe ('stepup-enroll'[^\n]*)|Restart-Service/g;
     let x;
     while ((x = re.exec(script))) {
       const t = x[0];
-      if (t === "Say 'step=install'") {
+      if (t === "Emit 'step=install'") {
         const file = unq(/Copy-Item -LiteralPath '((?:[^']|'')*)' -Destination \$new/.exec(script)[1]);
         const want = /if \(\$h -ne '([0-9a-f]{64})'\) \{ Remove-Item -LiteralPath \$new/.exec(script)[1];
         if (sha(file) !== want) return quit(10, 'the copied program has another sha256');
         fs.mkdirSync(paths.serviceDir, { recursive: true });
         fs.copyFileSync(file, paths.serviceExe);
         say(`installed=${paths.serviceExe}`);
-      } else if (t === "Say 'step=old-install'") {
+      } else if (t === "Emit 'step=old-install'") {
         m.tasks.delete('PrivataeBastion');
         fs.rmSync(paths.bastionExe, { force: true });
         const k = `HKU\\${m.sid}\\Environment\\Path`;
@@ -266,7 +269,7 @@ function fakeMachine(paths, opts = {}) {
           m.registry[k] = m.registry[k].split(';').filter((e) => e && e.replace(/\\$/, '').toLowerCase() !== paths.bastionDir.toLowerCase()).join(';');
         }
         say('old_install=removed');
-      } else if (t === "Say 'step=host-ca'") {
+      } else if (t === "Emit 'step=host-ca'") {
         const file = unq(/Copy-Item -LiteralPath '((?:[^']|'')*)' -Destination \$ca/.exec(script)[1]);
         const want = /if \(\$h -ne '([0-9a-f]{64})'\) \{ Remove-Item -LiteralPath \$ca/.exec(script)[1];
         if (sha(file) !== want) return quit(14, 'the Host CA copy has another sha256');

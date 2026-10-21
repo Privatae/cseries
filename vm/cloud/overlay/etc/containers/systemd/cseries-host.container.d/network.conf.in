@@ -1,0 +1,8 @@
+# The Host's fixed address on the containers' network (cseries.network.d/cloud.conf),
+# so Caddy, door.nft and the trusted-proxy setting can name it. Set on the
+# network itself, because the Host is on a second network too (the local
+# runtime's, cseries-host.container.d/runtime.conf), and podman takes a single
+# --ip only for a container on one network. This file replaces the WSL guest's
+# network.conf, which names the same network without an address.
+[Container]
+Network=cseries.network:ip=@HOST_IP@

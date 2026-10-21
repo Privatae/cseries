@@ -18,7 +18,13 @@ its unix socket), and runs the carry the way a boot does:
      renumbered, and every foreign key holds;
   3. a restored row whose parent was access that is gone now follows the
      key's own ON DELETE rule, and a key that says neither cascade nor set
-     null fails the carry instead of leaving a dangling reference.
+     null fails the carry instead of leaving a dangling reference;
+  7. the owner's sign-in: after the carry the restored Host starts (the real
+     owner_login.init) with the live owner and makes no setup code; the
+     browser that asked for the restore is still signed in; the owner signs in
+     with the live password, or the live passkey and a recovery code; the
+     backup's owner, password and sessions do not come back; and a backup
+     whose owner had another email is said so in the restore's result.
 
 Needs only docker (DOCKER_HOST is honoured, as in the CI runner's rootless
 Docker): psql runs inside the gate's own container, and the database image is
@@ -280,6 +286,13 @@ try:
             await c.execute("INSERT INTO entity_domain_access (entity_id, domain_id, access_level) "
                             "VALUES (5, $1, 'read')", dom)
         await l1.execute("UPDATE mcp_client_tokens SET revoked_at = now() WHERE id = 70")
+        # The owner's passkeys and recovery codes (v240): the backup holds a
+        # passkey the owner has since removed and a code still unspent; the
+        # live database holds the passkey added since and that code spent.
+        await r1.execute("INSERT INTO owner_passkeys (credential_id, public_key) VALUES ('\\x0a', '\\x01')")
+        await l1.execute("INSERT INTO owner_passkeys (credential_id, public_key) VALUES ('\\x0b', '\\x02')")
+        await r1.execute("INSERT INTO owner_recovery_codes (code_hash) VALUES ('h1')")
+        await l1.execute("INSERT INTO owner_recovery_codes (code_hash, used_at) VALUES ('h1', now())")
         # Each database's own backup-auth key (server/host_backup.py auth_key).
         k_live, k_restored = os.urandom(32), os.urandom(32)
         await l1.execute("INSERT INTO kernel_secrets (id, secret) VALUES ('backup_auth', $1)", k_live)
@@ -297,6 +310,11 @@ try:
               ("new rule", "p902") in [tuple(x) for x in await r1.fetch(
                   "SELECT p.name, f.name FROM nac_policy p JOIN nac_profiles f ON f.id = p.profile_id")])
         check("the old rule is gone", not await r1.fetchval("SELECT 1 FROM nac_policy WHERE name = 'old rule'"))
+        check("the owner's live passkeys hold: the one removed since does not come back",
+              [bytes(x["credential_id"]) for x in await r1.fetch("SELECT credential_id FROM owner_passkeys")]
+              == [b"\x0b"])
+        check("a recovery code spent since stays spent",
+              await r1.fetchval("SELECT used_at IS NOT NULL FROM owner_recovery_codes WHERE code_hash = 'h1'") is True)
         check("the revoked bastion stays revoked",
               await r1.fetchval("SELECT revoked_at FROM mcp_client_tokens WHERE id = 70") is not None)
         grants = {x[0] for x in await r1.fetch("SELECT domain_id FROM entity_domain_access WHERE entity_id = 5")}
@@ -485,8 +503,196 @@ try:
               {"network_bastion_heartbeat", "network_bastion_other", "bastion_update_refusals",
                "bastion_autoupdate_watch"} <= set(hr.CARRIED_TABLES))
 
+    async def run_owner():
+        # The owner's sign-in across a restore, driven through the real
+        # owner_login and owner_passkeys on the restored database, the way the
+        # kernel's start runs them (server/main.py: owner_login.init). Before
+        # the owner's account was carried, the restored database held the
+        # backup's: another email, password and cookie name, the browser that
+        # asked for the restore signed out, and from a backup taken before the
+        # owner was made no account at all, so a setup code only the kernel's
+        # log shows.
+        print("== 7. the owner signs in after a restore as before it, and no setup code is made")
+        import base64
+        import json
+        import logging
+        import struct
+        from datetime import datetime, timezone
+
+        import cbor2
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric import ec
+
+        from server import owner_login as L
+        from server import owner_passkeys as P
+        from server.home_origin import HOME
+        os.environ.pop("CSERIES_SETUP_CODE_FILE", None)
+        for db in ("live8", "restored8", "live9", "restored9", "live10", "restored10"):
+            psql("postgres", "-c", f"CREATE DATABASE {db} TEMPLATE tmpl")
+        live_email, backup_email = "owner@live.example", "someone@backup.example"
+        pw_live, pw_backup = "live password, long enough", "backup password, long enough"
+        client, app_host = "198.51.100.7", f"apps-settings-{HOME.host}"
+
+        class Said(logging.Handler):
+            def __init__(self):
+                super().__init__(logging.DEBUG)
+                self.lines = []
+
+            def emit(self, record):
+                self.lines.append(record.getMessage())
+        said = Said()
+        logging.getLogger("cseries.owner_login").addHandler(said)
+        logging.getLogger("cseries.owner_login").setLevel(logging.DEBUG)
+
+        async def owner(c, email, password, suffix):
+            await c.execute("INSERT INTO owner_account (id, email, password_hash, cookie_suffix) "
+                            "VALUES (1, $1, $2, $3)", email, await L.hash_password(password), suffix)
+
+        async def session(c, token, host=None, parent=None):
+            now = datetime.now(timezone.utc)
+            await c.execute("INSERT INTO owner_sessions (token_hash, created_at, last_seen_at, expires_at, "
+                            "origin, parent) VALUES ($1, $2, $2, $3, $4, $5)", L._token_hash(token), now,
+                            now + L.SESSION_MAX, host or HOME.host, L._token_hash(parent) if parent else None)
+
+        async def boot(c):
+            """The kernel's start on the restored database: owner_login.init."""
+            L._pool = lambda: c
+            L._owner_email = L._setup_code = L._cookie_suffix = None
+            for d in (L._cache, L._touched, L._failures, L._signed_out, L._joins, P._ceremonies, P._step_ups):
+                d.clear()
+            L._password_failures = (0, 0.0, 0.0)
+            said.lines.clear()
+            await L.init()
+
+        def no_setup_code():
+            return (not L.needs_setup() and L._setup_code is None
+                    and not any("SETUP CODE" in m or "no owner yet" in m for m in said.lines))
+
+        async def refused(coro):
+            try:
+                await coro
+                return None
+            except L.LoginError as e:
+                return str(e)
+
+        def b64u(x):
+            return base64.urlsafe_b64encode(x).decode().rstrip("=")
+
+        class Passkey:
+            """A passkey on a pretend device (ES256), as scripts/test_owner_passkeys_unit.py has it."""
+
+            def __init__(self):
+                self.key, self.cred_id, self.counter = ec.generate_private_key(ec.SECP256R1()), os.urandom(16), 0
+
+            def cose(self):
+                n = self.key.public_key().public_numbers()
+                return cbor2.dumps({1: 2, 3: -7, -1: 1, -2: n.x.to_bytes(32, "big"), -3: n.y.to_bytes(32, "big")})
+
+            def get(self, options):
+                self.counter += 1
+                cdj = json.dumps({"type": "webauthn.get", "challenge": options["challenge"],
+                                  "origin": HOME.origin, "crossOrigin": False}).encode()
+                auth = hashlib.sha256(options["rpId"].encode()).digest() + b"\x05" + struct.pack(">I", self.counter)
+                sig = self.key.sign(auth + hashlib.sha256(cdj).digest(), ec.ECDSA(hashes.SHA256()))
+                return {"id": b64u(self.cred_id), "rawId": b64u(self.cred_id), "type": "public-key",
+                        "response": {"clientDataJSON": b64u(cdj), "authenticatorData": b64u(auth),
+                                     "signature": b64u(sig), "userHandle": b64u(P.USER_HANDLE)},
+                        "clientExtensionResults": {}}
+
+        print("-- a password owner; the backup's owner had another email")
+        r8, l8 = await conn("restored8"), await conn("live8")
+        await owner(l8, live_email, pw_live, "live0001")
+        await session(l8, "the-restoring-browser")
+        await session(l8, "its-app-origin", host=app_host, parent="the-restoring-browser")
+        await owner(r8, backup_email, pw_backup, "back0001")
+        await session(r8, "a-session-in-the-backup")
+        try:
+            done8 = await hr.carry_rows(l8, r8, stamp="20261019T020000Z")
+        except Exception as e:
+            done8 = {"failed": repr(e)}
+        check("the carry succeeds with both owners", "failed" not in done8, done8)
+        check("every foreign key in the schema holds afterwards (a session's parent included)",
+              not await all_keys_hold(r8), await all_keys_hold(r8))
+        await boot(r8)
+        check("the restored Host starts with an owner and makes no setup code", no_setup_code(), said.lines)
+        check("the owner is the live one, not the backup's", L.owner_email() == live_email, L.owner_email())
+        check("the session cookie keeps its name, so the browser's cookie still counts",
+              L.cookie_name().endswith("_live0001"), L.cookie_name())
+        check("the browser that asked for the restore is still signed in, and its app origin too",
+              await L.session_email("the-restoring-browser", HOME.host) == live_email
+              and await L.session_email("its-app-origin", app_host) == live_email)
+        check("a session the backup held does not come back",
+              await L.session_email("a-session-in-the-backup", HOME.host) is None)
+        try:
+            token = await L.sign_in(live_email, pw_live, client, HOME.host)
+        except L.LoginError as e:
+            token = e
+        check("the owner signs in with the live email and password",
+              isinstance(token, str) and await L.session_email(token, HOME.host) == live_email, token)
+        check("the backup's email and password do not sign in",
+              await refused(L.sign_in(backup_email, pw_backup, client, HOME.host)) is not None)
+        note = done8.get("owner_note") or ""
+        check("the restore says plainly that the backup's owner had another email, and who signs in",
+              "another email" in note and live_email in note and backup_email not in note, note)
+        mark = await r8.fetchval("SELECT v FROM host_backup_state WHERE k = $1", hr.CARRIED_MARKER)
+        mark = json.loads(mark) if isinstance(mark, str) else mark
+        check("  and it is kept with the carry, for the restore's result", (mark or {}).get("owner") == note, mark)
+        await r8.close()
+        await l8.close()
+
+        print("-- a passkey owner; the backup was taken before the owner was made")
+        r9, l9 = await conn("restored9"), await conn("live9")
+        dev = Passkey()
+        await owner(l9, live_email, pw_live, "live0002")
+        await l9.execute("INSERT INTO owner_passkeys (credential_id, public_key) VALUES ($1, $2)",
+                         dev.cred_id, dev.cose())
+        codes = await P.new_recovery_codes(l9)
+        await session(l9, "the-restoring-browser-2")
+        try:
+            done9 = await hr.carry_rows(l9, r9, stamp="20261019T030000Z")
+        except Exception as e:
+            done9 = {"failed": repr(e)}
+        check("the carry succeeds onto a backup with no owner", "failed" not in done9, done9)
+        await boot(r9)
+        check("the restored Host starts with the live owner and makes no setup code",
+              no_setup_code() and L.owner_email() == live_email, said.lines)
+        check("the browser that asked for the restore is still signed in",
+              await L.session_email("the-restoring-browser-2", HOME.host) == live_email)
+        check("the password the passkey retired stays retired",
+              "passkey" in (await refused(L.sign_in(live_email, pw_live, client, HOME.host)) or ""))
+        try:
+            opts = await P.login_options(client, HOME.host)
+            token = await P.passkey_sign_in(opts["ceremony"], dev.get(opts["options"]), client, HOME.host)
+        except L.LoginError as e:
+            token = e
+        check("the owner signs in with the live passkey",
+              isinstance(token, str) and await L.session_email(token, HOME.host) == live_email, token)
+        try:
+            token = await P.recovery_sign_in(codes[0], client, HOME.host)
+        except L.LoginError as e:
+            token = e
+        check("  and with a live recovery code",
+              isinstance(token, str) and await L.session_email(token, HOME.host) == live_email, token)
+        check("  and the restore has nothing to say about the sign-in", "owner_note" not in done9, done9)
+        await r9.close()
+        await l9.close()
+
+        print("-- no owner yet when the restore ran; the backup had one")
+        r10, l10 = await conn("restored10"), await conn("live10")
+        await owner(r10, backup_email, pw_backup, "back0003")
+        done10 = await hr.carry_rows(l10, r10)
+        check("the backup's owner is not brought back: this Host had none",
+              await r10.fetchval("SELECT count(*) FROM owner_account") == 0)
+        check("  and the restore says so, and where to make one",
+              "no owner account" in (done10.get("owner_note") or "") and "/setup" in done10.get("owner_note", ""),
+              done10)
+        await r10.close()
+        await l10.close()
+        logging.getLogger("cseries.owner_login").removeHandler(said)
+
     asyncio.run(run())
     asyncio.run(run_more())
+    asyncio.run(run_owner())
 finally:
     subprocess.run(["docker", "stop", name], capture_output=True)   # --rm removes it
     shutil.rmtree(work, ignore_errors=True)

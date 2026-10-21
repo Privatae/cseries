@@ -78,7 +78,7 @@ test('enrolment runs on the elevated console: nothing redirected, nothing of it 
   const s = elevated.bastionInstallScript(plan());
   const line = s.split('\n').find((l) => /stepup-enroll'/.test(l) && /& \$exe/.test(l));
   assert.equal(line.trim(), "& $exe 'stepup-enroll' '--console-only' '--host' $hostName");
-  assert.ok(!/[|>]|Tee|Out-File|Out-String|Add-Content|Say/.test(line), `redirected or logged: ${line}`);
+  assert.ok(!/[|>]|Tee|Out-File|Out-String|Add-Content|Emit/.test(line), `redirected or logged: ${line}`);
   assert.ok(!/Bastion \d+ 'stepup-enroll'/.test(s), 'not through the logging wrapper');
   // A TOTP secret is base32: no such run of characters, and no otpauth URI.
   assert.ok(!/[A-Z2-7]{16,}/.test(s));
@@ -95,8 +95,8 @@ test('the pairing token goes only to pair\'s standard input: never in its argume
   assert.match(s, /\$text = \(\$stdin \| & \$exe @a 2>&1 \| ForEach-Object/);
   assert.match(s, /\$OutputEncoding = New-Object System\.Text\.UTF8Encoding \$false/);
   // The wrapper logs the command's name and output, not its arguments.
-  assert.match(s, /Say "> privatae-bastion \$what"/);
-  assert.ok(!/Say[^\n]*\$a\b/.test(s));
+  assert.match(s, /Emit "> privatae-bastion \$what"/);
+  assert.ok(!/Emit[^\n]*\$a\b/.test(s));
 });
 
 test('the old per-user install goes: its logon task, any copy from another path, its program, its PATH entry via HKEY_USERS', () => {
@@ -206,6 +206,6 @@ test('the approvals owner is recorded first, as this person\'s SID; the script n
   assert.ok(pos(s, /'service','install'/) < owner, 'the service state exists first');
   assert.ok(owner < pos(s, /'set-mode','networked'/), 'before anything else changes');
   assert.ok(owner < pos(s, /release-anchor/) && owner < pos(s, /@\('pair'/) && owner < pos(s, /& \$exe 'stepup-enroll'/));
-  assert.match(s, /Say 'owner=yes'/);
+  assert.match(s, /Emit 'owner=yes'/);
   assert.ok(!/--replace/.test(s) && !/--force/.test(s));
 });

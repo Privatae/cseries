@@ -518,6 +518,13 @@ async def charge_harness_compute(*, session_id, harness,
         cs = 0.0
     if cs <= 0:
         return None, None  # nothing metered → nothing to bill
+    from server.applications.local_runtime import in_use as _local_runtime
+    if _local_runtime():
+        # The owner's own machine ran it (the local runtime): there is no
+        # compute fee to charge, and nothing is left unbilled.
+        log.info("harness compute on this machine: session=%s harness=%s compute_s=%.1f "
+                 "(not billed)", session_id, harness, cs)
+        return None, None
     try:
         from server.main import get_bridge_client
         bc = get_bridge_client()

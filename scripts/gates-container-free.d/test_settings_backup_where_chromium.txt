@@ -1,0 +1,9 @@
+# 2026-10-20: Settings, Backup, "Where backups go", in headless Chromium over
+# a stand-in for the Host's routes. A standalone Host cannot choose the
+# network's storage and starts on a folder on this machine; the bucket's key
+# goes only to the vault route and the saved setting names it without the
+# secret; moving the backups asks for the owner's code; the folder's count is
+# saved with no second copy; "Download the latest backup" saves the newest
+# backup's bytes under its own name. Needs Playwright and Chromium, which this
+# lane already has; no pod, no DB, no network.
+test_settings_backup_where_chromium.py

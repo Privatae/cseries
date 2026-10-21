@@ -1,8 +1,13 @@
 # A pushed tag vX.Y.Z releases version X.Y.Z: the two images (multi-arch,
 # each architecture built, scanned and smoke-tested natively before anything
-# is pushed), the WSL guest images on the GitHub release, and the npm packages
-# with a release.json that pins all of it. docs/RELEASING.md is the runbook,
-# including what the maintainer runs before tagging.
+# is pushed), the four runtime images a machine starts its app, browser and
+# creative containers from (built, scanned and smoke-tested the same way), the
+# guest images (WSL's and Lima's), the coding engines' source tarball, the Blender source and
+# the C-Series Cloud overlay with its cloud-release.json on the GitHub
+# release, the free App Store's catalog and bundles, and the npm packages with
+# a release.json that pins all of it. docs/RELEASING.md is the runbook,
+# including what the maintainer runs before tagging and the two signatures
+# added by hand after it.
 name: release
 
 on:
@@ -23,6 +28,20 @@ defaults:
 env:
   HOST_IMAGE: ghcr.io/privatae/cseries
   POSTGRES_IMAGE: ghcr.io/privatae/cseries-postgres
+  # The runtime images, one per image family a machine's local runtime
+  # starts containers from. The runtime-image matrix names the same repos.
+  PYTHON_IMAGE: ghcr.io/privatae/cseries-app-runtime-python
+  BROWSER_IMAGE: ghcr.io/privatae/cseries-browser
+  HELPER_IMAGE: ghcr.io/privatae/cseries-app-helper
+  CREATIVE_IMAGE: ghcr.io/privatae/cseries-app-runtime-creative
+  # The creative image carries Blender (GPL), so each release carries the
+  # source for exactly the version that image unpacks. blender.org publishes
+  # only an md5sum beside its source archive, so the archive is also held to
+  # this sha256, measured from download.blender.org on 2026-10-19 with that
+  # md5sum matching. The release refuses a creative Dockerfile whose Blender
+  # is another version: bump the two together.
+  BLENDER_SOURCE_VERSION: "5.2.2"
+  BLENDER_SOURCE_SHA256: 56a3b1ec97479ff24dce65d2f09f8a1895005cece279b701fe4fcf74bce3f77e
   # The repo's vulnerability gate (trivy.yaml): fixable findings at these
   # severities fail the release; accepted ones live, path-scoped, in
   # .trivyignore.yaml. Fixable findings at the report severity are listed in
@@ -394,8 +413,478 @@ jobs:
           push-to-registry: true
           create-storage-record: false
 
+  # The runtime images: the toolchain images a machine's local runtime runs
+  # app containers from (python, and creative with Blender and the ArtCraft
+  # programs), the browser and the app helper. Each architecture is built,
+  # checked and pushed exactly as the host image is: one build to an archive
+  # that is both what the smoke test loads and the OCI layout that is pushed,
+  # trivy's secret scan and the vulnerability gate over that archive, a short
+  # smoke of what the runtime relies on, push by digest, provenance. The
+  # coding engines' images are not here: they are never published, and each
+  # machine builds them from the harness source tarball (runtime-release).
+  runtime-image:
+    name: Runtime image ${{ matrix.image }} (${{ matrix.arch }})
+    needs: version
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 150
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - image: python
+            arch: amd64
+            repo: ghcr.io/privatae/cseries-app-runtime-python
+            dockerfile: sidecars/app-runtime-python/Dockerfile
+            context: .
+            runner: ubuntu-24.04
+            machine: x86_64
+            trivy_asset: Linux-64bit
+            trivy_sha256: 2edd39da482bb4e9831962487b68f68e3928ec3137794757f54d00383d79547b
+            crane_asset: x86_64
+            crane_sha256: 0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0
+          - image: python
+            arch: arm64
+            repo: ghcr.io/privatae/cseries-app-runtime-python
+            dockerfile: sidecars/app-runtime-python/Dockerfile
+            context: .
+            runner: ubuntu-24.04-arm
+            machine: aarch64
+            trivy_asset: Linux-ARM64
+            trivy_sha256: 13833d97e8a1a5367471c372a173180157f593bece570e20d5d925fef552f5dd
+            crane_asset: arm64
+            crane_sha256: 898c0cff975f898a33e8c4580bdafb0e7c02c7faa33374e946762f97c4ab7110
+          - image: browser
+            arch: amd64
+            repo: ghcr.io/privatae/cseries-browser
+            dockerfile: sidecars/browser/Dockerfile
+            context: sidecars/browser
+            runner: ubuntu-24.04
+            machine: x86_64
+            trivy_asset: Linux-64bit
+            trivy_sha256: 2edd39da482bb4e9831962487b68f68e3928ec3137794757f54d00383d79547b
+            crane_asset: x86_64
+            crane_sha256: 0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0
+          - image: browser
+            arch: arm64
+            repo: ghcr.io/privatae/cseries-browser
+            dockerfile: sidecars/browser/Dockerfile
+            context: sidecars/browser
+            runner: ubuntu-24.04-arm
+            machine: aarch64
+            trivy_asset: Linux-ARM64
+            trivy_sha256: 13833d97e8a1a5367471c372a173180157f593bece570e20d5d925fef552f5dd
+            crane_asset: arm64
+            crane_sha256: 898c0cff975f898a33e8c4580bdafb0e7c02c7faa33374e946762f97c4ab7110
+          - image: helper
+            arch: amd64
+            repo: ghcr.io/privatae/cseries-app-helper
+            dockerfile: sidecars/app-helper/Dockerfile
+            context: sidecars/app-helper
+            runner: ubuntu-24.04
+            machine: x86_64
+            trivy_asset: Linux-64bit
+            trivy_sha256: 2edd39da482bb4e9831962487b68f68e3928ec3137794757f54d00383d79547b
+            crane_asset: x86_64
+            crane_sha256: 0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0
+          - image: helper
+            arch: arm64
+            repo: ghcr.io/privatae/cseries-app-helper
+            dockerfile: sidecars/app-helper/Dockerfile
+            context: sidecars/app-helper
+            runner: ubuntu-24.04-arm
+            machine: aarch64
+            trivy_asset: Linux-ARM64
+            trivy_sha256: 13833d97e8a1a5367471c372a173180157f593bece570e20d5d925fef552f5dd
+            crane_asset: arm64
+            crane_sha256: 898c0cff975f898a33e8c4580bdafb0e7c02c7faa33374e946762f97c4ab7110
+          # Blender and the ArtCraft programs are downloaded as x86-64 builds
+          # only (the creative Dockerfile's URLs), so this image is amd64 only.
+          - image: creative
+            arch: amd64
+            repo: ghcr.io/privatae/cseries-app-runtime-creative
+            dockerfile: sidecars/app-runtime-creative/Dockerfile
+            context: .
+            runner: ubuntu-24.04
+            machine: x86_64
+            trivy_asset: Linux-64bit
+            trivy_sha256: 2edd39da482bb4e9831962487b68f68e3928ec3137794757f54d00383d79547b
+            crane_asset: x86_64
+            crane_sha256: 0ab7a1d6932a213aed964ce97666c3077fe691c8606413674a8b3e0b9ec4cda0
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      ARCH: ${{ matrix.arch }}
+      IMAGE: ${{ matrix.image }}
+      REPO: ${{ matrix.repo }}
+      LOCAL: cseries-runtime-${{ matrix.image }}:release
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the runner is ${{ matrix.machine }}
+        env:
+          MACHINE: ${{ matrix.machine }}
+        run: |
+          if [[ "$(uname -m)" != "$MACHINE" ]]; then
+            echo "::error::the $ARCH image is built natively, and this runner is $(uname -m)"
+            exit 1
+          fi
+
+      - name: Install trivy and crane, pinned by sha256
+        env:
+          TRIVY_ASSET: ${{ matrix.trivy_asset }}
+          TRIVY_SHA256: ${{ matrix.trivy_sha256 }}
+          CRANE_ASSET: ${{ matrix.crane_asset }}
+          CRANE_SHA256: ${{ matrix.crane_sha256 }}
+        run: |
+          set -euo pipefail
+          bin="$RUNNER_TEMP/bin" dl="$RUNNER_TEMP/dl"
+          mkdir -p "$bin" "$dl"
+          fetch() {
+            curl -fsSL --retry 3 -o "$dl/$3" "$1"
+            echo "$2  $dl/$3" | sha256sum -c -
+          }
+          fetch "https://github.com/aquasecurity/trivy/releases/download/v$TRIVY_VERSION/trivy_${TRIVY_VERSION}_$TRIVY_ASSET.tar.gz" \
+            "$TRIVY_SHA256" trivy.tar.gz
+          fetch "https://github.com/google/go-containerregistry/releases/download/v$CRANE_VERSION/go-containerregistry_Linux_$CRANE_ASSET.tar.gz" \
+            "$CRANE_SHA256" crane.tar.gz
+          tar -xzf "$dl/trivy.tar.gz" -C "$bin" trivy
+          tar -xzf "$dl/crane.tar.gz" -C "$bin" crane
+          echo "$bin" >> "$GITHUB_PATH"
+
+      # The source label links the GHCR package to this repository, as the
+      # host image's does; these Dockerfiles carry none of their own.
+      - name: Build the image
+        env:
+          DOCKERFILE: ${{ matrix.dockerfile }}
+          CONTEXT: ${{ matrix.context }}
+        run: |
+          set -euo pipefail
+          docker buildx create --name release --driver docker-container \
+            --driver-opt "image=$BUILDKIT_IMAGE" --bootstrap
+          out="$RUNNER_TEMP/oci"
+          mkdir -p "$out"
+          docker buildx build --builder release --platform "linux/$ARCH" \
+            --provenance=false --sbom=false -f "$DOCKERFILE" \
+            --label "org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.version=$VERSION" \
+            --output "type=docker,dest=$out/image.tar,name=$LOCAL,oci-mediatypes=true" "$CONTEXT"
+          docker buildx rm release
+
+      - name: Load the image and check it is the one that will be pushed
+        id: oci
+        run: |
+          set -euo pipefail
+          docker load -i "$RUNNER_TEMP/oci/image.tar"
+          mkdir -p "$RUNNER_TEMP/oci/layout"
+          tar -xf "$RUNNER_TEMP/oci/image.tar" -C "$RUNNER_TEMP/oci/layout"
+          digest="$(python .github/scripts/release.py oci-check "$RUNNER_TEMP/oci/layout" "$LOCAL" "$ARCH")"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
+      # What the local runtime relies on from each image, run the way it runs
+      # them: an unprivileged uid, no capabilities, no network.
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          locked=(--rm --network none --cap-drop ALL --security-opt no-new-privileges --user 1000:1000)
+          case "$IMAGE" in
+            python|creative)
+              # The three files the runtime runs from this image (the wall,
+              # the source fetch and the wrapper), and the toolchain an app
+              # builds with.
+              docker run "${locked[@]}" --read-only --entrypoint python3 "$LOCAL" -c '
+          import ast, sqlite3, ssl, sys
+          for p in ("/opt/app-runtime/fetch.py", "/opt/app-runtime/run.py", "/opt/app-runtime/egress.py"):
+              ast.parse(open(p).read(), p)
+          print(sys.version.split()[0], ssl.OPENSSL_VERSION)'
+              docker run "${locked[@]}" --entrypoint sh "$LOCAL" -c \
+                'gcc --version | head -1 && git --version && curl --version | head -1'
+              if [[ "$IMAGE" == creative ]]; then
+                docker run "${locked[@]}" -e HOME=/tmp --entrypoint blender "$LOCAL" --version
+                docker run "${locked[@]}" --entrypoint sh "$LOCAL" -c \
+                  'n=$(ls /usr/local/bin/*-cli | wc -l); echo "$n ArtCraft programs"; test "$n" -gt 0'
+              fi
+              ;;
+            browser)
+              # Chromium up under the browser's own seccomp profile, the
+              # control API answering /health with ok on loopback.
+              c=smoke-browser
+              docker run -d --name "$c" --network none --cap-drop ALL --user 1000:1000 \
+                --shm-size 256m --security-opt "seccomp=$GITHUB_WORKSPACE/seccomp-browser.json" \
+                -e CONTROL_BIND=127.0.0.1 "$LOCAL" > /dev/null
+              ok=""
+              for _ in $(seq 1 60); do
+                if docker exec "$c" curl -fsS -m 3 http://127.0.0.1:8830/health > "$RUNNER_TEMP/health.json" 2> /dev/null \
+                   && grep -q '"ok": *true' "$RUNNER_TEMP/health.json"; then
+                  ok=1
+                  break
+                fi
+                sleep 2
+              done
+              cat "$RUNNER_TEMP/health.json" 2> /dev/null || true
+              if [[ -z "$ok" ]]; then
+                docker logs "$c" 2>&1 | tail -40
+                docker rm -f "$c" > /dev/null
+                echo "::error::the browser image did not answer /health with ok within 120 s"
+                exit 1
+              fi
+              docker rm -f "$c" > /dev/null
+              ;;
+            helper)
+              # The binary serves from a config like the runtime's, and its
+              # own -healthcheck (the only probe a scratch image can run)
+              # passes.
+              cfg="$RUNNER_TEMP/helper-config"
+              mkdir -p "$cfg"
+              printf '{"app_id": "smoke", "port": 8850, "hosts": ["example.com"]}\n' > "$cfg/config.json"
+              chmod -R a+rX "$cfg"
+              c=smoke-helper
+              docker run -d --name "$c" --network none --read-only --cap-drop ALL --user 1000:1000 \
+                -e PORT=8850 -e BIND=127.0.0.1 -v "$cfg:/config:ro" "$LOCAL" > /dev/null
+              ok=""
+              for _ in $(seq 1 15); do
+                if docker exec "$c" /app-helper -healthcheck; then ok=1; break; fi
+                sleep 1
+              done
+              if [[ -z "$ok" ]]; then
+                docker logs "$c" 2>&1 | tail -20
+                docker rm -f "$c" > /dev/null
+                echo "::error::the app helper did not pass its own health check"
+                exit 1
+              fi
+              docker rm -f "$c" > /dev/null
+              ;;
+            *)
+              echo "::error::no smoke test for $IMAGE"
+              exit 1
+              ;;
+          esac
+
+      # The image's own package lists, read inside it: what a person who
+      # pulls it is given, and under which licences. The helper is a scratch
+      # image with no package database, so its notices are what it adds.
+      - name: Write the image's third-party notices
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/notices"
+          f="$RUNNER_TEMP/notices/${REPO##*/}-$VERSION-$ARCH-notices.txt"
+          if [[ "$IMAGE" == helper ]]; then
+            python3 .github/scripts/release.py notices --image "$REPO" --version "$VERSION" \
+              --arch "$ARCH" --root "$RUNNER_TEMP/no-root" > "$f"
+          else
+            docker run --rm --network none --cap-drop ALL --user 1000:1000 \
+              -v "$GITHUB_WORKSPACE/.github/scripts:/release-scripts:ro" --entrypoint python3 "$LOCAL" \
+              /release-scripts/release.py notices --image "$REPO" --version "$VERSION" --arch "$ARCH" > "$f"
+          fi
+          head -5 "$f"
+          wc -l "$f"
+
+      - name: Scan for secrets and vulnerabilities
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/oci/image.tar"
+          trivy image --download-db-only
+          trivy image --skip-db-update --input "$archive" \
+            --scanners secret --exit-code 1
+          trivy image --skip-db-update --input "$archive" \
+            --scanners vuln --severity "$VULN_FAIL_SEVERITY" --ignore-unfixed --exit-code 1
+          rc=0
+          trivy image --skip-db-update --input "$archive" \
+            --scanners vuln --severity "$VULN_REPORT_SEVERITY" --ignore-unfixed --exit-code 3 || rc=$?
+          if (( rc == 3 )); then
+            echo "::warning title=$VULN_REPORT_SEVERITY findings ($IMAGE, $ARCH)::fixable $VULN_REPORT_SEVERITY findings in the $IMAGE image, listed in this step's log; the release gate fails on $VULN_FAIL_SEVERITY"
+          elif (( rc != 0 )); then
+            exit "$rc"
+          fi
+
+      # A machine-readable list of what the image holds, from the same tested
+      # archive. It is attested to the pushed digest below rather than added to
+      # the release: trivy stamps each SBOM with its time and a fresh document
+      # id, and a released asset is never replaced.
+      - name: Write the image's SBOM
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/oci/image.tar"
+          trivy image --skip-db-update --input "$archive" \
+            --format spdx-json --output "$RUNNER_TEMP/sbom.spdx.json"
+          python3 -c 'import json, sys; d = json.load(open(sys.argv[1])); print(len(d.get("packages") or []), "packages")' \
+            "$RUNNER_TEMP/sbom.spdx.json"
+
+      - name: Push by digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DIGEST: ${{ steps.oci.outputs.digest }}
+        run: |
+          set -euo pipefail
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          crane push "$RUNNER_TEMP/oci/layout" "$REPO@$DIGEST"
+          got="sha256:$(crane manifest "$REPO@$DIGEST" | sha256sum | cut -d' ' -f1)"
+          if [[ "$got" != "$DIGEST" ]]; then
+            echo "::error::the registry's manifest for $REPO@$DIGEST hashes to $got"
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/digests"
+          echo "$DIGEST" > "$RUNNER_TEMP/digests/$IMAGE-$ARCH"
+
+      - name: Attest the image
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ matrix.repo }}
+          subject-digest: ${{ steps.oci.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Attest the image's SBOM
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ matrix.repo }}
+          subject-digest: ${{ steps.oci.outputs.digest }}
+          sbom-path: ${{ runner.temp }}/sbom.spdx.json
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Keep the digest for the merge
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runtime-digest-${{ matrix.image }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/digests/
+          if-no-files-found: error
+          overwrite: true
+
+      - name: Keep the notices for the release
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runtime-notices-${{ matrix.image }}-${{ matrix.arch }}
+          path: ${{ runner.temp }}/notices/
+          if-no-files-found: error
+          overwrite: true
+
+  runtime-merge:
+    name: Runtime image tags
+    needs: [version, runtime-image]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+    outputs:
+      python: ${{ steps.tag.outputs.python }}
+      browser: ${{ steps.tag.outputs.browser }}
+      helper: ${{ steps.tag.outputs.helper }}
+      creative: ${{ steps.tag.outputs.creative }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: The digests each architecture tested and pushed
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: runtime-digest-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/digests
+
+      - name: Install crane, pinned by sha256
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/bin" "$RUNNER_TEMP/dl"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/dl/crane.tar.gz" \
+            "https://github.com/google/go-containerregistry/releases/download/v$CRANE_VERSION/go-containerregistry_Linux_x86_64.tar.gz"
+          echo "$CRANE_SHA256_X86_64  $RUNNER_TEMP/dl/crane.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/dl/crane.tar.gz" -C "$RUNNER_TEMP/bin" crane
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      # A tag is never moved: an existing X.Y.Z is accepted only when it is
+      # already exactly the tested digests (this job, re-run). The creative
+      # image has one architecture, so its tag is that one manifest.
+      - name: Tag X.Y.Z from exactly the tested digests
+        id: tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          d="$RUNNER_TEMP/digests"
+          exists() {  # repo:tag -> 0 when it exists, 1 when the registry says it does not
+            if crane digest "$1" > /dev/null 2> "$RUNNER_TEMP/probe.err"; then return 0; fi
+            if grep -qiE 'MANIFEST_UNKNOWN|NAME_UNKNOWN|NOT_FOUND|404' "$RUNNER_TEMP/probe.err"; then return 1; fi
+            cat "$RUNNER_TEMP/probe.err" >&2
+            echo "::error::could not tell whether $1 exists"
+            exit 1
+          }
+          for image in python browser helper; do
+            case "$image" in
+              python) repo="$PYTHON_IMAGE" ;;
+              browser) repo="$BROWSER_IMAGE" ;;
+              helper) repo="$HELPER_IMAGE" ;;
+            esac
+            amd64="$(cat "$d/$image-amd64")"
+            arm64="$(cat "$d/$image-arm64")"
+            if exists "$repo:$VERSION"; then
+              if ! crane manifest "$repo:$VERSION" \
+                   | python3 .github/scripts/release.py index-check - "$amd64" "$arm64"; then
+                echo "::error::$repo:$VERSION already exists and holds other images; a released tag is never moved"
+                exit 1
+              fi
+              echo "$repo:$VERSION already holds these two images"
+            else
+              docker buildx imagetools create -t "$repo:$VERSION" "$repo@$amd64" "$repo@$arm64"
+            fi
+            crane manifest "$repo:$VERSION" \
+              | python3 .github/scripts/release.py index-check - "$amd64" "$arm64"
+            echo "$image=$(crane digest "$repo:$VERSION")" >> "$GITHUB_OUTPUT"
+          done
+          creative="$(cat "$d/creative-amd64")"
+          if exists "$CREATIVE_IMAGE:$VERSION"; then
+            echo "$CREATIVE_IMAGE:$VERSION already exists"
+          else
+            crane tag "$CREATIVE_IMAGE@$creative" "$VERSION"
+          fi
+          got="$(crane digest "$CREATIVE_IMAGE:$VERSION")"
+          if [[ "$got" != "$creative" ]]; then
+            echo "::error::$CREATIVE_IMAGE:$VERSION is $got, not the tested $creative; a released tag is never moved"
+            exit 1
+          fi
+          echo "creative=$creative" >> "$GITHUB_OUTPUT"
+
+      - name: Attest the python index
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.PYTHON_IMAGE }}
+          subject-digest: ${{ steps.tag.outputs.python }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Attest the browser index
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.BROWSER_IMAGE }}
+          subject-digest: ${{ steps.tag.outputs.browser }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Attest the helper index
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.HELPER_IMAGE }}
+          subject-digest: ${{ steps.tag.outputs.helper }}
+          push-to-registry: true
+          create-storage-record: false
+
   guest:
-    name: WSL guest image (${{ matrix.arch }})
+    name: Guest images (${{ matrix.arch }})
     needs: version
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 90
@@ -418,22 +907,27 @@ jobs:
         with:
           persist-credentials: false
 
-      # Each architecture on its own runner: build-rootfs.sh refuses a
-      # foreign one unless qemu-user is registered, and these runners have
-      # none.
-      - name: Build the guest image
+      # Each architecture on its own runner: build-rootfs.sh and
+      # build-image.sh refuse a foreign one unless qemu-user is registered,
+      # and these runners have none. Both guests are built here, because
+      # release.json pins each (release.js refuses a manifest without
+      # them): WSL's root filesystem for Windows and Lima's qcow2 disk for
+      # macOS and Linux.
+      - name: Build the guest images
         run: |
           set -euo pipefail
           out="$RUNNER_TEMP/guest"
           mkdir -p "$out"
           bash vm/wsl/build-rootfs.sh --arch "$ARCH" --version "$VERSION" --out "$out"
-          name="cseries-wsl-rootfs-$VERSION-$ARCH.tar.gz"
-          stated="$(cut -d' ' -f1 "$out/$name.sha256")"
-          got="$(sha256sum "$out/$name" | cut -d' ' -f1)"
-          if [[ "$stated" != "$got" ]]; then
-            echo "::error::$name.sha256 says $stated, the file hashes to $got"
-            exit 1
-          fi
+          bash vm/lima/build-image.sh --arch "$ARCH" --version "$VERSION" --out "$out"
+          for name in "cseries-wsl-rootfs-$VERSION-$ARCH.tar.gz" "cseries-guest-$VERSION-$ARCH.qcow2"; do
+            stated="$(cut -d' ' -f1 "$out/$name.sha256")"
+            got="$(sha256sum "$out/$name" | cut -d' ' -f1)"
+            if [[ "$stated" != "$got" ]]; then
+              echo "::error::$name.sha256 says $stated, the file hashes to $got"
+              exit 1
+            fi
+          done
 
       - name: Keep the guest image for the release
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -474,13 +968,14 @@ jobs:
           set -euo pipefail
           assets=()
           for arch in x64 arm64; do
-            name="cseries-wsl-rootfs-$VERSION-$arch.tar.gz"
-            for f in "$RUNNER_TEMP/guest/$name" "$RUNNER_TEMP/guest/$name.sha256"; do
-              if [[ ! -f "$f" ]]; then
-                echo "::error::$(basename "$f") was not built"
-                exit 1
-              fi
-              assets+=("$f")
+            for name in "cseries-wsl-rootfs-$VERSION-$arch.tar.gz" "cseries-guest-$VERSION-$arch.qcow2"; do
+              for f in "$RUNNER_TEMP/guest/$name" "$RUNNER_TEMP/guest/$name.sha256"; do
+                if [[ ! -f "$f" ]]; then
+                  echo "::error::$(basename "$f") was not built"
+                  exit 1
+                fi
+                assets+=("$f")
+              done
             done
           done
           {
@@ -489,7 +984,7 @@ jobs:
             echo "- \`$HOST_IMAGE:$VERSION\` \`$HOST_DIGEST\`"
             echo "- \`$POSTGRES_IMAGE:$VERSION\` \`$POSTGRES_DIGEST\`"
             echo
-            echo "WSL guest images for x64 and arm64 are attached, each with its .sha256."
+            echo "Guest images for x64 and arm64 are attached, each with its .sha256: WSL's root filesystem (Windows) and Lima's qcow2 disk (macOS and Linux)."
             echo "Install with \`npx cseries@$VERSION\`."
           } > "$RUNNER_TEMP/notes.md"
           if ! gh release view "$TAG" > /dev/null 2>&1; then
@@ -511,9 +1006,286 @@ jobs:
             fi
           done
 
+  # What the runtime needs beside the images, on the same GitHub release:
+  # the coding engines' source tarball (each machine builds an engine's
+  # image from it, since those images are never published), the Blender
+  # source for the creative image, and each runtime image's notices.
+  runtime-release:
+    name: Runtime release assets
+    needs: [version, runtime-merge, release]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: ${{ github.ref_name }}
+    outputs:
+      harness_src_sha256: ${{ steps.src.outputs.sha256 }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: The runtime images' notices
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: runtime-notices-*
+          merge-multiple: true
+          path: ${{ runner.temp }}/assets
+
+      # build-harness-src.sh dates every entry at the commit's time, so the
+      # same tag builds the same bytes on any runner.
+      - name: Build the harness source tarball
+        id: src
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/assets"
+          bash vm/runtime/build-harness-src.sh --version "$VERSION" --out "$out"
+          name="cseries-harness-src-$VERSION.tar.gz"
+          stated="$(cut -d' ' -f1 "$out/$name.sha256")"
+          got="$(sha256sum "$out/$name" | cut -d' ' -f1)"
+          if [[ "$stated" != "$got" ]]; then
+            echo "::error::$name.sha256 says $stated, the file hashes to $got"
+            exit 1
+          fi
+          echo "sha256=$got" >> "$GITHUB_OUTPUT"
+
+      # The source for exactly the Blender the creative image unpacks: its
+      # version read from the Dockerfile and held to the pinned one, the
+      # archive checked against the md5sum blender.org publishes beside it and
+      # against the pinned sha256 (an md5 alone proves nothing about who made
+      # the file).
+      - name: Fetch the Blender source and check its sha256
+        run: |
+          set -euo pipefail
+          url="$(sed -n 's/^ARG BLENDER_URL=//p' sidecars/app-runtime-creative/Dockerfile)"
+          ver="$(basename "$url" | sed -nE 's/^blender-([0-9]+\.[0-9]+\.[0-9]+)-linux-x64\.tar\.xz$/\1/p')"
+          if [[ -z "$ver" ]]; then
+            echo "::error::cannot read Blender's version from the creative Dockerfile's BLENDER_URL ($url)"
+            exit 1
+          fi
+          if [[ "$ver" != "$BLENDER_SOURCE_VERSION" ]]; then
+            echo "::error::the creative image unpacks Blender $ver and the pinned source is $BLENDER_SOURCE_VERSION; bump BLENDER_SOURCE_VERSION and BLENDER_SOURCE_SHA256 together with the Dockerfile"
+            exit 1
+          fi
+          name="blender-$ver.tar.xz"
+          cd "$RUNNER_TEMP/assets"
+          curl -fsSL --retry 3 -o "$name" "https://download.blender.org/source/$name"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$name.md5sum" "https://download.blender.org/source/$name.md5sum"
+          (cd "$RUNNER_TEMP/assets" && md5sum -c "$RUNNER_TEMP/$name.md5sum")
+          echo "$BLENDER_SOURCE_SHA256  $name" | sha256sum -c -
+          sha256sum "$name" > "$name.sha256"
+
+      # A released asset is never replaced: one already on the release (this
+      # job, re-run) must be byte for byte the file this run made, because a
+      # machine may already pin the harness tarball's sha256.
+      - name: Upload the runtime assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          present="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+          for f in "$RUNNER_TEMP"/assets/*; do
+            name="$(basename "$f")"
+            if grep -qxF "$name" <<< "$present"; then
+              have="$(gh release download "$TAG" --pattern "$name" --output - | sha256sum | cut -d' ' -f1)"
+              want="$(sha256sum "$f" | cut -d' ' -f1)"
+              if [[ "$have" != "$want" ]]; then
+                echo "::error::$name is already on the release with other contents ($have, this run made $want); a released asset is never replaced"
+                exit 1
+              fi
+              echo "$name is already on the release, with these contents"
+            else
+              gh release upload "$TAG" "$f"
+            fi
+          done
+
+  # The free App Store: catalog.json lists every store app with its bundle's
+  # URL on this release and sha256, the runtime images it needs pinned by
+  # digest, its licence and its source; the bundles go beside it. A Host takes
+  # the catalog only once its signature (kind cseries-store) is beside it,
+  # which the maintainer adds by hand from the computer that holds the release
+  # key (docs/RELEASING.md), so control of this repository alone puts no app
+  # on any Host.
+  store:
+    name: App Store catalog
+    needs: [version, runtime-merge, release]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: ${{ github.ref_name }}
+      PYTHON_DIGEST: ${{ needs.runtime-merge.outputs.python }}
+      BROWSER_DIGEST: ${{ needs.runtime-merge.outputs.browser }}
+      HELPER_DIGEST: ${{ needs.runtime-merge.outputs.helper }}
+      CREATIVE_DIGEST: ${{ needs.runtime-merge.outputs.creative }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Write catalog.json and the bundles
+        env:
+          DOWNLOAD_BASE: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.ref_name }}
+          SOURCE_BASE: ${{ github.server_url }}/${{ github.repository }}/tree/${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/store"
+          mkdir -p "$out"
+          python3 - "$RUNNER_TEMP/runtime-images.json" <<'EOF'
+          import json, os, sys
+          images = {f: f"{os.environ[f.upper() + '_IMAGE']}@{os.environ[f.upper() + '_DIGEST']}"
+                    for f in ("python", "browser", "helper", "creative")}
+          json.dump(images, open(sys.argv[1], "w"), indent=2, sort_keys=True)
+          print(json.dumps(images, indent=2, sort_keys=True))
+          EOF
+          python3 scripts/build_store_catalog.py --version "$VERSION" --bundles factory-bundles \
+            --download-base "$DOWNLOAD_BASE" --images "$RUNNER_TEMP/runtime-images.json" \
+            --source-base "$SOURCE_BASE" --out "$out"
+          test -f "$out/catalog.json"
+          ls -l "$out"
+
+      # A released asset is never replaced: catalog.json may already have its
+      # signature beside it, which covers exactly these bytes.
+      - name: Upload catalog.json and the bundles
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/store"
+          present="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+          for f in "$out/catalog.json" "$out"/*.cseries; do
+            name="$(basename "$f")"
+            if grep -qxF "$name" <<< "$present"; then
+              have="$(gh release download "$TAG" --pattern "$name" --output - | sha256sum | cut -d' ' -f1)"
+              want="$(sha256sum "$f" | cut -d' ' -f1)"
+              if [[ "$have" != "$want" ]]; then
+                echo "::error::$name is already on the release with other contents ($have, this run built $want); a released asset is never replaced"
+                exit 1
+              fi
+              echo "$name is already on the release, with these contents"
+            else
+              gh release upload "$TAG" "$f"
+            fi
+          done
+
+      - name: What the maintainer signs
+        run: |
+          set -euo pipefail
+          sha="$(sha256sum "$RUNNER_TEMP/store/catalog.json" | cut -d' ' -f1)"
+          {
+            echo "### App Store catalog $VERSION: waiting for its signature"
+            echo
+            echo "On the computer that holds the release key (docs/RELEASING.md):"
+            echo
+            echo '```'
+            echo "release-sign sign cseries-store $VERSION $sha > catalog.json.${sha:0:16}.sig"
+            echo "gh release upload $TAG catalog.json.${sha:0:16}.sig --repo $GITHUB_REPOSITORY"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  # The C-Series Cloud release: the overlay a cloud box installs and
+  # cloud-release.json, which pins it and the images this run pushed. Boxes
+  # take a release only once its signature is beside the manifest, and the
+  # maintainer adds that by hand from the computer that holds the release key
+  # (docs/RELEASING.md), so control of this repository alone moves no box.
+  cloud:
+    name: C-Series Cloud release
+    needs: [version, merge, release, runtime-merge, runtime-release]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      TAG: ${{ github.ref_name }}
+      HOST_DIGEST: ${{ needs.merge.outputs.host }}
+      POSTGRES_DIGEST: ${{ needs.merge.outputs.postgres }}
+      PYTHON_DIGEST: ${{ needs.runtime-merge.outputs.python }}
+      BROWSER_DIGEST: ${{ needs.runtime-merge.outputs.browser }}
+      HELPER_DIGEST: ${{ needs.runtime-merge.outputs.helper }}
+      CREATIVE_DIGEST: ${{ needs.runtime-merge.outputs.creative }}
+      HARNESS_SRC_SHA256: ${{ needs.runtime-release.outputs.harness_src_sha256 }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # build-overlay.sh dates every entry at the commit's time, so the same
+      # tag builds the same bytes on any runner.
+      - name: Build the overlay and write cloud-release.json
+        env:
+          DOWNLOAD_BASE: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/cloud"
+          bash vm/cloud/build-overlay.sh --version "$VERSION" --out "$out"
+          python3 .github/scripts/release.py cloud-json vm/cloud/cloud-release.json \
+            --version "$VERSION" \
+            --host-image "$HOST_IMAGE" --host-digest "$HOST_DIGEST" \
+            --postgres-image "$POSTGRES_IMAGE" --postgres-digest "$POSTGRES_DIGEST" \
+            --overlay "$out/cseries-cloud-overlay-$VERSION.tar.gz" \
+            --download-base "$DOWNLOAD_BASE" --out "$out/cloud-release.json" \
+            --runtime "python=$PYTHON_IMAGE@$PYTHON_DIGEST" \
+            --runtime "browser=$BROWSER_IMAGE@$BROWSER_DIGEST" \
+            --runtime "helper=$HELPER_IMAGE@$HELPER_DIGEST" \
+            --runtime "creative=$CREATIVE_IMAGE@$CREATIVE_DIGEST" \
+            --harness-src-url "$DOWNLOAD_BASE/cseries-harness-src-$VERSION.tar.gz" \
+            --harness-src-sha256 "$HARNESS_SRC_SHA256"
+
+      # A released asset is never replaced: one already on the release (this
+      # job, re-run) must be byte for byte the file this run built, because
+      # a signature over cloud-release.json may already sit beside it.
+      - name: Upload the overlay and cloud-release.json
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/cloud"
+          overlay="cseries-cloud-overlay-$VERSION.tar.gz"
+          present="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+          for f in "$out/$overlay" "$out/$overlay.sha256" "$out/cloud-release.json"; do
+            name="$(basename "$f")"
+            if grep -qxF "$name" <<< "$present"; then
+              have="$(gh release download "$TAG" --pattern "$name" --output - | sha256sum | cut -d' ' -f1)"
+              want="$(sha256sum "$f" | cut -d' ' -f1)"
+              if [[ "$have" != "$want" ]]; then
+                echo "::error::$name is already on the release with other contents ($have, this run built $want); a released asset is never replaced"
+                exit 1
+              fi
+              echo "$name is already on the release, with these contents"
+            else
+              gh release upload "$TAG" "$f"
+            fi
+          done
+
+      - name: What the maintainer signs
+        run: |
+          set -euo pipefail
+          sha="$(sha256sum "$RUNNER_TEMP/cloud/cloud-release.json" | cut -d' ' -f1)"
+          {
+            echo "### C-Series Cloud $VERSION: waiting for its signature"
+            echo
+            echo "On the computer that holds the release key (docs/RELEASING.md):"
+            echo
+            echo '```'
+            echo "release-sign sign cseries-cloud $VERSION $sha > cloud-release.json.${sha:0:16}.sig"
+            echo "gh release upload $TAG cloud-release.json.${sha:0:16}.sig --repo $GITHUB_REPOSITORY"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
   npm:
     name: npm packages
-    needs: [version, merge, guest, release]
+    needs: [version, merge, guest, release, runtime-merge, runtime-release]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -523,6 +1295,11 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       HOST_DIGEST: ${{ needs.merge.outputs.host }}
       POSTGRES_DIGEST: ${{ needs.merge.outputs.postgres }}
+      PYTHON_DIGEST: ${{ needs.runtime-merge.outputs.python }}
+      BROWSER_DIGEST: ${{ needs.runtime-merge.outputs.browser }}
+      HELPER_DIGEST: ${{ needs.runtime-merge.outputs.helper }}
+      CREATIVE_DIGEST: ${{ needs.runtime-merge.outputs.creative }}
+      HARNESS_SRC_SHA256: ${{ needs.runtime-release.outputs.harness_src_sha256 }}
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -551,23 +1328,34 @@ jobs:
             --version "$VERSION" \
             --host-image "$HOST_IMAGE" --host-digest "$HOST_DIGEST" \
             --postgres-image "$POSTGRES_IMAGE" --postgres-digest "$POSTGRES_DIGEST" \
-            --guest-dir "$RUNNER_TEMP/guest" --download-base "$DOWNLOAD_BASE"
+            --guest-dir "$RUNNER_TEMP/guest" --download-base "$DOWNLOAD_BASE" \
+            --runtime "python=$PYTHON_IMAGE@$PYTHON_DIGEST" \
+            --runtime "browser=$BROWSER_IMAGE@$BROWSER_DIGEST" \
+            --runtime "helper=$HELPER_IMAGE@$HELPER_DIGEST" \
+            --runtime "creative=$CREATIVE_IMAGE@$CREATIVE_DIGEST" \
+            --harness-src-url "$DOWNLOAD_BASE/cseries-harness-src-$VERSION.tar.gz" \
+            --harness-src-sha256 "$HARNESS_SRC_SHA256"
 
       # Everything release.json names must be fetchable by anyone, with no
       # login, before a CLI that pins it is published.
       - name: Check what release.json pins is public
         run: |
           set -euo pipefail
-          for ref in "$HOST_IMAGE@$HOST_DIGEST" "$POSTGRES_IMAGE@$POSTGRES_DIGEST"; do
+          for ref in "$HOST_IMAGE@$HOST_DIGEST" "$POSTGRES_IMAGE@$POSTGRES_DIGEST" \
+                     "$PYTHON_IMAGE@$PYTHON_DIGEST" "$BROWSER_IMAGE@$BROWSER_DIGEST" \
+                     "$HELPER_IMAGE@$HELPER_DIGEST" "$CREATIVE_IMAGE@$CREATIVE_DIGEST"; do
             if ! docker buildx imagetools inspect "$ref" > /dev/null; then
-              echo "::error::$ref cannot be pulled without a login. Make both GHCR packages public (docs/RELEASING.md), then re-run this job."
+              echo "::error::$ref cannot be pulled without a login. Make every GHCR package of the release public (docs/RELEASING.md), then re-run this job."
               exit 1
             fi
           done
           python3 - packages/cseries/release.json > "$RUNNER_TEMP/guest-urls" <<'EOF'
           import json, sys
-          for g in json.load(open(sys.argv[1]))["guest"].values():
+          m = json.load(open(sys.argv[1]))
+          for g in m["guest"].values():
               print(g["url"], g["sha256"])
+          src = m["runtime"]["harness_src"]
+          print(src["url"], src["sha256"])
           EOF
           while read -r url sha; do
             got="$(curl -fsSL --retry 3 "$url" | sha256sum | cut -d' ' -f1)"

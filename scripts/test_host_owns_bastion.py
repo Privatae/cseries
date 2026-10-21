@@ -88,7 +88,21 @@ import tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path[:0] = [ROOT, os.path.join(ROOT, "brain")]
 
-TMP = pathlib.Path(tempfile.mkdtemp(prefix="host-owns-bastion-"))
+def _socket_tmp() -> pathlib.Path:
+    """The test's folder: in TMPDIR when the deepest socket it binds there
+    (shared/runs/<run id>.sock, a real AF_UNIX address, at most 107 bytes)
+    fits, else in /tmp. The pre-merge runner's TMPDIR is a scratch folder
+    of its own, deep enough that the run socket did not fit, so this gate
+    failed there and passed when run by hand."""
+    deepest = len("/host-owns-bastion-XXXXXXXX/shared/runs/run-0001abcd.sock")
+    for base in (tempfile.gettempdir(), "/tmp"):
+        if len(os.path.abspath(base)) + deepest <= 107 and os.path.isdir(base):
+            return pathlib.Path(tempfile.mkdtemp(prefix="host-owns-bastion-", dir=base))
+    raise SystemExit("FAIL: no temp folder short enough for a unix socket "
+                     f"(TMPDIR={tempfile.gettempdir()!r})")
+
+
+TMP = _socket_tmp()
 # Removed however the run ends, an import failure included.
 atexit.register(shutil.rmtree, TMP, True)
 SHARED = TMP / "shared"

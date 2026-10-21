@@ -1,0 +1,2 @@
+# 2026-10-19 (local runtime): cseries-runtime's unix socket answers only a peer with the Host's uid inside the Host's cgroup (the same uid in another cgroup, or another uid, is refused 403 and its request not read), one JSON line in and one out in the bridge's envelope, and 400 for a line that is not JSON, is over 1 MiB or names an unknown op. A real socket in a temporary directory.
+test_runtime_server_peer.py

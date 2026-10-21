@@ -222,4 +222,7 @@ Copyright 2019 Kenneth Reitz
    limitations under the License.
 ```
 
+pyOpenSSL 26.4.0 (Apache-2.0; the owner's passkeys, through webauthn) carries no NOTICE file, in its
+wheel or at its upstream tag (third_party/licenses/SOURCES.md, section 11).
+
 No NOTICE file was found for the Apache-2.0 npm packages in the web bundles (checked in an installed node_modules with the same workbench-web lockfile), for the other Apache-2.0 Python wheels in the kernel image, or for the Apache-2.0 Python wheels in the sidecar images. Apache AGE's NOTICE is still missing (item 10). The ArtCraft NOTICE texts are in the appendix.

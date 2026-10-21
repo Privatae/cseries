@@ -22,8 +22,10 @@ Two hard properties:
 import asyncio
 import base64
 import datetime as _dt
+import ipaddress
 import json
 import os
+import socket
 import sys
 import time
 from typing import NamedTuple, Optional
@@ -234,6 +236,100 @@ def _upstream_proxy() -> Optional[tuple]:
     if not host:
         return None
     return host, port
+
+
+# ── the app lane's floor: never a private or reserved address ───────────────
+#
+# The app lane carries traffic for other containers (the local runtime's
+# browser, process apps, helpers and coding engines). A destination that
+# resolves to anything that is not a global address (this machine, the
+# owner's own network, a link-local metadata address) is refused, whatever the
+# signed rules say: on a cloud box the box's firewall drops those for every
+# container, but in a WSL guest nothing else would. The dial then goes to the
+# address that was checked, so the name cannot resolve to something else in
+# between; a request a signed rule pins to a bastion is held to the same floor,
+# and the bastion is asked for that address (EgressProxy._pinned_dispatch says
+# why the bastion's own check does not cover it). CSERIES_EGRESS_TEST_NETS (comma-separated networks) counts ranges as
+# outside, for a test machine whose stand-in sites live in documentation
+# ranges; nothing sets it on a real machine.
+
+def _test_nets() -> list:
+    out = []
+    for n in (os.environ.get("CSERIES_EGRESS_TEST_NETS") or "").split(","):
+        n = n.strip()
+        if n:
+            try:
+                out.append(ipaddress.ip_network(n, strict=False))
+            except ValueError:
+                pass
+    return out
+
+
+# IPv6 addresses that a translator on the machine's network turns into an IPv4
+# one. The well-known NAT64 prefix (RFC 6052) carries the IPv4 address in its last
+# four bytes, and Python counts every address in it as global, so
+# 64:ff9b::a9fe:a9fe (169.254.169.254) passed the floor. An address there is judged
+# by the IPv4 address inside it: an IPv6-only network with DNS64 reaches every IPv4
+# site this way, so the prefix as a whole cannot be refused. The rest of
+# 64:ff9b::/32 is refused outright, the local-use prefix 64:ff9b:1::/48 (RFC 8215)
+# with it: its translator may embed the IPv4 address at any of RFC 6052's prefix
+# lengths, so which IPv4 address it reaches cannot be read from the address. The
+# bastion's own egress check judges these the same way (client-go/egress.go
+# internalIP).
+_NAT64_WKP = ipaddress.ip_network("64:ff9b::/96")
+_NAT64_ALL = ipaddress.ip_network("64:ff9b::/32")
+
+
+def _outside(addr: str) -> bool:
+    """Whether a dialled address is on the internet (or a test's stand-in)."""
+    try:
+        ip = ipaddress.ip_address(addr.split("%", 1)[0])
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
+        elif ip in _NAT64_WKP:
+            ip = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+        elif ip in _NAT64_ALL:
+            return False
+    if any(ip.version == n.version and ip in n for n in _test_nets()):
+        return True
+    return ip.is_global
+
+
+async def _resolve(host: str, port: int) -> list:
+    """Every address host resolves to (an address resolves to itself)."""
+    infos = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    return [i[4][0] for i in infos]
+
+
+def _connect_line(addr: str, port: int) -> bytes:
+    """`CONNECT <addr>:<port> HTTP/1.1` for an address the floor checked (an IPv6 one
+    in brackets)."""
+    a = addr.split("%", 1)[0]
+    host = f"[{a}]" if ":" in a else a
+    return f"CONNECT {host}:{int(port)} HTTP/1.1\r\n".encode("ascii")
+
+
+def _origin_form(head: bytes, target: str) -> bytes:
+    """A proxy's absolute-form request (`GET http://h/p HTTP/1.1`) as the origin is
+    sent it: `GET /p HTTP/1.1`, with a Host header (added from the URL when the client
+    sent none). The rest of the head is unchanged."""
+    first, sep, rest = head.partition(b"\r\n")
+    parts = first.split(b" ")
+    authority, path = target, "/"
+    if "://" in target:
+        after = target.split("://", 1)[1]
+        authority, slash, tail = after.partition("/")
+        path = "/" + tail if slash else "/"
+    if len(parts) >= 3:
+        parts[1] = path.encode("latin-1", "replace")
+        first = b" ".join(parts)
+    lines = rest.split(b"\r\n")
+    if not any(ln[:5].lower() == b"host:" for ln in lines):
+        rest = b"Host: " + authority.encode("latin-1", "replace") + b"\r\n" + rest
+    return first + (sep or b"\r\n") + rest
 
 
 def _no_proxy_match(host: str) -> bool:
@@ -713,8 +809,8 @@ class EgressProxy:
                         b"' is not connected, and this traffic is pinned to it. "
                         b"Start its bastion, or change the rule in your Network app.")
                     return
-                if await relay.dispatch(head, reader, writer, timeout=_IO_TIMEOUT,
-                                        bastion_token_id=token_id):
+                if await self._pinned_dispatch(relay, token_id, head, reader, writer,
+                                               method, target):
                     return
                 await self._refuse(
                     writer, b"503 Service Unavailable",
@@ -732,6 +828,12 @@ class EgressProxy:
             # waits the full timeout on every request, and with no queue
             # ever created asyncio.wait(set()) raises into the outer handler, which
             # closes the socket with no body at all.
+            # The app lane never reaches a bastion this way: its unpinned traffic
+            # returned above, and an exit nac_propose would not sign is not given to
+            # whichever bastion is free with the floor skipped.
+            if self.app_lane:
+                await self._direct_dispatch(head, reader, writer, method, target)
+                return
             if relay.worker_count() > 0:
                 ok = await relay.dispatch(head, reader, writer, timeout=_IO_TIMEOUT)
                 if ok:
@@ -775,6 +877,12 @@ class EgressProxy:
                 dport = 80
             if not dhost:
                 raise ValueError("no destination host")
+            dial = dhost
+            if self.app_lane:
+                addrs = await self._floor(dhost, dport, writer)
+                if addrs is None:
+                    return
+                dial = addrs[0]
             upstream = None if _no_proxy_match(dhost) else _upstream_proxy()
             if upstream is not None:
                 try:
@@ -802,7 +910,7 @@ class EgressProxy:
                                 pass
                     return
             remote_r, remote_w = await asyncio.wait_for(
-                asyncio.open_connection(dhost, dport), timeout=_IO_TIMEOUT)
+                asyncio.open_connection(dial, dport), timeout=_IO_TIMEOUT)
         except Exception as exc:
             egress_log.info("gate: direct egress could not connect (%s)", type(exc).__name__)
             if _is_platform_dest(dhost):
@@ -839,6 +947,120 @@ class EgressProxy:
                 except Exception:
                     pass
 
+    async def _floor(self, dhost: str, dport: int, writer) -> Optional[list]:
+        """The app lane's floor: every address dhost resolves to, when each is outside
+        (_outside); otherwise the request is answered 403 and None is returned."""
+        from server.network.egress_relay import log as egress_log
+        try:
+            addrs = await _resolve(dhost, dport)
+        except OSError:
+            addrs = []
+        if not addrs or not all(_outside(a) for a in addrs):
+            egress_log.info("gate: app lane refused a private or reserved destination")
+            await self._refuse(
+                writer, b"403 Forbidden",
+                b"Blocked: this destination is this machine or a private or reserved "
+                b"network, which nothing that goes out through this gate may reach.")
+            return None
+        return addrs
+
+    def _dest_and_port(self, method: str, target: str, head: bytes) -> tuple:
+        """(host, port) the request is for, as _direct_dispatch reads them."""
+        if method == "CONNECT":
+            return self._host_port(target, 443)
+        if "://" in target:
+            return self._host_port(target.split("://", 1)[1].partition("/")[0], 80)
+        return self._dest_host(method, target, head), 80
+
+    async def _pinned_dispatch(self, relay, token_id, head, reader, writer, method, target) -> bool:
+        """Hand a request pinned to a bastion to that bastion. False when it did not
+        take it in time (the caller answers 503); True when it was answered.
+
+        From the app lane the floor applies first, as on every other way out. The
+        callers there are apps, the browser and coding engines, not the owner, and a
+        bastion on the owner's own machine dials whatever its Host asks without a check
+        of its own: client-go/egress.go egressVettedAddr vets only on an anchored box,
+        "because on a local box the host using it is the person's own"
+        (client-go/coder_egress.go, which vets a coding agent's traffic always for the
+        same reason). And the bastion is asked for the ADDRESS the floor checked, never
+        the name, which it would resolve again: a name that answered a public address
+        here could answer 127.0.0.1 there. A CONNECT goes as `CONNECT <address>:<port>`
+        (the client's TLS still names the site); a plain-HTTP request goes down a
+        CONNECT tunnel to that address in origin form (_pinned_http)."""
+        if not self.app_lane:
+            return await relay.dispatch(head, reader, writer, timeout=_IO_TIMEOUT,
+                                        bastion_token_id=token_id)
+        dhost, dport = self._dest_and_port(method, target, head)
+        if not dhost:
+            await self._refuse(writer, b"400 Bad Request", b"This request names no destination.")
+            return True
+        addrs = await self._floor(dhost, dport, writer)
+        if addrs is None:
+            return True
+        line = _connect_line(addrs[0], dport)
+        if method == "CONNECT":
+            rest = head.split(b"\n", 1)[1] if b"\n" in head else b"\r\n"
+            return await relay.dispatch(line + rest, reader, writer, timeout=_IO_TIMEOUT,
+                                        bastion_token_id=token_id)
+        return await self._pinned_http(relay, token_id, line + b"\r\n", _origin_form(head, target),
+                                       reader, writer)
+
+    async def _pinned_http(self, relay, token_id, connect, request, reader, writer) -> bool:
+        """A plain-HTTP request through a bastion's CONNECT tunnel: the bastion's answer
+        to the CONNECT is read here, and only a 200 lets the request through; anything
+        else (its own refusal) is what the client gets."""
+        a, b = socket.socketpair()
+        try:
+            ar, aw = await asyncio.open_connection(sock=a)
+            br, bw = await asyncio.open_connection(sock=b)
+        except OSError:
+            a.close()
+            b.close()
+            return False
+        task = asyncio.ensure_future(relay.dispatch(connect, ar, aw, timeout=_IO_TIMEOUT,
+                                                    bastion_token_id=token_id))
+        answer = asyncio.ensure_future(br.readuntil(b"\r\n\r\n"))
+        # The bastion answers once a worker took the request and its dial ended
+        # (client-go egressDialTimeout is 20 s, as _IO_TIMEOUT is here).
+        await asyncio.wait({task, answer}, timeout=_IO_TIMEOUT * 3,
+                           return_when=asyncio.FIRST_COMPLETED)
+        if not answer.done():
+            # No worker took it in time (dispatch answered False), or nothing came back.
+            answer.cancel()
+            bw.close()
+            if not task.done():
+                task.cancel()
+                return False
+            return not task.cancelled() and task.exception() is None and bool(task.result())
+        try:
+            status = answer.result()
+        except (asyncio.IncompleteReadError, asyncio.LimitOverrunError, OSError) as e:
+            status = getattr(e, "partial", b"") or b""
+        if status.startswith((b"HTTP/1.1 200", b"HTTP/1.0 200")):
+            try:
+                bw.write(request)
+                await bw.drain()
+                await self._pipe(reader, writer, br, bw)
+            except Exception:
+                pass
+        else:
+            # The bastion's own refusal (403 with X-Privatae-Refused) or its 502.
+            try:
+                writer.write(status or b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+                await writer.drain()
+            except Exception:
+                pass
+            for w in (writer, bw):
+                try:
+                    w.close()
+                except Exception:
+                    pass
+        try:
+            await asyncio.wait_for(task, timeout=5)
+        except Exception:
+            pass
+        return True
+
     @staticmethod
     async def _pipe(client_reader, client_writer, remote_reader, remote_writer):
         """Bidirectional splice client <-> remote until either side closes."""
@@ -870,7 +1092,11 @@ class EgressProxy:
             # is what a sibling pod dials; see server/loopback.py on why `::` and not a
             # v4 literal. Reachability is bounded by the CiliumNetworkPolicy, identity by
             # the per-subject credential; neither alone is the control.
-            self._server = await asyncio.start_server(self._handle, "::", EGRESS_LANE_PORT)
+            # Dual-stack: asyncio sets IPV6_V6ONLY on a `::` listener it makes, and the
+            # local runtime's containers dial it over IPv4 (vm/runtime).
+            sock = socket.create_server(("::", EGRESS_LANE_PORT), family=socket.AF_INET6,
+                                        dualstack_ipv6=socket.has_dualstack_ipv6())
+            self._server = await asyncio.start_server(self._handle, sock=sock)
         else:
             self._server = await asyncio.start_server(
                 self._handle, EGRESS_PROXY_HOST, EGRESS_PROXY_PORT)

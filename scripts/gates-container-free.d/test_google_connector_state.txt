@@ -10,4 +10,5 @@
 # URI follows the state it came back with (a mismatch reads only as "token
 # exchange failed"), and — across TWO keys, because one key cannot show it —
 # that a state signed by another Host is refused here.
+# 2026-10-19: the callback is reached without a session on an https Host, so a state works once and only when this Host minted it (oauth.mint_state / claim_state), within fifteen minutes; the pending states stay bounded.
 test_google_connector_state.py

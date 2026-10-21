@@ -648,9 +648,21 @@ async def browser_sidecar_post(path: str, payload: dict, *, what: str,
                 refusal = None
             if refusal:
                 out["over_plan"] = refusal
-                out["reason"] = "the plan has no room for the browser right now" + (
+                where = "this machine" if refusal.get("scope") == "machine" else "the plan"
+                out["reason"] = f"{where} has no room for the browser right now" + (
                     f" (it needs {refusal['needs_mi']} MiB and {refusal['headroom_mi']} MiB "
                     "are free)" if refusal.get("needs_mi") is not None else "")
+            else:
+                # Any other refusal this machine wrote for a person (a short
+                # disk names its floor and each app's data): its words, so
+                # the Host can say why and what would free room.
+                try:
+                    why = _hb.wake_refused(_BROWSER_APP_ID)
+                except Exception:  # noqa: BLE001
+                    why = None
+                if why:
+                    out["refused"] = why
+                    out["reason"] = f"this machine refused to start the browser: {why['message']}"
             return out
         woke = not already
         rep, reason, retryable = await _call()
@@ -701,7 +713,10 @@ async def _start(app_id: str, *, pool, installed, manifest, kind: str,
         # No supervisor process: the lane wakes the helper pod, the way a
         # proxied request would. None = the wake did not land (yet).
         host = await _hb.ensure_awake_app(app_id)
-        return None if host else "runtime pod did not wake yet"
+        if host:
+            return None
+        why = _hb.wake_refused(app_id)
+        return _MACHINE_REFUSED + why["message"] if why else "runtime pod did not wake yet"
     if kind != "process":
         return None
     sup = _sup_mod.get_supervisor()
@@ -713,21 +728,31 @@ async def _start(app_id: str, *, pool, installed, manifest, kind: str,
         else:
             await sup.open_window(installed=installed, manifest=manifest,
                                   window_id=PROOF_WINDOW_ID)
+    except _sup_mod.WakeRefused as e:
+        return _MACHINE_REFUSED + e.message
     except Exception as e:  # noqa: BLE001 — SupervisorError and friends
         return str(e)[:600]
     return None
+
+
+# A start this machine refused (harness_backend.wake_refused: a short disk, no
+# room): the platform's side, so not a failure of the app, and not a wake
+# still pending either.
+_MACHINE_REFUSED = "this machine refused to start it: "
 
 
 def _wake_pending(start_error: str | None) -> bool:
     """The start failed only because the pod lane has not woken the app's
     runtime pod yet (app_verify._start for a helper, supervisor._pod_open for
     a pod-backed process app). The app has not been run at all."""
-    return bool(start_error) and "did not wake" in start_error
+    return (bool(start_error) and "did not wake" in start_error
+            and not start_error.startswith(_MACHINE_REFUSED))
 
 
 def _platform_start_error(start_error: str | None) -> bool:
     """A start that failed on the platform's side, before the app ran."""
-    return bool(start_error) and start_error.startswith("supervisor unavailable")
+    return bool(start_error) and start_error.startswith(("supervisor unavailable",
+                                                         _MACHINE_REFUSED))
 
 
 def _runtime_pod(app_id: str) -> str | None:

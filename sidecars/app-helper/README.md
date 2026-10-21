@@ -1,15 +1,25 @@
 # cseries-app-helper
 
-The platform's Form-1 app runtime:
-a static, stdlib-only Go fetch+cache proxy that is the ONLY server-side
-code in a store app's pod. Configured entirely from the app's signed
-manifest `network[]` (via the operator's descriptor ConfigMap); refuses
-undeclared hosts, GET-only, HTTPS-only upstream, per-hop redirect
-re-checks (max 3), 8MiB response cap, TTL cache with stale-while-error,
-content-blind. No shell in the image — the kubelet probe is
-`/app-helper -healthcheck`.
+The server side of a helper-form store app: a static, standard-library-only
+Go fetch-and-cache proxy, and the only container such an app runs. It fetches
+public data from the hosts the app declared, on behalf of the app's browser
+code.
 
-Build: `docker build -t cseries-app-helper:vX.Y.Z .`
-Test:  `go test ./...` (14 tests, httptest-only, no network)
-Measured at v0.1.0 build time: image 9.73MB; live e2e: /health ok, undeclared host 403, POST 405, real
-api.weather.gov fetch 200 miss->hit, -healthcheck exit 0.
+- Configured from a JSON file (`CONFIG_PATH`, default `/config/config.json`)
+  naming the app, its declared hosts and optional per-host cache TTLs. The
+  local runtime writes it from the app's descriptor `network[]`.
+- `GET /fetch/<host>/<path>`: a host not on the list is refused with 403;
+  any method other than GET (and the CORS preflight) with 405.
+- Upstream is HTTPS only. Redirects are followed at most 3 hops, each hop
+  re-checked against the list; an off-list hop is the same 403.
+- Responses are capped at 8 MiB and cached with a TTL; when the upstream
+  fails, the last good response is served marked stale.
+- It logs startup and refusals by class only, never a request or a
+  destination.
+- Outbound traffic goes through `HTTP_PROXY`/`HTTPS_PROXY`; the local runtime
+  points both at the Host's egress gate.
+- The image has no shell. `/app-helper -healthcheck` checks the running
+  instance's `/health` and exits 0 or 1.
+
+Build: `docker build -t cseries-app-helper:dev .`
+Test: `go test ./...` (no network needed)

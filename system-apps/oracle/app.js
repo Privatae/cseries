@@ -131,7 +131,7 @@ function syncEnd() { _inflight = Math.max(0, _inflight - 1); if (!_inflight) $("
 
 /* ---------- app state ---------- */
 const state = {
-    lens: "ledger",         // ledger | threads | corrections | health | data
+    lens: "ledger",         // ledger | threads | slots | corrections | health | data
     temporal: "canonical",  // canonical | asof | all
     asOf: null,             // iso date string
     types: new Set(),       // selected memory_type filters
@@ -146,6 +146,7 @@ const cache = { stats: null, coverage: null, rows: [], threads: [], episodes: []
 const LENS = {
     ledger: { title: "Ledger", sub: "The living log of entries — what your Host holds true, and how it got there." },
     threads: { title: "Threads", sub: "Memory grouped by where it happened — each app, project, and peer keeps its own." },
+    slots: { title: "Slots", sub: "One live entry per topic and place: the newest replaces the older, and each slot keeps what it replaced." },
     corrections: { title: "Corrections", sub: "The Host changing its mind — every superseded entry and what replaced it." },
     health: { title: "Health", sub: "How memory forms, embedding coverage, and model readiness." },
     data: { title: "Data", sub: "What your Host keeps in its own database — each table's purpose and rows, and the snapshots you can go back to." },
@@ -222,6 +223,7 @@ function routeLens() {
     switch (state.lens) {
         case "ledger": return loadLedger();
         case "threads": return loadThreads();
+        case "slots": return loadSlots();
         case "corrections": return loadCorrections();
         case "health": return loadHealth();
         case "data": return loadData();
@@ -433,14 +435,23 @@ function renderThreadTurns(turns, thread) {
                 <span class="day-label label-sys">${esc(fmtDayLabel(grp[0].created_at))}</span></div>
                 <div class="day-rows thread-turns">` + grp.map((t) => {
                 const role = (t.role || "user").toLowerCase();
+                // Which memories rode this turn's prompt (the turn records
+                // them: metadata.memory_rode), each one click away.
+                const rode = Array.isArray((t.metadata || {}).memory_rode) ? t.metadata.memory_rode : [];
+                const rodeHTML = rode.length
+                    ? `<div class="tt-rode label-sys">Memories in this turn: ${rode.map((r) =>
+                        `<button class="tt-rode-id" data-id="${esc(r.id)}" title="${esc(r.section || "")}">#${esc(r.id)}</button>`).join(" ")}</div>`
+                    : "";
                 return `<div class="thread-turn tt-${esc(role)}">
                     <div class="tt-role label-sys">${esc(role)}<span class="tt-time">${esc(epTime(t.created_at))}</span></div>
-                    <div class="tt-content">${esc(t.content)}</div>
+                    <div class="tt-content">${esc(t.content)}</div>${rodeHTML}
                 </div>`;
             }).join("") + `</div></div>`;
         }
         body.innerHTML = back + tlFilterHTML("Search this conversation…") + tl;
         wireTlFilter(body, ".thread-turn", ".day-group");
+        $$("#lens-body .tt-rode-id").forEach((el) =>
+            el.addEventListener("click", () => openInspector(Number(el.dataset.id))));
     }
     const b = $("#thread-back");
     if (b) b.addEventListener("click", () => {
@@ -814,6 +825,86 @@ function rowHTML(r) {
         <span class="mr-date">${esc(fmtDate(r.created_at))}</span>
         ${superMark}
     </div>`;
+}
+
+/* ================================================================
+ * Slots lens — every live preference and relationship note by slot
+ * (type · where it is read · topic), each with what it replaced, and
+ * the entries that have no topic yet. A slot holds one live entry: the
+ * newest replaces the older, and a rule the person taught outranks a
+ * preference the Host inferred.
+ * ================================================================ */
+// How many slots, and entries with no topic, the lens lists. One more is
+// asked for, so a list the cap cut says so instead of reading as complete.
+const SLOTS_SHOWN = 200;
+async function loadSlots() {
+    const body = $("#lens-body");
+    body.innerHTML = skeletonRows(5);
+    syncStart();
+    try {
+        const j = await getJSON(`/api/brain/memory-slots?limit=${SLOTS_SHOWN + 1}`);
+        const allSlots = j.slots || [], allLoose = j.no_topic || [];
+        const slots = allSlots.slice(0, SLOTS_SHOWN), loose = allLoose.slice(0, SLOTS_SHOWN);
+        const cut = (n, what) => n > SLOTS_SHOWN
+            ? `<div class="slot-head label-sys">More than ${SLOTS_SHOWN} ${what}: the first ${SLOTS_SHOWN} are listed.</div>`
+            : "";
+        if (!slots.length && !loose.length) {
+            body.innerHTML = emptyState("No preferences yet",
+                "When your Host keeps a preference or a note about someone, it lands in a slot here with its topic.");
+            return;
+        }
+        const scopeName = (sc) => (!sc || sc === "global") ? "everywhere" : sc;
+        const chainHTML = (chain) => chain.length
+            ? `<div class="slot-chain">${chain.map((c) =>
+                `<div class="mem-row st-superseded" data-id="${c.id}">
+                    <span class="mr-content struck">${esc(c.content)}</span>
+                    <span class="label-sys">replaced ${esc(fmtDateTime(c.replaced_at))}${c.why ? " · " + esc(c.why) : ""}</span>
+                </div>`).join("")}</div>`
+            : "";
+        const slotHTML = slots.map((sl) => `<div class="slot">
+            <div class="slot-head label-sys">${esc(sl.type)} · ${esc(scopeName(sl.scope))} · topic <b>${esc(sl.topic)}</b>${sl.rule ? ' · <span class="cseries-pill info">rule</span>' : ""}</div>
+            <div class="mem-row" data-id="${sl.live.id}">
+                <span class="cseries-pill info mr-type">live</span>
+                <span class="mr-content">${esc(sl.live.content)}</span>
+                <span class="label-sys">${esc(fmtDateTime(sl.live.created_at))}${sl.live.turn_type ? " · " + esc(sl.live.turn_type) : ""}</span>
+            </div>
+            ${chainHTML(sl.chain || [])}
+        </div>`).join("");
+        const looseHTML = loose.length
+            ? `<div class="slot-loose"><div class="slot-head label-sys">No topic yet — each rides beside any other entry about the same thing until it has one</div>
+                ${loose.map((r) => `<div class="mem-row" data-id="${r.id}">
+                    <span class="cseries-pill mr-type">${esc(r.type)}${r.rule ? " · rule" : ""}</span>
+                    <span class="mr-content">${esc(r.content)}</span>
+                    <span class="slot-key"><input class="cseries-input slot-topic" data-id="${r.id}" placeholder="topic" aria-label="Topic for #${r.id}">
+                    <button class="cseries-btn ghost slot-save" data-id="${r.id}">Set</button></span>
+                </div>`).join("")}</div>`
+            : "";
+        body.innerHTML = tlFilterHTML("Filter slots…") + slotHTML
+            + cut(allSlots.length, "slots, by type, place and topic") + looseHTML
+            + cut(allLoose.length, "entries with no topic yet, newest first");
+        wireTlFilter(body, ".slot, .slot-loose .mem-row", null);
+        $$("#lens-body .mem-row .mr-content").forEach((el) => el.addEventListener("click", () =>
+            openInspector(Number(el.closest(".mem-row").dataset.id))));
+        $$("#lens-body .slot-save").forEach((el) => el.addEventListener("click", async () => {
+            const id = Number(el.dataset.id);
+            const box = $(`#lens-body .slot-topic[data-id="${id}"]`);
+            await setTopic(id, box ? box.value : "");
+        }));
+    } catch (e) {
+        paneError(body, "Couldn't load slots: " + e.message, loadSlots);
+    } finally { syncEnd(); }
+}
+
+async function setTopic(id, topic) {
+    if (!String(topic || "").trim()) { banner("error", "A topic needs a few words."); return; }
+    syncStart();
+    try {
+        const r = await postJSON(`/api/brain/manage/memories/${id}/topic`, { topic });
+        banner("success", r.status === "replaced_by"
+            ? `#${id} was older than #${r.replaced_by}, which holds that topic here, so #${r.replaced_by} stays and #${id} moved into its history.`
+            : `#${id} now has topic "${r.slot && r.slot.topic}".`);
+        loadFacets(); routeLens();
+    } catch (e) { banner("error", "Setting the topic failed: " + e.message); } finally { syncEnd(); }
 }
 
 /* ================================================================
@@ -1201,6 +1292,22 @@ function renderInspector(m, neighbors) {
                 <div class="lin-row" data-id="${m.held_by_rule}"><span class="lin-dir">→</span><span class="lin-txt">Rule #${m.held_by_rule} says the same words. This copy is kept where that rule is not read, and never shows beside it.</span></div></div>`
             : "");
 
+    // The slot: what the entry is about, where it is read, the turn type it
+    // was written in, and what it replaced in that slot.
+    const isSlotted = m.memory_type === "preference" || m.memory_type === "relationship";
+    const chain = Array.isArray(m.chain) ? m.chain : [];
+    const slot = isSlotted
+        ? `<div class="ins-field"><span class="ins-label">Slot</span>
+            <div class="ins-value">${m.topic
+                ? `topic <b>${esc(m.topic)}</b> · read ${esc(!m.slot_scope || m.slot_scope === "global" ? "everywhere" : m.slot_scope)}`
+                : `no topic yet — it rides beside any other entry about the same thing until it has one`}${m.turn_type ? ` · written in a ${esc(m.turn_type)} turn` : ""}</div>
+            ${m.status === "active" && !m.t_valid_until ? `<div class="ins-edit-row"><input class="cseries-input" id="ins-topic" placeholder="topic" value="${esc(m.topic || "")}" aria-label="Topic">
+                <button class="cseries-btn ghost" id="ins-topic-save">${m.topic ? "Rename" : "Set topic"}</button></div>` : ""}
+            ${chain.length ? `<div class="ins-value" style="margin-top:6px">Replaced in this slot:</div>` + chain.map((c) =>
+                `<div class="lin-row" data-id="${c.id}"><span class="lin-dir up">↑</span><span class="lin-txt">#${c.id} ${esc((c.content || "").slice(0, 120))} — ${esc(fmtDate(c.replaced_at))}${c.why ? " · " + esc(c.why) : ""}</span></div>`).join("") : ""}
+        </div>`
+        : "";
+
     // Lineage (clickable walk)
     const lin = [];
     if (m.correction_of) lin.push(`<div class="lin-row" data-id="${m.correction_of}"><span class="lin-dir up">↑</span><span class="lin-txt">Replaced #${m.correction_of} — what this superseded</span></div>`);
@@ -1275,6 +1382,7 @@ function renderInspector(m, neighbors) {
             ${m.status_reason ? `<div class="ins-field"><span class="ins-label">Status reason</span><div class="ins-value mono" style="color:var(--cseries-clay)">${esc(m.status_reason)}</div></div>` : ""}
             ${resolution}
             ${rule}
+            ${slot}
             ${lifeline}
             ${lineage}
             ${provenance}
@@ -1297,6 +1405,8 @@ function renderInspector(m, neighbors) {
     $("#ins-delete").addEventListener("click", () => confirmDelete(m.id));
     const rc = $("#ins-resolve");
     if (rc) rc.addEventListener("click", () => resolveMemory(m.id));
+    const ts = $("#ins-topic-save");
+    if (ts) ts.addEventListener("click", async () => { await setTopic(m.id, $("#ins-topic").value); openInspector(m.id); });
     // Edit-form wiring happens ONCE here — wiring it inside the Correct
     // click handler stacked duplicate save listeners (double POST).
     $("#ins-edit-cancel").addEventListener("click", () => { $("#ins-edit").hidden = true; });

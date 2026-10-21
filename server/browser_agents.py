@@ -839,6 +839,12 @@ async def _wake() -> bool:
 
     Loopback (the legacy in-pod sidecar) needs no wake; a failed wake is
     reported by the first call, which says the browser is unreachable.
+
+    A wake this machine or the plan REFUSED (a short disk, no room, too many
+    containers: harness_backend.wake_refused) raises AgentError with the
+    refusal's words, so the run ends there with the reason the owner can act
+    on. Calling the browser anyway would fail as "unreachable" and wake it
+    cold a second time, to the same refusal.
     """
     try:
         from server.applications import harness_backend as hb
@@ -847,9 +853,16 @@ async def _wake() -> bool:
         return False
     already = bool(hb.upstream_host(_BROWSER))
     try:
-        await hb.ensure_awake(_BROWSER, _BROWSER)
+        host = await hb.ensure_awake(_BROWSER, _BROWSER)
     except Exception as e:  # noqa: BLE001
         log.info("browser wake failed: %s", type(e).__name__)
+        return not already
+    if host is None:
+        # Read only after this wake returned None: it recorded its own
+        # failure, so the refusal is this wake's, never an earlier one's.
+        words = hb.wake_refused_words(_BROWSER)
+        if words:
+            raise AgentError(f"the browser was not started{words}")
     return not already
 
 

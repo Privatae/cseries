@@ -1,5 +1,6 @@
 /* ================================================================
- * Backups — app-specific layout (read-only status view).
+ * Backups — the recovery key, the backups on this machine, a restore
+ * from a file, and the bastion's own copy.
  * Design tokens + components: /css/tokens.css + cseries-components.css
  * ================================================================ */
 
@@ -219,4 +220,81 @@ html, body {
 }
 .app-footer-right {
     color: var(--cseries-linen);
+}
+
+
+/* ── the recovery key, the files, a restore from a file ─────────────── */
+.view-heading.spaced { margin-top: var(--space-5); }
+.cseries-card {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+}
+.say {
+    font-size: var(--text-sm);
+    color: var(--cseries-linen);
+    line-height: var(--leading-relaxed);
+    margin: 0;
+    white-space: pre-line;
+}
+.say.strong { color: var(--cseries-gold); font-weight: 600; }
+.status-banner { border-left: 3px solid var(--cseries-gold); margin-bottom: var(--space-4); }
+.actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-top: var(--space-2);
+}
+.tick {
+    display: flex;
+    gap: var(--space-2);
+    align-items: flex-start;
+    font-size: var(--text-sm);
+    color: var(--cseries-linen);
+    margin-top: var(--space-2);
+}
+.tick input { margin-top: 3px; }
+.cseries-input.short { max-width: 180px; }
+.file {
+    font-size: var(--text-sm);
+    color: var(--cseries-linen);
+    margin-top: var(--space-2);
+}
+.key-show {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-4);
+    align-items: flex-start;
+    margin-top: var(--space-2);
+}
+.key-qr svg { display: block; border-radius: 4px; background: #fff; }
+.key-text-wrap { flex: 1; min-width: 220px; }
+.key-text {
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    color: var(--cseries-paper);
+    background: var(--cseries-twilight);
+    padding: var(--space-3);
+    border-radius: 4px;
+    white-space: pre-wrap;
+    word-break: break-all;
+    margin: 0 0 var(--space-2);
+}
+.sep { border-top: 1px solid var(--cseries-seam); margin: var(--space-3) 0 var(--space-2); }
+.file-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: var(--space-3);
+    font-size: var(--text-sm);
+    color: var(--cseries-linen);
+}
+.file-row .when { color: var(--cseries-paper); }
+.file-row .size { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--cseries-ash); }
+
+@media print {
+    body * { visibility: hidden; }
+    #key-show, #key-show * { visibility: visible; }
+    #key-show { position: absolute; top: 0; left: 0; }
+    .key-text { color: #000; background: #fff; }
 }

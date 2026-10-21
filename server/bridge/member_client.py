@@ -52,6 +52,11 @@ NETWORK_DOOR_PORT = 8643
 # out appstore.yank_version until the store checks that the caller published
 # the app, and appstore.checkout.create and appstore.refund because it holds no
 # Stripe key in phase 1; so they are answered here and never sent.
+#
+# The backup ops carry the Host's encrypted backups to the network's storage
+# (server/host_backup.py): the door scopes each to the Host's own folder.
+# backup.recovery_key is left out until the door answers it: it would hand the
+# Host a recovery key its owner never registered through the network.
 NETWORK_OPS: frozenset[str] = frozenset({
     "heartbeat.ping", "passport.renew", "passport.revoke",
     "appstore.list", "appstore.icon", "appstore.fetch_bundle", "appstore.purchase",
@@ -64,6 +69,9 @@ NETWORK_OPS: frozenset[str] = frozenset({
     "community.vote", "community.flag", "community.search", "community.digest",
     "community.set_proposal_ref", "community.group.join",
     "rendezvous.list", "rendezvous.withdraw",
+    "backup.upload.start", "backup.upload.part", "backup.upload.complete",
+    "backup.upload.abort", "backup.put_url", "backup.list", "backup.get_url",
+    "backup.drop", "backup.report",
 })
 
 # The reasons the door gives when it refuses or drops a connection.

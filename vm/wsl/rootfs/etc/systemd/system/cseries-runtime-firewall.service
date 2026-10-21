@@ -1,0 +1,18 @@
+# The local runtime's firewall in the WSL guest (/etc/cseries-runtime/runtime.nft),
+# loaded before the runtime and before any container starts. There is no
+# ExecStop: stopping this unit leaves the rules in place.
+[Unit]
+Description=C-Series local runtime firewall
+DefaultDependencies=no
+Before=cseries-runtime.service cseries-host.service shutdown.target
+Conflicts=shutdown.target
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/cseries-runtime/runtime.nft
+ExecReload=/usr/sbin/nft -f /etc/cseries-runtime/runtime.nft
+
+[Install]
+WantedBy=sysinit.target

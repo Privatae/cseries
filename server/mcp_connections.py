@@ -725,7 +725,10 @@ async def _use_app(pool, row: dict, send):
             raise McpConnectionError(f"{row['name']} was not reached: its app did not wake "
                                      f"({type(e).__name__}: {str(e)[:200]})") from None
         if not host:
-            raise McpConnectionError(f"{row['name']} was not reached: its app did not wake")
+            # A refusal this machine wrote for a person (a short disk, no
+            # room) is the reason the Host relays (wake_refused_words).
+            raise McpConnectionError(f"{row['name']} was not reached: its app did not wake"
+                                     f"{harness_backend.wake_refused_words(app_id)}")
         try:
             return await send(headers, (f"http://{host}{path}", False))
         except mcp_client.McpError as e:
@@ -1157,7 +1160,8 @@ async def _app_file(pool, eid: int, app_id: str, rel: str, room: int) -> tuple[b
         raise McpConnectionError(f"{app_id} did not wake to hand over {rel} "
                                  f"({type(e).__name__}: {str(e)[:200]})") from None
     if not host:
-        raise McpConnectionError(f"{app_id} did not wake to hand over {rel}")
+        raise McpConnectionError(f"{app_id} did not wake to hand over {rel}"
+                                 f"{harness_backend.wake_refused_words(app_id)}")
     token = await harness_backend.app_source_token(pool, app_id)
     url = f"http://{host}/files/{quote(rel, safe='/')}"
     import aiohttp

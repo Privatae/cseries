@@ -1,0 +1,528 @@
+#!/usr/bin/python3 -I
+"""The cloud box's bootstrap, run once as root by vm/cloud/bootstrap.sh, which
+has installed the packages and unpacked the overlay. Running it again finishes
+what an earlier run left undone and changes nothing that is already right.
+
+  cseries-cloud-bootstrap run --overlay <unpacked overlay>
+  cseries-cloud-bootstrap seal
+  cseries-cloud-bootstrap rotate-door-key
+
+run reads /etc/cseries-cloud/bootstrap.json, sets the box up, starts the Host,
+pairs the bastion on this machine to it, and prints ONE JSON line:
+
+  {"ok": true, "setup_code": ..., "heartbeat_pubkey": ..., "acme_account_uri": ...,
+   "host_ca_sha256": ..., "versions": {...}, "cert": "issued"|"pending"|"self-signed"}
+
+or {"ok": false, "step": ..., "error": ...}. Progress goes to stderr.
+
+seal is the provisioner's last command: it answers at once, then a few seconds
+later drops the SSH rule, stops, masks and removes the SSH server, removes
+every authorized_keys file and the default user's sudo, and stops cloud-init
+from running again, so nothing the provider's metadata says later can open
+the box.
+
+rotate-door-key replaces the door key Caddy's forward_auth question carries
+to the Host (cseries_cloud.ensure_door_key has the two files): the Host's
+copy in place, then Caddy's, then `systemctl reload caddy`. Between the
+first write and the reload the Host refuses Caddy's questions (measured in
+the VM test: 137 ms).
+"""
+
+import grp
+import json
+import os
+import platform
+import shutil
+import subprocess
+import sys
+import time
+
+sys.path.insert(0, "/usr/local/lib/cseries-cloud")
+import cseries_cloud as cc  # noqa: E402
+
+GUEST = "/usr/local/bin/cseries-guest"
+BASTION = "/usr/local/bin/privatae-bastion"
+BASTION_HOME = "/root"
+UNIX_REDEEM = "unix:///run/privatae-host/enroll.sock"
+# Every family the bastion offers except harness, egress and inference, and
+# the anchor's directives: with these off, nothing the Host sends changes the
+# box (no ops, no root exec, no sessions, no folder writes, no binary swap).
+FAMILIES_OFF = ("ops", "dcn", "services", "observe", "session", "models", "directives")
+HEALTH_WAIT_S = 300
+TLS_GROUP = "caddy"
+# The units run_bootstrap's own steps enable, each where the order needs it
+# (the firewall before Caddy, the Host before its door, the bastion before
+# its pairing). Any other unit in the overlay with an [Install] section is
+# enabled after them by cseries_cloud.overlay_units' rule, the one the
+# updater applies to a unit a release adds, so a fresh box and an updated one
+# run the same units.
+ORDERED_UNITS = frozenset({
+    "cseries-firewall.service", "caddy.service", "cseries-door-helper.socket",
+    "cseries-lane6.socket", "cseries-enroll6.socket", "privatae-bastion.service",
+    "cseries-cert.timer", "cseries-cloud-update.timer", "cseries-cloud-heartbeat.timer",
+    "cseries-runtime.socket", "cseries-squid.service",
+})
+# The groups the box's own services hand to the Host container: the bastion's
+# sockets, the pairing-window helper's, and the local runtime's.
+GROUPS = ("privatae-host", "cseries", "cseries-runtime")
+
+
+def log(msg):
+    print(f"bootstrap: {msg}", file=sys.stderr, flush=True)
+
+
+def sh(cmd, **kw):
+    log("$ " + " ".join(cmd))
+    return cc.run(cmd, **kw)
+
+
+class Step(Exception):
+    def __init__(self, step, err):
+        super().__init__(err)
+        self.step = step
+
+
+def ensure_group(name):
+    try:
+        return grp.getgrnam(name).gr_gid
+    except KeyError:
+        sh(["groupadd", "--system", name])
+        return grp.getgrnam(name).gr_gid
+
+
+def secure_bootstrap_json(path):
+    """bootstrap.json holds the acme-dns password and the setup code, and it
+    stays on the box because a later run reads it again. Root's alone, 0600,
+    whatever owner and mode the provisioner wrote it with: Caddy, the
+    provider's default user and every other account on the box are refused."""
+    if os.geteuid() == 0:
+        os.chown(path, 0, 0)
+    os.chmod(path, 0o600)
+
+
+def write_config(paths, cfg, gids):
+    cc.write_json(paths.cloud_json(), cc.cloud_json(cfg))
+    if cfg["acme_dns"]:
+        # The storage file lego's acme-dns provider reads, keyed by the name
+        # the certificate is for (the wildcard's base).
+        cred = dict(cfg["acme_dns"]["credential"])
+        cred.setdefault("allowfrom", [])
+        cc.write_json(paths.acme_dns_json(), {cc.zone_host(cfg): cred}, mode=0o600)
+        cc.write_json(os.path.join(paths.etc, "acme-dns-api.json"),
+                      {"api_base": cfg["acme_dns"]["api_base"]})
+    if cfg["setup_code"]:
+        cc.atomic_write(paths.setup_code(), cfg["setup_code"] + "\n", 0o640, 0, gids["cseries"])
+        cc.atomic_write(os.path.join(paths.units, "cseries-host.container.d", "setup-code.conf"),
+                        "# The setup code the provisioner made for this box, so a reboot\n"
+                        "# before the owner claims the Host does not change it.\n"
+                        "[Container]\n"
+                        "Volume=/etc/cseries-cloud/setup-code:/run/cseries-cloud/setup-code:ro\n"
+                        "Environment=CSERIES_SETUP_CODE_FILE=/run/cseries-cloud/setup-code\n")
+
+
+def install_overlay(paths, overlay, cfg, gids, version):
+    values = cc.template_values(cfg, gids)
+    changed = cc.apply_overlay(os.path.join(overlay, "root"), paths, values)
+    keep = paths.overlay_dir(version)
+    if os.path.realpath(overlay) != os.path.realpath(keep):
+        if os.path.isdir(keep):
+            shutil.rmtree(keep)
+        shutil.copytree(overlay, keep, symlinks=True)
+    st = cc.read_json(paths.update_state(), {}) or {}
+    st.update({"version": version, "overlay_version": version})
+    cc.write_json(paths.update_state(), st)
+    return changed
+
+
+CRUN_PROFILE = "/etc/apparmor.d/crun"
+
+
+def unname_crun(paths):
+    """Disable AppArmor's profile named crun. It confines nothing (it is
+    flags=(unconfined), shipped by Debian's apparmor package only to give crun
+    a name), but with that name every process crun starts in a container is
+    labelled containers-default//&crun, which podman's containers-default
+    profile does not list as a peer: a container's processes then cannot
+    signal one another, and PostgreSQL cannot stop its own server (measured on
+    Debian 13: apparmor 4.1.0, crun 1.21, containers-default-0.62.2). Without
+    the name, crun is plain unconfined, which that profile does list.
+    True when it changed something."""
+    prof = paths.p(CRUN_PROFILE)
+    disabled = paths.p("etc/apparmor.d/disable/crun")
+    if not os.path.exists(prof) or os.path.lexists(disabled):
+        return False
+    os.makedirs(os.path.dirname(disabled), exist_ok=True)
+    os.symlink(CRUN_PROFILE, disabled)
+    sh(["apparmor_parser", "-R", prof], check=False)
+    return True
+
+
+def placeholder_cert(paths, cfg):
+    """A self-signed certificate for the box's names, so Caddy can start
+    before the first real one; cseries-cert replaces it."""
+    cert, key = os.path.join(paths.tls, "cert.pem"), os.path.join(paths.tls, "key.pem")
+    if os.path.exists(cert) and os.path.exists(key):
+        return False
+    import datetime
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+    k = ec.generate_private_key(ec.SECP256R1())
+    name = "*." + cc.zone_host(cfg)
+    now = datetime.datetime.now(datetime.timezone.utc)
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, name)])
+    c = (x509.CertificateBuilder().subject_name(subject).issuer_name(subject)
+         .public_key(k.public_key()).serial_number(x509.random_serial_number())
+         .not_valid_before(now - datetime.timedelta(minutes=5))
+         .not_valid_after(now + datetime.timedelta(days=90))
+         .add_extension(x509.SubjectAlternativeName([x509.DNSName(name)]), critical=False)
+         .sign(k, hashes.SHA256()))
+    gid = grp.getgrnam(TLS_GROUP).gr_gid
+    os.makedirs(paths.tls, exist_ok=True)
+    os.chown(paths.tls, 0, gid)
+    os.chmod(paths.tls, 0o750)
+    cc.atomic_write(key, k.private_bytes(serialization.Encoding.PEM,
+                                         serialization.PrivateFormat.PKCS8,
+                                         serialization.NoEncryption()), 0o640, 0, gid)
+    cc.atomic_write(cert, c.public_bytes(serialization.Encoding.PEM), 0o640, 0, gid)
+    cc.write_json(os.path.join(paths.state, "cert.json"), {"source": "self-signed"})
+    return True
+
+
+def staged_manifest(overlay, version, keys=cc.RELEASE_KEYS):
+    """The signed manifest bootstrap.sh verified to fetch this overlay, when
+    it did, checked again here: its signature, its shape, its version and
+    the overlay it names. None when the overlay came from elsewhere."""
+    stage = os.path.dirname(os.path.abspath(overlay))
+    body_p = os.path.join(stage, cc.MANIFEST_NAME)
+    if not os.path.exists(body_p):
+        return None
+    with open(body_p, "rb") as f:
+        body = f.read()
+    with open(body_p + ".sig", encoding="ascii") as f:
+        manifest = cc.verify_signed_manifest(cc.KIND, body, f.read(), keys)
+    cc.validate_manifest(manifest)
+    with open(os.path.join(stage, "overlay.tar.gz"), "rb") as f:
+        if cc.sha256_hex(f.read()) != manifest["overlay"]["sha256"]:
+            raise cc.CloudError("the overlay unpacked is not the one the signed manifest names")
+    if manifest["version"] != version:
+        raise cc.CloudError(f"the overlay is {version}, the signed manifest {manifest['version']}")
+    return manifest
+
+
+def image_refs(cfg, manifest=None):
+    """(host ref, postgres ref, bastion min_version, runtime lines) for the
+    images to run; the runtime lines are cseries-guest configure's for the
+    local runtime's images, from the signed manifest ("" without one)."""
+    if cfg["image_archive"]:
+        a = cfg["image_archive"]
+        names = [a[w] if "/" in a[w] else "localhost/" + a[w] for w in ("host", "postgres")]
+        # A run after the first finds both images loaded and needs the
+        # archive no more.
+        if not all(subprocess.run(["podman", "image", "exists", n], check=False).returncode == 0
+                   for n in names):
+            sh(["podman", "load", "-q", "-i", a["path"]])
+        refs = []
+        for name in names:
+            digest = sh(["podman", "image", "inspect", "--format", "{{.Digest}}", name]).strip()
+            base = name.rsplit(":", 1)[0] if ":" in name.split("/")[-1] else name
+            refs.append(f"{base}@{digest}")
+        return refs[0], refs[1], cc.BASTION_MIN_VERSION, cc.runtime_lines(manifest)
+    if cfg["images"]:
+        return (cc.pinned(cfg["images"]["host"]), cc.pinned(cfg["images"]["postgres"]),
+                cc.BASTION_MIN_VERSION, cc.runtime_lines(manifest))
+    if manifest is None:
+        url = f"{cfg['release_base']}/{cc.MANIFEST_NAME}"
+        manifest, _, _ = cc.fetch_signed(url, cc.KIND)
+        cc.validate_manifest(manifest)
+    return (cc.pinned(manifest["images"]["host"]), cc.pinned(manifest["images"]["postgres"]),
+            manifest["bastion"]["min_version"], cc.runtime_lines(manifest))
+
+
+def guest(*args, input=None, check=True, timeout=None):
+    return sh([GUEST, *args], input=input, check=check, timeout=timeout)
+
+
+def wait_healthy(timeout=HEALTH_WAIT_S):
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        if subprocess.run([GUEST, "health"], capture_output=True, check=False).returncode == 0:
+            return True
+        time.sleep(3)
+    return False
+
+
+def start_host(host_ref, pg_ref, version, relabel=False, runtime="", limits=""):
+    # limits: the Host's memory ceiling for this box (cc.host_limit_lines).
+    out = guest("configure", input=f"host={host_ref}\npostgres={pg_ref}\nrelease={version}\n{limits}{runtime}")
+    guest("pull", timeout=3600)
+    running = "host=active" in guest("status")
+    guest("restart" if ("changed=1" in out or relabel) and running else "start", timeout=600)
+    if not wait_healthy():
+        raise cc.CloudError("the Host did not answer its health check within 5 minutes")
+
+
+def bastion_version(binary):
+    out = subprocess.run([binary, "version"], capture_output=True, text=True, timeout=30,
+                         check=False).stdout
+    parts = out.split()
+    return parts[1].lstrip("v") if len(parts) >= 2 and parts[0] == "privatae-bastion" else None
+
+
+def install_bastion(paths, cfg, min_version):
+    dest = paths.bastion_bin()
+    if cfg["bastion_binary"]:
+        src = cfg["bastion_binary"]
+        if bastion_version(src) is None:
+            raise cc.CloudError(f"{src} is not a privatae-bastion binary")
+    else:
+        manifest, _, _ = cc.fetch_signed(cc.BASTION_MANIFEST_URL, cc.BASTION_KIND)
+        if cc.parse_version(manifest["version"]) is None or \
+                cc.parse_version(manifest["version"]) < cc.parse_version(min_version):
+            raise cc.CloudError(f"the published bastion is {manifest['version']}; this box needs "
+                                f"{min_version} or newer")
+        key = "linux-arm64" if platform.machine() in ("aarch64", "arm64") else "linux-amd64"
+        b = (manifest.get("binaries") or {}).get(key) or {}
+        if not cc.SHA256_RE.match(str(b.get("sha256", ""))) or \
+                not str(b.get("url", "")).startswith("https://"):
+            raise cc.CloudError(f"the bastion release {manifest['version']} has no {key} build")
+        installed = bastion_version(dest) if os.path.exists(dest) else None
+        if installed == manifest["version"]:
+            return installed
+        src = dest + ".download"
+        got = cc.fetch_to_file(b["url"], src, cc.MAX_BASTION_BYTES)
+        if got != b["sha256"]:
+            os.unlink(src)
+            raise cc.CloudError(f"the bastion download hashes to {got}, its manifest says {b['sha256']}")
+    v = bastion_version(src)
+    if cc.parse_version(v) is None or cc.parse_version(v) < cc.parse_version(min_version):
+        raise cc.CloudError(f"the bastion is {v}; this box needs {min_version} or newer")
+    if not os.path.exists(dest) or open(src, "rb").read() != open(dest, "rb").read():
+        tmp = dest + ".new"
+        shutil.copyfile(src, tmp)
+        os.chmod(tmp, 0o755)
+        os.replace(tmp, dest)
+    if src.endswith(".download"):
+        os.unlink(src)
+    return v
+
+
+def bastion(*args, check=True, input=None):
+    env = dict(os.environ, HOME=BASTION_HOME)
+    return sh([BASTION, *args], check=check, env=env, timeout=120, input=input)
+
+
+def paired_host():
+    out = bastion("switch", "--list")
+    hosts = sorted({line.split()[0] for line in out.splitlines()
+                    if len(line.split()) >= 3 and line.split()[2] in ("on", "off")})
+    return hosts
+
+
+def pair_bastion(paths):
+    st = cc.read_json(paths.update_state(), {}) or {}
+    hosts = paired_host()
+    if not hosts:
+        tok = json.loads(guest("pair-token", timeout=120))
+        # The token on pair's standard input (`-`), never in its command line,
+        # which sh() also logs: until it is redeemed it is a whole enrolment.
+        bastion("pair", "--redeem-url", UNIX_REDEEM, "-", input=tok["token"] + "\n")
+        st["host_ca_sha256"] = cc.sha256_hex(tok["host_ca_pem"].encode("utf-8"))
+        cc.write_json(paths.update_state(), st)
+        hosts = paired_host()
+    if len(hosts) != 1:
+        raise cc.CloudError(f"the bastion should be paired with this box's Host alone, "
+                            f"it lists {hosts}")
+    host = hosts[0]
+    for fam in FAMILIES_OFF:
+        bastion("switch", host, fam, "off")
+    # The local runtime starts every container on this machine, coding
+    # engines included, against one memory budget. The bastion's coder mode
+    # would start them too, against a budget of its own that cannot see the
+    # runtime's containers, so it stays off here.
+    coders = bastion("coders", "off", check=False)
+    return host, st.get("host_ca_sha256"), coders.strip()
+
+
+def other_units(overlay):
+    """(units to enable and start, units only to enable) among the
+    overlay's units with an [Install] section that ORDERED_UNITS does not
+    name."""
+    units = cc.overlay_units(os.path.join(overlay, "root"))
+    rest = {u: st for u, st in units.items() if st[0] and u not in ORDERED_UNITS}
+    return sorted(u for u, st in rest.items() if st[1]), sorted(u for u, st in rest.items() if not st[1])
+
+
+def first_cert(paths, cfg):
+    if not cfg["acme_dns"]:
+        return "self-signed", None
+    r = subprocess.run(["/usr/local/sbin/cseries-cert"], capture_output=True, text=True,
+                       timeout=900, check=False)
+    sys.stderr.write(r.stderr)
+    uri = None
+    try:
+        with open(os.path.join(paths.state, "acme-account-uri"), encoding="utf-8") as f:
+            uri = f.read().strip() or None
+    except FileNotFoundError:
+        pass
+    if r.returncode != 0:
+        # Through systemd from here on, so a failure is tried again every 20
+        # minutes (cseries-cert.service) rather than at the next daily timer:
+        # the provisioner writes the box's DNS after this bootstrap.
+        sh(["systemctl", "start", "--no-block", "cseries-cert.service"], check=False)
+    return ("issued" if r.returncode == 0 else "pending"), uri
+
+
+def run_bootstrap(overlay):
+    paths = cc.Paths()
+    step = "bootstrap.json"
+    try:
+        secure_bootstrap_json(paths.bootstrap_json())
+        cfg = cc.validate_bootstrap(cc.read_json(paths.bootstrap_json()))
+        with open(os.path.join(overlay, "VERSION"), encoding="utf-8") as f:
+            version = f.read().strip()
+        if not cc.VERSION_RE.match(version):
+            raise cc.CloudError(f"the overlay's VERSION is not X.Y.Z: {version!r}")
+
+        manifest = staged_manifest(overlay, version)
+        step = "groups"
+        gids = {g: ensure_group(g) for g in GROUPS}
+        step = "config"
+        write_config(paths, cfg, gids)
+        step = "door key"
+        _key, made = cc.ensure_door_key(paths, gids["cseries"])
+        log("door key: made" if made else "door key: kept")
+        step = "timezone"
+        sh(["timedatectl", "set-timezone", "UTC"], check=False)
+        step = "overlay"
+        changed = install_overlay(paths, overlay, cfg, gids, version)
+        log(f"overlay {version}: {len(changed)} files written")
+        step = "system"
+        sh(["systemctl", "daemon-reload"])
+        sh(["systemd-tmpfiles", "--create", "/etc/tmpfiles.d/privatae-host.conf",
+            "/etc/tmpfiles.d/cseries-door.conf"])
+        sh(["sysctl", "--system"])
+        sh(["systemctl", "restart", "systemd-journald"])
+        # Debian's nftables.service starts with `flush ruleset`, which would
+        # remove netavark's table and this box's own.
+        sh(["systemctl", "mask", "nftables.service"])
+        step = "firewall"
+        sh(["systemctl", "enable", "cseries-firewall.service"])
+        sh(["systemctl", "restart", "cseries-firewall.service"])
+        step = "caddy"
+        placeholder_cert(paths, cfg)
+        sh(["systemctl", "enable", "caddy.service"])
+        sh(["systemctl", "restart", "caddy.service"])
+        step = "apparmor"
+        relabel = unname_crun(paths)
+        step = "runtime"
+        # Debian's own squid would listen on every address with its default
+        # rules; the runtime runs its own (cseries-squid.service). The
+        # runtime's socket must exist before the Host starts: the Host mounts
+        # its directory.
+        sh(["systemctl", "disable", "--now", "squid.service"], check=False)
+        sh(["systemctl", "mask", "squid.service"], check=False)
+        sh(["systemctl", "enable", "--now", "cseries-runtime.socket", "cseries-squid.service"])
+        step = "host"
+        host_ref, pg_ref, min_bastion, runtime = image_refs(cfg, manifest)
+        start_host(host_ref, pg_ref, version, relabel, runtime, cc.host_limit_lines(paths))
+        step = "door"
+        sh(["systemctl", "enable", "--now", "cseries-door-helper.socket",
+            "cseries-lane6.socket", "cseries-enroll6.socket"])
+        step = "bastion"
+        bv = install_bastion(paths, cfg, min_bastion)
+        sh(["systemctl", "daemon-reload"])
+        sh(["systemctl", "enable", "privatae-bastion.service"])
+        sh(["systemctl", "restart", "privatae-bastion.service"])
+        _host, ca_sha, coders = pair_bastion(paths)
+        step = "heartbeat"
+        key = cc.load_or_create_key(paths.heartbeat_key())
+        step = "timers"
+        sh(["systemctl", "enable", "--now", "cseries-cert.timer", "cseries-cloud-update.timer",
+            "cseries-cloud-heartbeat.timer"])
+        step = "units"
+        start, enable = other_units(overlay)
+        if enable:
+            sh(["systemctl", "enable", *enable])
+        if start:
+            sh(["systemctl", "enable", "--now", *start])
+        step = "certificate"
+        cert, account = first_cert(paths, cfg)
+        status = guest("status")
+        images = dict(line.split("=", 1) for line in status.splitlines() if "=" in line)
+        result = {
+            "ok": True,
+            "setup_code": cfg["setup_code"],
+            "heartbeat_pubkey": cc.public_key_b64(key),
+            "acme_account_uri": account,
+            "host_ca_sha256": ca_sha,
+            "cert": cert,
+            "coders": coders,
+            "versions": {"cloud": version, "bastion": bv,
+                         "host_image": images.get("host_image"),
+                         "postgres_image": images.get("postgres_image")},
+        }
+    except (cc.CloudError, OSError, ValueError, KeyError, subprocess.SubprocessError) as e:
+        print(json.dumps({"ok": False, "step": step, "error": str(e)}), flush=True)
+        return 1
+    print(json.dumps(result, sort_keys=True), flush=True)
+    return 0
+
+
+SEAL_SCRIPT = r"""
+set -u
+/usr/local/sbin/cseries-firewall seal || true
+systemctl disable --now ssh.socket ssh.service 2>/dev/null || true
+systemctl mask ssh.socket ssh.service 2>/dev/null || true
+rm -f /root/.ssh/authorized_keys /root/.ssh/authorized_keys2
+for d in /home/*; do rm -f "$d/.ssh/authorized_keys" "$d/.ssh/authorized_keys2"; done
+for u in $(getent group sudo | cut -d: -f4 | tr ',' ' '); do gpasswd -d "$u" sudo || true; done
+rm -f /etc/sudoers.d/90-cloud-init-users
+touch /etc/cloud/cloud-init.disabled
+DEBIAN_FRONTEND=noninteractive apt-get purge -y -qq openssh-server >/dev/null 2>&1 || true
+"""
+
+
+def seal():
+    paths = cc.Paths()
+    os.makedirs(paths.state, exist_ok=True)
+    cc.atomic_write(os.path.join(paths.state, "sealed"), time.strftime("%Y-%m-%dT%H:%M:%SZ\n",
+                                                                       time.gmtime()))
+    # Later, from a transient unit, so this command's own SSH session gets
+    # its answer and closes first.
+    sh(["systemd-run", f"--unit=cseries-seal-{int(time.time())}", "--on-active=10s",
+        "--service-type=oneshot",
+        "/bin/sh", "-c", SEAL_SCRIPT])
+    print(json.dumps({"ok": True, "sealed": True, "in_seconds": 10}), flush=True)
+    return 0
+
+
+def rotate_door_key():
+    paths = cc.Paths()
+    try:
+        cc.rotate_door_key(paths, grp.getgrnam("cseries").gr_gid)
+        sh(["systemctl", "reload", "caddy.service"])
+    except (cc.CloudError, OSError, KeyError) as e:
+        print(json.dumps({"ok": False, "step": "door key", "error": str(e)}), flush=True)
+        return 1
+    print(json.dumps({"ok": True, "door_key": "rotated"}), flush=True)
+    return 0
+
+
+def main(argv):
+    if os.geteuid() != 0:
+        print("cseries-cloud-bootstrap runs as root", file=sys.stderr)
+        return 2
+    if argv[:1] == ["seal"] and len(argv) == 1:
+        return seal()
+    if argv == ["rotate-door-key"]:
+        return rotate_door_key()
+    if len(argv) == 3 and argv[0] == "run" and argv[1] == "--overlay":
+        return run_bootstrap(argv[2])
+    print("usage: cseries-cloud-bootstrap run --overlay <dir> | seal | rotate-door-key", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

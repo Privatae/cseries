@@ -275,8 +275,8 @@ check("the clause's 'no scope' entry is the consolidator's own UNSCOPED",
 _ct_src = open(os.path.join(APP_ROOT, "brain/mastercode/circles_threads.py"), encoding="utf-8").read()
 _ow = _ct_src[_ct_src.index("async def _own_words"):]
 _ow = _ow[:_ow.index("\nasync def ", 10)]
-check("thread delete's own-words row keeps the Host's decision",
-      '("about", "scoped_by", "scoped_at", "scope_history")' in _ow)
+check("thread delete's own-words row keeps the Host's decision (and the turn that made it)",
+      '("about", "scoped_by", "scoped_at", "scoped_in", "scope_history")' in _ow)
 _syn = open(os.path.join(APP_ROOT, "server/synaptive_handler.py"), encoding="utf-8").read()
 check("an external client's identity reads its memory through recent_identity_memories "
       "(run on a real database in test_memory_integrity_db.py)",
@@ -289,7 +289,11 @@ _take = _mc_src[_mc_src.index('md["rehomed_from"] = owner'):]
 check("a takeover of a deleted thread's late row drops a decision naming that thread "
       "(unless it is a rule the person taught somewhere still live)",
       _take.index('if same_scope(md.get("about"), owner) and not await _taught_elsewhere(')
-      < _take.index("UPDATE entity_memory SET metadata = $3::jsonb, project_id = $4"))
+      < _take.index("UPDATE entity_memory SET metadata = $3::jsonb"))
+# A row written fresh in the taking conversation carries no project tag
+# (circles_threads.carry_learned), so the takeover writes none either.
+check("a takeover leaves the row's project tag as it is",
+      "project_id" not in _take[:_take.index("restore_after_takeover")])
 _ts = open(os.path.join(APP_ROOT, "brain/mastercode/runtime/tools.py"), encoding="utf-8").read()
 check("memory_scope writes a thread scope only under the thread's share lock",
       "AND deleted_at IS NULL FOR SHARE))" in _ts)

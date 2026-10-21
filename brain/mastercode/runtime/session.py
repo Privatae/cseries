@@ -2445,40 +2445,6 @@ def _compare_delivery(record: dict) -> tuple[str, str, str]:
     return "\n\n".join(parts), f"{head}", level
 
 
-def dispatch_topic_summary(pool, sess):
-    """After a turn, ask for its topic's summary of what overflowed to be
-    rewritten, and return the task (None when none is asked for).
-
-    Circles is one conversation: a topic's history
-    carries the summary of what overflowed, so with the consolidation loop off
-    the turn asks for it here (turn_consolidator.summary_written_in_turn).
-    thread_consolidator.maybe_consolidate writes only when the topic's history
-    is near its budget or 60 turns have passed since the last summary, never
-    twice at once for one topic, and never touches the turn. Not for the root
-    thread, and not for a turn with no history budget (it read no history).
-    The caller leaves ephemeral turns out. Never raises."""
-    try:
-        budget = getattr(sess, "_history_budget_tokens", None)
-        if not budget:
-            return None
-        from mastercode import summary_policy as _tcm_sum
-        from mastercode.memory_engine import derive_source_context as _dsc_sum
-        from mastercode.runtime import root_turn as _root_sum
-        ctx = _dsc_sum(getattr(sess, "interaction_context", None),
-                       session_id=sess.session_id,
-                       thread_id=getattr(sess, "thread_id", None))
-        if not _tcm_sum.summary_written_in_turn(
-                ctx, root=_root_sum.is_root(getattr(sess, "turn_type", None))):
-            return None
-        from mastercode.thread_consolidator import maybe_consolidate
-        return asyncio.create_task(maybe_consolidate(
-            pool, sess.entity_id, sess.session_id, ctx,
-            history_budget_tokens=int(budget)))
-    except Exception as _sum_err:  # noqa: BLE001 — the turn is done either way
-        log.debug("topic summary dispatch failed (non-fatal): %s", _sum_err)
-        return None
-
-
 class EntityRuntime:
     """
     Runtime engine for Mastercode entities.
@@ -4343,6 +4309,12 @@ class EntityRuntime:
         # (runtime/turn_pictures); an agent's run takes none.
         from mastercode.runtime import turn_pictures as _turn_pictures
         _pictures_token = _turn_pictures.begin_turn()
+        # The topic close_turn holds for the turn's end (close_turn.TURN_TOPIC,
+        # set by the core): a turn that ends before its bottom (an error end,
+        # a Stop, a crisis referral) never moved, so what it held is written
+        # where its message was placed, below.
+        from mastercode.runtime.close_turn import TURN_TOPIC as _TURN_TOPIC
+        _topic_token = _TURN_TOPIC.set(None)
         try:
             result = await self._send_message_core(*args, **kwargs)
         except _aio.CancelledError:
@@ -4360,6 +4332,12 @@ class EntityRuntime:
             _turn_taint.end_turn(_taint_token)
             _turn_pictures.end(_pictures_token)
             _end.run()
+            _held = _TURN_TOPIC.get()
+            if isinstance(_held, dict) and (_held.get("topic") or _held.get("title")):
+                from mastercode.runtime.close_turn import finish_topic as _finish_topic
+                # Not awaited: a cancel may be on its way through here.
+                _aio.ensure_future(_finish_topic(self.pool, holder=_held))
+            _TURN_TOPIC.reset(_topic_token)
         if isinstance(result, dict) and result.get("error"):
             await self._settle_takeover("failed")
         elif isinstance(result, dict) and result.get("model_unconfigured"):
@@ -5386,8 +5364,14 @@ class EntityRuntime:
         sess.recall_scope = _src_ctx
         # ...and for anything this turn writes outside the turn writer
         # (memory_engine.session_source_context): the turn's own conversation.
-        from mastercode.memory_engine import CURRENT_TURN_SCOPE
+        from mastercode.memory_engine import CURRENT_TURN_ROW, CURRENT_TURN_SCOPE
         CURRENT_TURN_SCOPE.set({"session_id": sess.session_id, "scope": _src_ctx})
+        # ...and the turn itself: its token, the id it has from now on (on
+        # every row it writes, its message row too, and what it learns names
+        # it: memory_engine.turn_tokens_now), and its message row once that
+        # write starts below (none yet: a woken turn writes none, and an
+        # earlier turn's must never be named).
+        CURRENT_TURN_ROW.set({"session_id": sess.session_id, "task": None, "token": _turn_token})
         # ...and its room, in the shape escalate records on its ticket below
         # (asked_in): what the platform files during this turn — a ticket, a
         # connector pairing — is linked to this conversation, so its card
@@ -5487,6 +5471,15 @@ class EntityRuntime:
         # the row and retag it instead of racing the embed.
         _user_row_task = None
         _user_row_stamp = None
+        # The writes of the rows of what the person sends into this turn (the
+        # drain, in the tool loop): awaited before a move at the turn's end,
+        # which takes them with the message (thread_choice.turn_rows).
+        _nudge_row_tasks: list = []
+        # The write of a rule taught in this message (_keep_taught, below):
+        # awaited before the Host's thread pick or a re-home moves the
+        # exchange, so the rule exists to move with its message
+        # (thread_choice.move_exchange, turn_home.rehome_turn).
+        _taught_task = None
         if system_turn and host_request:
             # The Host's own request that opened this turn (root_turn.open_root):
             # a row of the thread like the person's, marked as the Host's, so
@@ -5500,6 +5493,8 @@ class EntityRuntime:
                     project_id=_row_project_id, tags={**_user_tags, "requested_by": "host"},
                     created_at=_user_row_stamp,
                 ))
+                CURRENT_TURN_ROW.set({"session_id": sess.session_id, "task": _user_row_task,
+                                      "token": _turn_token})
             except Exception as _turn_err:
                 log.warning("turn-row dispatch (host request) failed (non-fatal): %s", _turn_err)
         elif system_turn:
@@ -5523,6 +5518,11 @@ class EntityRuntime:
                     created_at=_user_row_stamp,
                 ))
                 _turn_row_task(_user_row_task)
+                # What this turn learns names this row (memory_engine.
+                # turn_from_turns) and the turn (its token): close_turn and
+                # memory_curate run in this task, or in one started from it.
+                CURRENT_TURN_ROW.set({"session_id": sess.session_id, "task": _user_row_task,
+                                      "token": _turn_token})
             except Exception as _turn_err:
                 log.warning("turn-row dispatch (user) failed (non-fatal): %s", _turn_err)
             # "Remember this:" (and the other teaching triggers) is kept word
@@ -5541,19 +5541,31 @@ class EntityRuntime:
                     if _taught:
                         CURRENT_TURN_TAUGHT.set({"session_id": sess.session_id,
                                                  "texts": [t["content"] for t in _taught]})
-                        async def _keep_taught(taught, row_task, src):
+                        # The turn type resolves below, after this task starts:
+                        # the rule waits for it (bounded) to be stamped with it.
+                        sess._turn_type_known = {"event": asyncio.Event(), "name": None}
+                        async def _keep_taught(taught, row_task, src, known, token):
+                            # `token`: the turn's, captured here; in PII mode
+                            # the rule lands in the queue's drain worker, which
+                            # runs outside this turn, and the row's id is never
+                            # returned (rid None), so the token alone names it.
                             rid = None
                             try:
                                 rid = await row_task
                             except Exception:  # noqa: BLE001 — the rule stands without its link
                                 rid = None
+                            try:
+                                await asyncio.wait_for(known["event"].wait(), timeout=30)
+                            except Exception:  # noqa: BLE001 — unstamped beats unwritten
+                                pass
                             eng = MemoryEngine(self.pool)
                             from mastercode import pii_queue as _pii
                             for t in taught:
                                 async def _write_taught(text, t=t):
                                     return await eng._store_teaching_memory(
                                         sess.entity_id, {**t, "content": text}, sess.session_id,
-                                        source_context=src, from_turns=[int(rid)] if rid else None)
+                                        source_context=src, from_turns=[int(rid)] if rid else None,
+                                        turn_type=known.get("name"), turn_tokens=[token])
                                 # PII mode: the rule lands tokenized, through the
                                 # PII queue as durable memory (entity scope,
                                 # verified), as the consolidator's did from the
@@ -5562,8 +5574,9 @@ class EntityRuntime:
                                 await _pii.submit(t["content"], f"entity:{sess.entity_id}:memory",
                                                   _write_taught, verify=True, pool=self.pool,
                                                   entity_id=sess.entity_id)
-                        asyncio.create_task(_keep_taught(
-                            _taught, _user_row_task, _turn_tags.get("source_context")))
+                        _taught_task = asyncio.create_task(_keep_taught(
+                            _taught, _user_row_task, _turn_tags.get("source_context"),
+                            sess._turn_type_known, _turn_token))
             except Exception as _tt_err:
                 log.warning("taught-rule store failed (non-fatal): %s", _tt_err)
 
@@ -5674,6 +5687,25 @@ class EntityRuntime:
         except Exception as _rt_err:  # noqa: BLE001 - no module, no root turn
             log.warning("root turn module unavailable; this turn is not a root turn: %s", _rt_err)
             _root_mod = None
+        # Which thread this message belongs to, when the send route found no
+        # clear match: the Host picks in this turn (runtime/thread_choice),
+        # with one more tool. Never for a root turn or a platform-started one.
+        _choice = None
+        if not _root_turn and not system_turn:
+            try:
+                from mastercode.runtime import thread_choice as _tchoice
+                _choice = _tchoice.from_frame(getattr(sess, "frame", None))
+            except Exception as _tc_err:  # noqa: BLE001 — the message stays where it landed
+                log.debug("thread choice not read (non-fatal): %s", _tc_err)
+                _choice = None
+        if _choice is not None:
+            # The pick can still file this turn elsewhere when it ends, after
+            # close_turn named the thread's topic and title: they are written
+            # then, to the thread the turn ends in (close_turn.finish_topic,
+            # below the pick). A turn with no pick writes them at once.
+            from mastercode.runtime.close_turn import TURN_TOPIC
+            TURN_TOPIC.set({"session_id": sess.session_id, "entity_id": sess.entity_id,
+                            "landed": dict(_src_ctx) if isinstance(_src_ctx, dict) else None})
         # The type this turn runs under, recorded for this
         # turn's context (an agent or build it starts stamps it on its
         # entity_tasks row, v186) and reported to the turn registry (the
@@ -5684,6 +5716,19 @@ class EntityRuntime:
             set_current_turn_type(getattr(sess, "turn_type", None))
         except Exception as _ct_err:  # noqa: BLE001 - a record never fails a turn
             log.debug("current turn type not recorded (non-fatal): %s", _ct_err)
+        # ...and the name every memory row this turn writes is stamped with
+        # (entity_memory.turn_type): the platform's record, never the model's.
+        try:
+            from mastercode.memory_engine import CURRENT_TURN_TYPE as _CTT
+            from mastercode.memory_slots import turn_type_label as _tt_label
+            _turn_type_name = _tt_label(getattr(sess, "turn_type", None))
+            _CTT.set({"session_id": sess.session_id, "name": _turn_type_name})
+            _turn_type_known = getattr(sess, "_turn_type_known", None)
+            if _turn_type_known is not None:
+                _turn_type_known["name"] = _turn_type_name
+                _turn_type_known["event"].set()
+        except Exception as _ctt_err:  # noqa: BLE001 - a stamp never fails a turn
+            log.debug("turn type stamp not set (non-fatal): %s", _ctt_err)
         if progress_cb is not None:
             _tt_now = getattr(sess, "turn_type", None) or {}
             try:
@@ -5764,13 +5809,24 @@ class EntityRuntime:
         _chat_role = "chat"
         _ctx_window = None        # model context_length, tokens (None = legacy caps)
         _ctx_budget = None        # effective per-turn input budget (None = unbudgeted)
+        # What each round's pre-send trim holds the request to: the window's
+        # budget with the per-thread dial, but not the Host's default history
+        # ceiling. The ceiling bounds the HISTORY a turn starts with (and the
+        # spend meter's round); a result the turn reads itself is bounded by
+        # the window, so a reader's window-sized page is not swapped for a
+        # truncation note the moment it lands.
+        _round_budget = None
+        # What the spend meter counts a round in (turn_allowance.meter_budget):
+        # _ctx_budget, or with an unknown window the legacy caps' round.
+        _spend_ctx_budget = None
         _hist_budget_tokens = None
         _budget_override = None
-        _thread_summary = None
         # The per-turn SPEND ALLOWANCE in dollars (runtime/turn_allowance.py).
         # Read here, beside the context dial, because they are one setting in
         # the person's head and they live in the same two stores.
         _turn_allowance_usd = None
+        _turn_defaults: dict = {}
+        _default_rounds = None
         try:
             _ctx_window = await _cb.model_context_window(
                 _chat_route.get("model"), provider=_chat_route.get("provider"))
@@ -5799,6 +5855,16 @@ class EntityRuntime:
             if _turn_allowance_usd is None:
                 _turn_allowance_usd = await _cb.read_thread_allowance(
                     self.pool, sess.entity_id, _src_ctx)
+            # The Host's bounded defaults (context_budget.read_turn_defaults):
+            # the history ceiling, and the spend a turn (or a scheduled run)
+            # gets when no dial set one — the owner's dollar figure, else the
+            # built-in rounds, metered in tokens.
+            _turn_defaults = await _cb.read_turn_defaults(self.pool, sess.entity_id)
+            _scheduled_run = (app_id or "") == "scheduled_task"
+            if _turn_allowance_usd is None:
+                _turn_allowance_usd = _turn_defaults.get(
+                    "scheduled_task_allowance_usd" if _scheduled_run else "turn_allowance_usd")
+            _default_rounds = _turn_defaults.get("scheduled_rounds" if _scheduled_run else "turn_rounds")
             # The output reserve can't exceed what the window can carry —
             # a 16384 default against an 8k/16k model made the request
             # invalid before history was counted and drove the trim target
@@ -5882,6 +5948,13 @@ class EntityRuntime:
             _fr: dict = {k: _base[k] for k in ("app_id", "project_id") if _base.get(k) is not None}
             for _k in ("view", "pills"):
                 if _req.get(_k):
+                    _fr[_k] = _req[_k]
+            # What the platform's own send routes say about the turn (never
+            # the page: a client's frame is validated to view/pills at the
+            # route): the topic Circles placed the message in, and the
+            # threads the Host may move it to (runtime/thread_choice).
+            for _k in ("topic", "thread_choice"):
+                if isinstance(_req.get(_k), dict):
                     _fr[_k] = _req[_k]
             # Client-sent text that reaches the prompt is shape-checked and
             # capped, like view/pills: an attachment kind is image, document
@@ -6189,6 +6262,13 @@ class EntityRuntime:
                         output_reserve=_reply_reserve,
                         system_tokens=_cb.est_tokens(_sys_content),
                         override=_budget_override,
+                        ceiling=(_turn_defaults or {}).get("history_ceiling_tokens"),
+                    )
+                    _round_budget = _cb.derive_turn_budget(
+                        window=_ctx_window,
+                        output_reserve=_reply_reserve,
+                        system_tokens=_cb.est_tokens(_sys_content),
+                        override=_budget_override,
                     )
                     _hist_budget_tokens = max(
                         _ctx_budget - _cb.est_tokens(user_message),
@@ -6201,7 +6281,20 @@ class EntityRuntime:
                 except Exception as _cb_err:
                     log.debug("history budget derivation failed (legacy caps): %s", _cb_err)
                     _ctx_budget = None
+                    _round_budget = None
                     _hist_budget_tokens = None
+            # The spend meter's round: the context budget, or, when the window
+            # is unknown and the legacy caps above apply, the system blocks plus
+            # that history, so the built-in default bounds this turn too.
+            try:
+                from mastercode.runtime import turn_allowance as _ta_m
+                _spend_ctx_budget = _ta_m.meter_budget(
+                    _ctx_budget, allowance_usd=_turn_allowance_usd, default_rounds=_default_rounds,
+                    system_tokens=_cb.est_tokens(_sys_content),
+                    history_tokens=max_hist // _cb.CHARS_PER_TOKEN)
+            except Exception as _mb_err:  # noqa: BLE001 — the meter keeps _ctx_budget
+                log.debug("spend meter budget unavailable (non-fatal): %s", _mb_err)
+                _spend_ctx_budget = None
             try:
                 sess._history_budget_tokens = _hist_budget_tokens
             except Exception:
@@ -6244,41 +6337,22 @@ class EntityRuntime:
             except Exception as _rt_err:
                 log.warning("recall_recent_turns dispatch failed: %s", _rt_err)
 
-            # Conversation-depth P2: the thread consolidator's
-            # rolling summary leads the verbatim window — newest-first turns
-            # fill what the budget leaves after it (next-turn assembly).
-            # A summary read failure degrades to the verbatim-only window.
-            # Replay/A-B (history_before) skips it: the variant must see the
-            # history the ORIGINAL answer saw, not a summary written later.
-            # With the consolidator off (turn_consolidator.enabled) nothing
-            # updates that summary, and a frozen one would
-            # ride every turn with no age check: the thread's goal and the
-            # last turn's close_turn handoff ride instead (close_turn.
-            # thread_state) — the turn model's thread-level context. They
-            # change with every handoff, so they go in the per-turn block
-            # after history (below), never ahead of the cached prefix.
-            # Circles is one conversation: a topic's
-            # history is its own turns plus the summary of what overflowed,
-            # on whatever the pod's environment says (turn_consolidator
-            # .summary_on); the turn keeps it fresh after it ends (below,
-            # summary_written_in_turn). The root thread never takes one.
-            _summary_msg = None
-            # An internal thread of a run of work reads neither: the project's
-            # summary and last handoff are its siblings' turns too, and its
-            # brief carries the shared record instead.
+            # Thread-level context. The thread's goal and the last turn's
+            # close_turn handoff ride every scoped turn (close_turn.
+            # thread_state) — they change with every handoff, so they go in
+            # the per-turn block after history (below), never ahead of the
+            # cached prefix. No rolling summary: no model outside the Host's
+            # turn writes what the Host reads as its own context. When turns
+            # actually fall out of the window, their own close_turn notes
+            # ride in their place (evicted_record, below the fit).
+            # Replay/A-B (history_before) and an internal thread of a run of
+            # work (whose brief carries the shared record) read neither the
+            # state nor the record; a root turn reads no record.
+            _record_msg = None
+            _record_ok = bool(_src_ctx) and not getattr(sess, "history_before", None) \
+                and not _work_lane and not _root_turn
             if _src_ctx and not getattr(sess, "history_before", None) and not _work_lane:
                 try:
-                    from mastercode import summary_policy as _tcm
-                    if _tcm.summary_on(_src_ctx, root=_root_turn):
-                        from mastercode.thread_consolidator import get_live_summary
-                        _thread_summary = await get_live_summary(
-                            self.pool, sess.entity_id, _src_ctx)
-                        if _thread_summary and _thread_summary.get("content"):
-                            _summary_msg = {
-                                "role": "system",
-                                "content": (_cb.SUMMARY_PREFIX + "\n"
-                                            + _thread_summary["content"]),
-                            }
                     if True:
                         from mastercode.runtime.close_turn import thread_state as _thread_state
                         # A root turn leaves out a goal or handoff written
@@ -6286,10 +6360,8 @@ class EntityRuntime:
                         _thread_state_block = (
                             await _thread_state(self.pool, sess.entity_id, _src_ctx,
                                                 withhold_untrusted=_root_turn)) or ""
-                    if _summary_msg is not None:
-                        max_hist = max(max_hist - len(_summary_msg["content"]), 0)
                 except Exception as _ts_err:
-                    log.debug("thread summary fetch failed (non-fatal): %s", _ts_err)
+                    log.debug("thread state fetch failed (non-fatal): %s", _ts_err)
 
             if pg_turns:
                 # PG returned chronological. Filter to what may enter the model
@@ -6322,38 +6394,68 @@ class EntityRuntime:
                     # keep their stamp for every other reader.
                     eligible = _root_mod.withhold_untrusted(eligible)
 
-                _total = sum(len(m.get("content") or "") for m in eligible)
-                if _total <= max_hist:
-                    kept = eligible          # whole thread fits: front is stable
-                else:
-                    # CHUNKED eviction (context_budget.TRIM_BLOCK_DIVISOR).
-                    # Dropping the single oldest turn each time would keep the
-                    # window fullest but move the prefix front EVERY turn, so a
-                    # thread at the ceiling could never cache its history —
-                    # which is most of what the cache-stable wire shape buys.
-                    # Overshoot to a block boundary instead: the same cut point
-                    # then survives many turns, and the cached prefix with it.
-                    _block = max(max_hist // _cb.TRIM_BLOCK_DIVISOR, 1)
-                    _need = _total - max_hist
-                    _target = ((_need + _block - 1) // _block) * _block
-                    _dropped = 0
-                    _cut = 0
-                    for _i, m in enumerate(eligible):
-                        if _dropped >= _target:
-                            break
-                        _dropped += len(m.get("content") or "")
-                        _cut = _i + 1
-                    # Never cut the thread down to nothing — the newest
-                    # exchange always survives; the pre-send trim is the
-                    # backstop if that still overruns.
-                    _cut = min(_cut, max(len(eligible) - 2, 0))
-                    kept = eligible[_cut:]
-                if len(kept) > max_msgs:
-                    kept = kept[-max_msgs:]
+                def _fit_window(rows_in: list, budget: int) -> list:
+                    _total = sum(len(m.get("content") or "") for m in rows_in)
+                    if _total <= budget:
+                        out = rows_in            # whole thread fits: front is stable
+                    else:
+                        # CHUNKED eviction (context_budget.TRIM_BLOCK_DIVISOR).
+                        # Dropping the single oldest turn each time would keep the
+                        # window fullest but move the prefix front EVERY turn, so a
+                        # thread at the ceiling could never cache its history —
+                        # which is most of what the cache-stable wire shape buys.
+                        # Overshoot to a block boundary instead: the same cut point
+                        # then survives many turns, and the cached prefix with it.
+                        _block = max(budget // _cb.TRIM_BLOCK_DIVISOR, 1)
+                        _need = _total - budget
+                        _target = ((_need + _block - 1) // _block) * _block
+                        _dropped = 0
+                        _cut = 0
+                        for _i, m in enumerate(rows_in):
+                            if _dropped >= _target:
+                                break
+                            _dropped += len(m.get("content") or "")
+                            _cut = _i + 1
+                        # Never cut the thread down to nothing — the newest
+                        # exchange always survives; the pre-send trim is the
+                        # backstop if that still overruns.
+                        _cut = min(_cut, max(len(rows_in) - 2, 0))
+                        out = rows_in[_cut:]
+                    if len(out) > max_msgs:
+                        out = out[-max_msgs:]
+                    return out
+
+                kept = _fit_window(eligible, max_hist)
+                if _record_ok:
+                    # Did turns fall out (cut here, or never read because the
+                    # thread holds more rows than the window asks for)? Then
+                    # the record of their own close_turn notes rides first:
+                    # its ceiling is reserved and the window fitted again, so
+                    # it never pushes a kept turn out afterwards.
+                    try:
+                        from mastercode import evicted_record as _er
+                        _oldest = (kept[0].get("row_id") if kept else None)
+                        if not kept or _oldest is None or _oldest != (eligible[0].get("row_id") if eligible else None) \
+                                or len(pg_turns) >= max_msgs:
+                            _probe = await _er.evicted_record(
+                                self.pool, sess.entity_id, _src_ctx, sess.session_id,
+                                oldest_kept_id=_oldest, lane=_work_lane)
+                            if _probe:
+                                max_hist = max(max_hist - _er.RECORD_MAX_CHARS, 0)
+                                kept = _fit_window(eligible, max_hist)
+                                _rec_text = await _er.evicted_record(
+                                    self.pool, sess.entity_id, _src_ctx, sess.session_id,
+                                    oldest_kept_id=(kept[0].get("row_id") if kept else None),
+                                    lane=_work_lane)
+                                if _rec_text:
+                                    _record_msg = {"role": "system", "content": _rec_text}
+                    except Exception as _er_err:  # noqa: BLE001 — history rides without it
+                        log.debug("evicted record skipped (non-fatal): %s", _er_err)
                 _hist_rows = eligible
                 _hist_fit = {"max_hist": max_hist, "max_msgs": max_msgs,
                              "block": max(max_hist // _cb.TRIM_BLOCK_DIVISOR, 1),
-                             "summary": _summary_msg}
+                             "record": _record_msg,
+                             "record_from": kept[0].get("row_id") if kept else None}
                 # role + content only, notices as platform notes
                 history_msgs = history_messages(kept)
                 # A turn row written in a turn that read untrusted content
@@ -6361,9 +6463,9 @@ class EntityRuntime:
                 from mastercode.runtime import turn_taint as _tt_hist
                 _tt_hist.mark_rows(kept, "the conversation's earlier turns")
                 history_chars = sum(len(m.get("content") or "") for m in kept)
-                if _summary_msg is not None:
-                    history_msgs.insert(0, _summary_msg)
-                    history_chars += len(_summary_msg["content"])
+                if _record_msg is not None:
+                    history_msgs.insert(0, _record_msg)
+                    history_chars += len(_record_msg["content"])
             else:
                 # sess.messages keeps what the person saw. The Host's own words
                 # and any platform notice come apart here the way recalled rows
@@ -6390,9 +6492,6 @@ class EntityRuntime:
                     _fallback.insert(0, item)
                     history_chars += len(content)
                 history_msgs = history_messages(_fallback)
-                if _summary_msg is not None:
-                    history_msgs.insert(0, _summary_msg)
-                    history_chars += len(_summary_msg["content"])
         else:
             # Purge old messages from session so they don't come back next message
             current_msg = sess.messages[-1] if sess.messages else None
@@ -6654,11 +6753,9 @@ class EntityRuntime:
         _tools_first_call_count = None
         _tools_first_call_sha = None
         _static_sys_sha = None
-        # Conversation-depth (artifact capture): the turn's tool
-        # results collected for the post-turn stash — they used to die with
-        # the turn's message list. Capture-only here; the size floor/cap and
-        # dedup live in thread_consolidator.stash_tool_artifacts, and the
-        # write itself is fire-and-forget off _post_message_tasks.
+        # The turn's tool results as the turn collects them (nothing stashes
+        # them after the turn any more: the artifact capture and its janitor
+        # are retired).
         _turn_artifacts: list[dict] = []
         # Override temperature from behavioral_params if set
         if "temperature" in behavioral:
@@ -6950,9 +7047,22 @@ class EntityRuntime:
                         note_fn=_note_renderer)
                     _n_plan = _tcore.note_plan(_n_kept, _note_renderer)
                     _n_hist = history_messages(_n_kept, tool_note=_note_renderer)
-                    if _hist_fit.get("summary") is not None:
-                        _n_hist.insert(0, _hist_fit["summary"])
-                        _n_weight += len(_hist_fit["summary"]["content"])
+                    _n_record = _hist_fit.get("record")
+                    if _n_record is not None and _n_kept and _hist_rows \
+                            and _n_kept[0].get("row_id") != (_hist_fit.get("record_from")):
+                        # The notes-weighted fit cut elsewhere: the record
+                        # covers exactly the rows before the new cut.
+                        try:
+                            from mastercode import evicted_record as _er2
+                            _n_text = await _er2.evicted_record(
+                                self.pool, sess.entity_id, _src_ctx, sess.session_id,
+                                oldest_kept_id=_n_kept[0].get("row_id"), lane=_work_lane)
+                            _n_record = {"role": "system", "content": _n_text} if _n_text else None
+                        except Exception as _er2_err:  # noqa: BLE001
+                            log.debug("evicted record refit skipped (non-fatal): %s", _er2_err)
+                    if _n_record is not None:
+                        _n_hist.insert(0, _n_record)
+                        _n_weight += len(_n_record["content"])
                     _old_n = len(history_msgs)
                     # The slice is still the history the walk placed (only
                     # per-turn blocks after it were added since); checked
@@ -7012,6 +7122,9 @@ class EntityRuntime:
                         await log_injected_block(self, sess, "own_skills", _own_skills_block)
                     except Exception as _osl_err:  # noqa: BLE001
                         log.debug("own skills provenance log failed (non-fatal): %s", _osl_err)
+            if _choice is not None and _choice.candidates:
+                # The thread choice's one tool, on this turn only.
+                tools = list(tools) + [_tchoice.TOOL_SCHEMA]
             _tools_first_call_count = len(tools)
             _tools_first_call_sha = _bytes_sha(tools)
             # The tool-surface facts (lane counts, the build doors by name).
@@ -7082,7 +7195,7 @@ class EntityRuntime:
                 _m for _m in history_msgs
                 if isinstance(_m, dict) and not (
                     _m.get("role") == "system"
-                    and str(_m.get("content") or "").startswith(_cb.SUMMARY_PREFIX))]
+                    and str(_m.get("content") or "").startswith(_cb.RECORD_PREFIX))]
             grok_messages = _root_mod.build_messages(
                 _static_sys, _dyn_sys, _root_hist, list(_protect_msgs))
             tools = _root_mod.tool_schemas(_root_auth)
@@ -7270,8 +7383,11 @@ class EntityRuntime:
         # are not in that figure, which makes the target slightly tight — the
         # safe direction.) _ctx_budget is None when the window is unknown or
         # history was cleared → the legacy window-based target, unchanged.
-        if _ctx_target is not None and _ctx_budget is not None:
-            _ctx_target = min(_ctx_target, _ctx_budget + _cb.est_tokens(_sys_content))
+        # The figure is _round_budget: _ctx_budget without the Host's default
+        # history ceiling, which bounds the history the walk above fetched and
+        # not what this turn's own tool calls bring back.
+        if _ctx_target is not None and _ctx_budget is not None and _round_budget is not None:
+            _ctx_target = min(_ctx_target, _round_budget + _cb.est_tokens(_sys_content))
 
         # A used result leaves the turn (context_budget.
         # drop_used_tool_results): before each model call, a big read the
@@ -7351,7 +7467,8 @@ class EntityRuntime:
             from mastercode.runtime import turn_allowance as _ta0
             _first_aff = _ta0.TurnSpend.for_route(
                 _inference_model, _inference_provider,
-                allowance_usd=_turn_allowance_usd, ctx_budget=_ctx_budget,
+                allowance_usd=_turn_allowance_usd, ctx_budget=_spend_ctx_budget or _ctx_budget,
+                default_rounds=_default_rounds,
             ).affordable_output(_ta0.new_input_tokens(grok_messages, 0))
             if _first_aff is not None:
                 _first_max = max(1, min(effective_max, max(_first_aff, _reply_reserve)))
@@ -7423,7 +7540,8 @@ class EntityRuntime:
         _spend_cut_reply: bool | str = False  # ...while a cut reply waited: "text" / "empty"
         _spend = _ta.TurnSpend.for_route(
             _inference_model, _inference_provider,
-            allowance_usd=_turn_allowance_usd, ctx_budget=_ctx_budget)
+            allowance_usd=_turn_allowance_usd, ctx_budget=_spend_ctx_budget or _ctx_budget,
+            default_rounds=_default_rounds)
         if _spend.basis != "none":
             log.info("turn allowance: basis=%s allowance=%s model=%s session=%s",
                      _spend.basis, _spend.allowance, _inference_model,
@@ -8301,7 +8419,7 @@ class EntityRuntime:
                     for _ni, _nt in enumerate(_nudges):
                         try:
                             from mastercode.memory_engine import write_turn_row as _wtr_n
-                            asyncio.create_task(_wtr_n(
+                            _nudge_row_tasks.append(asyncio.create_task(_wtr_n(
                                 self.pool, sess.entity_id, sess.session_id, "user", _nt,
                                 project_id=_row_project_id,
                                 tags={**(_turn_tags or {}), **(_nudge_row_tags.get(_nt) or {}),
@@ -8311,7 +8429,7 @@ class EntityRuntime:
                                       **({"client_id": _cids[_ni]} if _cids[_ni] else {}),
                                       # ...and which app sent it (delivered_row).
                                       **_sender_tags(_cids[_ni])},
-                                created_at=_nudge_at.get(_nt) or datetime.now(timezone.utc)))
+                                created_at=_nudge_at.get(_nt) or datetime.now(timezone.utc))))
                         except Exception as _nr_err:  # noqa: BLE001
                             log.warning("nudge row not written (session %s): %s",
                                         sess.session_id, _nr_err)
@@ -9061,6 +9179,19 @@ class EntityRuntime:
                     log.warning("tool call %s not run: %s (session %s)", func_name,
                                 "cut off at the output limit" if _cut_call else "arguments not JSON",
                                 sess.session_id)
+                    continue
+
+                # The thread choice (runtime/thread_choice): the Host says
+                # which thread this message belongs to. Answered here, by the
+                # turn itself: it reads the frame's own list and moves nothing
+                # until the turn ends.
+                if func_name == "pick_thread" and _choice is not None and _choice.candidates:
+                    _pt_res = await _tchoice.pick(self.pool, sess, func_args, _choice,
+                                                  user_message=user_message)
+                    tool_actions.append({"tool": func_name, "args": func_args,
+                                         "result_status": str(_pt_res.get("status") or "ok")})
+                    grok_messages.append({"role": "tool", "tool_call_id": tc_id, "name": func_name,
+                                          "content": json.dumps(_pt_res, default=str)})
                     continue
 
                 # close_turn in an ordinary round (no reply text beside it, or
@@ -10969,8 +11100,9 @@ class EntityRuntime:
                 "history": {
                     "turns": len(_hist_turns),
                     "chars": int(_loc.get("history_chars") or 0),
-                    "summary": bool(_loc.get("_summary_msg"))
-                               and str((_loc.get("_summary_msg") or {}).get("content") or "").startswith(_cb.SUMMARY_PREFIX),
+                    # the Host's own notes on the turns that fell out
+                    # (evicted_record), when any did
+                    "evicted_record": bool(_loc.get("_record_msg")),
                     # the goal + last handoff (consolidator off), per turn
                     "thread_state": bool(_loc.get("_thread_state_block")),
                 },
@@ -11034,13 +11166,20 @@ class EntityRuntime:
         # Review button beside Context — so it is stored whole, not sized.
         if _close_turn_signal is not None:
             _assistant_tags["close_turn"] = _close_turn_signal
+        # Which memory rows rode this turn's prompt, by id, type and section
+        # (memory_engine.build_memory_context): the owner can see what the
+        # Host was told it remembered (the Memory app reads it per turn).
+        try:
+            _rode = (getattr(sess, "prefire_meta", None) or {}).get("rode")
+            if isinstance(_rode, list):
+                _assistant_tags["memory_rode"] = _rode[:60]
+        except Exception:  # noqa: BLE001 — a record never fails a turn
+            pass
         # Conversation-depth: budget + summary provenance ride the
         # turn row so a measurement harness can chart per-thread token
         # curves against the budget that was in force.
         if _ctx_budget is not None:
             _assistant_tags["context_budget"] = _ctx_budget
-        if _thread_summary and _thread_summary.get("version") is not None:
-            _assistant_tags["summary_version"] = _thread_summary["version"]
         if system_turn:
             # Attributed like an agent delivery (origin='agent'): the reader
             # can tell the host spoke because the platform woke it, not
@@ -11054,8 +11193,39 @@ class EntityRuntime:
         # stays in the window's thread, and the client is told. Measured cause
         # replies filed by window, reports filed by build,
         # one conversation split across two threads for two hours.
+        # The Host picked the thread this message belongs to
+        # (runtime/thread_choice): the exchange is filed there, the reply
+        # written there, the client told. A move that cannot be made leaves
+        # the turn whole where it landed.
+        _choice_moved = None
+        if _choice is not None and _choice.picked and not sess.context_borrowed:
+            try:
+                _choice_src = dict(_turn_tags.get("source_context") or {})
+                _choice_moved = await _tchoice.move_exchange(
+                    self.pool, sess.entity_id, _choice, src=_choice_src,
+                    user_row_task=_user_row_task, turn_token=_turn_token,
+                    learned_task=_taught_task, nudge_row_tasks=_nudge_row_tasks)
+            except Exception as _cm_err:  # noqa: BLE001 — never a failed turn
+                log.warning("thread choice move failed (non-fatal): %s", _cm_err)
+                _choice_moved = None
+            if _choice_moved and _choice_moved.get("moved"):
+                _to = _choice_moved["to"]
+                _assistant_tags["source_context"] = dict(_to)
+                _assistant_tags["rehomed_from"] = _choice_src
+                _row_project_id = int(_to["ref"]) if _to["kind"] == "project" else None
+                if _to["kind"] == "project":
+                    sess.interaction_context = f"project:{_to['ref']}"
+                # What the turn still writes lands where the exchange went (a
+                # thread the move made too), as a queued write takes its place
+                # when it is queued.
+                _tchoice.place_turn(sess, _to)
+            else:
+                # The turn stays whole where it landed: what it still writes
+                # lands there, not in the thread it picked.
+                _tchoice.stay(sess, _choice)
+                _choice_moved = None
         _turn_home = None
-        if not system_turn and not sess.context_borrowed and tool_actions:
+        if not system_turn and not sess.context_borrowed and tool_actions and _choice_moved is None:
             try:
                 from mastercode.runtime.turn_home import decide_turn_home
                 _turn_home = decide_turn_home(_row_project_id, tool_actions)
@@ -11067,9 +11237,10 @@ class EntityRuntime:
         # capture — they read sess.interaction_context) scope to the new
         # thread. A move that fails halfway would recreate the split this
         # exists to close, so a failed or impossible
-        # move (PII mode returns no row id, the DB refused) means the turn
-        # stays where it was typed, whole. rehome_turn awaits the user row's
-        # own write task, so this cannot race the embed.
+        # move (no row carries the turn's token, the turn's writes did not
+        # land in time, the DB refused) means the turn stays where it was
+        # typed, whole. rehome_turn awaits everything the turn wrote first
+        # (in PII mode, what it queued), so this cannot race the writes.
         _rehome_res = None
         if _turn_home is not None:
             try:
@@ -11078,7 +11249,8 @@ class EntityRuntime:
                     self.pool, sess.entity_id,
                     from_project=_row_project_id, to_project=_turn_home,
                     user_row_task=_user_row_task, session_id=sess.session_id,
-                    user_content=user_message, turn_started_at=_user_row_stamp)
+                    turn_token=_turn_token,
+                    learned_task=_taught_task, nudge_row_tasks=_nudge_row_tasks)
             except Exception as _rh_err:  # noqa: BLE001 - never a failed turn
                 log.warning("turn re-home %s->%s failed (non-fatal): %s",
                             _row_project_id, _turn_home, _rh_err)
@@ -11093,8 +11265,20 @@ class EntityRuntime:
             # (sess.source_context is not re-derived: its only reader, the
             # prompt_log row, was written during prompt assembly.)
             sess.interaction_context = f"project:{_turn_home}"
+            # ...and what the turn still writes lands in the new project.
+            from mastercode.runtime.thread_choice import place_turn
+            place_turn(sess, {"kind": "project", "ref": str(_turn_home)})
         else:
             _turn_home = None
+        # The topic and title close_turn named this turn go to the thread the
+        # turn ends in: where the pick filed the exchange, else where the
+        # message was placed (close_turn.finish_topic). Before the pick, they
+        # would have named the thread the message left.
+        try:
+            from mastercode.runtime.close_turn import finish_topic
+            await finish_topic(self.pool, moved=_choice_moved)
+        except Exception as _ft_err:  # noqa: BLE001 — never a failed turn
+            log.warning("close_turn topic not written at the turn's end (non-fatal): %s", _ft_err)
 
         try:
             from mastercode.memory_engine import write_turn_row
@@ -11135,6 +11319,21 @@ class EntityRuntime:
                 })
             except Exception as _tm_err:  # noqa: BLE001
                 log.debug("thread_moved frame failed (non-fatal): %s", _tm_err)
+        if _choice_moved is not None and progress_cb is not None:
+            # The Host's own pick moved the exchange: every client follows the
+            # same frame (the Workbench by its project fields).
+            try:
+                _to = _choice_moved["to"]
+                await progress_cb({
+                    "event": "thread_moved",
+                    "from": _choice_src, "to": _to, "to_title": _choice_moved.get("title"),
+                    "from_project_id": (int(_choice_src["ref"]) if _choice_src.get("kind") == "project"
+                                        else None),
+                    "to_project_id": int(_to["ref"]) if _to["kind"] == "project" else None,
+                    "to_project_name": _choice_moved.get("title") if _to["kind"] == "project" else None,
+                })
+            except Exception as _tm2_err:  # noqa: BLE001
+                log.debug("thread_moved frame (choice) failed (non-fatal): %s", _tm2_err)
 
         # Resolve the model that ran (for the response metadata + post tasks).
         # The orchestrator turn always routes to a provider; the SERVED pair
@@ -11180,8 +11379,10 @@ class EntityRuntime:
             # metered in, so the panel can say the basis changed rather than
             # showing a dollar total that quietly stopped growing.
             "allowance_basis_changed_from": _spend.basis_changed_from,
-            "summary_version": (_thread_summary or {}).get("version"),
-            "consolidated_at": (_thread_summary or {}).get("created_iso"),
+            # No rolling summary is written any more (evicted_record); the
+            # keys stay, empty, for the clients that read them.
+            "summary_version": None,
+            "consolidated_at": None,
             # Provenance rides the same frame: who answered this turn.
             "model": model_used,
             "provider": _served.get("provider"),
@@ -11244,39 +11445,10 @@ class EntityRuntime:
         # was removed and the bill is harness compute, recorded
         # to harness_compute_log and invoiced monthly.
 
-        # Compute ephemeral flag early -- needed to guard brain event dispatch
-        _eph_ctx = getattr(sess, "interaction_context", None) or ""
-        _is_ephemeral = _eph_ctx in EPHEMERAL_CONTEXTS or _eph_ctx.startswith("autonomous_task:")
-
-        # The post-turn thread consolidator is gone, and nothing replaces it
-        # at this site.
-        #
-        # The rolling summary now has ONE writer: batch_consolidator, on the
-        # turn-consolidator cron, inside the single structured call that also
-        # derives the batch's memories. Two writers was not duplicated effort,
-        # it was a correctness problem — this lane summarised the live history
-        # window seconds after a turn while the cron lane summarised the
-        # un-extracted slice, so one thread got two different summaries from
-        # two different inputs, each superseding the other's row in whichever
-        # order they happened to land.
-        #
-        # What is lost: the summary is no longer rewritten within seconds of a
-        # turn. It is rewritten on the consolidation pass, over the SAME window
-        # this lane used (recall_recent_turns fitted by
-        # _fit_turns_to_consolidator_window). The triggers this lane owned —
-        # history pressure, turn cadence, the 45-minute idle gap — existed to
-        # decide when a separate call was worth paying for, and there is no
-        # separate call to pay for any more.
-        #
-        # Except in Circles, which is one conversation: a topic's history carries the summary of what overflowed, so
-        # with the loop off the turn asks for it here. maybe_consolidate
-        # writes only when the topic's history is near its budget or 60 turns
-        # have passed since the last summary, never twice at once for one
-        # topic, and never touches the turn (turn_consolidator
-        # .summary_written_in_turn). Not for the root thread.
-        if not _is_ephemeral:
-            dispatch_topic_summary(self.pool, sess)
-
+        # Nothing runs after the turn to rewrite what the Host remembers: no
+        # rolling summary, no artifact janitor. A conversation that outgrows
+        # its window carries the Host's own close_turn notes on the turns that
+        # fell out (evicted_record), built when the next turn reads it.
         # (The tool-artifact capture that rode here stashed results for the
         # batch consolidator's janitor to review; both are gone.)
 

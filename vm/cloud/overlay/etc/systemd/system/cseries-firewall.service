@@ -1,0 +1,22 @@
+# The cloud box's firewall (/etc/cseries-cloud/nftables/door.nft), loaded
+# before any network comes up, as Debian's nftables.service is. There is no
+# ExecStop: stopping this unit leaves the rules in place, and only a reboot
+# or `cseries-firewall load` changes them.
+[Unit]
+Description=C-Series Cloud firewall
+DefaultDependencies=no
+Wants=network-pre.target
+Before=network-pre.target shutdown.target
+Conflicts=shutdown.target
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/cseries-firewall load
+ExecReload=/usr/local/sbin/cseries-firewall load
+ProtectSystem=full
+ProtectHome=yes
+
+[Install]
+WantedBy=sysinit.target

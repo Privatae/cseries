@@ -1765,8 +1765,10 @@ async def main() -> int:
         await ct.delete_thread(pool, TEST_EID, str(tn2["id"]))
         await _clean(pool)
 
-        # close_turn: a near wording of a held preference replaces it (the merge
-        # pass's test, on the real vector column), never a second live row.
+        # close_turn: a preference in a held row's topic replaces it, never a
+        # second live row (memory_slots); a near wording with no topic is no
+        # longer merged by its vector (the embedding auto-supersede is gone).
+        from mastercode.memory_slots import key_row as _key_row
         _vec_str = "[" + ",".join(["0.1"] * dim) + "]"
 
         async def _fixed_vec(*a, **k):
@@ -1776,6 +1778,18 @@ async def main() -> int:
         try:
             held_near = await _vrow("prefers dark themes in every app", {"about": {"kind": "global"}},
                                     timedelta(days=1))
+            await _key_row(pool, TEST_EID, held_near, "theme")
+            wn = await _ctn2.apply(pool, TEST_EID, {"preferences": [
+                {"text": "prefers dark themes in every single app", "reason": "r", "topic": "theme",
+                 "scope": {"kind": "global"}}]}, session_id="gate-near", turn_scope=A)
+            live_n = await pool.fetchval(
+                "SELECT count(*) FROM entity_memory WHERE entity_id = $1 AND memory_type = 'preference' "
+                "AND status = 'active' AND t_valid_until IS NULL AND content LIKE 'prefers dark themes%'",
+                TEST_EID)
+            check("close_turn same topic: replaces the held row (one live row, the newest wording)",
+                  (wn.get("preferences") or [{}])[0].get("replaced") == held_near and live_n == 1, f"{wn} {live_n}")
+            await _clean(pool)
+            await _vrow("prefers dark themes in every app", {"about": {"kind": "global"}}, timedelta(days=1))
             wn = await _ctn2.apply(pool, TEST_EID, {"preferences": [
                 {"text": "prefers dark themes in every single app", "reason": "r",
                  "scope": {"kind": "global"}}]}, session_id="gate-near", turn_scope=A)
@@ -1783,8 +1797,11 @@ async def main() -> int:
                 "SELECT count(*) FROM entity_memory WHERE entity_id = $1 AND memory_type = 'preference' "
                 "AND status = 'active' AND t_valid_until IS NULL AND content LIKE 'prefers dark themes%'",
                 TEST_EID)
-            check("close_turn near wording: replaces the held row (one live row, the newest wording)",
-                  (wn.get("preferences") or [{}])[0].get("replaced") == held_near and live_n == 1, f"{wn} {live_n}")
+            got = (wn.get("preferences") or [{}])[0]
+            check("close_turn near wording with no topic: no longer merged by its vector; both stay, and the "
+                  "answer says how to give it one",
+                  got.get("status") == "stored" and not got.get("replaced") and live_n == 2
+                  and "op='key'" in (got.get("note") or ""), f"{wn} {live_n}")
             await _clean(pool)
 
             async def _live(prefix):
@@ -1793,25 +1810,29 @@ async def main() -> int:
                     "AND status = 'active' AND t_valid_until IS NULL AND content LIKE $2", TEST_EID, prefix + "%")}
             tn = await ct.create_thread(pool, TEST_EID, title="scope gate near")
             TN = ct.descriptor_for(str(tn["id"]))
-            # A correction, in the thread where an undecided row was said: it
-            # is read everywhere that row was, so it replaces it.
+            # A correction, in the thread where an undecided row was said: its
+            # slot is that thread's, so the same topic there replaces it.
             said = await _vrow("prefers dark mode in the editor", {"source_context": TN}, timedelta(days=1))
+            await _key_row(pool, TEST_EID, said, "editor_mode")
             wn = await _ctn2.apply(pool, TEST_EID, {"preferences": [
-                {"text": "prefers light mode in the editor", "reason": "corrected",
+                {"text": "prefers light mode in the editor", "reason": "corrected", "topic": "editor_mode",
                  "scope": {"kind": "thread"}}]}, session_id="gate-near", turn_scope=TN)
             got = (wn.get("preferences") or [{}])[0]
-            check("close_turn near wording: a correction where the held row was said replaces it",
+            check("close_turn same topic: a correction where the held row was said replaces it",
                   got.get("status") == "stored" and got.get("replaced") == said
                   and await _live("prefers ") == {"prefers light mode in the editor"}, f"{wn}")
+            await pool.execute("UPDATE entity_memory SET resolution_pointer = NULL WHERE entity_id = $1", TEST_EID)
             await pool.execute("DELETE FROM entity_memory WHERE entity_id = $1 AND memory_type = 'preference'",
                                TEST_EID)
-            # An exception for one thread to a rule held everywhere: both stay.
-            await _vrow("prefers replies in english", {"about": {"kind": "global"}}, timedelta(days=1))
+            # An exception for one thread to a rule held everywhere: the same
+            # topic in two scopes is two slots, and both stay.
+            wide = await _vrow("prefers replies in english", {"about": {"kind": "global"}}, timedelta(days=1))
+            await _key_row(pool, TEST_EID, wide, "reply_language")
             wn = await _ctn2.apply(pool, TEST_EID, {"preferences": [
-                {"text": "prefers replies in french", "reason": "this thread",
+                {"text": "prefers replies in french", "reason": "this thread", "topic": "reply_language",
                  "scope": {"kind": "thread"}}]}, session_id="gate-near", turn_scope=TN)
             got = (wn.get("preferences") or [{}])[0]
-            check("close_turn near wording: a narrower exception is its own row; the wider rule stays",
+            check("close_turn same topic, narrower scope: an exception is its own row; the wider rule stays",
                   got.get("status") == "stored" and not got.get("replaced")
                   and await _live("prefers replies") == {"prefers replies in english", "prefers replies in french"},
                   f"{wn}")

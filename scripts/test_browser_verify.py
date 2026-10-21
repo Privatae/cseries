@@ -479,11 +479,13 @@ check("EXECUTED: ...and refused once expired",
 AV._forget_verify_cap("appA")
 mw = (_ROOT / "server/middleware/localhost_only.py").read_text()
 px = (_ROOT / "server/applications/proxy.py").read_text()
-# A standalone Host has no proof browser off the box, so the gate gives the
-# verify header no lane: /system-apps/ from off the box needs the owner's
-# session whatever headers it carries.
-check("the gate gives the verify header no lane on a standalone Host",
-      "_VERIFY_CAP_HEADER" not in mw and "x-cseries-verify-cap" not in mw
+# The proof browser is a container of the local runtime, so the verify header
+# opens /system-apps/ only for a caller on the runtime's network; from any
+# other address it needs the owner's session whatever headers it carries
+# (scripts/test_localhost_gate_runtime_net.py drives the real middleware).
+_rx = mw[mw.index("def runtime_exempt"):mw.index("class LocalhostOnlyMiddleware")]
+check("the gate gives the verify header a lane only from the runtime's network",
+      "runtime_peer(client_host) and runtime_exempt(" in mw and "_VERIFY_CAP_HEADER" in _rx
       and 'path = request.scope["path"]' in mw)
 check("...and serve_app checks it constant-time against THIS app id, 403 otherwise",
       'request.headers.get("x-cseries-verify-cap")' in px
@@ -522,8 +524,8 @@ sys.modules["aiohttp"].ClientSession = lambda *a, **k: _AioSession()
 # under /system-apps/, so the page passed the gate and its first script got
 # 403 — every SDK-managed app failed the proof. The gate now passes that one
 # path when the header names ANY live verify cap.
-check("...nor /js/app-sdk.js",
-      "_VERIFY_SDK_PATH" not in mw and "verify_cap_is_live" not in mw)
+check("...and /js/app-sdk.js only while a verify is live",
+      "_VERIFY_SDK_PATH" in _rx and "verify_cap_is_live(cap)" in _rx)
 AV._mint_verify_cap("appZ"); capZ = list(AV._VERIFY_CAPS["appZ"])[0]
 check("EXECUTED: verify_cap_is_live accepts a live cap of any app",
       AV.verify_cap_is_live(capZ))

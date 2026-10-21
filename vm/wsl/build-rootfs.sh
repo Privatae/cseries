@@ -75,6 +75,8 @@ docker run --rm --privileged \
     -e OUT_UID="$(id -u)" -e OUT_GID="$(id -g)" \
     -v "$here:/src:ro" \
     -v "$seccomp:/src-seccomp/seccomp-personal.json:ro" \
+    -v "$(dirname "$seccomp")/seccomp-browser.json:/src-seccomp/seccomp-browser.json:ro" \
+    -v "$(cd "$here/../runtime" && pwd):/src-runtime:ro" \
     -v "$out:/out" \
     "$BUILDER_IMAGE" \
     bash /src/mkrootfs.sh

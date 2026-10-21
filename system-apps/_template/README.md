@@ -1,6 +1,7 @@
 # C-Series App Template
 
-Copy this directory to create a new system app. Every app follows the same shape; design work happens in `app.js` (logic) and occasionally in `style.css` (LAYOUT only, never colors/type/motion).
+Copy this directory to start a new system app. Logic goes in `app.js`;
+`style.css` holds layout only, never colours, type or motion.
 
 ## Create a new app
 
@@ -12,51 +13,53 @@ cp -r system-apps/_template system-apps/<your-id>
 
 Then edit:
 
-1. **`app.yaml`** — set `id`, `name`, `description`, window size, permissions.
-2. **`index.html`** — replace the `TEMPLATE` slug with your `id` in the four href/src paths. Fill in real content.
-3. **`style.css`** — layout adjustments only. DO NOT add colors, font-families, font-sizes (outside the --text-* scale), radii, or durations. If you need one, it goes in `dashboard/base/css/tokens.css` first.
+1. **`app.yaml`** — set `id` (lowercase letters, digits and hyphens), `name`,
+   `description`, `version`, the `window` size and `permissions`.
+2. **`index.html`** — replace `TEMPLATE` with your `id` in the three
+   `/system-apps/TEMPLATE/...` paths (style, header icon, script). Fill in
+   real content.
+3. **`style.css`** — layout adjustments only. Do not add colours, font
+   families, font sizes outside the `--text-*` scale, radii or durations. If
+   you need one, it goes in `dashboard/base/css/tokens.css` first.
 4. **`app.js`** — your app's logic.
-5. **Icons** — swap `icon.png` (256×256) and `icon-64.png` (64×64) for your app's artwork. PNG with transparency. Shield or emblem style matches Privatae Host.
+5. **Icons** — replace `icon.png` (256×256) and `icon-64.png` (64×64) with
+   your app's artwork, PNG with transparency.
 
 ## Rules
 
 The design system, in short:
 - Use the tokens. Never hex, never raw px for spacing.
-- Use the component classes. `cseries-btn`, `cseries-pill`, `cseries-card`, `cseries-nav`, `cseries-nav-btn`, `cseries-row`, `cseries-empty`, `cseries-seam`.
-- Small-caps labels on everything persistent (`.label-sys` or `.cseries-nav-btn`).
-- One Threshold Seam under the header, never more.
+- Use the component classes: `cseries-btn`, `cseries-pill`, `cseries-card`,
+  `cseries-nav`, `cseries-nav-btn`, `cseries-row`, `cseries-empty`,
+  `cseries-seam`.
+- Small-caps labels on everything persistent (`.label-sys` or
+  `.cseries-nav-btn`).
+- One seam (`cseries-seam`) under the header, never more.
 - No bounce, no glow, no gradient backgrounds, no decoration.
 
 ## File layout
 
 ```
 _template/
-├── app.yaml              # manifest — id, name, icon, window, permissions
-├── index.html            # app shell; loads tokens.css + cseries-components.css + local style.css
-├── style.css             # per-app layout (not colors/type)
-├── app.js                # app client logic
-├── icon.png              # 256×256 app icon (desktop + launcher)
-├── icon-64.png           # 64×64 smaller icon (in-window header, taskbar)
-└── README.md             # (this file — delete when copying to a real app)
+├── app.yaml              # manifest: id, name, icons, entrypoint, window, permissions
+├── index.html            # app shell; loads tokens.css, motion.css, cseries-components.css, then style.css
+├── style.css             # per-app layout (not colours or type)
+├── app.js                # app logic
+├── icon.png              # 256×256 app icon
+├── icon-64.png           # 64×64 icon (the in-window header uses it)
+└── README.md             # this file; delete it in a real app
 ```
 
 ## API access
 
-Apps run in a same-origin sandboxed iframe and can call:
+An `/api` route either requires a permission or is listed, with its reason,
+in `server/applications/route_policy.py`. A call to a route whose permission
+the app's `app.yaml` did not declare is refused. `server/applications/scopes.py`
+is the full list of permissions. Declare only what the app uses.
 
-- `/api/system/*` — status, entity info
-- `/api/files/*` — file gateway (CEIGAS-gated)
-- `/api/backup/*` — PG backup
-- `/api/projects/*` — app projects
-- `/api/ceigas/*` — CEIGAS policy, signals, incidents
-- Plus any routes your app's permissions list grants access to.
+## Building
 
-## Testing
-
-1. Copy the template.
-2. Edit.
-3. Rebuild the image: `/pc-update v0.2.X`
-4. On your PC, run a fresh FDA cycle → new `docker run` → reload the dashboard.
-5. Your app's icon appears on the desktop + in the launcher.
-
-Do not stage files outside the platform. No SCP. No /tmp drops. Use the flows the platform already has.
+`scripts/rebuild_factory_bundles.sh` packs and signs every app under
+`system-apps/` (except `_template`) into `factory-bundles/`. Only the ids
+listed in `scripts/image_baked_apps.txt` are also copied into
+`native-bundles/` and ship inside the image.

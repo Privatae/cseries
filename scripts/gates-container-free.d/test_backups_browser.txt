@@ -1,0 +1,9 @@
+# 2026-10-20: the Backups app's recovery key and restore from a file, under
+# node with a recording fetch and console (scripts/test_backups_browser.mjs).
+# The key pair is made in the page in age's own encoding, the private half is
+# in no request and no log line, age-keygen reads the saved key file to the
+# same public half and the age binary encrypts to it; the vendored age bundle
+# is the pinned one and it and the age binary open each other's files; a
+# downloaded backup is read from the start of the file without the rest.
+# Needs node and the age binary; no pod, no DB, no network.
+test_backups_browser.py

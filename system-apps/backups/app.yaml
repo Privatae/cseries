@@ -1,6 +1,6 @@
 id: backups
 name: Backups
-description: Status of your gateway-managed memory backup.
+description: Your recovery key, the backups on this machine, an export of your whole Host, and a restore from a file.
 icon: icon.png
 icon_small: icon-64.png
 entrypoint: index.html
@@ -9,14 +9,26 @@ provenance: standard
 # value from the Host, a machine or a provider stays inside the attribute it
 # is written into. App-only change.
 # 3.0.6 (2026-10-18): the product is renamed C-Series (names, paths, env vars).
-# 3.0.7 (2026-10-20): text only. The status line says where the encrypted copy is
-#   kept (this Host's database); the note no longer describes Privatae backups.
-version: "3.0.7"
+# 3.1.0 (2026-10-19): the Host's own backups, with no platform needed: the
+# recovery key made here in the owner's browser (only its public half is
+# sent), the backups kept on this machine downloaded as one file, an export
+# of the whole Host, and a restore from a file. Image-baked from this version:
+# every Host backs up, so every Host has it.
+# 3.1.1 (2026-10-20): a download without the save-file picker (this page framed
+# in the desktop, Firefox, Safari) is a one-time link the browser downloads
+# itself, never the whole backup held in the page; the top of the app says
+# plainly when backups are paused (no recovery key, as after a restore onto a
+# new machine) or failing, and when the last one finished.
+# 3.1.2 (2026-10-20): text only. Your bastion's copy says where its encrypted
+#   copy is kept (this Host's database); no note describes Privatae backups.
+# 3.1.3 (2026-10-20): text only. Restoring from a file says each app's own data
+#   comes back too: backups now carry it.
+version: "3.1.3"
 # Environment-catalog facts (host-facing, code-true). Source for the L1
 # topology block + describe_app — NOT a surface_role body (this is a control
 # panel, not a conversational surface): what_it_is/user_path only.
 prompt_behavior:
-  what_it_is: "Backups shows the status of the user's encrypted memory backup — what is backed up, when it last synced, and how many items. Read-only: the bastion daemon owns the backup and the container never holds the keys."
+  what_it_is: "Backups is where the owner makes their Host recovery key (in their own browser; only its public half reaches the Host, and every backup is encrypted to it), downloads the backups kept on this machine as one file, makes an export of the whole Host to take to another machine, and restores the Host from a backup file. It also shows the bastion's own encrypted copy. Making the key and restoring take the owner's second-factor code, and none of it is the Host's to do: the Host reads how its backups went with GET /api/backup/runs."
   user_path: "the Backups app, in the dock"
 
 window:
@@ -29,3 +41,5 @@ window:
 
 permissions:
   - read:backup_list
+  - read:backup_settings
+  - write:backup_settings

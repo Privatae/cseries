@@ -99,6 +99,13 @@ check("the Backup tab says which links a restore left out, in the restore card a
       "S.linksLeftOutSentence(links, count)" in app_js
       and "leftOut(rs.links_left_out, rs.links_left_out_count)" in app_js
       and "leftOut(p.links_left_out, p.links_left_out_count)" in app_js)
+# A restore keeps this Host's own sign-in; when that differs from what the
+# owner expects (another email in the backup, or no owner yet), the restore's
+# owner note (host_restore.owner_note, kept as parts.restored.owner and the
+# progress's owner) is said in both places too.
+check("the Backup tab says the restore's owner note, in the restore card and in the run list",
+      "(rs.owner ? ' ' + rs.owner : '')" in app_js
+      and "if (p.owner) lines.push(p.owner);" in app_js)
 
 # A name in a crafted backup could hold a line break, and
 # the run list is shown with white-space: pre-line, so it added lines of its

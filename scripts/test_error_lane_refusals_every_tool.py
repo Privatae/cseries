@@ -258,8 +258,12 @@ print("3 every unsorted error return is pinned")
 # tools.py 153 -> 154 (memory_curate op='alias'): "memory pool not
 # ready" is the database lane's own failure. A missing memory_id or content, an
 # alias over 300 characters and a memory that is not live go through refused().
+# tools.py 154 -> 155 (memory_curate op='key', memory slots): "memory pool not
+# ready" is the database lane's own failure, as for op='alias'. A missing
+# topic, a memory_id that is not an integer, words no live row holds and a row
+# that is not a live preference or relationship note go through refused().
 PINNED = {
-    "brain/mastercode/runtime/tools.py": 154,
+    "brain/mastercode/runtime/tools.py": 155,
     "brain/mastercode/runtime/session.py": 0,
     "brain/mastercode/runtime/turn_type_approval.py": 0,
     "brain/mastercode/runtime/github_lane.py": 2,

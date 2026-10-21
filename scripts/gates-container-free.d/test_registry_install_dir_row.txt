@@ -1,0 +1,2 @@
+# 2026-10-20: an installed app's folder is installer.INSTALL_ROOT/<id> whatever its installed_applications.source_dir says (registry._install_dir). A restored backup's row naming another folder that holds an app.yaml had the supervisor run that file's command beside the kernel; an id that is not an app id names no folder. Real registry mapping and supervisor, an invented hostile row; no DB.
+test_registry_install_dir_row.py

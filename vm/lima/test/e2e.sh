@@ -7,8 +7,9 @@
 #
 #   vm/lima/test/e2e.sh <guest.qcow2> <privatae-bastion linux-amd64> <host image> <postgres image>
 #
-# The guest image is vm/lima/build-image.sh's; the bastion is a 0.53 or later
-# build; the two images are local Docker images (nothing is published yet),
+# The guest image is vm/lima/build-image.sh's; the bastion is a build at
+# least packages/cseries/release.json's bastion.min_version (e2e-lima.js
+# reads both); the two images are local Docker images (nothing is published yet),
 # handed to the guest as a `docker save` tarball. Needs Docker, /dev/kvm and
 # Node 18 or later here. WORK sets the scratch folder (default /var/tmp),
 # which needs about 12 GB free: the person's home, and the VM's disk in it,
@@ -17,7 +18,9 @@
 #
 # Checked, in order: e2e-lima.js's two passes (the second asks for nothing);
 # the Host answering on the machine's 127.0.0.1:8800 and nothing else of the
-# guest's forwarded; the bastion as the systemd service, paired and anchored;
+# guest's forwarded; the local runtime on the guest's real podman and systemd
+# (vm/runtime/test/real-podman-checks.sh: the containers' CPU slice, an app's
+# kept data exported and imported back); the bastion as the systemd service, paired and anchored;
 # the VM started again by the login unit in a fresh user manager; and
 # uninstall --delete-data.
 set -euo pipefail
@@ -46,6 +49,9 @@ trap cleanup EXIT
 say() { printf '\n== %s\n' "$*"; }
 B() { docker exec "$name" "$@"; }
 U() { docker exec -u tester -e HOME=/home/tester -e XDG_RUNTIME_DIR=/run/user/1500 \
+      -e DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1500/bus -w /home/tester "$name" "$@"; }
+# The same, with this script's standard input passed through.
+Ui() { docker exec -i -u tester -e HOME=/home/tester -e XDG_RUNTIME_DIR=/run/user/1500 \
       -e DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1500/bus -w /home/tester "$name" "$@"; }
 
 say "the machine"
@@ -97,6 +103,12 @@ U env LIMA_HOME=/home/tester/.local/share/cseries/lima "$limactl" --tty=false sh
 sleep 5
 if B sh -c 'exec 3<>/dev/tcp/127.0.0.1/9999' 2>/dev/null; then echo "FAIL: guest port 9999 reached the machine"; exit 1; fi
 echo "a guest port other than 8800, 8810, 8811 is not forwarded"
+
+say "the local runtime on the guest's own podman and systemd"
+# The containers' slice and an app's kept data out and back, as root in the
+# guest, with the Host's own client in the Host's container.
+Ui env LIMA_HOME=/home/tester/.local/share/cseries/lima "$limactl" --tty=false shell --workdir / cseries \
+    sudo bash -s -- "localhost/${host_img%%:*}:${host_img##*:}" < "$repo/vm/runtime/test/real-podman-checks.sh"
 
 say "the bastion"
 B systemctl is-active privatae-bastion

@@ -1,0 +1,2 @@
+# The Memory app's Slots lens and the Compute model-call list say when their cap cut them.
+test_app_lists_say_when_cut.py

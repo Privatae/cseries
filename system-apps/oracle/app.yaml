@@ -104,7 +104,15 @@ system: true
 #   and the snapshots with Restore. Reads through /api/world on the Host's own
 #   database role; adds use:world.
 # 5.6.1 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
-version: "5.6.1"
+# 5.7.0 (2026-10-19): the Slots lens — every live preference and relationship
+#   note by slot (its type, where it is read, its topic), each with the entries
+#   it replaced, and the entries with no topic yet, each with a box to give it
+#   one. The record inspector shows the slot, the turn type it was written in
+#   and what it replaced there, and renames the topic. A conversation's turns
+#   list the memories that rode each turn. Reads GET /api/brain/memory-slots;
+#   POST /api/brain/manage/memories/{id}/topic sets a topic. The lens lists
+#   200 slots and 200 entries with no topic, and says so when there are more.
+version: "5.7.0"
 # Environment-catalog facts (host-facing, code-true). Source for the L1
 # topology block + describe_app — NOT a surface_role body (this is a control
 # panel, not a conversational surface): what_it_is/user_path only.

@@ -774,12 +774,22 @@ def history(directory: Path | None = None) -> dict:
 
 def _restore_script(dump_text: str) -> str:
     """The snapshot as one transaction: empty `world`, then load it. The dump's own
-    CREATE of the schema is dropped (the schema stays; host_world cannot create one)."""
+    CREATE of the schema is dropped (the schema stays; host_world cannot create one).
+
+    psql replays it under a \\restrict key made here, never the file's own. A
+    snapshot is a file in the state folder, which a restored backup brings back,
+    and the file's own \\restrict key is in the file: one that says \\unrestrict
+    with it, then \\! (a program, run as the kernel), would run that program.
+    Under a key nothing in the file can know, psql refuses every meta-command
+    in it, and the restore stops on it (ON_ERROR_STOP) with nothing changed."""
+    import secrets
     # Compared word by word, so this module carries no DDL text (the no-DDL
     # gate reads every string literal in brain/).
     kept = [ln for ln in dump_text.splitlines()
-            if [w.upper() for w in ln.split()] != ["CREATE", "SCHEMA", "WORLD;"]]
-    return "CALL world_admin.empty_world();\n" + "\n".join(kept) + "\n"
+            if [w.upper() for w in ln.split()] != ["CREATE", "SCHEMA", "WORLD;"]
+            and not ln.startswith(("\\restrict ", "\\unrestrict "))]
+    return (f"\\restrict {secrets.token_hex(24)}\n" + "CALL world_admin.empty_world();\n"
+            + "\n".join(kept) + "\n")
 
 
 def restore(snapshot: str, dsn: str | None = None, directory: Path | None = None) -> dict:

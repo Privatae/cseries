@@ -7,13 +7,21 @@
 #   wait-boot          wait until systemd has finished starting
 #   configure          read the pinned images from stdin (host=, postgres=,
 #                      release=, and optionally cpu_quota= and
-#                      memory_max=) and write them
-#                      where the units read them
-#   pull               pull both images, with progress
+#                      memory_max=) and write them where the units read
+#                      them; on a machine with the local runtime also its
+#                      images (python=, creative=, helper=, browser=, each
+#                      pinned by digest) and the engines' sources
+#                      (harness_src_url=, harness_src_sha256=), the
+#                      browser's control token, and the Host's drop-in that
+#                      joins it to the runtime
+#   pull               pull both images (and the runtime's python image), with
+#                      progress
 #   start | stop | restart
 #   status             key=value lines, cpus= and mem_total_kb= among them
 #                      (this system's processor count and MemTotal)
 #   health             exit 0 when the Host answers on 127.0.0.1:8800
+#   ready              exit 0 when the Host's deep health check says ready:
+#                      its database, its migrations and its runtime are up
 #   logs host|postgres [--follow] [--lines N]
 #   host-log           the current Host container's own output
 #   pair-token         a one-time pairing token for the bastion, as JSON
@@ -22,8 +30,18 @@
 #   version            the guest image's version
 set -eu
 
-UNITS=/etc/containers/systemd
-STATE=/etc/cseries
+# Every path is under CSERIES_GUEST_ROOT, which only a test sets.
+R=${CSERIES_GUEST_ROOT:-}
+UNITS=$R/etc/containers/systemd
+STATE=$R/etc/cseries
+RT_ETC=$R/etc/cseries-runtime
+RT_BIN=$R/usr/local/sbin/cseries-runtime
+RT_NET=10.89.78.0/24
+RT_HOST_IP=10.89.78.2
+# The Host's MAC there, made from its address as the runtime makes its
+# containers' (cseries_runtime/common.py mac_for), so it is the same after a
+# restart and no neighbour cache keeps a dead one.
+RT_HOST_MAC=02:63:0a:59:4e:02
 
 die() { printf '%s\n' "$*" >&2; exit 1; }
 
@@ -75,8 +93,65 @@ write_if_changed() {
     echo 1
 }
 
+# A URL as the image table takes it: http(s), and no character a JSON string
+# or a shell would read as anything else.
+valid_url() {
+    case "$1" in
+        http://*|https://*) ;;
+        *) return 1 ;;
+    esac
+    case "$1" in *[!A-Za-z0-9._~:/%+-]*) return 1 ;; esac
+    return 0
+}
+
+hex64() {
+    [ ${#1} -eq 64 ] || return 1
+    case "$1" in *[!0-9a-f]*) return 1 ;; esac
+    return 0
+}
+
+# The local runtime's image table: each family the release pins, and the
+# engines' sources. Only the keys given; a family missing is one the runtime
+# refuses.
+runtime_images() {
+    out='{
+  "images": {'
+    sep=""
+    for fam in python creative helper browser; do
+        eval "ref=\$rt_$fam"
+        [ -n "$ref" ] || continue
+        out="$out$sep
+    \"$fam\": \"$ref\""
+        sep=","
+    done
+    out="$out
+  }"
+    if [ -n "$rt_hs_url" ]; then
+        out="$out,
+  \"harness_src\": {\"url\": \"$rt_hs_url\", \"sha256\": \"$rt_hs_sha\"}"
+    fi
+    printf '%s\n}' "$out"
+}
+
+# The browser's control token, made once: the runtime gives it to the browser
+# container and the Host sends it with every call (without one the browser
+# would take any caller on its port).
+browser_token() {
+    f=$RT_ETC/browser-control-token
+    if [ ! -s "$f" ]; then
+        mkdir -p "$RT_ETC"
+        tok=$(od -An -tx1 -N32 /dev/urandom | tr -d ' \n')
+        hex64 "$tok" || die "configure: could not make the browser's control token"
+        (umask 077 && printf '%s\n' "$tok" > "$f.new" && mv "$f.new" "$f")
+    fi
+    tok=$(cat "$f")
+    (umask 077 && printf 'BROWSER_CONTROL_TOKEN=%s\n' "$tok" > "$f.env.new" && mv "$f.env.new" "$f.env")
+    chmod 0600 "$f" "$f.env"
+}
+
 configure() {
     host="" postgres="" release="" cpu_quota="" memory_max=""
+    rt_python="" rt_creative="" rt_helper="" rt_browser="" rt_hs_url="" rt_hs_sha="" rt_given=""
     while IFS='=' read -r key value || [ -n "$key" ]; do
         case "$key" in
             host) host=$value ;;
@@ -84,6 +159,16 @@ configure() {
             release) release=$value ;;
             cpu_quota) cpu_quota=$value ;;
             memory_max) memory_max=$value ;;
+            python|creative|helper|browser)
+                valid_ref "$value" || die "configure: $key image is not pinned by digest: $value"
+                eval "rt_$key=\$value"
+                rt_given=1 ;;
+            harness_src_url)
+                valid_url "$value" || die "configure: harness_src_url is not an http(s) URL: $value"
+                rt_hs_url=$value rt_given=1 ;;
+            harness_src_sha256)
+                hex64 "$value" || die "configure: harness_src_sha256 is not 64 hex characters"
+                rt_hs_sha=$value rt_given=1 ;;
             "") ;;
             *) die "configure: unknown key $key" ;;
         esac
@@ -112,6 +197,9 @@ configure() {
         [1-9]*M) case "${memory_max%M}" in *[!0-9]*) die "configure: memory_max is not a size in MiB: $memory_max" ;; esac ;;
         *) die "configure: memory_max is not a size in MiB: $memory_max" ;;
     esac
+    if [ -n "$rt_hs_url$rt_hs_sha" ] && { [ -z "$rt_hs_url" ] || [ -z "$rt_hs_sha" ]; }; then
+        die "configure: harness_src_url and harness_src_sha256 go together"
+    fi
     a=$(write_if_changed "$UNITS/cseries-host.container.d/image.conf" "[Container]
 Image=$host")
     b=$(write_if_changed "$UNITS/cseries-postgres.container.d/image.conf" "[Container]
@@ -129,13 +217,43 @@ CPUQuota=$cpu_quota")
 [Service]
 MemoryMax=$memory_max")
     fi
-    if [ "$a$b$d$e" != 0000 ]; then
+    f=0
+    if [ -x "$RT_BIN" ]; then
+        if [ -n "$rt_given" ]; then
+            g=$(write_if_changed "$RT_ETC/images.json" "$(runtime_images)")
+            : "$g"
+        fi
+        browser_token
+        gid=$(getent group cseries-runtime | cut -d: -f3)
+        [ -n "$gid" ] || die "configure: the cseries-runtime group is missing"
+        f=$(write_if_changed "$UNITS/cseries-host.container.d/runtime.conf" "# The Host's side of the local runtime (cseries-runtime): its network,
+# its socket and the browser's control token. Written by cseries-guest configure.
+[Unit]
+Requires=cseries-runtime.socket
+After=cseries-runtime.socket
+
+[Container]
+Network=cseries-apps.network:ip=$RT_HOST_IP,mac=$RT_HOST_MAC
+Volume=/run/cseries-runtime:/run/cseries-runtime
+GroupAdd=$gid
+Environment=CSERIES_RUNTIME_SOCKET=/run/cseries-runtime/runtime.sock
+Environment=CSERIES_RUNTIME_KERNEL_ADDR=$RT_HOST_IP:8800
+Environment=CSERIES_RUNTIME_NET=$RT_NET
+EnvironmentFile=/etc/cseries-runtime/browser-control-token.env")
+    fi
+    if [ "$a$b$d$e$f" != 00000 ]; then
         systemctl daemon-reload
         echo changed=1
     else
         echo changed=0
     fi
     : "$c"
+}
+
+runtime_image_of() {
+    # The ref the image table pins for family $1, or nothing.
+    [ -f "$RT_ETC/images.json" ] || return 0
+    sed -n "s/^ *\"$1\": \"\([^\"]*\)\".*/\1/p" "$RT_ETC/images.json"
 }
 
 need_config() {
@@ -194,6 +312,12 @@ case "$cmd" in
             ref=$(image_of "$which")
             podman image exists "$ref" || podman pull "$ref"
         done
+        # The messaging connectors run on the python image, so it comes with
+        # the Host; the browser's and the creative engines' come on first use.
+        ref=$(runtime_image_of python)
+        if [ -n "$ref" ]; then
+            podman image exists "$ref" || podman pull "$ref"
+        fi
         ;;
     start)
         need_config
@@ -215,6 +339,7 @@ case "$cmd" in
         echo "postgres=$(unit_state cseries-postgres.service)"
         echo "cpus=$(getconf _NPROCESSORS_ONLN)"
         echo "mem_total_kb=$(sed -n 's/^MemTotal: *\([0-9]*\) kB$/\1/p' /proc/meminfo)"
+        echo "runtime=$(unit_state cseries-runtime.socket)"
         if curl -fsS --max-time 3 -o /dev/null http://127.0.0.1:8800/api/system/health 2>/dev/null; then
             echo "health=ok"
         else
@@ -223,6 +348,17 @@ case "$cmd" in
         ;;
     health)
         curl -fsS --max-time 3 -o /dev/null http://127.0.0.1:8800/api/system/health
+        ;;
+    ready)
+        # Liveness says only that the web server answers. A Host whose
+        # database is down or whose migrations did not apply answers it too,
+        # and cannot serve a chat; the deep check answers 503 for that.
+        # Asked from inside the Host's container: from here the port forward
+        # delivers the request from the network's gateway, and once the Host
+        # has an owner only loopback reaches the deep check without a session.
+        body=$(podman exec cseries-host curl -fsS --max-time 10 \
+            http://127.0.0.1:8800/api/system/health/deep </dev/null) || exit 1
+        printf '%s' "$body" | grep -Eq '"status": *"ready"'
         ;;
     logs)
         which=${1:-host}
@@ -255,6 +391,6 @@ case "$cmd" in
         cat "$STATE/guest-version"
         ;;
     *)
-        die "usage: cseries-guest wait-boot|configure|pull|start|stop|restart|status|health|logs|host-log|pair-token|keepalive|version"
+        die "usage: cseries-guest wait-boot|configure|pull|start|stop|restart|status|health|ready|logs|host-log|pair-token|keepalive|version"
         ;;
 esac

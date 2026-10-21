@@ -1022,6 +1022,16 @@ async def lifespan(app: FastAPI):
         from server.bridge.no_platform import NoPlatform
         set_bridge_client(NoPlatform())
 
+    # The local runtime on this Host's machine starts its apps' and engines'
+    # containers (server/applications/local_runtime.py). Re-send every
+    # installed app's runtime descriptor and every connected engine to it once
+    # it answers, as the platform's boot reconciler does for the operator.
+    from server.applications.local_runtime import in_use as _rt_in_use
+    if _rt_in_use():
+        from server.applications import harness_sync as _harness_sync
+        from server.applications.local_runtime import runtime_client as _rt_client
+        asyncio.create_task(_harness_sync.run_loop(_rt_client()))
+
     # The first-run identity (server/local_identity.py) when the row is still
     # the init-db placeholder; a no-op afterwards. State surfaces in
     # /api/system/health/deep as the "identity" check.
@@ -1944,6 +1954,9 @@ app.include_router(artifacts_routes.router)
 
 from server.routes import backup as backup_routes
 app.include_router(backup_routes.router)
+# A file the owner uploads to restore from streams to disk as it arrives: a
+# router of its own, without the backup router's whole-body read.
+app.include_router(backup_routes.upload_router)
 # The Host's own crash artifacts (list/delete, metadata only). Kernel
 # route rather than a meta-tool because kernel_op already carries the scoped
 # token + CEIGAS bits check; see server/routes/system_crash.py.

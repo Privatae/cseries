@@ -298,18 +298,11 @@ async def main(dsn):
         check("T the threads' turns (in the run's project) are no candidate of the topic pick",
               all(not k.startswith("project:") for k, _ in scores), scores)
 
-        shown = {}
-
-        async def model(messages, **kw):
-            shown["system"] = messages[0]["content"]
-            return {"tool_calls": [{"function": {"name": tp.TOPIC_PICK_TOOL_NAME, "arguments": json.dumps(
-                {"new": True, "title": "Login redirect", "reason": "nothing matches"})}}]}
         land = await tp.pick_topic(pool, E, "how is the login redirect loop fix going",
-                                   current_thread_id=topic, call_model=model,
-                                   route={"provider": "anthropic", "model": "m"})
-        check("T ...the Host is never shown one, and a message never lands in one",
-              "project:" not in shown.get("system", "") and land.thread_id not in (str(pid), f"project:{pid}"),
-              (shown.get("system", "")[:300], land))
+                                   current_thread_id=topic)
+        check("T ...the Host is never offered one, and a message never lands in one",
+              not any(c.get("kind") == "project" for c in (land.choice or ()))
+              and land.thread_id not in (str(pid), f"project:{pid}"), land)
         feed = (await rc.read_feed(pool, E, limit=200))["messages"]
         check("T ...and none of their turns is in the conversation's feed",
               not any("session cookie fix step" in m["body"] for m in feed))

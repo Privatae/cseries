@@ -467,9 +467,7 @@ async def serve_app(app_id: str, path: str, request: Request) -> Response:
             from server.applications import harness_backend
             host = await harness_backend.ensure_awake_app(app_id)
             if host is None:
-                raise HTTPException(
-                    status.HTTP_503_SERVICE_UNAVAILABLE,
-                    f"{app_id} is starting — retry")
+                raise _not_awake(app_id, f"{app_id} is starting — retry")
             try:
                 return await _serve_external(app_id, 0, path, request,
                                              strip_prefix=True, upstream_host=host)
@@ -479,6 +477,8 @@ async def serve_app(app_id: str, path: str, request: Request) -> Response:
                 harness_backend.invalidate_app_url(app_id)
                 host = await harness_backend.ensure_awake_app(app_id)
                 if host is None:
+                    if harness_backend.wake_refused(app_id):
+                        raise _not_awake(app_id, "") from None
                     raise
                 return await _serve_external(app_id, 0, path, request,
                                              strip_prefix=True, upstream_host=host)
@@ -509,9 +509,7 @@ async def serve_app(app_id: str, path: str, request: Request) -> Response:
         from server.applications import harness_backend
         host = await harness_backend.ensure_awake_app(app_id)
         if host is None:
-            raise HTTPException(
-                status.HTTP_503_SERVICE_UNAVAILABLE,
-                f"{app_id} helper is starting — retry")
+            raise _not_awake(app_id, f"{app_id} helper is starting — retry")
         # /system-apps/<id>/helper/fetch/<host>/<path> -> /fetch/<host>/<path>
         fwd = path[len("helper/"):]
         try:
@@ -525,6 +523,8 @@ async def serve_app(app_id: str, path: str, request: Request) -> Response:
             harness_backend.invalidate_app_url(app_id)
             host = await harness_backend.ensure_awake_app(app_id)
             if host is None:
+                if harness_backend.wake_refused(app_id):
+                    raise _not_awake(app_id, "") from None
                 raise
             return await _serve_external(app_id, 0, fwd, request,
                                          strip_prefix=True, upstream_host=host)
@@ -550,8 +550,7 @@ async def serve_app(app_id: str, path: str, request: Request) -> Response:
             from server.applications import harness_backend
             host = await harness_backend.ensure_awake(app_id, harness_id)
             if host is None:
-                raise HTTPException(
-                    status.HTTP_503_SERVICE_UNAVAILABLE, f"{app_id} is starting — retry")
+                raise _not_awake(app_id, f"{app_id} is starting — retry")
             return await _serve_external(app_id, port, path, request, strip_prefix,
                                          upstream_host=host)
         # No harness: a loopback port in the Host pod, the same exposure as an
@@ -565,6 +564,22 @@ async def serve_app(app_id: str, path: str, request: Request) -> Response:
         status.HTTP_500_INTERNAL_SERVER_ERROR,
         f"unknown runtime kind: {kind}",
     )
+
+
+def _not_awake(app_id: str, starting: str) -> HTTPException:
+    """The answer to a request whose app container did not wake. A wake this
+    machine refused for a reason the owner can act on (a short disk, no room)
+    answers with the refusal's own status and its words, one line of text
+    (harness_backend.wake_refused); an app paused while a backup copies its
+    data is 504 in the runtime's words for a wake then; anything else is
+    still starting, 503."""
+    from server.applications import harness_backend, local_runtime
+    if local_runtime.exporting_app_data(app_id):
+        return HTTPException(status.HTTP_504_GATEWAY_TIMEOUT, local_runtime.EXPORT_PAUSED)
+    why = harness_backend.wake_refused(app_id)
+    if why:
+        return HTTPException(why["code"], why["message"])
+    return HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, starting)
 
 
 def _is_static_file(install_dir: Path, path: str) -> bool:
@@ -1306,6 +1321,17 @@ async def serve_app_ws(websocket: WebSocket, app_id: str, path: str) -> None:
         # Opening counts as use, so a session is never idle before its first frame.
         harness_backend.touch_activity(app_id)
         if ws_host is None:
+            why = harness_backend.wake_refused(app_id)
+            if why:
+                # A close reason holds 123 bytes and the refusal names each
+                # app's data, so it is one error frame (the viewport shows
+                # its detail as text), then the close.
+                import json as _json
+                await websocket.accept()
+                await websocket.send_text(_json.dumps(
+                    {"t": "error", "detail": why["message"], "refused": why["code"]}))
+                await websocket.close(code=1013, reason="refused by this machine")
+                return
             await websocket.close(code=1011, reason="harness starting")
             return
     else:

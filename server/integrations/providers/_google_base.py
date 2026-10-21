@@ -238,7 +238,9 @@ async def handle_callback(
     row exists. Providers use it to prime their cursor (Gmail historyId,
     Drive startPageToken, etc.).
     """
-    payload = oauth.verify_state(state)
+    # A state this Host minted for this sign-in, spent here: the callback is
+    # reached without a session (middleware/localhost_only.is_oauth_callback).
+    payload = oauth.claim_state(state)
     if not payload or payload.get("provider") != provider_key:
         return {"ok": False, "error": "invalid_state"}
 

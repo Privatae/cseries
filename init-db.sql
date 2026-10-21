@@ -150,9 +150,28 @@ CREATE TABLE entity_memory (
     -- rows from before it and on rows other writers lay down: those are read
     -- by created_at, COALESCE(landed_at, created_at).
     -- migrations/v216_project_list_reads.sql adds it to existing databases.
-    landed_at           TIMESTAMPTZ
+    landed_at           TIMESTAMPTZ,
+    -- v241: the entry's slot. slot_topic is what it is about, as the Host
+    -- named it in its own memory call (normalized: [a-z0-9_], at most 48);
+    -- slot_scope is where it is read ('global' or '<kind>:<ref>'), set by the
+    -- platform; turn_type is the writing turn's type name, stamped by the
+    -- platform (provenance, not part of the slot). One live entry per slot
+    -- (ux_entity_memory_live_slot); a row with no topic is outside the rule.
+    -- migrations/v241_memory_slots.sql adds them to existing databases.
+    slot_topic          TEXT,
+    slot_scope          TEXT,
+    turn_type           TEXT,
+    CONSTRAINT entity_memory_slot_topic_shape
+        CHECK (slot_topic IS NULL
+               OR (slot_topic ~ '^[a-z0-9][a-z0-9_]{0,47}$' AND slot_scope IS NOT NULL))
 );
 
+CREATE UNIQUE INDEX ux_entity_memory_live_slot
+    ON entity_memory (entity_id, memory_type, slot_scope, slot_topic)
+ WHERE slot_topic IS NOT NULL AND status = 'active' AND t_valid_until IS NULL;
+CREATE INDEX idx_entity_memory_slot_topic_tsv
+    ON entity_memory USING gin (to_tsvector('english'::regconfig, replace(slot_topic, '_', ' ')))
+ WHERE slot_topic IS NOT NULL;
 CREATE INDEX idx_entity_memory_entity ON entity_memory (entity_id);
 CREATE INDEX idx_entity_memory_search_tsv ON entity_memory USING gin (search_tsv);
 CREATE INDEX idx_entity_memory_type ON entity_memory (entity_id, memory_type);
@@ -1961,6 +1980,11 @@ CREATE INDEX IF NOT EXISTS idx_turn_tool_results_session
 -- live-root index reads deleted_at (v189), declared here too so this file
 -- still loads whole in its one transaction on an empty database.
 ALTER TABLE circles_threads ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+-- v241: a topic made for one message and then folded into the thread the
+-- Host picked for it in its turn (runtime/thread_choice.py): '<kind>:<ref>' of
+-- where it went, so a page that still names it sends there
+-- (circles_threads.live_thread_id).
+ALTER TABLE circles_threads ADD COLUMN IF NOT EXISTS merged_into TEXT;
 ALTER TABLE circles_threads
     ADD COLUMN IF NOT EXISTS builtin_type TEXT NULL;
 ALTER TABLE circles_threads DROP CONSTRAINT IF EXISTS circles_threads_builtin_type_check;

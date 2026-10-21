@@ -1,0 +1,8 @@
+#!/usr/sbin/nft -f
+# The bastion's outbound limits, for the cgroup the running privatae-bastion
+# service has now. nft resolves a cgroup path when the rule is loaded, and
+# systemd makes the service's cgroup anew at each start, so cseries-firewall
+# loads this from the service's ExecStartPre, inside that new cgroup, before
+# the bastion itself runs. door.nft holds bastion_vet, the rules themselves.
+flush chain inet cseries_door bastion_out
+add rule inet cseries_door bastion_out socket cgroupv2 level 2 "system.slice/privatae-bastion.service" jump bastion_vet

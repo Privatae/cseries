@@ -167,3 +167,39 @@ All three declare MIT in package.json. The texts below come from the upstream re
 | remark-math-6.0.0.LICENSE | remark-math | 6.0.0 | MIT | https://raw.githubusercontent.com/remarkjs/remark-math/d5d0660b150810a535bbb07eac6cc96a4510aa24/license | verified (release commit) |
 | rehype-katex-7.0.1.LICENSE | rehype-katex | 7.0.1 | MIT | https://raw.githubusercontent.com/remarkjs/remark-math/88a9497e1ede93b958237c85edbf5651faeca7af/license | verified (release commit; same monorepo licence as remark-math) |
 | react-remove-scroll-bar-2.3.8.LICENSE | react-remove-scroll-bar | 2.3.8 | MIT | https://raw.githubusercontent.com/theKashey/react-remove-scroll-bar/master/LICENSE | upstream later: the 2.3.8 release commit (b3b1287a) has no LICENSE file; the author (Anton Korzunov, the package.json author) added this MIT text afterwards |
+
+## 11. webauthn 3.0.1 and the packages it brings (the owner's passkeys)
+
+Fetched 2026-10-19. Each text is the licence file inside the wheel requirements.txt pins, copied byte for byte from its `.dist-info/licenses/` directory; each wheel's sha256 matched the digest PyPI publishes for it. cbor2 is the only one with compiled code; the texts in its x86_64 and arm64 wheels for cp314 are byte-identical (sha256 a6afd126…2fef).
+
+| file | package | version | SPDX | wheel the text came from | status |
+|---|---|---|---|---|---|
+| webauthn-3.0.1.LICENSE | webauthn (Duo Labs) | 3.0.1 | BSD-3-Clause | https://files.pythonhosted.org/packages/ea/5e/cc651030a1d43010234247ab4361aac17276f62b185975100ba62aa00cf7/webauthn-3.0.1-py3-none-any.whl | verified |
+| cbor2-6.1.5.LICENSE | cbor2 (Alex Grönholm) | 6.1.5 | MIT | https://files.pythonhosted.org/packages/e5/fa/5f9baeecf35db1d35ca5415dfa1e8656d656ccbbaca875e65d72df849f4e/cbor2-6.1.5-cp314-cp314-manylinux_2_28_x86_64.whl | verified |
+| pyasn1-0.6.4.LICENSE | pyasn1 (Ilya Etingof) | 0.6.4 | BSD-2-Clause | https://files.pythonhosted.org/packages/9a/3b/6163796d69c3977d1e4287bea4a6979161cbbdd170ebb430511e8e1999ce/pyasn1-0.6.4-py3-none-any.whl | verified |
+| pyasn1-modules-0.4.2.LICENSE | pyasn1-modules (Ilya Etingof) | 0.4.2 | BSD-2-Clause (the metadata says "BSD"; the text is the two-clause licence, byte-identical to pyasn1's) | https://files.pythonhosted.org/packages/47/8d/d529b5d697919ba8c11ad626e835d4039be708a35b0d22de83a269a6682c/pyasn1_modules-0.4.2-py3-none-any.whl | verified |
+| pyOpenSSL-26.4.0.LICENSE | pyOpenSSL (the pyOpenSSL developers) | 26.4.0 | Apache-2.0 | https://files.pythonhosted.org/packages/51/ad/2cf6d3fa2fae5c79e1ed9960c0d42badd0f94d81dd12b50604cdc839e648/pyopenssl-26.4.0-py3-none-any.whl | verified |
+
+**NOTICE.** pyOpenSSL is the one Apache-2.0 package here. Its wheel carries no NOTICE file, and https://raw.githubusercontent.com/pyca/pyopenssl/26.4.0/NOTICE answers 404, so there is no NOTICE text to carry; NOTICE records that.
+
+**Duty.** BSD-2-Clause, BSD-3-Clause and MIT: keep the copyright notice and the licence text. Apache-2.0: include the licence.
+
+## 12. The browser libraries vendored into the system apps (age-encryption, noble, scure, qrcode-generator)
+
+Fetched 2026-10-20. Settings (system-apps/settings/vendor/) and Backups (system-apps/backups/vendor/) each carry the same age-encryption.js, one esbuild bundle of age-encryption and the five packages it uses (sha256 2097a8cf…eb27, pinned in each vendor/VERSIONS). Backups also carries qrcode-generator, byte-identical to dashboard/base/js/qrcode.js (sha256 6326a28e…7c95).
+
+**Evidence.** Each npm text below was read from the package's own tarball (`npm pack <pkg>@<version>`), and each tarball's sha512 matched the integrity the registry publishes and the one vendor/VERSIONS records. Every text is byte-identical to the vendor/LICENSE-* copy beside the bundle. qrcode-generator's npm tarball carries no licence file; its text is the repository's LICENSE at the release tag `js1.4.4`, and that tag's js/qrcode.js is byte-identical to the npm 1.4.4 qrcode.js (sha256 18ae399f…1780). The vendored qrcode.js is that file with a four-line header comment added above it.
+
+| file | package | version | SPDX | URL fetched | status |
+|---|---|---|---|---|---|
+| age-encryption-0.3.1.LICENSE | age-encryption (typage, the age authors) | 0.3.1 | BSD-3-Clause | https://registry.npmjs.org/age-encryption/-/age-encryption-0.3.1.tgz (package/LICENSE) | verified |
+| noble-ciphers-2.4.0.LICENSE | @noble/ciphers (Paul Miller) | 2.4.0 | MIT | https://registry.npmjs.org/@noble/ciphers/-/ciphers-2.4.0.tgz | verified |
+| noble-curves-2.4.0.LICENSE | @noble/curves (Paul Miller) | 2.4.0 | MIT | https://registry.npmjs.org/@noble/curves/-/curves-2.4.0.tgz | verified |
+| noble-curves-2.0.1.LICENSE | @noble/curves, nested under @noble/post-quantum | 2.0.1 | MIT | https://registry.npmjs.org/@noble/curves/-/curves-2.0.1.tgz | verified |
+| noble-hashes-2.4.0.LICENSE | @noble/hashes (Paul Miller) | 2.4.0 | MIT | https://registry.npmjs.org/@noble/hashes/-/hashes-2.4.0.tgz | verified |
+| noble-hashes-2.0.1.LICENSE | @noble/hashes, nested under @noble/post-quantum | 2.0.1 | MIT | https://registry.npmjs.org/@noble/hashes/-/hashes-2.0.1.tgz | verified |
+| noble-post-quantum-0.5.4.LICENSE | @noble/post-quantum (Paul Miller) | 0.5.4 | MIT | https://registry.npmjs.org/@noble/post-quantum/-/post-quantum-0.5.4.tgz | verified |
+| scure-base-2.4.0.LICENSE | @scure/base (Paul Miller) | 2.4.0 | MIT | https://registry.npmjs.org/@scure/base/-/base-2.4.0.tgz | verified |
+| qrcode-generator-1.4.4.LICENSE | qrcode-generator (Kazuhiko Arase) | 1.4.4 | MIT | https://raw.githubusercontent.com/kazuhikoarase/qrcode-generator/js1.4.4/LICENSE | verified (release tag) |
+
+**Duty.** BSD-3-Clause and MIT: keep the copyright notice and the licence text with the copies. The texts are here and beside each bundle (vendor/LICENSE-*); the bundle keeps each package's own comments (esbuild --legal-comments=inline).

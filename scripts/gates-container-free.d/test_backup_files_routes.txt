@@ -1,0 +1,10 @@
+# 2026-10-20: the routes of the backups on this machine and of where backups go
+# (server/routes/backup.py). The recovery key made on the Host (public half,
+# its own fingerprint, never the Host's vault key, behind the owner's code);
+# the bucket's key sealed in the vault and never answered back; Settings,
+# Backup refusing a place that cannot be written (the network on a Host not on
+# one, a bucket with none saved, a second copy for backups kept on this
+# machine) and asking the owner's code to move or thin them; the download, the
+# upload, the restore from a file and the export, all walled from the Host.
+# Stand-in pool and vault; no pod, no DB server, no network.
+test_backup_files_routes.py

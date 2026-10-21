@@ -141,15 +141,16 @@ async def _check_entitlement(app_id: str) -> None:
                                     bundles, entity self-signed) pass
                                     `check_entitlement=False` instead.
     """
-    try:
-        from server.main import get_bridge_client
-    except Exception as e:
-        raise EntitlementUnverifiable(f"entitlement gate: bridge import failed: {e}") from None
-    bc = get_bridge_client()
-    if bc is None or not getattr(bc, "_connected", False):
+    # The network's door when it answers, else the free public catalog
+    # (applications/public_store.py), whose apps are all free; a door that
+    # exists but is not answering is never routed around for an app outside
+    # that catalog, so a priced app still fails closed.
+    from server.applications.public_store import store_client
+    bc = store_client()
+    if not bc._connected:
         raise EntitlementUnverifiable(
-            f"entitlement gate: bridge not connected (cannot verify entitlement "
-            f"for {app_id!r}). Retry once the bridge is up; or call install via "
+            f"entitlement gate: no App Store is reachable (cannot verify entitlement "
+            f"for {app_id!r}). Retry once the network's door is up; or call install via "
             f"a path that bypasses the gate (factory / host self-signed)."
         )
     envelope = await bc.request_full("appstore.entitlement.check", {"app_id": app_id})
@@ -288,8 +289,9 @@ async def _sync_app_harness(harness_id: str, enabled: bool, *, bc=None) -> bool:
     loop); by default it is the process-wide one."""
     try:
         if bc is None:
-            from server.main import get_bridge_client as _gbc
-            bc = _gbc()
+            # The machine's local runtime when it has one, else the bridge.
+            from server.applications.local_runtime import runtime_client
+            bc = runtime_client()
         if bc is None or not getattr(bc, "_connected", False):
             log.info("harness sync (%s=%s) skipped — bridge not connected", harness_id, enabled)
             return False
@@ -325,9 +327,13 @@ class AppRuntimeOverPlan(Exception):
         # numbers only: the bridge caps its body at 200 chars, and a payload
         # carrying a sentence measured 238 bytes, so the numbers used to be cut
         # off mid-JSON and this exception carried None for all of them.
+        # The local runtime refuses for the machine, not a plan: it says so
+        # with scope "machine", and there is no plan to name or upgrade to.
+        self.machine = d.get("scope") == "machine"
         if self.needs_mi is not None:
+            spare = "this machine has" if self.machine else "this plan has"
             msg = (f"{app_id} reserves {self.needs_mi}MiB of your machine and "
-                   f"this plan has {self.headroom_mi}MiB spare.")
+                   f"{spare} {self.headroom_mi}MiB spare.")
             if self.upgrade_to:
                 msg += f" {self.upgrade_to} has room for it."
         else:
@@ -430,6 +436,9 @@ async def sync_app_runtime(app_id: str, enabled: bool, *, bc=None) -> bool:
                     "wakeTimeoutS": int(m.runtime.ready_timeout_seconds),
                     "kernelUrl": kernel_url_for_pods(),
                     "sourceToken": await app_source_token(pool, app_id),
+                    # A resident app runs all the time; the local runtime's
+                    # machine guard stops one last.
+                    "lifecycle": m.runtime.lifecycle,
                 })
         if bc is None:
             # Same process-wide bridge handle the wake path uses (one

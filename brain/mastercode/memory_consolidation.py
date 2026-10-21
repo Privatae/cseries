@@ -296,19 +296,58 @@ def _close_to(candidate: dict, content: str, embedding_str: Optional[str]) -> bo
 
 
 def scope_stamp(source_context: Optional[dict],
-                from_turns: Optional[list] = None) -> Optional[dict]:
+                from_turns: Optional[list] = None,
+                turn_tokens: Optional[list] = None) -> Optional[dict]:
     """What a retirement (metadata.superseded_in) or a goal's close
     (metadata.resolved_in) records: the scope whose conversation did it, plus
     the turn rows that conversation consolidated. The turn ids are what lets
     the stamp move with the messages when a Split or an adopt moves them
     (circles_threads.carry_stamps), the way the rows learned from them move.
-    None when there is no scope to name."""
+    `turn_tokens` names the same turns by the id each turn has from its start
+    (metadata.turn_token on its message row), which a write knows before the
+    row lands: in PII mode the row is queued and its id is never known to the
+    write. None when there is no scope to name."""
     if not isinstance(source_context, dict) or not source_context.get("kind"):
         return None
     stamp = dict(source_context)
-    if from_turns:
-        stamp["from_turns"] = [int(t) for t in from_turns]
+    stamp.update(turn_marks({"from_turns": from_turns, "from_turn_tokens": turn_tokens}))
     return stamp
+
+
+# The two keys that name the turns a row or a record was learned in: the
+# message rows' ids (when the write knew them) and the turns' own tokens.
+TURN_KEYS = ("from_turns", "from_turn_tokens")
+
+
+def turn_marks(src: Optional[dict]) -> dict:
+    """The turn keys of `src` (a stamp, a record, a row's metadata) that name
+    a turn, normalized: ids as ints, tokens as strings. {} when none do."""
+    out: dict = {}
+    if not isinstance(src, dict):
+        return out
+    try:
+        ids = [int(t) for t in (src.get("from_turns") or [])]
+    except (TypeError, ValueError):
+        ids = []
+    toks = [str(t) for t in (src.get("from_turn_tokens") or []) if t]
+    if ids:
+        out["from_turns"] = ids
+    if toks:
+        out["from_turn_tokens"] = toks
+    return out
+
+
+def merge_turns(into: dict, more: Optional[dict]) -> bool:
+    """Add the turns `more` names to `into` (a record), in place. True when
+    `into` gained one."""
+    have, add = turn_marks(into), turn_marks(more)
+    changed = False
+    for k, cast in (("from_turns", int), ("from_turn_tokens", str)):
+        new = set(add.get(k) or []) - set(have.get(k) or [])
+        if new:
+            into[k] = sorted(set(have.get(k) or []) | new, key=cast)
+            changed = True
+    return changed
 
 
 class MemoryConsolidator:
@@ -416,6 +455,7 @@ class MemoryConsolidator:
                                'about', o.metadata->'about',
                                'scoped_by', o.metadata->'scoped_by',
                                'scoped_at', o.metadata->'scoped_at',
+                               'scoped_in', o.metadata->'scoped_in',
                                'scope_history', o.metadata->'scope_history')) AS patch
                       FROM unnest($1::int[], $2::int[]) AS w(loser_id, winner_id)
                       JOIN entity_memory o ON o.id = w.loser_id AND o.entity_id = $3
@@ -441,8 +481,16 @@ class MemoryConsolidator:
         confidence: float = 0.85,
         visibility: str = "default",
         metadata_extra: Optional[dict] = None,
+        turn_type: Optional[str] = None,
     ) -> int:
         """Insert a new entity_memory row and return its id.
+
+        Every row is stamped by the platform with where it is read
+        (slot_scope, memory_slots.slot_scope_for, for the types that carry a
+        scope) and the type of the turn that wrote it (turn_type: `turn_type`,
+        else the running turn's, memory_engine.turn_type_now). A row written
+        here has no topic: a slotted write goes through
+        memory_slots.write_in_slot.
 
         parent_id, if set, is written into metadata.supersedes_id so the lineage
         is queryable without joining the AGE graph (useful for read-side audit).
@@ -456,6 +504,11 @@ class MemoryConsolidator:
         meta = dict(metadata_extra or {})
         if parent_id:
             meta["supersedes_id"] = parent_id
+        from mastercode.memory_slots import slot_scope_for
+        from mastercode.memory_engine import turn_type_now
+        slot_scope = slot_scope_for(memory_type, meta)
+        if turn_type is None:
+            turn_type = turn_type_now(source_session) if source_session else turn_type_now()
         # dimension_vec_str is accepted for the callers' sake and ignored: the
         # ten-dimension personality vector left entity_memory.
         if embedding_str:
@@ -469,13 +522,13 @@ class MemoryConsolidator:
                 INSERT INTO entity_memory (
                     entity_id, content, memory_type, source_session,
                     importance, confidence, visibility,
-                    metadata, {content_col}
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7,
-                          $8::jsonb, $9::{cast})
+                    slot_scope, turn_type, metadata, {content_col}
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9,
+                          $10::jsonb, $11::{cast})
                 RETURNING id
                 """,
                 entity_id, content, memory_type, source_session,
-                importance, confidence, visibility,
+                importance, confidence, visibility, slot_scope, turn_type,
                 json.dumps(meta), embedding_str,
             )
         else:
@@ -484,12 +537,12 @@ class MemoryConsolidator:
                 INSERT INTO entity_memory (
                     entity_id, content, memory_type, source_session,
                     importance, confidence, visibility,
-                    metadata
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb)
+                    slot_scope, turn_type, metadata
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb)
                 RETURNING id
                 """,
                 entity_id, content, memory_type, source_session,
-                importance, confidence, visibility,
+                importance, confidence, visibility, slot_scope, turn_type,
                 json.dumps(meta),
             )
         return row["id"]
@@ -642,19 +695,28 @@ class MemoryConsolidator:
                     if same(md.get(owner_key)):
                         # Its own conversation saying it again: nothing to
                         # record — but a teaching here marks the place taught
-                        # (a row re-homed here by a delete was not taught here).
-                        if key == "held_in" and taught and not any(
-                                same(e) and e.get("taught") and not e.get("words")
-                                for e in (md.get(key) or []) if isinstance(e, dict)):
+                        # (a row re-homed here by a delete was not taught here),
+                        # and a repeat teaching adds its message to that mark,
+                        # so the mark follows that message if it moves
+                        # (circles_threads.carry_learned) and the place it
+                        # goes is one the person taught the rule in too.
+                        entries = [e for e in (md.get(key) or []) if isinstance(e, dict)]
+                        mine = next((e for e in entries if same(e) and e.get("taught")
+                                     and not e.get("words")), None)
+                        turns = turn_marks(stamp)
+                        if key == "held_in" and taught and mine is None:
                             mark = {"kind": stamp["kind"], "ref": str(stamp.get("ref") or ""),
-                                    "at": row["now"].isoformat(), "taught": True}
-                            if stamp.get("from_turns"):
-                                mark["from_turns"] = [int(t) for t in stamp["from_turns"]]
+                                    "at": row["now"].isoformat(), "taught": True, **turns}
                             await conn.execute(
                                 "UPDATE entity_memory SET metadata = jsonb_set(COALESCE(metadata,"
                                 " '{}'::jsonb), '{held_in}', $3::jsonb) WHERE id = $1 AND entity_id = $2",
-                                row_id, entity_id, json.dumps(
-                                    [e for e in (md.get(key) or []) if isinstance(e, dict)] + [mark]))
+                                row_id, entity_id, json.dumps(entries + [mark]))
+                        elif (key == "held_in" and taught and turns and turn_marks(mine)
+                              and merge_turns(mine, turns)):
+                            await conn.execute(
+                                "UPDATE entity_memory SET metadata = jsonb_set(COALESCE(metadata,"
+                                " '{}'::jsonb), '{held_in}', $3::jsonb) WHERE id = $1 AND entity_id = $2",
+                                row_id, entity_id, json.dumps(entries))
                         return True
                     locked_owner = md.get(owner_key)
                     if not (isinstance(locked_owner, dict) and isinstance(owner, dict)
@@ -709,16 +771,15 @@ class MemoryConsolidator:
                             else:
                                 md["source_context"] = {"kind": stamp["kind"],
                                                         "ref": str(stamp.get("ref") or "")}
-                            if stamp.get("from_turns"):
-                                md["from_turns"] = [int(t) for t in stamp["from_turns"]]
-                            else:
-                                md.pop("from_turns", None)
+                            for _k in TURN_KEYS:
+                                md.pop(_k, None)
+                            md.update(turn_marks(stamp))
                             md["rehomed_from"] = owner
                             from mastercode.circles_threads import _taught_elsewhere
                             if same_scope(md.get("about"), owner) and not await _taught_elsewhere(
                                     conn, entity_id, md, str(owner.get("kind")), str(owner.get("ref") or "")):
                                 # a decision naming the deleted thread goes
-                                for _k in ("about", "scoped_by", "scoped_at"):
+                                for _k in ("about", "scoped_by", "scoped_at", "scoped_in"):
                                     md.pop(_k, None)
                             if (fresh.get("about") and "about" not in md
                                     and not same_scope(fresh["about"], owner)):
@@ -731,21 +792,18 @@ class MemoryConsolidator:
                                 # Taught here: the place is marked as any
                                 # teaching place is (memory_engine.rule_reach).
                                 mark = {"kind": stamp["kind"], "ref": str(stamp.get("ref") or ""),
-                                        "at": row["now"].isoformat(), "taught": True}
-                                if stamp.get("from_turns"):
-                                    mark["from_turns"] = [int(t) for t in stamp["from_turns"]]
-                                md["held_in"] = [e for e in (md.get("held_in") or [])
+                                        "at": row["now"].isoformat(), "taught": True,
+                                        **turn_marks(stamp)}
+                                md["held_in"] =[e for e in (md.get("held_in") or [])
                                                  if isinstance(e, dict)] + [mark]
-                            project = None
-                            if stamp["kind"] == "project":
-                                try:
-                                    project = int(stamp.get("ref"))
-                                except (TypeError, ValueError):
-                                    project = None
+                            # Its project tag is left as it is: the caller's
+                            # own copy, a fresh write, would carry none for
+                            # the project it was said in (circles_threads.
+                            # carry_learned).
                             await conn.execute(
-                                "UPDATE entity_memory SET metadata = $3::jsonb, project_id = $4"
+                                "UPDATE entity_memory SET metadata = $3::jsonb"
                                 " WHERE id = $1 AND entity_id = $2",
-                                row_id, entity_id, json.dumps(md), project)
+                                row_id, entity_id, json.dumps(md))
                             # The row is the caller's now, but what the deleted
                             # thread changed with it is still undone: what it
                             # linked, or had merged into it, comes back beside it.
@@ -766,10 +824,7 @@ class MemoryConsolidator:
                     for e in entries:
                         if (same(e) and e.get("words") == fresh.get("words")
                                 and e.get("about") == fresh.get("about")):
-                            turns = {int(t) for t in (e.get("from_turns") or [])}
-                            turns |= {int(t) for t in (stamp.get("from_turns") or [])}
-                            if turns:
-                                e["from_turns"] = sorted(turns)
+                            merge_turns(e, stamp)
                             if fresh.get("at") and not e.get("at"):
                                 e["at"] = fresh["at"]   # the first time it was said
                             if fresh.get("taught"):

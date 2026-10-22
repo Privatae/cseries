@@ -31,6 +31,7 @@ Container-free: python3 scripts/test_cloud_box_bootstrap.py (needs cryptography)
 """
 import copy
 import hashlib
+import http.client
 import importlib.util
 import json
 import os
@@ -213,8 +214,147 @@ with tempfile.TemporaryDirectory() as tmp:
           store["k7x2m9.cloud.privatae.ai"]["subdomain"] == GOOD["acme_dns"]["credential"]["subdomain"],
           "acme-dns.json is keyed by the machine's zone, <address_id>.<zone>", list(store))
     check(cc.load_cloud(paths)["address_id"] == "k7x2m9", "the box's cloud.json carries the address_id")
+# Debian builds lego without its acme-dns provider ("unrecognized DNS
+# provider: acme-dns" from Debian 13's lego 4.9.1-2, on the first machine on
+# our own VPS host, 2026-10-22), so cseries-cert runs lego's exec provider
+# with cseries-acme-dns-hook, which makes the acme-dns update itself.
+hook_loader = SourceFileLoader("acme_dns_hook", os.path.join(OVERLAY, "usr/local/sbin/cseries-acme-dns-hook"))
+hook_spec = importlib.util.spec_from_loader("acme_dns_hook", hook_loader)
+hook = importlib.util.module_from_spec(hook_spec)
+hook_loader.exec_module(hook)
+
+
+class _Answer:
+    def __init__(self, body):
+        self.body = body
+
+    def read(self):
+        return self.body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+sent = []
+
+
+def _acme_dns(answer_txt=None):
+    def opener(req, timeout=None):
+        sent.append(req)
+        txt = json.loads(req.data)["txt"] if answer_txt is None else answer_txt
+        return _Answer(json.dumps({"txt": txt}).encode())
+    return opener
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    paths = cc.Paths(tmp)
+    boot.write_config(paths, {**cfg, "setup_code": None}, {"cseries": os.getgid()})
+    cred = GOOD["acme_dns"]["credential"]
+    hook.present(paths, "_acme-challenge.k7x2m9.cloud.privatae.ai.", "tXtV4lue", opener=_acme_dns())
+    req = sent[-1]
+    check(req.full_url == GOOD["acme_dns"]["api_base"] + "/update" and req.get_method() == "POST" and
+          req.get_header("X-api-user") == cred["username"] and req.get_header("X-api-key") == cred["password"] and
+          json.loads(req.data) == {"subdomain": cred["subdomain"], "txt": "tXtV4lue"},
+          "the hook sets the challenge with acme-dns's update call and the machine's credential",
+          (req.full_url, req.get_method(), json.loads(req.data)))
+    # lego follows the challenge name's CNAME and passes its target, the
+    # credential's fulldomain (seen live with Debian 13's lego 4.9.1-2).
+    hook.present(paths, cred["fulldomain"] + ".", "tXtV4lue2", opener=_acme_dns())
+    check(json.loads(sent[-1].data) == {"subdomain": cred["subdomain"], "txt": "tXtV4lue2"},
+          "the hook takes the acme-dns name the challenge CNAME points at, as lego passes it")
+    n = len(sent)
+    for name in ("_acme-challenge.other.cloud.privatae.ai.", "k7x2m9.cloud.privatae.ai.",
+                 "other-" + cred["fulldomain"] + ".",
+                 "_acme-challenge.k7x2m9.cloud.privatae.ai.evil.test."):
+        try:
+            hook.present(paths, name, "v", opener=_acme_dns())
+            refused_name = False
+        except cc.CloudError:
+            refused_name = True
+        check(refused_name and len(sent) == n, f"the hook refuses {name}, and calls nothing")
+    try:
+        hook.present(paths, "_acme-challenge.k7x2m9.cloud.privatae.ai.", "v", opener=_acme_dns("other"))
+        unconfirmed = False
+    except cc.CloudError:
+        unconfirmed = True
+    check(unconfirmed, "an update acme-dns does not confirm with the same TXT value is a failure")
+    def _cut_short(req, timeout=None):
+        raise http.client.IncompleteRead(b"")
+
+    for what, op in (("an answer that is not a JSON object", lambda req, timeout=None: _Answer(b'["v"]')),
+                     ("a response cut short", _cut_short)):
+        try:
+            hook.present(paths, "_acme-challenge.k7x2m9.cloud.privatae.ai.", "v", opener=op)
+            clean = False
+        except cc.CloudError:
+            clean = True
+        check(clean, f"{what} is the hook's own failure, not a traceback")
+
+    # urllib follows a redirect of a POST as a GET that keeps every header but
+    # the content ones, so the credential would go wherever a redirect points.
+    # http.client's connections are answered from memory here: urllib's own
+    # redirect handling runs and nothing leaves the machine.
+    class _Sock:
+        def __init__(self, raw):
+            self.raw = raw
+
+        def makefile(self, *a, **k):
+            return io.BytesIO(self.raw)
+
+    wire = []
+
+    class _Wire(http.client.HTTPConnection):  # for urllib's static helpers; it never connects
+        def __init__(self, host, timeout=None, **kw):
+            self.host, self.sock = host, None
+
+        def set_debuglevel(self, level):
+            pass
+
+        def set_tunnel(self, *a, **k):
+            pass
+
+        def request(self, method, url, body=None, headers=None, **kw):
+            self.method = method
+            wire.append((self.host, method, url, dict(headers or {})))
+
+        def getresponse(self):
+            if len(wire) == 1:
+                raw = b"HTTP/1.1 302 Found\r\nLocation: http://elsewhere.invalid/update\r\nContent-Length: 0\r\n\r\n"
+            else:
+                body = b'{"txt": "v"}'
+                raw = b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\n\r\n%s" % (len(body), body)
+            r = http.client.HTTPResponse(_Sock(raw), method=self.method)
+            r.begin()
+            return r
+
+        def close(self):
+            pass
+
+    _hc = (http.client.HTTPConnection, http.client.HTTPSConnection)
+    http.client.HTTPConnection = http.client.HTTPSConnection = _Wire
+    try:
+        hook.present(paths, "_acme-challenge.k7x2m9.cloud.privatae.ai.", "v")
+        redirect_refused = False
+    except cc.CloudError:
+        redirect_refused = True
+    finally:
+        http.client.HTTPConnection, http.client.HTTPSConnection = _hc
+    check(redirect_refused and len(wire) == 1,
+          "a redirect from acme-dns is refused, so the credential's headers go nowhere else",
+          [(h, m, u, sorted(k for k in hd if k.lower().startswith("x-api"))) for h, m, u, hd in wire])
+check(hook.main(["hook", "cleanup", "_acme-challenge.k7x2m9.cloud.privatae.ai.", "v"]) == 0 and
+      hook.main(["hook", "present"]) == 2, "cleanup is nothing, and a short call is refused")
+check(os.access(os.path.join(OVERLAY, "usr/local/sbin/cseries-acme-dns-hook"), os.X_OK),
+      "the hook is executable in the overlay (build-overlay marks usr/local/sbin anyway)")
+
 src_boot = open(os.path.join(OVERLAY, "usr/local/sbin/cseries-cloud-bootstrap")).read()
 src_cert = open(os.path.join(OVERLAY, "usr/local/sbin/cseries-cert")).read()
+check('"--dns", "exec"' in src_cert and "EXEC_PATH=HOOK" in src_cert and
+      'HOOK = "/usr/local/sbin/cseries-acme-dns-hook"' in src_cert and '"--dns", "acme-dns"' not in src_cert,
+      "cseries-cert runs lego's exec provider with the hook, never the acme-dns provider Debian leaves out")
 check('name = "*." + cc.zone_host(cfg)' in src_boot and '"--domains", "*." + zone' in src_cert and
       "zone = cc.zone_host(cfg)" in src_cert,
       "the placeholder certificate and lego's request are both for *.<the machine's zone>")
@@ -685,6 +825,44 @@ check(cc.BASTION_MIN_VERSION == "0.53.2" and
       json.load(open(os.path.join(ROOT, "packages/cseries/release.json")))["bastion"]["min_version"]
       == cc.BASTION_MIN_VERSION,
       "the box needs the bastion that reads `pair -`, the cseries command's floor too")
+
+# A box with no bastion_binary downloads its bastion. fetch_to_file writes
+# the file with open(..., "wb") (0644 under the usual umask) and
+# install_bastion then runs it for its version: before the chmod every such
+# bootstrap failed with PermissionError [Errno 13] on <bastion>.download
+# (the first machine on our own VPS host, 2026-10-22; the VM test hands the
+# box a bastion_binary, so it never took this path).
+BIN = b"#!/bin/sh\necho privatae-bastion 9.9.9\n"
+BIN_SHA = hashlib.sha256(BIN).hexdigest()
+_fs, _ftf = cc.fetch_signed, cc.fetch_to_file
+cc.fetch_signed = lambda url, kind, *a, **k: ({"version": "9.9.9", "binaries": {
+    arch: {"sha256": BIN_SHA, "url": "https://bastion.invalid/privatae-bastion"}
+    for arch in ("linux-amd64", "linux-arm64")}}, b"", b"")
+
+
+def _fetch_like_the_real_one(url, path, max_bytes, timeout=120):
+    with open(path, "wb") as f:
+        f.write(BIN)
+    return BIN_SHA
+
+
+cc.fetch_to_file = _fetch_like_the_real_one
+got, err, mode, leftover = None, None, None, None
+try:
+    with tempfile.TemporaryDirectory() as tmp:
+        bp = cc.Paths(tmp)
+        os.makedirs(os.path.dirname(bp.bastion_bin()), exist_ok=True)
+        try:
+            got = boot.install_bastion(bp, {"bastion_binary": None}, cc.BASTION_MIN_VERSION)
+        except Exception as e:  # noqa: BLE001  reported by the check below
+            err = f"{type(e).__name__}: {e}"
+        if os.path.exists(bp.bastion_bin()):
+            mode = os.stat(bp.bastion_bin()).st_mode & 0o777
+        leftover = os.path.exists(bp.bastion_bin() + ".download")
+finally:
+    cc.fetch_signed, cc.fetch_to_file = _fs, _ftf
+check(got == "9.9.9" and mode == 0o755 and leftover is False,
+      "a box that downloads its bastion runs the download and installs it 0755", (got, err, mode, leftover))
 
 # ── 4. the constants agree ──────────────────────────────────────────────────
 

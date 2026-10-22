@@ -103,8 +103,9 @@ def secure_bootstrap_json(path):
 def write_config(paths, cfg, gids):
     cc.write_json(paths.cloud_json(), cc.cloud_json(cfg))
     if cfg["acme_dns"]:
-        # The storage file lego's acme-dns provider reads, keyed by the name
-        # the certificate is for (the wildcard's base).
+        # The credential cseries-acme-dns-hook reads (in the shape of lego's
+        # acme-dns storage file), keyed by the name the certificate is for
+        # (the wildcard's base).
         cred = dict(cfg["acme_dns"]["credential"])
         cred.setdefault("allowfrom", [])
         cc.write_json(paths.acme_dns_json(), {cc.zone_host(cfg): cred}, mode=0o600)
@@ -295,6 +296,10 @@ def install_bastion(paths, cfg, min_version):
         if got != b["sha256"]:
             os.unlink(src)
             raise cc.CloudError(f"the bastion download hashes to {got}, its manifest says {b['sha256']}")
+        # fetch_to_file writes the file 0644 and bastion_version runs it: without
+        # this every box that downloads its bastion failed with PermissionError
+        # (the first machine on our own VPS host, 2026-10-22).
+        os.chmod(src, 0o700)
     v = bastion_version(src)
     if cc.parse_version(v) is None or cc.parse_version(v) < cc.parse_version(min_version):
         raise cc.CloudError(f"the bastion is {v}; this box needs {min_version} or newer")

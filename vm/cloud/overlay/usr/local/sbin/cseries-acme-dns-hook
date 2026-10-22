@@ -1,0 +1,100 @@
+#!/usr/bin/python3 -I
+"""lego's exec DNS provider hook for the box's wildcard certificate (cseries-cert).
+
+Debian builds lego without its acme-dns provider (debian/rules lists acmedns
+among the disabled "nodns" providers; Debian 13's lego 4.9.1-2 answers
+"unrecognized DNS provider: acme-dns"), and its exec provider is kept. So
+cseries-cert runs lego with --dns exec and EXEC_PATH set to this file, which
+does what the acme-dns provider does:
+
+  present <fqdn> <value>   sets <value> as the TXT record behind the machine's
+                           _acme-challenge name: POST <api_base>/update with the
+                           provisioner's acme-dns credential
+                           (/etc/cseries-cloud/acme-dns.json, keyed by
+                           <address_id>.<zone>; acme-dns-api.json beside it).
+  cleanup <fqdn> <value>   nothing: acme-dns keeps the two newest TXT values of
+                           a subdomain and has no delete.
+
+Only the machine's own challenge name is ever presented:
+_acme-challenge.<address_id>.<zone>, or the acme-dns name its CNAME points at
+(the credential's fulldomain), which is the name lego passes once it has
+followed that CNAME (measured with Debian 13's lego 4.9.1-2, 2026-10-22). Any
+other name is refused, as the credential could change no other anyway.
+"""
+
+import http.client
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+
+sys.path.insert(0, "/usr/local/lib/cseries-cloud")
+import cseries_cloud as cc  # noqa: E402
+
+
+def log(msg):
+    print(f"acme-dns-hook: {msg}", file=sys.stderr, flush=True)
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """acme-dns answers /update itself and never redirects it. urllib follows
+    a redirect of a POST as a GET carrying every header but the content ones,
+    X-Api-User and X-Api-Key included, to whatever host and scheme (http too)
+    the redirect names, so a redirect is a failure here instead."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(req.full_url, code, f"{msg}, a redirect, which is refused",
+                                     headers, fp)
+
+
+_open = urllib.request.build_opener(_NoRedirect).open
+
+
+def present(paths, fqdn, value, opener=_open):
+    cfg = cc.load_cloud(paths)
+    zone = cc.zone_host(cfg)
+    cred = (cc.read_json(paths.acme_dns_json(), {}) or {}).get(zone)
+    if not isinstance(cred, dict) or not all(cred.get(k) for k in ("username", "password", "subdomain")):
+        raise cc.CloudError(f"{paths.acme_dns_json()} holds no acme-dns credential for {zone}")
+    names = {f"_acme-challenge.{zone}".lower()}
+    if cred.get("fulldomain"):
+        names.add(str(cred["fulldomain"]).rstrip(".").lower())
+    if fqdn.rstrip(".").lower() not in names:
+        raise cc.CloudError(f"{fqdn} is not this machine's challenge name _acme-challenge.{zone} "
+                            "or the acme-dns name it points at")
+    api = cc.read_json(os.path.join(paths.etc, "acme-dns-api.json"), {}) or {}
+    base = str(api.get("api_base") or "").rstrip("/")
+    if not base.startswith("https://"):
+        raise cc.CloudError("acme-dns-api.json names no https api_base")
+    req = urllib.request.Request(
+        base + "/update", method="POST",
+        data=json.dumps({"subdomain": cred["subdomain"], "txt": value}).encode(),
+        headers={"X-Api-User": cred["username"], "X-Api-Key": cred["password"],
+                 "Content-Type": "application/json", "User-Agent": cc.USER_AGENT})
+    try:
+        with opener(req, timeout=30) as r:
+            answer = json.loads(r.read().decode("utf-8", "replace") or "{}")
+    except (OSError, ValueError, http.client.HTTPException) as e:
+        raise cc.CloudError(f"acme-dns update failed: {e}") from None
+    if not isinstance(answer, dict) or answer.get("txt") != value:
+        raise cc.CloudError("acme-dns did not confirm the TXT value it was given")
+
+
+def main(argv):
+    if len(argv) == 4 and argv[1] == "cleanup":
+        return 0
+    if len(argv) != 4 or argv[1] != "present":
+        log("usage: cseries-acme-dns-hook present|cleanup <fqdn> <value>")
+        return 2
+    try:
+        present(cc.Paths(), argv[2], argv[3])
+    except cc.CloudError as e:
+        log(str(e))
+        return 1
+    log(f"TXT set for {argv[2]}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

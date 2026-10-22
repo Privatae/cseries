@@ -1,7 +1,9 @@
 #!/usr/bin/python3 -I
 """The box's wildcard certificate for *.<address_id>.<zone>, the machine's
-zone (cseries_cloud.zone_host), by lego with the acme-dns provider
-(cseries-cert.service, daily). It covers the Host at
+zone (cseries_cloud.zone_host), by lego with its exec DNS provider and
+cseries-acme-dns-hook, which sets the challenge through acme-dns
+(cseries-cert.service, daily). Debian's lego is built without the acme-dns
+provider itself (cseries-acme-dns-hook says why). It covers the Host at
 <name>.<address_id>.<zone> and each isolated app at
 apps-<key>-<name>.<address_id>.<zone>.
 
@@ -30,6 +32,7 @@ sys.path.insert(0, "/usr/local/lib/cseries-cloud")
 import cseries_cloud as cc  # noqa: E402
 
 LEGO = "/usr/bin/lego"
+HOOK = "/usr/local/sbin/cseries-acme-dns-hook"
 
 
 def log(msg):
@@ -92,10 +95,9 @@ def main():
     lego_dir = os.path.join(paths.state, "lego")
     os.makedirs(lego_dir, mode=0o700, exist_ok=True)
     crt, key = lego_files(lego_dir, zone)
-    env = dict(os.environ, ACME_DNS_API_BASE=api["api_base"],
-               ACME_DNS_STORAGE_PATH=paths.acme_dns_json())
+    env = dict(os.environ, EXEC_PATH=HOOK)
     args = [LEGO, "--accept-tos", "--path", lego_dir, "--email", cfg["acme_email"],
-            "--server", cfg["acme_server"], "--key-type", "ec256", "--dns", "acme-dns",
+            "--server", cfg["acme_server"], "--key-type", "ec256", "--dns", "exec",
             "--domains", "*." + zone]
     args += ["renew", "--days", "30"] if os.path.exists(crt) else ["run"]
     r = subprocess.run(args, capture_output=True, text=True, env=env, timeout=600, check=False)

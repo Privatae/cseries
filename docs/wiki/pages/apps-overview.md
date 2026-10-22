@@ -61,7 +61,7 @@ Agents, Artifacts, Backups, Calendar, Circles, Community, Compute, Context, Desi
 
 ## Which apps come from the App Store?
 
-Other apps, including the App Store app itself, Publisher, Browser, Claude Code, Security and Terminal, comes from the store, and your Host installs any of them when you ask. The store is a signed catalog published with each C-Series release, so any Host can read it without joining the [Privatae network](wiki:the-privatae-network); a Host that has joined also sees the apps the network offers.
+Other apps, including the App Store app itself, Publisher, Browser, Claude Code, Security and Terminal, come from the store. Your Host installs the App Store app from it the first time it starts, and any of the others when you ask. The store is a signed catalog published with each C-Series release, so any Host can read it without joining the [Privatae network](wiki:the-privatae-network); a Host that has joined also sees the apps the network offers.
 
 ## What about apps I build?
 

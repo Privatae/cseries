@@ -71,13 +71,21 @@ EPISODE_GAP_MINUTES = 30
 # Hosts whose URL paths are `<owner>/<repo>`. The persisted tool-call chip
 # does NOT carry a repo field (see repos_from_trail), so a repo is only
 # recoverable when a result handed back a URL on one of these. The Host's own
-# forge is GITEA_URL's host when that is set; there is no default forge.
+# forge is the git server connected in Settings, else GITEA_URL's host when
+# that is set; there is no default forge.
 _REPO_HOSTS = ("github.com", "gitlab.com")
 
 
 def _repo_re():
     hosts = list(_REPO_HOSTS)
     forge = (os.environ.get("GITEA_URL") or "").strip()
+    try:
+        # The git server connected in Settings, when there is one.
+        from server.git_server import connected
+        if connected() is not None:
+            forge = connected().url
+    except Exception:  # noqa: BLE001 — a reader outside the server process
+        pass
     forge = forge.split("://", 1)[-1].split("/", 1)[0]
     if forge and forge not in hosts:
         hosts.insert(0, forge)

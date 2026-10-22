@@ -39,6 +39,7 @@ import json
 import os
 import re
 import sys
+from turn_source import turn_source  # session.py and the modules split out of it
 
 FAILS = []
 
@@ -294,7 +295,7 @@ def main() -> int:
     check("pre-fire: no scope known still volunteers no own words",
           "OTHER THREAD" not in block and "THIS THREAD" not in block
           and "User pays invoices on the 1st" in block, block)
-    src_sess = open(os.path.join(app_root, "brain/mastercode/runtime/session.py")).read()
+    src_sess = turn_source(app_root)
     check("the turn's RECALL scope is parked for the pre-fire",
           "sess.recall_scope = _src_ctx" in src_sess
           and 'source_context=getattr(sess, "recall_scope", None)' in src_ps)

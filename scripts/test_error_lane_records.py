@@ -33,10 +33,8 @@ as a syntax tree. No pod, no DB. Exit 0 = pass.
 ERROR_LANE_ERROR_LOG / ERROR_LANE_SESSION_PY override the two paths (used to
 prove the test fails against origin/main's copies).
 
-Check 1 needs the session.py half of the fix. Until that diff lands, the gate
-runs checks 2-4 and check 1 runs with --call-site (it fails today, by design:
-it names the dead call). Whoever lands the session.py change makes check 1
-unconditional here in the same commit.
+All four checks run every time: the turn's half of the fix (its recorder
+call outside `if _prompt_console:`) has landed.
 """
 
 import ast
@@ -46,11 +44,13 @@ import logging
 import os
 import sys
 
+from turn_source import turn_source  # session.py and the modules split out of it
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.join(HERE, "..")
 ERROR_LOG = os.environ.get("ERROR_LANE_ERROR_LOG") or os.path.join(ROOT, "server", "error_log.py")
-SESSION_PY = os.environ.get("ERROR_LANE_SESSION_PY") or os.path.join(
-    ROOT, "brain", "mastercode", "runtime", "session.py")
+# Unset: the turn, session.py and every module split out of it. Set: that one file.
+SESSION_PY = os.environ.get("ERROR_LANE_SESSION_PY")
 
 FAILS = []
 
@@ -100,8 +100,11 @@ def _tests_console(test: ast.AST) -> bool:
 
 
 def reachable_checks():
-    with open(SESSION_PY, encoding="utf-8") as f:
-        tree = ast.parse(f.read())
+    if SESSION_PY:
+        with open(SESSION_PY, encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+    else:
+        tree = ast.parse(turn_source(ROOT))
     parents = {}
     for node in ast.walk(tree):
         for child in ast.iter_child_nodes(node):
@@ -216,8 +219,7 @@ async def recorder_checks():
 
 
 if __name__ == "__main__":
-    if "--call-site" in sys.argv[1:]:
-        reachable_checks()
+    reachable_checks()
     asyncio.run(recorder_checks())
     if FAILS:
         print(f"[error-lane-records] {len(FAILS)} FAILED: {', '.join(FAILS)}")

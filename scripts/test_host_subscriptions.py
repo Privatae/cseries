@@ -36,6 +36,7 @@ import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 _ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 sys.path.insert(0, str(_ROOT))
@@ -620,7 +621,7 @@ def main() -> int:
               and abs(t_mixed[0] - (500 * 3e-6 + 50 * 15e-6)) < 1e-9, repr(t_mixed))
         check("cost: turn — key-served with no rate known: 'unpriced', never "
               "'subscription'", t_key_cold == (None, "unpriced"), repr(t_key_cold))
-        sess_src = (_ROOT / "brain/mastercode/runtime/session.py").read_text()
+        sess_src = turn_source(_ROOT)
         check("cost: the turn's printed price is computed per call (session passes "
               "its per-call ledger to estimate_turn_cost)",
               "per_call=_per_call)" in sess_src, "session.py")

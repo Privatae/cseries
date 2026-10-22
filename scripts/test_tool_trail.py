@@ -30,6 +30,7 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 sys.path.insert(0, str(ROOT))
@@ -260,7 +261,7 @@ def main() -> int:
           "[22:11 UTC]" in tt.render_tool_trail(turns))
 
     # ── 5. wiring (source-tree) ────────────────────────────────────────────
-    sess = (ROOT / "brain/mastercode/runtime/session.py").read_text(encoding="utf-8")
+    sess = turn_source(ROOT)
     me = (ROOT / "brain/mastercode/memory_engine.py").read_text(encoding="utf-8")
     check("session.py folds digest_tool_action into ta_entry",
           "digest_tool_action(func_name, func_args, tool_result)" in sess)

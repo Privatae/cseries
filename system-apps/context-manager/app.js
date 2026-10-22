@@ -1444,6 +1444,10 @@
         catch (e) { state.embedModel = { _err: e.message }; }
         try { state.embedBastions = (await fetchJSON('/api/embedding/bastions')).bastions || []; }
         catch (e) { state.embedBastions = { _err: e.message }; }
+        // The managed embedder takes over only a model its catalog carries (the
+        // switch refuses any other); a Host with no platform has no catalog.
+        try { state.embedManaged = ((await fetchJSON('/api/embedding/catalog')).embedding_models || []).map(m => m.id); }
+        catch (e) { state.embedManaged = []; }
         try { state.embedJobs = (await fetchJSON('/api/brain/embed/jobs?limit=12')).jobs || []; }
         catch (e) { state.embedJobs = { _err: e.message }; }
         renderEmbedding();
@@ -1509,6 +1513,7 @@
         if (cur._err) { card.innerHTML = errBox(cur._err); if (baList) baList.innerHTML = ''; return; }
         const prov = cur.provider || 'privatae';
         const onBastion = prov === 'local';
+        const managedTakes = !!cur.model && (state.embedManaged || []).indexOf(cur.model) !== -1;
         const basRaw = state.embedBastions;
         const basErr = basRaw && basRaw._err ? basRaw._err : null;
         const bas = Array.isArray(basRaw) ? basRaw : [];
@@ -1520,9 +1525,16 @@
             })
             : null;
         const servingName = serving ? (serving.name || serving.hostname) : null;
-        const provPill = onBastion
+        // The lane the Host embeds on, named as /api/embedding/current reports it:
+        // 'local' (a machine you run), a provider id (that provider, under your key
+        // in Keys), or 'privatae' (the managed embedder on the platform).
+        const provPill = !cur.configured
+            ? '<span class="ctx-pill na" title="No embedding model is set">not set</span>'
+            : onBastion
             ? `<span class="ctx-pill ok" title="Served on a machine you run">${esc(servingName ? 'local · ' + servingName : 'local')}</span>`
-            : '<span class="ctx-pill backend-pg" title="Served on the platform">managed</span>';
+            : prov === 'privatae'
+            ? '<span class="ctx-pill backend-pg" title="Served on the platform">managed</span>'
+            : `<span class="ctx-pill" title="Served by ${attr(prov)} under your key in Keys">${esc(prov)}</span>`;
         card.innerHTML = `<div class="ctx-card">
             <div class="ctx-card-main">
                 <span class="ctx-card-title">${esc(cur.model || 'default')}</span>
@@ -1530,7 +1542,7 @@
                 ${cur.dim ? `<span class="label-sys">${esc(cur.dim)}d</span>` : ''}
             </div>
             <div class="ctx-card-actions">
-                ${onBastion ? '<button class="cseries-btn ghost" id="embed-use-managed">Use managed</button>' : ''}
+                ${onBastion && managedTakes ? '<button class="cseries-btn ghost" id="embed-use-managed">Use managed</button>' : ''}
             </div>
         </div>`;
         if (baList) {

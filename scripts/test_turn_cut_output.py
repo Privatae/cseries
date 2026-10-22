@@ -27,6 +27,7 @@ import json
 import logging
 import os
 import sys
+from turn_source import sync_turn_attr, turn_source  # session.py and the modules split out of it
 
 APP_ROOT = os.environ.get("APP_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, APP_ROOT)
@@ -463,14 +464,17 @@ check("7c both are env-set and <= 0 disables (the round backstop's rule)",
           os.environ.__setitem__("X_CAP_TEST", "0") or S._backstop_env("X_CAP_TEST", 7) >= 10**6))
 S._pending_nudges.clear()
 S._live_turns = getattr(S, "_live_turns", None)
+sync_turn_attr(S, "_live_turns")
 _long = "x" * 5000
 _orig_live = S.turn_is_live
 S.turn_is_live = lambda sid: True
+sync_turn_attr(S, "turn_is_live")
 try:
     S.answer_into_turn("sess-ans", 7, _long)
     _got = [t for t, _ts in S.consume_nudges_timed("sess-ans")]
 finally:
     S.turn_is_live = _orig_live
+    sync_turn_attr(S, "turn_is_live")
 check("7d an answer into a running turn arrives whole (it was cut at 2,000)",
       _got == [_long], [len(x) for x in _got])
 check("7e the 2,000-character answer cut is gone", not hasattr(S, "ANSWER_MAX_CHARS"))
@@ -482,7 +486,7 @@ _br = open(os.path.join(APP_ROOT, "server/routes/brain.py")).read()
 _bn = _br.split("async def brain_turn_nudge")[1].split("\n@router.")[0]
 check("7f2 the Workbench nudge route sends the person's words whole (it cut them at 2,000)",
       "[:2000]" not in _bn and '.get("text") or "").strip()' in _bn)
-_mtl = open(os.path.join(APP_ROOT, "brain/mastercode/runtime/session.py")).read()
+_mtl = turn_source(APP_ROOT)
 _mtl = _mtl[_mtl.index("def mark_turn_live"):][:900]
 check("7f3 each round of the tool loop is a sign of life to the turn registry (T-9)",
       "note_alive(session_id)" in _mtl)

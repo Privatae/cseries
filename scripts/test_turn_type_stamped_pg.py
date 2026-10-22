@@ -27,6 +27,7 @@ import os
 import pathlib
 import subprocess
 import sys
+from turn_source import turn_source  # session.py and the modules split out of it
 
 ROOT = pathlib.Path(os.environ.get("APP_ROOT") or pathlib.Path(__file__).resolve().parents[1])
 for p in (str(ROOT / "brain"), str(ROOT), str(ROOT / "scripts")):
@@ -123,7 +124,7 @@ async def run(pool):
           p2.get("replaced") == pid and await stamp_of(pool, p2.get("id")) == "chat", p2)
 
     print("T6. where the stamp is set")
-    src = (ROOT / "brain/mastercode/runtime/session.py").read_text()
+    src = turn_source(ROOT)
     i = src.find("set_current_turn_type(getattr(sess, \"turn_type\", None))")
     j = src.find("_CTT.set({\"session_id\": sess.session_id, \"name\": _turn_type_name})")
     check("T6 session.py stamps the turn's type right where it is resolved", 0 < i < j < i + 1500, (i, j))

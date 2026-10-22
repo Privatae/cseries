@@ -62,6 +62,7 @@ Exit 0 = all pass; exit 1 + [turn-types] FAIL lines otherwise.
 
 import asyncio
 import os
+from turn_source import turn_source  # session.py and the modules split out of it
 os.environ.setdefault("CSERIES_OPERATOR_ENTITY_ID", "9003")  # the operator Host in these cases
 import re
 import sys
@@ -983,7 +984,7 @@ def main() -> int:
 
     # ── 13. session.py wiring (structural, per site by name).
     sess_path = os.path.join(app_root, "brain", "mastercode", "runtime", "session.py")
-    src = open(sess_path, encoding="utf-8").read()
+    src = turn_source(app_root)
     typed = 'turn_type=getattr(sess, "turn_type", None)'
 
     def _site(marker: str, window: int = 1600) -> bool:

@@ -46,6 +46,7 @@ import pathlib
 import re
 import subprocess
 import sys
+from turn_source import turn_source  # session.py and the modules split out of it
 
 ROOT = pathlib.Path(os.environ.get("APP_ROOT") or pathlib.Path(__file__).resolve().parents[1])
 sys.path.insert(0, str(ROOT / "brain"))
@@ -340,7 +341,7 @@ async def record_not_summary(pool, root):
     check("S ...from that topic's rows only", rec and "tomato" not in rec.lower() and "errand" not in rec)
     check("S ...and nothing was written to build it", n_summ == await pool.fetchval(
         "SELECT count(*) FROM entity_memory WHERE memory_type = 'summary'") == 0, n_summ)
-    hist = (ROOT / "brain/mastercode/runtime/session.py").read_text()
+    hist = turn_source(ROOT)
     check("S a root turn reads no record",
           "_record_ok = bool(_src_ctx) and not getattr(sess, \"history_before\", None) \\\n"
           "                and not _work_lane and not _root_turn" in hist)

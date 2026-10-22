@@ -28,10 +28,11 @@ import ast
 import os
 import sys
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 sys.path[:0] = [str(ROOT), str(ROOT / "brain")]
-SRC = (ROOT / "brain/mastercode/runtime/session.py").read_text()
+SRC = turn_source(ROOT)
 FAILS: list[str] = []
 
 

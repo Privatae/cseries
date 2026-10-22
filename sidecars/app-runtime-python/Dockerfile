@@ -60,9 +60,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # pip 26.2.1, the one the base image carries, vendors certifi 2026.6.17, whose
 # CA bundle trusts the emSign root behind eight intermediates with compromised
 # keys (GHSA-6q48-6c7w-9gw2, CRITICAL). pip 26.2.2 vendors the fixed 2026.10.19.
-# Pinned by hash; drop this once the base image ships 26.2.2 or later.
+# Pinned by hash. Its wheel stays in /opt/app-runtime/wheels: run.py installs it
+# into every app venv, so `pip` in an app's command is this one.
 RUN printf '%s\n' 'pip==26.2.2 --hash=sha256:fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70' > /tmp/pip.txt \
- && python -m pip install --no-cache-dir --require-hashes -r /tmp/pip.txt \
+ && python -m pip download --no-cache-dir --no-deps --require-hashes -r /tmp/pip.txt -d /opt/app-runtime/wheels \
+ && python -m pip install --no-cache-dir --no-index --no-deps /opt/app-runtime/wheels/pip-26.2.2-py3-none-any.whl \
  && rm /tmp/pip.txt
 
 # The toolchain: compiler + headers for native wheels (TA-Lib, cffi,

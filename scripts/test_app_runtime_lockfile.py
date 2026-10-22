@@ -19,6 +19,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -101,6 +102,7 @@ with tempfile.TemporaryDirectory() as td:
         "import sys, os, pathlib\n"
         f"pathlib.Path({str(log)!r}).write_text(' '.join(sys.argv[1:]))\n"
         "sys.exit(int(os.environ.get('FAKE_PIP_RC', '0')))\n")
+    run.PIP_WHEELS = str(d / "no-wheels")   # these cases: an image that keeps no pip wheel
     ship = Ship()
     check("no record → no deps step, empty env", run.prepare_deps(str(src), "demo", ship) == {})
     (src / "attestation.json").write_text(json.dumps({"schema": 1, "files": {},
@@ -137,6 +139,102 @@ with tempfile.TemporaryDirectory() as td:
           rc == 78 and log.exists(), repr(rc))
     check("the stale sha marker is NOT rewritten after a failed install",
           (venv / ".cseries-lock-sha256").read_text().strip() == hashlib.sha256(LOCK).hexdigest())
+
+    # The steps prepare_deps runs itself, with no stand-in pip: the venv's pip is
+    # the image's own wheel when the image keeps one (`pip` in an app's command
+    # stays the venv's), else python's own `venv`.
+    ran = []
+    real_run = run.subprocess.run
+
+    def record(argv, **kw):
+        ran.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, stdout="")
+    wheels = d / "wheels"
+    wheels.mkdir()
+    wheel = wheels / "pip-26.2.2-py3-none-any.whl"
+    wheel.write_bytes(b"")
+    run.subprocess.run = record
+    try:
+        run.PIP_WHEELS = str(wheels)
+        fresh = d / "venv-fresh"
+        run.prepare_deps(str(src), "demo", Ship(), venv_dir=str(fresh))
+        check("a new venv gets no bundled pip, then the image's pip wheel, then the lockfile through it",
+              len(ran) == 3
+              and ran[0] == [sys.executable, "-m", "venv", "--without-pip", str(fresh)]
+              and ran[1] == [sys.executable, "-m", "pip", "--python", str(fresh / "bin" / "python"),
+                             "install", "--no-index", "--no-deps", "--disable-pip-version-check", str(wheel)]
+              and ran[2][0] == str(fresh / "bin" / "pip") and "--require-hashes" in ran[2], ran)
+        # A venv made before the image kept its pip (its own pip 26.2.1), lockfile unchanged.
+        old = d / "venv-old"
+        (old / "bin").mkdir(parents=True)
+        (old / "bin" / "python").write_text("#!/bin/sh\n")
+        (old / "lib" / "python3.14" / "site-packages" / "pip-26.2.1.dist-info").mkdir(parents=True)
+        (old / ".cseries-lock-sha256").write_text(hashlib.sha256((src / "requirements.lock").read_bytes()).hexdigest() + "\n")
+        ran.clear()
+        env3 = run.prepare_deps(str(src), "demo", Ship(), venv_dir=str(old))
+        check("an older venv, its lockfile unchanged, is reused and gets the image's pip once",
+              isinstance(env3, dict) and len(ran) == 1 and ran[0][-1] == str(wheel) and "--python" in ran[0], ran)
+        (old / "lib" / "python3.14" / "site-packages" / "pip-26.2.1.dist-info").rmdir()
+        (old / "lib" / "python3.14" / "site-packages" / "pip-26.2.2.dist-info").mkdir()
+        ran.clear()
+        run.prepare_deps(str(src), "demo", Ship(), venv_dir=str(old))
+        check("...and once it has that pip, nothing runs on the next boot", ran == [], ran)
+        site = old / "lib" / "python3.14" / "site-packages"
+        # Two pip installs in one venv: replacing one leaves the other, so a rule
+        # that keeps trying runs pip on every boot and never settles.
+        (site / "pip-26.2.1.dist-info").mkdir()
+        ran.clear()
+        s5 = Ship()
+        run.prepare_deps(str(src), "demo", s5, venv_dir=str(old))
+        check("a venv holding two pip installs is left as it is (no pip on every boot), and says so",
+              ran == [] and any("2 pip installs" in s for s in s5.lines), (ran, s5.lines))
+        (site / "pip-26.2.2.dist-info").rmdir()
+        # A lockfile that pins pip itself (pip-compile --allow-unsafe) owns the venv's pip.
+        lock_now = (src / "requirements.lock").read_bytes()
+        (src / "requirements.lock").write_bytes(
+            lock_now + b"pip==26.2.1 \\\n    --hash=sha256:" + b"4" * 64 + b"\n")
+        pinned_sha = hashlib.sha256((src / "requirements.lock").read_bytes()).hexdigest()
+        (old / ".cseries-lock-sha256").write_text(pinned_sha + "\n")
+        ran.clear()
+        run.prepare_deps(str(src), "demo", Ship(), venv_dir=str(old))
+        check("a lockfile that pins pip keeps the pip it pinned: the reused venv's pip is not replaced",
+              ran == [], ran)
+        (old / ".cseries-lock-sha256").unlink()
+        ran.clear()
+        run.prepare_deps(str(src), "demo", Ship(), venv_dir=str(old))
+        check("...nor before a reinstall: the lockfile alone sets it",
+              len(ran) == 1 and ran[0][0] == str(old / "bin" / "pip"), ran)
+        (site / "pip-26.2.1.dist-info").rmdir()
+        (old / ".cseries-lock-sha256").unlink()
+        ran.clear()
+        run.prepare_deps(str(src), "demo", Ship(), venv_dir=str(old))
+        check("...but a venv with no pip at all gets the image's first, so the lockfile can install",
+              len(ran) == 2 and ran[0][-1] == str(wheel) and ran[1][0] == str(old / "bin" / "pip"), ran)
+        (src / "requirements.lock").write_bytes(lock_now)
+        # A failed replacement on the reuse path keeps the venv and shows why.
+        (site / "pip-26.2.1.dist-info").mkdir()
+        (old / ".cseries-lock-sha256").write_text(hashlib.sha256(lock_now).hexdigest() + "\n")
+
+        def record_fail(argv, **kw):
+            ran.append(list(argv))
+            return subprocess.CompletedProcess(argv, 1, stdout="ERROR: the wheel is unreadable\n")
+        run.subprocess.run = record_fail
+        ran.clear()
+        s6 = Ship()
+        env6 = run.prepare_deps(str(src), "demo", s6, venv_dir=str(old))
+        run.subprocess.run = record
+        check("a failed pip replacement on reuse keeps the venv and logs pip's own error",
+              isinstance(env6, dict) and len(ran) == 1
+              and any("the wheel is unreadable" in s for s in s6.lines), (ran, s6.lines))
+        run.PIP_WHEELS = str(d / "no-wheels")
+        ran.clear()
+        plain = d / "venv-plain"
+        run.prepare_deps(str(src), "demo", Ship(), venv_dir=str(plain))
+        check("an image that keeps no pip wheel makes the venv with python's own venv (and its pip)",
+              ran and ran[0] == [sys.executable, "-m", "venv", str(plain)]
+              and ran[1][0] == str(plain / "bin" / "pip"), ran)
+    finally:
+        run.subprocess.run = real_run
 
 print()
 if FAILED:

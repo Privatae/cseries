@@ -112,7 +112,10 @@ system: true
 #   list the memories that rode each turn. Reads GET /api/brain/memory-slots;
 #   POST /api/brain/manage/memories/{id}/topic sets a topic. The lens lists
 #   200 slots and 200 entries with no topic, and says so when there are more.
-version: "5.7.0"
+# 5.7.1 (2026-10-22): the Data lens's empty state says the tables are
+#   data the Host builds for a task, not what you tell it about yourself,
+#   which is memory. App-only change.
+version: "5.7.1"
 # Environment-catalog facts (host-facing, code-true). Source for the L1
 # topology block + describe_app — NOT a surface_role body (this is a control
 # panel, not a conversational surface): what_it_is/user_path only.

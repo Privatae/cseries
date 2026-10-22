@@ -33,6 +33,7 @@ import asyncio
 import json
 import os
 import sys
+from turn_source import turn_source  # session.py and the modules split out of it
 
 FAILS = []
 
@@ -65,7 +66,7 @@ def main() -> int:
     from mastercode.runtime import tools as tools_mod
     import server.brain_service as bs
     src = lambda *p: open(os.path.join(app_root, *p), encoding="utf-8").read()
-    ssrc_all = src("brain", "mastercode", "runtime", "session.py")
+    ssrc_all = turn_source()
     rsrc = src("brain", "mastercode", "brain", "offline_task_runner.py")
 
     TYPES = {FIN: _type(FIN, "Finance"), OPS: _type(OPS, "Ops"), GONE: _type(GONE, "Gone", "retired")}
@@ -942,7 +943,7 @@ def main() -> int:
 
     # ── 5. Wiring.
     real_by_id = None
-    ssrc = src("brain", "mastercode", "runtime", "session.py")
+    ssrc = turn_source()
     check("the session passes the pin into the resolution",
           "pinned_type_id=_pinned," in ssrc)
     check("the session records the pin on every path", "sess.pinned_turn_type_id = turn_type_id" in ssrc)

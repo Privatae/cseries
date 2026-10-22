@@ -47,6 +47,7 @@ import asyncio
 import os
 import re
 import sys
+from turn_source import turn_source  # session.py and the modules split out of it
 
 FAILS = []
 
@@ -368,8 +369,7 @@ def main() -> int:
           r.get("provider") == "openrouter" and r.get("base_url") is None, f"got {r}")
 
     # ── 8. session.py + prompt_schema wiring (structural).
-    sess_src = open(os.path.join(app_root, "brain", "mastercode", "runtime", "session.py"),
-                    encoding="utf-8").read()
+    sess_src = turn_source(app_root)
     i_load = sess_src.find("sess.turn_type = await resolve_session_type(")
     i_route = sess_src.find("_chat_route = await _rrr(")
     i_override = sess_src.find("_chat_route = await _tt_route_for_type(")

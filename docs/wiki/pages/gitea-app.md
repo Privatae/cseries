@@ -1,6 +1,6 @@
 ---
 title: The Gitea app
-summary: Gitea is where you browse the code on the git forge your Host is configured for, decide which of your repositories your Host may read or write, and keep copies of your GitHub repositories. A Host from the standard installer has no forge configured.
+summary: Gitea is where you browse the code on the git server your Host uses, decide which of your repositories your Host may read or write, and keep copies of your GitHub repositories. You connect a git server you run in Settings; until you do, there is none.
 section: apps
 order: 10
 questions:
@@ -10,10 +10,13 @@ questions:
   - How do I bring my GitHub repositories into my forge?
   - Does mirroring change anything on GitHub?
   - Where do I approve my Host's code changes?
+  - How do I connect my own git server?
 app: gitea
 ---
 
-Gitea is your window onto the git forge where your code and your Host's code live. It comes with every Host, but the forge is a separate Gitea server and not part of the Host. The app works against the forge the Host is configured for. A Host installed with `npx cseries` has none, and the app then says no forge is configured.
+Gitea is your window onto the git server where your code and your Host's code live. It comes with every Host, but the git server is a separate Gitea or Forgejo server and not part of the Host. You connect one you run in [Settings](wiki:settings-app), under Git server. Until you do, the app says no git server is connected.
+
+On a git server you connected, your Host signs in only as the account you made for it there. Your own repositories, giving your Host access to one of them, and GitHub mirrors are then done on the server's own pages, signed in as you, and the app's panels for them say so. Host repos works as below.
 
 ## What are the four panels?
 
@@ -31,3 +34,7 @@ Connect GitHub once: the app shows a short code, you enter it on GitHub's own si
 ## Where do I approve my Host's changes?
 
 Not here. Your Host's proposed changes come to you as Code Approvals, which you find in the [Workbench](wiki:workbench-app). [Code repositories](wiki:code-repositories) explains how your Host's code gets from its workspace to yours.
+
+## How do I connect my own git server?
+
+In [Settings](wiki:settings-app), under Git server. Make an account on the server for your Host and an access token for it, then give Settings the server's address, that username and the token.

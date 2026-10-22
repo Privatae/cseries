@@ -50,6 +50,7 @@ import asyncio
 import json
 import os
 import sys
+from turn_source import turn_source  # session.py and the modules split out of it
 
 FAILS = []
 
@@ -570,7 +571,7 @@ def main() -> int:
         check(name, ok, detail)
 
     # ── 8. wiring (source pins) ──────────────────────────────────────────
-    sess_src = open(os.path.join(app_root, "brain/mastercode/runtime/session.py")).read()
+    sess_src = turn_source(app_root)
     check("no referral is left in the runtime: no fixed text, no blocked crisis return",
           "_CRISIS_REFERRAL" not in sess_src and '"block_reason": "crisis_gate"' not in sess_src
           and "988lifeline.org" not in sess_src)

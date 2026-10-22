@@ -442,12 +442,24 @@ async def revoke_harness_cred(provider: str, *, actor: Optional[str] = None) -> 
     # mark lands, the next boot's fallback would rebuild the harness. Marking
     # first makes the worst case "disconnected but the file lingers" — which the
     # next reconciler pass then skips — rather than a silent reconnect.
+    # A tombstone that could not be written stops the revoke with nothing removed:
+    # removing the file and the Vault copy without it is undone by the next
+    # reconcile, and the caller would report a disconnect that did not happen.
+    # disconnect_for_credential, the one caller, writes it first and raises; this
+    # holds the same rule for any caller that reaches here directly.
     try:
         from server.network import harness_state
-        await harness_state.mark_disconnected(provider)
+        marked = await harness_state.mark_disconnected(provider)
+    except Exception as e:  # pragma: no cover - defensive
+        log.warning("harness vault: tombstone for %s failed, nothing revoked: %r", provider, e)
+        return False
+    if not marked:
+        log.warning("harness vault: tombstone for %s not written, nothing revoked", provider)
+        return False
+    try:
         await harness_state.clear_credential(provider)
     except Exception as e:  # pragma: no cover - defensive
-        log.warning("harness vault: tombstone for %s failed (revoke continues): %r",
+        log.warning("harness vault: clearing the credential record of %s failed: %r",
                     provider, e)
 
     revoked_any = False

@@ -656,8 +656,12 @@ def _hardened_git(worktree: Path) -> tuple[list, dict]:
     (_tar_member_touches_git, _collect_out_members). The config below is the
     second wall for the day one of those misses: it is shared with
     project_git._hardened_cmd (HARDENED_GIT_CONFIG), and every `diff` through
-    this base also passes project_git.HARDENED_DIFF_FLAGS."""
-    from server.routes.project_git import HARDENED_GIT_CONFIG
+    this base also passes project_git.HARDENED_DIFF_FLAGS.
+
+    Raises project_git.UnsafeRepoError (an OSError) when the worktree's .git
+    holds anything the kernel does not write there (project_git.check_repo)."""
+    from server.routes.project_git import HARDENED_GIT_CONFIG, check_repo
+    check_repo(worktree)
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0",
            "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"}
     # Committer identity must be inline: the /dev/null config means there is no
@@ -1117,7 +1121,10 @@ def _worktree_diff_host(worktree: Path) -> str:
     import subprocess
     import threading
     from server.routes.project_git import HARDENED_DIFF_FLAGS
-    _g, _env = _hardened_git(worktree)
+    try:
+        _g, _env = _hardened_git(worktree)
+    except OSError:
+        return ""               # check_repo logged why
     try:
         subprocess.run([*_g, "add", "-A"], env=_env, stdout=subprocess.DEVNULL,
                        stderr=subprocess.DEVNULL, timeout=_HOST_DIFF_TIMEOUT_S)
@@ -5316,16 +5323,25 @@ async def _persist_rotated_creds(harness_id: str, run_out: dict) -> None:
     tombstone alone does not cover: revoke a harness while one of its runs is in
     flight and the completing run would write the credential straight back,
     leaving it dispatchable (dispatch gates on file presence) while the UI says
-    disconnected."""
-    try:
-        from server.network import harness_state
-        if await harness_state.is_disconnected(harness_id):
-            log.info("rotated creds for %s not persisted — harness disconnected",
-                     harness_id)
-            return
-    except Exception as e:  # pragma: no cover - defensive
-        log.info("rotated-creds disconnect check for %s failed (continuing): %r",
-                 harness_id, e)
+    disconnected.
+
+    The marker is filed under the PROVIDER id (harness_state.harness_for_keys_name:
+    claude's is "claude-sdk"), so it is read under that id here; read under the app id
+    "claude-code" it never matched, and a disconnected Claude got its file written back."""
+    provider = _HARNESS_PROVIDER.get(harness_id, harness_id)
+
+    async def _disconnected() -> bool:
+        try:
+            from server.network import harness_state
+            return await harness_state.is_disconnected(provider)
+        except Exception as e:  # pragma: no cover - defensive
+            log.info("rotated-creds disconnect check for %s failed (continuing): %r",
+                     harness_id, e)
+            return False
+
+    if await _disconnected():
+        log.info("rotated creds for %s not persisted — harness disconnected", harness_id)
+        return
     creds = run_out.get("rotated_creds")
     dir_path, files = _HARNESS_CRED_FILES.get(harness_id, (None, ()))
     if not creds or not isinstance(creds, dict) or not dir_path:
@@ -5356,11 +5372,38 @@ async def _persist_rotated_creds(harness_id: str, run_out: dict) -> None:
             tmp.write_text(content)
             tmp.chmod(0o600)
             tmp.replace(target)
+            # Checked again after the write: a Disconnect that completed between the
+            # check above and this write removed the file this just put back. The marker
+            # is set before the file is removed (harness_state.disconnect_for_credential),
+            # so it reads as set now; remove the file again, and no caller seals it.
+            if await _disconnected():
+                target.unlink(missing_ok=True)
+                log.info("rotated creds for %s removed again — disconnected during the "
+                         "write", harness_id)
+                return
             log.info("persisted rotated %s creds from harness pod (%s)",
                      harness_id, fn)
         except (OSError, ValueError) as exc:
             log.warning("rotated-creds persist failed for %s/%s: %s",
                         harness_id, fn, exc)
+
+
+async def _reconnect_on_login(harness_id: str) -> None:
+    """A vendor login that handed back a grant is the person connecting the engine again,
+    so it lifts their disconnect marker, the way storing a key in Keys does
+    (harness_state.reconnect_for_credential). Called by the login routes only, never by
+    the run path: a run's rotated credential is the old one refreshed, and lifting the
+    marker there would let a run in flight undo a disconnect. Before the persist, which
+    skips a disconnected harness and would drop the new grant. Never raises."""
+    try:
+        from server.network import harness_state
+        provider = _HARNESS_PROVIDER.get(harness_id, harness_id)
+        if await harness_state.is_disconnected(provider):
+            await harness_state.clear_disconnected(provider)
+            log.info("login grant for %s lifts its disconnect marker", harness_id)
+    except Exception as e:  # pragma: no cover - defensive
+        log.info("login reconnect for %s failed (the grant may not persist): %r",
+                 harness_id, e)
 
 
 async def _builds_in_flight(harness_id: str) -> int:
@@ -5728,7 +5771,10 @@ def _worktree_base_blobs(worktree: Path) -> Optional[dict]:
     import subprocess
     if not (worktree / ".git").is_dir():
         return None
-    _g, _env = _hardened_git(worktree)
+    try:
+        _g, _env = _hardened_git(worktree)
+    except OSError:
+        return None             # check_repo logged why; the land copies as before
     try:
         _tree = (worktree / ".git" / "SEED_TREE").read_text().strip() or "HEAD"
     except OSError:
@@ -5760,7 +5806,10 @@ def _blob_to_file(worktree: Path, sha: str, dest: Path) -> bool:
     clock on it: a local git reading its own object store ends when the blob
     is written."""
     import subprocess
-    _g, _env = _hardened_git(worktree)
+    try:
+        _g, _env = _hardened_git(worktree)
+    except OSError:
+        return False
     try:
         with open(dest, "wb") as fh:
             r = subprocess.run([*_g, "cat-file", "blob", sha], env=_env,
@@ -7977,6 +8026,7 @@ async def harness_login(req: HarnessLoginReq) -> dict:
             # Observed, as in harness_login_finish: sealed only when the
             # file actually changed (_seal_login_grant).
             before = _harness_pod_creds(harness)
+            await _reconnect_on_login(harness)
             await _persist_rotated_creds(harness, body)
             out["persisted"] = _harness_pod_creds(harness) != before
             if out["persisted"]:
@@ -8160,6 +8210,7 @@ async def harness_login_finish(req: HarnessLoginReq) -> dict:
             # disconnected harness, so compare the entity's files before and
             # after: "persisted" must be an observation, not an assumption.
             before = _harness_pod_creds(harness)
+            await _reconnect_on_login(harness)
             await _persist_rotated_creds(harness, body)
             out["persisted"] = _harness_pod_creds(harness) != before
             if out["persisted"]:
@@ -8359,6 +8410,7 @@ async def harness_login_code(req: HarnessLoginCodeReq) -> dict:
         out.update({k: body.get(k) for k in ("ok", "done", "auth_method", "error")})
         if body.get("rotated_creds"):
             before = _harness_pod_creds(harness)
+            await _reconnect_on_login(harness)
             await _persist_rotated_creds(harness, body)
             out["persisted"] = _harness_pod_creds(harness) != before
     except Exception as e:
@@ -9747,6 +9799,12 @@ async def propose_commit(req: ProposeCommitReq) -> dict:
             failed.append({"path": path, "harness": harness,
                            "error": "rejected_project_escape"})
             continue
+        # Nor into .git through a link in the project (`cfg -> .git`): the
+        # name was checked above, the place it lands is checked here.
+        from server.routes.project_git import is_git_dir_name as _is_git
+        if any(_is_git(p) for p in dst_real.relative_to(_project_real).parts):
+            failed.append({"path": path, "harness": harness, "error": "rejected_unsafe_path"})
+            continue
         try:
             dst.parent.mkdir(parents=True, exist_ok=True)
             # A chunked copy: the source is the harness's file.
@@ -9830,7 +9888,16 @@ async def propose_commit(req: ProposeCommitReq) -> dict:
     # The process env is left as the kernel's (unlike _hardened_git) so a
     # fresh `git init` keeps the image's init.defaultBranch; a -c on the
     # command line outranks any repo config either way.
-    from server.routes.project_git import HARDENED_DIFF_FLAGS, HARDENED_GIT_CONFIG
+    from server.routes.project_git import (HARDENED_DIFF_FLAGS, HARDENED_GIT_CONFIG,
+                                           repo_refusal)
+    if stage_root is not None:
+        _why = repo_refusal(stage_root)
+        if _why:
+            log.warning("propose_commit: git refused in %s: %s", stage_root, _why)
+            failed.append({"path": "<stage>", "harness": "<git>",
+                           "error": f"git was not run in the project folder: {_why}; "
+                                    "nothing was staged"})
+            stage_root = None
 
     async def _stage_git(*args: str) -> tuple[int, bytes, bytes]:
         p = await asyncio.create_subprocess_exec(

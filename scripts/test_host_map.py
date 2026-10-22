@@ -21,6 +21,7 @@ import inspect
 import os
 import sys
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, os.environ.get("CSERIES_BRAIN", str(REPO / "brain")))
@@ -249,7 +250,7 @@ check("the person's own rules ride, headed",
       _ov.startswith("## Rules the person set for you") and "Always answer in French." in _ov, _ov)
 check("the platform rulebook is gone",
       not hasattr(_ar, "GLOBAL_RULES") and not hasattr(_ar, "HOST_RULES"))
-_sess_src = (REPO / "brain/mastercode/runtime/session.py").read_text()
+_sess_src = turn_source(REPO)
 check("the host prompt reads the person's rules",
       'build_host_rules(self.pool, sess.entity["id"])' in _sess_src)
 

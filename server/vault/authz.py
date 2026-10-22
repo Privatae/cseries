@@ -170,8 +170,12 @@ async def use_credential(
     actor = actor or owner
     # An MCP server's sign-in (server/mcp_oauth.py) goes only to that server,
     # through the kernel's MCP client; never to a URL some other call names.
-    if vault_api.is_sign_in_name(name) and action != "mcp_call":
-        raise VaultAuthzError(f"{name!r} is an MCP server's sign-in; only its own connection uses it")
+    # The git server's token is used by the Host's git clients only, never by
+    # a broker action, the MCP client's included.
+    if vault_api.is_sign_in_name(name) and (action != "mcp_call"
+                                            or vault_api.is_git_server_token(name)):
+        w = vault_api.held_name_words(name)
+        raise VaultAuthzError(f"{name!r} is {w['what']}; only {w['user']} uses it")
     # mcp_call is the kernel's MCP client alone: refused before anything is
     # opened (or audited as opened) when no exchange was handed in.
     if action == "mcp_call" and mcp_send is None:

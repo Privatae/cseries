@@ -41,6 +41,7 @@
         else if (view === 'desktop') loadDesktopTab();
         else if (view === 'backup') loadBackup();
         else if (view === 'network') loadNetwork();
+        else if (view === 'git-server') loadGitServer();
         // appearance view renders from its own state; nothing to load on switch
     }
 
@@ -3126,6 +3127,115 @@
         }
     }
 
+    // ── Git server ──────────────────────────────────────
+    // A Gitea or Forgejo server the owner runs: GET /api/git-server, POST
+    // {url, username, token, person_username} to check and connect it, DELETE
+    // to disconnect. The server's refusals (a wrong token, a token of another
+    // account, a plain http address) arrive as the error's detail and are
+    // shown as they are. Every value is set with textContent.
+    var gs = { busy: false };
+
+    function gsSay(text) {
+        var m = document.getElementById('gs-message');
+        if (!m) return;
+        m.textContent = text || '';
+        m.hidden = !text;
+    }
+
+    function renderGitServer(st) {
+        var box = document.getElementById('gs-state');
+        var form = document.getElementById('gs-form');
+        var off = document.getElementById('gs-disconnect-row');
+        if (!box || !form || !off) return;
+        box.textContent = '';
+        var rows = document.createElement('div');
+        rows.className = 'about-details';
+        if (st && st.connected) {
+            rows.appendChild(netRow('Server', st.url));
+            rows.appendChild(netRow('The Host signs in as', st.username));
+            rows.appendChild(netRow('Your username there', st.person_username || 'Not given'));
+            rows.appendChild(netRow('Check', 'Signed in as ' + (st.username || '--')
+                + (st.can_create_repos ? ', and it can create repositories' : '')
+                + ' (' + netWhen(st.checked_at) + ')'));
+        } else if (st && st.token_missing) {
+            rows.appendChild(netRow('Server', st.url));
+            rows.appendChild(netRow('State', 'Its token is no longer in your Keys app. Connect it again.'));
+        } else if (st && st.install_forge) {
+            rows.appendChild(netRow('Server', st.install_forge));
+            rows.appendChild(netRow('Set by', 'This Host\'s install. Connecting a server here replaces it.'));
+        } else {
+            rows.appendChild(netRow('Server', 'No git server is connected'));
+        }
+        box.appendChild(rows);
+        form.hidden = !!(st && st.connected);
+        off.hidden = !(st && (st.connected || st.token_missing));
+    }
+
+    async function loadGitServer() {
+        if (gs.busy) return;
+        try {
+            renderGitServer(await fetchJSON('/api/git-server', { cache: 'no-store' }));
+        } catch (e) {
+            var box = document.getElementById('gs-state');
+            if (box) box.textContent = 'Could not read the git server: ' + netWhy(e);
+        }
+    }
+
+    function gsVal(id) {
+        var el = document.getElementById(id);
+        return el ? el.value.trim() : '';
+    }
+
+    async function connectGitServer() {
+        var url = gsVal('gs-url'), user = gsVal('gs-user'), token = gsVal('gs-token');
+        if (!url || !user || !token) {
+            gsSay('Give the server\'s address, the Host\'s username there and its access token.');
+            return;
+        }
+        if (gs.busy) return;
+        var btn = document.getElementById('gs-connect-btn');
+        gs.busy = true;
+        if (btn) btn.disabled = true;
+        gsSay('Checking ' + url + '…');
+        try {
+            var st = await fetchJSON('/api/git-server', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ url: url, username: user, token: token,
+                                       person_username: gsVal('gs-person') || null }),
+            });
+            var tokEl = document.getElementById('gs-token');
+            if (tokEl) tokEl.value = '';
+            gsSay('');
+            renderGitServer(st);
+        } catch (e) {
+            gsSay(netWhy(e));
+        } finally {
+            gs.busy = false;
+            if (btn) btn.disabled = false;
+        }
+    }
+
+    async function disconnectGitServer() {
+        if (gs.busy) return;
+        if (!window.confirm('Disconnect the git server? The Host stops reaching it: no new '
+                + 'repositories, Code Approvals or Auto-Approve merges there. The repositories '
+                + 'stay on the server, and the token is removed from your Keys app.')) return;
+        var btn = document.getElementById('gs-disconnect-btn');
+        gs.busy = true;
+        if (btn) btn.disabled = true;
+        try {
+            var st = await fetchJSON('/api/git-server', { method: 'DELETE' });
+            gsSay('The git server is disconnected.');
+            renderGitServer(st);
+        } catch (e) {
+            gsSay(netWhy(e));
+        } finally {
+            gs.busy = false;
+            if (btn) btn.disabled = false;
+        }
+    }
+
     // ── Boot ────────────────────────────────────────────
     function viewExists(view) {
         return !!document.querySelector('.cseries-nav-btn[data-view="' + view + '"]');
@@ -3168,6 +3278,12 @@
         });
         var netLeave = document.getElementById('net-leave-btn');
         if (netLeave) netLeave.addEventListener('click', leaveNetwork);
+
+        // ── Git server tab ───────────────────────────────
+        var gsConnect = document.getElementById('gs-connect-btn');
+        if (gsConnect) gsConnect.addEventListener('click', connectGitServer);
+        var gsOff = document.getElementById('gs-disconnect-btn');
+        if (gsOff) gsOff.addEventListener('click', disconnectGitServer);
 
         var connectBtn = document.getElementById('btn-connect-chat');
         if (connectBtn) connectBtn.addEventListener('click', openSynModal);

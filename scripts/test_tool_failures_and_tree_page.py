@@ -22,6 +22,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parent.parent)
 sys.path.insert(0, str(ROOT))
@@ -102,7 +103,7 @@ check("context.py: no synthesis prompt left behind",
       and "keep_searching" not in src_ctx
       and "## Working Memory" not in src_ctx)
 check("context.py: records WHY the lane went", "REMOVED 2026-09-15" in src_ctx)
-src_sess_syn = (ROOT / "brain/mastercode/runtime/session.py").read_text()
+src_sess_syn = turn_source(ROOT)
 check("session: nothing calls the synthesizer or the compressor",
       "_brain_synthesize_context(" not in src_sess_syn
       and "_compress_to_working_memory(" not in src_sess_syn)
@@ -174,7 +175,7 @@ finally:
     _cops._skills_dir = _real_dir
 check("...then the platform's file of that name", _disk is not None and _disk.name == "build-workflow.md",
       f"{_ptr} -> {_disk}")
-src_sess = (ROOT / "brain/mastercode/runtime/session.py").read_text()
+src_sess = turn_source(ROOT)
 check("session: hints come from tool_failures over THIS round (round-start index, never a tail slice)",
       "_note_round(_fail_ledger, tool_actions[_round_start:] + _round_extra)" in src_sess
       and "_round_start = len(tool_actions)" in src_sess

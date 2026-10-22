@@ -11,6 +11,7 @@ import ast
 import json
 import os
 import sys
+from turn_source import turn_source  # session.py and the modules split out of it
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 failures = []
@@ -29,7 +30,7 @@ def src(rel):
 
 # 1. session.py: the turn tags (written on the user row, the assistant row and
 #    the stopped-turn trace) carry the SAME token the session frame sends.
-session = ast.parse(src("brain/mastercode/runtime/session.py"))
+session = ast.parse(turn_source())
 send = next(n for n in ast.walk(session)
             if isinstance(n, ast.AsyncFunctionDef) and n.name == "_send_message_core")
 tags = [n for n in ast.walk(send)

@@ -706,7 +706,8 @@ _AREA_PERSON_NOTE: dict[str, str] = {
 
 
 def _area_card(area: dict, endpoints: list[dict], doc: str,
-               host_tools: list[str], status: str) -> dict:
+               host_tools: list[str], status: str,
+               reachable: list[tuple[str, str]] = ()) -> dict:
     prefix = area["prefix"]
     # The noun for this area: the deepest CONCRETE segment of the prefix. A
     # templated tail (`/api/applications/{app_id}`) is not a word a user says.
@@ -730,8 +731,25 @@ def _area_card(area: dict, endpoints: list[dict], doc: str,
         if _AREA_PERSON_NOTE.get(prefix):
             reach += " " + _AREA_PERSON_NOTE[prefix]
     elif host_tools == ["kernel_op"]:
-        reach = ("From the host: "
-                 + _call("kernel_op", {"method": "GET", "path": sample}) + ".")
+        # The host's example is a route kernel_op actually lets through
+        # (`reachable`: the area's routes that derive covered), GET first. The
+        # area's shortest path is not: /api/system/name, POST-only and walled,
+        # once stood as this area's "GET" example.
+        calls = sorted(((m, p) for m, p in reachable if "{" not in p),
+                       key=lambda mp: (mp[0] != "GET", len(mp[1]), mp[1], mp[0]))
+        if calls:
+            method, path = calls[0]
+            reach = ("From the host: "
+                     + _call("kernel_op", {"method": method, "path": path}) + ".")
+        else:
+            # Every covered route here has an id in its path. kernel_op matches
+            # exact contract paths (kernel_ops.exposed_route), so a real id is
+            # refused and the bare template calls nothing real. Falling back
+            # to `sample` would bring back the fault above: a GET the area may
+            # not have, on a path kernel_op may not expose.
+            reach = ("From the host: no kernel_op call reaches this area yet; "
+                     "its routes take an id in the path, and kernel_op calls "
+                     "exact paths only.")
     else:
         reach = (f"From the host: no named tool is mapped to this area (host-parity "
                  f"status: {status})")
@@ -1254,6 +1272,17 @@ def collect(root: Path) -> dict:
         # of 0. The Index's search is POST /api/projects/index (its words in
         # the body, never a URL), in the /api/projects area beside /search.
         "/api/workbench": [],
+        # Settings, Git server (server/routes/git_server.py): what is
+        # connected, connect (the server's address, the Host's account and its
+        # token, which goes into Keys) and disconnect. Connecting decides which
+        # server and which account the Host works as, so connect and disconnect
+        # are the owner's acts. No host tool reads these routes: the Host's git
+        # work reads the connection in-process (git_server.forge_identity).
+        # read:git_server and write:git_server have no entity bits in
+        # ENTITY_SCOPE_TO_BITS and /api/git-server is not exposed to kernel_op,
+        # so all three derive WALLED. Without this row the ratchet reads the
+        # area as unreviewed.
+        "/api/git-server": [],
     }
 
     def _area_tools(prefix: str) -> list[str] | None:
@@ -1323,13 +1352,15 @@ def collect(root: Path) -> dict:
     for r in api_contract.get("routes", []):
         p = _area_prefix(r["path"])
         a = _areas.setdefault(p, {"prefix": p, "routes": 0, "scopes": set(),
-                                  "classes": {}, "endpoints": []})
+                                  "classes": {}, "endpoints": [], "reachable": []})
         a["routes"] += 1
         if r.get("scope"):
             a["scopes"].add(r["scope"])
         method = r.get("method", "GET")
         cls = _route_class(method, r["path"], r.get("scope"), _area_tools(p))
         a["classes"][cls] = a["classes"].get(cls, 0) + 1
+        if cls == "covered":
+            a["reachable"].append((method.upper(), r["path"]))
         a["endpoints"].append({
             "method": method, "path": r["path"], "scope": r.get("scope"),
             "does": route_does.get((method, r["path"]), ""),
@@ -1379,7 +1410,7 @@ def collect(root: Path) -> dict:
             area,
             sorted(a["endpoints"], key=lambda e: (e["path"], e["method"])),
             module_doc.get("/".join(p.split("/")[:3]), ""),
-            tools, status,
+            tools, status, a["reachable"],
         ))
     lanes: dict[str, int] = {}
     for op in host_ops:

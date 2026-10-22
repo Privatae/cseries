@@ -218,11 +218,13 @@ class _FakeBridge:
 
 
 class _App:
-    """registry.list_active's row shape, narrowed to .id and .version."""
+    """registry.list_active's row shape, narrowed to .id, .version and
+    .authored_here (None: not built on this Host)."""
 
     def __init__(self, app_id: str, version: str) -> None:
         self.id = app_id
         self.version = version
+        self.authored_here = None
 
 
 def _with_registry(rows: list[_App], fn):

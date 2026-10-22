@@ -31,6 +31,11 @@ object in `world` saying what it is for. Before a call that could remove or resh
 (words the Host adds to a memory with `memory_curate op='alias'`). The `world` skill
 (`default-skills/world.md`) is where the Host reads how to use it.
 
+What the person tells the Host about themselves (the tools in their kitchen, a habit they are
+building) is memory: a preference, kept in the turn with `close_turn`'s preferences or
+`memory_curate`, where the newest entry in a topic wins. A `world` table holds data the Host builds
+for a task, such as a meal plan or a tracker.
+
 ### The kill switch
 
 While the file `ceigas_kill_switch` exists in the kill-switch directory
@@ -105,8 +110,8 @@ gives an existing row a topic. A row with no topic is outside the slot rule.
 
 v235 retired `fact`, `decision`, `topic`, `emotion`, `unresolved`, `knowledge`, `skill_memory`,
 `moral_precedent` and `legacy`: their rows became `retired` and archived, so the Memory app's
-as-of view still shows them. A fact with a shape of its own belongs in a table the Host designs
-in `world`.
+as-of view still shows them. What the person says about themselves is a preference the Host
+keeps in the turn.
 
 ## 5. The system prompt
 

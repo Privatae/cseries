@@ -32,6 +32,7 @@ import json
 import os
 import sys
 import types
+from turn_source import turn_source  # session.py and the modules split out of it
 
 APP_ROOT = os.environ.get("APP_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, APP_ROOT)
@@ -416,7 +417,7 @@ try:
 finally:
     INF._direct_models = _saved_dm
     INF.brain_service.get_pool = _saved_gp
-_sess = open(os.path.join(APP_ROOT, "brain/mastercode/runtime/session.py")).read()
+_sess = turn_source(APP_ROOT)
 check("F3 the turn warms the route when its window or output limit is unknown",
       "await warm_route_catalog(_chat_route.get(\"provider\"))" in _sess)
 check("F4 no model call in the turn carries the old fixed number",

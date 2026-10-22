@@ -24,6 +24,7 @@ import asyncio
 import os
 import sys
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 _ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 _SESSION = _ROOT / "brain" / "mastercode" / "runtime" / "session.py"
@@ -47,7 +48,7 @@ def _funcs(src: str) -> dict:
             if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
 
 
-sess_src = _SESSION.read_text()
+sess_src = turn_source(_ROOT)
 disp_src = _DISPATCH.read_text()
 svc_src = _BRAIN_SVC.read_text()
 SESS = _funcs(sess_src)
@@ -63,12 +64,17 @@ check("a multi-agent round narrates one numbered line per agent",
       "agents in parallel" in sess_src and "enumerate(_dispatch_intents, 1)" in sess_src)
 
 # ── 2. the narration reaches the screen and equals the stored row ───────────
-# Review r11 of no-go-ahead: the narration is a piece of its own, sent and
+# The narration is a piece of its own, sent and
 # recorded once by the single recorder; the round's prose was sent (and
 # recorded) as it streamed and settles first — nothing is rebuilt.
 check("session pushes a `narration` progress event carrying the narration itself",
       '{"event": "narration", "text": text, "content": text}' in sess_src)
-_disp = sess_src[sess_src.index("            if _dispatched_round:\n"):]
+# From the round's block to the end of the method that holds it, so nothing
+# after it (a module split out of session.py) can stand in for it.
+_d0 = sess_src.index("            if _dispatched_round:\n")
+_d1 = min([x for x in (sess_src.find("\n    async def ", _d0), sess_src.find("\n    def ", _d0)) if x > 0]
+          or [len(sess_src)])
+_disp = sess_src[_d0:_d1]
 check("the stored turn keeps streamed prose AND the narration (each a piece, joined with the stream's "
       "own separator)",
       0 < _disp.index("await _settle()") < _disp.index("await _send_narration(_narration)")
@@ -200,7 +206,7 @@ import re as _re
 _ver = tuple(int(x) for x in _re.search(r'^version: "(\d+)\.(\d+)\.(\d+)"', wb, _re.M).groups())
 check("workbench app.yaml at or past 0.16.3", _ver >= (0, 16, 3), str(_ver))
 
-# ── 6. review follow-ups (2026-09-02) ─────────────────────────────────────────
+# ── 6. a continuation after a round: the registry, its brief, a redelivery ─────
 reg_src = (_ROOT / "server" / "turn_registry.py").read_text()
 check("turn registry: a platform-started turn can register with a display label",
       "display_message: Optional[str] = None" in reg_src and '"system": self.display_message is not None' in reg_src)

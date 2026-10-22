@@ -240,6 +240,8 @@ async def promote_entry(pool, entity_id: int, artifact_id: int, source: str,
     for p in (src, dst):
         if not (p == ws or ws in p.parents):
             raise ArtifactError(400, "path escapes the artifact workspace")
+    _reject_git_target(workspace, source)
+    _reject_git_target(workspace, target)
     if not src.is_file():
         raise ArtifactError(404, f"{source!r} not found in artifact {artifact_id}")
     if src == dst:
@@ -247,7 +249,7 @@ async def promote_entry(pool, entity_id: int, artifact_id: int, source: str,
                 "bytes": src.stat().st_size, "changed": False}
     data = src.read_bytes()
     dst.parent.mkdir(parents=True, exist_ok=True)
-    dst.write_bytes(data)
+    _write_new_inode(dst, data)
     rev = _snapshot(workspace, actor=actor, op="promote", note=f"{source} → {target}")
     await pool.execute(
         "UPDATE projects SET updated_at=now() WHERE id=$1 AND entity_id=$2",
@@ -306,11 +308,15 @@ async def import_files(pool, entity_id: int, artifact_id: int, project_id: int,
             raise ArtifactError(400, f"source path escapes project {project_id}: {rel_from!r}")
         if not (dst == ws or ws in dst.parents):
             raise ArtifactError(400, f"target path escapes the artifact workspace: {rel_to!r}")
+        # Neither side through .git: the source's .git is that project's
+        # repository, not its content, and the target's is this one's.
+        _reject_git_target(src_ws, rel_from)
+        _reject_git_target(workspace, rel_to)
         if not src.is_file():
             raise ArtifactError(404, f"{rel_from!r} not found in project {project_id}")
         data = src.read_bytes()
         dst.parent.mkdir(parents=True, exist_ok=True)
-        dst.write_bytes(data)
+        _write_new_inode(dst, data)
         copied.append({"from": rel_from, "to": rel_to, "bytes": len(data)})
     rev = _snapshot(workspace, actor=actor, op="import",
                     note=f"from project {project_id}: " + ", ".join(c["to"] for c in copied))
@@ -571,11 +577,17 @@ def remove_history_file(workspace: Path, name: str) -> None:
 
 def _workspace_files(tree):
     """All snapshot-able files of an open workspace tree: everything except
-    .history. A link is never followed (server/applications/tree_walk.py): a
+    .history and any .git. A link is never followed (server/applications/tree_walk.py): a
     snapshot is a copy that the revision render serves and a revert writes
     back as a real file, so a followed link would turn its target's bytes
-    into workspace content, and from there into a published site."""
-    return tree.walk(skip=lambda parts, is_dir: _HISTORY_DIR in parts)
+    into workspace content, and from there into a published site.
+
+    .git is the project repository the kernel keeps in this folder
+    (project_git), not the artifact's content: a revision that held it would
+    write it back on revert, config included."""
+    from server.routes.project_git import is_git_dir_name
+    return tree.walk(skip=lambda parts, is_dir: _HISTORY_DIR in parts
+                     or any(is_git_dir_name(p) for p in parts))
 
 
 def _parse_log(raw: bytes | None) -> list[dict]:
@@ -897,13 +909,16 @@ async def render_history(pool, entity_id: int, artifact_id: int, rev: str,
 
 
 def _clear_workspace(workspace: Path, *, keep: set) -> None:
-    """Remove everything in the workspace except .history and the files in
-    `keep` (root-relative). A link is removed as a link, never followed or
-    emptied."""
+    """Remove everything in the workspace except .history, the project
+    repository at .git (revisions do not hold it, so a revert must not lose
+    it), and the files in `keep` (root-relative). A link is removed as a link,
+    never followed or emptied."""
     import shutil
     if not keep:
         for entry_path in list(workspace.iterdir()):
-            if entry_path.name == _HISTORY_DIR:
+            if entry_path.name == _HISTORY_DIR or (
+                    entry_path.name == ".git" and not entry_path.is_symlink()
+                    and entry_path.is_dir()):
                 continue
             # A linked folder is unlinked, never emptied: rmtree refuses a link
             # (and ignore_errors hid that), which left it in place for the
@@ -915,16 +930,17 @@ def _clear_workspace(workspace: Path, *, keep: set) -> None:
         return
     for root, dirs, names in os.walk(workspace, topdown=False, followlinks=False):
         rel_root = Path(root).relative_to(workspace)
-        if rel_root.parts and rel_root.parts[0] == _HISTORY_DIR:
+        if rel_root.parts and rel_root.parts[0] in (_HISTORY_DIR, ".git"):
             continue
         for name in names:
             rel = (rel_root / name).as_posix()
             if rel not in keep:
                 (Path(root) / name).unlink(missing_ok=True)
         for name in dirs:
-            if not rel_root.parts and name == _HISTORY_DIR:
-                continue
             p = Path(root) / name
+            if not rel_root.parts and (name == _HISTORY_DIR
+                                       or (name == ".git" and not p.is_symlink())):
+                continue
             if p.is_symlink():
                 p.unlink(missing_ok=True)
             else:
@@ -972,7 +988,13 @@ async def revert_artifact(pool, entity_id: int, artifact_id: int, rev: str,
                 kept = sorted(f.rel for f in _workspace_files(wtree)
                               if f.size > _LEGACY_FILE_MAX and f.rel not in held)
         _clear_workspace(workspace, keep=set(kept))
+        from server.routes.project_git import is_git_dir_name
         for f in restore:
+            # A revision recorded before revisions left .git out may hold one
+            # (the repository, or a .git/config written into the folder); it
+            # is never written back.
+            if any(is_git_dir_name(p) for p in PurePosixPath(f.rel).parts):
+                continue
             fd = rtree.open(f.source)
             if fd is None:
                 continue
@@ -1369,6 +1391,36 @@ def _reject_unsafe_path(rel: str) -> None:
     # a promote FROM it would leak a snapshot as the live entry.
     if _HISTORY_DIR in Path(rel).parts:
         raise ArtifactError(400, f"{_HISTORY_DIR}/ is the revision store — not a file path: {rel!r}")
+    # An artifact's folder is a project folder, and the kernel runs git in it
+    # (project_git.sync_project_repo after a workspace_file write). A
+    # `.git/config` written here would be that repository's config, and some
+    # of its keys run a program on the next `git add`. Any case, at any depth.
+    from server.routes.project_git import is_git_dir_name
+    if any(is_git_dir_name(p) for p in Path(rel).parts):
+        raise ArtifactError(400, f".git is git's own folder — not a file path: {rel!r}")
+
+
+def _reject_git_target(workspace: Path, rel: str) -> None:
+    """The same refusal for the path a name RESOLVES to: a link in the folder
+    (`cfg -> .git`) would carry `cfg/config` into .git under another name."""
+    from server.routes.project_git import path_reaches_git
+    if path_reaches_git(workspace, rel):
+        raise ArtifactError(400, f"{rel!r} leads into .git, git's own folder")
+
+
+def _write_new_inode(dest: Path, data: bytes | str) -> None:
+    """Write `data` at `dest` without writing through a hard link: a file with
+    another name elsewhere (possibly inside .git) is unlinked first, so only
+    this name gets the new bytes."""
+    try:
+        if os.lstat(dest).st_nlink > 1:
+            dest.unlink()
+    except FileNotFoundError:
+        pass
+    if isinstance(data, bytes):
+        dest.write_bytes(data)
+    else:
+        dest.write_text(data)
 
 
 def _write_files(workspace: Path, files: list[dict]) -> int:
@@ -1384,14 +1436,12 @@ def _write_files(workspace: Path, files: list[dict]) -> int:
         dest = (workspace / rel).resolve()
         if not (dest == ws or ws in dest.parents):
             raise ArtifactError(400, f"path escapes the artifact workspace: {rel!r}")
+        _reject_git_target(workspace, rel)
         content = f.get("content")
         if content is None:
             raise ArtifactError(400, f"file {rel!r} has no content")
         dest.parent.mkdir(parents=True, exist_ok=True)
-        if isinstance(content, bytes):
-            dest.write_bytes(content)
-        else:
-            dest.write_text(str(content))
+        _write_new_inode(dest, content if isinstance(content, bytes) else str(content))
         written += 1
     return written
 

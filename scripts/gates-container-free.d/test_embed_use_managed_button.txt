@@ -1,0 +1,2 @@
+# 2026-10-21: a bastion serving the Host's embeddings offers "Use managed instead" in the Network app, and the Context app's embedding card "Use managed", only when the managed embedder's catalog carries the current model (none on a Host with no platform), under node.
+test_embed_use_managed_button.py

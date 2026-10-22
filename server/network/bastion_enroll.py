@@ -253,6 +253,61 @@ async def mint_pairing_token(pool, *, entity_id: int, handle: Optional[str], nam
     }
 
 
+async def add_tcp_pairing(pool, minted: dict, window: Optional[dict] = None) -> None:
+    """Add what a bastion pairing over TCP needs to a standalone Host's
+    `minted`: the Host CA, the redeem URL and the lane's address. Where the
+    bastion cannot reach the Host's enroll socket, the pair command becomes the
+    TCP one, trusting that CA alone, with the window it must run in.
+
+    The socket is reachable only where the Host serves it from a directory the
+    machine shares (compose.yaml mounts one). A Host on a server of its own
+    (CSERIES_LANE_HOST) is paired from other machines, and a Host in a VM on the
+    person's machine has no such directory: the socket path names nothing on the
+    machine where the bastion runs. Both get the TCP command; the VM forwards
+    the enroll and lane ports to the machine's 127.0.0.1."""
+    from server.network import host_ca, local_bastion
+    await host_ca.ensure(pool)
+    ca = await host_ca.ca_cert_pem(pool)
+    minted["host_ca_pem"] = ca
+    minted["enroll"] = local_bastion.enroll_url()
+    minted["lane_address"] = local_bastion.lane_address()
+    if window:
+        minted["pairing_window"] = window
+    remote = local_bastion.remote_lane()
+    if not remote and local_bastion.STATE == "listening":
+        return
+    command = (f"{BASTION_BINARY} pair --redeem-url {minted['enroll']} "
+               f"--host-ca host-ca.pem {minted['token']}")
+    minted["pair_command"] = command
+    run = minted.setdefault("run", {})
+    run["pair"] = command
+    # The Network app shows install, pair and note as they come, so the CA
+    # the pair command names is saved in the install step. The card runs a
+    # value's lines together, which would break a PEM copied from it, so the
+    # CA travels base64-encoded inside one command per kind of machine.
+    b64 = base64.b64encode(ca.encode("ascii")).decode("ascii")
+    run["install"] = ((run.get("install") or "").rstrip()
+                      + "\n\nThen save this Host's certificate as host-ca.pem, in the folder you "
+                        "run the pair command from:\n"
+                      + f"macOS / Linux:  echo {b64} | base64 -d > host-ca.pem\n"
+                      + "Windows (PowerShell):  [IO.File]::WriteAllBytes((Join-Path $PWD 'host-ca.pem'), "
+                        f"[Convert]::FromBase64String('{b64}'))")
+    if remote:
+        note = ("Run the pair command on the machine you want as a bastion. It trusts this Host's "
+                "certificate and nothing else, generates its own keys and opens the lanes this Host "
+                "uses to reach that machine. The token is single-use and expires in 15 minutes.")
+    else:
+        note = ("Run the pair command on the computer this Host is installed on: its pairing port "
+                "answers only there, on 127.0.0.1. The bastion trusts this Host's certificate and "
+                "nothing else, generates its own keys and opens the lanes this Host uses to reach "
+                "the computer. The token is single-use and expires in 15 minutes.")
+    if window:
+        minutes = max(1, round(window["expires_in_s"] / 60))
+        note += (f" This Host's pairing port is open to {window['address']} for {minutes} minutes: "
+                 "pair from a machine at that address within that time.")
+    run["note"] = note
+
+
 async def redeem(pool, *, entity_id: int, handle: Optional[str], secret: str,
                  bastion_pubkey: str, operator_csr: str,
                  hostname: str = "", platform: str = "") -> dict:

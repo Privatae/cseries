@@ -1,5 +1,7 @@
 # Privatae Personal Computer — Python dependencies
-# All versions pinned. Run `pip install --require-hashes` in CI.
+# Pinned to exact versions, except the four ranges below (litellm, pydantic,
+# python-multipart, tree-sitter-language-pack). The image installs this file
+# without hash checking (Dockerfile.linux's builder stage).
 
 # FastAPI + server
 # starlette 1.3.1 is the first release the release scan reports clean: 0.41.3
@@ -53,6 +55,14 @@ asyncpg==0.31.0
 # HTTP client (Ollama embeddings, health checks)
 # 3.14.3: cp314 wheels — see the Pillow note above.
 aiohttp==3.14.3
+# certifi is the CA bundle of the HTTPS clients that bring their own (requests,
+# httpx and litellm, curl_cffi, trafilatura, botocore); aiohttp uses the
+# system's. Pinned at the release GHSA-6q48-6c7w-9gw2 (CRITICAL) names as
+# fixed. Releases from 2019.03.09 until 2026.10.18 carry the emSign ECC Root
+# CA - G3, whose intermediate keys were compromised; 2026.10.18 dropped every
+# emSign root but is still inside the advisory's range. Unpinned, a cached
+# install layer can keep an older one.
+certifi==2026.10.19
 
 # (mcp removed: it was here for the claude-agent-sdk that the
 # Designs import-from-URL job loaded in the kernel process; that job is

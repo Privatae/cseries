@@ -11,9 +11,11 @@ writes the chat line once one is merged.
 It never merges. A button a person clicks merges as that person (only an
 auto-merge would be the Host), and the only login this pod
 holds on the forge is the Host's own. So Approve opens a window on the
-platform's own site, which merges with the person's forge account; the route
-that merged here with the Host's login is gone. The Host merges only under
-Auto-Approve (project_git.merge_project_pr).
+platform's own site, which merges with the person's forge account, or, on a
+git server the person connected in Settings, the pull request's own page
+there, where they merge as themselves; the route that merged here with the
+Host's login is gone. The Host merges only under Auto-Approve
+(project_git.merge_project_pr).
 
 Scopes reuse the existing review surface: read:review for reads,
 write:review for what the person asks for.
@@ -61,7 +63,7 @@ async def gitea_status():
     """Is a gitea credential present? The app keys its connect-state on this."""
     cred = _gitea_creds()
     if not cred:
-        return {"connected": False, "reason": "no gitea credential on this host"}
+        return {"connected": False, "reason": "no git server connected (Settings, Git server)"}
     user, _token, host = cred
     return {"connected": True, "user": user, "host": host}
 

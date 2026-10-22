@@ -24,6 +24,7 @@ import asyncio
 import json
 import os
 import sys
+from turn_source import turn_source  # session.py and the modules split out of it
 
 APP_ROOT = os.environ.get("APP_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, APP_ROOT)
@@ -193,7 +194,7 @@ finally:
     TW._bound_tool_result = _saved_b
 check("H1a the wall gets the window where it takes one, and nothing where it does not",
       _with == {"context_window": 1_000_000} and _without == {}, (_with, _without))
-_sess_src = open(os.path.join(APP_ROOT, "brain/mastercode/runtime/session.py")).read()
+_sess_src = turn_source(APP_ROOT)
 _sa_src = open(os.path.join(APP_ROOT, "brain/mastercode/runtime/scoped_agent.py")).read()
 check("H1b both Host-loop result sites and the agent loop pass the active window",
       # the dedup-gate site bounds tool_result; the main site bounds the

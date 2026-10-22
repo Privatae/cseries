@@ -34,7 +34,12 @@ skills it writes and in what it builds in `world`. `docs/HOST-MEMORY-AND-PROMPT.
 /app/
 ├── brain/mastercode/           # The Host's runtime
 │   ├── runtime/
-│   │   ├── session.py          # Core EntityRuntime: the turn
+│   │   ├── session.py          # Core EntityRuntime: the turn (_send_message_core)
+│   │   ├── turn_input.py       # Words sent into a running turn, in order
+│   │   ├── turn_holds.py       # What keeps a turn open and wakes one; backstops
+│   │   ├── turn_trace.py       # Reply pieces and the live turn trace
+│   │   ├── turn_lanes.py       # A turn's lane and what it may do
+│   │   ├── orchestration_tools.py # The Host's verbs and the orchestrator prompt
 │   │   ├── prompt_schema.py    # The system prompt's blocks, in order
 │   │   ├── prompt_builder.py   # Block builders (identity, tendencies, discipline)
 │   │   ├── crisis.py           # The crisis floor
@@ -115,7 +120,8 @@ types `migrations/v235_one_memory.sql` keeps, and the prompt's blocks in render 
 - Matching preferences and notes about people ride each turn (`memory_engine.py`,
   `PROMPT_MEMORY_TYPES`). The `recall` tool searches notes, documents, projects, code, skills and
   `world` together, each store answering under its own section (`memory_retrieval.py`,
-  `SEARCH_STORES`). A shaped fact lives in a `world` table.
+  `SEARCH_STORES`). What the person tells the Host about themselves is a preference; a `world`
+  table holds data the Host builds for a task.
 - The Host writes its own skills (`skills/<name>` through `runtime/host_skills.py`). Each write
   is checked against `runtime/skill_standard.py` before it is saved and becomes a new version; the
   person can restore any version in the Skills app. A skill written in a turn that read untrusted
@@ -204,9 +210,12 @@ backup storage requests.
 
 ## Known Issues / Technical Debt
 
-- `runtime/session.py` is over 11,000 lines.
-- Code Repositories and Code Approvals need a Gitea forge named in `GITEA_URL`
-  (`server/routes/gitea_client.py` refuses with 409 without one), and the installer sets none.
+- `runtime/session.py` is about 9,750 lines, most of it `EntityRuntime._send_message_core`. Its
+  module-level helpers live in turn_input, turn_holds, turn_trace, turn_notices,
+  orchestration_tools, turn_lanes and delivery_checks, and session.py re-exports every name.
+- The desktop and the system apps under `/system-apps/` are served with no Content-Security-Policy
+  header: `security_headers` in `server/main.py` sets one only on an app's own origin, and
+  `server/applications/proxy.py` adds one only to what a community app serves.
 
 ---
 
@@ -219,6 +228,11 @@ backup storage requests.
 
 ## Security Model
 
+Each claim C-Series makes about its security is listed with the test that enforces it in
+[docs/ai/claims.md](docs/ai/claims.md); [docs/ai/threat-model.md](docs/ai/threat-model.md) says what a
+Host defends against and what you still have to trust. Report a vulnerability as
+[SECURITY.md](SECURITY.md) says.
+
 - **Localhost-only middleware** (`server/middleware/localhost_only.py`): a request must come from 127.0.0.1 or ::1, or carry the owner's signed-in session; the sign-in and setup pages, and a few paths that check their own credential, are the exceptions
 - **CEIGAS gate** (`server/middleware/ceigas_gate.py`): the kill switch. While it is set, requests under the mapped `/api` prefixes are refused unless they are a stop or a governance call. What a caller may do is checked per route (`requires_permission`) and, for the Host's own tools, by the capability gate
 - **Published on loopback only**: the dashboard (8800) and the bastion's two ports (8810, 8811) are bound to 127.0.0.1 in `compose.yaml` and in the guest's `cseries-host.container`
@@ -229,5 +243,5 @@ backup storage requests.
 - **The database has no network port**: `listen_addresses = ''`, a Unix socket only
 - **Path checks**: a build's files are resolved and kept inside their project (`server/routes/review.py`);
   the code browser lists a symlink without following it (`server/routes/codespace.py`)
-- **Security headers** (`server/main.py`): X-Content-Type-Options, X-XSS-Protection, Referrer-Policy, X-Frame-Options: SAMEORIGIN
+- **Security headers** (`server/main.py`): X-Content-Type-Options, Referrer-Policy, X-Frame-Options: SAMEORIGIN (an app origin gets a CSP frame-ancestors instead)
 - **Entity id from a relay identity**: on the relay identity path, where the id is read from `relay.json`, `entrypoint.sh` refuses an id that is not a number. A standalone Host does not take that path; it is entity 1

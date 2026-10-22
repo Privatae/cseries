@@ -185,15 +185,34 @@
         });
     }
 
+    // With no git server, every panel says where to connect one. The Host
+    // reaches a server only once the owner connects it in Settings.
+    const NO_SERVER = '<div class="cseries-empty"><span class="empty-title">No git server connected</span>' +
+        'Connect a Gitea or Forgejo server you run in Settings, Git server, and the Host\u2019s ' +
+        'repositories appear here.</div>';
+
+    // A server the owner connected: the person works there as themselves, in
+    // its own pages, so the panels say where instead of offering a sign-in.
+    function ownServerNote(data, text) {
+        const who = data.host_identity ? ` The Host signs in there as <strong>${esc(data.host_identity)}</strong>.` : '';
+        return '<div class="cseries-empty">' + esc(text) + who +
+            ` <a href="${esc(data.own_server)}" target="_blank" rel="noopener noreferrer">${esc(data.own_server)}</a></div>`;
+    }
+
     async function loadUserRepos() {
         $('user-list').innerHTML = skeletonCards(4);
         let data;
         try { data = await api('/api/gitea/user/repos'); }
         catch (e) { data = { connected: false }; }
         if (!data.connected) {
-            $('user-list').innerHTML = '<div class="cseries-empty"><span class="empty-title">Not connected to Gitea</span>' +
-                'This host’s Gitea identity is still provisioning. Check back shortly.</div>';
+            $('user-list').innerHTML = NO_SERVER;
             setStatus('gitea: not connected'); return;
+        }
+        if (data.own_server) {
+            $('user-list').innerHTML = ownServerNote(data, 'Your own repositories are on ' +
+                'your git server: open it to see them, signed in as you. The Host\u2019s ' +
+                'repositories are under Host repos.');
+            setStatus('gitea · your server'); return;
         }
         if (data.login_required) { renderSignIn('user-list'); setStatus('gitea · sign in'); return; }
         repoCards(data.repos || [], 'user-list', 'user',
@@ -247,7 +266,7 @@
         try { data = await api('/api/gitea/repos'); }
         catch (e) { data = { connected: false }; }
         if (!data.connected) {
-            $('host-list').innerHTML = '<div class="cseries-empty">Host gitea not connected.</div>';
+            $('host-list').innerHTML = NO_SERVER;
             setStatus('gitea: not connected'); return;
         }
         repoCards(data.repos || [], 'host-list', 'host',
@@ -263,7 +282,13 @@
         catch (e) { data = { connected: false }; }
         const el = $('perms-list');
         if (!data.connected) {
-            el.innerHTML = '<div class="cseries-empty">Not connected to Gitea.</div>';
+            el.innerHTML = NO_SERVER;
+            setStatus('gitea · permissions'); return;
+        }
+        if (data.own_server) {
+            el.innerHTML = ownServerNote(data, 'To let the Host work in a repository of yours, ' +
+                'add its account as a collaborator there, in the repository\u2019s Settings, ' +
+                'Collaborators.');
             setStatus('gitea · permissions'); return;
         }
         if (data.login_required) { renderSignIn('perms-list'); setStatus('gitea · sign in'); return; }

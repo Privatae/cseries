@@ -38,6 +38,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 FAILS = []
 _ROOT = os.environ.get("APP_ROOT") or str(Path(__file__).resolve().parents[1])
@@ -280,7 +281,7 @@ def t_opencode_length(hc, specs, tmp: Path):
 
 
 def t_zero_change_words():
-    src = Path(_ROOT, "brain/mastercode/runtime/session.py").read_text()
+    src = turn_source(_ROOT)
     fn = next(n for n in ast.parse(src).body
               if isinstance(n, ast.FunctionDef) and n.name == "_compare_delivery")
     ns: dict = {"json": json}

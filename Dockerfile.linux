@@ -175,6 +175,9 @@ ADD https://apt.postgresql.org/pub/repos/apt/dists/bookworm-pgdg/InRelease pgdg-
 # COPY read.
 FROM scratch AS image-scripts
 
+# Gates copied below that check the turn's code read it through turn_source:
+# runtime/session.py and the modules split out of it.
+COPY scripts/turn_source.py /app/scripts/turn_source.py
 COPY scripts/test_transcript_format.py /app/scripts/test_transcript_format.py
 COPY scripts/test_picture_fit_image.py /app/scripts/test_picture_fit_image.py
 # Factory-build gate: the smoke suite execs this in-image (plan→gate→build over

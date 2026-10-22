@@ -11,8 +11,9 @@ mcp lane — the call the MCP gate makes), and the card shows it.
 
 Pinned here: the route and the real app.js card agree with the gate's own evaluate() for
 every machine, in every state (no rules, a quarantine rule, the default profile, the
-integrity lock), a bearer-only token is shown as not governed, and with no engine the
-card says "not checked" rather than inventing an answer.
+integrity lock, no engine at all), and a bearer-only token is shown as not governed.
+With no engine the gate refuses every governed machine, so the card says refused and
+that the rules did not load.
 
 Stub pool (it answers each query from in-memory rows), a real ed25519 key, the real
 NACController, the real route, the real app.js under node. No pod, no DB, no network.
@@ -327,8 +328,8 @@ check("the engine is not locked, and the card's decision says so",
       and d["nas"].get("profile") == "__integrity__" and d["nas"].get("allowed") is False, (listed["engine"], d["nas"]))
 db.profiles.pop()
 
-# ── 4d. a malformed approved match: the route stays up and says what the gate does ──────
-print("4d. a malformed approved match: the lane still renders, and says the gate admits")
+# ── 4d. a malformed approved match: it fails its check and locks, it never admits ────────
+print("4d. a malformed approved match: the rule fails its check, so every governed machine is refused")
 db.policy = [_rule(6, "bad-match", "quarantine", [], pid=6, match={"min_posture": ["healthy"]})]
 try:
     listed = _route(db)
@@ -338,16 +339,35 @@ except Exception as e:
 check("/nac/endpoints does not fail on a rule the engine cannot evaluate", crashed is None, repr(crashed))
 if listed:
     d = {e["hostname"]: (e.get("decision") or {}) for e in listed["endpoints"]}
-    check("each governed machine is reported admitted with an engine error (the gate admits on one)",
-          d["desk"].get("error") is True and d["desk"].get("allowed") is True, d["desk"])
+    check("the engine is locked by the rule, not admitting through an error",
+          listed["engine"]["tamper"] is True and d["desk"].get("locked") is True
+          and d["desk"].get("allowed") is False and not d["desk"].get("error"), (listed["engine"], d["desk"]))
     ok, got = _agrees_with_gate(db, listed)
-    check("...and the gate does admit them", ok, got)
+    check("...and the gate refuses them too", ok, got)
     html, err = _cards(listed)
     if html:
-        check("the card says the rules could not be applied and the machine is let in",
-              "could not apply its Ingress rules" in _card(html, "desk")
-              and ">admitted<" in _card(html, "desk"), _card(html, "desk"))
+        check("the card shows the lock and that the machine is refused",
+              "integrity lock" in _card(html, "desk") and ">refused<" in _card(html, "desk"),
+              _card(html, "desk"))
     check("the Quarantine buttons are still drawn", html is not None and "data-nac-quarantine" in (html or ""), err)
+
+# ── 4d2. an engine that raises while deciding: the card says refused, as the gate does ───
+print("4d2. an engine that raises while deciding: refused, and the card says so")
+db.policy = []
+_engine(db)
+_live["nac"].decide = lambda ep: (_ for _ in ()).throw(TypeError("invented engine fault"))
+listed = _route(db)
+d = {e["hostname"]: (e.get("decision") or {}) for e in listed["endpoints"]}
+check("each governed machine is reported refused with an engine error (the gate refuses on one)",
+      d["desk"].get("error") is True and d["desk"].get("allowed") is False, d["desk"])
+ok, got = _agrees_with_gate(db, listed)
+check("...and the gate does refuse them", ok, got)
+html, err = _cards(listed)
+if html:
+    check("the card says the rules could not be applied and the machine is refused",
+          "could not be applied" in _card(html, "desk") and ">refused<" in _card(html, "desk"),
+          _card(html, "desk"))
+_engine(db)
 
 # ── 4e. an expired pairing token ─────────────────────────────────────────────────────────
 print("4e. an expired pairing token is refused before any rule")
@@ -379,18 +399,27 @@ if html:
           ">admitted<" in _card(html, "nas"), _card(html, "nas"))
 db.quarantined = []
 
-# ── 5. no engine: nothing is claimed ─────────────────────────────────────────────────────
-print("5. with no engine running, the card says 'not checked'")
+# ── 5. no engine: the gate refuses every governed machine, and the card says so ──────────
+print("5. with no engine running, a governed machine's card says refused, as the gate does")
 _live["nac"] = None
 listed = _route(db)
-check("no engine: no decisions, engine reported as not running",
-      all(e.get("decision", "absent") is None for e in listed["endpoints"])
-      and listed["engine"] == {"running": False, "tamper": None}, listed)
+d = {e["hostname"]: (e.get("decision") or {}) for e in listed["endpoints"]}
+check("no engine: engine reported as not running, each governed machine refused as unloaded",
+      listed["engine"] == {"running": False, "tamper": None}
+      and all(d[h].get("governed") is True and d[h].get("allowed") is False
+              and d[h].get("unloaded") is True for h in ("desk", "nas")), (listed["engine"], d))
+check("no engine: a bearer-only token is still not governed (the gate exempts it)",
+      d["pasted"] == {"governed": False}, d["pasted"])
+ok, got = _agrees_with_gate(db, listed)
+check("...and every card agrees with the gate, which refuses with no engine", ok, got)
 html, err = _cards(listed)
 if html:
-    check("the card says 'not checked', never an admitted-by-default it cannot know",
-          "not checked" in _card(html, "desk") and "admitted" not in _card(html, "desk")
-          and "default-preserve" not in html, _card(html, "desk"))
+    desk = _card(html, "desk")
+    check("the card says refused and that the rules did not load, never admitted or 'not checked'",
+          ">refused<" in desk and "did not load" in desk and "admitted" not in desk
+          and "not checked" not in desk and "default-preserve" not in html, desk)
+    check("the bearer-only card still says your Ingress rules skip it",
+          "your Ingress rules skip it" in _card(html, "pasted"), _card(html, "pasted"))
 
 print()
 if _fails:

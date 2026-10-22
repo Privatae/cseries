@@ -104,9 +104,15 @@ HANGS = TEMPLATE_HTML.replace("</body>", "<script>while (true) {}</script></body
 HANGS_ON_FIRST_TICK = TEMPLATE_HTML.replace(
     "</body>", "<script>addEventListener('load', function () { requestAnimationFrame("
     "function () { while (true) {} }); });</script></body>", 1)
-# Paints, then locks up half a second later — inside the settle.
+# Paints, then locks up once the check has seen its first frames — inside the
+# settle. A fixed timer cannot place the lock-up there: on a busy machine the
+# check's first look can come after any timer, and the document then reads as
+# "never painted". So the lock-up is ARMED by the check itself (see
+# _locks_after_its_first_look), through the DOM the worlds share.
+_LOCK_MARK = "data-test-lock-now"
 HANGS_AFTER_PAINT = TEMPLATE_HTML.replace(
-    "</body>", "<script>setTimeout(function () { while (true) {} }, 500);</script></body>", 1)
+    "</body>", "<script>setInterval(function () { if (document.documentElement.hasAttribute("
+    f"'{_LOCK_MARK}')) {{ while (true) {{}} }} }}, 50);</script></body>", 1)
 # Draws no tile and no bar, and LIES about it from its own main world: every
 # DOM query answers fake visible elements, every box is on screen, every
 # style is visible, and animation frames fire at once. The check measures
@@ -177,11 +183,21 @@ RELOAD_LOOP = _with("<script>setTimeout(function(){location.reload()},300)</scri
 NAV_BLANK = _with("<script>setTimeout(function(){location.href='about:blank'},400)</script>")
 NAV_DATA = _with("<script>setTimeout(function(){location.href='data:text/html,<p>other</p>'},400)</script>")
 NAV_HTTP = _with("<script>setTimeout(function(){location.href='http://127.0.0.1:9/other'},400)</script>")
-# Draws its tiles and bar, then removes the tiles at 1.5 s (inside the 2 s settle).
-REMOVES_TILES = _with("<script>setTimeout(function(){document.querySelectorAll('[data-cseries-app]')"
-                      ".forEach(function(e){e.remove()})},1500)</script>")
-HIDES_TILES = _with("<script>setTimeout(function(){document.querySelectorAll('[data-cseries-app]')"
-                    ".forEach(function(e){e.style.visibility='hidden'})},1500)</script>")
+# Draws its tiles and bar, then removes (or hides) the tiles inside the settle:
+# after the check's first look, before its last. A fixed timer cannot place
+# that on a busy machine, so the change is ARMED by the check once its first
+# look returns (_after_its_first_look), through the DOM the worlds share.
+_ACT_MARK = "data-test-act-now"
+
+
+def _on_mark(js: str) -> str:
+    return _with("<script>var _t=setInterval(function(){if(document.documentElement.hasAttribute("
+                 f"'{_ACT_MARK}')){{clearInterval(_t);{js}}}}},50)</script>")
+
+
+REMOVES_TILES = _on_mark("document.querySelectorAll('[data-cseries-app]').forEach(function(e){e.remove()})")
+HIDES_TILES = _on_mark("document.querySelectorAll('[data-cseries-app]')"
+                       ".forEach(function(e){e.style.visibility='hidden'})")
 # A tab kept in the address's fragment, and history.replaceState: the SAME
 # document — not a navigation away. A reload after a fragment change is.
 SAME_DOCUMENT = _with("<script>setTimeout(function(){location.hash='tab-2';"
@@ -325,15 +341,12 @@ async def _run_all() -> dict:
         except Exception as exc:  # no browser binary installed
             return {"skip": f"chromium unavailable: {exc}"}
         DV.set_browser_provider(lambda: browser)
-        # The hang cases would otherwise hold the suite for the production
-        # 20 s / 10 s; the behaviour under test is the same at 2.5 s.
         real = DV.LOAD_TIMEOUT_MS, DV.STEP_TIMEOUT_S
-        DV.LOAD_TIMEOUT_MS, DV.STEP_TIMEOUT_S = 2_500, 2.5
         try:
-            # The lock-ups and the out-of-memory crash run AFTER the rest, so a
-            # renderer they pin or a heap they grow can never slow another case
-            # into a false "stopped responding". Six at a time: the steps are
-            # held to 2.5 s here, and a crowded renderer must not be what fails.
+            # Every case that loads and answers is judged at the PRODUCTION
+            # limits: on a busy machine a healthy page can take seconds to
+            # answer one step, and a shortened limit then reads it as a
+            # lock-up. Six at a time.
             out: dict = {}
             gate = asyncio.Semaphore(6)
 
@@ -341,15 +354,83 @@ async def _run_all() -> dict:
                 async with gate:
                     return await _check(CASES[n])
 
-            disruptive = [n for n in CASES if n.startswith("hangs") or n == "oom"]
-            for batch in ([n for n in CASES if n not in disruptive], disruptive):
-                got = await asyncio.gather(*(one(n) for n in batch))
-                out.update(zip(batch, got))
+            healthy = [n for n in CASES if n not in _DISRUPTIVE and n not in _ARMED]
+            out.update(zip(healthy, await asyncio.gather(*(one(n) for n in healthy))))
+            # The documents that change inside the settle, on their own: the
+            # check arms each one after its first look.
+            out.update(zip(_ARMED, await _after_its_first_look(_ARMED)))
+            # The lock-ups and the out-of-memory crash run AFTER the rest, one
+            # at a time, so a renderer they pin or a heap they grow can never
+            # slow another case. Each is held to a short limit ONLY on the step
+            # it genuinely hangs in, where waiting longer changes nothing; every
+            # step before that runs at the production limit.
+            for n in _DISRUPTIVE:
+                DV.LOAD_TIMEOUT_MS, DV.STEP_TIMEOUT_S = real
+                if n == "hangs":                    # never loads: the load is what hangs
+                    DV.LOAD_TIMEOUT_MS, DV.STEP_TIMEOUT_S = _HUNG_LOAD_MS, _HUNG_STEP_S
+                    out[n] = await _check(CASES[n])
+                elif n == "hangs_on_first_tick":    # loads, then locks before its first frames
+                    DV.STEP_TIMEOUT_S = _HUNG_STEP_S
+                    out[n] = await _check(CASES[n])
+                elif n == "hangs_after_paint":      # short only once it is locked
+                    out[n] = await _locks_after_its_first_look()
+                else:                               # oom: waits for the crash itself
+                    out[n] = await _check(CASES[n])
+            DV.LOAD_TIMEOUT_MS, DV.STEP_TIMEOUT_S = real
             out["abort"] = await _abort_probe(browser)
         finally:
             DV.LOAD_TIMEOUT_MS, DV.STEP_TIMEOUT_S = real
             await browser.close()
         return out
+
+
+_DISRUPTIVE = ("hangs", "hangs_on_first_tick", "hangs_after_paint", "oom")
+_ARMED = ("removes_tiles", "hides_tiles")
+
+
+async def _after_its_first_look(names) -> list:
+    """Runs CASES[n] for each name, setting _ACT_MARK in each document as soon
+    as the check's first look (its first probe of that copy) has returned.
+    The settle and the end-of-settle look are the shipped code, unchanged."""
+    real_call = DV._IsolatedWorld.call
+    armed: set = set()
+
+    async def call(self, fn_js, arg=None):
+        got = await real_call(self, fn_js, arg)
+        if fn_js == DV._PROBE_JS and id(self) not in armed:
+            armed.add(id(self))
+            await real_call(self, f"() => document.documentElement.setAttribute('{_ACT_MARK}', '')")
+        return got
+
+    DV._IsolatedWorld.call = call
+    try:
+        return await asyncio.gather(*(_check(CASES[n]) for n in names))
+    finally:
+        DV._IsolatedWorld.call = real_call
+# The limits a step that genuinely hangs is held to (production: 20 s / 10 s).
+_HUNG_LOAD_MS, _HUNG_STEP_S = 2_500, 2.5
+
+
+async def _locks_after_its_first_look() -> tuple[dict, dict]:
+    """HANGS_AFTER_PAINT, locked up the moment the check has seen its first
+    frames: the readiness wait (load + two frames) returns, and only then is
+    the document told to lock up and the step limit shortened. Everything
+    the check does after that (the first look, the settle, the end-of-settle
+    probe that must time out) is the shipped code, unchanged."""
+    real_call = DV._IsolatedWorld.call
+
+    async def call(self, fn_js, arg=None):
+        got = await real_call(self, fn_js, arg)
+        if fn_js == DV._TWO_FRAMES_JS:
+            DV.STEP_TIMEOUT_S = _HUNG_STEP_S
+            await real_call(self, f"() => document.documentElement.setAttribute('{_LOCK_MARK}', '')")
+        return got
+
+    DV._IsolatedWorld.call = call
+    try:
+        return await _check(HANGS_AFTER_PAINT)
+    finally:
+        DV._IsolatedWorld.call = real_call
 
 
 @pytest.fixture(scope="module")
@@ -600,8 +681,7 @@ def test_the_check_reaches_no_network(results):
 # ── checks that need their own limits ────────────────────────────────────────
 
 async def _solo(html: str, **patch) -> tuple[dict, dict]:
-    """One check in its own browser with module limits patched (the shared
-    run holds every step to 2.5 s)."""
+    """One check in its own browser with module limits patched."""
     async with async_api.async_playwright() as p:
         try:
             browser = await p.chromium.launch(args=list(DV.CHECK_BROWSER_ARGS))
@@ -644,7 +724,13 @@ def test_a_reloaded_copy_has_the_first_copys_load_allowance():
         calls[0] += 1
         if calls[0] >= 2:
             await asyncio.sleep(3.0)
+            # The copy's load has been waited for: the steps after it read a
+            # healthy page, and are held to the production limit again so a
+            # busy machine cannot turn this into a false lock-up.
+            DV.STEP_TIMEOUT_S = production_step
         return await real_wait(self, *a, **kw)
+
+    production_step = DV.STEP_TIMEOUT_S
 
     Frame.wait_for_load_state = slow_wait
     try:

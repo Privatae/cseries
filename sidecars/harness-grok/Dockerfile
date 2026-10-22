@@ -13,6 +13,12 @@
 # mounts (throwaway workspace RW + grok creds Secret RO).
 
 FROM python:3.14-slim-bookworm@sha256:5127143f679a1bcf59e6b9ea1a95e6cef8b8d0905bf1ca459a7f0141398ddc4f
+# The base image's pip 26.2.1 vendors certifi 2026.6.17, whose emSign roots
+# have compromised intermediate keys (GHSA-6q48-6c7w-9gw2, CRITICAL). pip
+# 26.2.2 vendors the fixed 2026.10.19.
+RUN printf '%s\n' 'pip==26.2.2 --hash=sha256:fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70' > /tmp/pip.txt \
+ && python -m pip install --no-cache-dir --require-hashes -r /tmp/pip.txt \
+ && rm /tmp/pip.txt
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \

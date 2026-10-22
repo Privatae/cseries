@@ -35,7 +35,7 @@ Not inside your Host. Each build runs on a coding engine you connected, in a con
 
 ## Who merges the code?
 
-You do. Every phase that lands is saved as a commit on one rolling Code Approval for the project, written in plain English: what changed, why, what was checked, and the engine and model each change was built with. When you press Approve, a separate approval page opens, and confirming there merges the change as you, with your own git account. Approval happens there, outside your Host's pages, so your Host cannot press Approve for you. Code Approvals are pull requests on a git forge, which a Host from the standard installer does not have configured; see [Code repositories and approvals](wiki:code-repositories).
+You do. Every phase that lands is saved as a commit on one rolling Code Approval for the project, written in plain English: what changed, why, what was checked, and the engine and model each change was built with. When you press Approve, a separate approval page opens, and confirming there merges the change as you, with your own git account. Approval happens there, outside your Host's pages, so your Host cannot press Approve for you. Code Approvals are pull requests on a git server, which you connect in Settings under Git server; on a server you connected, Approve opens the change's own page there. See [Code repositories and approvals](wiki:code-repositories).
 
 ## What is Auto-Approve?
 

@@ -368,7 +368,16 @@ system: true
 #   and its how-to lines live in skills and tool descriptions the Host reads on
 #   demand. Manifest-only; bundle rebuilt, repacked and re-signed.
 # 0.31.10 (2026-10-18): rebuilt from sources whose comments were rewritten as plain rationale; no behaviour change.
-version: "0.31.10"
+# 0.31.11 (2026-10-21): with no git forge configured, Code Approvals says the Host
+#   is not configured for one, as the wiki does, in place of "no forge login yet",
+#   which read as something that would arrive. App-only change; bundle rebuilt.
+# 0.32.0 (2026-10-21): on a git server the owner connected in Settings, Approve
+#   opens the pull request's own page on that server, where the person merges
+#   signed in as themselves, and the card says which server; the card's watch
+#   and the bench's listing notice the merge there as they do on the platform
+#   forge. With no git server, Code Approvals says to connect one in Settings,
+#   Git server. Bundle rebuilt.
+version: "0.32.0"
 # 0.31.8 (2026-10-18): when a turn ends without reading words you
 #   typed into it and your Host starts its next turn with them, the page now
 #   always follows that turn. It used to miss it now and then on a busy

@@ -20,6 +20,12 @@ native or standard provenance) or the community key (and declare community),
 the same keys and the same provenance rule the installer applies; anything
 else stops the build, so a catalog never lists a bundle a Host would refuse.
 
+DEFAULTS. An entry in DEFAULT_APPS, signed with the C-Series apps key, is
+marked is_default: a Host installs it once, at its first start after the
+catalog lists it (server/applications/default_install.py), and an uninstall
+of it then holds. The App Store is one, because it is the only way a person
+adds any other app and it is not baked into the image.
+
 THE BYTES. The same inputs give the same catalog, byte for byte: entries in
 app id order, keys sorted, generated_at from --epoch, else SOURCE_DATE_EPOCH,
 else the commit time of HEAD. Nothing is signed here; the maintainer signs the
@@ -63,6 +69,7 @@ VERSION_RE = re.compile(r"^[0-9]+\.[0-9]+\.[0-9]+$")
 IMAGE_RE = re.compile(r"^[a-z0-9][a-z0-9._/:-]*@sha256:[0-9a-f]{64}$")
 FAMILIES = ("python", "creative", "helper", "browser")
 SUMMARY_MAX = 1000
+DEFAULT_APPS = frozenset({"app-store"})
 
 
 class BuildError(Exception):
@@ -196,7 +203,7 @@ def build(version: str, bundles_dir: Path, out: Path, *, download_base: str | No
             "publisher": signer if signer == "C-Series" else str(m.get("author") or "Community"),
             "version": v,
             "provenance": str(m.get("provenance") or "standard"),
-            "is_default": False,
+            "is_default": signer == "C-Series" and app_id in DEFAULT_APPS,
             "price_micros": 0,
             "bundle": {"url": url, "sha256": hashlib.sha256(data).hexdigest(), "size": len(data)},
             "images": {f: images[f] for f in fams if f in images},

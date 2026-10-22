@@ -12,7 +12,6 @@ The user owns their outbound; this only lets them choose to limit it.
 
 from __future__ import annotations
 
-import base64
 import json
 import logging
 import os
@@ -363,11 +362,9 @@ async def setup_bastion(request: Request):
     standalone = local_bastion.standalone()
     window = await _open_pairing_window(request) if standalone and door_helper.helper_path() else None
     try:
-        minted = await nac_commit.setup_bastion(pool, eid, (body.get("name") or ""))
+        minted = await nac_commit.setup_bastion(pool, eid, (body.get("name") or ""), window=window)
     except nac_commit.CommitError as e:
         raise HTTPException(e.status, e.detail)
-    if standalone:
-        await _tcp_pairing(pool, minted, window)
     return minted
 
 
@@ -396,46 +393,6 @@ async def _open_pairing_window(request: Request) -> dict:
         raise HTTPException(502, f"The pairing port did not open: {e}")
     logger.info("pairing port opened to %s for %ds", addr, expires)
     return {"address": addr, "expires_in_s": expires}
-
-
-async def _tcp_pairing(pool, minted: dict, window: Optional[dict]) -> None:
-    """Add what a bastion on another machine needs to `minted`: the Host CA,
-    the redeem URL and the lane's address; on a server of its own, the TCP pair
-    command in place of the socket one, and the window it must run in."""
-    from server.network import host_ca, local_bastion
-    await host_ca.ensure(pool)
-    ca = await host_ca.ca_cert_pem(pool)
-    minted["host_ca_pem"] = ca
-    minted["enroll"] = local_bastion.enroll_url()
-    minted["lane_address"] = local_bastion.lane_address()
-    if window:
-        minted["pairing_window"] = window
-    if not local_bastion.remote_lane():
-        return
-    command = (f"{bastion_enroll.BASTION_BINARY} pair --redeem-url {minted['enroll']} "
-               f"--host-ca host-ca.pem {minted['token']}")
-    minted["pair_command"] = command
-    run = minted.setdefault("run", {})
-    run["pair"] = command
-    # The Network app shows install, pair and note as they come, so the CA
-    # the pair command names is saved in the install step. The card runs a
-    # value's lines together, which would break a PEM copied from it, so the
-    # CA travels base64-encoded inside one command per kind of machine.
-    b64 = base64.b64encode(ca.encode("ascii")).decode("ascii")
-    run["install"] = ((run.get("install") or "").rstrip()
-                      + "\n\nThen save this Host's certificate as host-ca.pem, in the folder you "
-                        "run the pair command from:\n"
-                      + f"macOS / Linux:  echo {b64} | base64 -d > host-ca.pem\n"
-                      + "Windows (PowerShell):  [IO.File]::WriteAllBytes((Join-Path $PWD 'host-ca.pem'), "
-                        f"[Convert]::FromBase64String('{b64}'))")
-    note = ("Run the pair command on the machine you want as a bastion. It trusts this Host's "
-            "certificate and nothing else, generates its own keys and opens the lanes this Host "
-            "uses to reach that machine. The token is single-use and expires in 15 minutes.")
-    if window:
-        minutes = max(1, round(window["expires_in_s"] / 60))
-        note += (f" This Host's pairing port is open to {window['address']} for {minutes} minutes: "
-                 "pair from a machine at that address within that time.")
-    run["note"] = note
 
 
 @router.post("/bastions/redeem")

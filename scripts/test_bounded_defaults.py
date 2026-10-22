@@ -26,6 +26,7 @@ import json
 import os
 import pathlib
 import sys
+from turn_source import turn_source  # session.py and the modules split out of it
 
 ROOT = pathlib.Path(os.environ.get("APP_ROOT") or pathlib.Path(__file__).resolve().parents[1])
 sys.path[:0] = [str(ROOT), str(ROOT / "brain")]
@@ -171,7 +172,7 @@ check("O GET /turn-defaults shows what is in force, what was set and the built-i
       got["set"] == {"history_ceiling_tokens": 48000} and got["built_in"]["turn_rounds"] == 20, got)
 
 print("W. the turn reads them")
-src = (ROOT / "brain/mastercode/runtime/session.py").read_text()
+src = turn_source(ROOT)
 check("W every turn reads the defaults and a scheduled run takes its own",
       "_turn_defaults = await _cb.read_turn_defaults(self.pool, sess.entity_id)" in src
       and '_scheduled_run = (app_id or "") == "scheduled_task"' in src

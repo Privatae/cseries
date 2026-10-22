@@ -48,7 +48,7 @@ STALL_TURNS = 3          # three turns that each wrote nothing
 SKIP_LIMIT = 3           # turns the platform could not start, in a row
 
 
-# Both are the person's limits (runtime/user_limits, 2026-10-20): the
+# Both are the person's limits (runtime/user_limits): the
 # constants are the defaults, and the person's value wins when they set one.
 def stall_max() -> int:
     from mastercode.runtime import user_limits

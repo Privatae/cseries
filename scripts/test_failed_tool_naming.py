@@ -21,6 +21,7 @@ import ast
 import os
 import sys
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 _ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 _SESSION = _ROOT / "brain" / "mastercode" / "runtime" / "session.py"
@@ -34,7 +35,7 @@ def check(label: str, cond: bool, extra: str = "") -> None:
         _FAILURES.append(label)
 
 
-src = _SESSION.read_text()
+src = turn_source(_ROOT)
 tree = ast.parse(src)
 
 fns = [n for n in ast.walk(tree)

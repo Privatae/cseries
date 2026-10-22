@@ -84,7 +84,8 @@ def _git_count_stream(project_dir: Path, args: tuple, on_line) -> int:
     import threading
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0",
            "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"}
-    from server.routes.project_git import HARDENED_GIT_CONFIG
+    from server.routes.project_git import HARDENED_GIT_CONFIG, check_repo
+    check_repo(project_dir)     # an OSError when its .git is not the kernel's
     argv = ["git", *HARDENED_GIT_CONFIG, "-c", "safe.directory=*", "-C", str(project_dir), *args]
     proc = subprocess.Popen(
         argv, env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
@@ -139,8 +140,11 @@ def _git(project_dir: Path, *args: str) -> subprocess.CompletedProcess:
     # backup, a tree copied for inspection) must yield its facts, not a
     # "dubious ownership" refusal that would read as "no commit".
     # The project dir holds landed harness output: the shared hardened -c set
-    # (routes/project_git.HARDENED_GIT_CONFIG), not a local copy of it.
-    from server.routes.project_git import HARDENED_GIT_CONFIG
+    # (routes/project_git.HARDENED_GIT_CONFIG), not a local copy of it. A
+    # .git holding anything the kernel did not write there is not read at all
+    # (check_repo raises an OSError, which collect_git reports as git_error).
+    from server.routes.project_git import HARDENED_GIT_CONFIG, check_repo
+    check_repo(project_dir)
     return subprocess.run(
         ["git", *HARDENED_GIT_CONFIG,
          "-c", "safe.directory=*", "-C", str(project_dir), *args],

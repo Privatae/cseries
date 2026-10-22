@@ -369,9 +369,19 @@ _PROFILES = [{"id": 1, "name": "str-allow", "enforcement": "allow", "is_default"
 
 
 def _nac_with(profile_id):
-    n = NACController(verify_pubkey=None)
+    """An armed engine holding one approved rule, signed with the profile's terms (the
+    engine enforces signed terms only; an unsigned approved rule fails its check)."""
+    import base64 as _b64
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey as _K
+    from server.network.nac_controller import _canonical as _canon
+    key = _K.generate()
+    prof = next(p for p in _PROFILES if p["id"] == profile_id)
+    terms = {"name": "r", "priority": 1, "match": {}, "enforcement": prof["enforcement"],
+             "permits": prof["permits"]}
+    n = NACController(verify_pubkey=key.public_key().public_bytes_raw())
     n._ingest(_PROFILES, [{"id": 1, "name": "r", "priority": 1, "match": {},
-                           "profile_id": profile_id, "signed_terms": None, "signature": None}])
+                           "profile_id": profile_id, "signed_terms": terms,
+                           "signature": _b64.b64encode(key.sign(_canon(terms))).decode()}])
     return n
 
 
@@ -388,10 +398,11 @@ class _Broken:
         raise RuntimeError("engine error")
 
 
-# Deliberately unchanged: whether an engine error admits or refuses is a separate
-# decision. This pins the current behaviour so that neither direction changes quietly.
-check("gate: an engine error still admits (fail-open unchanged, pending its own decision)",
-      asyncio.run(_nac_gate(device, nac=_Broken())) is None)
+# An engine error refuses the machine, the way the tamper lock does
+# (scripts/test_nac_gate_fails_closed.py has the cases that used to reach it).
+_err = asyncio.run(_nac_gate(device, nac=_Broken()))
+check("gate: an engine error refuses the machine (fail closed)",
+      isinstance(_err, dict) and _err.get("allowed") is False, repr(_err))
 
 
 # ── 3. the host is recorded as the host ─────────────────────────────────────
@@ -780,8 +791,10 @@ check("revoking an approved allow with legacy STRING permits needs the code",
 check("a legacy UNSIGNED approved allow with no permits (read from its profile) needs the code",
       _needs_code(_prow("allow", [], signed=False)) == (True, True))
 out, revoked, codes = _revoke(_prow("allow", _MCP, signed=False))
-check("a legacy UNSIGNED approved allow that admits (read from its profile) is free",
-      isinstance(out, dict) and revoked and codes == [], (repr(out), codes))
+check("an approved allow with NO signature fails the engine's check (it locks every machine "
+      "out), so removing it needs the code, whatever its profile admits",
+      isinstance(out, nac_commit.CommitError) and out.status == 403 and not revoked,
+      (repr(out), codes))
 check("revoking a row whose signature no longer verifies needs the code (the engine fails the "
       "whole mesh closed on it)", _needs_code(_prow("allow", [], tamper=True)) == (True, True),
       _needs_code(_prow("allow", [], tamper=True)))
@@ -845,9 +858,10 @@ _legacy._ingest([{"id": 5, "name": "r", "enforcement": "allow", "is_default": Fa
                   "permits": [{"direction": "inbound", "lane": "any"}]}],
                 [{"id": 7, "name": "r", "priority": 1, "match": {}, "profile_id": 5,
                   "signed_terms": None, "signature": None}])
-check("(why: a legacy unsigned approved rule is read from its profile, so rewriting that profile "
-      "would change what the engine enforces)",
-      _legacy.permits_inbound(_legacy.decide({"posture": "healthy"})[0]) is True)
+check("(and an approved rule with no signature is never read from its profile: it fails its "
+      "check, so the engine refuses every machine rather than enforce the editable profile)",
+      _legacy._tamper is True
+      and _legacy.permits_inbound(_legacy.decide({"posture": "healthy"})[0]) is False)
 
 revoke_seen = {}
 

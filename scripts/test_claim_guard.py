@@ -35,6 +35,7 @@ Run: APP_ROOT=<repo> python3 scripts/test_claim_guard.py
 import os
 import sys
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 _ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 sys.path.insert(0, str(_ROOT / "brain"))
@@ -550,7 +551,7 @@ check("fail-soft: a broken guard never takes the turn down",
 
 
 # ── 3. wiring: runs at the turn's text exit, repairs at most once ───────────
-sess_src = (_ROOT / "brain/mastercode/runtime/session.py").read_text()
+sess_src = turn_source(_ROOT)
 check("session.py calls the guard", "find_unbacked_start" in sess_src)
 check("the repair budget is declared", "_claim_repairs = 0" in sess_src)
 check("the guard only runs while the budget is unspent",

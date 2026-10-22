@@ -1,0 +1,2 @@
+# 2026-10-22 (NAC): every time the network gate locks, the person is told. A lock that lifts and comes back writes a notice with its own id (the inbox drops a repeated id, so reusing the first one went unseen), a notice still being written when the lock lifted no longer marks the lock's return as told, and a restart in the same state still names the first notice so the inbox keeps one copy. Real engine and ed25519 key, stand-in inbox keyed by message_id; no pod, no DB.
+test_nac_lock_notice_episodes.py

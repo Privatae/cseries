@@ -375,10 +375,13 @@ if [ "$schema_present" != "t" ]; then
     # Set the entity's actual ID to match the platform identity.
     # Skip in genesis mode — genesis client sets ID after linking.
     if [ "$ENTITY_ID" -gt 0 ] 2>/dev/null; then
-        psql -h "$PG_SOCKET" -U entity -d "$ENTITY_DB" -c \
-            "UPDATE entity_registry SET id = $ENTITY_ID, privatae_entity_id = $ENTITY_ID WHERE id = 1;" >/dev/null
-        psql -h "$PG_SOCKET" -U entity -d "$ENTITY_DB" -c \
-            "SELECT setval('entity_registry_id_seq', $ENTITY_ID);" >/dev/null
+        # The id goes to psql as a variable (:'eid'), never spliced into the SQL
+        # text; psql reads variables only from a script, so the SQL comes on stdin.
+        psql -h "$PG_SOCKET" -U entity -d "$ENTITY_DB" -v ON_ERROR_STOP=1 \
+            -v eid="$ENTITY_ID" >/dev/null <<'SQL'
+UPDATE entity_registry SET id = :'eid'::int, privatae_entity_id = :'eid'::bigint WHERE id = 1;
+SELECT setval('entity_registry_id_seq', :'eid'::bigint);
+SQL
     fi
 
     echo "Database initialized — schema loaded, entity $ENTITY_ID seeded"
@@ -455,8 +458,13 @@ if [ -d ${KERNEL_SCHEMA_APP:-/app}/migrations ]; then
         base=$(basename "$f" .sql)
         # v001_foo → 1
         version=$(echo "$base" | sed -E 's/^v0*([0-9]+).*$/\1/')
-        applied=$(psql -h "$PG_SOCKET" -U entity -d "$ENTITY_DB" -At \
-            -c "SELECT 1 FROM schema_migrations WHERE version=$version" 2>/dev/null)
+        case "$version" in
+            ''|*[!0-9]*) echo "ERROR: migration $base has no version number" >&2; exit 1 ;;
+        esac
+        # The version and name go to psql as variables, never spliced into the SQL.
+        applied=$(printf '%s\n' "SELECT 1 FROM schema_migrations WHERE version = :'ver'::int;" \
+            | psql -h "$PG_SOCKET" -U entity -d "$ENTITY_DB" -At -v ON_ERROR_STOP=1 \
+                -v ver="$version" 2>/dev/null)
         if [ "$applied" = "1" ]; then
             continue
         fi
@@ -465,8 +473,9 @@ if [ -d ${KERNEL_SCHEMA_APP:-/app}/migrations ]; then
             echo "ERROR: migration $base failed" >&2
             exit 1
         fi
-        psql -h "$PG_SOCKET" -U entity -d "$ENTITY_DB" -c \
-            "INSERT INTO schema_migrations(version, name) VALUES ($version, '$base')" >/dev/null
+        printf '%s\n' "INSERT INTO schema_migrations(version, name) VALUES (:'ver'::int, :'name');" \
+            | psql -h "$PG_SOCKET" -U entity -d "$ENTITY_DB" -v ON_ERROR_STOP=1 \
+                -v ver="$version" -v name="$base" >/dev/null
     done
 fi
 

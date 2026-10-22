@@ -380,8 +380,13 @@ async def _nac_gate(auth: dict, nac=None) -> dict | None:
     Default-preserve: no NAC policy authored => permit (today's behavior). Bearer-only
     tokens (NULL fingerprint) and in-pod loopback (_internal) are EXEMPT — full access for
     a pasted token is the user's sovereign choice; the NAC governs mesh devices.
-    A tampered signed policy denies (the PDP returns quarantine); an infra error fails OPEN
-    to default-preserve — the NAC is additive, so a DB blip must not lock the whole mesh.
+    A tampered signed policy denies (the PDP returns quarantine), and so does an engine
+    that raises while deciding: an error says nothing about whether the rules admit this
+    machine, so it is refused, the way the tamper lock refuses, and logged. Admitting on an
+    error let one approved rule the matcher could not evaluate admit every governed
+    machine. A request that met a passing error (a DB read) is refused once; the next one
+    asks again. With no engine loaded at all (its import or construction failed at start)
+    a governed machine is refused the same way.
 
     Returns the decision dict when the device is QUARANTINED (caller refuses the request),
     or None to allow. `nac` is injectable for tests; production uses get_nac_controller()."""
@@ -399,15 +404,74 @@ async def _nac_gate(auth: dict, nac=None) -> dict | None:
         except Exception:
             nac = None
     if nac is None:
-        return None  # pre-lifespan -> default-preserve
+        # No engine: its import or construction failed at start (main.py logs it and
+        # leaves the reference empty; requests are not served before start finishes).
+        # Nothing then knows whether the rules admit this machine, so it is refused,
+        # as an engine error is.
+        logger.error("NAC gate: no network engine is loaded, so token %s is refused", token_id)
+        return {"allowed": False, "profile": None, "error": True,
+                "why": "the network rules are not loaded on this Host, so this machine is refused"}
     try:
         decision = await nac.evaluate(int(token_id))
     except Exception as e:
-        logger.warning("NAC gate: evaluate error for token %s (default-preserve): %s", token_id, e)
-        return None
+        logger.error("NAC gate: the engine could not decide for token %s, so it is refused: %r",
+                     token_id, e)
+        return {"allowed": False, "profile": None, "error": True,
+                "why": "the network rules could not be evaluated for this machine "
+                       f"({type(e).__name__}), so it is refused"}
     if not decision.get("allowed", True):
         return decision
     return None
+
+
+# The inbox notice for a start where the network engine was not built. Its words live here,
+# beside the gate that refuses, and not in nac_controller: that module failing to import
+# is one of the ways the engine is not built.
+NO_ENGINE_NOTICE_SUBJECT = "Your Host is refusing every paired machine"
+NO_ENGINE_NOTICE_BODY = (
+    "Your Host is refusing every machine you paired with it.\n\n"
+    "Its network rules did not load when it started, so it cannot tell which of your "
+    "paired machines the rules let in, and it refuses all of them rather than guess. "
+    "An app or client you connected with a plain token, not a paired machine, is not "
+    "affected.\n\n"
+    "Your Host tries to load the rules again each time it starts. If this message comes "
+    "back after a restart, the rules still did not load; the Network app's Ingress lane "
+    "says so too."
+)
+
+
+async def tell_no_engine(*, notify=None) -> bool:
+    """Tell the person that the gate refuses every paired machine because the network
+    engine was not built at this start (main.py's NAC init). Called once per start that
+    fails, so each such start writes one notice with its own id: a later start that fails
+    again after one that loaded is news, and a reused id would be dropped by the inbox
+    (memory_handlers.handle_inbox_append: ON CONFLICT (message_id) DO NOTHING).
+
+    Written the way the lock notice is (NACController._tell_lock). `notify` is injectable
+    for a test; None is the Host's inbox. Never raises: the Host keeps starting. Returns
+    whether the notice was stored."""
+    import uuid
+    notice = {
+        "subject": NO_ENGINE_NOTICE_SUBJECT,
+        "body": NO_ENGINE_NOTICE_BODY,
+        "body_format": "text/markdown",
+        "message_kind": "system_notification",
+        "message_id": str(uuid.uuid4()),
+        "payload": {"app": "network", "kind": "nac_not_loaded"},
+    }
+    try:
+        if notify is not None:
+            res = await notify(notice)
+        else:
+            from server.bridge.memory_handlers import handle_inbox_append
+            res = await handle_inbox_append(notice)
+    except Exception as e:
+        logger.warning("NAC: could not tell the Host its network rules did not load: %r", e)
+        return False
+    if isinstance(res, dict) and res.get("ok") is False:
+        logger.warning("NAC: the rules-not-loaded notice was not stored: %s", res.get("error"))
+        return False
+    return True
 
 
 # ── Tool dispatch ────────────────────────────────────────────────────
@@ -829,10 +893,6 @@ async def _ceigas_gate_synaptive(
     # the entity's effective surface so an over-scoped entity can't
     # widen what the token authorized.
     if (effective_bits & required_bits) != required_bits:
-        narrow_note = (
-            f" (token-narrowed: host={entity_bits:08b} ∩ token={token_bits:08b})"
-            if narrowing_active else ""
-        )
         # In the words a host can repeat to a user: the capability
         # by name, and WHICH wall this is — decided by which wall FIRED, not
         # by whether a token was in flight (keying on

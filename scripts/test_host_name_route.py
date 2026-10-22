@@ -10,7 +10,8 @@ Host's own entity_registry row. Pinned here:
   3. every app the gate admits is served from its own origin: any page on
      the desktop's origin can get a same-origin app's token, so admitting
      one would let a Host-built app rename the Host. The network membership
-     routes still admit Settings alone;
+     routes still admit Settings alone; Settings' Git server routes take the
+     same gate, and every app it admits is on its own origin too;
   4. a name is trimmed, 1 to 40 characters, with no control or format
      characters, and anything else is refused with 400;
   5. a good name is written to this Host's row, and nothing is written for a
@@ -125,6 +126,40 @@ async def main():
               f"provenance={prov!r}")
     check(network_membership.OWNER_APP_IDS == ("settings",),
           "network membership still admits Settings alone", str(network_membership.OWNER_APP_IDS))
+
+    # 3b — Settings' Git server routes use the same gate: connecting decides
+    # which server and account the Host works as.
+    from server.routes import git_server as gs_routes
+    gs_deps = {(sorted(r.methods)[0], r.path): [getattr(d.call, "_app_scope", d.call.__name__)
+                                                for d in r.dependant.dependencies]
+               for r in gs_routes.router.routes if isinstance(r, APIRoute)}
+    check(gs_deps == {("GET", "/api/git-server"): ["read:git_server"],
+                      ("POST", "/api/git-server"): ["write:git_server", "owner_only"],
+                      ("DELETE", "/api/git-server"): ["write:git_server", "owner_only"]},
+          "connect and disconnect take write:git_server, then the owner gate", str(gs_deps))
+    for app_id in (None, "host", "network", "getting-started"):
+        check(await status_of(gs_routes.owner_only(request(app_id))) == 403,
+              f"git server owner gate refuses the {app_id or 'token-less'} caller")
+    check(await status_of(gs_routes.owner_only(request("settings"))) == 403,
+          "git server: settings' token without the owner's sign-in is refused")
+    real_gs_session = gs_routes.live_session
+    gs_routes.live_session = signed_in
+    try:
+        check(await status_of(gs_routes.owner_only(request("settings"))) == 200,
+              "git server: settings with the owner signed in may connect")
+        # Signed in, so a refusal here can only come from the app check.
+        for app_id in (None, "host", "network", "getting-started"):
+            check(await status_of(gs_routes.owner_only(request(app_id))) == 403,
+                  f"git server: a signed-in owner does not let the {app_id or 'token-less'} caller connect")
+    finally:
+        gs_routes.live_session = real_gs_session
+    for app_id in gs_routes.OWNER_APP_IDS:
+        m = re.search(r"(?m)^provenance:\s*(\S+)",
+                      (ROOT / "system-apps" / app_id / "app.yaml").read_text())
+        prov = m.group(1) if m else ""
+        check(is_isolated(app_id, prov),
+              f"{app_id}, admitted by the git server owner gate, is served from its own origin",
+              f"provenance={prov!r}")
 
     # 4
     # "\ud800": a lone surrogate, which a JSON body can carry and UTF-8 cannot store.

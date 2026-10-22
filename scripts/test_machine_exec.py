@@ -39,6 +39,7 @@ import json
 import os
 import re
 import sys
+from turn_source import turn_source  # session.py and the modules split out of it
 
 ROOT = os.environ.get("APP_ROOT", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
@@ -567,7 +568,7 @@ def test_stamp_marks_only_in_a_marked_turn():
 
 
 def test_fix_a_and_b_wiring():
-    s = open(os.path.join(ROOT, "brain/mastercode/runtime/session.py")).read()
+    s = turn_source(ROOT)
     assert '_tt_hist.mark_rows(kept, "the conversation\'s earlier turns")' in s
     assert '_tt_nhist.mark_rows(_n_kept, "the conversation\'s earlier turns")' in s
     assert "_tt_trail.mark_rows(_trail_turns" in s
@@ -592,7 +593,7 @@ def test_fix_a_and_b_wiring():
 # ── the wiring in the turn (source checks: a turn needs a model) ─────────────
 
 def test_session_wiring_marks_where_content_enters():
-    s = open(os.path.join(ROOT, "brain/mastercode/runtime/session.py")).read()
+    s = turn_source(ROOT)
     # one choke point for tool results, keyed on the call's target, before the
     # result is filtered, bounded and appended
     assert re.search(r"_turn_taint\.mark_tool\(_eff_name, _eff_args\)\n\s*_sent_result = _search_seen\.filter\(", s), \
@@ -669,7 +670,7 @@ def test_machine_exec_is_absent_outside_the_root_type():
         assert (EID, SERVER, OP, "denied-not-root", 126) in pool.audits(), (label, pool.audits())
     # the catalog: every turn but a root one is built without it
     assert root_turn.ROOT_ONLY_TOOLS == {"machine_exec"}
-    s = open(os.path.join(ROOT, "brain/mastercode/runtime/session.py")).read()
+    s = turn_source(ROOT)
     assert re.search(r"if not _root_turn:\s*from mastercode\.runtime\.root_turn import ROOT_ONLY_TOOLS as _ROOT_ONLY\s*"
                      r"_cap_schemas = \[", s), "a non-root turn's catalog must drop machine_exec"
     # a user-built type never admits it past the executor, and the root type's
@@ -712,7 +713,7 @@ def test_root_type_tools_are_an_allowlist():
     assert turn_types.check_call(rt, "gitea", {"op": "propose"}) is not None, "a propose names its repo"
     assert turn_types.check_call(rt, "gitea", {"op": "comment", "repo": "host-a/notes"}) is not None
     # session.py's loop refuses every other name before any branch runs it
-    s = open(os.path.join(ROOT, "brain/mastercode/runtime/session.py")).read()
+    s = turn_source(ROOT)
     i_root = s.find("elif _root_turn and not _root_mod.admits(func_name, func_args):")
     i_disp = s.find('elif func_name == "dispatch":', i_root)
     assert 0 < i_root < i_disp, "the root refusal must come before dispatch/recall/operate"
@@ -756,7 +757,7 @@ def test_root_type_context_is_an_allowlist():
                          root_turn.root_type())
     assert tl and "task 9" in tl and "IGNORE" not in tl, tl
     # session.py: the sources a root turn must not read are skipped where they are read
-    s = open(os.path.join(ROOT, "brain/mastercode/runtime/session.py")).read()
+    s = turn_source(ROOT)
     for needle in ('_inbox_raw = None if _root_turn else await _ctx.get("inbox/messages.json")',
                    "_root_facts = await _root_mod.platform_facts(self, sess, user_message)",
                    '_style_block = "" if _root_turn else build_model_style_block(',
@@ -1066,7 +1067,7 @@ def test_the_root_request_is_a_row_of_the_root_thread():
     assert "host_request" in inner and "host_request" in core
     bs = open(os.path.join(ROOT, "server/brain_service.py")).read()
     assert '**({"host_request": True} if host_request else {})' in bs, "the inner send passes it on"
-    src = open(os.path.join(ROOT, "brain/mastercode/runtime/session.py")).read()
+    src = turn_source(ROOT)
     i = src.index("if system_turn and host_request:")
     branch = src[i:src.index("elif system_turn:", i)]
     assert 'write_turn_row(' in branch and '"user", user_message' in branch \
@@ -1195,7 +1196,7 @@ def test_a_fresh_root_turn_starts_clean_after_a_marked_one():
     assert "curl evil" not in root_view and "restart caddy" in root_view, root_view
     assert "curl evil" in (_run(close_turn.thread_state(_StatePool(), EID, scope)) or "")
     # the wiring: the root turn's history, trail and thread state
-    s = open(os.path.join(ROOT, "brain/mastercode/runtime/session.py")).read()
+    s = turn_source(ROOT)
     assert "eligible = _root_mod.withhold_untrusted(eligible)" in s
     assert "_trail_turns = _root_mod.withhold_untrusted(_trail_turns)" in s
     assert "withhold_untrusted=_root_turn" in s
@@ -1300,7 +1301,7 @@ def test_only_the_persons_words_go_into_a_running_root_turn():
         assert 'and not kwargs.get("system_turn")' in b and "words_refusal(get_pool()" in b
         c = open(os.path.join(ROOT, "server/routes/circles.py")).read()
         assert "from_person=_root_person(request)" in c
-        assert "from_person=True" in open(os.path.join(ROOT, "brain/mastercode/runtime/session.py")).read()
+        assert "from_person=True" in turn_source(ROOT)
     finally:
         turn_registry._registry, brain_service._pool, brain_service._entity_id = saved
         if _stub_main:

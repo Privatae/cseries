@@ -3097,9 +3097,23 @@ async def _exec_system_refresh_sdk_auth(args: dict) -> dict:
     import asyncio, os, urllib.request, urllib.parse, json as _json, time
     from pathlib import Path as _Path
 
-    creds_path = _Path("/home/privatae/.claude/.credentials.json")
+    from server.network import nac_harness as _nh
+    creds_path = _Path(_nh._AGENT_CREDS_PATH)
     if not creds_path.exists():
         return _refused("no claude credentials on disk — sign in to the Claude Code harness (harness_connections op='login', or the Keys app)", user_action="Sign in to the Claude Code harness (Orchestrator → Coding → Claude Code → sign in).")
+    # A refresh is not a connect: it renews the credential already on disk. When the
+    # person has disconnected Claude it must neither write that credential back nor seal
+    # it into the vault (which a refresh racing the Disconnect would do), and it must
+    # not lift the marker: only a new sign-in reconnects.
+    async def _disconnected() -> bool:
+        try:
+            from server.network import harness_state
+            return await harness_state.is_disconnected("claude-sdk")
+        except Exception:
+            return False  # a failed read is "not disconnected" (harness_state.is_disconnected)
+
+    if await _disconnected():
+        return _refused("Claude Code is disconnected — nothing to refresh", user_action="Connect Claude Code again (sign in, or add the key in the Keys app).")
     try:
         creds = json.loads(creds_path.read_text())
     except Exception as e:
@@ -3154,6 +3168,11 @@ async def _exec_system_refresh_sdk_auth(args: dict) -> dict:
                 return _refused_if_caller(e, f"network error: {e}")
             await asyncio.sleep(2)
 
+    # Checked again here: the POST above takes seconds, and a Disconnect inside it
+    # removed the file this would write back.
+    if await _disconnected():
+        return _refused("Claude Code was disconnected during the refresh — nothing written", user_action="Connect Claude Code again (sign in, or add the key in the Keys app).")
+
     # Write refreshed token back to disk in the SDK's expected shape.
     now_ms = int(time.time() * 1000)
     expires_in_s = int(new_tok.get("expires_in") or 0)
@@ -3174,6 +3193,17 @@ async def _exec_system_refresh_sdk_auth(args: dict) -> dict:
     except Exception as e:
         return _refused_if_caller(e, f"could not persist new token: {e}")
 
+    # And once more after the write. A Disconnect that completed between the check above
+    # and the write has already removed the file, so the write put it back. The marker is
+    # set before the file is removed (harness_state.disconnect_for_credential), so it is
+    # set by now: remove the file again and seal nothing.
+    if await _disconnected():
+        try:
+            creds_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return _refused("Claude Code was disconnected during the refresh — nothing kept", user_action="Connect Claude Code again (sign in, or add the key in the Keys app).")
+
     # Harness-OAuth vault cutover: re-seal the rotated creds into the
     # host-owned vault so "harness:claude_oauth" stays current after a refresh (the
     # boot-materialize can then rebuild the plaintext on a restart). Additive +
@@ -3186,6 +3216,11 @@ async def _exec_system_refresh_sdk_auth(args: dict) -> dict:
         _eid = os.environ.get("ENTITY_ID", "")
         if _pool is not None and _eid.isdigit():
             await nac_harness.seal_agent_creds(_pool, int(_eid), actor="claude_auth:refresh")
+            # A Disconnect that landed while the seal was in flight may have revoked the
+            # Vault copy before the seal stored it: take both back out.
+            if await _disconnected():
+                await nac_harness.revoke_agent_creds(actor="claude_auth:refresh")
+                return _refused("Claude Code was disconnected during the refresh — nothing kept", user_action="Connect Claude Code again (sign in, or add the key in the Keys app).")
     except Exception:
         pass  # vault sealing is best-effort; the on-disk refresh already succeeded
 
@@ -9612,6 +9647,15 @@ async def _exec_workspace_file(args):
                     "is excluded from the project's repo, so a write there could "
                     "never be committed. Put your own files elsewhere in the "
                     "project."))
+            # .git in any case, and through a link (`cfg -> .git`): the kernel
+            # runs git in this folder right after the write (sync below), and
+            # a repo-local config can name programs git runs.
+            from server.routes.project_git import path_reaches_git
+            if path_reaches_git(base, (a.get("path") or "").strip()):
+                return _ws_refused((
+                    ".git is git's own folder, not project content — files there "
+                    "are never written or deleted by this tool. Write the "
+                    "project's own files instead."))
             # An ARTIFACT's .history/ is its revision store (and its trial
             # mark): what "revert" restores and what Designs may discard. The
             # artifact ops refuse it as a path (artifacts._reject_unsafe_path);
@@ -12076,6 +12120,13 @@ async def _exec_keys_manage(args: dict) -> dict:
         # for that one server: used only by its connection, ended only from
         # the Network app. A `use` would send it to whatever URL the call names.
         from server.mcp_oauth import is_reserved_key_name
+        from server.vault.api import is_git_server_token
+        if is_git_server_token(a.get("name")):
+            # The account the Host signs in as on the person's git server is the
+            # owner's choice, checked when they connect it (server/git_server.py).
+            return _refused(f"{str(a.get('name')).strip()!r} is the token of the git server "
+                            "connected in Settings: only the Host's own git clients use it, and "
+                            "the person connects or disconnects the server in Settings, Git server")
         if is_reserved_key_name(a.get("name")):
             return _refused(f"{str(a.get('name')).strip()!r} is an MCP server's sign-in: only that "
                             "server's connection uses it, and the person signs in or out on its card "
@@ -12164,8 +12215,17 @@ async def _exec_keys_manage(args: dict) -> dict:
             name = (a.get("name") or "").strip()
             if not name:
                 return _refused("name is required for op='revoke'")
+            # A harness credential's disconnect marker goes first, as on the Vault
+            # route: if it cannot be written nothing is revoked, because without it
+            # the harness signs back in once its credential is removed.
+            from server.network import harness_state
+            try:
+                marked, newly = await harness_state.record_disconnect(name)
+            except harness_state.DisconnectNotRecorded as e:
+                return {"status": "error", "result": f"keys_manage revoke failed: {e}"}
             ok = await vault_api.revoke_secret(pool, entity_id=eid, name=name, actor=actor)
             if not ok:
+                await harness_state.lift_unused_disconnect(marked, newly)
                 return _refused(f"no active credential named {name!r}")
             res = {"revoked": name}
             # Revoking a harness credential DISCONNECTS it. Same entry point the
@@ -12622,7 +12682,7 @@ async def _exec_personality_state(args: dict) -> dict:
             "These weights are what the user set and they never move on their own. "
             "They change only when the user moves the sliders in Settings → Response "
             "Shaping or asks you in words. What you learn from the user lands in "
-            "rules and your own tables, never in these weights."
+            "your memory (preferences and rules), never in these weights."
         )
         return {"status": "ok", "result": res}
     except Exception as e:
@@ -15473,9 +15533,16 @@ async def _exec_github_repo(args: dict) -> dict:
         # this when the user asks for the import).
         import aiohttp
 
-        gitea = (os.environ.get("GITEA_URL") or "").rstrip("/")
-        gitea_token = os.environ.get("GITEA_API_TOKEN", "")
-        gitea_user = os.environ.get("GITEA_USERNAME", "")
+        # The Host's own coding forge: the git server connected in Settings,
+        # else the forge the install set (server/git_server.py).
+        from server.git_server import connected as _git_server
+        _own = _git_server()
+        if _own is not None:
+            gitea, gitea_token, gitea_user = _own.url, _own.token, _own.user
+        else:
+            gitea = (os.environ.get("GITEA_URL") or "").rstrip("/")
+            gitea_token = os.environ.get("GITEA_API_TOKEN", "")
+            gitea_user = os.environ.get("GITEA_USERNAME", "")
         if not gitea or not gitea_token:
             return {"status": "error", "result":
                     "this pod's gitea identity is not wired (GITEA_URL/GITEA_API_TOKEN) — cannot import"}

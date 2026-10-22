@@ -361,8 +361,14 @@ def _run_git(argv: list[str], cwd: str, env: dict, timeout: int = _GIT_TIMEOUT) 
     """One git call, no shell. Module-level so tests replace it.
     The checkout holds files the caller supplies (which can be a harness's
     output), so every call carries the shared hardened -c set
-    (routes/project_git.HARDENED_GIT_CONFIG)."""
-    from server.routes.project_git import HARDENED_GIT_CONFIG
+    (routes/project_git.HARDENED_GIT_CONFIG), and none runs once the
+    checkout's .git holds anything the kernel did not put there
+    (project_git.check_repo)."""
+    from server.routes.project_git import HARDENED_GIT_CONFIG, UnsafeRepoError, check_repo
+    try:
+        check_repo(Path(cwd))
+    except UnsafeRepoError as e:
+        return 1, str(e)
     try:
         r = subprocess.run(["git", *HARDENED_GIT_CONFIG, *argv], cwd=cwd, env=env,
                            capture_output=True, text=True, timeout=timeout)
@@ -687,8 +693,14 @@ def _project_git(project_dir: Path, *argv: str, env_extra: dict | None = None,
                  text: bool = True) -> subprocess.CompletedProcess:
     """One git call in a project's tree, hardened the way every host-side git
     call in a harness-written tree is (project_git.HARDENED_GIT_CONFIG), with
-    no global or system config. Module-level so tests can see it."""
-    from server.routes.project_git import HARDENED_GIT_CONFIG
+    no global or system config. Module-level so tests can see it. Refuses
+    (409, naming the key) a tree whose .git holds anything the kernel did not
+    put there (project_git.check_repo)."""
+    from server.routes.project_git import HARDENED_GIT_CONFIG, UnsafeRepoError, check_repo
+    try:
+        check_repo(project_dir)
+    except UnsafeRepoError as e:
+        raise HTTPException(409, str(e)) from None
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0",
            "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null",
            **(env_extra or {})}

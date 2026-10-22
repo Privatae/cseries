@@ -31,6 +31,7 @@ import json
 import os
 import re
 import sys
+from turn_source import turn_source  # session.py and the modules split out of it
 
 APP_ROOT = os.environ.get("APP_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, APP_ROOT)
@@ -168,8 +169,8 @@ def b_by_name_refusal():
     f = getattr(TD, "by_name_refusal", None)
     check("tool_doors.by_name_refusal is the by-name refusal", callable(f))
     check("session.py's tool loop answers a by-name call from it",
-          "by_name_refusal" in src("brain/mastercode/runtime/session.py")
-          and "call dispatch with it in tool_scope" not in src("brain/mastercode/runtime/session.py"))
+          "by_name_refusal" in turn_source()
+          and "call dispatch with it in tool_scope" not in turn_source())
     if not callable(f):
         return
     lanes = _by_lane()

@@ -60,10 +60,15 @@ def _smoke_runs(repo: pathlib.Path, tmp: pathlib.Path) -> list[str]:
     log = tmp / "smoke-ran.log"
     log.write_text("")
     body = _block("smoke_test.sh", r'GATE_LIST="\$SMOKE_REPO/scripts/' + _LIST + r'\.txt"')
+    # The loop writes each gate's output under $SMOKE_SCRATCH, which smoke_test.sh
+    # makes before it; the throwaway tree has no pass record, so the "already
+    # passed" check falls through to reading the list, as on a first run.
+    scratch = tmp / "scratch"
+    scratch.mkdir(exist_ok=True)
     script = ("set -euo pipefail\nred(){ :; }; green(){ :; }; yellow(){ :; }\n"
-              f'failed=0\nSMOKE_REPO="$1"\n{body}\n')
+              f'failed=0\nSMOKE_REPO="$1"\nSMOKE_SCRATCH="$2"\n{body}\n')
     env = {**os.environ, "PATH": f"{bin_dir}:{os.environ['PATH']}", "GATE_LOG": str(log)}
-    p = subprocess.run(["bash", "-c", script, "smoke", str(repo)], env=env,
+    p = subprocess.run(["bash", "-c", script, "smoke", str(repo), str(scratch)], env=env,
                        capture_output=True, text=True, timeout=120)
     assert p.returncode == 0, p.stdout + p.stderr
     return log.read_text().split()

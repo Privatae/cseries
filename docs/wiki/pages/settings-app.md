@@ -1,6 +1,6 @@
 ---
 title: Settings
-summary: Settings holds your Host's name and version, its appearance and time zone, how it responds, the limits on what it may spend and how long its work may run, the layout of your desktop and dock, its backups, and the optional Privatae network membership. It comes with every Host and cannot be removed.
+summary: Settings holds your Host's name and version, its appearance and time zone, how it responds, the limits on what it may spend and how long its work may run, the layout of your desktop and dock, its backups, the optional Privatae network membership, and the git server it keeps code on. It comes with every Host and cannot be removed.
 section: apps
 order: 10
 questions:
@@ -13,6 +13,7 @@ questions:
   - How do I change what my Host may spend, or how long its work may run?
   - Where do I set up backups for my Host?
   - Can my Host restore or change its own backups?
+  - How do I connect my Host to my own git server?
 app: settings
 ---
 
@@ -50,6 +51,12 @@ The Backup tab sets a schedule (every day, once a week, or off), where backups g
 
 The Network tab takes the one-time code from your Privatae account page. It is optional; see [joining the Privatae network](wiki:the-privatae-network).
 
+## How do I connect my Host to my own git server?
+
+The Git server tab connects a Gitea or Forgejo server you already run. On the server, make an account for your Host, sign in as it, and make an access token in its Settings, Applications, with write permission for user, repository and issue: the server asks for user to create a repository, and issue to comment on a pull request. Then give the tab the server's address, which must be https because your Host reaches a git server over https only and may be an address on your own network, though not one of the Host's own, that account's username, its token, and, if you like, your own username there. Check and connect signs in as that account first. It refuses a token the server does not accept, a token that belongs to another account, and one that cannot create repositories, and it keeps nothing when it refuses.
+
+Once connected, the tab shows the server, the account your Host signs in as, and when the check passed. The token is kept sealed in your [Keys](wiki:keys-app) app. Your Host makes each project's repository under its own account there, and if you gave your own username it gives you write access to each one. Your Host's Code Approvals open on that server, where you approve them signed in as yourself. Disconnect removes the token and the settings; the repositories stay on the server. Only the owner, signed in, can connect or disconnect a git server.
+
 ## Can my Host change these for me?
 
-Backup keys, restoring, sending a copy and switching the memory mirror on or off are yours alone: your Host is walled off from all of them.
+Its name, which git server it works on, backup keys, restoring, sending a copy and switching the memory mirror on or off are yours alone: your Host is walled off from all of them.

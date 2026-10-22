@@ -1260,7 +1260,8 @@ function CodeApprovalsSection({
       <div className="px-3 pb-4">
         {!connected ? (
           <p className="px-1 py-1 text-muted-foreground text-xs">
-            The Host has no forge login yet, so there is nothing to approve here.
+            Code Approvals need a git server. Connect a Gitea or Forgejo server you run in
+            Settings, Git server, and the changes the Host makes wait for you here.
           </p>
         ) : rows == null ? (
           <p className="px-1 py-1 text-muted-foreground text-xs">loading…</p>

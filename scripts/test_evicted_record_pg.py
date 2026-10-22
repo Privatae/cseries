@@ -28,6 +28,7 @@ import pathlib
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
+from turn_source import turn_source  # session.py and the modules split out of it
 
 ROOT = pathlib.Path(os.environ.get("APP_ROOT") or pathlib.Path(__file__).resolve().parents[1])
 for p in (str(ROOT / "brain"), str(ROOT), str(ROOT / "scripts")):
@@ -104,7 +105,7 @@ async def run(pool):
     check("N a thread whose window starts at its first row has nothing leading its history",
           lead is None, lead)
     check("N ...and no rolling summary is read for it",
-          "get_live_summary" not in (ROOT / "brain/mastercode/runtime/session.py").read_text())
+          "get_live_summary" not in turn_source(ROOT))
     if er is None:
         return
 
@@ -161,7 +162,7 @@ async def run(pool):
           and rec4.splitlines()[-1].startswith("40 earlier"), rec4.splitlines()[-1])
 
     print("S. the session's fit")
-    src = (ROOT / "brain/mastercode/runtime/session.py").read_text()
+    src = turn_source(ROOT)
     blk = src[src.index("kept = _fit_window(eligible, max_hist)"):src.index("_hist_rows = eligible")]
     first = blk.index("_probe = await _er.evicted_record(")
     check("S the block is probed, its ceiling reserved, the window fitted again, then built",

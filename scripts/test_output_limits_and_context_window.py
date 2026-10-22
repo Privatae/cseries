@@ -30,6 +30,7 @@ import json
 import os
 import sys
 import types
+from turn_source import turn_source  # session.py and the modules split out of it
 
 APP_ROOT = os.environ.get("APP_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, APP_ROOT)
@@ -167,7 +168,7 @@ for prov, model, w in (("kimi", "k3", 1_048_576), ("anthropic", "claude-opus-5-5
 check("history budget on the five measured routes equals main's (k3 961k, not 479k)",
       all(r[1] == r[2] for r in _rows) and _rows[0][2] > 960_000, _rows)
 check("the mid-turn trim target equals main's (window - 16,384)", all(r[3] == r[4] for r in _rows), _rows)
-_sess = open(os.path.join(APP_ROOT, "brain/mastercode/runtime/session.py")).read()
+_sess = turn_source(APP_ROOT)
 check("the turn derives history and the trim target from the reply reserve, not the output limit",
       "output_reserve=_reply_reserve," in _sess
       and "_ctx_target = (_ctx_window - _reply_reserve)" in _sess

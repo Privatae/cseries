@@ -37,9 +37,34 @@ from server.vault import crypto, identity, store
 # of someone else's choosing.
 SIGN_IN_PREFIX = "mcp-oauth"
 
+# The token of the git server the owner connected in Settings
+# (server/git_server.TOKEN_NAME) is held the same way, for the same reason. It
+# signs the Host in to that one server as the account the owner's connect
+# checked: a broker use would send it to whatever URL the call names, and a
+# write would have the Host sign in at its next start as an account that check
+# never saw. Only server/git_server.py passes sign_in=True for it.
+GIT_SERVER_TOKEN_NAME = "git-server"
+
+
+def is_git_server_token(name: Any) -> bool:
+    return str(name or "").strip().lower() == GIT_SERVER_TOKEN_NAME
+
 
 def is_sign_in_name(name: Any) -> bool:
-    return str(name or "").strip().lower().startswith(SIGN_IN_PREFIX)
+    n = str(name or "").strip().lower()
+    return n.startswith(SIGN_IN_PREFIX) or n == GIT_SERVER_TOKEN_NAME
+
+
+def held_name_words(name: Any) -> dict:
+    """The words a refusal uses for a name is_sign_in_name holds: what it is,
+    the only code that writes and uses it, and where the person changes it."""
+    if is_git_server_token(name):
+        return {"what": "the token of the git server connected in Settings",
+                "writer": "Settings, Git server", "user": "the Host's own git clients",
+                "where": "connect or disconnect the server in Settings, Git server"}
+    return {"what": "an MCP server's sign-in", "writer": "the sign-in",
+            "user": "its own connection",
+            "where": "sign in or out on the server's card in the Network app"}
 
 
 class SignInName(ValueError):
@@ -56,10 +81,12 @@ async def store_secret(
     public keys, e.g. an opt-in break-glass key). Returns the envelope id.
     `if_absent`: raise store.NameTaken instead of superseding an existing
     active key of that name (checked inside the write transaction).
-    `sign_in`: the caller is the MCP sign-in (SIGN_IN_PREFIX above)."""
+    `sign_in`: the caller is the MCP sign-in (SIGN_IN_PREFIX above), or
+    server/git_server.py writing GIT_SERVER_TOKEN_NAME."""
     signed_in_name = is_sign_in_name(name)
     if signed_in_name and not sign_in:
-        raise SignInName(f"{name!r} is an MCP server's sign-in; only the sign-in writes it")
+        w = held_name_words(name)
+        raise SignInName(f"{name!r} is {w['what']}; only {w['writer']} writes it")
     owner = identity.host_identity(entity_id)
     recipients = [await identity.host_pubkey(pool)]
     if extra_recipients:
@@ -89,7 +116,7 @@ async def open_secret(
     key') unless include_deactivated — only the TOTP-gated reveal path passes
     that, because the user still owns the value while it is switched off. An
     MCP server's sign-in reads as absent too, unless `sign_in` (SIGN_IN_PREFIX
-    above)."""
+    above), and so does the git server's token (GIT_SERVER_TOKEN_NAME)."""
     if is_sign_in_name(name) and not sign_in:
         return None
     owner = identity.host_identity(entity_id)
@@ -151,7 +178,7 @@ async def add_break_glass(
     if is_sign_in_name(name):
         # A recipient added to a sign-in could open the token from any copy
         # of the envelope (a backup), outside the sign-in.
-        raise SignInName(f"{name!r} is an MCP server's sign-in; it takes no other recipient")
+        raise SignInName(f"{name!r} is {held_name_words(name)['what']}; it takes no other recipient")
     owner = identity.host_identity(entity_id)
     env = await store.get_envelope(pool, owner_identity=owner, logical_name=name, actor=actor or owner)
     if env is None:

@@ -21,11 +21,13 @@ Commits never name a model: the no-attribution rule covers commits and source
 Approval is where a reviewer reads which models wrote the code.
 
 Approving is the person's act, never the Host's: a merge button in a UI merges
-as the person clicking it. The
+as the person clicking it. On the platform forge the
 Approve button opens a window on the platform's own site, which reads the
 change from the forge and, on the person's click there, merges it with the
-person's own forge account. This pod holds no credential that can merge as the
-person, so nothing here merges. The Host merges only under Auto-Approve
+person's own forge account. On a git server the person connected in Settings
+(server/git_server.py) it opens the pull request's own page on that server,
+where they merge signed in as themselves. This pod holds no credential that
+can merge as the person, so nothing here merges. The Host merges only under Auto-Approve
 (project_git.merge_project_pr), as itself, and every merge — the person's or
 the Host's — gets one line in the project's chat, written from the forge's own
 merge record (announce_merge).
@@ -598,6 +600,11 @@ async def get_approval(pool, entity_id: int, project_id: int, number: int) -> di
         "deletions": (pr or {}).get("deletions"),
         "on_machine": forge.on_machine,
     })
+    own = None
+    if not forge.on_machine:
+        from server.git_server import connected as _git_server
+        own = _git_server()
+    out["approve_on"] = None
     if forge.on_machine:
         # The platform cannot reach the code server on the person's machine,
         # so the approval happens there; this names where.
@@ -605,6 +612,16 @@ async def get_approval(pool, entity_id: int, project_id: int, number: int) -> di
         out["approve_where"] = (f"This code lives on {forge.machine}. Approve it in the code "
                                 f"server there.")
         out["forge_url"] = link
+    elif own is not None:
+        # The person's own git server: they merge on the pull request's own
+        # page there, signed in as themselves. The Host notices the merge on
+        # its next read of the forge (the card's watch, the bench's listing),
+        # where merged_by says whether it was them or the Host.
+        from server.git_server import pr_page
+        out["approve_url"] = pr_page(repo, number, (pr or {}).get("html_url"))
+        out["approve_where"] = None
+        out["approve_on"] = own.netloc
+        out["repo_url"] = repo_link(await host_origin(entity_id), repo)
     else:
         out["approve_url"] = approve_url(repo, number, await _handle(entity_id))
         out["approve_where"] = None
@@ -671,12 +688,18 @@ async def announce_merge(pool, entity_id: int, project_id: int, number: int) -> 
     # acts as on the code server on the person's machine.
     host_login = _sess.user if _sess is not None else (cred[0] if cred else None)
     person = None
-    try:
-        from server.routes import gitea as _gitea
-        await _gitea._load_user_tok()     # a restarted pod holds it in the vault
-        person = _gitea.user_login()
-    except Exception:  # noqa: BLE001 — then the line names the login the forge recorded
-        person = None
+    from server.git_server import connected as _git_server
+    own = None if forge.on_machine else _git_server()
+    if own is not None:
+        # On the person's own git server: the username they gave in Settings.
+        person = own.person or None
+    else:
+        try:
+            from server.routes import gitea as _gitea
+            await _gitea._load_user_tok()     # a restarted pod holds it in the vault
+            person = _gitea.user_login()
+        except Exception:  # noqa: BLE001 — then the line names the login the forge recorded
+            person = None
     title = pr.get("title") or f"#{number}"
     base = ((pr.get("base") or {}).get("ref")) or "main"
     commit = (pr.get("merge_commit_sha") or "")[:7]

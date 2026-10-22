@@ -34,6 +34,7 @@ import pathlib
 import subprocess
 import sys
 import types
+from turn_source import turn_source  # session.py and the modules split out of it
 
 ROOT = pathlib.Path(os.environ.get("APP_ROOT") or pathlib.Path(__file__).resolve().parents[1])
 sys.path.insert(0, str(ROOT / "brain"))
@@ -209,7 +210,7 @@ async def main(dsn):
         check("H thread 2's history is its own turns, never thread 1's",
               any("thread two reply" in b for b in bodies_h)
               and not any("thread one reply" in b for b in bodies_h), bodies_h)
-        sess_src = src("brain/mastercode/runtime/session.py")
+        sess_src = turn_source()
         check("H the turn tags its rows with its lane and reads history by it (session.py)",
               '_turn_tags["task_lane"] = _work_lane' in sess_src and "lane=_work_lane" in sess_src)
 

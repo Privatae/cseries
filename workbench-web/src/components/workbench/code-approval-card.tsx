@@ -302,8 +302,9 @@ export function CodeApprovalCard({
         )}
         {watching && (
           <p className="text-muted-foreground text-xs" role="status">
-            Approve it in the privatae.ai window that opened. This card updates when it is
-            done.
+            {detail?.approve_on
+              ? `Approve it on ${detail.approve_on}, in the window that opened, signed in as yourself. This card updates when it is done.`
+              : "Approve it in the privatae.ai window that opened. This card updates when it is done."}
           </p>
         )}
         {blockedUrl && (

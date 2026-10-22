@@ -26,6 +26,7 @@ import inspect
 import os
 import sys
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, os.environ.get("CSERIES_BRAIN", str(REPO / "brain")))
@@ -52,7 +53,7 @@ check("no builder for them is left (prompt_builder._build_source_code_block, "
       "prompt_schema._b_source_code / _b_felt_senses)",
       not hasattr(pb, "_build_source_code_block")
       and not hasattr(ps, "_b_source_code") and not hasattr(ps, "_b_felt_senses"))
-sess_txt = (REPO / "brain/mastercode/runtime/session.py").read_text()
+sess_txt = turn_source(REPO)
 _i = sess_txt.index("_static_sys_sha = _bytes_sha(")
 _ceigas = sess_txt.index("# -- The operator kill switch on the inference crossing --")
 _host = sess_txt.index('grok_messages[0]["content"] = _host_rules + ')
@@ -113,7 +114,7 @@ check("_build_grouped hashes every rendered block and passes the hashes on",
       "block_hashes[block.name] = hashlib.sha256" in src and "block_hashes=block_hashes" in src)
 
 # ── 3. the ledger hashes the tool list and the static text ─────────────────
-sess_src = (REPO / "brain/mastercode/runtime/session.py").read_text()
+sess_src = turn_source(REPO)
 # One tool mode (the groups mode and its own list build are
 # gone), so the normal list is built, and hashed, in ONE place; a root turn's
 # allowlist (runtime/root_turn) replaces it and is hashed where it

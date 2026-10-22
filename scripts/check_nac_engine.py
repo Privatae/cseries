@@ -14,10 +14,15 @@ Two parts:
        * degraded / unknown        -> matched quarantine -> DENY  (CoA on posture drop)
        * no policy authored        -> PERMIT  (default-preserve: today's behavior)
        * signed snapshot tampered  -> signature breaks -> mesh FAILS CLOSED (DENY)
-       * unsigned approved rule     -> loads + decides via its profile (bootstrap)
-       * no pinned key (unarmed)    -> snapshots still load + enforce (engine on pre-P4)
+       * unsigned approved rule     -> fails its check ("unsigned") -> FAILS CLOSED
+       * priority columns swapped   -> order still follows the SIGNED priority
+       * no entity id (unarmed)     -> signed snapshots still load + enforce (genesis)
 
-  2. DB BINDING (skippable via SKIP_DB=1) — read-only: connect to the in-pod database,
+  2. KEY + NOTICE (stand-in pool, no DB) — a key unreadable at boot enforces no signed
+     rule, the next reload re-arms once it reads; a lock is told to the Host's inbox once
+     per lock, under an id a restart in the same lock reuses.
+
+  3. DB BINDING (skippable via SKIP_DB=1) — read-only: connect to the in-pod database,
      attach_pool, status() — proves v058 applied and the PDP binds + loads on a real pod.
 
 Non-zero exit on any failure. Run in-pod: `docker exec <c> python3 /app/scripts/check_nac_engine.py`
@@ -103,17 +108,40 @@ def pure_tests() -> list[str]:
     if permits(nac_t, {"posture": "healthy"}) is not False:
         fails.append("tamper: a tampered mesh must fail CLOSED (got permit)")
 
-    # ── unsigned approved rule (pre-P4 bootstrap) loads + decides via its profile ──
-    nac_u = NACController(verify_pubkey=_PUB)
-    nac_u._ingest(_PROFILES, [{"id": 30, "name": "inv-unsigned", "priority": 5,
-                               "match": {}, "profile_id": 1,
-                               "signed_terms": None, "signature": None}])
-    if nac_u._tamper:
-        fails.append("unsigned: an approved-but-unsigned rule wrongly flagged tamper")
-    if permits(nac_u, {"posture": "healthy"}) is not True:
-        fails.append("unsigned: catch-all allow rule should PERMIT (got deny)")
+    # ── unsigned approved rule: approve signs in the same write, so a row with no signature
+    #    is one whose signature was stripped. It fails its check; it is never read from its
+    #    editable columns. ──
+    for nac_u in (NACController(verify_pubkey=_PUB), NACController(verify_pubkey=None)):
+        nac_u._ingest(_PROFILES, [{"id": 30, "name": "inv-unsigned", "priority": 5,
+                                   "match": {}, "profile_id": 1,
+                                   "signed_terms": None, "signature": None}])
+        armed = "armed" if nac_u._verify_pubkey else "unarmed"
+        if nac_u._tamper is not True:
+            fails.append(f"unsigned ({armed}): an approved rule with no signature must trip tamper")
+        if nac_u._verdicts.get(30) != {"integrity": "failed", "reason": "unsigned"}:
+            fails.append(f"unsigned ({armed}): verdict should be failed/unsigned, got "
+                         f"{nac_u._verdicts.get(30)!r}")
+        if permits(nac_u, {"posture": "healthy"}) is not False:
+            fails.append(f"unsigned ({armed}): a catch-all allow with no signature must not PERMIT")
 
-    # ── unarmed bootstrap: no pinned key -> snapshots still load + enforce ──
+    # ── column priority swapped: enforcement follows the SIGNED priority ──
+    # Signed: quarantine-all at 10 ahead of allow-all at 20. Then the editable columns are
+    # swapped so the allow claims 1 and the quarantine 99. First match must still be the
+    # quarantine, and nothing is flagged: the signed terms are intact.
+    quar = _signed_row(40, "inv-shut", 10, {}, "quarantine", [])
+    allow = _signed_row(41, "inv-open", 20, {}, "allow", [{"direction": "inbound", "lane": "mcp"}])
+    quar["priority"], allow["priority"] = 99, 1
+    nac_p = NACController(verify_pubkey=_PUB)
+    nac_p._ingest(_PROFILES, [allow, quar])   # handed over in the swapped column order
+    if nac_p._tamper:
+        fails.append("priority: a column-only swap must not flag tamper (signed terms intact)")
+    if [r["id"] for r in nac_p._rules] != [40, 41]:
+        fails.append(f"priority: rules must be ordered by SIGNED priority, got "
+                     f"{[r['id'] for r in nac_p._rules]}")
+    if permits(nac_p, {"posture": "healthy"}) is not False:
+        fails.append("priority: swapping the priority COLUMNS reordered enforcement (allow won)")
+
+    # ── unarmed by design (genesis / no entity id): signed snapshots load + enforce ──
     nac_b = NACController(verify_pubkey=None)
     nac_b._ingest(_PROFILES, armed_policy)
     if nac_b._tamper:
@@ -121,6 +149,146 @@ def pure_tests() -> list[str]:
     if permits(nac_b, {"posture": "degraded"}) is not False:
         fails.append("unarmed: degraded posture should still QUARANTINE")
 
+    return fails
+
+
+# ── the async half: the key retry and the lock notice, against a stand-in pool ──
+
+class _Pool:
+    """The two reads NACController._load makes. Rows are handed back as they are set."""
+    def __init__(self, policy):
+        self.policy = policy
+
+    async def fetch(self, query, *args):
+        if "FROM nac_profiles" in query:
+            return list(_PROFILES)
+        if "FROM nac_policy" in query:
+            return list(self.policy)
+        raise AssertionError(f"unexpected query: {query}")
+
+
+def _engine(pool, eid, notify):
+    """An engine as server.main builds one, with its notices sent to `notify`."""
+    nac = NACController(pool=pool, entity_id=eid)
+    nac._notify = notify
+    return nac
+
+
+def lock_tests() -> list[str]:
+    from server.network import nac_stepup
+    fails: list[str] = []
+    key = {"readable": False}
+
+    async def _key(pool, eid):
+        if not key["readable"]:
+            raise RuntimeError("signing key unavailable")
+        return _PUB
+
+    notices: list[dict] = []
+
+    async def _notify(n):
+        notices.append(n)
+        return {"ok": True}
+
+    def permits(nac, ep):
+        prof, _why = nac.decide(ep)
+        return nac.permits_inbound(prof, lane="mcp")
+
+    healthy_allow = _signed_row(20, "inv-healthy", 20, {"posture": ["healthy"]}, "allow",
+                                [{"direction": "inbound", "lane": "mcp"}])
+    real_key = nac_stepup.entity_verify_pubkey
+    nac_stepup.entity_verify_pubkey = _key
+    try:
+        async def run():
+            # ── key unreadable at boot: no signed rule is enforced unchecked ──
+            pool = _Pool([healthy_allow])
+            nac = _engine(pool, 7, _notify)
+            await nac.attach_pool(pool)
+            if nac._verify_pubkey is not None:
+                fails.append("key: an unreadable key must leave the engine unarmed")
+            if nac._tamper is not True:
+                fails.append("key: a signed rule the Host cannot check must trip the lock")
+            if nac._verdicts.get(20) != {"integrity": "failed", "reason": "key_unreadable"}:
+                fails.append(f"key: verdict should be failed/key_unreadable, got "
+                             f"{nac._verdicts.get(20)!r}")
+            if permits(nac, {"posture": "healthy"}) is not False:
+                fails.append("key: a signed allow was enforced UNCHECKED while the key was unreadable")
+            if len(notices) != 1 or "signing key" not in notices[0]["body"]:
+                fails.append(f"key: one notice saying the signing key could not be read, got "
+                             f"{[n['body'][:60] for n in notices]}")
+            # ── the next reload re-arms once the key reads, and the lock lifts ──
+            key["readable"] = True
+            await nac._load(force=True)
+            if nac._verify_pubkey != _PUB:
+                fails.append("key: the reload did not re-arm once the key became readable")
+            if nac._tamper or nac._verdicts.get(20) != {"integrity": "ok"}:
+                fails.append(f"key: after re-arm the rule should verify ok, got tamper="
+                             f"{nac._tamper} {nac._verdicts.get(20)!r}")
+            if permits(nac, {"posture": "healthy"}) is not True:
+                fails.append("key: after re-arm the healthy machine should be admitted again")
+
+            # ── tamper: exactly one notice per lock, however many reloads ──
+            notices.clear()
+            bad = dict(healthy_allow)
+            bad["signed_terms"] = dict(bad["signed_terms"], permits=[{"direction": "inbound",
+                                                                      "lane": "any"}])
+            pool.policy = [bad]
+            for _ in range(4):
+                await nac._load(force=True)
+            if nac._tamper is not True:
+                fails.append("notice: the tampered rule did not lock the gate")
+            if len(notices) != 1:
+                fails.append(f"notice: one lock must be told once, got {len(notices)} notices")
+            elif not (notices[0]["message_kind"] == "system_notification"
+                      and "refusing every machine you paired" in notices[0]["body"]
+                      and "Network app" in notices[0]["body"]
+                      and "no longer matches what you approved" in notices[0]["body"]):
+                fails.append(f"notice: wrong wording or kind: {notices[0]!r}")
+            first_id = notices[0]["message_id"] if notices else None
+            # A restart in the same state names the same notice, so the inbox keeps one.
+            again = _engine(pool, 7, _notify)
+            await again.attach_pool(pool)
+            if len(notices) != 2 or notices[-1]["message_id"] != first_id:
+                fails.append("notice: a restart in the same lock must reuse the notice id "
+                             "(the inbox drops the copy)")
+            # A different breakage is a new lock and is told.
+            unsigned = dict(healthy_allow, signed_terms=None, signature=None)
+            pool.policy = [unsigned]
+            await nac._load(force=True)
+            await nac._load(force=True)
+            if len(notices) != 3 or notices[-1]["message_id"] == first_id:
+                fails.append(f"notice: a new breakage must be told once with a new id, got "
+                             f"{len(notices)} notices")
+            # Fixed, then broken again: told again.
+            pool.policy = [healthy_allow]
+            await nac._load(force=True)
+            if nac._tamper:
+                fails.append("notice: the restored rule should lift the lock")
+            pool.policy = [bad]
+            await nac._load(force=True)
+            if len(notices) != 4:
+                fails.append(f"notice: a lock after the gate recovered must be told again, got "
+                             f"{len(notices)} notices")
+            # A notice the inbox refuses is retried on the next reload, not marked told.
+            refused: list[dict] = []
+
+            async def _refuse(n):
+                refused.append(n)
+                return {"ok": False, "error": "pool not ready", "retryable": True}
+            nac3 = _engine(pool, 7, _refuse)
+            await nac3.attach_pool(pool)
+            await nac3._load(force=True)
+            if len(refused) != 2:
+                fails.append(f"notice: a refused notice must be retried, got {len(refused)} tries")
+            # Genesis stays unarmed by design: no key read, signed rows enforced.
+            key["readable"] = False
+            g = _engine(_Pool([healthy_allow]), 0, _notify)
+            await g.attach_pool(g.pool)
+            if g._tamper or permits(g, {"posture": "healthy"}) is not True:
+                fails.append("genesis: entity 0 must stay unarmed and enforce its signed rows")
+        asyncio.run(run())
+    finally:
+        nac_stepup.entity_verify_pubkey = real_key
     return fails
 
 
@@ -156,6 +324,7 @@ async def db_tests() -> list[str]:
 
 def main() -> int:
     fails = pure_tests()
+    fails += lock_tests()
     fails += asyncio.run(db_tests())
     if fails:
         print("NAC-ENGINE CHECK FAILED:")

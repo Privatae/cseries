@@ -20,7 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from server import brain_service
-from server.applications.middleware import requires_permission
+from server.applications.middleware import requires_any_permission, requires_permission
 from server.network import nac_stepup
 from server.operator_identity import request_email
 from server.vault import api as vault
@@ -640,7 +640,7 @@ async def store_secret(req: StoreReq, request: Request) -> dict:
             409, f"a key named {req.name!r} already exists — replace it in the "
                  "Keys app if you mean to, or ask your Host for a different name")
     except vault.SignInName as e:
-        raise HTTPException(409, f"{e}: sign in or out on the server's card in the Network app") from None
+        raise HTTPException(409, f"{e}: {vault.held_name_words(req.name)['where']}") from None
     out: dict = {"ok": True, "id": vid, "name": req.name}
     _bust_provider_caches(req.name)
     # Storing a credential for a harness is the RECONNECT: it clears the
@@ -832,25 +832,84 @@ async def set_secret_deactivated(name: str, req: DeactivateReq, request: Request
     if not ok:
         raise HTTPException(404, f"no active secret named {name!r}")
     _bust_provider_caches(name)
+    await _git_server_keys_changed(name)
     return {"ok": True, "name": name, "deactivated": req.deactivated}
 
 
-@router.delete("/secrets/{name}", dependencies=[Depends(requires_permission("write:vault"))])
+async def _git_server_keys_changed(name: str) -> None:
+    """The connected git server's token, revoked or switched off or on here:
+    the Host stops using it now, or takes it up again, rather than at its next
+    start (server/git_server.keys_changed)."""
+    if vault.is_git_server_token(name):
+        from server import git_server
+        await git_server.keys_changed(_pool(), _entity_id())
+
+
+_OWN_HARNESS_SCOPE = "disconnect:own_harness"
+
+
+def _disconnect_only(request: Request) -> bool:
+    """True when the caller reached the delete through disconnect:own_harness alone."""
+    tok = getattr(request.state, "app_token", None)
+    return tok is not None and "write:vault" not in tok.permissions
+
+
+def _own_harness_only(request: Request, name: str) -> None:
+    """A caller holding only disconnect:own_harness may remove only the sign-in of the
+    engine it is. The app id is the engine's app id; only claude's differs from the id
+    harness_state files its sign-in under (review._HARNESS_PROVIDER)."""
+    if not _disconnect_only(request):
+        return
+    tok = request.state.app_token
+    from server.network import harness_state
+    from server.routes.review import _HARNESS_PROVIDER
+    app_id = getattr(tok, "app_id", None) or ""
+    own = _HARNESS_PROVIDER.get(app_id, app_id)
+    if not own or harness_state.harness_for_keys_name(name) != own:
+        raise HTTPException(
+            403, f"app {app_id!r} may disconnect only its own sign-in, not {name!r}")
+
+
+@router.delete("/secrets/{name}",
+               dependencies=[Depends(requires_any_permission("write:vault", _OWN_HARNESS_SCOPE))])
 async def revoke_secret(name: str, request: Request) -> dict:
     """Revoke a credential. When the name belongs to a coding harness, this also
     DISCONNECTS that harness — superseding the envelope alone left the runtime
     file on disk and the reconcilers rebuilt it within one interval, so the
     harness kept working and the revoke was cosmetic.
 
+    write:vault revokes any credential. disconnect:own_harness revokes only the
+    calling engine app's own sign-in (_own_harness_only): it is how the Claude Code
+    app's Disconnect reaches this full disconnect without holding every key.
+
     `disconnected` in the response says whether the harness half ran, so the UI
-    can tell the user what actually happened rather than assuming."""
-    ok = await vault.revoke_secret(_pool(), entity_id=_entity_id(), name=name, actor=_actor(request, "revoke"))
-    if not ok:
-        raise HTTPException(404, f"no active secret named {name!r}")
-    _bust_provider_caches(name)
-    out: dict = {"ok": True, "revoked": name}
+    can tell the user what actually happened rather than assuming.
+
+    An engine app's Disconnect runs the harness half even when there is no Vault
+    copy to revoke (`revoked` is then None). The reconcile seals a copy only
+    within 300 s of a sign-in, so a Disconnect inside that window finds none, and
+    without the marker a run that finishes afterwards writes the credential back.
+
+    For a harness credential the marker is written FIRST, before the Vault copy is
+    revoked. If it cannot be written the answer is 503 and nothing is removed: the
+    sign-in keeps working and the app says the disconnect failed, instead of the
+    Vault copy and file going while the harness signs back in."""
+    _own_harness_only(request, name)
+    from server.network import harness_state
     try:
-        from server.network import harness_state
+        marked, newly = await harness_state.record_disconnect(name)
+    except harness_state.DisconnectNotRecorded as e:
+        logger.warning("vault: disconnect marker for %r not written; nothing revoked", name)
+        raise HTTPException(503, f"could not disconnect {name!r}: {e}")
+    ok = await vault.revoke_secret(_pool(), entity_id=_entity_id(), name=name, actor=_actor(request, "revoke"))
+    if not ok and not _disconnect_only(request):
+        await harness_state.lift_unused_disconnect(marked, newly)
+        raise HTTPException(404, f"no active secret named {name!r}")
+    if ok:
+        _bust_provider_caches(name)
+        await _git_server_keys_changed(name)
+    out: dict = {"ok": True, "revoked": name if ok else None}
+    try:
         harness = await harness_state.disconnect_for_credential(
             name, actor=_actor(request, "revoke"))
         if harness:
@@ -860,6 +919,11 @@ async def revoke_secret(name: str, request: Request) -> dict:
         # rather than reporting a clean disconnect we did not achieve.
         logger.warning("vault: harness disconnect for %r failed: %r", name, e)
         out["disconnect_error"] = str(e)[:160]
+    if not ok and not out.get("disconnected"):
+        # Nothing was revoked and the disconnect did not run: the app must not read
+        # this as done.
+        raise HTTPException(503, f"could not disconnect {name!r}: "
+                                 f"{out.get('disconnect_error') or 'no harness'}")
     return out
 
 

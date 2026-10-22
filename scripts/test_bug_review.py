@@ -17,6 +17,7 @@ import asyncio
 import importlib.util
 import os
 import sys
+from turn_source import turn_source  # session.py and the modules split out of it
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # bug_review imports tool_call_ledger (stdlib-only) for its refusals.
@@ -263,7 +264,7 @@ try:
 except Exception as _e:  # noqa: BLE001
     check(f"agent_dispatch record builders importable ({type(_e).__name__}: {_e})", False)
 
-_sess_src = open(os.path.join(_ROOT, "brain", "mastercode", "runtime", "session.py")).read()
+_sess_src = turn_source(_ROOT)
 check("a validator's delivery is a fixed sentence, never its own words",
       "elif _bug_verdict_number(record) is not None:" in _sess_src and "Verdict recorded for bug report #" in _sess_src
       and "_bug_validator_number(record) is not None" in _sess_src

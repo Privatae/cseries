@@ -726,9 +726,13 @@ export interface CodeApprovalDetail extends CodeApproval {
   additions?: number | null;
   deletions?: number | null;
   on_machine: boolean;
-  /** The platform's approve window; null where the platform cannot reach. */
+  /** Where Approve opens: the platform's approve window, or the pull
+   * request's own page on a git server connected in Settings; null where
+   * neither can be reached. */
   approve_url: string | null;
   approve_where: string | null;
+  /** The connected git server's address when Approve opens there, else null. */
+  approve_on?: string | null;
   repo_url?: string;
 }
 

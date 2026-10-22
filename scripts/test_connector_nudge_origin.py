@@ -28,6 +28,7 @@ import asyncio
 import logging
 import os
 import sys
+from turn_source import turn_source  # session.py and the modules split out of it
 
 APP_ROOT = os.environ.get("APP_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, APP_ROOT)
@@ -194,7 +195,7 @@ async def main():
           [t for t, _ts in got][:1] == ["plain words"], repr(got))
     check("and the tags go with the queue",
           (S.nudge_row_tags(sid) if hasattr(S, "nudge_row_tags") else None) == {})
-    src = open(os.path.join(APP_ROOT, "brain", "mastercode", "runtime", "session.py")).read()
+    src = turn_source(APP_ROOT)
     drain = src.split("_nudge_row_tags = nudge_row_tags(sess.session_id)")
     check("the drain reads the tags right before consume_nudges_timed",
           len(drain) == 2 and drain[1].lstrip().startswith(

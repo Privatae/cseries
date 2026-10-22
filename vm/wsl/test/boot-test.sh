@@ -286,6 +286,15 @@ done
 [ -n "$ok" ] || { echo "FAIL: the Host did not come back after a restart"; G cseries-guest logs host --lines 40; exit 1; }
 G cseries-guest status
 G curl -s -o /dev/null -w 'GET /setup -> %{http_code}\n' http://127.0.0.1:8800/setup
+# A program on the machine reaching the Host through WSL's localhost forward, with no
+# owner session: the Host must see a peer that is not its own loopback and
+# send it to sign in (server/middleware/localhost_only.py). Were WSL's localhost forward
+# to arrive as 127.0.0.1, every program on the machine would have the owner's API.
+status=$(G curl -s -w ' %{http_code}' http://127.0.0.1:8800/api/system/status)
+case "$status" in
+    *'sign in first'*' 403') echo "an API call from the machine with no session is sent to sign in" ;;
+    *) echo "FAIL: an API call from the machine with no session got: $status"; exit 1 ;;
+esac
 if [ -n "$rt_py" ] && [ -n "$rt_browser" ]; then
     back=""
     for _ in $(seq 1 60); do

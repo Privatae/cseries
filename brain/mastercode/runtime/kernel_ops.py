@@ -320,6 +320,12 @@ _WALLED_PATHS: frozenset[str] = frozenset({
     "/api/mcp/oauth/{name}/start",
     "/api/mcp/oauth/{name}/sign-out",
     "/api/mcp/oauth/callback",
+    # Naming the Host (server/routes/host_name.py): the name the Host is called
+    # by is the owner's choice, made in Settings, About. Only /api/system/crash
+    # and /api/system/processes are exposed; walled anyway, like the MCP
+    # sign-in routes, so the classification survives any later exposure of
+    # /api/system.
+    "/api/system/name",
 })
 
 _CONNECTOR_WALL = (
@@ -389,6 +395,10 @@ _WALL_REASONS: dict[str, str] = {
     "/api/mcp/oauth/{name}/start": _MCP_SIGNIN_WALL,
     "/api/mcp/oauth/{name}/sign-out": _MCP_SIGNIN_WALL,
     "/api/mcp/oauth/callback": _MCP_SIGNIN_WALL,
+    "/api/system/name": (
+        "The name you are called by is the owner's to choose: they set it in Settings, "
+        "About. If they ask you to change it, tell them where, and suggest a name if "
+        "they want one."),
 }
 
 # Method-aware carve-out. _WALLED_PATHS is keyed by PATH, so it can only say

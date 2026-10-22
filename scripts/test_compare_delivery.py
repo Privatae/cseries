@@ -11,6 +11,7 @@ import json
 import os
 import re
 import sys
+from turn_source import turn_source  # session.py and the modules split out of it
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 failures = []
@@ -22,7 +23,7 @@ def check(name, ok, detail=""):
         failures.append(name)
 
 
-src = open(os.path.join(ROOT, "brain/mastercode/runtime/session.py")).read()
+src = turn_source(ROOT)
 tree = ast.parse(src)
 fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_compare_delivery")
 ns: dict = {"json": json}

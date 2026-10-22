@@ -155,8 +155,8 @@ def main() -> int:
     # direct_provider). AST check: every kwarg the session turn passes must
     # be a parameter the wrapper accepts — catches the NEXT field too.
     import ast
-    with open(os.path.join(app_root, "brain/mastercode/runtime/session.py")) as f:
-        sess_tree = ast.parse(f.read())
+    from turn_source import turn_source  # session.py and the modules split out of it
+    sess_tree = ast.parse(turn_source(app_root))
     with open(os.path.join(app_root, "brain/mastercode/runtime/tools.py")) as f:
         tools_tree = ast.parse(f.read())
     wrapper_params: set = set()

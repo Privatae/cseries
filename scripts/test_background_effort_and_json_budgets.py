@@ -37,6 +37,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 _root = os.environ.get("APP_ROOT") or str(Path(__file__).resolve().parents[1])
 sys.path.insert(0, _root)
@@ -85,8 +86,7 @@ check("an empty-string effort is a fallback, not an effort",
       ic.route_effort({"effort": "   "}) == "low")
 check("a None effort falls back", ic.route_effort({"effort": None}) == "low")
 check("no route at all still yields low, never None", ic.route_effort(None) == "low")
-_sess = open(os.path.join(_root, "brain/mastercode/runtime/session.py"),
-             encoding="utf-8").read()
+_sess = turn_source(_root)
 check("the chat turn's literal rule is the one being mirrored",
       '_reasoning_effort = (_chat_route.get("effort") or "").strip() or "low"'
       in _sess)

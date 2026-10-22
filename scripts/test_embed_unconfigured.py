@@ -38,6 +38,7 @@ Container-free. Run: APP_ROOT=<repo> python3 scripts/test_embed_unconfigured.py
 import asyncio
 import os
 import sys
+from turn_source import turn_source  # session.py and the modules split out of it
 
 FAILED = 0
 
@@ -206,7 +207,7 @@ def main() -> int:
           "_emb_configured is False" in src_brain)
 
     # The two host-prompt lines that still said "embedding lane is down".
-    src_sess = _read(repo, "brain/mastercode/runtime/session.py")
+    src_sess = turn_source(repo)
     check("session.py host prompt no longer says 'embedding lane is down'",
           "embedding lane is" not in src_sess and "lane is down" not in src_sess)
 

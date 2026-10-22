@@ -202,6 +202,21 @@ def main() -> int:
         check("unlink: an id it does not own is refused, deleting nothing",
               run(hv.revoke_harness_cred("not-a-harness")) is False
               and {p.name for p in tmp2.iterdir()} == before)
+
+        # A tombstone that cannot be written stops the revoke: removing the file
+        # without it is undone by the next reconcile.
+        run(hs.clear_disconnected("opencode"))
+        real_mark = hs.mark_disconnected
+
+        async def unwritable(_provider):
+            return False
+        hs.mark_disconnected = unwritable
+        try:
+            refused = run(hv.revoke_harness_cred("opencode"))
+        finally:
+            hs.mark_disconnected = real_mark
+        check("unlink: with no tombstone written, nothing is removed and the revoke says so",
+              refused is False and theirs.exists())
     finally:
         hv._FILES = orig_files
         for f in (mine, theirs, bystander):

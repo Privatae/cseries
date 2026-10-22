@@ -9,12 +9,12 @@
    "status": "changed"
   },
   "app-store-app": {
-   "checked": "2026-10-21",
+   "checked": "2026-10-22",
    "status": "current"
   },
   "approvals": {
-   "checked": "2026-10-20",
-   "status": "changed"
+   "checked": "2026-10-22",
+   "status": "current"
   },
   "apps-overview": {
    "checked": "2026-10-20",
@@ -45,12 +45,12 @@
    "status": "changed"
   },
   "claude-code-app": {
-   "checked": "2026-10-20",
-   "status": "changed"
+   "checked": "2026-10-22",
+   "status": "current"
   },
   "code-repositories": {
-   "checked": "2026-10-20",
-   "status": "changed"
+   "checked": "2026-10-22",
+   "status": "current"
   },
   "coding-agents": {
    "checked": "2026-10-20",
@@ -85,8 +85,8 @@
    "status": "current"
   },
   "gitea-app": {
-   "checked": "2026-10-20",
-   "status": "changed"
+   "checked": "2026-10-22",
+   "status": "current"
   },
   "glossary": {
    "checked": "2026-10-20",
@@ -113,8 +113,8 @@
    "status": "changed"
   },
   "memory-app": {
-   "checked": "2026-10-20",
-   "status": "changed"
+   "checked": "2026-10-22",
+   "status": "current"
   },
   "models-and-keys": {
    "checked": "2026-10-20",
@@ -141,7 +141,7 @@
    "status": "changed"
   },
   "settings-app": {
-   "checked": "2026-10-21",
+   "checked": "2026-10-22",
    "status": "current"
   },
   "sites-app": {
@@ -157,15 +157,15 @@
    "status": "changed"
   },
   "the-privatae-network": {
-   "checked": "2026-10-21",
+   "checked": "2026-10-22",
    "status": "current"
   },
   "updates-and-versions": {
-   "checked": "2026-10-21",
+   "checked": "2026-10-22",
    "status": "current"
   },
   "what-a-host-cannot-do": {
-   "checked": "2026-10-20",
+   "checked": "2026-10-22",
    "status": "changed"
   },
   "what-a-host-is": {
@@ -181,20 +181,20 @@
    "status": "changed"
   },
   "workbench": {
-   "checked": "2026-10-20",
-   "status": "changed"
+   "checked": "2026-10-22",
+   "status": "current"
   },
   "workbench-app": {
-   "checked": "2026-10-20",
-   "status": "changed"
+   "checked": "2026-10-22",
+   "status": "current"
   },
   "your-machines": {
    "checked": "2026-10-20",
    "status": "current"
   },
   "your-private-network": {
-   "checked": "2026-10-20",
-   "status": "changed"
+   "checked": "2026-10-22",
+   "status": "current"
   }
  },
  "schema": 1

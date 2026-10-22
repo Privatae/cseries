@@ -67,6 +67,7 @@ import json
 import logging
 import os
 import sys
+from turn_source import sync_turn_attr, turn_source  # session.py and the modules split out of it
 
 APP_ROOT = os.environ.get("APP_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, APP_ROOT)
@@ -199,6 +200,7 @@ class Harness:
         (S._call_entity_model, PG.call_model, IC.resolve_role_route,
          S._AVAILABLE["ceigas_domain_controller"], S._run_close_turn,
          S._execute_meta_tool, S._build_tool_schemas, S.release_holds) = self._saved
+        sync_turn_attr(S, "release_holds")
         TA.TurnSpend.check = self._check
 
     async def turn(self, message):
@@ -578,6 +580,7 @@ async def _scenario(when, typed, cid=None, origin="page", marker=None, merge=Fal
                 if sid == "late-sess-1" and not took:
                     took.append(words_in())
             S.release_holds = release_then_words
+            sync_turn_attr(S, "release_holds")
         if when != "no-session":
             await h.turn(first)
         stranded = list(S._pending_nudges.get("late-sess-1") or [])
@@ -586,6 +589,7 @@ async def _scenario(when, typed, cid=None, origin="page", marker=None, merge=Fal
         accepted = bool(took and took[0])
         turn1_calls = len(h.calls)
         S.release_holds = h._saved[-1]
+        sync_turn_attr(S, "release_holds")
         h.spend_check = None
         h.on_event = None
         SC.detect_crisis = _detect
@@ -751,7 +755,7 @@ check("6: the registry's nudge frame and the turn's receipt carry the page's id"
 # The saved row: this harness's turn runs on a lane that writes no user rows
 # (no app), so the row's metadata is read in the drain's source; the browser
 # gate (test_workbench_book.py scenario K2) reloads from a saved row with it.
-_drain = open(os.path.join(APP_ROOT, "brain/mastercode/runtime/session.py")).read()
+_drain = turn_source(APP_ROOT)
 _drain = _drain[_drain.index("import write_turn_row as _wtr_n"):][:900]
 check("6: ...and the nudge's saved row carries it in its metadata (the drain's row tags)",
       '"nudge": True,' in _drain and '**({"client_id": _cids[_ni]} if _cids[_ni] else {}),' in _drain

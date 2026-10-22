@@ -29,6 +29,7 @@ import re
 import os
 import sys
 from datetime import datetime, timedelta, timezone
+from turn_source import turn_source  # session.py and the modules split out of it
 
 FAILS = []
 
@@ -413,7 +414,7 @@ def main() -> int:
     check("brain_service turns the event into a data frame of ids only",
           'if kind == "turn_type":' in bsrc and '"type": "turn_type",' in bsrc
           and '"turn_type_id": event.get("turn_type_id"),' in bsrc)
-    ssrc = src("brain", "mastercode", "runtime", "session.py")
+    ssrc = turn_source()
     i_set = ssrc.find("set_current_turn_type(getattr(sess, \"turn_type\", None))")
     i_res = ssrc.find("sess.turn_type = await resolve_session_type(")
     i_prompt = ssrc.find("_pt_block = await build_per_turn_prompt(self, sess, user_message)")

@@ -162,7 +162,8 @@ async def is_disconnected(provider: str) -> bool:
 
 
 async def mark_disconnected(provider: str) -> bool:
-    """Tombstone this harness so no reconciler resurrects it."""
+    """Tombstone this harness so no reconciler resurrects it. False when the
+    marker could not be written."""
     p = (provider or "").strip()
     if not p:
         return False
@@ -170,6 +171,45 @@ async def mark_disconnected(provider: str) -> bool:
     if p in cur:
         return True
     return await _write_key(_DISCONNECTED_KEY, sorted(cur | {p}))
+
+
+class DisconnectNotRecorded(RuntimeError):
+    """The disconnect marker could not be written, so nothing was removed."""
+
+
+def _not_recorded(harness: str) -> str:
+    return (f"your Host could not record that {harness} is disconnected, so it removed "
+            f"nothing and the sign-in still works. Without that record the sign-in would "
+            f"come back on its own after it was removed. Try again.")
+
+
+async def record_disconnect(name: str) -> tuple[Optional[str], bool]:
+    """Write the disconnect marker for the harness credential `name` belongs to, BEFORE
+    anything is removed. Returns (harness id, whether this call set it); (None, False)
+    when the credential is not a harness's.
+
+    Raises DisconnectNotRecorded when the marker could not be written. A revoke must stop
+    there: with no marker, removing the Vault copy and the file is undone by the next
+    reconcile or by a run that finishes afterwards (review._persist_rotated_creds), so the
+    person would be told "disconnected" while the harness signs back in. The second value
+    lets a caller whose revoke then finds nothing to remove lift a marker only it set
+    (lift_unused_disconnect)."""
+    harness = harness_for_keys_name(name)
+    if not harness:
+        return None, False
+    newly = not await is_disconnected(harness)
+    if not await mark_disconnected(harness):
+        raise DisconnectNotRecorded(_not_recorded(harness))
+    return harness, newly
+
+
+async def lift_unused_disconnect(harness: Optional[str], newly: bool) -> None:
+    """Undo record_disconnect when the revoke it guarded found nothing to remove and
+    stops there (a 404), and only when that call set the marker: one set by an earlier
+    disconnect stays."""
+    if harness and newly and not await clear_disconnected(harness):
+        log.warning("harness_state: could not lift the disconnect marker for %s after a "
+                    "revoke that removed nothing", harness)
 
 
 async def clear_disconnected(provider: str) -> bool:
@@ -490,13 +530,19 @@ async def disconnect_for_credential(name: str, *,
     """Called when a credential is REVOKED. When it belongs to a harness: remove
     the harness's runtime file(s), supersede its envelopes, and tombstone it.
     Returns the harness id, or None when the credential is not a harness's.
-    Best-effort; never raises into the caller's revoke."""
+
+    Raises DisconnectNotRecorded, before removing anything, when the tombstone cannot
+    be written: removing the file without it is undone by the next reconcile or a
+    finishing run, so the caller must report a failed disconnect, not a done one.
+    Callers write it first (record_disconnect) so the Vault copy is not revoked
+    either. Past the tombstone the rest is best-effort and does not raise."""
     harness = harness_for_keys_name(name)
     if not harness:
         return None
     # Tombstone FIRST — a pod death between here and the unlink must fail toward
     # "disconnected with a lingering file", never a silent reconnect.
-    await mark_disconnected(harness)
+    if not await mark_disconnected(harness):
+        raise DisconnectNotRecorded(_not_recorded(harness))
     await clear_credential(harness)
     if harness == "claude-sdk":
         # claude is deliberately absent from harness_vault._FILES (it has its

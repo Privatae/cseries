@@ -1,10 +1,11 @@
 """
 Shared gitea API client.
 
-Calls the entity's OWN gitea (GITEA_URL) — the per-entity token provisioned
-at boot into ~/.git-credentials (entrypoint.sh) — through the pod's egress proxy,
-reusing the credential + proxy helpers the harness lane already uses
-(server/network/nac_harness._read_git_credential / _egress_proxy).
+Calls the Host's OWN coding forge through the pod's egress proxy: the git
+server connected in Settings, else the forge the install set (the token
+entrypoint.sh writes into ~/.git-credentials from GITEA_*). Which one is
+server/git_server.forge_identity, the one resolver every coding-forge reader
+goes through.
 
 Extracted from routes/workbench.py so BOTH the Workbench PR surface and the Gitea
 app's /api/gitea/* surface call one client — no parallel implementations. The host
@@ -26,10 +27,11 @@ GITEA_TIMEOUT = aiohttp.ClientTimeout(total=20)
 
 
 def gitea_creds():
-    """(user, token, host) from the entity's gitea credential, or None."""
+    """(user, token, host) of the Host's own coding forge, or None
+    (server/git_server.forge_identity)."""
     try:
-        from server.network.nac_harness import _read_git_credential
-        return _read_git_credential()
+        from server.git_server import forge_identity
+        return forge_identity()
     except Exception as e:  # pragma: no cover - defensive
         logger.warning("gitea credential read failed: %s", e)
         return None
@@ -76,6 +78,13 @@ async def gitea_request(method: str, path: str, *, params=None, json=None,
     `bearer` to authenticate as the USER (their OAuth2 access token) instead.
     Returns parsed JSON (or raw text when raw_text). Raises HTTPException on non-2xx."""
     if bearer:
+        # A person's token here is one the platform minted for Privatae's
+        # forge. With a git server connected, the forge below is the person's
+        # own server, which must never be handed that token.
+        from server.git_server import connected
+        if connected() is not None:
+            raise HTTPException(409, "signing in as you is not available on a connected git "
+                                     "server: open the server's own page")
         host = gitea_netloc()
         req_auth = None
         headers = {"Authorization": f"Bearer {bearer}"}

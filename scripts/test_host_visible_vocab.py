@@ -17,6 +17,8 @@ import re
 import sys
 from pathlib import Path
 
+from turn_source import turn_paths  # session.py and the modules split out of it
+
 ROOT = Path(__file__).resolve().parents[1]
 
 # Files whose text can reach a host's context (registry + caps + triage tool
@@ -35,8 +37,9 @@ HOST_VISIBLE = [
     # modules, the harness pool's build path (its activity strings feed the
     # bench), and the harness-auth catalog (display names reach the Keys /
     # Orchestrator UI). Comments included — a comment today is a copy-paste
-    # into a prompt tomorrow.
-    ROOT / "brain/mastercode/runtime/session.py",
+    # into a prompt tomorrow. The turn is session.py and every module split
+    # out of it (orchestration_tools.py builds the orchestrator prompt).
+    *(Path(p) for p in turn_paths(ROOT)),
     ROOT / "brain/mastercode/runtime/prompt_builder.py",
     ROOT / "brain/mastercode/runtime/prompt_schema.py",
     ROOT / "brain/mastercode/runtime/agent_rules.py",

@@ -20,6 +20,7 @@ import re
 import sys
 import tempfile
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 sys.path.insert(0, str(ROOT))
@@ -343,7 +344,7 @@ check("a split conflict puts the phase back to ready, marks it, and is never ret
       and "(result ? 'integration_conflict')" in seg("_phase_failed_builds")
       and "integration_conflict" in seg("_failed_build_kind"))
 check("the delivery says what a split conflict means",
-      "split_conflict" in (ROOT / "brain/mastercode/runtime/session.py").read_text())
+      "split_conflict" in turn_source(ROOT))
 check("the door composes the brief BEFORE it claims (a failed read strands nothing)",
       door.index("scoped_intent = await _compose_phase_intent(pool, prow)")
       < door.index("if not await _claim_phase(pool, prow):"))

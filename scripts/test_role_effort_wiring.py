@@ -36,6 +36,7 @@ import ast
 import os
 import sys
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 _ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 sys.path.insert(0, str(_ROOT))
@@ -51,7 +52,7 @@ def check(label: str, cond: bool, extra: str = "") -> None:
 
 
 GATEWAY = (_ROOT / "brain" / "mastercode" / "provider_gateway.py").read_text()
-SESSION = (_ROOT / "brain" / "mastercode" / "runtime" / "session.py").read_text()
+SESSION = turn_source(_ROOT)
 CONFIG = (_ROOT / "brain" / "mastercode" / "inference_config.py").read_text()
 gw_tree = ast.parse(GATEWAY)
 GW_FUNCS = {n.name: n for n in ast.walk(gw_tree)

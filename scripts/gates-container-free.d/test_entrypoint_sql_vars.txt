@@ -1,0 +1,2 @@
+# Every psql statement in entrypoint.sh and entrypoint-postgres.sh takes its values as psql variables (-v, read as :'name' or :"name"); no shell variable is spliced into SQL text. Reads the two scripts; no database.
+test_entrypoint_sql_vars.py

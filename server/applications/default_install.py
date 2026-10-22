@@ -122,7 +122,10 @@ async def _install_default_set(bc: "BridgeClient", pool) -> dict:
         _save_offered(offered | default_ids)
         return {"status": "ok", "installed": [], "note": "nothing to install"}
 
-    results = {"installed": [], "failed": []}
+    # `unreached`: defaults whose bundle could not be fetched because the store
+    # was not reached (a transport failure, error_kind infra), as opposed to a
+    # store or installer that answered no. run_loop tries those again.
+    results = {"installed": [], "failed": [], "unreached": []}
     for app in candidates:
         app_id = app["app_id"]
         version = app.get("latest_version")
@@ -136,9 +139,12 @@ async def _install_default_set(bc: "BridgeClient", pool) -> dict:
             )
         except Exception as exc:
             results["failed"].append((app_id, f"fetch raised: {exc}"))
+            results["unreached"].append(app_id)
             continue
         if not envelope.get("ok"):
             results["failed"].append((app_id, envelope.get("error") or "fetch failed"))
+            if envelope.get("error_kind") == "infra":
+                results["unreached"].append(app_id)
             continue
         data = envelope.get("data") or {}
         b64 = data.get("bundle_b64")
@@ -169,10 +175,49 @@ async def _install_default_set(bc: "BridgeClient", pool) -> dict:
         log.info("default-installed %s v%s from store", app_id, version)
 
     # Record every current default id as "offered" so an uninstall of any
-    # of them now sticks across future boots.
-    _save_offered(offered | default_ids)
+    # of them now sticks across future boots, except one that failed to
+    # install. It was never on this Host, so there is no uninstall to respect,
+    # and recording it would leave it missing for good after one download that
+    # did not finish. For the App Store that means a Host with no way to add
+    # any other app. It is tried again at the next start, and sooner by
+    # run_loop when the store was not reached.
+    failed_ids = {app_id for app_id, _ in results["failed"]}
+    _save_offered(offered | (default_ids - failed_ids))
     results["status"] = "ok"
     return results
+
+
+def _upgrade_reserves_more(app_id: str, bundle: bytes) -> bool:
+    """Would installing `bundle` over the installed `app_id` reserve more of
+    the machine's memory than the installed version does?
+
+    install_bundle lays the new version down before it hands the runtime the
+    app's descriptor, and when the runtime refuses that descriptor it rolls
+    back by uninstalling the app (installer.install_bundle, AppRuntimeOverPlan).
+    The local runtime refuses only an app that needs more than the machine's
+    whole budget, so a version that reserves no more than the installed one
+    always fits again. The unattended sweep therefore installs only those; a
+    larger one waits for the person, who updates it from the App Store and is
+    there to read a refusal. Anything that cannot be read counts as larger."""
+    import tempfile
+    from server.applications import bundles
+    from server.applications.manifest import load as load_manifest, runs_in_pod
+    try:
+        contents = bundles._read_zip(bundle)
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "app.yaml").write_bytes(contents.manifest_yaml)
+            new = load_manifest(Path(tmp) / "app.yaml")
+    except Exception:  # noqa: BLE001 - unreadable is treated as larger
+        return True
+    if not runs_in_pod(new):
+        return False                # nothing for the runtime to refuse
+    try:
+        old = load_manifest(installer.INSTALL_ROOT / app_id / "app.yaml")
+    except Exception:  # noqa: BLE001 - unreadable is treated as larger
+        return True
+    if not runs_in_pod(old) or new.runtime.kind != old.runtime.kind:
+        return True
+    return (new.resources.baseline_memory_mi or 0) > (old.resources.baseline_memory_mi or 0)
 
 
 def _version_tuple(v) -> tuple:
@@ -228,6 +273,12 @@ async def _sync_store_upgrades(bc: "BridgeClient", pool) -> dict:
             # refresh something about to be removed, and on an entity whose
             # sweep is failing (fail-soft, retries next boot) it would keep
             # the zombie current forever.
+            continue
+        if local_app.authored_here is True:
+            # This Host built the app itself (the Workbench's ship), so its
+            # version is the person's to set. A store app under the same id
+            # would replace what they built: install_bundle clears the install
+            # directory before it extracts the store's bundle.
             continue
         if app_id in image_baked:
             # The IMAGE owns this app's version — install_image_bundles laid it
@@ -362,6 +413,12 @@ async def _sync_store_upgrades(bc: "BridgeClient", pool) -> dict:
         except Exception as exc:
             results["failed"].append((app_id, f"b64 invalid: {exc}"))
             continue
+        if _upgrade_reserves_more(app_id, bundle):
+            results["skipped"].append({
+                "app_id": app_id, "from": from_v, "to": to_v,
+                "reason": "the new version reserves more memory than this one; "
+                          "update it from the App Store"})
+            continue
         try:
             # Re-verify entitlement on UPGRADE, not just first install. This is
             # what makes a subscription model enforceable: a lapsed/cancelled
@@ -486,12 +543,23 @@ def retry_wait(attempts: int) -> float:
     return float(min(RETRY_BASE_S * (2 ** min(max(0, int(attempts) - 1), 32)), RETRY_MAX_S))
 
 
+def _store_not_reached(result: dict) -> bool:
+    """Did the pass fail to reach the App Store for the default set: the
+    catalog could not be read, or a default app's bundle could not be fetched?
+    Both can pass, so run_loop tries again. A refusal (a store or installer
+    that answered no) waits for the next start instead."""
+    d = result.get("default_reconcile")
+    if not isinstance(d, dict):
+        d = result                       # the fresh-Host pass returns it directly
+    return d.get("status") in ("store_unreachable", "store_error") or bool(d.get("unreached"))
+
+
 async def run_loop(bc: "BridgeClient | None") -> None:
     """Background task spawned from lifespan. Waits for the bridge to
-    settle, then runs the bootstrap once. While the bridge is not connected
-    (or a pass crashes) it retries with a doubling wait, never giving up;
-    it ends when the install pass ran or there is no PG (nothing to do),
-    and says which."""
+    settle, then runs the bootstrap once. While the bridge is not connected,
+    a pass crashes, or the App Store was not reached for the default apps, it
+    retries with a doubling wait, never giving up; it ends when the install
+    pass ran or there is no PG (nothing to do), and says which."""
     try:
         await asyncio.sleep(STARTUP_DELAY_SECONDS)
     except asyncio.CancelledError:
@@ -520,6 +588,15 @@ async def run_loop(bc: "BridgeClient | None") -> None:
             log.warning("default-install: no database pool — nothing installed (attempt %d)",
                         attempts)
             return
+        if _store_not_reached(result):
+            # The App Store app is installed by this pass and is the only way
+            # a person adds any other app, so a store that did not answer at
+            # this start is tried again rather than left to the next restart.
+            wait = retry_wait(attempts)
+            log.info("default-install attempt %d: the App Store was not reached for the "
+                     "default apps — retrying in %.0fs", attempts, wait)
+            await asyncio.sleep(wait)
+            continue
         log.info("default-install finished after %d attempt(s): %s", attempts,
                  result.get("status"))
         return

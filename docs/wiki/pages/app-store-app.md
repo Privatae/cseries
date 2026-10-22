@@ -13,7 +13,7 @@ questions:
   - Why can't I find Workbench or Circles in the App Store?
 ---
 
-The App Store is where you find apps for your Host and add them, and see where each one runs and what it takes before you choose it. It is not one of the apps built into the Host. It needs no account and no membership. Each release publishes a signed public catalog of free apps, and any Host reads it: the catalog's signature, each app package's checksum and the package's own signature are all checked on your Host before anything installs. A Host that has joined the [Privatae network](wiki:the-privatae-network) uses the network's store while the network answers, and the public catalog whenever it does not.
+The App Store is where you find apps for your Host and add them, and see where each one runs and what it takes before you choose it. It is not one of the apps built into the Host: your Host installs it from the store the first time it starts, and if you uninstall it, it stays removed. It needs no account and no membership. Each release publishes a signed public catalog of free apps, and any Host reads it: the catalog's signature, each app package's checksum and the package's own signature are all checked on your Host before anything installs. A Host that has joined the [Privatae network](wiki:the-privatae-network) uses the network's store while the network answers, and the public catalog whenever it does not.
 
 ## What is in the App Store?
 
@@ -31,4 +31,4 @@ Before anything installs, the app's details list the outside addresses it may re
 
 ## How do I update or remove an app?
 
-The **Updates** tab shows any newer version waiting; an app moves to it when you choose to update. **Uninstall** on an installed app removes it; it asks you to click a second time first. Uninstalling also takes back what the app was given: its MCP server stops being one of your Host's connections, and an account you paired through a messaging app is cut off. Settings, Memory and Orchestrator are part of the Host itself and cannot be removed. [The apps on a Host](wiki:apps-overview) lists every app and where each one comes from.
+The **Updates** tab shows any newer version waiting; an app moves to it when you choose to update, and your Host also updates the apps it installed from the store each time it starts, except a new version that would reserve more of the machine's memory, which waits for you here. **Uninstall** on an installed app removes it; it asks you to click a second time first. Uninstalling also takes back what the app was given: its MCP server stops being one of your Host's connections, and an account you paired through a messaging app is cut off. Settings, Memory and Orchestrator are part of the Host itself and cannot be removed. [The apps on a Host](wiki:apps-overview) lists every app and where each one comes from.

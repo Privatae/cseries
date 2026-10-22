@@ -27,13 +27,16 @@ import ast
 import sys
 from pathlib import Path
 
+from turn_source import turn_paths  # session.py and the modules split out of it
+
 ROOT = Path(__file__).resolve().parents[1]
 WRAPPER = ROOT / "brain/mastercode/runtime/tools.py"
 # Files whose _call_entity_model call sites resolve to the runtime wrapper
 # (direct or via runtime/__init__ re-export). memory.py / memory_handlers.py
-# forward opaque **kwargs — nothing to check statically there.
+# forward opaque **kwargs — nothing to check statically there. The turn is
+# session.py and every module split out of it.
 CALLERS = [
-    ROOT / "brain/mastercode/runtime/session.py",
+    *(Path(p) for p in turn_paths(ROOT)),
     ROOT / "brain/mastercode/runtime/tools.py",
 ]
 TARGET = "_call_entity_model"

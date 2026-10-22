@@ -359,6 +359,17 @@ async def finish(body: FinishBody):
     except Exception as e:  # pragma: no cover - defensive
         log.warning("seal_agent_creds after finish failed (non-fatal): %s", e)
 
+    # A finished sign-in is the person connecting Claude again, so it lifts the
+    # disconnect marker a Disconnect set, the way storing the key in Keys does.
+    # The seal above goes to the vault directly, not through POST /api/vault/secrets,
+    # so nothing else lifts it, and with it set the reconcilers skip Claude and its
+    # status reads "disconnected" over the credential just written.
+    try:
+        from server.network import harness_state, nac_harness
+        await harness_state.reconnect_for_credential(nac_harness.agent_creds_vault_name())
+    except Exception as e:  # pragma: no cover - defensive
+        log.warning("reconnect after finish failed (non-fatal): %s", e)
+
     # Consume the session ONLY now, on success — a failed exchange above leaves
     # it intact so the user can retry with a fresh code within the TTL.
     async with _SESSIONS_LOCK:

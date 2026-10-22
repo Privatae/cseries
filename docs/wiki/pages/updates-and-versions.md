@@ -42,7 +42,7 @@ The installer's update always moves to the release it publishes. It has no comma
 
 ## Do apps update separately?
 
-The apps built into the Host change only when the Host itself updates. Apps you installed from the [App Store](wiki:app-store-app) update separately, with no membership needed; the App Store shows an Update button when a newer version is waiting.
+The apps built into the Host change only when the Host itself updates. Apps you installed from the [App Store](wiki:app-store-app) update separately, with no membership needed: your Host updates them each time it starts, and the App Store shows an Update button when a newer version is waiting. A new version that would reserve more of the machine's memory than the one you have waits for you to update it there.
 
 ## Does my Host tell me what changed?
 

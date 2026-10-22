@@ -20,6 +20,11 @@
      for) and the answer names the window; without the check, from a private
      address, or when the helper refuses, nothing is minted. A Host with a
      platform answers as before.
+  4. A Host in a VM on the person's machine (no shared socket directory, so
+     the local bastion's sockets are not served) shows the TCP command on
+     127.0.0.1 too, since the socket path names nothing on the machine; a
+     Host whose sockets are served keeps the socket command. The Host's own
+     manage_bastion tool answers the same command as the Network app.
 
 No database; the pairing helper is a stand-in on a unix socket.
 
@@ -207,12 +212,15 @@ async def setup_route(d):
     from fastapi import HTTPException
     from server import brain_service, owner_passkeys
     from server.middleware import owner_session
-    from server.network import host_ca, nac_commit
+    from server.network import bastion_enroll, host_ca, nac_commit
     from server.routes import network as NR
 
     minted = []
 
-    async def fake_setup(pool, eid, name):
+    async def fake_handle(eid):
+        return "home"
+
+    async def fake_mint(pool, *, entity_id, handle, name):
         minted.append(name)
         return {"token": "skb_inventedtoken", "expires_in_s": 900, "name": name or "bastion",
                 "run": {"install": "macOS / Linux:  curl -fsSL https://privatae.ai/bastion/install.sh | sh",
@@ -231,10 +239,11 @@ async def setup_route(d):
     async def fake_live(scope):
         return ("owner@example.com", session["token"]) if session["token"] else (None, None)
 
-    saved = (brain_service.get_pool, nac_commit.setup_bastion, host_ca.ensure, host_ca.ca_cert_pem,
-             LB.standalone, owner_session.live_session)
+    saved = (brain_service.get_pool, bastion_enroll.mint_pairing_token, bastion_enroll.resolve_self_handle,
+             host_ca.ensure, host_ca.ca_cert_pem, LB.standalone, owner_session.live_session, LB.STATE)
     brain_service.get_pool = lambda: object()
-    nac_commit.setup_bastion = fake_setup
+    bastion_enroll.mint_pairing_token = fake_mint
+    bastion_enroll.resolve_self_handle = fake_handle
     host_ca.ensure, host_ca.ca_cert_pem = fake_ensure, fake_ca
     owner_session.live_session = fake_live
     h = Helper(os.path.join(d, "door.sock"))
@@ -311,11 +320,26 @@ async def setup_route(d):
 
         with Env(CSERIES_LANE_HOST=None, CSERIES_DOOR_HELPER=None, CSERIES_ENROLL_PORT=None,
                  CSERIES_LANE_PORT=None):
+            LB.STATE = "listening"
             ans = await NR.setup_bastion(_request("127.0.0.1"))
             check(ans.get("host_ca_pem") == FAKE_CA
                   and ans.get("enroll") == "https://127.0.0.1:8810/v1/local/redeem"
                   and ans["run"]["pair"].startswith("privatae-bastion pair --redeem-url unix://"),
-                  "a Host on this machine: CA and loopback redeem URL, the socket pair command kept", ans["run"])
+                  "a Host serving its sockets on this machine: CA and loopback redeem URL, the socket "
+                  "pair command kept", ans["run"])
+
+            LB.STATE = "no-shared-dir"
+            local = ("privatae-bastion pair --redeem-url https://127.0.0.1:8810/v1/local/redeem "
+                     "--host-ca host-ca.pem skb_inventedtoken")
+            ans = await NR.setup_bastion(_request("127.0.0.1"))
+            check(ans["run"]["pair"] == local and ans.get("pair_command") == local
+                  and "base64 -d > host-ca.pem" in ans["run"]["install"]
+                  and "127.0.0.1" in ans["run"]["note"] and "pairing_window" not in ans,
+                  "a Host in a VM, whose sockets are not served: the TCP command on 127.0.0.1, the CA "
+                  "to save, a note naming this computer", ans["run"])
+            tool = await nac_commit.manage_bastion(object(), 1, "enroll", name="bastion")
+            check(tool["run"]["pair"] == local,
+                  "the Host's manage_bastion tool answers the same command", tool["run"]["pair"])
 
         LB.standalone = lambda: False
         with Env(CSERIES_LANE_HOST="home.box.example", CSERIES_DOOR_HELPER=h.path):
@@ -325,8 +349,8 @@ async def setup_route(d):
                   "a Host with a platform answers as before", ans.keys())
     finally:
         await h.stop()
-        (brain_service.get_pool, nac_commit.setup_bastion, host_ca.ensure, host_ca.ca_cert_pem,
-         LB.standalone, owner_session.live_session) = saved
+        (brain_service.get_pool, bastion_enroll.mint_pairing_token, bastion_enroll.resolve_self_handle,
+         host_ca.ensure, host_ca.ca_cert_pem, LB.standalone, owner_session.live_session, LB.STATE) = saved
 
 
 def via_proxy_again():

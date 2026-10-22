@@ -45,6 +45,12 @@
 
 # ── Fetch and verify the programs (this stage is thrown away) ─────────────
 FROM python:3.14-slim-bookworm@sha256:5127143f679a1bcf59e6b9ea1a95e6cef8b8d0905bf1ca459a7f0141398ddc4f AS programs
+# The base image's pip 26.2.1 vendors certifi 2026.6.17, whose emSign roots
+# have compromised intermediate keys (GHSA-6q48-6c7w-9gw2, CRITICAL). pip
+# 26.2.2 vendors the fixed 2026.10.19.
+RUN printf '%s\n' 'pip==26.2.2 --hash=sha256:fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70' > /tmp/pip.txt \
+ && python -m pip install --no-cache-dir --require-hashes -r /tmp/pip.txt \
+ && rm /tmp/pip.txt
 
 ARG BLENDER_URL=https://download.blender.org/release/Blender5.2/blender-5.2.2-linux-x64.tar.xz
 ARG BLENDER_SHA256=84098912789dc450e95697c4184fb8a90acbe5111c2ba4aede3fecb57806a168
@@ -116,9 +122,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # pip 26.2.1, the one the base image carries, vendors certifi 2026.6.17, whose
 # CA bundle trusts the emSign root behind eight intermediates with compromised
 # keys (GHSA-6q48-6c7w-9gw2, CRITICAL). pip 26.2.2 vendors the fixed 2026.10.19.
-# Pinned by hash; drop this once the base image ships 26.2.2 or later.
+# Pinned by hash. Its wheel stays in /opt/app-runtime/wheels: run.py installs it
+# into every app venv, so `pip` in an app's command is this one.
 RUN printf '%s\n' 'pip==26.2.2 --hash=sha256:fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70' > /tmp/pip.txt \
- && python -m pip install --no-cache-dir --require-hashes -r /tmp/pip.txt \
+ && python -m pip download --no-cache-dir --no-deps --require-hashes -r /tmp/pip.txt -d /opt/app-runtime/wheels \
+ && python -m pip install --no-cache-dir --no-index --no-deps /opt/app-runtime/wheels/pip-26.2.2-py3-none-any.whl \
  && rm /tmp/pip.txt
 
 RUN apt-get update \

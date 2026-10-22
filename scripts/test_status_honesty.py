@@ -24,6 +24,7 @@ import re
 import sys
 import time
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 REPO = Path(__file__).resolve().parent.parent
 failures: list[str] = []
@@ -219,7 +220,7 @@ if 'status="active"' not in tools_src:
 #     doctrine where it now lives, that the briefing does not carry a second
 #     copy, and the behaviour the rule promised: an unavailable store is
 #     named in recall's answer, never rendered as empty.
-session_src = (REPO / "brain/mastercode/runtime/session.py").read_text()
+session_src = turn_source(REPO)
 try:
     from mastercode.runtime.session import _build_orchestrator_prompt, _orchestration_verbs
     _verbs = {(t.get("function") or {}).get("name"): (t.get("function") or {}).get("description") or ""

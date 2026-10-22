@@ -33,6 +33,7 @@ import sys
 import types
 import zipfile
 import zlib
+from turn_source import turn_source  # session.py and the modules split out of it
 
 ROOT = os.environ.get("APP_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -219,7 +220,7 @@ check("openai: a named picture is an image_url part", [p["type"] for p in oai[:2
 noted = asyncio.run(ap.for_wire(named, "anthropic", images_as_notes=True))[0]["content"]
 check("the private name still names the picture in a note", "image.png" in noted[0]["text"]
       and "older.png" in noted[1]["text"], noted[:2])
-src_sess = open(os.path.join(ROOT, "brain/mastercode/runtime/session.py")).read()
+src_sess = turn_source(ROOT)
 check("session.py builds a pasted picture with its name private (_title), never `title`",
       '_img["_title"] = _iname' in src_sess and '_img["title"]' not in src_sess)
 real = {"error": ('anthropic 400: {"type":"error","error":{"type":"invalid_request_error",'

@@ -34,6 +34,7 @@
                 <button class="cseries-nav-btn" data-view="desktop" role="tab" aria-selected="false">Desktop</button>
                 <button class="cseries-nav-btn" data-view="backup" role="tab" aria-selected="false">Backup</button>
                 <button class="cseries-nav-btn" data-view="network" role="tab" aria-selected="false">Network</button>
+                <button class="cseries-nav-btn" data-view="git-server" role="tab" aria-selected="false">Git server</button>
             </nav>
         </header>
 
@@ -520,6 +521,46 @@
                 </div>
 
                 <p class="view-sub net-message" id="net-message" role="alert" hidden></p>
+            </section>
+
+            <!-- Git server: connect a Gitea or Forgejo server the owner runs.
+                 GET /api/git-server, POST to connect, DELETE to disconnect. -->
+            <section id="view-git-server" class="app-view" hidden>
+                <div class="view-heading">
+                    <h2>Git server</h2>
+                    <p class="view-sub">Connect a Gitea or Forgejo server you already run. The Host keeps each project's code there, opens its Code Approvals there, and merges there under Auto-Approve. Make an account on the server for the Host, sign in as it, and make an access token in its Settings, Applications, with write permission for user, repository and issue: the server asks for user to create a repository, and issue to comment on a pull request.</p>
+                </div>
+
+                <div class="cseries-card" id="gs-state">
+                    <div class="label-sys">Checking…</div>
+                </div>
+
+                <div class="cseries-card" id="gs-form" hidden style="margin-top: var(--space-4);">
+                    <label class="label-sys" for="gs-url">The server's address</label>
+                    <input id="gs-url" class="cseries-input" spellcheck="false" autocapitalize="off"
+                           placeholder="https://git.example.org" maxlength="300" />
+                    <p class="view-sub" style="margin-top: var(--space-1);">An https address. The Host reaches a git server over https only, so a server on plain http cannot be connected.</p>
+                    <label class="label-sys" for="gs-user" style="margin-top: var(--space-3);">The Host's username there</label>
+                    <input id="gs-user" class="cseries-input" style="max-width: 280px;" spellcheck="false"
+                           autocapitalize="off" autocomplete="off" maxlength="40" />
+                    <label class="label-sys" for="gs-token" style="margin-top: var(--space-3);">That account's access token</label>
+                    <input id="gs-token" class="cseries-input" type="password" spellcheck="false"
+                           autocomplete="off" maxlength="255" />
+                    <p class="view-sub" style="margin-top: var(--space-1);">Kept sealed in your Keys app.</p>
+                    <label class="label-sys" for="gs-person" style="margin-top: var(--space-3);">Your own username there (optional)</label>
+                    <input id="gs-person" class="cseries-input" style="max-width: 280px;" spellcheck="false"
+                           autocapitalize="off" autocomplete="off" maxlength="40" />
+                    <p class="view-sub" style="margin-top: var(--space-1);">With it, the Host gives you write access to every repository it makes there.</p>
+                    <div class="bundle-actions" style="margin-top: var(--space-3);">
+                        <button id="gs-connect-btn" class="cseries-btn primary">Check and connect</button>
+                    </div>
+                </div>
+
+                <div class="bundle-actions" id="gs-disconnect-row" hidden style="margin-top: var(--space-4);">
+                    <button id="gs-disconnect-btn" class="cseries-btn ghost">Disconnect</button>
+                </div>
+
+                <p class="view-sub net-message" id="gs-message" role="alert" hidden></p>
             </section>
 
             <!-- Connect-a-chat modal -->

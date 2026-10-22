@@ -1,0 +1,2 @@
+# server/main.py's security_headers middleware: nosniff, Referrer-Policy no-referrer and the framing policy on every response, and no retired X-XSS-Protection header. Reads the middleware's source; no pod, no network.
+test_security_headers.py

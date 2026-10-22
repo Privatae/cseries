@@ -16,6 +16,9 @@
      server/applications/public_store.py.
   5. Over the repository's own factory-bundles with its own keys, the build
      succeeds and lists no image-baked app.
+  6. The App Store, signed with the C-Series key, is the one default entry: a
+     Host installs it at its first start. A community bundle under the same id
+     is not a default.
 
 Container-free: python3 scripts/test_build_store_catalog.py
 """
@@ -102,6 +105,7 @@ good = {
     "baked.cseries": bundle("baked-thing", "1.0.0", apps_pem),
     "retired.cseries": bundle("pulse", "1.0.0", apps_pem),
     "tool.cseries": bundle("training-memory", "1.0.0", apps_pem),
+    "store.cseries": bundle("app-store", "3.0.0", apps_pem),
 }
 D = "sha256:" + "e" * 64
 (W / "images.json").write_text(json.dumps({"python": "ghcr.io/example/runtime-python" + "@" + D}))
@@ -128,7 +132,7 @@ check("the same bundles give the same catalog.json, byte for byte", cat1 and cat
 doc = json.loads(cat1 or b"{}")
 ids = [a["app_id"] for a in doc.get("apps", [])]
 check("the store lane only: no baked, retired or platform-tool app",
-      ids == ["chat-bot", "note-pad", "shared-board"], ids)
+      ids == ["app-store", "chat-bot", "note-pad", "shared-board"], ids)
 check("each listed bundle is copied out under <app_id>-<version>.cseries, byte for byte",
       (W / "out1" / "note-pad-1.0.0.cseries").read_bytes() == good["notes.cseries"]
       and not (W / "out1" / "baked-thing-1.0.0.cseries").exists())
@@ -139,6 +143,9 @@ check("an entry's URL is absolute under --download-base, with the copied bytes' 
                             "sha256": hashlib.sha256(good["notes.cseries"]).hexdigest(),
                             "size": len(good["notes.cseries"])}, np_)
 check("an entry is free and not a default", np_.get("price_micros") == 0 and np_.get("is_default") is False)
+check("the App Store signed with the C-Series key is the one default entry",
+      [a["app_id"] for a in doc.get("apps", []) if a.get("is_default") is True] == ["app-store"],
+      [(a["app_id"], a.get("is_default")) for a in doc.get("apps", [])])
 check("a first-party app is the repository's licence, published by C-Series",
       np_.get("license") == "AGPL-3.0-only" and np_.get("publisher") == "C-Series")
 check("a process app lists the runtime image it pulls, pinned by digest",
@@ -163,7 +170,15 @@ r3 = build(bdir, W / "out3")
 rel_doc = json.loads((W / "out3" / "catalog.json").read_text()) if r3.returncode == 0 else {}
 check("without --download-base the URLs are relative to the catalog",
       [a["bundle"]["url"] for a in rel_doc.get("apps", [])] ==
-      ["chat-bot-2.1.0.cseries", "note-pad-1.0.0.cseries", "shared-board-0.3.0.cseries"])
+      ["app-store-3.0.0.cseries", "chat-bot-2.1.0.cseries", "note-pad-1.0.0.cseries",
+       "shared-board-0.3.0.cseries"])
+
+d = lane("community-store", {"c.cseries": bundle("app-store", "3.0.0", comm_pem, provenance="community",
+                                                extra="author: Invented Maker\n")})
+r5 = build(d, W / "out5")
+doc5 = json.loads((W / "out5" / "catalog.json").read_text()) if r5.returncode == 0 else {}
+check("a community bundle under the App Store's id is not a default",
+      [a.get("is_default") for a in doc5.get("apps", [])] == [False], (r5.stderr, doc5.get("apps")))
 
 for what, data in [
     ("a bundle signed by neither key", bundle("odd-one", "1.0.0", stranger_pem)),
@@ -207,6 +222,10 @@ if r.returncode == 0:
           sorted(repo_ids & baked_ids))
     check("and lists the messaging connectors", {"telegram", "discord", "slack"} <= repo_ids,
           sorted(repo_ids))
+    repo_defaults = [a["app_id"] for a in json.loads((W / "repo" / "catalog.json").read_text())["apps"]
+                     if a["is_default"]]
+    check("and marks the App Store, and only it, default", repo_defaults == ["app-store"],
+          repo_defaults)
 
 if FAILS:
     print(f"\n[store-catalog] {len(FAILS)} FAILED")

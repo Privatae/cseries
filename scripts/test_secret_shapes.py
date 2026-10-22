@@ -38,6 +38,7 @@ import re
 import shutil
 import subprocess
 import sys
+from turn_source import turn_source  # session.py and the modules split out of it
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 APP_ROOT = os.environ.get("APP_ROOT", ROOT)
@@ -235,7 +236,7 @@ else:
 
 # ── 10. send_message is wired above the raw-message capture ──────────────
 sess_path = os.path.join(APP_ROOT, "brain", "mastercode", "runtime", "session.py")
-src = open(sess_path, encoding="utf-8").read()
+src = turn_source(APP_ROOT)
 i_redact = src.find("_secret_shapes.redact(user_message)")
 i_raw = src.find("_raw_user_message = user_message")
 check("wired: send_message calls secret_shapes.redact", i_redact > 0)

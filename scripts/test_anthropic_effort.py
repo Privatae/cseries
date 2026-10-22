@@ -46,6 +46,7 @@ import logging
 import os
 import sys
 import types
+from turn_source import turn_source  # session.py and the modules split out of it
 
 APP_ROOT = os.environ.get("APP_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, APP_ROOT)
@@ -420,7 +421,7 @@ def _callers_missing_chosen() -> list[str]:
 
 _miss = _callers_missing_chosen()
 check("E7 every lane that sends route_effort also sends chosen_effort", not _miss, _miss)
-SESSION = open(os.path.join(APP_ROOT, "brain/mastercode/runtime/session.py"), encoding="utf-8").read()
+SESSION = turn_source(APP_ROOT)
 _lit = None
 for _n in ast.walk(ast.parse(SESSION)):
     if (isinstance(_n, ast.Assign) and len(_n.targets) == 1

@@ -460,6 +460,13 @@ async def lifespan(app: FastAPI):
         from server import owner_login
         await owner_login.init()
 
+        # The git server the owner connected in Settings, back from its
+        # settings row and Keys, and ~/.git-credentials written from it, before
+        # anything reads the Host's coding forge (server/git_server.py).
+        # Never raises.
+        from server import git_server
+        await git_server.load(brain_pool, relay_entity_id)
+
         # The credential audit's retention bound: routine reads older than 30
         # days become daily counts in vault_audit_rollup, counted and removed
         # in one statement per batch (server/vault/audit_rollup.py). Hourly,
@@ -1032,6 +1039,15 @@ async def lifespan(app: FastAPI):
         from server.applications.local_runtime import runtime_client as _rt_client
         asyncio.create_task(_harness_sync.run_loop(_rt_client()))
 
+    # The App Store app is not baked into the image, and it is the only way a
+    # person adds any other app, so the catalog marks it default and the Host
+    # installs it at its first start. The same pass upgrades the apps installed
+    # from the store. The client is looked up at each call (None here), so it
+    # is the network's door for a member and the signed public catalog for a
+    # standalone Host (applications/public_store.py).
+    from server.applications import default_install as _default_install
+    asyncio.create_task(_default_install.run_loop(None))
+
     # The first-run identity (server/local_identity.py) when the row is still
     # the init-db placeholder; a no-op afterwards. State surfaces in
     # /api/system/health/deep as the "identity" check.
@@ -1049,7 +1065,10 @@ async def lifespan(app: FastAPI):
     # ceigas-local — ceigas gates CAPABILITY, the NAC gates NETWORK POLICY — both
     # bound to the host's own database pool. Pool-bound + initial policy load here;
     # the MCP-lane PEP reaches it via get_nac_controller(). Behavior-neutral
-    # until the user authors policy (default-preserve), so a load failure is non-fatal.
+    # until the user authors policy (default-preserve). A failure here does not stop
+    # the Host starting, but with no engine built the gate refuses every machine with
+    # a device fingerprint (server/routes/mcp.py _nac_gate), and the Network app and
+    # /api/system/health/deep say so.
     try:
         from server.network.nac_controller import NACController
         global _nac_controller_ref, _nac_egress_ref, _nac_egress_lane_ref
@@ -1089,7 +1108,19 @@ async def lifespan(app: FastAPI):
             logger.info("NAC egress app lane up ([::]:%d) — subject-authenticated; "
                         "pinned rules route from other pods", _lane_port)
     except Exception as e:
-        logger.warning("NAC PDP init failed (non-fatal; default-preserve): %s", e)
+        if _nac_controller_ref is None:
+            logger.error("NAC PDP did not load, so the MCP gate refuses every machine with a "
+                         "device fingerprint until a start where it loads: %r", e)
+            # The log is not where the person looks: the inbox says it too, once per start.
+            try:
+                from server.routes.mcp import tell_no_engine
+                await tell_no_engine()
+            except Exception as _tell_err:
+                logger.warning("NAC: the rules-not-loaded notice could not be sent: %r",
+                               _tell_err)
+        else:
+            logger.warning("NAC startup step failed after the PDP was built (the PDP "
+                           "runs): %r", e)
 
     # DESTRUCTIVE credential cutover (2026-06-25): retire the legacy plaintext
     # connections store (NaCl `*.bin` blobs + the PLAINTEXT master key under
@@ -1363,7 +1394,6 @@ async def backup_activity(request, call_next):
 async def security_headers(request, call_next):
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
-    response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "no-referrer"
     # Framing policy. An isolated app is served from its own origin,
     # apps-<key>-<handle> (server/applications/app_origin.py), and MUST be
@@ -1917,6 +1947,9 @@ app.include_router(network_membership_routes.router)
 # The owner names the Host, in Settings -> About.
 from server.routes import host_name as host_name_routes
 app.include_router(host_name_routes.router)
+# The owner connects a git server they run, in Settings -> Git server.
+from server.routes import git_server as git_server_routes
+app.include_router(git_server_routes.router)
 # The oversight ledger: read the findings
 # the host folded from what its machines reported, and resolve one. Separate
 # from network.router because the scopes are separate — read:topology opens the

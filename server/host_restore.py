@@ -2498,12 +2498,12 @@ def unpack(src, identity: str, staged: Path, *, expect: Optional[dict] = None,
 # merge or diff driver, uploadpack), work on another folder (core.worktree),
 # or read objects or settings from another folder (alternates, commondir,
 # config.worktree, include.path). The Host runs git in its projects (commit,
-# status, diff, push) with only the hooks, fsmonitor and external diff turned
-# off (routes/project_git.py HARDENED_GIT_CONFIG), and a backup's projects are
-# anyone's. So every folder of the staged tree that git would take for a Git
-# directory (HEAD, and objects and refs or a commondir: git's own test) gets a
-# config of only the format it is written in, and loses what points elsewhere
-# and its hooks. The Host sets origin itself before it pushes
+# status, diff, push) only on a config holding nothing but the keys its own
+# init, clone and remote setup write (routes/project_git.py check_repo), and
+# a backup's projects are anyone's. So every folder of the staged tree that
+# git would take for a Git directory (HEAD, and objects and refs or a
+# commondir: git's own test) gets a config of only the format it is written
+# in, and loses what points elsewhere and its hooks. The Host sets origin itself before it pushes
 # (project_git._sync_blocking), and each fetch and push names its URL. A
 # pointer reached through a link to a folder is left: removing it would write
 # outside the staged tree before the swap.

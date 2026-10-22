@@ -1,6 +1,6 @@
 ---
 name: world
-description: Your own database. When the person tells you something with a shape of its own (a household, a kitchen, a routine, a collection), store it in tables you design in your schema `world`, so you can find it and use it later. How to build, read, describe and restore it with the `data` tool.
+description: Your own database, for data you build for a task (a meal plan, a tracker, a list the work produces), in tables you design in your schema `world`. What the person tells you about themselves is memory, not a table. How to build, read, describe and restore it with the `data` tool.
 allowed-tools: data, memory_curate
 ---
 
@@ -8,7 +8,8 @@ allowed-tools: data, memory_curate
 
 ## When to use
 
-- The person tells you facts that have a shape: things they own, how they live, what they do on a schedule, lists they keep. A preference note holds a sentence. A table holds the shape.
+- You are building data for a task: a meal plan, a tracker, a schedule, a list the work produces or keeps. A table holds its shape, and you can extend it later.
+- Not for what the person tells you about themselves (how they live, what they own, what they like): that is memory, kept with `close_turn`'s preferences or `memory_curate`, and recall brings it back. A task's table may use those facts; it does not replace them.
 - You need to answer a question from your own records (conversations, memory, tool log) and recall did not find it. Your own tables in `public` are readable with SQL.
 - You keep answering the same question by hand. Write a view or function in `world` that answers it, and it becomes a tool: `find_tools` lists it as `world:<name>`.
 
@@ -19,23 +20,23 @@ allowed-tools: data, memory_curate
 3. **Build and fill it in one call.** For example:
 
    ```sql
-   CREATE TABLE kitchen (
-       tool  text PRIMARY KEY,
-       uses  int  NOT NULL DEFAULT 0,
+   CREATE TABLE packing_list (
+       item  text PRIMARY KEY,
+       qty   int  NOT NULL DEFAULT 1,
        note  text
    );
-   COMMENT ON TABLE kitchen IS 'The cooking tools Alex has, and how often Alex uses each.';
-   INSERT INTO kitchen (tool) VALUES ('air fryer'), ('rice cooker');
+   COMMENT ON TABLE packing_list IS 'What to pack for the June hiking trip, and how many of each.';
+   INSERT INTO packing_list (item, qty) VALUES ('rain jacket', 1), ('wool socks', 4);
    ```
 
    Run it with `operate(tool='data', args={op:'sql', sql:'...'}, intent='...')`. Unqualified names land in `world`.
-4. **Read with parameters.** One statement, values as strings: `operate(tool='data', args={op:'sql', sql:'SELECT tool FROM kitchen WHERE uses > $1', params:['2']}, intent='...')`. They are converted to the column types.
+4. **Read with parameters.** One statement, values as strings: `operate(tool='data', args={op:'sql', sql:'SELECT item FROM packing_list WHERE qty > $1', params:['2']}, intent='...')`. They are converted to the column types.
 5. **Make a tool when it pays.** A function with a `COMMENT` is callable as `operate(tool='world:<name>', args={...}, intent='...')`.
 
 ## Checks
 
 - The call returns `status: ok`. A table, view or function you made without a `COMMENT` rolls the whole call back, and the answer gives the exact statement to add.
-- `read(tool='data', args={op:'describe', name:'kitchen'})` shows the object, its purpose, its columns and its row estimate.
+- `read(tool='data', args={op:'describe', name:'packing_list'})` shows the object, its purpose, its columns and its row estimate.
 
 ## When it fails
 

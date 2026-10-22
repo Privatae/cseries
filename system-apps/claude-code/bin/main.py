@@ -200,14 +200,15 @@ def status(request=None):
 
 @sidecar.handler("POST", "/disconnect")
 def disconnect(request=None):
-    """Revoke this entity's Claude credential: remove the on-disk creds and
-    clear the sidecar cache.
+    """Remove the on-disk creds and clear the sidecar cache.
 
-    Was /oauth/disconnect, which first DELETEd the platform's own Anthropic
-    token store on the platform frontend. That store is gone (2026-08-15), so
-    what remains is the part that was always the real revoke: the on-disk
-    file _get_token reads. Clearing the cache alone would let the next
-    _get_token re-read disk and silently reconnect.
+    The second half of the app's Disconnect. The first is the Host's own
+    disconnect, which app.js calls before this (DELETE /api/vault/secrets/
+    harness:claude_oauth): it sets the marker that keeps the Host from
+    writing the file back from its Vault copy, and revokes that copy. This
+    file alone is not a disconnect; the Host's reconcile restored it within
+    300 s. Clearing the cache alone would let the next _get_token re-read
+    disk and silently reconnect.
     """
     try:
         LOCAL_CREDS_PATH.unlink(missing_ok=True)

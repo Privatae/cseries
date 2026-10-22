@@ -727,6 +727,14 @@ def write_file(path: str, content: str, encoding: str = "utf-8",
         return _refused(f"content too large: {len(data)} bytes (max {MAX_WRITE_BYTES})")
 
     resolved.parent.mkdir(parents=True, exist_ok=True)
+    # Never write through a hard link: a file that also has a name elsewhere
+    # (inside a project's .git, say) is unlinked first, so only this name
+    # gets the new bytes.
+    try:
+        if os.lstat(resolved).st_nlink > 1:
+            resolved.unlink()
+    except FileNotFoundError:
+        pass
     resolved.write_bytes(data)
 
     return {"status": "ok", "path": path, "bytes_written": len(data)}

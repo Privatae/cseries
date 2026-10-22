@@ -12,6 +12,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, os.environ.get("CSERIES_BRAIN", str(REPO / "brain")))
@@ -37,7 +38,7 @@ check(_tools_wire_stamp(None) == {"chars": 0, "sha": None} and _tools_wire_stamp
       "no tools: zero characters and no hash")
 check(_tools_wire_stamp(tools[:1]) != st, "a different list gives a different stamp")
 
-src = (REPO / "brain/mastercode/runtime/session.py").read_text()
+src = turn_source(REPO)
 check('_entry["tools_chars"] = _tw.get("chars")' in src and '_entry["tools_sha"] = _tw.get("sha")' in src,
       "the per-call ledger entry copies the stamp (session._note_served)")
 gw = (REPO / "brain/mastercode/provider_gateway.py").read_text()

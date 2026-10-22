@@ -23,6 +23,17 @@
      standalone Host, the bundle comes from the public store and installs
      through installer.install_bundle, signature and provenance checked
      against the trust store as for any other source.
+  6. The first start: on a standalone Host the boot pass installs the app the
+     catalog marks default, once (an uninstall holds), and leaves the others;
+     server/main.py starts that pass.
+  7. The first start when the store does not answer: a default app whose
+     download failed is not recorded as offered, and the boot pass waits and
+     tries again until it installs; the store's copy of an app never replaces
+     one this Host built itself under the same id, while an app from the store
+     still upgrades.
+  8. The start-time upgrade leaves a runtime app on its installed version when
+     the new one reserves more memory (an over-plan refusal would uninstall
+     it), and still upgrades one that reserves the same.
 
 Container-free: python3 scripts/test_public_store.py (needs cryptography, yaml).
 """
@@ -634,6 +645,403 @@ async def part5():
     check("a bundle the trust store's keys did not sign is still refused at install", refused_alien)
 
 run(part5())
+
+# ── 6. the first start: the catalog's default apps install themselves ───────
+#
+# The App Store app is not baked into the image, and it is the only way a
+# person adds any other app. The catalog marks it default, and the boot pass
+# (default_install.run_loop, started from server/main.py) installs what the
+# catalog marks default on a standalone Host, once: an uninstall then holds.
+
+
+async def part6():
+    from server import brain_service
+    from server.applications import default_install, installer, registry, trust_store
+
+    MAIN.get_bridge_client = lambda: NoPlatform()
+    os.environ["CSERIES_STORE_CACHE"] = str(WORK / "cache6")
+    PS._stores.clear()
+    pad = make_bundle("plain-pad", "0.2.0")
+    (SRV / "rel" / "plain-pad-0.2.0.cseries").write_bytes(pad)
+    publish("0.6.0", [
+        entry(is_default=True, bundle={"url": "gadget-notes-1.2.3.cseries", "sha256": bsha,
+                                       "size": len(bundle)}),
+        entry(app_id="plain-pad", version="0.2.0",
+              bundle={"url": "plain-pad-0.2.0.cseries",
+                      "sha256": hashlib.sha256(pad).hexdigest(), "size": len(pad)}),
+    ])
+
+    pool = _Pool()
+    install_root = WORK / "apps6"
+    install_root.mkdir()
+    now = datetime.now(timezone.utc)
+
+    def app(app_id, version="1.0.0"):
+        return registry.InstalledApp(
+            id=app_id, name=app_id, version=version, provenance="native", entrypoint="index.html",
+            permissions=[], source_dir="", source_signature=None, installed_at=now,
+            upgraded_at=None, status="active", app_license={}, authored_here=None)
+
+    # A fresh Host: the kernel's three and a built-in app the image laid down.
+    active = {a: app(a) for a in ("settings", "oracle", "orchestrator", "calendar")}
+
+    async def list_active(_pool):
+        return list(active.values())
+
+    async def register(_pool, manifest, authored_here=None):
+        active[manifest.id] = app(manifest.id, manifest.version)
+        return active[manifest.id]
+
+    async def keys(_pool):
+        return [trust_store.SigningKey(
+            fingerprint=hashlib.sha256(apps_pub).hexdigest(), public_key=apps_pub,
+            publisher="C-Series", provenance_allowed=["native", "standard"],
+            registered_at=now, revoked_at=None)]
+
+    saved = (brain_service.get_pool, installer.INSTALL_ROOT, trust_store.list_active_keys,
+             registry.register, registry.list_active, installer.image_baked_ids,
+             default_install._OFFERED_MARKER)
+    brain_service.get_pool = lambda: pool
+    installer.INSTALL_ROOT = install_root
+    trust_store.list_active_keys = keys
+    registry.register = register
+    registry.list_active = list_active
+    installer.image_baked_ids = lambda: frozenset({"calendar"})
+    default_install._OFFERED_MARKER = WORK / "offered6.json"
+    try:
+        first = await default_install.run_once(None)
+        installed_first = sorted(active)
+        active.pop("gadget-notes", None)             # the person uninstalls it
+        second = await default_install.run_once(None)
+        installed_second = sorted(active)
+    finally:
+        (brain_service.get_pool, installer.INSTALL_ROOT, trust_store.list_active_keys,
+         registry.register, registry.list_active, installer.image_baked_ids,
+         default_install._OFFERED_MARKER) = saved
+
+    check("at a standalone Host's first start, the catalog's default app installs from the public store",
+          (first.get("default_reconcile") or {}).get("installed") == ["gadget-notes"]
+          and "gadget-notes" in installed_first, first)
+    check("an app the catalog does not mark default is not installed",
+          "plain-pad" not in installed_first, installed_first)
+    check("its files are where the installer puts them",
+          (install_root / "gadget-notes" / "index.html").is_file())
+    check("once uninstalled, the next start leaves it uninstalled",
+          "gadget-notes" not in installed_second
+          and (second.get("default_reconcile") or {}).get("installed") == [], second)
+
+    main_src = (ROOT / "server" / "main.py").read_text(encoding="utf-8")
+    life = main_src[main_src.index("async def lifespan("):]
+    check("server/main.py starts the boot pass at every start",
+          re.search(r"asyncio\.create_task\(\s*_default_install\.run_loop\(None\)\s*\)", life) is not None)
+
+run(part6())
+
+# ── 7. the first start when the store does not answer ───────────────────────
+#
+# A default app counts as offered (so an uninstall of it holds) only once it
+# has installed: recording one whose download did not finish would leave the
+# Host without it for good, and without the App Store a person cannot add any
+# other app. The boot pass waits and tries again while the store is not
+# reached. And the store's copy of an app never replaces one this Host built
+# itself under the same id, while an app installed from the store still
+# upgrades.
+
+
+async def part7():
+    from server import brain_service
+    from server.applications import default_install, installer, registry, trust_store
+
+    MAIN.get_bridge_client = lambda: NoPlatform()
+    os.environ["CSERIES_STORE_CACHE"] = str(WORK / "cache7")
+    PS._stores.clear()
+    pad = (SRV / "rel" / "plain-pad-0.2.0.cseries").read_bytes()
+    own = make_bundle("tool-thing", "2.0.0")
+    (SRV / "rel" / "tool-thing-2.0.0.cseries").write_bytes(own)
+    publish("0.7.0", [
+        entry(is_default=True, bundle={"url": "gadget-notes-1.2.3.cseries", "sha256": bsha,
+                                       "size": len(bundle)}),
+        entry(app_id="plain-pad", version="0.2.0",
+              bundle={"url": "plain-pad-0.2.0.cseries",
+                      "sha256": hashlib.sha256(pad).hexdigest(), "size": len(pad)}),
+        entry(app_id="tool-thing", version="2.0.0",
+              bundle={"url": "tool-thing-2.0.0.cseries",
+                      "sha256": hashlib.sha256(own).hexdigest(), "size": len(own)}),
+    ])
+    # The release server does not have the default app's bundle yet.
+    held = SRV / "rel" / "gadget-notes-1.2.3.cseries"
+    away = WORK / "gadget-notes-1.2.3.away"
+    os.replace(held, away)
+
+    pool = _Pool()
+    install_root = WORK / "apps7"
+    install_root.mkdir()
+    marker = WORK / "offered7.json"
+    now = datetime.now(timezone.utc)
+
+    def app(app_id, version="1.0.0", authored_here=None):
+        return registry.InstalledApp(
+            id=app_id, name=app_id, version=version, provenance="native", entrypoint="index.html",
+            permissions=[], source_dir="", source_signature=None, installed_at=now,
+            upgraded_at=None, status="active", app_license={}, authored_here=authored_here)
+
+    # The kernel's three, a built-in app, an app installed from the store at an
+    # older version, and one the person built in the Workbench under an id the
+    # catalog also carries.
+    active = {a: app(a) for a in ("settings", "oracle", "orchestrator", "calendar")}
+    active["plain-pad"] = app("plain-pad", "0.1.0")
+    active["tool-thing"] = app("tool-thing", "1.0.0", authored_here=True)
+
+    async def list_active(_pool):
+        return list(active.values())
+
+    async def register(_pool, manifest, authored_here=None):
+        prev = active.get(manifest.id)
+        sticky = bool(prev is not None and prev.authored_here) or bool(authored_here)
+        active[manifest.id] = app(manifest.id, manifest.version, sticky or None)
+        return active[manifest.id]
+
+    async def keys(_pool):
+        return [trust_store.SigningKey(
+            fingerprint=hashlib.sha256(apps_pub).hexdigest(), public_key=apps_pub,
+            publisher="C-Series", provenance_allowed=["native", "standard"],
+            registered_at=now, revoked_at=None)]
+
+    sleeps: list[float] = []
+
+    class _Clock:
+        """default_install's asyncio, with sleep recorded and not slept: the
+        release server gets the bundle during the pass's first wait."""
+
+        def __getattr__(self, name):
+            return getattr(asyncio, name)
+
+        @staticmethod
+        async def sleep(d):
+            sleeps.append(float(d))
+            if len(sleeps) == 2 and away.exists():
+                os.replace(away, held)
+            if len(sleeps) > 6:
+                raise asyncio.CancelledError()
+
+    saved = (brain_service.get_pool, installer.INSTALL_ROOT, trust_store.list_active_keys,
+             registry.register, registry.list_active, installer.image_baked_ids,
+             default_install._OFFERED_MARKER, default_install.asyncio)
+    brain_service.get_pool = lambda: pool
+    installer.INSTALL_ROOT = install_root
+    trust_store.list_active_keys = keys
+    registry.register = register
+    registry.list_active = list_active
+    installer.image_baked_ids = lambda: frozenset({"calendar"})
+    default_install._OFFERED_MARKER = marker
+    try:
+        first = await default_install.run_once(None)
+        offered_first = json.loads(marker.read_text()) if marker.exists() else []
+        installed_first = sorted(active)
+        own_after = active["tool-thing"]
+        pad_after = active["plain-pad"].version
+
+        marker.unlink(missing_ok=True)               # the first start again, as a loop
+        default_install.asyncio = _Clock()
+        try:
+            await default_install.run_loop(None)
+            loop_ended = True
+        except asyncio.CancelledError:
+            loop_ended = False
+        default_install.asyncio = saved[-1]
+        installed_loop = sorted(active)
+
+        active.pop("gadget-notes", None)             # the person uninstalls it
+        later = await default_install.run_once(None)
+    finally:
+        if away.exists():
+            os.replace(away, held)
+        (brain_service.get_pool, installer.INSTALL_ROOT, trust_store.list_active_keys,
+         registry.register, registry.list_active, installer.image_baked_ids,
+         default_install._OFFERED_MARKER, default_install.asyncio) = saved
+
+    rec = first.get("default_reconcile") or {}
+    check("a default app whose download fails at the first start is not installed",
+          "gadget-notes" not in installed_first
+          and [f[0] for f in rec.get("failed") or []] == ["gadget-notes"], rec)
+    check("and it is not recorded as offered, so a later start still installs it",
+          "gadget-notes" not in offered_first and "settings" in offered_first, offered_first)
+    check("the boot pass waits and tries again, and installs it once the store answers",
+          loop_ended and "gadget-notes" in installed_loop and sleeps[1:] == [300.0],
+          (loop_ended, installed_loop, sleeps))
+    check("once it has installed, an uninstall of it holds",
+          "gadget-notes" not in active
+          and (later.get("default_reconcile") or {}).get("installed") == [], later)
+    sweep = first.get("upgrade_sweep") or {}
+    check("an app installed from the store upgrades at a start",
+          pad_after == "0.2.0", (pad_after, sweep))
+    check("the store's copy never replaces an app this Host built under the same id",
+          own_after.version == "1.0.0" and own_after.authored_here is True
+          and "tool-thing" not in [u.get("app_id") for u in sweep.get("upgraded") or []]
+          and not (install_root / "tool-thing").exists(), (own_after, sweep))
+
+run(part7())
+
+# ── 8. an unattended upgrade never reserves more memory than the installed one
+#
+# install_bundle lays a new version down before the runtime takes its
+# descriptor, and rolls back an over-plan refusal by uninstalling the app. So
+# the start-time sweep installs a runtime app's new version only when it
+# reserves no more than the installed one (which fitted); a larger one waits for
+# the person to update it from the App Store.
+
+
+def make_proc_bundle(app_id, version, memory_mi):
+    src = WORK / f"src-{app_id}-{version}"
+    src.mkdir(exist_ok=True)
+    manifest = (f"id: {app_id}\nname: {app_id}\ndescription: A small service.\nicon: icon.png\n"
+                f'version: "{version}"\nprovenance: standard\nentrypoint: index.html\npermissions: []\n'
+                f"network: []\nresources:\n  baseline_memory_mi: {memory_mi}\n"
+                "runtime:\n  kind: process\n  image: python\n  command: [\"python3\", \"main.py\"]\n"
+                "  ready_path: /health\n")
+    (src / "app.yaml").write_text(manifest)
+    (src / "index.html").write_bytes(b"<!doctype html><title>svc</title>")
+    (src / "main.py").write_text("print('ok')\n")
+    (src / "icon.png").write_bytes(ICON)
+    return bundles.sign(bundles.pack(src), apps_pem), manifest
+
+
+async def part8():
+    from server import brain_service
+    from server.applications import default_install, installer, registry, trust_store
+
+    MAIN.get_bridge_client = lambda: NoPlatform()
+    os.environ["CSERIES_STORE_CACHE"] = str(WORK / "cache8")
+    PS._stores.clear()
+    big2, _ = make_proc_bundle("svc-big", "2.0.0", 512)
+    same2, _ = make_proc_bundle("svc-same", "2.0.0", 128)
+    _, big1_yaml = make_proc_bundle("svc-big", "1.0.0", 128)
+    _, same1_yaml = make_proc_bundle("svc-same", "1.0.0", 128)
+    for name, data in (("svc-big-2.0.0.cseries", big2), ("svc-same-2.0.0.cseries", same2)):
+        (SRV / "rel" / name).write_bytes(data)
+    publish("0.8.0", [
+        entry(app_id="svc-big", version="2.0.0", images={},
+              bundle={"url": "svc-big-2.0.0.cseries", "sha256": hashlib.sha256(big2).hexdigest(),
+                      "size": len(big2)}),
+        entry(app_id="svc-same", version="2.0.0", images={},
+              bundle={"url": "svc-same-2.0.0.cseries", "sha256": hashlib.sha256(same2).hexdigest(),
+                      "size": len(same2)}),
+    ])
+
+    pool = _Pool()
+    install_root = WORK / "apps8"
+    for app_id, text in (("svc-big", big1_yaml), ("svc-same", same1_yaml)):
+        (install_root / app_id).mkdir(parents=True)
+        (install_root / app_id / "app.yaml").write_text(text)
+    now = datetime.now(timezone.utc)
+
+    def app(app_id, version="1.0.0"):
+        return registry.InstalledApp(
+            id=app_id, name=app_id, version=version, provenance="standard", entrypoint="index.html",
+            permissions=[], source_dir="", source_signature=None, installed_at=now,
+            upgraded_at=None, status="active", app_license={}, authored_here=None)
+
+    active = {a: app(a) for a in ("settings", "oracle", "orchestrator")}
+    active["svc-big"] = app("svc-big")
+    active["svc-same"] = app("svc-same")
+    synced = []
+
+    async def list_active(_pool):
+        return list(active.values())
+
+    async def register(_pool, manifest, authored_here=None):
+        active[manifest.id] = app(manifest.id, manifest.version)
+        return active[manifest.id]
+
+    async def keys(_pool):
+        return [trust_store.SigningKey(
+            fingerprint=hashlib.sha256(apps_pub).hexdigest(), public_key=apps_pub,
+            publisher="C-Series", provenance_allowed=["native", "standard"],
+            registered_at=now, revoked_at=None)]
+
+    async def sync_runtime(app_id, enabled, *, bc=None):
+        synced.append((app_id, enabled))
+        return True
+
+    saved = (brain_service.get_pool, installer.INSTALL_ROOT, trust_store.list_active_keys,
+             registry.register, registry.list_active, installer.image_baked_ids,
+             default_install._OFFERED_MARKER, installer.sync_app_runtime)
+    brain_service.get_pool = lambda: pool
+    installer.INSTALL_ROOT = install_root
+    trust_store.list_active_keys = keys
+    registry.register = register
+    registry.list_active = list_active
+    installer.image_baked_ids = lambda: frozenset()
+    default_install._OFFERED_MARKER = WORK / "offered8.json"
+    installer.sync_app_runtime = sync_runtime
+    try:
+        out = await default_install.run_once(None)
+    finally:
+        (brain_service.get_pool, installer.INSTALL_ROOT, trust_store.list_active_keys,
+         registry.register, registry.list_active, installer.image_baked_ids,
+         default_install._OFFERED_MARKER, installer.sync_app_runtime) = saved
+
+    sweep = out.get("upgrade_sweep") or {}
+    skipped = {x.get("app_id"): x.get("reason") for x in sweep.get("skipped") or []}
+    check("a runtime app whose new version reserves more memory is not upgraded at a start",
+          active["svc-big"].version == "1.0.0" and "reserves more memory" in (skipped.get("svc-big") or "")
+          and ("svc-big", True) not in synced, (sweep, synced))
+    check("and its installed copy is left in place",
+          "baseline_memory_mi: 128" in (install_root / "svc-big" / "app.yaml").read_text())
+    check("a runtime app whose new version reserves the same memory still upgrades",
+          active["svc-same"].version == "2.0.0" and ("svc-same", True) in synced, (sweep, synced))
+
+run(part8())
+
+# ── the on-demand route describes the same pass ──────────────────────────────────────────
+print("the /refresh-store route says what the sweep does now")
+import ast  # noqa: E402
+
+_tree = ast.parse((ROOT / "server" / "routes" / "applications.py").read_text(encoding="utf-8"))
+_fn = next((n for n in ast.walk(_tree)
+            if isinstance(n, ast.AsyncFunctionDef) and n.name == "refresh_store"), None)
+_doc = " ".join((ast.get_docstring(_fn) or "").split()) if _fn else ""
+check("its docstring no longer says it reinstalls every app that is newer",
+      "reinstalls in place if newer" not in _doc, _doc[:300])
+check("...it names what the sweep leaves alone: apps this Host built, image apps, and a "
+      "version that reserves more memory",
+      "authored_here" in _doc and "image" in _doc and "reserves more memory" in _doc, _doc[:600])
+check("...that it only moves forward, and skips or defers what it cannot install",
+      "strictly newer" in _doc and "skipped" in _doc and "deferred" in _doc, _doc[:600])
+check("...and that it goes through the App Store router, refusing only when no store can be reached",
+      "App Store router" in _doc and "503" in _doc, _doc[-400:])
+
+
+async def refresh_on_a_standalone_host():
+    from server import brain_service
+    from server.applications import installer, registry
+    from server.routes import applications as APPS
+    MAIN.get_bridge_client = lambda: NoPlatform()
+    PS._stores.clear()
+    now = datetime.now(timezone.utc)
+    kernel = [registry.InstalledApp(
+        id=a, name=a, version="1.0.0", provenance="native", entrypoint="index.html",
+        permissions=[], source_dir="", source_signature=None, installed_at=now,
+        upgraded_at=None, status="active", app_license={}, authored_here=None)
+        for a in ("settings", "oracle", "orchestrator")]
+
+    async def list_active(_pool):
+        return list(kernel)
+
+    saved = (brain_service.get_pool, registry.list_active, installer.image_baked_ids)
+    brain_service.get_pool = lambda: _Pool()
+    registry.list_active = list_active
+    installer.image_baked_ids = lambda: frozenset()
+    try:
+        out = await APPS.refresh_store(_Request({}))
+    except Exception as e:  # noqa: BLE001
+        out = {"error": f"{type(e).__name__}: {getattr(e, 'status_code', '')} {getattr(e, 'detail', e)}"}
+    finally:
+        (brain_service.get_pool, registry.list_active, installer.image_baked_ids) = saved
+    check("on a standalone Host, /refresh-store runs the sweep against the public catalog, not a 503",
+          out.get("status") == "ok" and out.get("checked") == 3, out)
+
+run(refresh_on_a_standalone_host())
 
 httpd.shutdown()
 if FAILS:

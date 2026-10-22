@@ -4,4 +4,8 @@
 # unreadable signing key is named as the reason a removal asks for the code; an expired management
 # grant (column OR signed expiry, the gate's rule) is shown as expired and revokes free; an
 # expiry reads forward (fmtExpiry) while fmtRel stays past-tense. Stub pool, real key, real app.js under node. No pod, no DB.
+# 2026-10-22 (NAC): with no engine running the Ingress lane shows its own banner (the rules did not
+# load, so every machine with a device fingerprint is locked out), never the integrity banner.
+# 2026-10-22 (NAC): an approved rule with one value written as a string (classification
+# "server") is enforced as that value, and /nac/policy and its card show the list the engine reads.
 test_nac_cards_match_engine.py

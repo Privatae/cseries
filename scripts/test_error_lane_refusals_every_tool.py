@@ -41,6 +41,8 @@ import tempfile
 import zipfile
 from pathlib import Path
 
+from turn_source import TURN_FILES  # session.py and the modules split out of it
+
 APP_ROOT = os.environ.get("APP_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, APP_ROOT)
 sys.path.insert(0, os.path.join(APP_ROOT, "brain"))
@@ -262,9 +264,13 @@ print("3 every unsorted error return is pinned")
 # ready" is the database lane's own failure, as for op='alias'. A missing
 # topic, a memory_id that is not an integer, words no live row holds and a row
 # that is not a live preference or relationship note go through refused().
+# tools.py 155 -> 156 (keys_manage op='revoke'): "the disconnect could not be
+# recorded" is the Host's own database failing to write the marker, so nothing
+# is revoked and the person is told; a missing name goes through refused().
 PINNED = {
-    "brain/mastercode/runtime/tools.py": 155,
-    "brain/mastercode/runtime/session.py": 0,
+    "brain/mastercode/runtime/tools.py": 156,
+    # session.py and every module split out of it hold session.py's pin.
+    **{"brain/mastercode/runtime/" + f: 0 for f in TURN_FILES},
     "brain/mastercode/runtime/turn_type_approval.py": 0,
     "brain/mastercode/runtime/github_lane.py": 2,
     "brain/mastercode/runtime/context_ops.py": 1,

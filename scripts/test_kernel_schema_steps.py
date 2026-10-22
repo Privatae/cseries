@@ -105,8 +105,11 @@ def around(before: str, after: str) -> str:
 # until init-db.sql has loaded) and is a version applied (never). With
 # {state}/fail present, creating the ledger fails, as a dropped connection would.
 STUB = """#!/bin/sh
+# SQL a call hands psql on stdin (values as -v, read as :'name'); read only
+# when the call has no -c and no -f, so a call that does never waits on it.
+case " $* " in *" -c "*|*" -f "*) sql="" ;; *) sql=$(cat | tr '\\n' ' ') ;; esac
 printf '%s\\n' "PGOPTIONS=${{PGOPTIONS-unset}} HOME=$HOME PGSYSCONFDIR=${{PGSYSCONFDIR-unset}} PGPORT=${{PGPORT-unset}} \
-ARGS=$(printf '%s' "$*" | tr '\\n' ' ')" >> {log}
+ARGS=$(printf '%s' "$*" | tr '\\n' ' ') SQL=$sql" >> {log}
 case "$*" in *"CREATE TABLE IF NOT EXISTS schema_migrations"*) [ -e {state}/fail ] && exit 3 ;; esac
 case "$*" in *--single-transaction*) : > {state}/loaded ;; esac
 case "$*" in *"to_regclass('public.entity_registry')"*) if [ -e {state}/loaded ]; then echo t; else echo f; fi ;; esac
@@ -179,11 +182,13 @@ try:
           files_run(calls) == ["init-db.sql", "migrations/v139_host_recall_role.sql", "migrations/v001_a.sql",
                                "migrations/v002_b.sql", "migrations/v139_host_recall_role.sql"]
           and any("--single-transaction -f APP/init-db.sql" in c for c in calls), files_run(calls))
-    renumber = next((i for i, c in enumerate(calls) if "UPDATE entity_registry SET id = 3" in c), None)
+    renumber = next((i for i, c in enumerate(calls)
+                     if "-v eid=3" in c and "UPDATE entity_registry SET id = :'eid'" in c), None)
     first_mig = next((i for i, c in enumerate(calls) if "-f APP/migrations/v001_a.sql" in c), None)
     check("the entity's own id lands before any migration",
           renumber is not None and first_mig is not None and renumber < first_mig, (renumber, first_mig))
-    recorded = [c.split("VALUES ", 1)[1] for c in calls if "INSERT INTO schema_migrations(version, name) VALUES (" in c]
+    recorded = [f"({c.split('-v ver=', 1)[1].split()[0]}, '{c.split('-v name=', 1)[1].split()[0]}')"
+                for c in calls if "INSERT INTO schema_migrations(version, name) VALUES (:'ver'" in c]
     check("each migration is recorded as it lands",
           recorded == ["(1, 'v001_a')", "(2, 'v002_b')", "(139, 'v139_host_recall_role')"], recorded)
     def psql_env(call: str) -> dict[str, str]:

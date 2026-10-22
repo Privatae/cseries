@@ -199,6 +199,67 @@ def _lockfile_from_record(src_dir):
         return None
 
 
+# The pip every app venv carries is the image's own, kept as a wheel at build
+# (hash-checked there): `python -m venv` alone copies in the stdlib's bundled
+# pip, which lags it and its CA bundle (pip 26.2.1 vendors a certifi with
+# compromised emSign roots). `pip` in an app's command stays the venv's.
+PIP_WHEELS = os.environ.get("APP_RUNTIME_PIP_WHEELS", "/opt/app-runtime/wheels")
+
+
+def _image_pip_wheel():
+    """(path, version) of the pip wheel the image keeps, or (None, None)."""
+    try:
+        names = sorted(n for n in os.listdir(PIP_WHEELS)
+                       if n.startswith("pip-") and n.endswith(".whl"))
+    except OSError:
+        return None, None
+    if not names:
+        return None, None
+    return os.path.join(PIP_WHEELS, names[-1]), names[-1].split("-")[1]
+
+
+def _venv_pip_versions(venv_dir):
+    """The versions of pip installed in the venv, one per dist-info."""
+    import glob
+    hits = glob.glob(os.path.join(venv_dir, "lib", "python*", "site-packages", "pip-*.dist-info"))
+    return sorted(os.path.basename(h)[len("pip-"):-len(".dist-info")] for h in hits)
+
+
+def _lock_pins_pip(lock_path):
+    """Does the lockfile name pip itself (pip-compile --allow-unsafe writes it)?
+    Then the venv's pip is the one the lockfile pinned."""
+    import re
+    try:
+        with open(lock_path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read().replace("\r\n", "\n").replace("\\\n", " ")
+    except OSError:
+        return False
+    for line in text.splitlines():
+        line = line.split(" #", 1)[0].strip()
+        if not line or line.startswith(("#", "-")):
+            continue
+        name = re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*", line)
+        if name and re.sub(r"[-_.]+", "-", name.group(0)).lower() == "pip":
+            return True
+    return False
+
+
+def _image_pip_wanted(venv_dir, wheel_version, lock_path, shipper):
+    """Should the image's pip go into this existing venv? Yes when it has no pip
+    (the lockfile needs one, and `pip` in the command is the venv's), or one pip
+    of another version that the lockfile does not pin. Two pip installs are left
+    as they are: replacing one leaves the other, so pip would run on every boot
+    and never settle."""
+    have = _venv_pip_versions(venv_dir)
+    if not have:
+        return True
+    if len(have) > 1:
+        shipper.add(f"[app-runtime] deps: the venv holds {len(have)} pip installs "
+                    f"({', '.join(have)}); left as it is")
+        return False
+    return have[0] != wheel_version and not _lock_pins_pip(lock_path)
+
+
 def prepare_deps(src_dir, app_id, shipper, *, venv_dir=None, pip_argv_prefix=None):
     """Install the declared lockfile — and nothing else — before the app runs.
     Returns the env additions
@@ -227,6 +288,9 @@ def prepare_deps(src_dir, app_id, shipper, *, venv_dir=None, pip_argv_prefix=Non
     marker = os.path.join(venv_dir, ".cseries-lock-sha256")
     pip = os.path.join(venv_dir, "bin", "pip")
     py = os.path.join(venv_dir, "bin", "python")
+    wheel, wheel_version = _image_pip_wheel()
+    pip_step = ([sys.executable, "-m", "pip", "--python", py, "install", "--no-index",
+                 "--no-deps", "--disable-pip-version-check", wheel] if wheel else None)
     # PIP_REQUIRE_HASHES=1: pip's own env switch for hash-checking mode, so a
     # bootstrap that runs `pip install foo` on top of the lockfile is refused
     # by pip itself — the contract's "nothing else is installed" is enforced
@@ -237,6 +301,21 @@ def prepare_deps(src_dir, app_id, shipper, *, venv_dir=None, pip_argv_prefix=Non
     try:
         with open(marker) as fh:
             if fh.read().strip() == lock_sha and os.path.isfile(py):
+                if pip_step and _image_pip_wanted(venv_dir, wheel_version, lock_path, shipper):
+                    # A venv made before the image kept its pip: give it that
+                    # pip once. A failure leaves the venv as it was, which ran.
+                    shipper.add("[app-runtime] deps: " + " ".join(pip_step))
+                    try:
+                        r = subprocess.run(pip_step, stdout=subprocess.PIPE,
+                                           stderr=subprocess.STDOUT, text=True, errors="replace")
+                        out, why = r.stdout or "", f"exit {r.returncode}"
+                    except OSError as e:
+                        r, out, why = None, "", f"cannot run it: {e}"
+                    if r is None or r.returncode != 0:
+                        for line in out.splitlines()[-20:]:
+                            shipper.add(line)
+                        shipper.add(f"[app-runtime] deps: the venv's pip was not replaced "
+                                    f"({why}); it keeps its own")
                 shipper.add(f"[app-runtime] deps: {lock_rel} unchanged "
                             f"({lock_sha[:12]}…), venv reused")
                 return env_add
@@ -244,7 +323,12 @@ def prepare_deps(src_dir, app_id, shipper, *, venv_dir=None, pip_argv_prefix=Non
         pass
     steps = []
     if not os.path.isfile(py):
-        steps.append([sys.executable, "-m", "venv", venv_dir])
+        if pip_step:
+            steps += [[sys.executable, "-m", "venv", "--without-pip", venv_dir], pip_step]
+        else:
+            steps.append([sys.executable, "-m", "venv", venv_dir])
+    elif pip_step and _image_pip_wanted(venv_dir, wheel_version, lock_path, shipper):
+        steps.append(pip_step)
     steps.append(list(pip_argv_prefix or [pip]) + [
         "install", "--require-hashes", "--no-deps", "--disable-pip-version-check",
         "-r", lock_path])

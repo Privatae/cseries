@@ -110,11 +110,14 @@ async def approve_policy(pool, eid: int, policy_id: int, *, stepup_code: Optiona
 
     An allow whose permits do not name a lane is refused (400) BEFORE the step-up is checked:
     it would admit nothing, and a TOTP code is burned on use, so it must not be spent on a
-    rule that cannot be committed. `via` names the surface for approved_by (approver_for)."""
+    rule that cannot be committed. So is any rule whose match is not the shape the engine
+    reads (normalize_match): a draft written before drafting checked it would otherwise be
+    signed, fail the engine's check and lock every machine out. `via` names the surface
+    for approved_by (approver_for)."""
     if not pool:
         raise CommitError(503, "brain pool not ready")
     from server.network import nac_stepup
-    from server.network.nac_controller import normalize_permits
+    from server.network.nac_controller import normalize_match, normalize_permits
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             "SELECT p.id, p.name, p.priority, p.match, pr.enforcement, pr.permits, p.approved_at "
@@ -128,6 +131,11 @@ async def approve_policy(pool, eid: int, policy_id: int, *, stepup_code: Optiona
         match = row["match"]
         if isinstance(match, str):
             match = _json.loads(match)
+        try:
+            match = normalize_match(match or None)
+        except ValueError as e:
+            raise CommitError(400, f"this rule cannot be approved: {e}. Decline it and draft "
+                                   f"it again with a match the engine reads")
         permits = row["permits"]
         if isinstance(permits, str):
             permits = _json.loads(permits)
@@ -399,8 +407,9 @@ async def revoke_policy(pool, eid: int, policy_id: int, *, stepup_code: Optional
     to something that admits it no more widely on that lane.
 
     Whether the rule admits is decided by the engine's own reading of the row
-    (_policy_row_admits): the SIGNED terms once approved, the profile for a legacy unsigned
-    row. Profiles are shared by name, so the profile alone can disagree with the signature.
+    (_policy_row_admits): the SIGNED terms once approved. An approved row with no signature
+    fails the engine's check, so it is one that keeps machines out. Profiles are shared by
+    name, so the profile alone can disagree with the signature.
 
     Declining a DRAFT is free, and the update only matches a row that is still a draft: if it
     was approved between the read and the write, nothing is revoked and the row is read again
@@ -1214,18 +1223,35 @@ async def endpoint_decisions(rows) -> dict:
                  (synaptive_handler), so it is refused whatever the rules say.
       governed False — a token with no bound fingerprint is bearer-only; _nac_gate never
                  asks the engine about it, so no Ingress rule decides it.
-      error    — decide()/permits_inbound raised (a malformed approved `match`, say).
-                 _nac_gate admits on any engine error, so the card says admitted, and why.
+      error    — decide()/permits_inbound raised. _nac_gate refuses on any engine error,
+                 so the card says refused, and why. (An approved `match` the engine cannot
+                 evaluate no longer gets here: it fails its integrity check and locks.)
+      unloaded — no engine is running in this process (its import or construction failed
+                 at start). _nac_gate refuses every governed machine then, so each governed
+                 row says refused and why.
     Otherwise the engine's decision. `locked` is the snapshot's own tamper flag, not the
     profile's name, so a rule someone named "__integrity__" cannot fake it. The decision
     is for the token the row belongs to — the lane shows the newest enrolment per hostname
     (routes/network.py) — and the forced reload is of the same engine object the gate asks,
     so the gate's next decision reads this snapshot. Returns {"engine": {running, tamper},
-    "by_token": {token_id: decision}}; with no engine, or one that cannot load, by_token is
-    empty and nothing is claimed."""
+    "by_token": {token_id: decision}}. With an engine that cannot load its rules right now,
+    by_token is empty and nothing is claimed: the gate may still be deciding from the
+    snapshot it loaded last."""
     nac = _live_engine()
     if nac is None:
-        return {"engine": {"running": False, "tamper": None}, "by_token": {}}
+        by_token = {}
+        for r in rows:
+            governed = bool(r.get("bound_fingerprint"))
+            if r.get("token_expired"):
+                by_token[r["token_id"]] = {"governed": governed, "expired": True, "allowed": False}
+            elif not governed:
+                by_token[r["token_id"]] = {"governed": False}
+            else:
+                by_token[r["token_id"]] = {
+                    "governed": True, "allowed": False, "unloaded": True,
+                    "why": "the network rules are not loaded on this Host, so this machine "
+                           "is refused"}
+        return {"engine": {"running": False, "tamper": None}, "by_token": by_token}
     try:
         state = await nac.integrity()
     except Exception:
@@ -1246,7 +1272,7 @@ async def endpoint_decisions(rows) -> dict:
             profile, why = nac.decide(ep)
             allowed = nac.permits_inbound(profile, lane="mcp")
         except Exception as e:
-            by_token[r["token_id"]] = {"governed": True, "allowed": True, "error": True,
+            by_token[r["token_id"]] = {"governed": True, "allowed": False, "error": True,
                                        "why": f"engine error: {type(e).__name__}"}
             continue
         by_token[r["token_id"]] = {
@@ -1282,8 +1308,9 @@ async def policy_list(pool, eid: int) -> dict:
     worked out again here: `tamper` True means it is refusing every machine the MCP gate asks
     about, because an approved rule failed its integrity check. Each approved row carries
     that engine's verdict on it as `integrity`: "failed" (with `integrity_reason`
-    "signature" or "profile") for the rule that sets the flag, "ok", or "unchecked" when
-    nothing checked it (no engine, it could not load, or it is unarmed). A draft's is None.
+    "signature", "unsigned", "key_unreadable" or "match", nac_controller.FAIL_*) for the rule
+    that sets the flag, "ok", or "unchecked" when nothing checked it (no engine, it could not
+    load, or it is unarmed by design). A draft's is None.
     "unchecked" is kept apart from "failed" on purpose: revoke_needs_code is True when the
     key cannot be read here, but the engine may still verify the rule with the key it holds,
     and that rule must not be shown as the one locking the mesh."""
@@ -1331,6 +1358,10 @@ async def policy_list(pool, eid: int) -> dict:
         if d["approved_at"] and isinstance(st, dict):
             d["enforcement"] = st.get("enforcement", "quarantine")
             d["permits"] = st.get("permits") or []
+            # The match as the engine reads it, so a condition approved as one string
+            # ("server") is shown as the list the engine compares with, not left out.
+            from server.network.nac_controller import evaluable_match
+            d["match"] = evaluable_match(st.get("match") or {})
         else:
             d["enforcement"] = prof["enforcement"] if prof else None
             permits = prof["permits"] if prof else []
@@ -1725,16 +1756,24 @@ async def unquarantine_bastion(pool, eid: int, server: str, token_id, stepup_cod
 _bastion_latest = {"version": None, "at": 0.0}
 
 
-async def setup_bastion(pool, eid: int, name: str) -> dict:
+async def setup_bastion(pool, eid: int, name: str, *, window: Optional[dict] = None) -> dict:
     """Mint a short-lived single-use PAIRING TOKEN for a new bastion. The user installs the
     cseries-bastion binary and runs `cseries-bastion pair <token>`, which generates its own keys
-    and redeems the token for its cert + routing."""
-    from server.network import bastion_enroll
+    and redeems the token for its cert + routing.
+
+    A standalone Host also answers how to pair over TCP, and its pair command is that one
+    wherever the bastion cannot reach the enroll socket (bastion_enroll.add_tcp_pairing), so the
+    Network app and the manage_bastion tool show the same command. `window` is the pairing
+    port's opening, when the route opened one."""
+    from server.network import bastion_enroll, local_bastion
     name = (name or "").strip() or "bastion"
     if len(name) > 80:
         raise CommitError(400, "name too long")
     handle = await bastion_enroll.resolve_self_handle(eid)
-    return await bastion_enroll.mint_pairing_token(pool, entity_id=eid, handle=handle, name=name)
+    minted = await bastion_enroll.mint_pairing_token(pool, entity_id=eid, handle=handle, name=name)
+    if local_bastion.standalone():
+        await bastion_enroll.add_tcp_pairing(pool, minted, window)
+    return minted
 
 
 async def revoke_bastion(pool, eid: int, token_id) -> dict:

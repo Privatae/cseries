@@ -45,11 +45,16 @@ async def run():
     # internal loopback -> EXEMPT
     if await _nac_gate(internal, nac=_FakeNac(False)) is not None:
         fails.append("internal loopback caller must be EXEMPT")
-    # no controller bound (default-preserve) -> PERMIT
-    if await _nac_gate(device, nac=None) is not None:
-        # get_nac_controller() may return a real bound controller in-pod; with no policy
-        # authored it default-preserves (permit). Either way the gate must not deny here.
+    # no policy authored (default-preserve) -> PERMIT: a real engine with no pool and
+    # no rules admits, which is the engine's own default.
+    from server.network.nac_controller import NACController
+    if await _nac_gate(device, nac=NACController(pool=None, entity_id=None)) is not None:
         fails.append("device token must be permitted when no policy is authored (default-preserve)")
+    # no engine loaded at all -> REFUSE a governed device. In this process the server's
+    # lifespan never ran, so get_nac_controller() answers None, as it does in the server
+    # when the engine's import or construction failed at start.
+    if await _nac_gate(device, nac=None) is None:
+        fails.append("a governed device must be refused when no network engine is loaded")
     return fails
 
 
@@ -61,7 +66,7 @@ def main():
             print("  -", f)
         return 1
     print("MCP-NAC-GATE INVARIANTS OK — quarantined device denied, healthy permitted, "
-          "bearer-only + internal exempt, default-preserve permits")
+          "bearer-only + internal exempt, default-preserve permits, no engine refuses")
     return 0
 
 

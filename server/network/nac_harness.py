@@ -374,6 +374,14 @@ def _read_git_credential():
     return None
 
 
+def _forge_identity():
+    """(user, token, host) of the Host's own coding forge: the git server
+    connected in Settings, else the file above or the install's GITEA_*
+    (server/git_server.forge_identity)."""
+    from server.git_server import forge_identity
+    return forge_identity()
+
+
 def _egress_proxy() -> str:
     import os
     return "http://127.0.0.1:" + (os.environ.get("NAC_EGRESS_PORT") or "13128")
@@ -387,7 +395,7 @@ HARNESS_TOKEN_REAP_SECONDS = 2 * 3600
 async def gitea_per_run(repo: str, name: str):
     """Mint a per-run scoped token; return (repo_url_with_token, token_id) or (None, None). The
     caller revokes token_id after the run; gitea_reap_orphans() is the backstop if it doesn't."""
-    cred = _read_git_credential()
+    cred = _forge_identity()
     if not cred:
         return None, None
     user, etoken, host = cred
@@ -413,7 +421,7 @@ async def gitea_per_run(repo: str, name: str):
 
 async def gitea_revoke(token_id) -> None:
     """Revoke a per-run token after the run (best-effort)."""
-    cred = _read_git_credential()
+    cred = _forge_identity()
     if not cred or token_id is None:
         return
     user, etoken, host = cred
@@ -435,7 +443,7 @@ async def gitea_reap_orphans() -> int:
     Per-run token names carry their mint epoch (`<name>.t<epoch>`); revoke any older than
     HARNESS_TOKEN_REAP_SECONDS — well beyond any real run, so a live run is never hit. Runs on
     the host (which holds the gitea credential). Returns the count revoked."""
-    cred = _read_git_credential()
+    cred = _forge_identity()
     if not cred:
         return 0
     user, etoken, host = cred
@@ -1157,7 +1165,7 @@ async def run_harness_op(pool, eid: int, server: str, harness_id: str, *,
     # on (the git credential's host).
     forge, name = "", (repo or "").strip().strip("/")
     if name:
-        cred = _read_git_credential()
+        cred = _forge_identity()
         forge = (cred[2] if cred else "").strip().strip("/").lower()
         if spec["mode"] == "git" and not forge:
             # The mint below would fail with 502; say so before the person is asked.

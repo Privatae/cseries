@@ -736,24 +736,25 @@ fi
 require_body_contains /api/applications '"id":"designs"' "designs app installed (image-baked bundle)" || failed=1
 
 # ── The Designs shelf (designs 1.0.0) ─────────────────────────────────────
-# Smoke has no bridge, so the shelf itself is unreachable here — the screen
-# must still answer 200 with the library error named and this host's own
-# desktops listed (an unreachable library never blanks what the Host made),
-# and a Go back that names its own desktop — here a made-up wallpaper key —
-# is refused, not written: Go back restores only a wear the server recorded
-# when a try began, and nothing was tried here (409).
+# Smoke runs a standalone Host: it has no library to reach, so the screen
+# answers 200 with library_error present and null (saying the library "can't
+# be reached" would be untrue there; the key itself is what a member Host's
+# screen reads its error from), the built-in designs on the house shelf, and this
+# host's own desktops listed. A Go back that names its own desktop — here a
+# made-up wallpaper key — is refused, not written: Go back restores only a
+# wear the server recorded when a try began, and nothing was tried here (409).
 dz_token="$(dcurl -sk --max-time 8 -X POST "$BASE/api/applications/designs/launch" \
     | python3 -c 'import json,sys; print(json.load(sys.stdin).get("token",""))' 2>/dev/null || echo '')"
 if [[ -n "$dz_token" ]]; then
     dz_list="$(dcurl -sk --max-time 8 -H "X-Application-Token: $dz_token" "$BASE/api/designs" \
-        | python3 -c 'import json,sys; d=json.load(sys.stdin); print("ok" if isinstance(d.get("local"),list) and d.get("library_error") and "wearing" in d else "bad")' 2>/dev/null || echo err)"
+        | python3 -c 'import json,sys; d=json.load(sys.stdin); house=[x for x in d.get("designs") or [] if x.get("builtin") and x.get("shelf")=="house"]; print("ok" if isinstance(d.get("local"),list) and "library_error" in d and d["library_error"] is None and house and "wearing" in d else "bad library_error=%r house=%d" % (d.get("library_error","(no key)"), len(house)))' 2>/dev/null || echo err)"
     dz_bad="$(dcurl -sk -o /dev/null -w '%{http_code}' --max-time 8 -X POST -H "X-Application-Token: $dz_token" \
         -H 'Content-Type: application/json' -d '{"previous":{"wallpaper":"url(x)"}}' \
         "$BASE/api/designs/restore" || echo 000)"
     if [[ "$dz_list" == "ok" && "$dz_bad" == "409" ]]; then
-        green "OK    designs shelf — lists local desktops with the library unreachable; a Go back naming its own desktop is refused (409)"
+        green "OK    designs shelf — a standalone Host lists the built-in designs and its own desktops with no library error; a Go back naming its own desktop is refused (409)"
     else
-        red "FAIL  designs shelf: list=$dz_list (want ok: local list + library_error + wearing) restore-bad=$dz_bad (want 409: no recorded try)"
+        red "FAIL  designs shelf: list=$dz_list (want ok: local list + built-in house designs + wearing, no library_error) restore-bad=$dz_bad (want 409: no recorded try)"
         failed=1
     fi
 else
@@ -1123,10 +1124,15 @@ fi
 # and surfaces the loud UNAVAILABLE wording. || true guard per this script's
 # own convention: a failing assertion must print a red FAIL, never kill the
 # run silently under set -e (which it once did).
+# The turn is read through /app/scripts/turn_source.py: session.py and the
+# modules split out of it.
 recall_gate="$(docker exec "$CNAME" python3 -c "
+import sys
+sys.path.insert(0, '/app/scripts')
+from turn_source import turn_source
 me = open('/app/brain/mastercode/memory_engine.py').read()
 mr = open('/app/brain/mastercode/memory_retrieval.py').read()
-se = open('/app/brain/mastercode/runtime/session.py').read()
+se = turn_source('/app')
 assert 'class RecallUnavailable' in me, 'RecallUnavailable class missing from memory_engine'
 assert mr.count('raise RecallUnavailable') >= 2, 'the recall engine no longer raises RecallUnavailable on infra-down'
 assert 'except RecallUnavailable' in se, 'host recall no longer catches RecallUnavailable'
@@ -1154,11 +1160,15 @@ fi
 # scoping is read from the schemas themselves: `operate` and `dispatch`
 # REQUIRE `intent` (the sentence the user sees before the action runs and
 # can stop), the session refuses an operate without one, and no read verb
-# (`read`, `recall`, `agent_status`) takes an intent at all.
+# (`read`, `recall`, `agent_status`) takes an intent at all. The turn is read
+# through /app/scripts/turn_source.py: session.py and the modules split out of
+# it (_orchestration_verbs is in orchestration_tools.py).
 narration_gate="$(docker exec "$CNAME" python3 -c "
-import ast, os
+import ast, os, sys
+sys.path.insert(0, '/app/scripts')
+from turn_source import turn_source
 R = '/app/brain/mastercode/runtime/'
-se = open(R + 'session.py').read()
+se = turn_source('/app')
 td = open(R + 'tool_doors.py').read()
 pb = open(R + 'prompt_builder.py').read()
 assert not os.path.exists(R + 'host_sdk_engine.py'), 'the retired Claude-SDK host engine is back in the image'
@@ -1184,7 +1194,7 @@ for v in ('operate', 'dispatch'):
 for v in ('read', 'recall', 'agent_status'):
     assert 'intent' not in (verbs[v].get('properties') or {}) and 'intent' not in (verbs[v].get('required') or []), f'read verb {v} asks for an intent: reads are no longer silent'
 assert 'operate requires \`intent\`' in se, 'the session no longer refuses an operate that states no intent'
-for name, src in (('session.py', se), ('prompt_builder.py', pb), ('tool_doors.py', td)):
+for name, src in (('the turn', se), ('prompt_builder.py', pb), ('tool_doors.py', td)):
     assert 'ALWAYS state what' not in src, f'the over-broad ALWAYS-state-first instruction came back ({name})'
 assert '_chat_route' in se, 'the single chat-route resolver is gone (N1 regression: the route must be resolved once, above the prompt render)'
 assert 'try_run_host_sdk_turn' not in se, 'the Claude-SDK lane was re-welded into the session turn (orchestrator v2 cut it)'
@@ -3265,8 +3275,15 @@ docker exec "$CNAME" grep -q "max-old-space-size" /app/brain/mastercode/runtime/
 docker exec "$CNAME" sh -c "grep -q 'def _bound_tool_result' /app/brain/mastercode/runtime/tool_result_wall.py \
     && ! grep -q 'json.dumps(result)\[:' /app/brain/mastercode/runtime/tool_result_wall.py" \
     || rat_fail="$rat_fail result-wall"
-docker exec "$CNAME" sh -c "grep -q '_bound_tool_result(tool_result, \*\*_cb.wall_kwargs(_ctx_window))' /app/brain/mastercode/runtime/session.py \
-    && ! grep -q 'json.dumps(tool_result)\[:' /app/brain/mastercode/runtime/session.py" \
+# The host loop is the turn: session.py and the modules split out of it, read
+# through /app/scripts/turn_source.py.
+docker exec "$CNAME" python3 -c "
+import sys
+sys.path.insert(0, '/app/scripts')
+from turn_source import turn_source
+s = turn_source('/app')
+sys.exit(0 if '_bound_tool_result(tool_result, **_cb.wall_kwargs(_ctx_window))' in s
+         and 'json.dumps(tool_result)[:' not in s else 1)" \
     || rat_fail="$rat_fail host-result-wall"
 docker exec "$CNAME" sh -c "grep -q '_bound_tool_result(tool_result, \*\*_cb.wall_kwargs(_agent_window))' /app/brain/mastercode/runtime/scoped_agent.py" \
     || rat_fail="$rat_fail agent-result-wall"
@@ -3403,7 +3420,7 @@ fi
 # The /mcp device->host gate refuses a quarantined bastion before dispatch, permits a
 # healthy one, and exempts bearer-only + internal callers (sovereign full access).
 if docker exec "$CNAME" python3 /app/scripts/check_mcp_nac_gate.py; then
-    green "OK    MCP NAC gate — quarantined device denied, healthy permitted, bearer-only/internal exempt"
+    green "OK    MCP NAC gate — quarantined device denied, healthy permitted, bearer-only/internal exempt, no engine refuses"
 else
     red "FAIL  MCP NAC gate — gate doesn't deny quarantine, or doesn't exempt bearer-only/internal"
     failed=1

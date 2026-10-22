@@ -62,14 +62,16 @@ def stand_ins():
     from server.middleware import owner_session
     from server.network import bastion_enroll, host_ca, local_bastion, nac_commit
 
-    async def mint(pool, eid, name):
-        # The real mint's wording, with a fixed token: only the pool is stood in.
+    async def mint(pool, eid, name, *, window=None):
+        # The real mint's wording and the real TCP step, with a fixed token:
+        # only the pool is stood in.
         class Pool:
             async def execute(self, sql, *args):
                 return "INSERT 0 1"
         out = await bastion_enroll.mint_pairing_token(Pool(), entity_id=9003, handle="home", name="bastion")
         out["run"]["pair"] = out["run"]["pair"].replace(out["token"], TOKEN)
         out["token"] = TOKEN
+        await bastion_enroll.add_tcp_pairing(pool, out, window)
         return out
 
     async def nothing(pool):

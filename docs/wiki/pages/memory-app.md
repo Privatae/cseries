@@ -25,7 +25,7 @@ Six views:
 - **Slots**: your preferences and notes about people, grouped by topic and place. Each slot holds one live entry. A newer entry replaces the older one, except that a preference your Host inferred never replaces a rule you taught, and the slot keeps what it replaced.
 - **Corrections**: every entry your Host changed its mind about, showing what it held, when that stopped being true, and what replaced it.
 - **Health**: how memory is forming. Your Host writes what it learns as it answers, so there is no background pass to wait on.
-- **Data**: what your Host keeps in its own database. When you tell it something with a shape of its own, such as the tools in your kitchen or a habit you are building, it can keep that in tables it designs for you. Each table, view and function says what it is for. You can read any table's rows here, and nothing you look at can change them.
+- **Data**: what your Host keeps in its own database: the data it builds for a task, such as a meal plan or a tracker, in tables it designs for you. What you tell it about yourself stays in its memory. Each table, view and function says what it is for. You can read any table's rows here, and nothing you look at can change them.
 
 ## Can I undo a change my Host made to its own tables?
 

@@ -15,6 +15,7 @@ the rest stays gone. No DB, no network.
 import os
 import sys
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, os.environ.get("CSERIES_BRAIN", str(REPO / "brain")))
@@ -36,7 +37,7 @@ for gone in ("pick_tool_groups", "render_loaded_tools", "render_skill_context",
              "render_self_inventory", "desktop_write_seen", "GROUP_KEYWORDS",
              "SURFACE_DEFAULT_GROUPS", "ALWAYS_TOOLS", "SKILL_INJECT_TOTAL"):
     check(f"prefire_tools.{gone} is gone", not hasattr(PT, gone))
-_sess = (REPO / "brain/mastercode/runtime/session.py").read_text()
+_sess = turn_source(REPO)
 for gone in ("pick_tool_groups", "render_skill_context", "render_self_inventory",
              "_tool_loadable", "prefetch_block", "func_name == \"orient\"",
              "_build_host_orchestration_tools(search=True)", "build_host_rules(self.pool, sess.entity[\"id\"], search="):

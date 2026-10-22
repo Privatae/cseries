@@ -366,8 +366,13 @@ else
         elif [ "$_found" = "$ENTITY_DB_OLD" ]; then
             # Connect to `postgres`, not to the database being renamed —
             # Postgres refuses to rename the database the session is in.
+            # The names go to psql as identifier variables (:"old"), never
+            # spliced into the SQL text; psql reads them only from a script.
             if psql -h "$PG_BOOTSTRAP_SOCKET" -U entity -d postgres -v ON_ERROR_STOP=1 \
-                   -c "ALTER DATABASE $ENTITY_DB_OLD RENAME TO $ENTITY_DB_NEW" >/dev/null 2>&1; then
+                   -v old="$ENTITY_DB_OLD" -v new="$ENTITY_DB_NEW" >/dev/null 2>&1 <<'SQL'
+ALTER DATABASE :"old" RENAME TO :"new";
+SQL
+            then
                 : > "$DB_RENAME_STAMP"
                 echo "Entity database renamed $ENTITY_DB_OLD -> $ENTITY_DB_NEW"
             else
@@ -562,9 +567,10 @@ write_container_stats() {
         sleep 1
         _n=$((_n + 1))
     done
-    _have="$(psql -h "$PG_SOCKET" -U entity -d postgres -Atqc \
-        "SELECT string_agg(datname, ',' ORDER BY datname) FROM pg_database \
-         WHERE datname IN ('$ENTITY_DB_NEW','$ENTITY_DB_OLD')" 2>/dev/null)"
+    # The two names go to psql as variables, never spliced into the SQL.
+    _have="$(printf '%s\n' "SELECT string_agg(datname, ',' ORDER BY datname) FROM pg_database WHERE datname IN (:'new', :'old');" \
+        | psql -h "$PG_SOCKET" -U entity -d postgres -Atq \
+            -v new="$ENTITY_DB_NEW" -v old="$ENTITY_DB_OLD" 2>/dev/null)"
     # Only the unambiguous case. An empty read means the query failed, not that
     # the databases are gone, and must never delete the stamp.
     if [ "$_have" = "$ENTITY_DB_OLD" ]; then

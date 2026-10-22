@@ -33,6 +33,7 @@ import sys
 import tempfile
 import types
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 _ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 sys.path.insert(0, str(_ROOT / "brain"))
@@ -428,7 +429,7 @@ check("the phase build asks for the verdict after the build and before its check
 import ast as _ast  # noqa: E402
 import json as _json2  # noqa: E402
 
-_sess_src = (_ROOT / "brain/mastercode/runtime/session.py").read_text()
+_sess_src = turn_source(_ROOT)
 _fn = next(n for n in _ast.parse(_sess_src).body
            if isinstance(n, _ast.FunctionDef) and n.name == "_desktop_render_facts")
 _ns: dict = {}

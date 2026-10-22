@@ -28,6 +28,8 @@ import ast
 import os
 import sys
 
+from turn_source import TURN_FILES  # session.py and the modules split out of it
+
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
 sys.path.insert(0, os.path.join(_ROOT, "brain"))
@@ -124,7 +126,7 @@ def _referenced_symbols(rel: str) -> set:
     return found
 
 
-for rel in ("brain/mastercode/runtime/session.py",
+for rel in (*("brain/mastercode/runtime/" + f for f in TURN_FILES),
             "brain/mastercode/runtime/scoped_agent.py",
             "brain/mastercode/runtime/direct_ops.py",
             "brain/mastercode/runtime/tools.py"):

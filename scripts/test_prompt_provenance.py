@@ -37,8 +37,10 @@ import uuid
 sys.path.insert(0, "/app/brain")
 sys.path.insert(0, "/app")
 
+from turn_source import turn_source  # noqa: E402  session.py and the modules split out of it
+
 DSN = "postgresql://entity@/hostmem?host=/var/run/postgresql"
-SESSION_PY = "/app/brain/mastercode/runtime/session.py"
+APP = "/app"
 PERSONALITY_PKG = "/app/brain/mastercode/personality"
 
 fails: list[str] = []
@@ -83,7 +85,7 @@ async def behavioral_gate() -> None:
 
 
 def source_ratchets() -> None:
-    src = open(SESSION_PY).read()
+    src = turn_source(APP)
 
     # 2. the constitution append is followed by provenance within the same block.
     m2 = re.search(r"_sys_content \+= \"\\n\\n\" \+ _const_block(.{0,400})", src, re.S)

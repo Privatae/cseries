@@ -530,8 +530,11 @@ async def run(dsn):
         searched = handed(m, "embedding endpoint", "quokka-f1")
         check("F the placement's search read the forward and its author (the check below is not vacuous)",
               bool(searched) and any("Deploy bot" in t for t in searched), [t[:300] for t in searched])
+        # Every text embedded since the forward arrived, not only those naming
+        # it: a label embedded on its own would carry the author's keys too.
+        embedded = handed(m, "embedding endpoint", "")
         check("F planted key — the placement's search of a forward is never handed its author's name or id",
-              bool(searched) and all(keyless(t) for t in searched), [t[:300] for t in searched])
+              bool(searched) and all(keyless(t) for t in embedded), [t[:300] for t in embedded])
         started = json.dumps(INNER_CALLS[n0:], default=str)
         check("F the forward starts its turn, with its author (the check below is not vacuous)",
               getattr(r, "state", None) == "started" and "quokka-f1" in started and "Deploy bot" in started,

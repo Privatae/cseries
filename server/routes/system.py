@@ -161,6 +161,7 @@ async def health_deep():
           "schema":  "ok (n migrations applied)" | "fail: ...",
           "runtime": "ok" | "fail: EntityRuntime is None",
           "bridge":  "ok" | "warn: not connected" | "not used (standalone)",
+          "nac":     "ok" | "warn: no network engine loaded, ...",
         },
         "uptime_s": int,
       }
@@ -316,6 +317,18 @@ async def health_deep():
             )
     except Exception as exc:
         checks["identity"] = f"warn: {type(exc).__name__}: {exc}"
+
+    # 6. Network gate engine. With none built at start, the MCP gate refuses every
+    # machine with a device fingerprint (routes/mcp.py _nac_gate), so the state is
+    # reported here. Warn-only: failing readiness would take the whole Host off the
+    # air, which is worse than its paired machines being refused.
+    try:
+        from server import main as _server_main
+        checks["nac"] = ("ok" if _server_main.get_nac_controller() is not None else
+                         "warn: no network engine loaded, so every machine with a device "
+                         "fingerprint is refused")
+    except Exception as exc:
+        checks["nac"] = f"warn: {type(exc).__name__}: {exc}"
 
     body = {
         "status": "degraded" if failed else "ready",

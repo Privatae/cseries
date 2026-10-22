@@ -390,7 +390,23 @@ system: true
 # sign in and whether you have, with Sign in / Sign in again / Sign out. Sign
 # in opens the authorization server through a link with rel=noopener (the page
 # it opens cannot reach this window) and the card reads the outcome back.
-version: "1.20.0"
+# 1.20.1 (2026-10-21): a bastion serving your embeddings offers "Use managed
+# instead" only when the managed embedder's catalog carries the current model;
+# the switch refuses any other, and a Host with no platform has no catalog, so
+# the button only ever ended in an error there. App-only change.
+# 1.20.2 (2026-10-22): the Ingress lock says why in the engine's words. A rule
+#   with no signature now fails its check ("unsigned"), and while the Host
+#   cannot read its signing key every signed rule fails as "key_unreadable";
+#   the banner then says the Host lets machines back in on its own once the key
+#   reads, instead of telling the person to revoke rules that are intact. The
+#   "profile missing" reason is gone: no unsigned rule is read from its profile.
+#   A rule whose match the engine cannot read fails its check too ("match"),
+#   and a machine the engine could not decide reads refused, as the gate now
+#   refuses it, instead of admitted. With no engine running at all the gate
+#   refuses every machine with a device fingerprint, so Ingress shows a banner
+#   saying the rules did not load and each such Posture card reads refused,
+#   instead of no banner and "not checked".
+version: "1.20.2"
 # Network is NOT a conversational surface — the user operates it directly and
 # talks to the host in Circles/the Workbench. So this is the code-true source for
 # the ENVIRONMENT CATALOG (topology block + describe_app), NOT a surface_role

@@ -51,6 +51,7 @@
         agentsUnrequested: 0,  // active + unrequested count — the alert signal (header chip + rail badge)
         agentDelegations: [],  // sanction tags
         embedCurrent: null,    // /api/embedding/current → {provider, model, dim, embedding_base_url}
+        embedManaged: [],      // /api/embedding/catalog → the model ids the managed embedder serves; none without a platform
         domain: null,        // /api/domain-policy
         domainError: null,   // why that read failed, said over the rules list
         // ── NAC (host-local network access control: approve-only) ──
@@ -1036,6 +1037,10 @@
         // embeddings" badge + the per-bastion serve/use-managed action. Best-effort.
         try { state.embedCurrent = await fetchJSON('/api/embedding/current'); }
         catch (e) { state.embedCurrent = null; }
+        try {
+            const cat = await fetchJSON('/api/embedding/catalog');
+            state.embedManaged = ((cat && cat.embedding_models) || []).map(m => m.id);
+        } catch (e) { state.embedManaged = []; }
         // Pairing approvals ask for the step-up code from THIS lens, and the
         // enrolled flag is otherwise only learned by the NAC lens. One cheap read
         // of the grants list carries it; without this a first-time Approve here
@@ -1350,6 +1355,12 @@
     // persists the bastion IDENTITY (cur.bastion = hostname) and resolves the
     // endpoint live from its heartbeat — so match on identity, exact. The URL
     // compare survives only for pure-BYO configs from before identities existed.
+    // The managed embedder takes over only a model its catalog carries (the
+    // switch refuses any other), and a Host with no platform has no catalog.
+    function managedTakesCurrentModel() {
+        const m = state.embedCurrent && state.embedCurrent.model;
+        return !!m && state.embedManaged.indexOf(m) !== -1;
+    }
     function bastionIsServingEmbeds(g) {
         const cur = state.embedCurrent;
         if (!cur || cur.provider !== 'local') return false;
@@ -1877,7 +1888,9 @@
         if (isOutdated(g) && !state.updateAsked.has(String(g.id))) actions.push({ label: 'Update to ' + state.latestVersion, cls: 'primary', onClick: () => updateBastion(g) });
         // Embed-lane one-click actions on an ONLINE, embed-capable bastion.
         if (g.online && canEmbed) {
-            if (serving) actions.push({ label: 'Use managed instead', onClick: () => useManagedEmbeds() });
+            if (serving) {
+                if (managedTakesCurrentModel()) actions.push({ label: 'Use managed instead', onClick: () => useManagedEmbeds() });
+            }
             else actions.push({ label: 'Serve my embeddings here', cls: 'primary', onClick: () => serveEmbedsHere(g) });
         }
         actions.push({ label: 'Revoke bastion', cls: 'danger', onClick: () => revokeBastion(g) });
@@ -2219,10 +2232,16 @@
     // While any approved rule fails the engine's integrity check, the engine refuses every
     // machine before it reads a single rule (nac_controller.decide). /nac/policy reports that
     // from the running engine: engine.tamper, and each approved row's own verdict as
-    // integrity — 'failed' only for the rule the engine rejected. 'unchecked' (nothing could
-    // check it, e.g. the key was unreadable) is not a failure and is not marked as one.
+    // integrity — 'failed' only for the rule the engine rejected. 'unchecked' (no engine was
+    // there to check it) is not a failure and is not marked as one.
+    // With no engine running at all (running false: it did not load at start) the MCP gate
+    // refuses every machine with a device fingerprint too (server/routes/mcp.py _nac_gate),
+    // so the lane is locked then as well, with its own banner (ingressUnloaded).
+    function ingressUnloaded() {
+        return !!(state.nac.engine && state.nac.engine.running === false);
+    }
     function ingressLocked() {
-        return !!(state.nac.engine && state.nac.engine.tamper === true);
+        return !!(state.nac.engine && state.nac.engine.tamper === true) || ingressUnloaded();
     }
     function policyFailed(r) {
         return !!r && r.status !== 'draft' && r.integrity === 'failed';
@@ -2230,10 +2249,23 @@
     // Why Revoke asks for the code when the server says only the unreadable key makes it ask
     // (revoke_code_reason 'key_unreadable'): not a claim that the rule keeps anything out.
     const KEY_UNREADABLE_NOTE = "your Host can't read its signing key right now, so removing any signed rule asks for your code";
+    // integrity_reason is the engine's (nac_controller FAIL_*): 'signature', 'unsigned',
+    // 'match' (its conditions are not in the form the engine reads), or 'key_unreadable' —
+    // the Host could not read its signing key, which says nothing about the rule itself and
+    // is not fixed by revoking it.
     function policyFailedWhy(r) {
-        return r && r.integrity_reason === 'profile'
-            ? 'the profile it points at is gone'
-            : 'its signature does not verify';
+        const why = r && r.integrity_reason;
+        if (why === 'unsigned') return 'it carries no signature';
+        if (why === 'match') return "your Host can't read its conditions";
+        if (why === 'key_unreadable') return "your Host can't read its signing key to check it";
+        return 'its signature does not verify';
+    }
+    function policyFailedPill(r) {
+        const why = r && r.integrity_reason;
+        if (why === 'unsigned') return 'unsigned';
+        if (why === 'match') return 'unreadable match';
+        if (why === 'key_unreadable') return 'cannot check';
+        return 'signature fails';
     }
     function admitsSummary(r) {
         if (policyFailed(r)) return 'admits nothing: ' + policyFailedWhy(r);
@@ -2253,25 +2285,47 @@
     // the name of an approved rule until that rule is gone.
     function ingressLockBanner() {
         if (!ingressLocked()) return '';
-        const failed = (state.nac.policy || []).filter(policyFailed);
         // "with a device fingerprint": _nac_gate never asks the engine about a token without
         // one, so the lock does not reach it (its Posture card says the rules skip it).
         const lead = '<strong>Every paired machine with a device fingerprint is locked out.</strong> ';
+        if (ingressUnloaded()) {
+            // No rule is at fault and none can be checked, so nothing below is marked failed.
+            return `<div class="status-banner error nac-unloaded-banner" role="alert">${lead}`
+                + 'Your Host\'s network rules did not load when it started, so it cannot check '
+                + 'them, and it refuses those machines rather than let one in unchecked. It tries '
+                + 'again each time it starts.</div>';
+        }
+        const failed = (state.nac.policy || []).filter(policyFailed);
         if (!failed.length) {
             return `<div class="status-banner error nac-lock-banner" role="alert">${lead}`
                 + 'An approved rule failed your Host\'s integrity check, so your Host is refusing '
                 + 'those machines. The rule is not in this list any more; reload to check again.</div>';
         }
-        const one = failed.length === 1;
-        const allSig = failed.every(r => r.integrity_reason !== 'profile');
-        const allProf = failed.every(r => r.integrity_reason === 'profile');
-        const names = failed.map(r => '“' + esc(r.name || ('rule ' + r.id)) + '”').join(', ');
+        // A key the Host cannot read fails every signed rule at once, and revoking them is
+        // not the fix: the engine retries the key on its own and lets machines back in.
+        const keyNote = failed.some(r => r.integrity_reason === 'key_unreadable')
+            ? 'Your Host can\'t read its signing key right now, so it can\'t check that your '
+              + 'approved rules are the ones you signed, and it refuses those machines until it '
+              + 'can. It keeps trying and lets them back in on its own once the key reads. '
+            : '';
+        const broken = failed.filter(r => r.integrity_reason !== 'key_unreadable');
+        if (!broken.length) {
+            return `<div class="status-banner error nac-lock-banner" role="alert">${lead}${keyNote}</div>`;
+        }
+        const one = broken.length === 1;
+        const allSig = broken.every(r => r.integrity_reason === 'signature' || !r.integrity_reason);
+        const allUnsigned = broken.every(r => r.integrity_reason === 'unsigned');
+        const allMatch = broken.every(r => r.integrity_reason === 'match');
+        const names = broken.map(r => '“' + esc(r.name || ('rule ' + r.id)) + '”').join(', ');
         let what;
-        if (one) what = `The approved rule ${names} ` + (allProf ? 'points at a profile that no longer exists' : 'failed its signature check');
-        else what = `The approved rules ${names} ` + (allSig ? 'failed their signature check' : (allProf ? 'point at profiles that no longer exist' : 'failed your Host\'s integrity check'));
-        const code = failed.every(r => r.revoke_needs_code === true)
+        if (one) what = `The approved rule ${names} ` + (allUnsigned ? 'carries no signature'
+            : (allMatch ? 'has conditions your Host can\'t read, so it can\'t tell which machines it covers'
+                : 'failed its signature check'));
+        else what = `The approved rules ${names} ` + (allSig ? 'failed their signature check' : (allUnsigned ? 'carry no signature'
+            : (allMatch ? 'have conditions your Host can\'t read' : 'failed your Host\'s integrity check')));
+        const code = broken.every(r => r.revoke_needs_code === true)
             ? (one ? ' (it asks for your code)' : ' (each asks for your code)') : '';
-        return `<div class="status-banner error nac-lock-banner" role="alert">${lead}`
+        return `<div class="status-banner error nac-lock-banner" role="alert">${lead}${keyNote}`
             + `${what}, so your Host refuses those machines until ${one ? 'it is' : 'they are'} removed. `
             + `Revoke ${one ? 'it' : 'them'} below${code}. If you still want ${one ? 'the rule' : 'one of them'}, `
             + 'then ask your agent to draft it again and approve the new draft.</div>';
@@ -2520,9 +2574,13 @@
             return { profile: 'none (no device fingerprint)',
                      reach: 'admitted; your Ingress rules skip it', refused: '' };
         }
+        if (d.unloaded) {
+            return { profile: 'rules not loaded', reach: 'refused',
+                     refused: 'Your Host refuses it: its network rules did not load when your Host started, so it cannot check them, and it refuses every machine with a device fingerprint rather than let one in unchecked. It tries again each time it starts.' };
+        }
         if (d.error) {
-            return { profile: 'could not be applied', reach: 'admitted',
-                     refused: 'Your Host could not apply its Ingress rules to this machine (an approved rule is malformed), and it lets a machine in when that happens. Check the rules under Ingress.' };
+            return { profile: 'could not be applied', reach: 'refused',
+                     refused: 'Your Host refuses it: its Ingress rules could not be applied to this machine, and your Host refuses a machine when that happens rather than let it in unchecked. Check the rules under Ingress.' };
         }
         const profile = d.locked ? 'integrity lock'
             : (d.profile || 'none (admitted by default)');
@@ -2658,7 +2716,7 @@
             // out), not as the terms it claims: those terms are the part that did not verify.
             const cardCls = draft ? 'nac-draft-row' : (failed ? 'nac-failed-row' : (allow ? 'live' : 'down'));
             const enfPill = failed
-                ? `<span class="cseries-pill deny">${r.integrity_reason === 'profile' ? 'profile missing' : 'signature fails'}</span>`
+                ? `<span class="cseries-pill deny">${policyFailedPill(r)}</span>`
                 : `<span class="cseries-pill ${allow ? 'allow' : 'deny'}">${esc(enf)}</span>`;
             const statePill = draft ? '<span class="cseries-pill warn">draft — awaiting you</span>' : '<span class="cseries-pill">approved</span>';
             const matchStr = nacMatchSummary(r.match);

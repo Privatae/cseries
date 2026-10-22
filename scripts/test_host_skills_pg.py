@@ -51,6 +51,7 @@ import os
 import pathlib
 import subprocess
 import sys
+from turn_source import turn_source  # session.py and the modules split out of it
 
 ROOT = pathlib.Path(os.environ.get("APP_ROOT") or pathlib.Path(__file__).resolve().parents[1])
 sys.path.insert(0, str(ROOT / "brain"))
@@ -469,7 +470,7 @@ async def store_checks(dsn):
                   in host_skills.type_skill_line("T", "x", error=RuntimeError("db gone")))
         finally:
             tk.create_ticket_service = real_create
-        sess_src = (ROOT / "brain/mastercode/runtime/session.py").read_text()
+        sess_src = turn_source(ROOT)
         check("T session.py loads a type's skill through host_skills.load_type_skill, awaited, with the pool",
               "from mastercode.runtime.host_skills import load_type_skill as _tt_load_skill" in sess_src
               and "await _tt_load_skill(self.pool, sess.entity_id, _type_skill_name)" in sess_src)

@@ -103,6 +103,15 @@ U env LIMA_HOME=/home/tester/.local/share/cseries/lima "$limactl" --tty=false sh
 sleep 5
 if B sh -c 'exec 3<>/dev/tcp/127.0.0.1/9999' 2>/dev/null; then echo "FAIL: guest port 9999 reached the machine"; exit 1; fi
 echo "a guest port other than 8800, 8810, 8811 is not forwarded"
+# A program on the machine reaching the Host through the forward, with no
+# owner session: the Host must see a peer that is not its own loopback and
+# send it to sign in (server/middleware/localhost_only.py). Were the forward
+# to arrive as 127.0.0.1, every program on the machine would have the owner's API.
+status=$(B curl -s -w ' %{http_code}' http://127.0.0.1:8800/api/system/status)
+case "$status" in
+    *'sign in first'*' 403') echo "an API call from the machine with no session is sent to sign in" ;;
+    *) echo "FAIL: an API call from the machine with no session got: $status"; exit 1 ;;
+esac
 
 say "the local runtime on the guest's own podman and systemd"
 # The containers' slice and an app's kept data out and back, as root in the

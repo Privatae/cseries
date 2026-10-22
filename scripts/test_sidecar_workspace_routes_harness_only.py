@@ -1056,9 +1056,26 @@ def host_git_checks() -> None:
         check("_worktree_diff_host: the planted diff.external did not run",
               not (marks / "ext").exists())
         check("_worktree_diff_host: the planted textconv did not run", not (marks / "tc").exists())
-        check("_worktree_diff_host: the diff is still real (the edit is in it)",
-              "+changed by the run" in out, out[:160])
-        base, env = pg._hardened_cmd(wt, "host", "example.invalid")
+        # A .git/config holding a key the kernel never writes is
+        # refused before git runs (project_git.check_repo); the -c set below
+        # stays the second wall for git run past that check.
+        check("_worktree_diff_host: a planted config is refused, no diff is read", out == "", out[:160])
+        clean = _host_worktree(td, "clean")
+        (clean / "src" / "a.txt").write_text("changed by the run\n")
+        real = rv._worktree_diff_host(clean)
+        check("_worktree_diff_host: on the kernel's own worktree the diff is real (the edit is in it)",
+              "+changed by the run" in real, real[:160])
+        try:
+            pg._hardened_cmd(wt, "host", "example.invalid")
+            why = ""
+        except OSError as exc:
+            why = str(exc)
+        check("project_git._hardened_cmd refuses the planted tree, naming the key",
+              "diff.external" in why, why)
+        base = ["git", *pg.HARDENED_GIT_CONFIG, "-C", str(wt)]
+        env = {**os.environ, "GIT_TERMINAL_PROMPT": "0",
+               "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"}
+        subprocess.run([*base, "add", "-A", "--", "src"], env=env, capture_output=True)
         flags = tuple(getattr(pg, "HARDENED_DIFF_FLAGS", ()))
         r = subprocess.run([*base, "diff", "--cached", "--quiet", *flags], env=env, capture_output=True)
         check("project_git's base + HARDENED_DIFF_FLAGS: diff --quiet runs nothing planted and "
@@ -1904,13 +1921,25 @@ def propose_commit_checks() -> None:
             # staging from reaching `git diff` (it did on the unfixed tree).
             out = _pc({"page.html": "codex"})
             out2 = _pc({".GIT/config": "codex"})
+            # The same project once its config holds only what the kernel
+            # writes: the staging runs and the diff is real (a planted
+            # config is refused, not run past).
+            for key in ("diff.external", "diff.x.textconv"):
+                subprocess.run(["git", "config", "--unset", key], cwd=proj, check=True)
+            out3 = _pc({"page.html": "codex"})
         finally:
             rv.SESSIONS_ROOT = saved
         check("propose_commit: a planted diff.external in the project repo did not run",
               not (marks / "ext").exists())
         check("propose_commit: a planted textconv did not run", not (marks / "tc").exists())
-        check("propose_commit: the staged diff is still real",
-              "+<p>picked</p>" in str(out.get("staged_diff")) and out.get("ok") is True, str(out)[:200])
+        check("propose_commit: a planted project repo is refused before any git runs, by key, "
+              "and the pick still lands",
+              not out.get("staged_diff") and "page.html" in (out.get("applied") or [])
+              and any("diff.external" in str(f.get("error")) for f in out.get("failed", [])),
+              str(out)[:200])
+        check("propose_commit: on the kernel's own repo the staged diff is real",
+              "+<p>picked</p>" in str(out3.get("staged_diff")) and out3.get("ok") is True,
+              str(out3)[:200])
         check("propose_commit: a pick of .GIT/config is refused (the any-case .git rule)",
               any(f.get("path") == ".GIT/config" and f.get("error") == "rejected_unsafe_path"
                   for f in out2.get("failed", [])) and not (proj / ".GIT").exists(),

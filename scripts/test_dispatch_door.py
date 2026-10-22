@@ -40,6 +40,7 @@ import asyncio
 import os
 import re
 import sys
+from turn_source import turn_source  # session.py and the modules split out of it
 
 FAILS = []
 
@@ -243,8 +244,12 @@ def main() -> int:
     check("an empty name never matches", sa.attached_file_refusal(task, "x", [""]) is None)
 
     # ── 7. Wiring: the door checks run before the grant wall. ──────────────
-    src = open(os.path.join(app_root, "brain/mastercode/runtime/session.py")).read()
-    branch = src[src.index('elif func_name == "dispatch":'):]
+    src = turn_source(app_root)
+    # The branch ends at the next tool's branch, so nothing after it (another
+    # branch, or a module split out of session.py) can stand in for it.
+    _b0 = src.index('elif func_name == "dispatch":')
+    _b1 = src.find("elif func_name ==", _b0 + 1)
+    branch = src[_b0:_b1 if _b1 > _b0 else len(src)]
     pos = [branch.find(k) for k in ("_attached_file_refusal(", "await _scope_name_refusal(",
                                     "await _model_name_refusal(",
                                     "_grant_precheck(_scope, _grant)")]

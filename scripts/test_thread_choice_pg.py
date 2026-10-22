@@ -42,6 +42,7 @@ import os
 import pathlib
 import subprocess
 import sys
+from turn_source import turn_source  # session.py and the modules split out of it
 
 ROOT = pathlib.Path(os.environ.get("APP_ROOT") or pathlib.Path(__file__).resolve().parents[1])
 for p in (str(ROOT / "brain"), str(ROOT), str(ROOT / "scripts")):
@@ -292,7 +293,7 @@ async def run(pool):
           and rule_taught_places(r3["md"]) == [B3s], (res3, r3["md"].get("source_context")))
     # The turn hands the move that write: the task _keep_taught runs in.
     import ast
-    tree = ast.parse((ROOT / "brain" / "mastercode" / "runtime" / "session.py").read_text())
+    tree = ast.parse(turn_source(ROOT))
     starts = [n for n in ast.walk(tree) if isinstance(n, ast.Assign)
               and any(isinstance(t, ast.Name) and t.id == "_taught_task" for t in n.targets)
               and isinstance(n.value, ast.Call) and "_keep_taught" in ast.dump(n.value)]

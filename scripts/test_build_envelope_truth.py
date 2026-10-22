@@ -33,6 +33,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 _ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 sys.path[:0] = [str(_ROOT), str(_ROOT / "brain")]
@@ -217,7 +218,7 @@ def main() -> int:
           '"files_preview_url": res.get("files_preview_url")' in adsrc
           and '"app": res.get("app")' in adsrc and '"notes": res.get("notes")' not in adsrc)
 
-    ssrc = (_ROOT / "brain/mastercode/runtime/session.py").read_text()
+    ssrc = turn_source(_ROOT)
     check("delivery turn derives run state from app_state.describe",
           "from server.applications.app_state import describe" in ssrc
           and "viewable RIGHT NOW" not in ssrc and 'record["notes"]' not in ssrc)

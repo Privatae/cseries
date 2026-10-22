@@ -31,6 +31,7 @@ import tarfile
 import types
 import zipfile
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parent.parent)
 sys.path.insert(0, str(ROOT))
@@ -291,7 +292,7 @@ check("network.md no longer says 'draft one first' after a refusal",
 check("the mgmt_run description says the same thing as the nudge",
       "only 'no signed grant' may become a draft" in reg and "draft one with propose_mgmt_grant. Returns" not in reg
       and "status 'denied' + the box's words" in reg)
-src_sess = (ROOT / "brain/mastercode/runtime/session.py").read_text()
+src_sess = turn_source(ROOT)
 check("session: a lane refusal is not shown as a capability-wall denial (ceigas_denied needs violations)",
       '"violations" in tool_result or "capabilities_required" in tool_result' in src_sess)
 from mastercode.runtime.tools import _refused_or_ok  # noqa: E402

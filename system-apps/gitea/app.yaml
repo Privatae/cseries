@@ -10,7 +10,15 @@ system: true
 #   saying what the app is and what lives in it; the how-to it carried lives in
 #   skills and tool descriptions. Manifest-only; bundle repacked.
 # 0.7.6 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
-version: "0.7.6"
+# 0.7.7 (2026-10-21): with no forge configured the app says so, as the wiki does, in
+#   place of "still provisioning, check back shortly", which never comes true on a
+#   Host installed with npx cseries. App-only change.
+# 0.8.0 (2026-10-21): the forge is the git server the owner connects in
+#   Settings, Git server (or the one the install set). With none, every panel
+#   says to connect one there. On a connected server, Your repos and Permissions
+#   point at the server's own pages, because the sign-in this app offers is
+#   Privatae's forge's (server/routes/gitea.py _own_server).
+version: "0.8.0"
 # Host-facing catalog fact (code-true). Four panels over the app's OWN authenticated
 # gitea client (server/routes/gitea.py -> gitea_client) — the same client the Workbench
 # uses for reads and writes. what_it_is/user_path only. Code Approvals (the plain-English

@@ -1,0 +1,11 @@
+# 2026-10-21 (Claude Code Disconnect sticks): the app's Disconnect goes through the Host's full
+# disconnect (DELETE /api/vault/secrets/harness:claude_oauth: marker, Vault copy, file) under
+# disconnect:own_harness, which opens that delete for the app's own sign-in only; after it no
+# reconcile pass and no finishing run writes the credential back (the marker is read under
+# claude-sdk); Keys, the Host-run login and the in-pod sign-in each lift the marker, and the
+# reconcile restores again. Stub pool, stand-in vault, temp files. No pod, no DB.
+# 2026-10-22 (Claude Code Disconnect fails loudly): a disconnect whose marker cannot be written stops
+# before anything is removed: the Vault route answers 503 (the app shows it), keys_manage reports an
+# error, disconnect_for_credential raises, and the Vault copy and file stay; a revoke that finds
+# nothing lifts only a marker it set.
+test_claude_disconnect_sticks.py

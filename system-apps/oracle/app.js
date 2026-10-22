@@ -1513,7 +1513,7 @@ function renderData(objects, snaps) {
     const body = $("#lens-body");
     const objs = objects.length ? objects.map(dataObjectHTML).join("")
         : emptyState("Nothing kept yet",
-            "When your Host stores something with a shape of its own, the tables it makes show up here.");
+            "When your Host builds data for a task, a meal plan or a tracker, the tables it makes show up here.");
     const snapRows = snaps.length ? snaps.map((s) => `<div class="data-snap">
             <span>${esc(new Date(s.taken).toLocaleString())}</span>
             <span class="label-sys">${esc(s.reason)}</span>

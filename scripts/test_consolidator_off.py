@@ -31,6 +31,7 @@ import asyncio
 import json
 import os
 import sys
+from turn_source import turn_source  # session.py and the modules split out of it
 
 APP_ROOT = os.environ.get("APP_ROOT", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, APP_ROOT)
@@ -107,7 +108,7 @@ check("trim: the thread-state message and the evicted-turn notes are spared",
       cb._is_summary({"role": "system", "content": cb.THREAD_STATE_PREFIX + "\nGoal: x"})
       and cb._is_summary({"role": "system", "content": cb.RECORD_PREFIX + "\n- x"}))
 
-sess_src = src("brain/mastercode/runtime/session.py")
+sess_src = turn_source()
 stree = ast.parse(sess_src)
 check("history: no rolling summary is read for any scope",
       "get_live_summary" not in sess_src and "summary_policy" not in sess_src

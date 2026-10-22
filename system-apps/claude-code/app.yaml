@@ -62,7 +62,18 @@ provenance: standard
 # store-lane ratchet needs the new number.
 # 0.2.20 (2026-10-18): the product is renamed C-Series (names, paths, env vars).
 # 0.2.21 (2026-10-18): changelog and comments rewritten as plain rationale; no behaviour change.
-version: "0.2.21"
+# 0.2.22 (2026-10-22): Disconnect is the full disconnect. It deleted only the
+# credentials file, and the Host wrote the file back from its Vault copy at the
+# next reconcile (boot, then every 300 s), so Claude reconnected on its own.
+# app.js now revokes harness:claude_oauth through DELETE /api/vault/secrets,
+# which sets the disconnect marker, revokes the Vault copy and deletes the file,
+# then clears the sidecar's cache. It holds disconnect:own_harness for that one
+# call (see `permissions:` below).
+# 0.2.23 (2026-10-22): Disconnect reports any answer but success. The Host this
+# version needs runs the disconnect for this app even with no Vault copy and
+# answers 200, so a 404 no longer means "nothing was sealed": it means the
+# marker may not be set. The store lane needs the new number for the repack.
+version: "0.2.23"
 # 0.2.19 (2026-09-28): manifest comment only — the ready_timeout note no longer
 # cites the SDK pip bootstrap removed in 0.2.18 (review). The store lane needs
 # the new number for the repacked bundle.
@@ -105,13 +116,17 @@ runtime:
   # headroom it always gave under post-restart contention.
   ready_timeout_seconds: 120
 
-# None (0.2.17). A permission here is a scope in this app's window token
+# One (0.2.22). A permission here is a scope in this app's window token
 # (server/routes/applications.py launch mints it from this list), and it only
-# matters to a kernel route guarded by requires_permission
-# (server/applications/middleware.py). What is left of the app calls no such
-# route: app.js fetches /api/system/status (no permission required) and its own
-# sidecar's /status and /disconnect, and bin/main.py calls no kernel route at
-# all. Dropped:
+# matters to a kernel route guarded by requires_permission or
+# requires_any_permission (server/applications/middleware.py).
+#   disconnect:own_harness → DELETE /api/vault/secrets/harness%3Aclaude_oauth, the
+#                            Disconnect button. It opens that route for this app's
+#                            own sign-in only (routes/vault.py _own_harness_only);
+#                            write:vault would open every key.
+# Everything else the app calls needs none: /api/system/status, and its own
+# sidecar's /status and /disconnect; bin/main.py calls no kernel route at all.
+# Dropped in 0.2.17, when the app had none:
 #   read:tickets       — GET /api/tickets/{id}, used only by /gc-orphans (removed)
 #   write:tickets      — ticket create/decide/dismiss; nothing in the app wrote one
 #   read:inference_log — the /api/compute/* reads and two /api/inference reads;
@@ -119,4 +134,5 @@ runtime:
 #   execute:inference  — POST /api/brain/chat, GET /api/inference/test/{role},
 #                        POST /api/realtime/client_secrets; nothing in the app
 #                        calls one
-permissions: []
+permissions:
+  - disconnect:own_harness

@@ -307,6 +307,10 @@ REMOVED: list[tuple[str, str]] = [
 # connection is all the Network app does with contacts.
 ANY_OF: list[tuple[str, str, tuple[str, ...]]] = [
     ("POST", "/api/contacts/request-peer", ("request:peer", "write:address_book")),
+    # Here the WIDE one is first: disconnect:own_harness opens this route only for the
+    # calling engine app's own sign-in (routes/vault.py _own_harness_only), so the
+    # route's scope in the API contract stays write:vault.
+    ("DELETE", "/api/vault/secrets/{name}", ("write:vault", "disconnect:own_harness")),
 ]
 
 
@@ -523,11 +527,12 @@ def any_of_behaviour(by_key: dict, secret: bytes, tok, shell_tok: str, zero_tok:
         # through _route_scopes), on the route as its router declares it.
         from server.applications.api_contract import _route_scope
         from server.routes import contacts as contacts_routes
-        route = next((r for r in contacts_routes.router.routes
+        from server.routes import vault as vault_routes
+        route = next((r for rt in (contacts_routes.router, vault_routes.router) for r in rt.routes
                       if getattr(r, "path", "") == p and m in (getattr(r, "methods", None) or ())), None)
         check(f"{m} {p}: the API contract names its scope and every scope that admits it",
               route is not None and _route_scope(route) == scopes[0] and _route_scopes(route) == list(scopes),
-              f"{(_route_scope(route), _route_scopes(route)) if route else 'no such route on the contacts router'}")
+              f"{(_route_scope(route), _route_scopes(route)) if route else 'no such route on the contacts or vault router'}")
 
 
 def resources_behaviour(secret: bytes, tok, zero_tok: str, every_tok: str) -> None:

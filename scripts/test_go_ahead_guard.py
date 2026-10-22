@@ -78,6 +78,7 @@ import os
 import re
 import sys
 import time
+from turn_source import sync_turn_attr, turn_source  # session.py and the modules split out of it
 
 APP_ROOT = os.environ.get("APP_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, APP_ROOT)
@@ -1038,7 +1039,7 @@ check("3k2: ...and its tool result says only the handoff was kept",
 
 def _src_of(fn_name):
     import ast as _ast
-    _t = open(os.path.join(APP_ROOT, "brain/mastercode/runtime/session.py")).read()
+    _t = turn_source(APP_ROOT)
     for _n in _ast.walk(_ast.parse(_t)):
         if isinstance(_n, (_ast.FunctionDef, _ast.AsyncFunctionDef)) and _n.name == fn_name:
             return _ast.get_source_segment(_t, _n) or ""
@@ -1358,6 +1359,7 @@ async def _scenario_stop(stop_reason="user"):
     h.patch()
     old_poll = S.ASK_POLL_S
     S.ASK_POLL_S = 5.0            # the hold does not look again before the Stop
+    sync_turn_attr(S, "ASK_POLL_S")
     try:
         with Outside(h) as out:
             t = asyncio.ensure_future(h.turn())
@@ -1382,6 +1384,7 @@ async def _scenario_stop(stop_reason="user"):
             await asyncio.sleep(0.2)
     finally:
         S.ASK_POLL_S = old_poll
+        sync_turn_attr(S, "ASK_POLL_S")
         h.unpatch()
     return h, out, handed
 
@@ -1399,6 +1402,7 @@ async def _died():
     S._handed.clear()
     fut = asyncio.get_running_loop().create_future()
     S._task_holds[77] = ("sess-dead", fut)
+    sync_turn_attr(S, "_task_holds")
     got: list = []
 
     async def on_lost(wake):
@@ -1558,7 +1562,7 @@ _texts = {
 _tk = open(os.path.join(APP_ROOT, "server/routes/tickets.py")).read()
 _cons = _tk[_tk.index('{"id": "approve", "label": "Approve — build it",'):]
 _texts["the bug-lane verdict"] = "Verdict recorded for bug report #12. The validated reports are listed in the bug lane."
-_sess_src = open(os.path.join(APP_ROOT, "brain/mastercode/runtime/session.py")).read()
+_sess_src = turn_source(APP_ROOT)
 check("4k: the bug-lane verdict delivery is that pointer (no 'Ask me …')",
       '"The validated reports are listed in the bug lane."' in _sess_src and "Ask me for the validated" not in _sess_src)
 for _label, _t in {
@@ -1580,7 +1584,7 @@ _dar = _src_of("deliver_agent_result")
 check("4e: deliver_agent_result makes no model call at all",
       "_call_entity_model(" not in _dar and "call_model(" not in _dar)
 import ast as _ast2  # noqa: E402
-_sess_tree = _ast2.parse(open(os.path.join(APP_ROOT, "brain/mastercode/runtime/session.py")).read())
+_sess_tree = _ast2.parse(turn_source(APP_ROOT))
 _dar_node = next(n for n in _ast2.walk(_sess_tree)
                  if isinstance(n, _ast2.AsyncFunctionDef) and n.name == "deliver_agent_result")
 _dar_strings = " ".join(n.value for n in _ast2.walk(_dar_node)
@@ -1822,6 +1826,7 @@ async def _scenario_stop_keeps(stop_reason="user"):
     h.patch()
     old_poll = S.ASK_POLL_S
     S.ASK_POLL_S = 5.0
+    sync_turn_attr(S, "ASK_POLL_S")
     try:
         with Outside(h) as out:
             t = asyncio.ensure_future(h.turn())
@@ -1842,6 +1847,7 @@ async def _scenario_stop_keeps(stop_reason="user"):
             await asyncio.sleep(0.2)
     finally:
         S.ASK_POLL_S = old_poll
+        sync_turn_attr(S, "ASK_POLL_S")
         h.unpatch()
     return h, out, held_row, trace, mid
 
@@ -2082,6 +2088,7 @@ S._woken_since_person.clear()
 #    and starts NO work — the next step goes in the question box.
 _key = TR.compose_thread_key(9003, "workbench", 251)
 S._woken_since_person[_key] = S.WOKEN_TURNS_MAX
+sync_turn_attr(S, "_woken_since_person")
 S._failed_wakes.clear()
 h, out = asyncio.run(_scenario_late(agent_record(430), [
     {"content": None, "tool_calls": [_tc("build", {"action": "run", "project_id": 251,
@@ -2099,6 +2106,7 @@ check("5i: ...its build is refused by code, and asking in the box still works",
 # ...and the person's own words read into such a turn put them IN it: it
 # may start work from there (their answer is the go-ahead).
 S._woken_since_person[_key] = S.WOKEN_TURNS_MAX
+sync_turn_attr(S, "_woken_since_person")
 
 
 def _i_answer_then_build(h):
@@ -2331,6 +2339,7 @@ async def _stop_via_dispatch():
     h.rt.agent_dispatch = RedeliverDispatch()
     old_poll = S.ASK_POLL_S
     S.ASK_POLL_S = 5.0
+    sync_turn_attr(S, "ASK_POLL_S")
     try:
         with Outside(h) as out:
             t = asyncio.ensure_future(h.turn())
@@ -2348,6 +2357,7 @@ async def _stop_via_dispatch():
             await asyncio.sleep(0.2)
     finally:
         S.ASK_POLL_S = old_poll
+        sync_turn_attr(S, "ASK_POLL_S")
         h.unpatch()
     return h.rt.agent_dispatch.redelivered
 
@@ -2468,6 +2478,7 @@ check("5n: ...as the person's message: that turn ran with tools and read the ans
 check("5n: a ticket made through the route cannot name a room to start a turn in",
       "asked_in" not in TK._strip_platform_locks({"asked_in": {"app_id": "x"}, "kind": "x"}))
 S._live_turns["sess-cap"] = None
+sync_turn_attr(S, "_live_turns")
 S.answer_into_turn("sess-cap", 41, "x" * 5000)
 _got = S.consume_nudges("sess-cap")
 S._live_turns.pop("sess-cap", None)
@@ -2567,6 +2578,7 @@ S.HOLD_S = 0.3
 _key = TR.compose_thread_key(9003, "workbench", 251)
 S._woken_since_person.clear()
 S._woken_since_person[_key] = S.WOKEN_TURNS_MAX
+sync_turn_attr(S, "_woken_since_person")
 S._failed_wakes.clear()
 h, out = asyncio.run(_scenario_late(build_record(470), [{"content": "Elm Lantern landed; phase 2 is next."}]))
 check("5q: a plan's phase landing wakes a turn that may work, past the chain's bound — it is the "
@@ -2593,6 +2605,7 @@ async def _wake_counted_at_start():
             rec, _ = reg.start_or_attach(thread_key=_key, entity_id=9003, app_id="workbench",
                                          message="the person's own turn", make_inner=inner)
             S._woken_since_person[_key] = S.WOKEN_TURNS_MAX
+            sync_turn_attr(S, "_woken_since_person")
             w = asyncio.ensure_future(h.rt._wake_host_turn(
                 entity_id=9003, app_id="workbench", project_id=251, thread_id=None,
                 brief="[Platform event] the dock check is back", origin_request="x",
@@ -2776,6 +2789,7 @@ async def _stop_after_core():
     h.patch()
     old_poll = S.ASK_POLL_S
     S.ASK_POLL_S = 5.0
+    sync_turn_attr(S, "ASK_POLL_S")
     try:
         with Outside(h) as out:
             t = asyncio.ensure_future(h.turn())
@@ -2793,6 +2807,7 @@ async def _stop_after_core():
             await asyncio.sleep(0.3)
     finally:
         S.ASK_POLL_S = old_poll
+        sync_turn_attr(S, "ASK_POLL_S")
         h.unpatch()
     return h, out
 
@@ -2885,6 +2900,7 @@ async def _round_chain(status, text=COULD_NOT, start_at=0, rounds=8, then_person
             S._research_rounds.clear()
             if start_at:
                 S._woken_since_person[TR.compose_thread_key(9003, "workbench", 251)] = start_at
+                sync_turn_attr(S, "_woken_since_person")
             origin = {"entity_id": 9003, "app_id": "workbench", "project_id": 251,
                       "origin_request": "Build me a trading bot for my exchange."}
             for _ in range(rounds):
@@ -2918,6 +2934,7 @@ check("5w: the woken-turn chain is a runaway backstop of 40 (it was 3)",
 # stand-in values — the code reads the module globals at run time.
 _bounds_saved = (S.WOKEN_TURNS_MAX, S.RESEARCH_ROUNDS_MAX)
 S.WOKEN_TURNS_MAX, S.RESEARCH_ROUNDS_MAX = 3, 5
+sync_turn_attr(S, "RESEARCH_ROUNDS_MAX", "WOKEN_TURNS_MAX")
 R = S.RESEARCH_ROUNDS_MAX
 h, out, after = asyncio.run(_round_chain("completed", then_person=True))
 check(f"5w: rounds whose agents COMPLETE saying they could not access anything stop at the research "
@@ -2961,6 +2978,7 @@ check("5w: ...and their briefs say nothing failed",
 S._woken_since_person.clear()
 S._research_rounds.clear()
 S.WOKEN_TURNS_MAX, S.RESEARCH_ROUNDS_MAX = _bounds_saved
+sync_turn_attr(S, "RESEARCH_ROUNDS_MAX", "WOKEN_TURNS_MAX")
 
 
 # x. a reply that arrives as the round backstop is reached
@@ -3057,6 +3075,7 @@ async def _stop_after_clean_box_repair():
     h.patch()
     old_poll = S.ASK_POLL_S
     S.ASK_POLL_S = 5.0
+    sync_turn_attr(S, "ASK_POLL_S")
     try:
         with Outside(h) as out:
             t = asyncio.ensure_future(h.turn())
@@ -3074,6 +3093,7 @@ async def _stop_after_clean_box_repair():
             await asyncio.sleep(0.3)
     finally:
         S.ASK_POLL_S = old_poll
+        sync_turn_attr(S, "ASK_POLL_S")
         h.unpatch()
     return h, out
 
@@ -3219,7 +3239,7 @@ S.HOLD_S = 240.0
 # The guard's call sites: one helper (it streams, carries the tools, is
 # metered), called at the text exit and at the dispatch exit, each before that
 # exit's hold and break.
-_src = open(os.path.join(APP_ROOT, "brain/mastercode/runtime/session.py")).read()
+_src = turn_source(APP_ROOT)
 _helper = _src[_src.index("async def _go_ahead_round("):_src.index("async def _escalate(")]
 check("call site: the repair is held until its round is over, carries the tools and is "
       "metered",
@@ -3251,10 +3271,12 @@ h = Harness([*_dead,
              {"content": "The retry is in the box above."}], **WB)
 S.HOLD_S = 0.3
 _afb_saved, S.ALL_FAIL_BACKSTOP_ROUNDS = S.ALL_FAIL_BACKSTOP_ROUNDS, 3
+sync_turn_attr(S, "ALL_FAIL_BACKSTOP_ROUNDS")
 try:
     out = asyncio.run(_with_rows(h))
 finally:
     S.ALL_FAIL_BACKSTOP_ROUNDS = _afb_saved
+    sync_turn_attr(S, "ALL_FAIL_BACKSTOP_ROUNDS")
 _rec, _row = _ga(out, h)
 check("5v: after the all-failed backstop, the breaker's answer is read by the guard (it used to "
       "break out unread)",
@@ -3706,6 +3728,7 @@ async def _stop_mid_hold(script, **kw):
     h.patch()
     old_poll = S.ASK_POLL_S
     S.ASK_POLL_S = 5.0
+    sync_turn_attr(S, "ASK_POLL_S")
     try:
         with Outside(h) as out:
             t = asyncio.ensure_future(h.turn())
@@ -3723,6 +3746,7 @@ async def _stop_mid_hold(script, **kw):
             await asyncio.sleep(0.3)
     finally:
         S.ASK_POLL_S = old_poll
+        sync_turn_attr(S, "ASK_POLL_S")
         h.unpatch()
     return h, out
 
@@ -5316,7 +5340,7 @@ check("7: the Orchestrator's route write takes the flag and stores it; a write w
       _stored_on.get("reasoning_inline") is True and _set_on.get("reasoning_inline") is True
       and "reasoning_inline" not in _stored_off, (_stored_on, _stored_off))
 _tsrc = open(os.path.join(APP_ROOT, "brain/mastercode/runtime/tools.py")).read()
-_ssrc = open(os.path.join(APP_ROOT, "brain/mastercode/runtime/session.py")).read()
+_ssrc = turn_source(APP_ROOT)
 # The wrapper's PARAMETERS, read from its signature: this used to match the
 # text "reasoning_inline: bool = False,\n) -> dict:", which pinned it as the
 # LAST parameter and went red the moment another one (on_alive) was added

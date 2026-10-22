@@ -169,7 +169,15 @@ system: true
 #   check answers from npm (channel "installer") and says to run npx cseries
 #   update on the machine; a check that failed shows its error, never
 #   "You're up to date".
-version: "3.15.0"
+# 3.16.0 (2026-10-21): the Git server tab. The owner connects a Gitea or
+#   Forgejo server they run: its https address, the username of an account
+#   they made there for the Host, that account's token and, optionally, their
+#   own username there. The Host checks the sign-in before keeping anything,
+#   seals the token in Keys and shows what is connected and the check's
+#   result; Disconnect removes it (GET/POST/DELETE /api/git-server,
+#   read:git_server / write:git_server, the owner's sign-in;
+#   server/routes/git_server.py).
+version: "3.16.0"
 # Environment-catalog facts (host-facing, code-true). Source for the L1
 # topology block + describe_app — NOT a surface_role body (this is a control
 # panel, not a conversational surface): what_it_is/user_path only.
@@ -179,14 +187,13 @@ prompt_behavior:
     updates, connection tokens for external chat clients, Appearance (wallpaper
     swatches, a custom image, the time zone, and a 'Host design' swatch once you
     have built an HTML desktop), the desktop layout (dock pins, desktop icons),
-    Response Shaping, Backup and Network. Response Shaping holds how much you
+    Response Shaping, Backup, Network and Git server. Response Shaping holds how much you
     explain and the ten personality sliders; both are the user's. Backup holds the
-    Host's own encrypted backups with a Back up now button, the backup keys, a
-    second copy sent to storage they rent or a machine of theirs, a bastion's local
-    copy and the memory mirror; the key controls, restores, the second copy and the
-    mirror switch are the user's alone. Network is where the owner joins the network
-    with the one-time code from their account page, sees this Host's membership, and
-    leaves; both are the owner's alone.
+    Host's own encrypted backups, the backup keys, a second copy sent to storage they
+    rent or a machine of theirs, a bastion's local copy and the memory mirror; the key
+    controls, restores, the second copy and the mirror switch are the user's alone.
+    Network is where the owner joins or leaves the network; Git server is where they
+    connect a Gitea or Forgejo server they run for your code. Both are the owner's alone.
   user_path: "the Settings app, in the dock"
 
 
@@ -225,3 +232,7 @@ permissions:
   # Renaming the Host from About: POST /api/system/name, which also needs the
   # owner's session.
   - write:host_name
+  # The Git server tab: GET /api/git-server takes read:git_server; POST and
+  # DELETE take write:git_server and the owner's session.
+  - read:git_server
+  - write:git_server

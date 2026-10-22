@@ -540,6 +540,13 @@ async def checkout(repo: str, *, ref: str = "") -> dict:
         if room <= 0:
             return {"ok": False, "skipped": True, "error": room_refusal(1, "its fetch needs")}
         if not fresh:
+            # The copy is the kernel's own clone, but git is never run in a
+            # tree whose .git holds what the kernel does not write there.
+            from server.routes.project_git import repo_refusal
+            why = repo_refusal(dest)
+            if why:
+                log.warning("repo sync of %s refused: %s", repo, why)
+                return {"ok": False, "error": f"git was not run in the copy of {repo}: {why}"}
             # Refresh. With no ref, follow the remote's CURRENT default
             # branch, asked of the remote each time — a shallow clone made
             # with --branch has no origin/HEAD, and a plain clone's

@@ -96,7 +96,13 @@ async def _keys_github_token() -> str | None:
 async def _user_bearer() -> str:
     """The USER's gitea OAuth bearer — the refresh-aware variant, so mirrors
     keep working across pod restarts without a fresh sign-in."""
-    from server.routes.gitea import _user_bearer_fresh
+    from server.routes.gitea import _own_server, _user_bearer_fresh
+    own = _own_server()
+    if own:
+        # Mirrors run as the person, and the Host holds no sign-in of theirs
+        # on a git server they connected: the server makes mirrors itself.
+        raise HTTPException(409, f"make a mirror on your git server itself: open {own}, "
+                                 "New Migration, and choose GitHub")
     tok = await _user_bearer_fresh()
     if not tok:
         raise HTTPException(409, "sign in to gitea first (Your repos → Sign in)")

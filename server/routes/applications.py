@@ -3024,38 +3024,43 @@ async def delete_app_config(app_id: str, key: str, request: Request) -> dict:
 
 # ── On-demand store-upgrade sweep ────────────────────────────────────
 #
-# default_install._sync_store_upgrades is the function the kernel
-# calls at boot to refresh locally-installed non-native apps when the
-# central store has newer versions. Pre-this-route the only way to
-# trigger it was a pod restart — which meant every Publisher-published
-# frontend ship required ~30s of chat downtime on every entity that
-# needed the update.
+# default_install._sync_store_upgrades is the pass the Host runs at every
+# start to update the apps it installed from the store. This route runs the
+# same pass on demand, so a newer store version can arrive without a restart.
+# It goes through the same App Store router as the start-up pass, so both read
+# the same store.
 #
-# This route exposes the same function on demand. Operator-side
-# pushes (e.g. `curl ... /api/applications/refresh-store` after
-# republishing a platform tool) now refresh in-place without rolling the
-# pod. Uses the live gunicorn worker's bridge singleton, which is
-# the same one the boot-time call uses — no parallel state, no
-# divergence with the boot path.
-#
-# Gated on write:update_request — same scope the image-apply +
-# bundle-fetch routes use; it's the canonical "trigger a system-state
-# update" capability. The Settings app declares it.
+# Gated on write:update_request, the scope the other update routes use; the
+# Settings app declares it.
 
 @router.post(
     "/refresh-store",
     dependencies=[Depends(requires_permission("write:update_request"))],
 )
 async def refresh_store(request: Request) -> dict:
-    """Trigger an on-demand store-upgrade sweep.
+    """Trigger an on-demand store-upgrade sweep (default_install._sync_store_upgrades,
+    the same pass the boot runs).
 
-    Walks every locally-installed non-native app, asks the central
-    store for its latest version, and reinstalls in place if newer.
-    Returns the same envelope shape `_sync_store_upgrades` returns
-    on boot: {status, upgraded: [{app_id, from, to}, ...], failed: [...]}.
+    It walks the installed apps and leaves alone the kernel's native apps, retired
+    ids, apps this Host built itself (authored_here), and apps the image lays down.
+    For each other app it asks the store for its latest version (by id when the app
+    is not in the catalog) and installs it in place only when it is strictly newer;
+    it never moves an app back. It does not install a version that reserves more
+    memory than the installed one: the person updates that one from the App Store.
+    A priced app without an active entitlement, or one the plan cannot hold, is
+    skipped, and one whose entitlement cannot be checked right now is deferred to
+    the next sweep.
 
-    No request body. Idempotent — a no-op when every local app is
-    already at the store's latest version.
+    Returns {status, upgraded: [{app_id, from, to}], skipped: [{app_id, from, to,
+    reason}], deferred: [...], failed: [(app_id, reason)], checked}; status is
+    "store_unreachable" or "store_error" (with error) when the catalog cannot be
+    read. No request body. Idempotent: nothing is installed when every app it
+    checks is at the store's latest.
+
+    It reaches the store through the App Store router, as the boot pass and the
+    Host's refresh_app_store tool do: the network's door when it answers, else the
+    public catalog. It answers 503 only when neither can be reached (no door, and
+    the public App Store turned off).
     """
     pool = brain_service.get_pool()
     if pool is None:
@@ -3067,11 +3072,13 @@ async def refresh_store(request: Request) -> dict:
             status.HTTP_503_SERVICE_UNAVAILABLE,
             f"bridge module unavailable: {e}",
         ) from None
-    bc = get_bridge_client()
-    if bc is None or not getattr(bc, "_connected", False):
+    from server.applications.public_store import store_client
+    bc = store_client(get_bridge_client())
+    if not bc._connected:
         raise HTTPException(
             status.HTTP_503_SERVICE_UNAVAILABLE,
-            "bridge not connected — cannot reach store",
+            "no App Store is reachable: the network's door is not connected and the "
+            "public App Store is turned off",
         )
     from server.applications.default_install import _sync_store_upgrades
     return await _sync_store_upgrades(bc, pool)
@@ -3738,8 +3745,8 @@ def _linked_build_dir(project_dir, cand: str) -> str:
         target = os.readlink(project_dir / cand)
     except OSError:
         target = "?"
-    fix = (f" Replace the link with the folder itself, or point it at a folder "
-           f"inside the project, then publish again.")
+    fix = (" Replace the link with the folder itself, or point it at a folder "
+           "inside the project, then publish again.")
     if link_leaves_tree(cand, target):
         raise ShipError(status.HTTP_400_BAD_REQUEST,
                         f"the build folder `{cand}` is a link to `{target}`, outside the "
@@ -4067,14 +4074,15 @@ async def publish_site_service(pool, project_id: int, *, slug: str,
 _REPO_RE = re.compile(r"^([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+?)(?:\.git)?$")
 
 
-def _entity_git(args: list, *, cwd=None, timeout: int = 240):
-    """Run git AS THIS ENTITY against its own gitea. The token comes from the
-    identity-reconciler env (GITEA_API_TOKEN) and is passed via an inline
-    credential helper + env — never on the command line, never on disk."""
+def _entity_git(args: list, *, cwd=None, timeout: int = 240, token: str | None = None):
+    """Run git AS THIS ENTITY against its own coding forge. The token is the
+    connected git server's when one is (`token`), else the identity-reconciler
+    env (GITEA_API_TOKEN), and is passed via an inline credential helper + env
+    — never on the command line, never on disk."""
     import os as _os
     import subprocess as _sp
     env = dict(_os.environ)
-    env["CSERIES_ENTITY_GIT_TOKEN"] = _os.environ.get("GITEA_API_TOKEN", "")
+    env["CSERIES_ENTITY_GIT_TOKEN"] = token if token is not None else _os.environ.get("GITEA_API_TOKEN", "")
     base = [
         "git",
         "-c", "credential.helper=",
@@ -4104,10 +4112,17 @@ async def publish_site_repo_service(*, repo: str, slug: str, ref: str = "") -> d
     if not m:
         raise ShipError(status.HTTP_400_BAD_REQUEST,
                         "repo must be owner/name (this host's gitea)")
-    if not _os.environ.get("GITEA_API_TOKEN") or not _os.environ.get("GITEA_URL"):
-        raise ShipError(status.HTTP_503_SERVICE_UNAVAILABLE,
-                        "no gitea identity on this host (GITEA_URL/GITEA_API_TOKEN)")
-    host = _os.environ["GITEA_URL"].rstrip("/")
+    # The Host's own coding forge: the git server connected in Settings, else
+    # the forge the install set (server/git_server.py).
+    from server.git_server import connected as _git_server
+    _own = _git_server()
+    if _own is not None:
+        host, _tok = _own.url, _own.token
+    else:
+        if not _os.environ.get("GITEA_API_TOKEN") or not _os.environ.get("GITEA_URL"):
+            raise ShipError(status.HTTP_503_SERVICE_UNAVAILABLE,
+                            "no git server connected on this host (Settings, Git server)")
+        host, _tok = _os.environ["GITEA_URL"].rstrip("/"), None
     url = f"{host}/{m.group(1)}/{m.group(2)}.git"
 
     tmp = _tempfile.mkdtemp(prefix="site-publish-")
@@ -4116,7 +4131,7 @@ async def publish_site_repo_service(*, repo: str, slug: str, ref: str = "") -> d
         if (ref or "").strip():
             args += ["--branch", ref.strip()]
         args += [url, tmp]
-        r = await _asyncio.to_thread(_entity_git, args)
+        r = await _asyncio.to_thread(_entity_git, args, token=_tok)
         if r.returncode != 0:
             raise ShipError(
                 status.HTTP_400_BAD_REQUEST,

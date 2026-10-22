@@ -45,6 +45,7 @@ import asyncio
 import os
 import sys
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 for p in (str(ROOT), str(ROOT / "brain"), str(ROOT / "server")):
@@ -310,7 +311,7 @@ async def _run():
                   int(sec.get("left_out") or 0) > 1 and sec.get("searched") == 0
                   and "none this turn can open" in htext and "Left out:" in htext and "no matches" not in htext,
                   repr(htext[:300]))
-    _src = (ROOT / "brain" / "mastercode" / "runtime" / "session.py").read_text()
+    _src = turn_source(ROOT)
     _recall_src = _src.split('elif func_name == "recall":', 1)[-1].split("elif func_name ==", 1)[0]
     check("H. the recall handler hands unified_search its turn's catalog (skill_step=_door_catalog.admitted_step)",
           "skill_step=(_door_catalog.admitted_step" in _recall_src)

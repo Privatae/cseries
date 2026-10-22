@@ -49,6 +49,7 @@ import asyncio
 import os
 import sys
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 for p in (str(ROOT), str(ROOT / "brain"), str(ROOT / "server")):
@@ -230,7 +231,7 @@ async def _run():
 asyncio.run(_run())
 
 # G: the wiring in the turn.
-_src = (ROOT / "brain" / "mastercode" / "runtime" / "session.py").read_text()
+_src = turn_source(ROOT)
 _at = _src.find("turn_own_skills(")
 _seg = _src[max(0, _at - 1500):_at + 2200] if _at >= 0 else ""
 check("G. session.py offers the turn its own skills (turn_own_skills)", _at >= 0)

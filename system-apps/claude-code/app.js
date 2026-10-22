@@ -156,10 +156,30 @@
     }
 
     // ---- Disconnect ----
+    //
+    // The full disconnect is the Host's, not the sidecar's: revoking the
+    // harness:claude_oauth key sets the disconnect marker, revokes the Vault copy
+    // and deletes the credentials file (harness_state.disconnect_for_credential).
+    // Deleting only the file, as this used to, was undone at the Host's next
+    // reconcile, which writes the file back from the Vault copy. When no Vault
+    // copy has been sealed yet the Host still runs the disconnect for this app
+    // and answers 200 (`revoked` is null); any other answer means the marker may
+    // not be set, and the person is told. Then the sidecar drops its cached token.
+    const CLAUDE_KEY = 'harness:claude_oauth';
 
     async function disconnect() {
         if (!confirm('Disconnect your Claude subscription?')) return;
-        await tryFetch(sidecarUrl('disconnect'), { method: 'POST' }).catch(() => {});
+        showError('disconnected', '');
+        const r = await tryFetch('/api/vault/secrets/' + encodeURIComponent(CLAUDE_KEY),
+                                 { method: 'DELETE' });
+        await tryFetch(sidecarUrl('disconnect'), { method: 'POST' });
+        if (!r.ok) {
+            const why = r.network ? 'your Host could not be reached'
+                : ('your Host answered ' + r.status);
+            showError('disconnected', 'Claude may reconnect on its own: ' + why
+                + ' when it was asked to forget the sign-in. Try Disconnect again, or remove '
+                + 'the Claude sign-in in the Keys app.');
+        }
         await refresh();
     }
 

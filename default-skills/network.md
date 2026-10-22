@@ -982,6 +982,10 @@ apply an op, and a machine that holds no way to take an approval.
   revoking that rule (it needs their code) and then, if they still want it,
   drafting it again; an approved rule cannot be approved twice. Here the
   revoke comes first, because the failing rule itself is what locks the mesh.
+  `policy.engine.running` false means your network rules did not load when
+  you started, and you are refusing every paired machine with a device
+  fingerprint for that reason alone. No rule is at fault, so revoking one does
+  not help; you try again each time you start. Say so first.
 
 ## Messaging connectors — guidance
 

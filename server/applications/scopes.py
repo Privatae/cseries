@@ -194,6 +194,14 @@ PERMISSIONS: Final[frozenset[str]] = frozenset({
     # membership: the name is the owner's choice, and the route also needs the
     # owner's session.
     "write:host_name",
+    # The git server the owner connects (server/routes/git_server.py): its
+    # address, the Host's account there, and the token sealed in Keys.
+    # Settings declares both and the write route admits Settings' token only,
+    # with the owner's session. Absent from meta_tool_caps and from
+    # build_contract.COMMUNITY_ALLOWED_SCOPES for the same reason as the name:
+    # which server the Host's code goes to is the owner's choice.
+    "read:git_server",
+    "write:git_server",
     # The oversight ledger: the findings
     # the host folded from what its machines reported — one row per thing, with
     # a first_seen that never moves. `read` is the whole ledger; `write` is the
@@ -383,6 +391,15 @@ PERMISSIONS: Final[frozenset[str]] = frozenset({
     # only byte-returning path is the user's TOTP-gated reveal.
     "read:vault",
     "write:vault",
+    # Disconnect the calling app's OWN coding-engine sign-in, and nothing else:
+    # DELETE /api/vault/secrets/{name} takes it beside write:vault
+    # (requires_any_permission), and with only this scope the name must be the
+    # sign-in of the engine the app is (the Claude Code app: harness:claude_oauth).
+    # That delete is the full disconnect (harness_state.disconnect_for_credential:
+    # the marker that stops the reconcilers writing the credential back, the Vault
+    # copy, the file). write:vault would also open storing, revoking and using every
+    # other key. Not a community-app scope.
+    "disconnect:own_harness",
 })
 
 

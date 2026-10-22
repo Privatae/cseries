@@ -31,6 +31,7 @@ import json
 import os
 import sys
 import types
+from turn_source import turn_source  # session.py and the modules split out of it
 
 APP_ROOT = os.environ.get("APP_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, APP_ROOT)
@@ -48,7 +49,7 @@ def check(name, cond, extra=""):
 
 
 SESSION = os.path.join(APP_ROOT, "brain/mastercode/runtime/session.py")
-_tree = ast.parse(open(SESSION).read())
+_tree = ast.parse(turn_source(APP_ROOT))
 
 # ── the turn's kwargs dict, as session.py writes it ───────────────────────
 _literal = None

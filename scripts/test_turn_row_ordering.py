@@ -31,6 +31,7 @@ import ast
 import os
 import sys
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 _ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 _ENGINE = _ROOT / "brain" / "mastercode" / "memory_engine.py"
@@ -96,7 +97,7 @@ check("the closure forwards the stamped value", "created_at=said_at" in wtr_src)
 
 
 # ── 4. every session.py turn write passes it ────────────────────────────────
-sess_src = _SESSION.read_text()
+sess_src = turn_source(_ROOT)
 sess_tree = ast.parse(sess_src)
 
 calls = []

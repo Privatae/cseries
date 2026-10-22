@@ -51,8 +51,14 @@ def project_lock(project_id: int) -> asyncio.Lock:
 # harness can influence. ONE copy, used by this module's _hardened_cmd and by
 # review._hardened_git. Hooks and fsmonitor were always here; diff.external
 # closes the command a planted repo config would run on `git diff`.
+# safe.bareRepository=explicit: with no .git in a folder, git takes the
+# folder ITSELF for a bare repository when it holds HEAD, objects/ and refs/,
+# and then reads the folder's own `config` file, which check_repo never sees
+# (it reads .git/config). Every name in that layout is an ordinary file a
+# Host or a harness pick can write. git 2.38+ honours the key from the
+# command line; the kernel never runs git in a bare repository by finding it.
 HARDENED_GIT_CONFIG = ("-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
-                       "-c", "diff.external=")
+                       "-c", "diff.external=", "-c", "safe.bareRepository=explicit")
 # Every `git diff` through a hardened base carries BOTH of these. Measured in
 # the Host image (git 2.39.5): with diff.external empty, a `git diff` WITHOUT
 # --no-ext-diff exits 128 (it tries to run the empty command), and
@@ -64,9 +70,197 @@ HARDENED_GIT_CONFIG = ("-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=f
 HARDENED_DIFF_FLAGS = ("--no-ext-diff", "--no-textconv")
 
 
+# ── what a tree's own .git may hold before the kernel runs git in it ─────────
+#
+# The -c set above names a few keys; a repo-local .git/config is still read,
+# and many of its keys run a program: filter.<x>.clean/smudge/process on
+# `add`/`status`/`checkout`, credential.helper on push, core.sshCommand,
+# core.askPass, core.pager/editor, merge/diff drivers, include.path pulling
+# in another file, core.worktree moving the tree, remote uploadpack and
+# receivepack. Naming each one in -c can never be complete, so the check is
+# the other way round: the config may hold only what the kernel itself
+# writes there, and git is not run in a tree whose config holds anything
+# else. Every key below is cited to the kernel call that writes it.
+_KERNEL_GIT_KEYS = frozenset({
+    # `git init` (_sync_blocking, _seed_blocking, review._prepare_worktree,
+    # review.propose_commit, gitea_propose._git_work) and `git clone`
+    # (tools._exec_import_repo, codesearch.repo_sync.checkout) write the
+    # repository format and these per-filesystem facts; none names a program.
+    "core.repositoryformatversion", "core.filemode", "core.bare",
+    "core.logallrefupdates", "core.ignorecase", "core.precomposeunicode",
+    "core.symlinks",
+    # Written for a sha256 repository by `git clone` (tools._exec_import_repo,
+    # codesearch.repo_sync.checkout) and by a restore, which resets every Git
+    # directory of a backup to a config of only its format
+    # (host_restore.defuse_git). git accepts only sha1 and sha256 here and
+    # refuses any other value before it runs anything.
+    "extensions.objectformat",
+})
+_KERNEL_GIT_KEY_RES = (
+    # `remote add origin` (_sync_blocking, _seed_blocking) and `clone` write
+    # url + fetch; `clone --no-tags` (repo_sync.checkout) writes tagopt, whose
+    # only values git acts on are --tags and --no-tags. The remote is named
+    # (`origin`, always): a section named by a URL, `[remote "<url>"] url = X`,
+    # is what git uses for a push or fetch GIVEN that url, so it would send
+    # the kernel's explicit-URL push and fetch to X.
+    re.compile(r"remote\.[A-Za-z0-9._-]+\.(url|fetch|tagopt)"),
+    # `branch host/build origin/<b>` (_sync_blocking), `checkout -B host/build
+    # origin/<b>` (_seed_blocking) and `clone` set the branch's upstream.
+    re.compile(r"branch\..+\.(remote|merge)"),
+)
+# A remote URL of the form `<transport>::<address>` (`ext::`, `fd::`, any
+# other) has git start the program git-remote-<transport>; one that begins
+# with `-` reads as an option. The kernel writes neither: it writes the forge
+# over https (_sync_blocking, _seed_blocking, repo_sync.clone_url,
+# import_repo's https-only check) and the machine forge's label
+# (_sync_machine). Plain paths and other URLs stay allowed, since a sync
+# re-points origin only after this check has passed.
+_HELPER_URL = re.compile(r"\s*(-|[A-Za-z0-9][A-Za-z0-9+.-]*::)")
+_REMOTE_NAME = re.compile(r"[A-Za-z0-9._-]+")
+
+
+class UnsafeRepoError(OSError):
+    """git was not run: the tree's .git holds something the kernel never puts
+    there. An OSError, so every fail-soft handler that already turns a git or
+    filesystem failure into "no result" handles this the same way."""
+
+
+def is_git_dir_name(name: str) -> bool:
+    """Whether a path component would be taken for `.git` by git on some
+    filesystem: any case, and with the trailing dots and spaces NTFS drops
+    (`.git.`), or NTFS's short name `git~1` — the same names git's own
+    verify_path refuses in a tree."""
+    n = str(name)
+    return n.rstrip(". ").casefold() == ".git" or n.casefold() == "git~1"
+
+
+def path_reaches_git(root: Path, rel: str) -> bool:
+    """True when a write or delete of `rel` below `root` would land in a .git:
+    a .git component in the name as given, or in the path it resolves to (a
+    link on the way, `cfg -> .git`, turns `cfg/config` into `.git/config`).
+    A path that resolves outside `root` is the caller's own jail's to refuse."""
+    if any(is_git_dir_name(p) for p in Path(rel).parts):
+        return True
+    try:
+        real = Path(os.path.realpath(Path(root) / rel)).relative_to(os.path.realpath(root))
+    except ValueError:
+        return False
+    return any(is_git_dir_name(p) for p in real.parts)
+
+
+def _config_key_refusal(key: str, value: str) -> str | None:
+    if key in _KERNEL_GIT_KEYS:
+        return None
+    if not any(rx.fullmatch(key) for rx in _KERNEL_GIT_KEY_RES):
+        return f"its .git/config sets `{key}`, which the kernel never writes there"
+    if key.endswith(".url") and _HELPER_URL.match(value):
+        return f"its .git/config sets `{key}` to a URL that would start a program"
+    if key.endswith(".remote") and not _REMOTE_NAME.fullmatch(value):
+        return f"its .git/config sets `{key}` to something other than a remote's name"
+    return None
+
+
+# Trees that passed, by the identity of what was read: an unchanged .git
+# (inode, mode) and config (inode, size, ctime) is not read again. ctime
+# moves on every write, rename or chmod and cannot be set back by a writer,
+# so a changed file is always read again. Bounded: only the newest are kept.
+_PASSED: dict[str, tuple] = {}
+_PASSED_MAX = 512
+
+
+def _tree_signature(dot: Path, cfg: Path) -> tuple | None:
+    try:
+        d = os.lstat(dot)
+        c = os.lstat(cfg)
+    except OSError:
+        return None
+    return (d.st_ino, d.st_mode, c.st_ino, c.st_mode, c.st_size, c.st_ctime_ns, c.st_mtime_ns,
+            os.path.lexists(dot / "commondir"))
+
+
+def repo_refusal(tree: Path) -> str | None:
+    """None when the kernel may run git in `tree`; else why not, in words that
+    name the offending key or file. Reads, never runs, the repo's config:
+    `git config --file` with no includes and no global or system config
+    starts no program whatever the file holds."""
+    tree = Path(tree)
+    dot = tree / ".git"
+    if dot.is_symlink():
+        return "its .git is a link, so git would use a repository somewhere else"
+    if not dot.exists():
+        return None                 # nothing of the tree's own: `git init` makes it
+    if not dot.is_dir():
+        return "its .git is a file (a pointer to a repository somewhere else)"
+    if os.path.lexists(dot / "commondir"):
+        return "its .git/commondir points git at another repository's config"
+    if os.path.lexists(dot / "objects" / "info" / "alternates"):
+        return "its .git/objects/info/alternates reads objects from another repository"
+    # git never makes a link in its own folder; the kernel writes through
+    # .git/info (the exclude and attributes files), so a link there would
+    # carry those writes somewhere else.
+    for sub in (dot, dot / "info"):
+        try:
+            names = os.listdir(sub)
+        except OSError:
+            continue
+        for name in names:
+            if os.path.islink(sub / name):
+                return f"its {(sub / name).relative_to(tree)} is a link"
+    cfg = dot / "config"
+    if cfg.is_symlink():
+        return "its .git/config is a link"
+    if not os.path.lexists(cfg):
+        return None
+    if not cfg.is_file():
+        return "its .git/config is not a file"
+    sig = _tree_signature(dot, cfg)
+    if sig is not None and _PASSED.get(str(tree)) == sig:
+        return None
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update({"GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null",
+                "GIT_CONFIG_NOSYSTEM": "1", "GIT_TERMINAL_PROMPT": "0"})
+    try:
+        # The shared -c set rides along so every host-side git argv has one
+        # shape (scripts/test_sidecar_workspace_routes_harness_only.py checks
+        # it); with --file, git lists only that file, never the -c entries.
+        r = subprocess.run(["git", *HARDENED_GIT_CONFIG, "config", "--file", str(cfg),
+                            "--no-includes", "--list", "--null"],
+                           env=env, cwd="/", capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as e:
+        return f"its .git/config could not be read: {e}"[:200]
+    if r.returncode != 0:
+        return ("its .git/config could not be read: "
+                + r.stderr.decode("utf-8", "replace").strip()[:160])
+    for entry in r.stdout.split(b"\0"):
+        if not entry:
+            continue
+        key, _, value = entry.decode("utf-8", "replace").partition("\n")
+        why = _config_key_refusal(key, value)
+        if why:
+            return why
+    if sig is not None:
+        if len(_PASSED) >= _PASSED_MAX:
+            _PASSED.clear()             # syncs run in threads: clear() is one step
+        _PASSED[str(tree)] = sig
+    return None
+
+
+def check_repo(tree: Path) -> None:
+    """repo_refusal as a gate: raises UnsafeRepoError (and logs a WARNING) when
+    git must not run in `tree`. Called by every helper that builds a kernel git
+    command for a tree a Host, a harness or a build can write."""
+    why = repo_refusal(tree)
+    if why:
+        logger.warning("git refused in %s: %s", tree, why)
+        raise UnsafeRepoError(f"git was not run in this folder: {why}")
+
+
 def _hardened_cmd(project_dir: Path, user: str, host: str) -> tuple[list, dict]:
     """Same hardened shape as review._hardened_git, with the HOST's gitea
-    identity as author — the clean-room account the commits belong to."""
+    identity as author — the clean-room account the commits belong to.
+    Raises UnsafeRepoError when the tree's .git is not the kernel's
+    (check_repo)."""
+    check_repo(project_dir)
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0",
            "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"}
     cmd = ["git", *HARDENED_GIT_CONFIG,
@@ -298,21 +492,24 @@ def _sync_blocking(project_id: int, repo_full: str, phase_label: str,
     if not project_dir.is_dir() or not any(project_dir.iterdir()):
         return {"committed": False, "error": "project workspace is empty"}
 
-    if machine:
-        base, env = _hardened_cmd(project_dir, machine["user"], machine["host"])
-        env = {**env, **machine["env"]}
-        remote_url = machine["origin"]                # a label; never dialled
-        push_url = machine["url"]                     # loopback relay, tokenless
-    else:
-        from server.routes.gitea_client import gitea_creds
-        cred = gitea_creds()
-        if not cred:
-            return {"committed": False, "error": "gitea not connected"}
-        user, token, host = cred
-        owner_name = repo_full.strip("/")
-        base, env = _hardened_cmd(project_dir, user, host)
-        remote_url = f"https://{host}/{owner_name}.git"           # tokenless on disk
-        push_url = f"https://{user}:{token}@{host}/{owner_name}.git"  # in-memory only
+    try:
+        if machine:
+            base, env = _hardened_cmd(project_dir, machine["user"], machine["host"])
+            env = {**env, **machine["env"]}
+            remote_url = machine["origin"]                # a label; never dialled
+            push_url = machine["url"]                     # loopback relay, tokenless
+        else:
+            from server.routes.gitea_client import gitea_creds
+            cred = gitea_creds()
+            if not cred:
+                return {"committed": False, "error": "gitea not connected"}
+            user, token, host = cred
+            owner_name = repo_full.strip("/")
+            base, env = _hardened_cmd(project_dir, user, host)
+            remote_url = f"https://{host}/{owner_name}.git"           # tokenless on disk
+            push_url = f"https://{user}:{token}@{host}/{owner_name}.git"  # in-memory only
+    except UnsafeRepoError as e:
+        return {"committed": False, "error": str(e)}
 
     if not (project_dir / ".git").is_dir():
         r = _run(base, env, "init")
@@ -432,7 +629,12 @@ def _seed_blocking(project_id: int, repo_full: str, default_branch: str,
     if not cred:
         return {"seeded": False, "error": "gitea not connected"}
     user, token, host = cred
-    base, env = _hardened_cmd(project_dir, user, host)
+    try:
+        base, env = _hardened_cmd(project_dir, user, host)
+    except UnsafeRepoError as e:
+        # A .git the rmtree above could not remove (a link, a file) is left
+        # as it is: nothing was made, so there is nothing to undo.
+        return {"seeded": False, "error": str(e)}
 
     def url(r: str) -> str:
         return f"https://{user}:{token}@{host}/{r.strip('/')}.git"     # in-memory only
@@ -932,6 +1134,7 @@ def committable_paths(project_id: int, paths: list) -> list:
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0",
            "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_CONFIG_SYSTEM": "/dev/null"}
     try:
+        check_repo(project_dir)
         r = subprocess.run(["git", *HARDENED_GIT_CONFIG, "-C", str(project_dir),
                             "check-ignore", "--no-index", "--stdin", "-z"],
                            input="\0".join(present) + "\0", env=env,
@@ -1091,22 +1294,25 @@ async def _sync_machine(pool, project_id: int, row, forge, *, phase_label: str,
 def _prepare_blocking(project_id: int, repo_full: str, machine: dict | None = None,
                       remote_branch: str = _WORK_BRANCH) -> dict:
     project_dir = _PROJECTS_ROOT / str(project_id)
-    if machine:
-        if not (project_dir / ".git").is_dir():
-            return {"prepared": False, "note": "no git repo in the project dir yet (first build)"}
-        base, env = _hardened_cmd(project_dir, machine["user"], machine["host"])
-        env = {**env, **machine["env"]}
-        push_url = machine["url"]                     # loopback relay, tokenless
-    else:
-        from server.routes.gitea_client import gitea_creds
-        cred = gitea_creds()
-        if not cred:
-            return {"prepared": False, "error": "gitea not connected"}
-        user, token, host = cred
-        if not (project_dir / ".git").is_dir():
-            return {"prepared": False, "note": "no git repo in the project dir yet (first build)"}
-        base, env = _hardened_cmd(project_dir, user, host)
-        push_url = f"https://{user}:{token}@{host}/{repo_full.strip('/')}.git"   # in-memory only
+    try:
+        if machine:
+            if not (project_dir / ".git").is_dir():
+                return {"prepared": False, "note": "no git repo in the project dir yet (first build)"}
+            base, env = _hardened_cmd(project_dir, machine["user"], machine["host"])
+            env = {**env, **machine["env"]}
+            push_url = machine["url"]                     # loopback relay, tokenless
+        else:
+            from server.routes.gitea_client import gitea_creds
+            cred = gitea_creds()
+            if not cred:
+                return {"prepared": False, "error": "gitea not connected"}
+            user, token, host = cred
+            if not (project_dir / ".git").is_dir():
+                return {"prepared": False, "note": "no git repo in the project dir yet (first build)"}
+            base, env = _hardened_cmd(project_dir, user, host)
+            push_url = f"https://{user}:{token}@{host}/{repo_full.strip('/')}.git"   # in-memory only
+    except UnsafeRepoError as e:
+        return {"prepared": False, "error": str(e)}
 
     # Only the work branch: it is all a build starts from (_fetch_branches).
     r = _fetch_branches(base, env, push_url, (remote_branch,))

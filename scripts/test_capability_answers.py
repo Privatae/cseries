@@ -330,6 +330,74 @@ found_over = [s for s in overclaims if s in doc_md]
 check("no unqualified 'this is everything' claim", not found_over,
       f"found: {found_over}" if found_over else "")
 
+# ── 8. an area card's kernel_op example is a call kernel_op lets through ──
+# A small model copies the example as written. The /api/system card once showed
+# kernel_op GET /api/system/name, a POST-only route that is walled: the call it
+# taught could only be refused.
+print("\n8. every area card's kernel_op example is one kernel_op lets through")
+from mastercode.runtime import kernel_ops as _ko  # noqa: E402
+
+
+def _kernel_op_examples(card_list: list[dict]) -> list[tuple[str, str]]:
+    return [(c["id"], m.group(1))
+            for c in card_list if c.get("kind") == "area"
+            for m in re.finditer(r"kernel_op\((\{.*?\})\)", c.get("how") or "")]
+
+
+def _example_faults(examples: list[tuple[str, str]]) -> list[str]:
+    bad = []
+    for cid, raw in examples:
+        try:
+            args = json.loads(raw)
+        except ValueError:
+            bad.append(f"{cid}: {raw} is not JSON")
+            continue
+        method, path = str(args.get("method", "GET")), str(args.get("path", ""))
+        # A template is in the contract under its own name, so exposed_route
+        # admits it literally; the call a model makes carries a real id, and
+        # exposure is exact-match, so that call is refused.
+        if "{" in path:
+            bad.append(f"{cid}: {method} {path} is a template, not a call")
+        elif _ko.exposed_route(method, path) is None:
+            bad.append(f"{cid}: {method} {path}")
+    return bad
+
+
+_saved_contract = _ko._contract_cache
+_ko._contract_cache = {(r["method"], r["path"]): r
+                       for r in (caps.get("api_contract") or {}).get("routes", [])}
+try:
+    _examples = _kernel_op_examples(cards)
+    _bad = _example_faults(_examples)
+    check("the area cards carry kernel_op examples", bool(_examples))
+    check("each kernel_op example names an exposed, unwalled route with that method",
+          not _bad, "; ".join(_bad[:8]))
+    _tmpl = next(((m, p) for (m, p) in _ko._contract_cache
+                  if "{" in p and _ko.exposed_route(m, p) is not None), None)
+    if _tmpl:
+        check("a templated kernel_op example is refused by this check",
+              bool(_example_faults([("synthetic", json.dumps({"method": _tmpl[0], "path": _tmpl[1]}))])),
+              f"{_tmpl[0]} {_tmpl[1]}")
+    else:
+        notes.append("section 8: no exposed templated route to self-test the template check with")
+    # An area whose only covered route has an id in its path has no call to
+    # show. The generator once fell back to the area's shortest path as a GET.
+    try:
+        import generate_capabilities as _gen  # noqa: E402
+        _eps = [{"method": "POST", "path": "/api/example/run", "scope": None, "does": ""},
+                {"method": "GET", "path": "/api/example/{item_id}", "scope": None, "does": ""}]
+        _how = _gen._area_card({"prefix": "/api/example", "scopes": []}, _eps, "",
+                               ["kernel_op"], "partial",
+                               [("GET", "/api/example/{item_id}")])["how"]
+        check("an area with only templated covered routes shows no kernel_op call",
+              not _kernel_op_examples([{"id": "synthetic", "kind": "area", "how": _how}]),
+              _how.splitlines()[0])
+    except Exception as e:  # noqa: BLE001
+        check("an area with only templated covered routes shows no kernel_op call",
+              False, f"could not build the card: {type(e).__name__}: {e}")
+finally:
+    _ko._contract_cache = _saved_contract
+
 # ── verdict ───────────────────────────────────────────────────────────
 print()
 for n in notes:

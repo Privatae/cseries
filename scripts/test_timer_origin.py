@@ -30,6 +30,7 @@ Run: APP_ROOT=<repo> python3 scripts/test_timer_origin.py
 import os
 import sys
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 _ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 
@@ -49,7 +50,7 @@ route_src = (_ROOT / "server/routes/agents.py").read_text()
 api_src = (_ROOT / "workbench-web/src/lib/api.ts").read_text()
 ops_src = (_ROOT / "workbench-web/src/components/workbench/ops-pane.tsx").read_text()
 handler_src = (_ROOT / "server/bridge/memory_handlers.py").read_text()
-session_src = (_ROOT / "brain/mastercode/runtime/session.py").read_text()
+session_src = turn_source(_ROOT)
 direct_src = (_ROOT / "brain/mastercode/runtime/direct_ops.py").read_text()
 bs_src = (_ROOT / "server/brain_service.py").read_text()
 
@@ -434,7 +435,7 @@ check("EXECUTED: an origin-less standing task's turn runs in a topic of its own"
 # em.project_id with no app_id exclusion (routes/brain.py), so that reply
 # rendered in the thread beside the report the runner writes: the duplicate
 # the hidden lane exists to prevent, through a new door.
-sess_src = (_ROOT / "brain/mastercode/runtime/session.py").read_text()
+sess_src = turn_source(_ROOT)
 check("a borrowed context is recorded on the session",
       "context_borrowed: bool = False" in sess_src
       and "context_borrowed=_context_borrowed," in sess_src)

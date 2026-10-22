@@ -33,6 +33,7 @@ import base64
 import os
 import sys
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, os.environ.get("CSERIES_BRAIN", str(REPO / "brain")))
@@ -116,7 +117,7 @@ check("a model that reads no pictures gets a note naming the picture",
       blind[-1]["content"][1]["type"] == "text" and "gimg_X" in blind[-1]["content"][1]["text"],
       blind[-1]["content"])
 
-src = (REPO / "brain/mastercode/runtime/session.py").read_text()
+src = turn_source(REPO)
 loop_at = src.index("            for tc in tool_calls:\n                func_name = tc[\"function\"][\"name\"]")
 drain_at = src.index("            _round_pictures = _turn_pictures.drain()")
 check("session.py drains at the round's level, after the per-call loop (not inside it)",
@@ -738,7 +739,7 @@ svg_url = "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000
 got = pasted(svg_url) if pasted else {}
 check("and a pasted picture that is not base64 is kept, not dropped",
       got == {"type": "image_url", "image_url": {"url": svg_url}}, got)
-src_sess = (REPO / "brain/mastercode/runtime/session.py").read_text()
+src_sess = turn_source(REPO)
 check("the Host's turn builds each pasted picture with that one helper",
       "pasted_picture(img_url)" in src_sess and '"type": "image_url"' not in src_sess)
 

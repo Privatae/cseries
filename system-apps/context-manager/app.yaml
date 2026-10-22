@@ -112,7 +112,12 @@ system: true
 #   it. Search shows five stores: the Host's journal left with its table
 #   (v237). Bundle repacked.
 # 2.8.2 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
-version: "2.8.2"
+# 2.8.3 (2026-10-21): "Use managed" on the embedding card shows only when the
+#   managed embedder's catalog carries the current model; the switch refuses any
+#   other, and a Host with no platform has no catalog. The card's lane pill names
+#   a provider lane by its provider and an unset model as not set, where it read
+#   "managed" for every lane but a machine you run. App-only change.
+version: "2.8.3"
 # Context is NOT a conversational surface — the user operates it directly and
 # talks to the host in Circles/the Workbench. So this is the code-true source for the
 # ENVIRONMENT CATALOG (topology block + describe_app), NOT a surface_role

@@ -406,13 +406,29 @@ async def ensure_user_collaborator(repo_full: str) -> dict:
 
     Idempotent (a PUT of the same permission is a no-op on gitea), fail-soft (never
     raises — a missing sign-in just returns {ok:false, reason}), and it only ever
-    WIDENS the user's access to the host's clean-room repo, never the reverse."""
+    WIDENS the user's access to the host's clean-room repo, never the reverse.
+
+    On a git server connected in Settings the Host holds no sign-in of the
+    person's: it adds the username the person gave there, with its own token,
+    as the account that owns the repo."""
     try:
         if not repo_full or "/" not in repo_full:
             return {"ok": False, "reason": "no repo"}
         from urllib.parse import quote as _quote
+        from server.git_server import connected as _git_server
         from server.routes.gitea import _user_bearer_fresh
         from server.routes.gitea_client import gitea_creds, gitea_request, split_repo
+        own = _git_server()
+        if own is not None:
+            if not own.person:
+                return {"ok": False, "reason": f"no username of yours on {own.netloc} was given "
+                                               "in Settings, Git server"}
+            owner, name = split_repo(repo_full)
+            await gitea_request(
+                "PUT",
+                f"/api/v1/repos/{owner}/{name}/collaborators/{_quote(own.person, safe='')}",
+                json={"permission": "write"}, raw_text=True)
+            return {"ok": True, "login": own.person, "permission": "write"}
         bearer = await _user_bearer_fresh()
         if not bearer:
             return {"ok": False, "reason": "user not signed in to gitea"}

@@ -36,6 +36,7 @@ import sys
 import tempfile
 import textwrap
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 _ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 sys.path[:0] = [str(_ROOT), str(_ROOT / "brain")]
@@ -541,7 +542,7 @@ def main() -> int:
         "status": "failed", "app_id": "podapp", "verify": {"verdict": "failed", "reason": "r", "seed": "SEED"},
         "repair": {"start": False, "round": 3, "why": "the automatic repair budget (2 rounds) is spent"}})
     check("budget-spent turn points the host at the seed", "budget" in txt and "seed" in txt, txt)
-    ssrc = (_ROOT / "brain/mastercode/runtime/session.py").read_text()
+    ssrc = turn_source(_ROOT)
     check("deliver_agent_result routes app_verify rows to the deterministic text",
           "_is_verify = (record.get(\"task_type\") == \"app_verify\")" in ssrc
           and "if _is_verify:\n            content, toast_summary, toast_level = _verify_delivery(record)" in ssrc)

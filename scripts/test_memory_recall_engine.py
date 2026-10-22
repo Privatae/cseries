@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
+from turn_source import turn_source  # session.py and the modules split out of it
 
 sys.path.insert(0, "/app")
 sys.path.insert(0, "/app/server")
@@ -171,7 +172,7 @@ async def main() -> int:
         from mastercode.public_tool_registry import PUBLIC_TOOL_SCHEMAS
         check("memory_search absent from public tool registry",
               "memory_search" not in PUBLIC_TOOL_SCHEMAS)
-        sess_src = open("/app/brain/mastercode/runtime/session.py").read()
+        sess_src = turn_source()
         check("session chat surface carries no memory_search",
               "memory_search" not in sess_src)
         check("recall tool description covers documents",

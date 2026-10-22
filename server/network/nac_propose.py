@@ -27,19 +27,23 @@ async def propose_policy(pool, *, name, enforcement="allow", permits=None,
 
     An allow must name the lanes it admits; normalize_permits refuses one that does
     not, because the engine grants an allow exactly its permits and an empty list
-    would lock out every machine the rule matches.
+    would lock out every machine the rule matches. The match must be the shape the
+    engine's matcher reads (normalize_match): one it cannot evaluate fails the
+    engine's check once approved, and that locks every paired machine out.
 
-    A draft may never rewrite a profile an APPROVED rule points to. Profiles are keyed
-    by name and the insert below upserts on it, and for an approved rule with no signed
-    terms (legacy, pre-signing) the engine reads that profile — so a free re-draft under
-    the same name would turn an approved quarantine into an allow with no approval. The
-    name is refused instead. The way to REPLACE an approved rule is to draft the new one
-    under a new name, have the user approve it, and only then revoke the old one — never
-    revoke first to reuse the name, which drops the old rule's protection before its
-    replacement exists (and removing an approved allow is free, so nothing would stop it).
-    A rule approved from now on is signed and read from its signature, so a concurrent
-    approval cannot be changed through the profile either."""
-    from server.network.nac_controller import normalize_permits
+    A draft may never take the name of an APPROVED rule. Profiles are keyed by name and
+    the insert below upserts on it, so a draft under that name would rewrite the profile
+    row the approved rule points to. The engine would not follow it: it enforces an
+    approved rule from its signed terms only, and an approved rule with no signed terms
+    fails its integrity check and locks the gate rather than being read from its profile
+    (nac_controller._effective, _ingest). But the two rules would then share one profile
+    that describes only the draft. The name is refused instead. The way to REPLACE an
+    approved rule is to draft the new one under a new name, have the user approve it, and
+    only then revoke the old one — never revoke first to reuse the name, which drops the
+    old rule's protection before its replacement exists (and removing an approved allow
+    is free, so nothing would stop it). A draft written while another is being approved
+    does not change that approval either: approve_policy signs the terms it read."""
+    from server.network.nac_controller import normalize_match, normalize_permits
     name = (name or "").strip()
     enforcement = (enforcement or "allow").strip()
     if not name:
@@ -47,7 +51,7 @@ async def propose_policy(pool, *, name, enforcement="allow", permits=None,
     if enforcement not in ("allow", "quarantine"):
         raise ValueError("enforcement must be 'allow' or 'quarantine'")
     permits = normalize_permits(enforcement, permits)
-    match = match or {}
+    match = normalize_match(match)
     priority = int(priority or 100)
     async with pool.acquire() as conn:
         async with conn.transaction():

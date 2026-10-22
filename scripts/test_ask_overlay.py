@@ -29,6 +29,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parent.parent)
 failures: list[str] = []
@@ -149,7 +150,7 @@ check("circles: a nudge whose request FAILED while the turn streams stays pendin
       and "}, [status, drainTick]);" in ch0)
 bs = src("server/brain_service.py")
 check("runtime: a drained nudge is receipted to the client as a 2: nudge_read frame (its own type — never a second `nudge` bubble)",
-      '"event": "nudge_read"' in src("brain/mastercode/runtime/session.py") and '{"type": "nudge_read", "text": event.get("text") or ""}' in bs
+      '"event": "nudge_read"' in turn_source() and '{"type": "nudge_read", "text": event.get("text") or ""}' in bs
       and '{"type": "nudge", "text"' not in bs)
 # The topic that asked is the ticket's own (asked_in, read for every topic of
 # the conversation at once), not the one the person last wrote to; only a card
@@ -176,7 +177,7 @@ ch = src("circles-web/src/hooks/use-circles-chat.ts")
 check("circles: a ticket read that resolves after a thread switch lands nowhere; one whose thread is not yet known (reload) is kept",
       "threadKeyRef.current = threadKey;" in ch and "if (raisedOn && now && raisedOn !== now) return;" in ch
       and "reset(mapped, key);" in circ)
-sess = src("brain/mastercode/runtime/session.py")
+sess = turn_source()
 exit_block = sess.split("if not tool_calls:")[1].split("break  # Normal text response, exit loop")[0]
 check("runtime: a nudge that arrives while the closing reply streams is seen at loop exit and gets a round — "
       "left queued for the drain, never taken off and pushed back",

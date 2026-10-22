@@ -25,6 +25,7 @@ import ast
 import os
 import sys
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 # Repo root — APP_ROOT when smoke drives it, else the tree this file lives in.
 # Same resolution the sibling gates use (test_autoadvance_selection.py). The
@@ -749,7 +750,7 @@ def main() -> int:
     check("delivery carries chain_stopped out of the row",
           '"chain_stopped": res.get("chain_stopped"),' in adsrc)
 
-    ssrc = (_ROOT / "brain/mastercode/runtime/session.py").read_text()
+    ssrc = turn_source(_ROOT)
     check("the delivery states it UNCONDITIONALLY, not behind the notes elif",
           'if (record.get("chain_stopped") or "").strip():' in ssrc,
           "a successful build sets preview_url, which would swallow an elif")

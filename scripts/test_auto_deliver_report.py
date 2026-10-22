@@ -18,6 +18,7 @@ AST/source checks plus the pure helper, so this runs outside the image.
 import ast
 import os
 import sys
+from turn_source import turn_source  # session.py and the modules split out of it
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 failures = []
@@ -29,7 +30,7 @@ def check(name, ok, detail=""):
         failures.append(name)
 
 
-session = open(os.path.join(ROOT, "brain/mastercode/runtime/session.py")).read()
+session = turn_source(ROOT)
 tree = ast.parse(session)
 fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "_auto_deliver_facts")
 ns: dict = {}

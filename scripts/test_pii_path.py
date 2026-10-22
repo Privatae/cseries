@@ -47,6 +47,7 @@ import re
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from turn_source import turn_source  # session.py and the modules split out of it
 
 FAILS = []
 
@@ -499,7 +500,7 @@ def main() -> int:
     check("write_turn_row routes via pii_guard.submit at thread scope",
           "pii_guard.submit(" in me_src and 'f"thread:{session_id}"' in me_src
           and "_write_turn_row_landed" in me_src)
-    sess_src = open(os.path.join(app_root, "brain/mastercode/runtime/session.py")).read()
+    sess_src = turn_source(app_root)
     check("_save_session_to_db routes transcripts via pii_guard.submit",
           "pii_guard.submit(" in sess_src and 'f"thread:{sess.session_id}"' in sess_src)
     q_src = open(os.path.join(app_root, "brain/mastercode/pii_queue.py")).read()

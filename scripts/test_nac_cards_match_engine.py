@@ -364,15 +364,17 @@ db.profiles.append(_profile(7, "legacy", "allow", _MCP, revoked=True))
 db.policy.append(_rule(3, "legacy", "allow", _MCP, pid=7, signed=False))
 listed = _list(db)
 r3 = _by_id(listed, 3)
-check("an unsigned approved rule whose profile is gone: 'failed' with reason 'profile'",
-      r3.get("integrity") == "failed" and r3.get("integrity_reason") == "profile", r3)
+check("an approved rule with no signature: 'failed' with reason 'unsigned' (never read from "
+      "its editable columns or its profile)",
+      r3.get("integrity") == "failed" and r3.get("integrity_reason") == "unsigned", r3)
 view, err = _ingress_view(listed)
 if view:
     check("two failing rules: the banner names both and asks for the code on each",
           "“office”, “legacy”" in view["html"] and "each asks for your code" in view["html"], view["html"][:900])
-    check("the profile-less card says its profile is gone",
-          "profile missing" in _card(view["html"], "legacy")
-          and "the profile it points at is gone" in _card(view["html"], "legacy"), _card(view["html"], "legacy"))
+    check("the unsigned card says it carries no signature",
+          "unsigned" in _card(view["html"], "legacy")
+          and "admits nothing: it carries no signature" in _card(view["html"], "legacy"),
+          _card(view["html"], "legacy"))
 
 # Removing the failing rules lifts the lock at the next read, and the engine agrees.
 for rid in (2, 3):
@@ -400,8 +402,13 @@ check("no engine running: engine reported as not running, tamper unknown (None),
       and _by_id(listed, 1)["integrity"] == "unchecked", listed)
 check("a draft's integrity is None", _by_id(listed, 4)["integrity"] is None, _by_id(listed, 4))
 v, err = _ingress_view(listed)
-check("no engine: no banner and no failure mark", v is not None and "nac-lock-banner" not in v["html"]
+check("no engine: no integrity banner and no failure mark", v is not None and "nac-lock-banner" not in v["html"]
       and "signature fails" not in v["html"], err or (v or {}).get("html", "")[:400])
+# The MCP gate refuses every governed machine when no engine is loaded, so the lane says so.
+check("no engine: the lane says every fingerprinted machine is locked out because the rules did not load",
+      v is not None and "nac-unloaded-banner" in v["html"]
+      and "Every paired machine with a device fingerprint is locked out." in v["html"]
+      and "did not load" in v["html"], err or (v or {}).get("html", "")[:700])
 unarmed = _engine(db2, armed=False)
 listed = _list(db2)
 check("an unarmed engine: armed False, not locked, and a signed row is 'unchecked' (never 'ok' or 'failed')",
@@ -490,6 +497,59 @@ except nac_commit.CommitError as e:
     err4 = e
 check("...and its refusal still says it keeps the machines out",
       err4 is not None and "keeps the machines it matches out" in err4.detail, repr(err4))
+
+print("   an engine that started without its key enforces no signed rule, and says why")
+db5 = _Db()
+db5.profiles = [_profile(5, "home", "allow", _MCP)]
+db5.policy = [_rule(1, "home", "allow", _MCP, pid=5)]
+_key_state["readable"] = False
+try:
+    nac5 = _engine(db5)                        # the key could not be read at startup
+    listed = _list(db5)
+    h1 = _by_id(listed, 1)
+    check("the engine is locked, and the rule failed as 'key_unreadable' (never enforced unchecked)",
+          listed["engine"]["tamper"] is True and h1.get("integrity") == "failed"
+          and h1.get("integrity_reason") == "key_unreadable", (listed["engine"], h1))
+    check("...and the gate's own evaluate() refuses the machine the rule would admit",
+          asyncio.run(nac5.evaluate(42)).get("allowed") is False)
+    v, err = _ingress_view(listed)
+    check("the lane renders", v is not None, err)
+    if v:
+        h = v["html"]
+        check("the banner says the key is why, and that the Host lets machines back in itself",
+              "nac-lock-banner" in h and "signing key right now" in h and "on its own" in h, h[:700])
+        check("...and does not tell the person to revoke the rule", "Revoke it below" not in h, h[:700])
+        check("the card says it cannot be checked, not that its signature fails",
+              "cannot check" in _card(h, "home") and "signature fails" not in _card(h, "home"),
+              _card(h, "home"))
+finally:
+    _key_state["readable"] = True
+listed = _list(db5)
+check("once the key reads, the next read re-arms the engine and the lock lifts",
+      listed["engine"] == {"running": True, "tamper": False, "armed": True}
+      and _by_id(listed, 1).get("integrity") == "ok", listed["engine"])
+
+
+# ══ 2b. a condition approved as one string ═══════════════════════════════════════════════
+print("2b. a rule approved with one value written as a string is enforced, and its card names it")
+_key_state["readable"] = True
+db = _Db()
+db.profiles = [_profile(7, "servers-out", "quarantine", [])]
+db.policy = [_rule(3, "servers-out", "quarantine", [], pid=7, match={"classification": "server"})]
+nac = _engine(db)
+listed = _list(db)
+r3 = _by_id(listed, 3) or {}
+check("one value as a string: the engine does not lock, and the rule's verdict is 'ok'",
+      listed.get("engine", {}).get("tamper") is False and r3.get("integrity") == "ok",
+      (listed.get("engine"), r3))
+check("...and the listing gives its match as the list the engine compares with",
+      r3.get("match") == {"classification": ["server"]}, r3.get("match"))
+view, err = _ingress_view(listed)
+check("2b: the Ingress lane renders", view is not None, err)
+if view:
+    card = _card(view["html"], "servers-out")
+    check("the card names the class it matches, not 'any device'",
+          "server" in card and "any device (catch-all)" not in card, card[:600])
 
 
 # ══ 3. expired management grants ══════════════════════════════════════════════════════════

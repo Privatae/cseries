@@ -18,6 +18,23 @@ sys.path.insert(0, os.environ.get("CSERIES_ROOT", "/app"))
 from server.network.nac_controller import NACController, reap_stale_endpoints, STALE_CUTOFF_SECONDS
 
 
+def _signed_policy(rows):
+    """(verify key, rows) — each rule signed with an ephemeral stand-in for the Host's key,
+    because the engine enforces only signed terms (an approved rule with no signature fails
+    its check and locks every machine out)."""
+    import base64
+    from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+    from server.network.nac_controller import _canonical
+    key = Ed25519PrivateKey.generate()
+    out = []
+    for r, enforcement, permits in rows:
+        terms = {"name": r["name"], "priority": r["priority"], "match": r["match"],
+                 "enforcement": enforcement, "permits": permits}
+        out.append(dict(r, signed_terms=terms,
+                        signature=base64.b64encode(key.sign(_canonical(terms))).decode()))
+    return key.public_key().public_bytes_raw(), out
+
+
 async def _mk_bastion(conn, eid, *, posture, last_seen_offset):
     """Synthetic bastion token + nac_endpoints(posture) + a heartbeat last_seen_at
     `last_seen_offset` seconds in the past. Returns token_id."""
@@ -72,15 +89,16 @@ async def run():
             fails.append(f"live device posture must be UNTOUCHED by the reaper (got {lp!r})")
 
         # dead-device-loses-reach: under a posture policy, the now-unknown device quarantines.
-        nac = NACController(pool=pool)
         profiles = [{"id": 1, "name": "allow-healthy", "enforcement": "allow", "is_default": False,
                      "permits": [{"direction": "inbound", "lane": "mcp"}]},
                     {"id": 2, "name": "quarantine-bad", "enforcement": "quarantine", "is_default": False,
                      "permits": []}]
-        policy = [{"id": 10, "name": "bad", "priority": 10, "match": {"posture": ["degraded", "unknown"]},
-                   "profile_id": 2, "signed_terms": None, "signature": None},
-                  {"id": 20, "name": "ok", "priority": 20, "match": {"posture": ["healthy"]},
-                   "profile_id": 1, "signed_terms": None, "signature": None}]
+        pub, policy = _signed_policy([
+            ({"id": 10, "name": "bad", "priority": 10, "match": {"posture": ["degraded", "unknown"]},
+              "profile_id": 2}, "quarantine", []),
+            ({"id": 20, "name": "ok", "priority": 20, "match": {"posture": ["healthy"]},
+              "profile_id": 1}, "allow", [{"direction": "inbound", "lane": "mcp"}])])
+        nac = NACController(pool=pool, verify_pubkey=pub)
         nac._ingest(profiles, policy)
 
         ep_dead = await nac._endpoint_state(stale)   # posture=unknown after reaping

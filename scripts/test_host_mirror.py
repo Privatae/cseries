@@ -18,6 +18,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, os.environ.get("CSERIES_BRAIN", str(REPO / "brain")))
@@ -32,7 +33,7 @@ def check(name, ok, detail=""):
         fails += 1
 
 
-src = (REPO / "brain/mastercode/runtime/session.py").read_text()
+src = turn_source(REPO)
 
 # ── 1. static message: only the (turn-stable) orchestrator catalog is appended ─
 appends = [m.start() for m in re.finditer(r'grok_messages\[0\]\["content"\] \+=', src)]

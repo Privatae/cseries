@@ -24,6 +24,7 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, os.environ.get("CSERIES_BRAIN", str(REPO / "brain")))
@@ -191,7 +192,7 @@ check("_b_comm_context no longer appends the date / the summary age",
       "strftime(" not in cc_src and "conversation_summary.md" not in cc_src and "updated_at" not in cc_src)
 
 # ── 6. the field travels ────────────────────────────────────────────────────
-sess_src = (REPO / "brain/mastercode/runtime/session.py").read_text()
+sess_src = turn_source(REPO)
 check("EntitySession has a frame field", "frame: Optional[dict] = None" in sess_src)
 check("send_message accepts frame and hands it to the transient builder",
       "        frame: dict | None = None,\n" in sess_src

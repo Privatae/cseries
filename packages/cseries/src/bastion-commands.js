@@ -2,9 +2,9 @@
 
 // The bastion commands the one elevated step runs, in order. The same list on
 // every OS: Windows renders it into its elevated PowerShell script
-// (win/elevated.js), and macOS and Linux will run it the same way once their
-// VM drivers land (bastion.js osOps). Each entry has the exit code the
-// elevated step ends with when that command fails.
+// (win/elevated.js), and macOS and Linux into the script they run under sudo
+// (bastion.js). Each entry has the exit code the elevated step ends with when
+// that command fails.
 //
 //   approvals-owner --sid <SID> Windows: the account that ran this command is
 //                               the only one whose tray answers approvals.

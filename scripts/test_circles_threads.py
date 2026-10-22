@@ -43,6 +43,7 @@ import os
 import pathlib
 import subprocess
 import sys
+from turn_source import turn_source  # session.py and the modules split out of it
 
 sys.path.insert(0, "/app")
 sys.path.insert(0, "/app/server")
@@ -1514,8 +1515,7 @@ async def main(dsn: str | None = None) -> int:
               f"status={st8} reports={reports8} schedule={sched8}")
 
         # z15. The turn writer binds the turn's scope where it derives it
-        _sess_src = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..",
-                                      "brain", "mastercode", "runtime", "session.py")).read()
+        _sess_src = turn_source(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'))
         _i = _sess_src.find("sess.recall_scope = _src_ctx")
         check("z15. runtime/session.py sets CURRENT_TURN_SCOPE right where it derives the "
               "turn's scope",

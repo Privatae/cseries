@@ -34,6 +34,7 @@ import json
 import os
 import re
 import sys
+from turn_source import turn_source  # session.py and the modules split out of it
 
 FAILS = []
 
@@ -392,7 +393,7 @@ def main() -> int:
     check("a typed turn can always ask about types", "turn_type" in tt.ALWAYS_ALLOWED)
     kit = open(os.path.join(app_root, "app-web-kit", "ask.ts"), encoding="utf-8").read()
     check("the chat renders its card", '"turn_type"]);' in kit and "RESULT_ASK_TOOLS" in kit)
-    ssrc = open(os.path.join(app_root, "brain", "mastercode", "runtime", "session.py"), encoding="utf-8").read()
+    ssrc = turn_source(app_root)
     check("the session takes a Once grant ONLY for an active type",
           '(sess.turn_type is not None and sess.turn_type.get("status") == "active"\n'
           '                    and not _pinned):\n'

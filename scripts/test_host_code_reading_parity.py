@@ -49,6 +49,7 @@ import tempfile
 import traceback
 import types
 from pathlib import Path
+from turn_source import turn_source  # session.py and the modules split out of it
 
 ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 sys.path.insert(0, str(ROOT))
@@ -583,7 +584,7 @@ def part_e_store_exemption():
           not cs("code_read", {"repo": "owner/repo", "path": "a.py"})
           and not cs("gitea", {"op": "grep", "repo": "owner/repo", "start_line": 1})
           and not cs("search_my_code", {"query": "x"}))
-    src = (ROOT / "brain/mastercode/runtime/session.py").read_text()
+    src = turn_source(ROOT)
     i = src.find("len(_bounded_result) > _result_store.STORE_OVER_CHARS")
     check("E2 the store's condition in the turn loop skips caller-sized reads",
           i > 0 and "_result_store.caller_sized(_eff_name, _eff_args)" in src[i:i + 300])

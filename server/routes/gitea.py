@@ -1,7 +1,9 @@
 """
-Gitea app — three panels over the configured forge (GITEA_URL). The USER panels authenticate AS THE
+Gitea app — three panels over the Host's coding forge (server/git_server.forge_identity: the git
+server connected in Settings, else the forge the install set). The USER panels authenticate AS THE
 USER via gitea's OAuth2/SSO (the same Authentik the dashboard uses), so the server
-logs the app in as you, not as the host.
+logs the app in as you, not as the host. That sign-in is Privatae's forge's, so on a connected git
+server the user panels point at the server's own pages instead (_own_server).
 
   • Your repos   (/user/repos, browse) — your OWN repositories, via your gitea OAuth2
     token (obtained through /oauth/login — seamless, you're already Authentik-SSO'd).
@@ -157,8 +159,26 @@ async def _load_user_tok() -> None:
         pass
 
 
+def _own_server() -> str | None:
+    """The address of the git server connected in Settings, or None. The
+    person's token below is for Privatae's forge, so with a server connected
+    there is no person's sign-in here: they use the server's own pages."""
+    from server.git_server import connected
+    c = connected()
+    return c.url if c is not None else None
+
+
+def _refuse_on_own_server() -> None:
+    url = _own_server()
+    if url:
+        raise HTTPException(409, f"signing in as you is not available on a connected git server: "
+                                 f"open {url} to work there as yourself")
+
+
 def _user_bearer() -> str | None:
     """The user's gitea OAuth2 access token, if signed in and unexpired."""
+    if _own_server():
+        return None
     tok = _user_tok.get("access_token")
     if not tok:
         return None
@@ -245,6 +265,8 @@ async def _user_bearer_fresh() -> str | None:
     (the VS Code editor's git credential broker) keep a valid token without forcing
     a re-login. Returns None only when there's no session and no usable refresh.
     Host sign-in first: with no session at all, mint through the platform."""
+    if _own_server():
+        return None
     await _load_user_tok()  # restore a persisted session after a pod restart
     tok = _user_tok.get("access_token")
     exp = _user_tok.get("expires_at")
@@ -281,6 +303,7 @@ async def _user_bearer_fresh() -> str | None:
 async def oauth_login(request: Request):
     """Start gitea SSO login — return the authorize URL (PKCE). The app opens it; the
     user is already Authentik-SSO'd so it's a seamless redirect back to the callback."""
+    _refuse_on_own_server()
     _reap_pkce()
     xf = request.headers.get("origin") or ""
     if not xf:
@@ -309,6 +332,9 @@ async def oauth_callback(code: str = "", state: str = ""):
     # Reached without a session (middleware/localhost_only.is_oauth_callback):
     # only a PKCE entry this Host made, under _PKCE_TTL old, taken out as it is
     # read, so a state works once.
+    if _own_server():
+        return HTMLResponse("<p>Signing in here is not available on a connected git server.</p>",
+                            status_code=409)
     _reap_pkce()
     entry = _pkce.pop(state, None) if state else None
     if not entry or not code:
@@ -341,6 +367,7 @@ async def connect(request: Request):
     """Host sign-in: obtain the user's gitea token through the platform — no popup.
     The requester's verified email (X-Authentik-Email, set by the direct router)
     is passed along; the platform honours it only if it is an operator of this Host."""
+    _refuse_on_own_server()
     email = (request.headers.get("x-authentik-email") or "").strip().lower() or None
     tok = await _ensure_user_token(email)
     if not tok:
@@ -385,14 +412,21 @@ async def oauth_status():
 async def status():
     cred = gitea_creds()
     if not cred:
-        return {"connected": False, "reason": "no gitea credential on this host"}
+        return {"connected": False, "reason": "no git server connected (Settings, Git server)"}
     return {"connected": True, "host": cred[2], "host_identity": cred[0],
-            "authed": _user_bearer() is not None}
+            "authed": _user_bearer() is not None, "own_server": _own_server()}
 
 
 # ── USER lens: your own repos (as YOU, via your OAuth2 token) ──────────────────
 @router.get("/user/repos", dependencies=[_READ])
 async def user_repos():
+    own = _own_server()
+    if own:
+        # The person works on their own server as themselves, in its own pages;
+        # this Host signs in there only as its own account.
+        cred = gitea_creds()
+        return {"connected": True, "authed": False, "own_server": own,
+                "host_identity": cred[0] if cred else None, "repos": []}
     bearer = _user_bearer()
     if not bearer:
         return {"connected": bool(gitea_creds()), "authed": False,

@@ -103,8 +103,8 @@ sha256, and the npm package with provenance.
 
 Issues and pull requests are welcome on GitHub. An accepted change is carried
 into the development repository and arrives here with the next snapshot.
-Report a security problem by email to info@privatae.ai, not in a public
-issue.
+Report a security problem by email to security@privatae.ai, not in a public
+issue; [SECURITY.md](SECURITY.md) says what to send and what is in scope.
 
 ## Messaging
 

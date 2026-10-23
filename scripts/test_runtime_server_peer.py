@@ -74,7 +74,7 @@ async def ask(path, payload):
 
 async def scenario(uid, cgroups, tmp):
     paths = C.Paths(tmp)
-    rt = S.Runtime(paths, guard=G.Guard(total_mb=8192), peer_uid=uid, peer_cgroups=cgroups,
+    rt = S.Runtime(paths, guard=G.Guard(total_mb=8192, held=lambda: 0, psi_path=os.devnull), peer_uid=uid, peer_cgroups=cgroups,
                    chown=lambda *a: None, machine="x86_64")
     sock_path = os.path.join(tmp, "runtime.sock")
     sock = S.listening_socket(sock_path)

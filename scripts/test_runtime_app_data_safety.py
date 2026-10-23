@@ -33,7 +33,6 @@ import shutil
 import stat
 import sys
 import tarfile
-import tempfile
 import threading
 import time
 import types
@@ -53,6 +52,7 @@ fake_main.get_bridge_client = lambda: None
 fake_main._ws_connections = set()
 sys.modules["server.main"] = fake_main
 
+import gate_runner_limits as limits  # noqa: E402
 import runtime_fake_podman as fake  # noqa: E402
 from cseries_runtime import common as C  # noqa: E402
 from cseries_runtime import guard as G  # noqa: E402
@@ -63,9 +63,12 @@ from server.applications import local_runtime as LR  # noqa: E402
 from server.applications import proxy  # noqa: E402
 
 FAILED = []
-ROOTED = os.geteuid() == 0
+# Root that can give files the app ids (not root in a user namespace
+# that maps only its own ids, as under the CI runner's rootlesskit).
+ROOTED = limits.owns_app_ids(C.UID_BASE, C.MAX_SLOTS * C.UID_RANGE)
 PY = "ghcr.io/privatae/cseries-app-runtime-python@sha256:" + "1" * 64
-tmp = Path(tempfile.mkdtemp(prefix="rt-appdata-safety-", dir=os.environ.get("TMPDIR")))
+# The runtime binds <tmp>/machine/runtime.sock.
+tmp = limits.socket_tmp("rt-appdata-safety-", "machine/runtime.sock")
 
 
 def check(label, cond, detail=""):
@@ -342,7 +345,7 @@ async def main():
 
     async def ready(*a):
         return True
-    rt = S.Runtime(paths, Podman(exe), G.Guard(total_mb=16384, disk_path=str(d)),
+    rt = S.Runtime(paths, Podman(exe), G.Guard(total_mb=16384, disk_path=str(d), held=lambda: 0, psi_path=os.devnull),
                    http_probe=ready, tcp_probe=ready,
                    chown=(os.chown if ROOTED else (lambda *a: None)), machine="x86_64",
                    peer_uid=os.getuid(), peer_cgroups=(own_cgroup().rstrip("/") + "/",))

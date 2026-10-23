@@ -411,6 +411,10 @@ def _schedule_desktop_snapshot():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup and shutdown lifecycle."""
+    # The Workbench projects dir /user-apps serves. Made here rather than at
+    # import, so importing this module needs no write access to /var/lib.
+    _USR_APPS.mkdir(parents=True, exist_ok=True)
+
     # Crash-dump housekeeping. Deliberately OUTSIDE any pool guard — it
     # touches the filesystem only and needs no database. The first version sat
     # inside `if brain_pool is not None:`, so a pod whose brain pool failed to
@@ -2137,8 +2141,8 @@ class _NoCacheStatic(StaticFiles):
 # original local_grep default — entity-written project files would have
 # landed in platform space. /var/lib/cseries/ is the entity's own writable,
 # persistent volume — the correct home for Workbench projects.
+# Made at server start (lifespan), never at import.
 _USR_APPS = _P("/var/lib/cseries/projects")
-_USR_APPS.mkdir(parents=True, exist_ok=True)
 
 # /system-apps/<id>/... is served by the application proxy router:
 # kind=static apps stream from /var/lib/cseries/apps/<id>/, kind=process
@@ -2147,8 +2151,9 @@ _USR_APPS.mkdir(parents=True, exist_ok=True)
 from server.applications.proxy import router as _apps_proxy_router
 app.include_router(_apps_proxy_router)
 
-if _USR_APPS.exists():
-    app.mount("/user-apps", _NoCacheStatic(directory=str(_USR_APPS)), name="user-apps")
+# check_dir=False: the dir is made at start, after this mount is registered.
+app.mount("/user-apps", _NoCacheStatic(directory=str(_USR_APPS), check_dir=False),
+          name="user-apps")
 
 
 # --- WebSocket (CAN-bus message protocol) ---

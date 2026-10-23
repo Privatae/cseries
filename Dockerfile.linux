@@ -718,11 +718,11 @@ COPY --chown=privatae:privatae scripts/wiki_pages.py /app/scripts/wiki_pages.py
 COPY --chown=privatae:privatae scripts/generate_wiki.py /app/scripts/generate_wiki.py
 COPY --chown=privatae:privatae docs/wiki/pages/ /app/docs/wiki/pages/
 COPY --chown=privatae:privatae docs/wiki/status.json /app/docs/wiki/status.json
-# The server.main import has module-level mkdir side effects (projects/,
-# review-sessions/, ladder-runs/, training_memory_jobs/). This RUN executes
-# as root — remove those runtime dirs after generation or they ship
-# root-owned and every privatae-user write inside them EACCES-fails at
-# runtime (they are created at runtime today, privatae-owned; keep it so).
+# No module the generators import creates a runtime dir any more
+# (tests/test_no_dirs_created_at_import.py). This RUN executes as root, so the
+# rm still keeps any such dir out of the image: one that shipped root-owned
+# would make every privatae-user write inside it fail with EACCES. They are
+# created at runtime, privatae-owned; keep it so.
 # /app/training_memory_jobs is made again, empty and privatae-owned: it is a
 # volume mount point, and a mount point missing from the image is made by
 # Docker as root.

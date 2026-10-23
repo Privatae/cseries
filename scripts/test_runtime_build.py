@@ -112,7 +112,7 @@ def world(tmp, served):
     # wrapper that turns into that user (systemd-run; checked on its own).
     if not hasattr(B, "podman_as_build_user"):     # code from before the build user
         b = B.Builder(paths, podman, fetch=fetch)
-        rt = S.Runtime(paths, podman, G.Guard(total_mb=16384, disk_path=tmp),
+        rt = S.Runtime(paths, podman, G.Guard(total_mb=16384, disk_path=tmp, held=lambda: 0, psi_path=os.devnull),
                        http_probe=lambda url: asyncio.sleep(0, result=True),
                        tcp_probe=lambda ip, port: asyncio.sleep(0, result=True),
                        chown=lambda *a: None, machine="x86_64", builder=b)
@@ -132,7 +132,7 @@ def world(tmp, served):
         return 0
     b = B.Builder(paths, podman, fetch=fetch, build_podman=bpodman, system=system,
                   chown=lambda *a: None, user_of=lambda uid: USERS[uid])
-    rt = S.Runtime(paths, podman, G.Guard(total_mb=16384, disk_path=tmp),
+    rt = S.Runtime(paths, podman, G.Guard(total_mb=16384, disk_path=tmp, held=lambda: 0, psi_path=os.devnull),
                    http_probe=lambda url: asyncio.sleep(0, result=True),
                    tcp_probe=lambda ip, port: asyncio.sleep(0, result=True),
                    chown=lambda *a: None, machine="x86_64", builder=b)

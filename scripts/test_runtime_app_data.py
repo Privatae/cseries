@@ -113,7 +113,7 @@ async def main():
 
     async def ready(*a):
         return True
-    rt = S.Runtime(paths, Podman(exe), G.Guard(total_mb=16384, disk_path=tmp),
+    rt = S.Runtime(paths, Podman(exe), G.Guard(total_mb=16384, disk_path=tmp, held=lambda: 0, psi_path=os.devnull),
                    http_probe=ready, tcp_probe=ready, chown=lambda *a: None, machine="x86_64",
                    peer_uid=os.getuid(), peer_cgroups=(own_cgroup().rstrip("/") + "/",))
     sock_path = os.path.join(tmp, "runtime.sock")

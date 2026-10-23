@@ -44,10 +44,10 @@ log = logging.getLogger("cseries.review")
 
 router = APIRouter(prefix="/api/review", tags=["review"])
 
+# Each is created where a session or project is first written, never at
+# import: importing this module needs no write access to /var/lib.
 SESSIONS_ROOT = Path("/var/lib/cseries/review-sessions")
-SESSIONS_ROOT.mkdir(parents=True, exist_ok=True)
 PROJECTS_ROOT = Path("/var/lib/cseries/projects")
-PROJECTS_ROOT.mkdir(parents=True, exist_ok=True)
 
 # How long a harness run may say NOTHING before the kernel gives up on it.
 # There is deliberately no TOTAL cap on a build: a run with a live feed needs no time

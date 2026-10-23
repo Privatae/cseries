@@ -101,7 +101,7 @@ class World:
         psi = os.path.join(tmp, "psi")
         with open(psi, "w") as f:
             f.write("full avg10=0.00 avg60=0.00 avg300=0.00 total=0\n")
-        self.guard = G.Guard(total_mb=total_mb, psi_path=psi, disk_path=tmp)
+        self.guard = G.Guard(total_mb=total_mb, psi_path=psi, disk_path=tmp, held=lambda: 0)
         self.rt = S.Runtime(self.paths, Podman(exe), self.guard, http_probe=self.http_probe,
                             tcp_probe=self.tcp_probe, clock=self.clock,
                             chown=lambda p, u, g: self.chowns.append((p, u)),

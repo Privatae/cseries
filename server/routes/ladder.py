@@ -46,8 +46,8 @@ log = logging.getLogger("privatae.pc.ladder")
 
 router = APIRouter(prefix="/api/ladder", tags=["ladder"])
 
+# Created where a run's state is first written, never at import.
 LADDER_ROOT = Path("/var/lib/cseries/ladder-runs")
-LADDER_ROOT.mkdir(parents=True, exist_ok=True)
 
 # Evidence is carried WHOLE (an old fixed 4,000-char cut dropped the failure
 # detail the next rung needed). The one real bound is the prompt's transport:

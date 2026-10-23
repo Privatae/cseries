@@ -57,7 +57,7 @@ check(G.parse_psi_full("some avg10=1.00 avg60=0 avg300=0 total=1\n") is None, "n
 with tempfile.TemporaryDirectory() as tmp:
     psi = os.path.join(tmp, "psi")
     open(psi, "w").write("full avg10=0.00 avg60=0.00 avg300=0.00 total=0\n")
-    g = G.Guard(total_mb=3819, psi_path=psi)
+    g = G.Guard(total_mb=3819, psi_path=psi, held=lambda: 0)
     budget = 3819 - 1055
     units = [{"kind": "harness", "ident": "codex", "memory_mi": 1024},
              {"kind": "app", "ident": "telegram", "memory_mi": 192}]

@@ -44,7 +44,6 @@ import stat
 import subprocess
 import sys
 import tarfile
-import tempfile
 import types
 from pathlib import Path
 
@@ -62,6 +61,7 @@ fake_main.get_bridge_client = lambda: None
 fake_main._ws_connections = set()
 sys.modules["server.main"] = fake_main
 
+import gate_runner_limits as limits  # noqa: E402
 import runtime_fake_podman as fake  # noqa: E402
 from cseries_runtime import argv as A  # noqa: E402
 from cseries_runtime import common as C  # noqa: E402
@@ -74,7 +74,9 @@ from server import host_restore as hr  # noqa: E402
 from server.applications import local_runtime as LR  # noqa: E402
 
 FAILED = []
-ROOTED = os.geteuid() == 0
+# Root that can give files the app ids (not root in a user namespace
+# that maps only its own ids, as under the CI runner's rootlesskit).
+ROOTED = limits.owns_app_ids(C.UID_BASE, C.MAX_SLOTS * C.UID_RANGE)
 
 
 def check(label, cond, detail=""):
@@ -90,7 +92,8 @@ if not Path(hb.AGE).is_file():
     sys.exit(2)
 
 PY = "ghcr.io/privatae/cseries-app-runtime-python@sha256:" + "1" * 64
-tmp = Path(tempfile.mkdtemp(prefix="bk-appdata-", dir=os.environ.get("TMPDIR")))
+# Each machine binds <tmp>/<name>/runtime.sock; "second" is the longest name.
+tmp = limits.socket_tmp("bk-appdata-", "second/runtime.sock")
 
 
 def own_cgroup():
@@ -130,7 +133,7 @@ class Machine:
 
         async def ready(*a):
             return True
-        self.rt = S.Runtime(self.paths, Podman(self.exe), G.Guard(total_mb=16384, disk_path=str(self.dir)),
+        self.rt = S.Runtime(self.paths, Podman(self.exe), G.Guard(total_mb=16384, disk_path=str(self.dir), held=lambda: 0, psi_path=os.devnull),
                             http_probe=ready, tcp_probe=ready,
                             chown=(os.chown if ROOTED else (lambda *a: None)), machine="x86_64",
                             peer_uid=os.getuid(), peer_cgroups=(own_cgroup().rstrip("/") + "/",))
@@ -480,7 +483,10 @@ async def main():
               (two.mount("notes") / "stray").stat().st_uid == new_base + C.NOBODY_ID
               and not (two.mount("notes") / "stray").stat().st_mode & stat.S_ISUID)
     else:
-        moved = {u for _p, u, _g in seen_owners}
+        # The plan restores photos too; only notes' files are in question here.
+        # They get their owners in notes' restore volume, before it is moved
+        # into place.
+        moved = {u for p, u, _g in seen_owners if C.restore_volume("notes") in Path(p).parts}
         check("its files are moved to this machine's ids for it (recorded: not root here)",
               moved and all(new_base <= u < new_base + C.UID_RANGE for u in moved), sorted(moved))
     hr._write_plan(plan)

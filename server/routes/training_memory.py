@@ -52,8 +52,8 @@ from server.applications.middleware import requires_permission
 # only) and is listed in server/applications/route_policy.py.
 router = APIRouter(prefix="/api/training-memory", tags=["training-memory"])
 
+# Created where a job's files are first written, never at import.
 JOBS_ROOT = Path(os.environ.get("TM_JOBS_ROOT", "/app/training_memory_jobs"))
-JOBS_ROOT.mkdir(parents=True, exist_ok=True)
 
 # In-process registry of active job event streams.
 _event_queues: dict[str, asyncio.Queue] = {}

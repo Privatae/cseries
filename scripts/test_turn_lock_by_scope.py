@@ -76,7 +76,7 @@ def check(name: str, ok: bool, detail: str = "") -> None:
         FAILS.append(name)
 
 
-EID = 3
+EID = 9003
 THREAD = "0b1c2d3e-4f50-4617-8293-a4b5c6d7e8f9"   # canonical, as the send path carries it
 PROJECT = 251
 CONNECTOR = "telegram-connector"
@@ -217,11 +217,11 @@ async def main() -> None:
 
     # ── unchanged ─────────────────────────────────────────────────────
     check("unchanged: keys with no thread, no project and no history_context are byte-identical",
-          compose(EID, "circles", None) == "circles|3|none"
-          and compose(EID, "workbench", None) == "workbench|3|none"
-          and compose(EID, "vscode", None) == "vscode|3|none"
-          and compose(EID, None, None) == "chat|3|none"
-          and compose(EID, CONNECTOR, None) == f"{CONNECTOR}|3|none",
+          compose(EID, "circles", None) == "circles|9003|none"
+          and compose(EID, "workbench", None) == "workbench|9003|none"
+          and compose(EID, "vscode", None) == "vscode|9003|none"
+          and compose(EID, None, None) == "chat|9003|none"
+          and compose(EID, CONNECTOR, None) == f"{CONNECTOR}|9003|none",
           repr([compose(EID, a, None) for a in ("circles", "workbench", "vscode", None)]))
     reg = fresh()
     first = await send(message="from circles", app_id="circles")

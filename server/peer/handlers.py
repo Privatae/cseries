@@ -140,7 +140,7 @@ async def inbox_deliver(peer_id: int, slip_info: dict, params: dict) -> dict:
     # WHO THE SENDING HOST IS, from our own peer list — never from the sender.
     # Same call inbox_request makes, for the same reason, and it also restores what
     # the bridge leg injects (from_display_name / from_handle): without it a thread
-    # that arrived direct titles "Host 122" while the same peer's bridge-delivered
+    # that arrived direct titles "Host 9122" while the same peer's bridge-delivered
     # messages titled with its real name, in one inbox the readers cannot tell apart.
     #
     # ONE DIVERGENCE REMAINS AND IT IS IRREDUCIBLE HERE: the relay names a peer from
@@ -1038,7 +1038,7 @@ async def _identify(peer_id: int) -> dict:
     The bridge leg injects verified from_display_name / from_handle /
     from_entity_uuid into the card's payload (adapter.py:4983-5002). This lane
     injected nothing, and the allow-list made that visible: the card fell through
-    to `message.from` and read "122@entity.localhost (a host) wants to connect".
+    to `message.from` and read "9122@entity.localhost (a host) wants to connect".
     Worse, Accept posts whatever the card showed as the contact's HANDLE
     (inbox-pane.tsx:253-260), so accepting wrote an ADDRESS as a host handle —
     the exact invariant this branch's own gate pins ("a handle can no longer BE an

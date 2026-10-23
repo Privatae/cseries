@@ -250,7 +250,7 @@ def _style_of(entity):
 
 
 _want = DEFAULT_BEHAVIORAL_PARAMS["response_style"]
-_unseeded = _loaded({"id": 128, "display_name": "Entity", "behavioral_params": None})
+_unseeded = _loaded({"id": 9128, "display_name": "Entity", "behavioral_params": None})
 ck("gate5b get_entity APPLIES the default (not merely defines the helper)",
    _style_of(_unseeded) == _want, repr(_unseeded))
 _kept = _loaded({"id": 1, "behavioral_params": {"response_style": "structured"}})

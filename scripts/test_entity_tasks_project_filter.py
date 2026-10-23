@@ -75,7 +75,7 @@ saved_pool, saved_eid = brain_service._pool, brain_service._entity_id
 try:
     print("== 2. the list and its counts are filtered by the project ==")
     pool = _Pool()
-    brain_service._pool, brain_service._entity_id = pool, 3
+    brain_service._pool, brain_service._entity_id = pool, 9003
     out = run(t._exec_entity_tasks({"op": "list", "project_id": 9423}))
     check("the call ran", out.get("status") == "ok", out)
     lst = [c for c in pool.calls if "ORDER BY created_at" in c[0]]
@@ -86,7 +86,7 @@ try:
           "result->>'project_id'" in q, q)
     check("...and in result.origin (dispatched agents)",
           "result->'origin'->>'project_id'" in q, q)
-    check("...against the asked project", "9423" in a and 3 in a, a)
+    check("...against the asked project", "9423" in a and 9003 in a, a)
     sq, sa = stats[0] if stats else ("", ())
     check("the per-status counts are the project's too",
           "result->>'project_id'" in sq and "9423" in sa, (sq, sa))
@@ -99,7 +99,7 @@ try:
     run(t._exec_entity_tasks({"op": "list"}))
     q2, a2 = [c for c in pool2.calls if "ORDER BY created_at" in c[0]][0]
     check("no project clause", "project_id" not in q2, q2)
-    check("entity, limit, offset only", a2 == (3, 100, 0), a2)
+    check("entity, limit, offset only", a2 == (9003, 100, 0), a2)
 
     print("== 4. a project_id that is not a number is refused ==")
     pool3 = _Pool()

@@ -277,8 +277,9 @@ async def record_and_notify(
 
 async def list_peerings(pool, entity_id: int) -> list[dict]:
     """Every peering this host has been told about, with the machine that
-    introduced it and whether the claim is still being made. Dormant rows are
-    kept and labelled, never dropped."""
+    introduced it, whether the claim is still being made, and the pairing state
+    the machine reports for it. Dormant rows are kept and labelled, never
+    dropped."""
     try:
         rows = await pool.fetch(
             """
@@ -301,7 +302,24 @@ async def list_peerings(pool, entity_id: int) -> list[dict]:
                          OR EXISTS (SELECT 1
                                       FROM jsonb_array_elements(h.peers) e
                                      WHERE e->>'host_name' = p.peer_host_name)))
-                   AS current
+                   AS current,
+                   -- The pairing state the box reports for this Host on that
+                   -- same latest beat (topology.upsert_heartbeat keeps only
+                   -- active, pending and revoked). NULL when the beat does not
+                   -- name the Host, names it with no state, or the box never
+                   -- reported peers. A box naming the Host more than once gets
+                   -- the least usable answer it gave: revoked over pending over
+                   -- active, and active only when every entry says active.
+                   -- COALESCE matters: bool_and skips NULLs, so an entry with
+                   -- no state would otherwise not count against active.
+                   (SELECT CASE
+                             WHEN bool_or(e->>'state' = 'revoked') THEN 'revoked'
+                             WHEN bool_or(e->>'state' = 'pending') THEN 'pending'
+                             WHEN bool_and(COALESCE(e->>'state', '') = 'active') THEN 'active'
+                           END
+                      FROM jsonb_array_elements(h.peers) e
+                     WHERE e->>'host_name' = p.peer_host_name)
+                   AS reported_state
               FROM network_bastion_peer p
               JOIN mcp_client_tokens t ON t.id = p.token_id
               LEFT JOIN network_bastion_heartbeat h ON h.token_id = p.token_id
@@ -325,4 +343,22 @@ async def list_peerings(pool, entity_id: int) -> list[dict]:
         "last_seen_at": r["last_seen_at"].isoformat() if r["last_seen_at"] else None,
         "introduced_by": r["bastion_hostname"] or r["bastion_name"],
         "current": bool(r["current"]),
+        # "active", "pending", "revoked", or None when the machine does not
+        # report one for this Host now.
+        "state": r["reported_state"],
+        # Whether a connection request may go to this Host through this
+        # peering: the machine still names it AND reports the pairing active.
+        # A pending Host has not been admitted to the machine and a revoked one
+        # was removed from it, so neither is a Host the machine serves. A
+        # missing or unknown state is treated the same way, because the
+        # request is the one thing a peering authorizes.
+        "requestable": bool(r["current"]) and r["reported_state"] == "active",
     } for r in rows]
+
+
+def requestable_peering(peerings: list[dict], peer_entity_id) -> Optional[dict]:
+    """The peering through which a connection request may go to that Host
+    (list_peerings' `requestable`), or None. The request route and the Circles
+    archive guard both look a Host up this way, so they cannot disagree."""
+    return next((p for p in peerings or []
+                 if p.get("requestable") and p.get("peer_entity_id") == peer_entity_id), None)

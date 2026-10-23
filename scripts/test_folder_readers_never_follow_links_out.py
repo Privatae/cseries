@@ -784,7 +784,7 @@ class _Pool:
 
 before = sorted(os.listdir(OUT / "sub"))
 try:
-    run(AR.revert_artifact(_Pool(), 3, 77, str(rev)))
+    run(AR.revert_artifact(_Pool(), 9003, 77, str(rev)))
     reverted = True
 except Exception as e:  # noqa: BLE001
     reverted = repr(e)
@@ -949,11 +949,11 @@ HIST = OUT / "hist"
 os.symlink(HIST, W2 / ".history")
 hist_before = state(HIST)
 check("history: a linked .history reads as no history", AR._history_log(W2) == [])
-listed = run(AR.list_history(_Pool(), 3, 78))
+listed = run(AR.list_history(_Pool(), 9003, 78))
 check("history: the list shows nothing from behind the link", SECRET.decode() not in json.dumps(listed),
       str(listed)[:200])
 try:
-    run(AR.render_history(_Pool(), 3, 78, "0001"))
+    run(AR.render_history(_Pool(), 9003, 78, "0001"))
     rendered = "rendered"
 except AR.ArtifactError as e:
     rendered = e.args[0] if e.args else None

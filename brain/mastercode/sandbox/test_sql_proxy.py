@@ -63,7 +63,7 @@ CASES = [
     # classified as READ and allowed. The new keyword-anywhere scan
     # denies all of these.
     (
-        "WITH wrote AS (UPDATE entity_registry SET bot_capabilities=255 WHERE id=3 RETURNING *) SELECT * FROM wrote",
+        "WITH wrote AS (UPDATE entity_registry SET bot_capabilities=255 WHERE id=9003 RETURNING *) SELECT * FROM wrote",
         WRITE_MEMORY,
         False,
         "CTE-hidden UPDATE on ADMIN-only table → deny via hidden-DML scan",
@@ -81,7 +81,7 @@ CASES = [
         "CTE-hidden DELETE on audit log → deny",
     ),
     (
-        "SELECT 1; UPDATE entity_registry SET bot_capabilities=255 WHERE id=3",
+        "SELECT 1; UPDATE entity_registry SET bot_capabilities=255 WHERE id=9003",
         READ_MEMORY,
         False,
         "stacked statement: SELECT then UPDATE → deny (UPDATE found in body)",
@@ -123,7 +123,7 @@ CASES = [
         "ADMIN bypasses the hidden-DML scan",
     ),
     (
-        "BEGIN; UPDATE entity_registry SET bot_capabilities=255 WHERE id=3; COMMIT",
+        "BEGIN; UPDATE entity_registry SET bot_capabilities=255 WHERE id=9003; COMMIT",
         WRITE_MEMORY,
         False,
         "BEGIN-then-UPDATE inside a TXN-classified leading statement → deny",

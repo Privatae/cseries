@@ -304,7 +304,7 @@ def test_a_heartbeat_with_alerts_reaches_the_row():
     # and drops what it does not name. Grepping the source would pass with the
     # narrower deleted, so this reads the statement AND its arguments.
     pool = Pool()
-    assert _run(topology.upsert_heartbeat(pool, 3, _beat(alerts=dict(OK)))) is not None
+    assert _run(topology.upsert_heartbeat(pool, 9003, _beat(alerts=dict(OK)))) is not None
     q, args = pool.insert()
     assert " alerts," in q or "alerts," in q.split("(", 1)[1], \
         "`alerts` is not in the INSERT column list — the beat is dropped on the floor"
@@ -321,7 +321,7 @@ def test_a_malformed_summary_is_stored_as_null():
     # NULL, not a repaired zero. A box saying something unreadable is the
     # "nobody looked" case, and it must arrive at the reader as one.
     pool = Pool()
-    assert _run(topology.upsert_heartbeat(pool, 3, _beat(alerts={"firing": -4}))) is not None
+    assert _run(topology.upsert_heartbeat(pool, 9003, _beat(alerts={"firing": -4}))) is not None
     q, args = pool.insert()
     # The column must be THERE and the value absent. Asserting only the absence
     # passes vacuously when the whole column has been dropped from the writer,
@@ -334,7 +334,7 @@ def test_a_malformed_summary_is_stored_as_null():
 
 def test_a_beat_with_no_alerts_key_stores_nothing_and_retracts_nothing():
     pool = Pool()
-    assert _run(topology.upsert_heartbeat(pool, 3, _beat())) is not None
+    assert _run(topology.upsert_heartbeat(pool, 9003, _beat())) is not None
     q, args = pool.insert()
     assert not [a for a in args if isinstance(a, str) and '"firing"' in a]
     # COALESCE, so a bastion that cannot report does not wipe one that could.

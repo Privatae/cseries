@@ -38,9 +38,10 @@ users, and engineers who want to read how the limits are enforced.
 - The first public releases are 0.1.x, published from this repository's tag
   workflow. The version numbers are on the
   [releases page](https://github.com/Privatae/cseries/releases).
-- The GitHub history is short: each commit is a snapshot of a release, or of
-  the documentation between releases, taken from a private development
-  repository. Each snapshot's commit message names the development commit.
+- Development happens in a private repository whose history is not published.
+  Each change merged there arrives on GitHub right after the merge, as a commit
+  with the same files, titled as the change was and dated when it was merged.
+  Commits up to 0.1.9 are snapshots instead.
 - There has been no outside security audit.
 - Several claims have no test yet; [claims.md](claims.md) lists them at the
   end. On Windows, keeping the guest away from the Windows drives is a setting

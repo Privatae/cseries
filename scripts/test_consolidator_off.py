@@ -91,7 +91,7 @@ SC = {"kind": "thread", "ref": "0f8b1c3e-2d4a-4b5c-9e6f-7a8b9c0d1e2f"}
 p = _Pool(goal="Ship the new desktop",
           handoff={"next_step": "wire the taskbar", "open_work": ["icons"],
                    "identifiers": ["artifact:9f2", "  /srv/a b.txt"]})
-state = asyncio.run(ct.thread_state(p, 3, SC))
+state = asyncio.run(ct.thread_state(p, 9003, SC))
 check("thread_state: the goal, the next step, open work and identifiers verbatim",
       state and state.startswith(cb.THREAD_STATE_PREFIX) and "Ship the new desktop" in state
       and "wire the taskbar" in state and "icons" in state and "  /srv/a b.txt" in state, state)
@@ -102,8 +102,8 @@ check("thread_state: read from this thread's own rows only",
       all("metadata->'source_context'->>'kind' = $2" in q and "->>'ref' = $3" in q for q in p.sql)
       and any("metadata->>'role' = 'assistant'" in q for q in p.sql), p.sql)
 check("thread_state: nothing to say -> None (no empty message rides)",
-      asyncio.run(ct.thread_state(_Pool(), 3, SC)) is None)
-check("thread_state: no scope -> None", asyncio.run(ct.thread_state(_Pool(goal="x"), 3, None)) is None)
+      asyncio.run(ct.thread_state(_Pool(), 9003, SC)) is None)
+check("thread_state: no scope -> None", asyncio.run(ct.thread_state(_Pool(goal="x"), 9003, None)) is None)
 check("trim: the thread-state message and the evicted-turn notes are spared",
       cb._is_summary({"role": "system", "content": cb.THREAD_STATE_PREFIX + "\nGoal: x"})
       and cb._is_summary({"role": "system", "content": cb.RECORD_PREFIX + "\n- x"}))
@@ -231,7 +231,7 @@ ME.active_embedding_column = _col
 pref = {"text": "prefers dark themes in every single app", "reason": "said so",
         "scope": {"kind": "global"}}
 np_ = _NearPool()
-r = asyncio.run(ct._write_preference(np_, 3, pref, session_id="s", turn_scope=SC))
+r = asyncio.run(ct._write_preference(np_, 9003, pref, session_id="s", turn_scope=SC))
 check("no similarity: a near wording with no topic is a row of its own; the held one is left alone",
       r.get("status") == "stored" and not r.get("replaced") and not np_.superseded and np_.inserted
       and not any("<=>" in q for q in np_.calls), r)

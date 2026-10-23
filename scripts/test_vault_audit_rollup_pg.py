@@ -79,7 +79,7 @@ def table_ddl() -> list[str]:
     return out
 
 
-HOST = "host:3"
+HOST = "host:9003"
 PERSON = "user:alex@example.com ip:203.0.113.9"
 
 

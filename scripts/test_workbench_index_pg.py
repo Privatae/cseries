@@ -2093,7 +2093,7 @@ async def run(dsn):
 
         # ── K: the pick's cost, at 50 pages and at 300 ──────────────────────
         print("-- K: the placement's cost does not grow with the pages")
-        e50 = 3
+        e50 = 9003
         await pool.execute("INSERT INTO entity_registry (id, display_name) VALUES ($1, 'fifty pages')"
                            " ON CONFLICT (id) DO NOTHING", e50)
         p50 = [await pool.fetchval(

@@ -697,7 +697,7 @@ async def _run_ticks(pool, n):
     hub_peers._converge_once, loop_splay.splay = fake_converge, no_splay
     nac_stepup.entity_verify_pubkey = verify_pub
     hub_peers.RECONCILE_INTERVAL_S = 0
-    os.environ["ENTITY_ID"] = "122"
+    os.environ["ENTITY_ID"] = "9122"
     try:
         await hub_peers.reconcile_hub_peers_loop(pool)
     except asyncio.CancelledError:

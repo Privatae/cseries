@@ -129,7 +129,7 @@ class _EmptyPool:
         return []
 
 
-w = asyncio.run(cb.window_report(_Pool(), 3))
+w = asyncio.run(cb.window_report(_Pool(), 9003))
 check("window: tokens in summed across calls", w["last_turn"]["tokens_in_total"] == 215238, repr(w["last_turn"]))
 check("window: cached summed", w["last_turn"]["tokens_cached_total"] == 102865)
 check("window: largest tool result first", w["last_turn"]["largest_tool_results"][0]["tool"] == "code_tree")
@@ -155,7 +155,7 @@ check("window_report reads prompt_log ENTITY-wide — the per-thread filter "
       "latest_prompt_blocks grew for the panel (2026-09-15) must not scope "
       "the host's mirror of its own last turn",
       "latest_prompt_blocks(pool, entity_id)\n" in cbs, )
-e = asyncio.run(cb.window_report(_EmptyPool(), 3))
+e = asyncio.run(cb.window_report(_EmptyPool(), 9003))
 check("window: a host with no ledger yet reads null, not an error",
       e["last_turn"] is None and e["prompt_blocks"] == [])
 

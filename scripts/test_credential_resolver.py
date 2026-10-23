@@ -321,7 +321,7 @@ def main() -> int:
     tv = TypedVault({"my openrouter token": "tok-oauth"},
                     {"my openrouter token": "oauth_token"})
     patch_vault(vault_api, tv)
-    rc = run(pv.resolve(StubPool(), 3, "openrouter", ("api_key",),
+    rc = run(pv.resolve(StubPool(), 9003, "openrouter", ("api_key",),
                         actor="t", env_fallback=False))
     check("typed column: oauth_token row is not served to an api_key consumer",
           rc is None and not tv.stores)
@@ -329,7 +329,7 @@ def main() -> int:
     tv2 = TypedVault({"my openrouter key": "sk-or-typed"},
                      {"my openrouter key": "api_key"})
     patch_vault(vault_api, tv2)
-    rc = run(pv.resolve(StubPool(), 3, "openrouter", ("api_key",),
+    rc = run(pv.resolve(StubPool(), 9003, "openrouter", ("api_key",),
                         actor="t", env_fallback=False))
     check("typed column: matching api_key row still self-heals to canonical",
           rc is not None and rc.secret == "sk-or-typed"
@@ -339,14 +339,14 @@ def main() -> int:
     # single accepted type the historical '' still comes back (parity above).
     dv = StubVault({"openrouter-oauth": "   ", "openrouter": "sk-or-real"})
     patch_vault(vault_api, dv)
-    rc = run(pv.resolve(StubPool(), 3, "openrouter", ("oauth_token", "api_key"),
+    rc = run(pv.resolve(StubPool(), 9003, "openrouter", ("oauth_token", "api_key"),
                         actor="t", env_fallback=False))
     check("multi-type ladder: whitespace first type falls through to a real one",
           rc is not None and rc.secret == "sk-or-real")
 
     dv2 = StubVault({"openrouter": "   "})
     patch_vault(vault_api, dv2)
-    rc = run(pv.resolve(StubPool(), 3, "openrouter", ("api_key",),
+    rc = run(pv.resolve(StubPool(), 9003, "openrouter", ("api_key",),
                         actor="t", env_fallback=False))
     check("single-type degenerate still returns '' (parity preserved)",
           rc is not None and rc.secret == "")

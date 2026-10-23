@@ -109,13 +109,13 @@ ROWS_NO_LEX = [dict(r, lex_rank=0.0, name_hit=False) for r in ROWS]
 async def _stub():
     # Unconfigured: lexical only, semantic:false, ranked, floor applied.
     pool = _Pool(ROWS)
-    r = await P.search_projects_service(pool, 3, "trading", limit=5, lane=(None, ""))
+    r = await P.search_projects_service(pool, 9003, "trading", limit=5, lane=(None, ""))
     check("unconfigured lane → semantic:false and the lexical ranking stands (rank, then name boost)",
           r["semantic"] is False and [p["id"] for p in r["projects"]] == [1, 3]
           and r["projects"][0]["score"] > r["projects"][1]["score"], repr(r))
     q, args = pool.calls[0]
     check("the bound params are (entity, tsquery, ilike, candidate cap)",
-          args == (3, "'trading':*", "%trading%", P._SEARCH_CANDIDATE_CAP), repr(args))
+          args == (9003, "'trading':*", "%trading%", P._SEARCH_CANDIDATE_CAP), repr(args))
     # The cap is what stops a keystroke dragging the pod's DB: every row carries
     # a REAL[] embedding, and this runs once per keystroke past a 200 ms debounce
     # against a postgres at max_connections=16. Assert the SQL is bounded AND
@@ -129,7 +129,7 @@ async def _stub():
     check("no refresh is scheduled without a model", not any("UPDATE projects" in q for q, _ in pool.calls))
 
     # Empty query: the "before you type" state — recent, non-archived, score null.
-    r0 = await P.search_projects_service(_Pool(ROWS), 3, "   ", limit=5, lane=(None, ""))
+    r0 = await P.search_projects_service(_Pool(ROWS), 9003, "   ", limit=5, lane=(None, ""))
     check("empty query → recent non-archived projects, score null, semantic:false",
           [p["id"] for p in r0["projects"]] == [1, 2, 3] and r0["projects"][0]["score"] is None
           and r0["semantic"] is False, repr(r0))
@@ -149,14 +149,14 @@ async def _stub():
     rows[1]["search_embedding_model"] = model
     rows[1]["search_embedding_hash"] = P._search_hash(model, P._search_text_of(rows[1]["name"], rows[1]["description"], ""))
     pool = _Pool(rows)
-    r = await P.search_projects_service(pool, 3, "radar forecast", limit=5, lane=(embed, model),
+    r = await P.search_projects_service(pool, 9003, "radar forecast", limit=5, lane=(embed, model),
                                         refresh_in_background=False)
     check("configured lane → semantic:true and the embedded match is found with no lexical hit",
           r["semantic"] is True and [p["id"] for p in r["projects"]] == [2], repr(r))
 
     # A stored vector from ANOTHER model is never compared (dims may differ) and is stale.
     rows[1]["search_embedding_model"] = "older-model"
-    r = await P.search_projects_service(_Pool(rows), 3, "radar forecast", limit=5, lane=(embed, model),
+    r = await P.search_projects_service(_Pool(rows), 9003, "radar forecast", limit=5, lane=(embed, model),
                                         refresh_in_background=False)
     check("a vector stored under another model is ignored (stale), not compared",
           r["semantic"] is True and r["projects"] == [], repr(r))
@@ -170,10 +170,10 @@ async def _stub():
 
     pool = _Pool([])
     stale = [(2, "Weather app\nforecast dashboard with radar tiles", "h2"), (3, "Trading journal", "h3")]
-    n = await P._refresh_project_embeddings(pool, 3, embed_then_quiet, model, stale)
+    n = await P._refresh_project_embeddings(pool, 9003, embed_then_quiet, model, stale)
     upd = [c for c in pool.calls if "UPDATE projects" in c[0]]
     check("refresh stores vector + model + hash for the row it embedded and stops when the lane returns None",
-          n == 1 and len(upd) == 1 and upd[0][1][:2] == (2, 3) and upd[0][1][3:] == (model, "h2")
+          n == 1 and len(upd) == 1 and upd[0][1][:2] == (2, 9003) and upd[0][1][3:] == (model, "h2")
           and "search_embedding = $3::real[]" in upd[0][0] and "entity_id = $2" in upd[0][0], repr((n, upd)))
 
     # The lane resolver never raises and reports unconfigured as (None, "").
@@ -181,7 +181,7 @@ async def _stub():
         async def fetchrow(self, *a):
             raise RuntimeError("db down")
 
-    lane = await P._search_embedding_lane(_Dead(), 3)
+    lane = await P._search_embedding_lane(_Dead(), 9003)
     check("an unreadable/unconfigured lane resolves to (None, '') — absent, never an error", lane == (None, ""))
 
 

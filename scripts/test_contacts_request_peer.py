@@ -14,7 +14,7 @@ if not DSN:
     print(f"SKIP — no test database. Start one:  bash {os.path.join(_ROOT, 'scripts/peer_test_db.sh')}")
     sys.exit(2)
 
-ME, PEER, STRANGER = 3, 122, 999
+ME, PEER, STRANGER = 9003, 9122, 999
 FAILS = []
 def check(label, cond, extra=""):
     print(("  PASS  " if cond else "  FAIL  ") + label + (("\n        " + str(extra)) if extra else ""))
@@ -27,11 +27,19 @@ async def main(dsn):
     pool = await asyncpg.create_pool(dsn, min_size=1, max_size=4)
     async with pool.acquire() as c:
         await c.execute("INSERT INTO mcp_client_tokens (id, entity_id, name, token_hash, url_handle, "
-                        "operator_kind) VALUES (7, 3, 'desk', '\\x00'::bytea, 'desk-7', 'bastion')")
-        # the box is STILL announcing a1b2… (current) and has stopped announcing dead…
+                        "operator_kind) VALUES (7, 9003, 'desk', '\\x00'::bytea, 'desk-7', 'bastion')")
+        # the box is STILL announcing a1b2… as active (current) and has stopped
+        # announcing dead…. The rest it still names, each in a state that is
+        # not active, so none of them may be asked (section 1b).
         await c.execute("""INSERT INTO network_bastion_heartbeat (token_id, hostname, peers)
             VALUES (7, 'WORKSTATION-1', $1::jsonb)""",
-            json.dumps([{"host_name": "a1b2c3d4e5f60718.host.example.test"}]))
+            json.dumps([{"host_name": "a1b2c3d4e5f60718.host.example.test", "state": "active"},
+                        {"host_name": "waiting01.host.example.test", "state": "pending"},
+                        {"host_name": "removed01.host.example.test", "state": "revoked"},
+                        {"host_name": "nostate01.host.example.test"},
+                        {"host_name": "oddstate1.host.example.test", "state": "suspended"},
+                        {"host_name": "twice0001.host.example.test", "state": "active"},
+                        {"host_name": "twice0001.host.example.test", "state": "revoked"}]))
 
     _stub = types.ModuleType("server.main"); _stub.app = None
     _stub.get_bridge_client = lambda: None
@@ -64,8 +72,13 @@ async def main(dsn):
         # one CURRENT peering (announced now) and one DORMANT (no longer announced)
         await c.execute("""INSERT INTO network_bastion_peer
             (token_id, peer_host_name, peer_handle, peer_entity_id)
-            VALUES (7,'a1b2c3d4e5f60718.host.example.test','a1b2c3d4e5f60718',122),
-                   (7,'dead00000000beef.host.example.test','dead00000000beef',777)""")
+            VALUES (7,'a1b2c3d4e5f60718.host.example.test','a1b2c3d4e5f60718',9122),
+                   (7,'dead00000000beef.host.example.test','dead00000000beef',777),
+                   (7,'waiting01.host.example.test','waiting01',501),
+                   (7,'removed01.host.example.test','removed01',502),
+                   (7,'nostate01.host.example.test','nostate01',503),
+                   (7,'oddstate1.host.example.test','oddstate1',504),
+                   (7,'twice0001.host.example.test','twice0001',505)""")
 
     from fastapi import FastAPI
     import httpx
@@ -98,6 +111,24 @@ async def main(dsn):
             row = await pool.fetchrow("SELECT handle, kind, status FROM contacts")
             check("a pending host contact was recorded",
                   row and row["kind"] == "host" and row["status"] == "pending", dict(row) if row else None)
+
+        print("\n── 1b. the machine still names the Host, but not as an ACTIVE pairing ──")
+        # Being named on the latest beat is not enough: the box also says what
+        # state the pairing is in. A Host waiting to be admitted, one removed
+        # from the machine, one named with no state or a state outside the
+        # fixed vocabulary, or one named twice with one of those answers, is
+        # not a Host the machine serves, so the request is refused before
+        # anything is sent.
+        for pid, what in ((501, "a pending pairing"), (502, "a revoked pairing"),
+                          (503, "a pairing named with no state"),
+                          (504, "a pairing in an unknown state"),
+                          (505, "a pairing named both active and revoked")):
+            before = len(sent)
+            r = await client.post("/api/contacts/request-peer", json={"peer_entity_id": pid})
+            check(f"{what} is refused 404 (got {r.status_code})", r.status_code == 404, r.text[:200])
+            check(f"...and NOTHING was sent for {what}", len(sent) == before, sent[before:])
+        n = await pool.fetchval("SELECT count(*) FROM contacts WHERE peer_entity_id BETWEEN 501 AND 505")
+        check("no pending host contact was recorded for any of them", n == 0, n)
 
         print("\n── 2. THE SECURITY PROPERTY: a stranger's id is refused ──")
         before = len(sent)

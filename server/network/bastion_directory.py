@@ -84,9 +84,17 @@ def _hosts(b: dict, anchor: Optional[dict],
         out.append({
             "host_name": host_name,
             "handle": str(p.get("handle") or "") or _handle_of(host_name),
-            # A bastion before 0.16 sent no state; everything it announced was
-            # an established pairing, since pending did not exist yet.
-            "state": _state(p.get("state")) or "active",
+            # A state the machine did not send, or one outside the fixed
+            # vocabulary (topology.py keeps only active/pending/revoked), reads
+            # as pending: announced on the machine, not usable. Never active,
+            # because active is what offers a connection request to that Host.
+            # Pending rather than leaving the Host out: the machine did name
+            # it, the peer introduction and the Network details still show it,
+            # and hiding a Host that shares the machine would hide the one fact
+            # this list exists to show. A current bastion always sends a state
+            # (client-go config.go stateName), so only an old or malformed beat
+            # lands here.
+            "state": _state(p.get("state")) or "pending",
             "since": str(p.get("since") or "") or None,
             # None until peer discovery resolves the name to a Host. Without it
             # there is no card to show and nobody to send a request to.

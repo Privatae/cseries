@@ -1,11 +1,13 @@
 -- C-Series OS — Entity Brain Database Schema
 --
 -- Single-entity personal computer. Entity ID 1 is always "this entity".
--- PostgreSQL 16 + pgvector. Runs embedded inside the container.
+-- PostgreSQL 17 + pgvector, in the Host's own postgres container
+-- (Dockerfile.postgres).
 --
--- Tables: 21 (brain core only — no platform, no multi-entity mesh)
+-- Tables: 51 (brain core only — no platform, no multi-entity mesh)
 --
--- Schema derived from Privatae host DB, stripped to brain essentials.
+-- The schema a new Host's database starts from: entrypoint.sh loads it, then
+-- applies migrations/v*.sql on top.
 
 -- Extensions
 CREATE EXTENSION IF NOT EXISTS vector;

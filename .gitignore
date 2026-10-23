@@ -23,3 +23,6 @@ teaching-memories.sql
 scripts/toolchain/node_modules/
 scripts/toolchain/.install.lock
 scripts/toolchain/.install.failed
+
+# TypeScript's incremental build state, written by `tsc -b`; no build here reads it.
+*.tsbuildinfo

@@ -70,7 +70,7 @@ def insert_kind(kind: str, message_id: str | None = None,
         "INSERT INTO inbox_messages "
         "(message_id, from_address,to_address,from_entity_id,to_entity_id,"
         " subject,message_kind,payload) VALUES "
-        f"({mid},'cseries@localhost','3@entity.localhost',3,3,"
+        f"({mid},'cseries@localhost','9003@entity.localhost',9003,9003,"
         f"'t','{kind}','{payload}'::jsonb) "
         "ON CONFLICT (message_id) DO NOTHING"
     )

@@ -4,17 +4,18 @@
 #
 # WHY (measured): smoke_test.sh re-runs the shared list, 359 gates one after
 # another, and that is about 37 of a 43-minute smoke. pre_merge_gates.sh
-# already ran every one of them,
-# 8 at a time, on the same tree minutes before, both in CI (the PR's gates job)
-# and in a ship (on the clean build checkout smoke then runs from). Running them twice tells nothing new and doubled every PR and
-# every ship.
+# already ran every one of them, 8 at a time, on the same tree minutes before
+# in a ship (on the clean build checkout smoke then runs from). Running them
+# twice tells nothing new and doubled every ship.
 #
 # Two records count, and only for a CLEAN tree whose HEAD tree hash matches:
-#   1. SMOKE_SHARED_GATES_PASSED_TREE, set by .gitea/workflows/check.yml on a
-#      smoke job that `needs: gates`, so the gates job passed this commit in
-#      this same run. That job runs PRE_MERGE_AFFECTED_ONLY=1:
-#      the gates that cover the PR's change, not the whole list, which runs at
-#      ship (record 2 below). The line printed says so;
+#   1. SMOKE_SHARED_GATES_PASSED_TREE, set by the forge's
+#      .gitea/workflows/check.yml on its smoke job, which runs beside a gates
+#      job on the same commit; that run is red unless the gates job passes this
+#      commit too. The gates job runs PRE_MERGE_AFFECTED_ONLY=1: the gates that
+#      cover the PR's change, not the whole list, which runs at ship (record 2
+#      below). The line printed says so. GitHub's .github/workflows/test.yml
+#      runs neither smoke nor the gates, so it never sets this;
 #   2. $GATE_RESULTS_DIR/<tree>.pass, which pre_merge_gates.sh writes only when
 #      every gate passed and the tree was clean and unchanged from start to end.
 # A dirty tree never matches: the hash would not name the code that is there.

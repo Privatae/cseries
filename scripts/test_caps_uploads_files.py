@@ -112,7 +112,7 @@ print("nudge")
 try:
     from mastercode.runtime import session as S
     saved = (CR._entity_id, CR._audit)
-    CR._entity_id = lambda: 3
+    CR._entity_id = lambda: 9003
 
     async def _no_audit(**kw):
         return None

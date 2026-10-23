@@ -652,7 +652,7 @@ async def _fake_meta(name, args, **kw):
 class _Sess:
     def __init__(self, ic="chat", tag="circles"):
         self.interaction_context, self.write_app_id = ic, tag
-        self.entity, self.session_id = {"id": 3}, "s9"
+        self.entity, self.session_id = {"id": 9003}, "s9"
 
 
 _orig_meta = S._execute_meta_tool

@@ -127,7 +127,7 @@ def main() -> int:
     real_append = inbox_routes.handle_inbox_append
     real_entity = inbox_routes._entity_id
     inbox_routes.handle_inbox_append = fake_append
-    inbox_routes._entity_id = lambda: 3
+    inbox_routes._entity_id = lambda: 9003
     try:
         hostile = inbox_routes.InboxDeliverRequest(
             subject="Invoice", body="…", idempotency_key="r7:a1:m42",
@@ -156,7 +156,7 @@ def main() -> int:
     check("the app's own content survives underneath",
           (p.get("app") or {}).get("rule") == "Invoices")
     check("the delivery is a self-send at the GATE, not just in the row",
-          captured.get("from_entity_id") == 3 and captured.get("message_kind") == "app_delivery",
+          captured.get("from_entity_id") == 9003 and captured.get("message_kind") == "app_delivery",
           f"from_entity_id={captured.get('from_entity_id')}")
     check("the sender names the app, not the platform",
           captured.get("from_address") == "app:mail-sorter@host",
@@ -198,7 +198,7 @@ def main() -> int:
         pool = _RecordingPool()
         real_pool, real_eid = mh.brain_service.get_pool, mh._entity_id
         mh.brain_service.get_pool = lambda: pool
-        mh._entity_id = lambda: 3
+        mh._entity_id = lambda: 9003
         try:
             asyncio.run(mh.handle_inbox_append({
                 "subject": "x", "body": "y", "message_kind": kind,

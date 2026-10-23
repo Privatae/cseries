@@ -596,7 +596,7 @@ async def main():
         check(len(SEEN) == seen_before, "and no request reached the server with the token",
               SEEN[seen_before:])
         lan_ok = True
-        for host in ("10.20.30.40", "192.168.7.20", "[fd00:aa::50]", "git.example.org"):
+        for host in ("10.20.30.40", "192.168.7.20", "[fd12:3456:789a::50]", "git.example.org"):
             try:
                 await gs._refuse_own_addresses(host)
             except gs.GitServerError as e:

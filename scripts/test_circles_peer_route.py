@@ -45,6 +45,8 @@ import types
 _ROOT = os.environ.get("APP_ROOT") or os.path.join(os.path.dirname(__file__), "..")
 sys.path[:0] = [_ROOT, os.path.join(_ROOT, "brain"), os.path.join(_ROOT, "system-apps"), os.path.join(_ROOT, "scripts")]
 
+import json  # noqa: E402
+
 import asyncpg  # noqa: E402
 
 DSN = os.environ.get("PEER_TEST_DSN")     # peer_test_db.sh's socket DSN; there is no TCP default
@@ -73,7 +75,8 @@ async def main(dsn: str) -> int:
             "INSERT INTO mcp_client_tokens (id, entity_id, name, token_hash, url_handle, operator_kind) "
             "VALUES (7, $1, 'desk', '\\x00'::bytea, 'desk-7', 'bastion')", ME)
         await c.execute(
-            "INSERT INTO network_bastion_heartbeat (token_id, hostname) VALUES (7, 'desktop-01')")
+            "INSERT INTO network_bastion_heartbeat (token_id, hostname, peers) VALUES "
+            "(7, 'desktop-01', '[{\"host_name\": \"beta.host.example.test\", \"state\": \"active\"}]'::jsonb)")
         # NO messages yet. The guard's rule is that a peering may hold open an
         # EMPTY channel and may never lock a real conversation, so the empty
         # case is the one that must refuse.
@@ -176,6 +179,26 @@ async def main(dsn: str) -> int:
         r = await client.request("DELETE", f"/api/circles/thread/entity/{PEER}")
         check(r.status_code == 409,
               f"once cleared, the empty channel is held open again (got {r.status_code})")
+
+        # 2b. The machine still names the Host but reports the pairing pending
+        #     or revoked: Circles does not list it and a connection request is
+        #     refused, so nothing holds its empty channel open either.
+        for state in ("pending", "revoked"):
+            async with pool.acquire() as c:
+                await c.execute(
+                    "UPDATE network_bastion_heartbeat SET peers = $1::jsonb WHERE token_id = 7",
+                    json.dumps([{"host_name": "beta.host.example.test", "state": state}]))
+            r = await client.request("DELETE", f"/api/circles/thread/entity/{PEER}")
+            check(r.status_code == 200,
+                  f"DELETE on a peering the machine reports {state} succeeds "
+                  f"(got {r.status_code}: {r.text[:200]})")
+        async with pool.acquire() as c:
+            await c.execute(
+                "UPDATE network_bastion_heartbeat SET peers = $1::jsonb WHERE token_id = 7",
+                json.dumps([{"host_name": "beta.host.example.test", "state": "active"}]))
+        r = await client.request("DELETE", f"/api/circles/thread/entity/{PEER}")
+        check(r.status_code == 409,
+              f"reported active again, the empty channel is held open again (got {r.status_code})")
 
         # 3. DORMANT peering — nothing holds the channel open any more, so even
         #    an empty thread clears.

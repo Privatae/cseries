@@ -42,7 +42,7 @@ def check(cond, msg, extra=""):
         FAILS.append(msg)
 
 
-ME, PEER = 164, 163
+ME, PEER = 9164, 9163
 
 
 def slip(issuer=PEER, grantee=ME, resource="dm:contact", ops=("message",)):

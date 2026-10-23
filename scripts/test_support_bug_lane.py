@@ -122,7 +122,7 @@ def run(coro):
 
 # ── Send on a bug: a PR, never a platform ticket ────────────────────────────
 pool = FakePool(ROW)
-res = run(sp.send_service(pool, 3, 5))
+res = run(sp.send_service(pool, 9003, 5))
 check("bug send: propose_bug_report called exactly once", len(_calls) == 1, str(len(_calls)))
 check("bug send: platform.ticket was NOT called",
       not any(op == "platform.ticket" for op, _ in bridge_calls), str(bridge_calls))
@@ -152,7 +152,7 @@ _calls.clear()
 bridge_calls.clear()
 bridge_answers["platform.ticket"] = {"ticket_id": 77, "status": "received"}
 pool_q = FakePool({**ROW, "category": "question"})
-res = run(sp.send_service(pool_q, 3, 5))
+res = run(sp.send_service(pool_q, 9003, 5))
 check("question send: platform.ticket open, no PR",
       bridge_calls and bridge_calls[0][0] == "platform.ticket"
       and bridge_calls[0][1]["op"] == "open" and not _calls, str(bridge_calls))
@@ -163,7 +163,7 @@ _env_saved = _env
 _env = _CredUnavailable("gitea_proposals credential missing")
 pool_f = FakePool(ROW)
 try:
-    run(sp.send_service(pool_f, 3, 5))
+    run(sp.send_service(pool_f, 9003, 5))
     check("bug send: missing platform credential is a SupportError", False, "did not raise")
 except sp.SupportError as e:
     check("bug send: missing platform credential is a 503 that says so",
@@ -171,14 +171,14 @@ except sp.SupportError as e:
 check("bug send: on failure the draft is untouched", pool_f.executes == [], str(pool_f.executes))
 _env = _Conflict("branch holds a different file")
 try:
-    run(sp.send_service(FakePool(ROW), 3, 5))
+    run(sp.send_service(FakePool(ROW), 9003, 5))
     check("bug send: a platform 409 is a 409 in plain words with a way out", False, "did not raise")
 except sp.SupportError as e:
     check("bug send: a platform 409 is a 409 in plain words with a way out",
           e.status == 409 and "send again" in e.detail and "branch" not in e.detail, e.detail)
 _env = {**_env_saved, "pr": 0}
 try:
-    run(sp.send_service(FakePool(ROW), 3, 5))
+    run(sp.send_service(FakePool(ROW), 9003, 5))
     check("bug send: an ok with no PR number is a failed send", False, "did not raise")
 except sp.SupportError as e:
     check("bug send: an ok with no PR number is a failed send (502)", e.status == 502, e.detail)
@@ -193,7 +193,7 @@ bridge_answers["proposal.status"] = {"repo": "Community/bugs", "reports": [
     {"number": 12, "status": "validated", "pr_url": "", "resolution": "",
      "events": [{"body": "Which browser?", "at": "2026-09-23T10:00:00Z"}]}]}
 pool_s = FakePool(SENT)
-out = run(sp.refresh_service(pool_s, 3))
+out = run(sp.refresh_service(pool_s, 9003))
 check("refresh: a bug_pr row is mirrored through proposal.status, not platform.ticket",
       [op for op, _ in bridge_calls] == ["proposal.status"]
       and bridge_calls[0][1] == {"kind": "bug", "numbers": [12]}, str(bridge_calls))
@@ -208,7 +208,7 @@ bridge_answers["proposal.status"] = {"reports": [
     {"number": 12, "status": "fixed", "pr_url": "https://forge.example/owner/platform/pulls/700",
      "resolution": "Fixed in #700", "events": []}]}
 pool_x = FakePool(SENT)
-run(sp.refresh_service(pool_x, 3))
+run(sp.refresh_service(pool_x, 9003))
 sql, params = pool_x.executes[-1]
 check("refresh: fixed carries the FIX url + resolution and closes the row",
       params[0] == "fixed" and params[2].endswith("/pulls/700") and params[1] == "Fixed in #700"
@@ -217,7 +217,7 @@ check("refresh: fixed carries the FIX url + resolution and closes the row",
 bridge_calls.clear()
 bridge_answers["proposal.status"] = {"reports": [{"number": 12, "status": "haunted"}]}
 pool_u = FakePool(SENT)
-run(sp.refresh_service(pool_u, 3))
+run(sp.refresh_service(pool_u, 9003))
 check("refresh: an unknown status from the platform is ignored, not mirrored",
       pool_u.executes == [], str(pool_u.executes))
 
@@ -225,7 +225,7 @@ bridge_calls.clear()
 bridge_answers["proposal.status"] = {"reports": [{"number": 12, "status": "received", "pr_url": "",
                                                    "resolution": "", "events": []}]}
 pool_n = FakePool({**SENT})
-run(sp.refresh_service(pool_n, 3))
+run(sp.refresh_service(pool_n, 9003))
 check("refresh: nothing moved → updated_at untouched", pool_n.executes == [], str(pool_n.executes))
 
 
@@ -250,7 +250,7 @@ bug_rows = [{**SENT, "id": 100 + i, "metadata": json.dumps({"lane": "bug_pr", "b
 plat_row = {**ROW, "id": 5, "status": "sent", "platform_id": 77, "platform_status": "received"}
 bridge_answers["proposal.status"] = {"reports": []}
 bridge_answers["platform.ticket"] = {"tickets": []}
-run(sp.refresh_service(ManyPool(bug_rows + [plat_row]), 3))
+run(sp.refresh_service(ManyPool(bug_rows + [plat_row]), 9003))
 status_calls = [p for op, p in bridge_calls if op == "proposal.status"]
 check("refresh: 51 bug rows → two proposal.status calls of ≤50 numbers",
       len(status_calls) == 2 and [len(c["numbers"]) for c in status_calls] == [50, 1], str([len(c["numbers"]) for c in status_calls]))
@@ -269,7 +269,7 @@ async def _failing_bridge(op, params):
 
 
 sp._bridge = _failing_bridge
-out = run(sp.refresh_service(ManyPool([bug_rows[0], plat_row]), 3))
+out = run(sp.refresh_service(ManyPool([bug_rows[0], plat_row]), 9003))
 sp._bridge = _orig_bridge
 check("refresh: a bug-lane failure is swallowed and the platform lane still runs",
       out == {"refreshed": 0} and [op for op, _ in bridge_calls] == ["proposal.status", "platform.ticket"],
@@ -279,13 +279,13 @@ check("refresh: a bug-lane failure is swallowed and the platform lane still runs
 bridge_calls.clear()
 bridge_answers["proposal.reply"] = {"number": 12, "replied": True}
 pool_r = FakePool({**SENT, "thread": "[]"})
-res = run(sp.reply_service(pool_r, 3, 5, body="Firefox 131", author="user"))
+res = run(sp.reply_service(pool_r, 9003, 5, body="Firefox 131", author="user"))
 check("reply on a bug row → proposal.reply with the report number",
       bridge_calls == [("proposal.reply", {"kind": "bug", "number": 12, "body": "Firefox 131"})]
       and res["thread_len"] == 1, str(bridge_calls))
 bridge_calls.clear()
 try:
-    run(sp.reply_service(FakePool({**SENT, "thread": "[]"}), 3, 5, body="x" * 4001, author="user"))
+    run(sp.reply_service(FakePool({**SENT, "thread": "[]"}), 9003, 5, body="x" * 4001, author="user"))
     check("reply on a bug row longer than the bridge cap is a 400 that says so", False, "did not raise")
 except sp.SupportError as e:
     check("reply on a bug row longer than the bridge cap is a 400 that says so",
@@ -293,7 +293,7 @@ except sp.SupportError as e:
 bridge_calls.clear()
 pool_r2 = FakePool({**SENT, "metadata": "{}", "platform_id": None})
 try:
-    run(sp.reply_service(pool_r2, 3, 5, body="x"))
+    run(sp.reply_service(pool_r2, 9003, 5, body="x"))
     check("reply on a sent row with no destination is a 409", False, "did not raise")
 except sp.SupportError as e:
     check("reply on a sent row with no destination is a 409 that says so",
@@ -304,14 +304,14 @@ _calls.clear()
 _env_saved2 = _env
 _env = OSError("connection reset")
 try:
-    run(sp.send_service(FakePool(ROW), 3, 5))
+    run(sp.send_service(FakePool(ROW), 9003, 5))
     check("bug send: a transport error is a SupportError", False, "did not raise")
 except sp.SupportError as e:
     check("bug send: a transport error is a 502, not a 500", e.status == 502 and "OSError" in e.detail, e.detail)
 _env = _env_saved2
 _calls.clear()
 del os.environ["GITEA_USERNAME"]
-run(sp.send_service(FakePool(ROW), 3, 5))
+run(sp.send_service(FakePool(ROW), 9003, 5))
 check("bug send: without GITEA_USERNAME the reporter is entity-<id>, and the Send goes through",
       _calls and _calls[0]["gitea_user"] == "entity-9003", str(_calls[:1]))
 

@@ -66,19 +66,19 @@ def main() -> int:
         bs.send_message = stream(['2:[{"type":"session"}]\n', '0:"ok"\n', 'e:{}\n'])
 
         async def run_ok():
-            ok = await ds.forward_decision_turn(3, "sess-1", "Decision on X: I chose `a`.", 9)
+            ok = await ds.forward_decision_turn(9003, "sess-1", "Decision on X: I chose `a`.", 9)
             for _ in range(20):
                 await asyncio.sleep(0.01)
             return ok
         ok = asyncio.run(run_ok())
         check("B a decided decision starts its turn, once, with the composed words",
               ok is True and len(sent) == 1 and sent[0].get("message", "").startswith("Decision on X")
-              and sent[0].get("entity_id") == 3, f"{ok} {sent}")
+              and sent[0].get("entity_id") == 9003, f"{ok} {sent}")
         check("B ...and the turn is followed to its end", followed[-1:] == ['e:{}\n'], f"{followed}")
         sent.clear()
         followed.clear()
         bs.send_message = stream(['3:"This thread was deleted."\n'])
-        refused = asyncio.run(ds.forward_decision_turn(3, "sess-1", "Decision on Y", 10))
+        refused = asyncio.run(ds.forward_decision_turn(9003, "sess-1", "Decision on Y", 10))
         check("B a refused turn (a 3: frame) is not counted as forwarded", refused is False, f"{refused}")
     finally:
         bs.send_message = real

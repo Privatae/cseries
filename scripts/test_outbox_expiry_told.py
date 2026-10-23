@@ -64,13 +64,13 @@ class Pool:
 
 
 async def main():
-    rows = [{"id": 1, "what": "chess", "peer_entity_id": 128, "op": "app.call",
+    rows = [{"id": 1, "what": "chess", "peer_entity_id": 9128, "op": "app.call",
              "message_id": uuid.uuid4()},
-            {"id": 2, "what": "chess", "peer_entity_id": 55, "op": "app.call",
+            {"id": 2, "what": "chess", "peer_entity_id": 9055, "op": "app.call",
              "message_id": uuid.uuid4()}]
     await AL.tick(Pool(rows))
     check("an app-lane tick that expires sends tells the sender once, naming them",
-          len(told) == 1 and "Host 128" in told[0]["body"] and "Host 55" in told[0]["body"]
+          len(told) == 1 and "Host 9128" in told[0]["body"] and "Host 9055" in told[0]["body"]
           and f"{AL.OUTBOX_TTL_DAYS} days" in told[0]["body"], repr(told)[:300])
     told.clear()
     await GL.tick(Pool([{"id": 3, "what": "grp-1", "peer_entity_id": 7, "op": "group.vote",
@@ -80,7 +80,7 @@ async def main():
     told.clear()
     await AL.tick(Pool([]))
     check("a tick that expires nothing tells nobody", told == [])
-    row = await AL.enqueue(Pool([]), "chess", 128, "app.call", "move", {})
+    row = await AL.enqueue(Pool([]), "chess", 9128, "app.call", "move", {})
     check("enqueue says when the send will be given up on",
           row.get("expires_at") == EXP.isoformat(), repr(row))
 

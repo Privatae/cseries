@@ -24,8 +24,12 @@ identify people. So every comment states its reason in place. This fails on:
             number sign and digits, a pair of them, or one in parentheses
   doc-ref   a PLAN-... or DESIGN-... document, or any other capitalised .md
             file name, that is not in this tree
-  entity-id an entity id from RESERVED_ENTITY_IDS in entity-N, entity_id=N or
-            entity N form; examples and tests use ids of 9000 and above
+  entity-id an entity id that labels a person's Host, in entity-N, entity_id=N,
+            entity N, Host N, Host #N or host-N form; examples and tests use
+            ids of 9000 and above. The ids are not published with the source:
+            they are read from RESERVED_IDS_FILE, one per line. Where that file
+            is absent this class is skipped and the run says so; the other
+            classes always run
   tool      the name of an internal tool, service or repository (TOOL_NAMES)
   old-name  a name the project used before it had this one (OLD_NAMES)
   mailbox   an address at a personal mail provider; examples use example.com
@@ -72,10 +76,38 @@ DOC_REF = re.compile(r"\b((?:PLAN|DESIGN)-[A-Za-z0-9][A-Za-z0-9_.-]*)")
 # LICENSE.md, a skill's DESIGN.md) are conventions, not references.
 DOC_FILE = re.compile(r"\b([A-Z][A-Z0-9]+-[A-Za-z0-9][A-Za-z0-9_.-]*\.md)\b")
 
-RESERVED_ENTITY_IDS = (3, 102, 122, 123, 128, 163, 164)
-_IDS = "|".join(str(i) for i in RESERVED_ENTITY_IDS)
-ENTITY_ID = re.compile(
-    r"\bentit(?:y|ies)(?:[-_ ]|_id\s*==?\s*|_id[\"']?\s*:\s*|\s+id\s+)#?(?:%s)\b" % _IDS, re.I)
+# The ids of Hosts that belong to people are kept outside the repository, one
+# per line ("#" starts a comment), so the source does not say which ids they are.
+RESERVED_IDS_FILE = "/etc/privatae/reserved-entity-ids"
+
+
+def load_reserved_ids(path: str = RESERVED_IDS_FILE) -> tuple[int, ...] | None:
+    """The ids in the file; None when there is no file. A line that is not an
+    id fails, so a damaged list is not read as a short one."""
+    try:
+        with open(path) as f:
+            text = f.read()
+    except OSError:
+        return None
+    ids = []
+    for n, raw in enumerate(text.splitlines(), 1):
+        line = raw.split("#", 1)[0].strip()
+        if line:
+            if not line.isdigit():
+                raise ValueError(f"{path}:{n} is not an entity id")
+            ids.append(int(line))
+    return tuple(ids)
+
+
+def entity_id_pattern(ids: tuple[int, ...]) -> re.Pattern | None:
+    if not ids:
+        return None
+    return re.compile(
+        r"\b(?:entit(?:y|ies)(?:[-_ ]|_id\s*==?\s*|_id[\"']?\s*:\s*|\s+id\s+)#?|Host\s+#?|host-)(?:%s)\b"
+        % "|".join(str(i) for i in ids), re.I)
+
+
+ENTITY_ID: re.Pattern | None = None  # set by main() from RESERVED_IDS_FILE
 
 
 def _alt(*names: str) -> str:
@@ -183,8 +215,9 @@ def line_findings(line: str, stems: set[str]) -> list[tuple[str, str]]:
         name = m.group(1)
         if not name.startswith(("PLAN-", "DESIGN-")) and "/" + name not in stems:
             out.append(("doc-ref", name))
-    for m in ENTITY_ID.finditer(line):
-        out.append(("entity-id", m.group(0)))
+    if ENTITY_ID is not None:
+        for m in ENTITY_ID.finditer(line):
+            out.append(("entity-id", m.group(0)))
     for rx, label in TOOL:
         if rx.search(line):
             out.append(("tool", label))
@@ -278,7 +311,10 @@ def self_test() -> list[str]:
     def classes(line):
         return {c for c, _ in line_findings(line, stems)}
 
-    ids = RESERVED_ENTITY_IDS
+    global ENTITY_ID
+    held = ENTITY_ID
+    ids = (47, 4711, 812)  # probe ids; the real list is not in the source
+    ENTITY_ID = entity_id_pattern(ids)
     positives = [(c, live(s)) for c, s in [
         ("ticket", "# fixed in T|-1234 last week"), ("ticket", "(T|-091)"), ("ticket", "see R|-12 in the model"),
         ("ticket", "the BT|-7 cap"), ("pr", "landed in PR |#431"), ("pr", "(|#812) moved it"),
@@ -286,7 +322,9 @@ def self_test() -> list[str]:
         ("doc-ref", "see DESIGN|-not-here §2"),
         ("doc-ref", "docs/PLAN|-gone-2026-01-01.md"), ("doc-ref", "see AUDIT|-2026-01-01-gone.md"), ("entity-id", "entity_id=%d," % ids[0]),
         ("entity-id", '"entity_id": %d' % ids[1]), ("entity-id", "Entity %d's app" % ids[-1]),
-        ("entity-id", "repo entity-%d/p1" % ids[2]),
+        ("entity-id", "repo entity-%d/p1" % ids[2]), ("entity-id", "app hear back from host %d" % ids[2]),
+        ("entity-id", "the backup is Host %d's" % ids[0]), ("entity-id", "titled Host #%d" % ids[1]),
+        ("entity-id", "gitea_user = 'host-%d'" % ids[0]),
         ("tool", "caught by op|test's lane"), ("tool", "OP|TEST_MARKER"), ("tool", "the para|llax db"),
         ("tool", "in privatae-bas|tion-dev"), ("tool", "see owner/|sentinel"), ("tool", "the privatae-|api pod"),
         ("tool", "(fable |review B1)"), ("tool", "Fable  |Review"),
@@ -301,6 +339,7 @@ def self_test() -> list[str]:
     ]]
     negatives = [live(s) for s in [
         "GPT-4 and SHA-256 and UTF-8", "color: #333;", "bg: \"#123\", fg: \"#000\"", "linear-gradient(#123,#456)", "Host #9003 and Host #9128", "entity_id=9003", "entity_id=30",
+        "Host 470", "host-4712", "the v0.3.47 tag",
         "entity 1023", "see DESIGN|-in-tree §2", "docs/DESIGN|-in-tree-2026-01-01.md",
         "see README.md, LICENSE.md and NOTES|-HERE.md", "T-12 minus", "if(T>240){ x=(T|-240)/2400 }",
         "a schema, a lemon, a dozen", "sub" + "li" + "men", "the parallel lane", "an optimistic test", "privatae-bastion",
@@ -318,17 +357,51 @@ def self_test() -> list[str]:
     for line in negatives:
         if classes(line):
             fails.append(f"self-test: false hit {classes(line)} in {line!r}")
+    # Without the id list the entity-id class is off and nothing else changes.
+    ENTITY_ID = None
+    got = classes(live("entity_id=%d, see T|-1234" % ids[0]))
+    if got != {"ticket"}:
+        fails.append(f"self-test: without the id list only the entity-id class is off, got {sorted(got)}")
+    ENTITY_ID = held
+    # The list file: ids one per line, comments and blank lines skipped; a
+    # missing file is None; a damaged line fails.
+    import tempfile
+    with tempfile.TemporaryDirectory() as d:
+        path = os.path.join(d, "ids")
+        with open(path, "w") as f:
+            f.write("# people's Hosts\n47\n\n 4711 \n812  # a note\n")
+        if load_reserved_ids(path) != ids:
+            fails.append(f"self-test: the id list reads as {load_reserved_ids(path)}, want {ids}")
+        if load_reserved_ids(os.path.join(d, "absent")) is not None:
+            fails.append("self-test: a missing id list is not None")
+        with open(path, "w") as f:
+            f.write("47\nentity-4711\n")
+        try:
+            load_reserved_ids(path)
+            fails.append("self-test: a damaged id list is read")
+        except ValueError:
+            pass
     return fails
 
 
 # ── main ─────────────────────────────────────────────────────────────────────
 
 def main(argv: list[str]) -> int:
+    global ENTITY_ID
     only = [a.rstrip("/") for a in argv if not a.startswith("-")]
     source = next((a.split("=", 1)[1] for a in argv if a.startswith("--source=")), "")
     fails = self_test()
     for f in fails:
         print(f"  FAIL  {f}")
+    try:
+        ids = load_reserved_ids()
+    except ValueError as e:
+        print(f"  FAIL  {e}")
+        return 1
+    if ids is None:
+        print(f"  NOTE  entity-id check skipped: no id list at {RESERVED_IDS_FILE} (one id per line); "
+              "the other checks still run")
+    ENTITY_ID = entity_id_pattern(ids or ())
     files = tracked_files(APP_ROOT)
     if source:
         source_files = tracked_files(source)

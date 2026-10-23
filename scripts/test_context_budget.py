@@ -490,7 +490,7 @@ async def thread_scope_checks(check, cb) -> None:
         ("per_turn", _turn("B"), b),
     ])
 
-    blocks_a = await (cb.latest_prompt_blocks(pool, 3, a))
+    blocks_a = await (cb.latest_prompt_blocks(pool, 9003, a))
     pre_a = [x for x in blocks_a if x.get("name") == "memory_prefire"]
     check("per-thread blocks: thread A gets A's pre-fire, not the thread that sent last",
           bool(pre_a) and pre_a[0]["items"] == ["prefired fact A"], str(pre_a))
@@ -498,7 +498,7 @@ async def thread_scope_checks(check, cb) -> None:
           [x.get("name") for x in blocks_a][:2] == ["identity", "constitutional"],
           str([x.get("name") for x in blocks_a]))
     check("per-thread blocks: the descriptor reaches the query as kind + ref",
-          pool.last_args == (3, "project", "7"), str(pool.last_args))
+          pool.last_args == (9003, "project", "7"), str(pool.last_args))
     # The static row is written at session start, so walking back from the
     # newest row it sits BEHIND the per-turn rows. Finding a per-turn build
     # must not end the walk (it did, and the cached system half vanished from
@@ -509,7 +509,7 @@ async def thread_scope_checks(check, cb) -> None:
         ("per_turn", _turn("B"), b),
         ("per_turn", _turn("A-new"), a),
     ])
-    deep = await (cb.latest_prompt_blocks(pool_deep, 3, a))
+    deep = await (cb.latest_prompt_blocks(pool_deep, 9003, a))
     pre_deep = [x for x in deep if x.get("name") == "memory_prefire"]
     check("per-thread blocks: newest build wins and the static row behind it "
           "is still reached",
@@ -517,7 +517,7 @@ async def thread_scope_checks(check, cb) -> None:
           and bool(pre_deep) and pre_deep[0]["items"] == ["prefired fact A-new"],
           str([x.get("name") for x in deep]) + " / " + str(pre_deep))
 
-    blocks_b = await (cb.latest_prompt_blocks(pool, 3, b))
+    blocks_b = await (cb.latest_prompt_blocks(pool, 9003, b))
     pre_b = [x for x in blocks_b if x.get("name") == "memory_prefire"]
     check("per-thread blocks: thread B gets B's pre-fire",
           bool(pre_b) and pre_b[0]["items"] == ["prefired fact B"], str(pre_b))
@@ -530,7 +530,7 @@ async def thread_scope_checks(check, cb) -> None:
         ("per_turn", _turn("B"), b),
     ])
     blocks_new = await cb.latest_prompt_blocks(
-        pool_new, 3, {"kind": "project", "ref": "999"})
+        pool_new, 9003, {"kind": "project", "ref": "999"})
     check("per-thread blocks: a thread with no build of its own reads EMPTY, "
           "not another thread's and not the unstamped legacy row",
           [x.get("name") for x in blocks_new] == ["identity", "constitutional"],
@@ -538,11 +538,11 @@ async def thread_scope_checks(check, cb) -> None:
 
     # No descriptor = the host's own mirror (window_report): entity-wide,
     # unfiltered, newest per-turn build wins.
-    blocks_any = await (cb.latest_prompt_blocks(pool, 3))
+    blocks_any = await (cb.latest_prompt_blocks(pool, 9003))
     pre_any = [x for x in blocks_any if x.get("name") == "memory_prefire"]
     check("no descriptor → entity-wide read (window_report's contract is intact)",
           bool(pre_any) and pre_any[0]["items"] == ["prefired fact B"]
-          and pool.last_args == (3,), f"{pre_any} / {pool.last_args}")
+          and pool.last_args == (9003,), f"{pre_any} / {pool.last_args}")
 
     # ── prefire_state: which of the three empties is this? ──────────────────
     # It must come from whether a PER-TURN build came back, never from whether
@@ -560,7 +560,7 @@ async def thread_scope_checks(check, cb) -> None:
         ("per_rebuild+static", _static, None),
         ("per_turn", built_no_prefire, a),
     ])
-    out_np = await cb.build_thread_context(pool_np, 3, a)
+    out_np = await cb.build_thread_context(pool_np, 9003, a)
     check("prefire_state: a real build that pre-fired NOTHING is 'thread', "
           "and its blocks still ride",
           out_np["prefire_state"] == "thread"
@@ -578,23 +578,23 @@ async def thread_scope_checks(check, cb) -> None:
         ("per_turn", [{"name": "codebook_core", "chars": 451,
                        "freshness": "per_turn"}], a),
     ])
-    out_inj = await cb.build_thread_context(pool_inj, 3, a)
+    out_inj = await cb.build_thread_context(pool_inj, 9003, a)
     check("prefire_state: the injected single-block fallback is a build too "
           "('thread', not 'no_build_yet')",
           out_inj["prefire_state"] == "thread", str(out_inj["prefire_state"]))
 
-    out_pre = await cb.build_thread_context(pool, 3, a)
+    out_pre = await cb.build_thread_context(pool, 9003, a)
     check("prefire_state: a build WITH a pre-fire is 'thread' and carries its items",
           out_pre["prefire_state"] == "thread"
           and out_pre["last_prefired"] == ["prefired fact A"],
           f"{out_pre['prefire_state']} / {out_pre['last_prefired']}")
 
     out_none = await cb.build_thread_context(
-        pool_new, 3, {"kind": "project", "ref": "999"})
+        pool_new, 9003, {"kind": "project", "ref": "999"})
     check("prefire_state: a thread with no per-turn build is 'no_build_yet'",
           out_none["prefire_state"] == "no_build_yet", str(out_none["prefire_state"]))
 
-    out_peer = await cb.build_thread_context(pool, 3, {"kind": "peer", "ref": "9"})
+    out_peer = await cb.build_thread_context(pool, 9003, {"kind": "peer", "ref": "9"})
     check("prefire_state: a peer thread is 'not_built_here' (nothing is built "
           "on this host for it, ever)",
           out_peer["prefire_state"] == "not_built_here", str(out_peer["prefire_state"]))

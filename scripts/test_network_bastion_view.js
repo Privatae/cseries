@@ -43,7 +43,9 @@ const doc = {
 };
 const MACHINES = [
     { id: 7, hostname: 'build-server-7', online: true, capabilities: [], models: [] },
-    { id: 9, hostname: 'laptop-9', online: true, capabilities: [], models: [] },
+    { id: 9, hostname: 'laptop-9', online: true, capabilities: [], models: [],
+      peers: [{ host_name: 'wren.host.example', handle: 'wren', state: 'active' },
+              { host_name: 'quill.host.example', handle: 'quill' }] },
 ];
 const listeners = {};
 let held = null;
@@ -106,6 +108,12 @@ function inspectorShows(name) {
     check(App.state.lens === 'bastions', `the hash view opens the Bastions lens (lens=${App.state.lens})`);
     check(inspectorShows('laptop-9'), 'the hash view opens the named machine\'s inspector');
     check(App.state.pendingBastion === null, 'the request is cleared once opened');
+    // 'also serves': a peer the machine named without a state is not shown bare,
+    // which would read the same as an established pairing.
+    const body = (byId['inspector-body'] || makeEl()).innerHTML;
+    check(body.includes('quill <span class="label-sys">(state not reported)</span>'),
+          'a peer with no reported state says so');
+    check(body.includes('wren') && !body.includes('wren <span'), 'an active peer carries no label');
 
     // An open window: the shell's message opens another machine.
     const onMessage = (listeners.message || []).slice(-1)[0];

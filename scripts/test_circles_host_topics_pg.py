@@ -10,7 +10,7 @@ the nested payload through) and in inbox_messages.payload. The receiver still
 derives the pair's thread itself, now on the relay too, and a topic never
 chooses it.
 
-TWO HOSTS, TWO DATABASES. Host A (1) and Host B (122) each get a fresh kernel
+TWO HOSTS, TWO DATABASES. Host A (1) and Host B (9122) each get a fresh kernel
 database, and brain_service's pool and entity id are switched to whichever
 Host is acting, so a send runs A's real route, A's real direct-lane sender, and
 B's real PeerServer with a real signed slip, storing into B's own database.
@@ -95,7 +95,7 @@ async def section(name, fn):
         check(f"{name.split()[0]} ran to the end", False, f"{type(e).__name__}: {e}")
 
 
-A, B, Z, OLD, FRESH, W = 1, 122, 130, 150, 160, 170
+A, B, Z, OLD, FRESH, W = 1, 9122, 130, 150, 160, 170
 A_PERSON, B_PERSON = "me@example.com", "owner@juno.example"
 ANA = "ana@example.com"           # a person A's contacts place on B
 NAMES = {A: "Ivy", B: "Juno", Z: "Zed", OLD: "Old", W: "Wren"}

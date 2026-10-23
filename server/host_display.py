@@ -53,7 +53,7 @@ def display_name_or_host(name: object, host_id: object = None) -> str:
 def host_self_intro(name: object, host_id: object = None) -> str:
     """The first line of the Host's identity prompt. A chosen name reads
     "You are Ada, the user's Host."; a placeholder reads "You are the
-    user's Host (Host #3)." rather than "You are Host #3, the user's Host."."""
+    user's Host (Host #9003)." rather than "You are Host #9003, the user's Host."."""
     if is_placeholder_name(name):
         label = host_label(host_id)
         return "You are the user's Host." if label == "Host" else f"You are the user's Host ({label})."

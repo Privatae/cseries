@@ -300,10 +300,10 @@ def c_picture():
     ce.machines_for = _none
     try:
         for ct in sorted(LOOKABLE_IMAGE_TYPES):
-            m = asyncio.run(ce.no_reader_message(object(), 3, "image.png", ct, 77))
+            m = asyncio.run(ce.no_reader_message(object(), 9003, "image.png", ct, 77))
             check(f"a stored {ct} is a picture the Host looks at itself",
                   "'action': 'look'" in m and "file:77" in m and not _offers_agent(m), m)
-        m = asyncio.run(ce.no_reader_message(object(), 3, "logo.svg", "image/svg+xml", 78))
+        m = asyncio.run(ce.no_reader_message(object(), 9003, "logo.svg", "image/svg+xml", 78))
         check("an SVG (not lookable) is not sent to look", "'look'" not in m, m)
     finally:
         ce.machines_for = real

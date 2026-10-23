@@ -169,7 +169,7 @@ swapped_restore()
 pool = Pool()
 pool.broken = True
 try:
-    asyncio.run(hr.finish(pool, 3))
+    asyncio.run(hr.finish(pool, 9003))
 except Exception:
     pass                                  # the backup loop logs this and carries on
 put(live, "proj/work.txt", "the restored project + A DAY OF THE USER'S WORK\n")
@@ -178,7 +178,7 @@ for boot in (2, 3, 4):
     hr.swap("hostmem")                    # the Host restarts (a wake, a roll)
 with_error = None
 try:
-    asyncio.run(hr.finish(pool, 3))
+    asyncio.run(hr.finish(pool, 9003))
 except Exception as e:
     with_error = e
 now = tree()
@@ -214,7 +214,7 @@ for boot in (2, 3):
 check("its third boot without a start undoes it",
       rc == 1 and (hr.read_plan() or {}).get("state") == hr.FAILED
       and tree().get("app-state/user-files/notes.txt") == "before the restore\n", (rc, hr.read_plan()))
-asyncio.run(hr.finish(Pool(), 3))
+asyncio.run(hr.finish(Pool(), 9003))
 check("and finish clears the unwanted copy without touching the live tree",
       tree().get("app-state/user-files/notes.txt") == "before the restore\n" and not hr.STAGED.exists())
 
@@ -237,7 +237,7 @@ if hasattr(hr, "UNDOING"):
     check("an undo that stops part way is marked as undoing",
           (hr.read_plan() or {}).get("state") == hr.UNDOING, hr.read_plan())
     p = Pool()
-    asyncio.run(hr.finish(p, 3))
+    asyncio.run(hr.finish(p, 9003))
     check("finish records nothing and deletes nothing while an undo is unfinished",
           p.recorded == [] and hr.read_plan() is not None and hr.STAGED.exists(), p.recorded)
     check("mark_started does not turn it into a restore", hr.mark_started() is False)
@@ -248,7 +248,7 @@ if hasattr(hr, "UNDOING"):
           and tree().get("app-state/user-files/notes.txt") == "before the restore\n"
           and "hostmem_before_restore" not in dbs, (rc, hr.read_plan(), tree()))
     p = Pool()
-    asyncio.run(hr.finish(p, 3))
+    asyncio.run(hr.finish(p, 9003))
     check("and finish records a failed restore, not a successful one", p.recorded == ["failed"], p.recorded)
 
 print("== undo never runs once the previous database is gone")

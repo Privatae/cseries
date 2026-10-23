@@ -58,7 +58,7 @@ asyncio.set_event_loop(LOOP)
 
 SERVER = "box-a"
 TOKEN_ID = 11
-EID = 3
+EID = 9003
 OP = "session:root:exec"
 
 

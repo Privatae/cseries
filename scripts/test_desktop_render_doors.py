@@ -540,7 +540,7 @@ A.Path = _AlwaysFile
 _render.update(answer=FAILED, calls=0)
 pool = _Pool()
 try:
-    run(A.set_desktop_artifact(pool, 3, 236))
+    run(A.set_desktop_artifact(pool, 9003, 236))
     err = None
 except ArtifactError as e:
     err = e
@@ -552,7 +552,7 @@ check("...the check ran on the RENDERED artifact (the exact bytes the shell moun
 
 _render.update(answer=UNCHECKED, calls=0)
 pool = _Pool()
-out = run(A.set_desktop_artifact(pool, 3, 236))
+out = run(A.set_desktop_artifact(pool, 9003, 236))
 check("SET-DESKTOP: the browser could not be asked -> it PROCEEDS (the user's own screen)",
       pool.writes and out.get("desktop_artifact_id") == 236, repr(out)[:200])
 check("...and says so — a NOT RENDER-CHECKED warning and render.checked False, never silent",
@@ -561,7 +561,7 @@ check("...and says so — a NOT RENDER-CHECKED warning and render.checked False,
 
 _render.update(answer=OK, calls=0)
 _set_pool = _Pool()
-out = run(A.set_desktop_artifact(_set_pool, 3, 236))
+out = run(A.set_desktop_artifact(_set_pool, 9003, 236))
 check("SET-DESKTOP: a clean render sets it and reports render.ok",
       out.get("render", {}).get("ok") is True and _render["calls"] == 1)
 _upsert = [w for w in _set_pool.writes if "desktop_artifact_id = EXCLUDED" in w]
@@ -569,13 +569,13 @@ check("...and the PHONE follows it: the phone variant goes back to 'Same as desk
       len(_upsert) == 1 and "wallpaper_mobile    = NULL" in _upsert[0], repr(_set_pool.writes)[:300])
 _render.update(answer={**OK, "warnings": ["on a phone (360×640) 8 of the 15 app tiles sit past "
                                           "the screen's side edges"]}, calls=0)
-out = run(A.set_desktop_artifact(_Pool(), 3, 236))
+out = run(A.set_desktop_artifact(_Pool(), 9003, 236))
 check("SET-DESKTOP: a pass with phone warnings is set, and the warnings are in the result the "
       "Host reads", out.get("desktop_artifact_id") == 236
       and any("past the screen's side edges" in w for w in out.get("warnings") or [])
       and (out.get("render") or {}).get("warnings"), repr(out)[:300])
 _render.update(answer=OK, calls=0)
-run(A.set_desktop_artifact(_Pool(), 3, 236))
+run(A.set_desktop_artifact(_Pool(), 9003, 236))
 from server.applications import desktop_pin as PIN  # noqa: E402
 _pin = PIN.read_pin(236) or {}
 check("...and WEARS what it checked: the pin is those exact bytes, render-checked",
@@ -584,14 +584,14 @@ check("...and WEARS what it checked: the pin is those exact bytes, render-checke
       repr(_pin))
 
 _render.update(answer=FAILED, calls=0)
-out = run(A.set_desktop_artifact(_Pool(), 3, 236, render_check=False))
+out = run(A.set_desktop_artifact(_Pool(), 9003, 236, render_check=False))
 check("SET-DESKTOP render_check=False (going back) does not load a browser at all",
       _render["calls"] == 0 and "render" not in out)
-out = run(A.set_desktop_artifact(_Pool(), 3, 236, render_check=dict(OK)))
+out = run(A.set_desktop_artifact(_Pool(), 9003, 236, render_check=dict(OK)))
 check("SET-DESKTOP with a result in hand uses it instead of loading the same bytes twice",
       _render["calls"] == 0 and out.get("render", {}).get("ok") is True)
 try:
-    run(A.set_desktop_artifact(_Pool(), 3, 236, render_check=dict(FAILED)))
+    run(A.set_desktop_artifact(_Pool(), 9003, 236, render_check=dict(FAILED)))
     refused = False
 except ArtifactError as e:
     refused = e.status == 422
@@ -600,7 +600,7 @@ check("...and a FAILED result in hand still refuses", refused)
 _doc["html"] = "<html><body>no mode, no tokens</body></html>"
 _render.update(answer=OK, calls=0)
 try:
-    run(A.set_desktop_artifact(_Pool(), 3, 236))
+    run(A.set_desktop_artifact(_Pool(), 9003, 236))
 except ArtifactError:
     pass
 check("SET-DESKTOP: the text floor runs FIRST — a floor refusal never wakes a browser",
@@ -619,7 +619,7 @@ _doc["html"] = _reported
 DR.remember_reload_report(_reported, "the shell counted more than 3 loads in 45 s")
 _browser_says["answer"] = UNCHECKED
 try:
-    out = run(A.set_desktop_artifact(_Pool(), 3, 236))
+    out = run(A.set_desktop_artifact(_Pool(), 9003, 236))
     err = None
 except ArtifactError as e:
     out, err = {}, e
@@ -633,7 +633,7 @@ check("...with a note naming the unconfirmed reload report",
 check("...and it is not recorded as failed", DR.known_failure(_reported) is None)
 DR.remember_reload_report(_reported, "the shell counted more than 3 loads in 45 s")
 _browser_says["answer"] = OK
-out = run(A.set_desktop_artifact(_Pool(), 3, 236))
+out = run(A.set_desktop_artifact(_Pool(), 9003, 236))
 check("SET-DESKTOP the same version with a browser: the browser's verdict decides (a pass sets it)",
       (out.get("render") or {}).get("ok") is True and "reload_report" not in (out.get("render") or {}),
       repr(out)[:300])

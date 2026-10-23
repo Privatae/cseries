@@ -18,7 +18,8 @@ on throwaway git repos and pins:
      the pass for every other case; CI's smoke (.gitea/workflows/check.yml)
      runs beside a gates job that runs whenever it does and can fail the run,
      and hands over the tree; pre_merge_gates.sh writes the record where the
-     reader looks.
+     reader looks. (GitHub's .github/workflows/test.yml runs neither smoke
+     nor the gate list, so it never sets SMOKE_SHARED_GATES_PASSED_TREE.)
 """
 import os
 import re

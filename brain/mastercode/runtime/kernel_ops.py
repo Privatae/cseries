@@ -101,8 +101,8 @@ _EXPOSED_PREFIXES: tuple[str, ...] = (
     "/api/applications/runtime/app-data",
     # The peer app lane: an installed app's peers, grants, sends, outbox and inbox on the direct
     # host<->host lane. Entity-domain like circles (read:peer_app at the
-    # READ_MEMORY bit, write:peer_app at WRITE_MEMORY), so "did the veterans
-    # app hear back from host 122" is a question the Host answers out loud,
+    # READ_MEMORY bit, write:peer_app at WRITE_MEMORY), so "did the notes
+    # app hear back from host 9122" is a question the Host answers out loud,
     # and a send it can drive. Reach is still bounded inside the routes: a
     # grant needs an accepted contact and a send needs the peer's grant.
     #

@@ -83,7 +83,7 @@ _ALLOW = [
     r"(?<![\w-])entity-roll(?![\w-])",
     # The Host's gitea username / branch prefix, as a TEMPLATE: entity-<id>,
     # entity-{id}, entity-${...}. A literal number (entity-9003) is prose about a
-    # Host and is NOT allowed — write "Host #3".
+    # Host and is NOT allowed — write "Host #9003".
     r"\bentity-(?:<id>|\{id\}|\$\{[^}]*\})",
     # Mesh / mail / cert addresses and files: <id>@entity.localhost,
     # entity:N@..., /etc/.../entity.crt.

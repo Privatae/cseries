@@ -33,6 +33,12 @@
         Sets each package's version to X.Y.Z, and every dependency on one of
         the release's own packages (@privatae/cseries-*) to exactly X.Y.Z.
 
+    release.py changes vX.Y.Z [--repo DIR]
+        Prints the release notes' list of changes: the subject of each commit
+        since the previous release's tag (the highest vX.Y.Z below this one
+        in this tag's history), newest first, or that this is the first
+        release.
+
     release-json and cloud-json also take the runtime images and the harness
     source, all of them or none:
             --runtime FAMILY=REPO@DIGEST   (once per family: python, browser,
@@ -453,6 +459,34 @@ def notices(image, version, arch, root="/"):
     return "\n".join(lines) + "\n"
 
 
+def _git(repo, *args):
+    r = subprocess.run(["git", "-C", repo, *args], capture_output=True, text=True, check=False)
+    if r.returncode != 0:
+        fail(f"git {' '.join(args)}: {r.stderr.strip()}")
+    return r.stdout
+
+
+def changes(tag, repo="."):
+    # The previous release is the highest vX.Y.Z below this one that this
+    # tag's history contains, so a tag cut on another line is never counted.
+    if not (tag.startswith("v") and VERSION_RE.match(tag[1:])):
+        fail(f"a release tag is vX.Y.Z, got {tag!r}")
+    this = tuple(int(x) for x in tag[1:].split("."))
+    earlier = []
+    for t in _git(repo, "tag", "--list", "v*", "--merged", tag).split():
+        if VERSION_RE.match(t[1:]):
+            v = tuple(int(x) for x in t[1:].split("."))
+            if v < this:
+                earlier.append((v, t))
+    if not earlier:
+        return "Changes: this is the first release, so there is no earlier one to list changes from.\n"
+    prev = max(earlier)[1]
+    subjects = [s for s in _git(repo, "log", "--format=%s", f"{prev}..{tag}").splitlines() if s.strip()]
+    if not subjects:
+        return f"Changes since {prev}: none.\n"
+    return f"Changes since {prev}:\n\n" + "".join(f"- {s}\n" for s in subjects)
+
+
 def stamp_npm(version, paths):
     if not VERSION_RE.match(version):
         fail(f"version must be X.Y.Z, got {version!r}")
@@ -502,6 +536,9 @@ def main():
     s = sub.add_parser("stamp-npm")
     s.add_argument("version")
     s.add_argument("paths", nargs="+")
+    ch = sub.add_parser("changes")
+    ch.add_argument("tag")
+    ch.add_argument("--repo", default=".")
     a = p.parse_args()
     if a.cmd == "oci-check":
         oci_check(a.layout, a.image, a.arch)
@@ -513,6 +550,8 @@ def main():
         cloud_json(a)
     elif a.cmd == "notices":
         sys.stdout.write(notices(a.image, a.version, a.arch, a.root))
+    elif a.cmd == "changes":
+        sys.stdout.write(changes(a.tag, a.repo))
     else:
         stamp_npm(a.version, a.paths)
 

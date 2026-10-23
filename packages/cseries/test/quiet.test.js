@@ -29,7 +29,7 @@ function linux(opts = {}, platform = 'linux') {
     const code = await main(argv, {
       platform, arch: 'x64', env: {}, paths: p, out, runner: m.runner, net: m.net,
       sleep: async () => {}, prompt: async () => false, portState: async () => 'free', freeBytes: () => 64 * 1024 ** 3,
-      releaseInfo: { release: rel, placeholders: [], file: 'test' }, bastionKeys: m.bastionKeys, hostname: 'test-machine',
+      releaseInfo: { release: rel, placeholders: [], file: 'test' }, bastionKeys: m.bastionKeys, sudoPaths: m.sudoPaths, hostname: 'test-machine',
     });
     return { code, text: out.text(), err: out.errText() };
   };

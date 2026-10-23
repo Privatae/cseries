@@ -75,8 +75,8 @@ async def main() -> int:
     from server.bridge import memory_handlers as M
     from server import brain_service
 
-    GID = "grp-163-" + "0" * 32
-    vote = {"terms": {"v": 1, "kind": "group_vote", "group": GID, "ballot": "b1", "voter": 164,
+    GID = "grp-9163-" + "0" * 32
+    vote = {"terms": {"v": 1, "kind": "group_vote", "group": GID, "ballot": "b1", "voter": 9164,
                       "choice": "yes", "seq": 1790122257889877, "nonce": "ab" * 16,
                       "signed_at": "2026-09-23T00:10:55.749841+00:00"},
             "signature": "eA==", "key_id": "entity_sign"}
@@ -138,11 +138,11 @@ async def main() -> int:
 
     print("4. the roster sync with a REMOVED member (the owner's snapshot is JSON)")
     import server.groups.roster as R2
-    members = [{"member_entity_id": 163, "role": "creator", "verify_pubkey": None,
+    members = [{"member_entity_id": 9163, "role": "creator", "verify_pubkey": None,
                 "display_name": "", "removed_at": None},
                {"member_entity_id": 165, "role": "member", "verify_pubkey": None,
                 "display_name": "", "removed_at": "2026-09-20T10:00:00+00:00"},
-               {"member_entity_id": 164, "role": "member", "verify_pubkey": None,
+               {"member_entity_id": 9164, "role": "member", "verify_pubkey": None,
                 "display_name": "", "removed_at": None}]
     pool = StrictPool(row=None)
     try:
@@ -159,7 +159,7 @@ async def main() -> int:
     pool = StrictPool(row={"id": 1, "name": "n", "kind": "log", "cooldown_s": 120,
                            "created_by": "host", "created_at": _dt.datetime.now(_dt.timezone.utc)})
     try:
-        await RS.add_channel(pool, 3, name="n", kind="log", action={"type": "log"},
+        await RS.add_channel(pool, 9003, name="n", kind="log", action={"type": "log"},
                              quiet_from="22:00", quiet_to="07:00", quiet_tz="UTC")
         ins = [a for q, a in pool.calls if "INSERT INTO reachout_channels" in q]
         check(ins and ins[0][5] == _dt.time(22, 0) and ins[0][6] == _dt.time(7, 0),
@@ -169,7 +169,7 @@ async def main() -> int:
     for bad, why in ((("25:00", "07:00"), "a time like"), (("22:00", None), "needs both"),
                      (("22:00+05:00", "07:00"), "without an offset")):
         try:
-            await RS.add_channel(StrictPool(), 3, name="n", kind="log", action={"type": "log"},
+            await RS.add_channel(StrictPool(), 9003, name="n", kind="log", action={"type": "log"},
                                  quiet_from=bad[0], quiet_to=bad[1])
             check(False, f"quiet {bad} is refused")
         except RS.ReachoutError as e:
@@ -180,7 +180,7 @@ async def main() -> int:
     sys.modules.setdefault("server.main", _t.ModuleType("server.main"))
     from server.routes import messages as MS
     try:
-        await MS.thread_service(StrictPool(), 3, "not-a-uuid")
+        await MS.thread_service(StrictPool(), 9003, "not-a-uuid")
         check(False, "refused as a MessageError(400)")
     except MS.MessageError as e:
         check(e.status == 400, "refused as a MessageError(400)", e.status)

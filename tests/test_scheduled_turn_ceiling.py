@@ -722,7 +722,7 @@ def test_apply_after_the_thread_was_deleted_sets_nothing(monkeypatch):
                                         "event_type": "scheduled_task", "summary": "t",
                                         "event_at": "2026-10-01T00:00:00Z",
                                         "recurrence": "daily", "payload": {"prompt": "go"}}}}
-    out = _run(SA.apply_proposal(object(), 3, md, option_id=SA.OPT_APPLY, ticket_id=5))
+    out = _run(SA.apply_proposal(object(), 9003, md, option_id=SA.OPT_APPLY, ticket_id=5))
     assert out["applied"] is False and "deleted" in out["why"], out
     assert wrote == [], wrote
 
@@ -738,11 +738,11 @@ def test_the_card_names_no_daily_number_when_the_person_set_no_limit(monkeypatch
         filed.append(kw)
         return {"id": 9}
     monkeypatch.setattr(TK, "create_ticket_service", _create)
-    _run(SA.propose(object(), 3, title="t", recurrence="daily", fire_at="x", plan_msg="p",
+    _run(SA.propose(object(), 9003, title="t", recurrence="daily", fire_at="x", plan_msg="p",
                     append={}, origin=None, turns_per_fire=1, turns_per_day=10 ** 9,
                     budget_usd=None))
     assert "1000000000" not in filed[0]["sitrep"], filed[0]["sitrep"]
-    _run(SA.propose(object(), 3, title="t", recurrence="daily", fire_at="x", plan_msg="p",
+    _run(SA.propose(object(), 9003, title="t", recurrence="daily", fire_at="x", plan_msg="p",
                     append={}, origin=None, turns_per_fire=1, turns_per_day=200,
                     budget_usd=None))
     assert "at most 200 model turns a day" in filed[1]["sitrep"], filed[1]["sitrep"]

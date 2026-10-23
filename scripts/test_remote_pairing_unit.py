@@ -153,7 +153,7 @@ async def helper_protocol(d):
     check(DH.public_address(PUBLIC) == PUBLIC and DH.public_address("::ffff:" + PUBLIC) == PUBLIC,
           "a public address passes, an IPv4-mapped one as its IPv4 form")
     for bad in ("10.88.0.9", "192.168.1.5", "127.0.0.1", "169.254.1.1", "100.64.0.1", "::1",
-                "fd00:aa::5", "fe80::1", "198.51.100.20", "2001:db8::5", "224.0.0.1", "?", "", None):
+                "fd12:3456:789a::5", "fe80::1", "198.51.100.20", "2001:db8::5", "224.0.0.1", "?", "", None):
         check(DH.public_address(bad) is None, f"not a public unicast address: {bad!r}")
     h = Helper(os.path.join(d, "h.sock"))
     await h.start()

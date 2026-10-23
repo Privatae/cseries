@@ -209,7 +209,7 @@ class TwoTurns:
         rt = S.EntityRuntime(self.pool)
         self.sess = S.EntitySession(
             session_id="sess-r13", entity_id=9003,
-            entity={"id": 3, "name": "Nova", "behavioral_params": {},
+            entity={"id": 9003, "name": "Nova", "behavioral_params": {},
                     "permission_overrides": {"bot_capabilities": 255}},
             interaction_context="project:251")
 
@@ -310,7 +310,7 @@ class EpisodePool:
         return out
 
 
-_eps = asyncio.run(KT.scope_episodes(EpisodePool(), 3, {"kind": "thread", "ref": "t-1"}))
+_eps = asyncio.run(KT.scope_episodes(EpisodePool(), 9003, {"kind": "thread", "ref": "t-1"}))
 check("b: an episode previewing a stopped reply names the notice apart: platform_notice + the "
       "Host's own words; the preview the person sees is unchanged",
       len(_eps) == 3 and _eps[0].get("platform_notice") == ["budget"]
@@ -349,7 +349,7 @@ class PreviewPool:
         return None
 
 
-_pv = asyncio.run(CB.build_thread_context(PreviewPool(), 3, {"kind": "thread", "ref": "t-1"}))
+_pv = asyncio.run(CB.build_thread_context(PreviewPool(), 9003, {"kind": "thread", "ref": "t-1"}))
 _pv_rows = _pv.get("history_preview") or []
 check("c: the History window preview is the window the model gets: the person's message, the "
       "Host's own words, and the stop as the platform's note row (never in the Host's words, never dropped)",

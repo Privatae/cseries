@@ -177,7 +177,7 @@ def _run(coro_fn, pool):
 
 def _approve_policy(row, **kw):
     pool = _Pool(row)
-    return _run(lambda: nac_commit.approve_policy(pool, 3, 7, stepup_code="123456", **kw), pool)
+    return _run(lambda: nac_commit.approve_policy(pool, 9003, 7, stepup_code="123456", **kw), pool)
 
 
 def _approver_of(pool):
@@ -263,7 +263,7 @@ async def _not_enrolled(pool):
 
 
 nac_stepup.is_enrolled = _not_enrolled
-listed = asyncio.run(nac_commit.policy_list(_ListPool(), 3))["policy"]
+listed = asyncio.run(nac_commit.policy_list(_ListPool(), 9003))["policy"]
 check("policy_list: an approved rule shows its signed enforcement + permits",
       listed[0].get("enforcement") == "allow"
       and listed[0].get("permits") == [{"direction": "inbound", "lane": "mcp"}], listed[0])
@@ -426,11 +426,11 @@ check("a non-UI caller cannot claim to be the user", _approver_of(pool) == "host
 
 pool = _Pool({"id": 4, "pattern": "evil.example", "action": "deny", "priority": 100,
               "subject": "*", "exit": "default", "approved_at": None})
-pool, out = _run(lambda: nac_commit.approve_egress(pool, 3, 4, via="host_tool"), pool)
+pool, out = _run(lambda: nac_commit.approve_egress(pool, 9003, 4, via="host_tool"), pool)
 check("host tool approves an egress DENY: recorded 'host'", _approver_of(pool) == "host", repr(out))
 pool = _Pool({"id": 6, "server": "box1", "ops": "[]", "deny": '["contain"]', "intent": None,
               "approved_at": None})
-pool, out = _run(lambda: nac_commit.approve_mgmt_grant(pool, 3, 6, via="host_tool"), pool)
+pool, out = _run(lambda: nac_commit.approve_mgmt_grant(pool, 9003, 6, via="host_tool"), pool)
 check("host tool approves a deny-only mgmt grant: recorded 'host'", _approver_of(pool) == "host", repr(out))
 
 # The host tool names itself for every kind.
@@ -531,7 +531,7 @@ def _approve_pairing(**kw):
     with _Patch((pg, "_anchored_here", _anchored), (pg, "_verify_stepup", _stepup_true),
                 (pg, "sign_and_push_grant", _grant_capture)):
         try:
-            asyncio.run(pg.approve_pairing(object(), 3, "box1", "peer.example", ["observe"],
+            asyncio.run(pg.approve_pairing(object(), 9003, "box1", "peer.example", ["observe"],
                                            stepup_code="123456", **kw))
         except TypeError as e:
             return e
@@ -583,7 +583,7 @@ def _accept(**kw):
                 (pg, "_refuse_scope_the_box_cannot_enforce", lambda row, models: None),
                 (pg, "redeem_on_box", _redeem), (pg, "sign_and_push_grant", _grant_capture)):
         try:
-            asyncio.run(mo.accept_inbound(pool, 3, 9, server="box1", caps=["inference"],
+            asyncio.run(mo.accept_inbound(pool, 9003, 9, server="box1", caps=["inference"],
                                           models=["llama3"], stepup_code="123456", **kw))
         except TypeError as e:
             return e, None
@@ -636,7 +636,7 @@ def _deny(**kw):
     pool = _OfferPool()
     with _Patch((pg, "_bastion_row", _bastion), (nac_mgmt, "audit_mgmt", _noop)):
         try:
-            asyncio.run(pg.deny_pairing(pool, 3, "box1", "peer.example", **kw))
+            asyncio.run(pg.deny_pairing(pool, 9003, "box1", "peer.example", **kw))
         except TypeError as e:
             return e
     rows = [a for q, a in pool.executed if "network_bastion_pairing" in q]
@@ -745,7 +745,7 @@ def _revoke(row, key=_entity_pub, **kw):
     pool = _Pool(row) if not isinstance(row, dict) or "rows" not in row else _Pool(**row)
     with _Patch((nac_stepup, "verify_stepup", _verify_code), (nac_stepup, "entity_verify_pubkey", key)):
         _codes.clear()
-        pool, out = _run(lambda: nac_commit.revoke_policy(pool, 3, 7, **kw), pool)
+        pool, out = _run(lambda: nac_commit.revoke_policy(pool, 9003, 7, **kw), pool)
     revoked = any("revoked_at=now()" in q for q, _a in pool.conn.applied)
     return out, revoked, list(_codes)
 
@@ -815,7 +815,7 @@ check("...and with the code it is removed", isinstance(out, dict) and revoked an
       repr(out))
 pool = _Pool(_prow("quarantine", [], approved=False))
 with _Patch((nac_stepup, "verify_stepup", _verify_code)):
-    asyncio.run(nac_commit.revoke_policy(pool, 3, 7))
+    asyncio.run(nac_commit.revoke_policy(pool, 9003, 7))
 check("a policy decline's UPDATE only matches a row that is still a draft",
       any("approved_at IS NULL" in q for q, _a in pool.conn.executed), pool.conn.executed)
 
@@ -825,7 +825,7 @@ def _revoke_egress(**kw_pool):
     pool = _Pool(**kw_pool)
     with _Patch((nac_stepup, "verify_stepup", _verify_code)):
         _codes.clear()
-        pool, out = _run(lambda: nac_commit.revoke_egress(pool, 3, 4, stepup_code=code), pool)
+        pool, out = _run(lambda: nac_commit.revoke_egress(pool, 9003, 4, stepup_code=code), pool)
     return out, any("revoked_at=now()" in q for q, _a in pool.conn.applied), pool
 
 
@@ -916,7 +916,7 @@ check('skill: the "any" lane is shown as [{"lane": "any"}], not a bare string',
 print("9. the revoke check reads the rule the way the engine loads it")
 _rpool = _Pool(_prow("allow", _MCP))
 with _Patch((nac_stepup, "verify_stepup", _verify_code), (nac_stepup, "entity_verify_pubkey", _entity_pub)):
-    _run(lambda: nac_commit.revoke_policy(_rpool, 3, 7), _rpool)
+    _run(lambda: nac_commit.revoke_policy(_rpool, 9003, 7), _rpool)
 _read = _rpool.conn.reads[0][0] if _rpool.conn.reads else ""
 check("revoke_policy's actual read joins only an UNREVOKED profile, as the engine's load does",
       "ON pr.id = p.profile_id AND pr.revoked_at IS NULL" in " ".join(_read.split()), _read)
@@ -946,7 +946,7 @@ def _listed(row, key=_entity_pub):
     r = {**base, **{k: row[k] for k in ("id", "name", "priority", "match", "profile_id",
                                         "approved_at", "signed_terms", "signature")}}
     with _Patch((nac_stepup, "entity_verify_pubkey", key)):
-        out = asyncio.run(nac_commit.policy_list(_ListPool2([r]), 3))["policy"][0]
+        out = asyncio.run(nac_commit.policy_list(_ListPool2([r]), 9003))["policy"][0]
     return out
 
 
@@ -1057,7 +1057,7 @@ def _revoke_grant(stepup_code=None, **kw_pool):
     pool = _Pool(**kw_pool)
     with _Patch((nac_stepup, "verify_stepup", _verify_code)):
         _codes.clear()
-        pool, out = _run(lambda: nac_commit.revoke_mgmt_grant(pool, 3, 6, stepup_code=stepup_code), pool)
+        pool, out = _run(lambda: nac_commit.revoke_mgmt_grant(pool, 9003, 6, stepup_code=stepup_code), pool)
     return out, any("revoked_at=now()" in q for q, _a in pool.conn.applied), pool
 
 
@@ -1161,7 +1161,7 @@ def _approve_store(store=_store, egress=_bundled, patches=(), **kw):
     pool = _StorePool(store, egress, **kw)
     with _Patch((nac_stepup, "verify_stepup", _verify_code), *patches):
         _codes.clear()
-        return _run(lambda: nac_commit.approve_dcn_store(pool, 3, 8, stepup_code="123456"), pool)
+        return _run(lambda: nac_commit.approve_dcn_store(pool, 9003, 8, stepup_code="123456"), pool)
 
 
 def _granted(pool):
@@ -1428,7 +1428,7 @@ async def _interleave():
 
     async def attempt():
         try:
-            return await nac_commit.approve_dcn_store(pool, 3, 8, approved_by="user@machine")
+            return await nac_commit.approve_dcn_store(pool, 9003, 8, approved_by="user@machine")
         except nac_commit.CommitError as e:
             return e
 
@@ -1475,7 +1475,7 @@ def _cleared_for(pool, table, rid):
 
 pool = _StorePool(_plan, _plan)   # the approve read (joins dcn_stores) and the re-read both find it
 with _Patch((nac_stepup, "box_confirmation", _plan_denied)):
-    pool, out = _run(lambda: nac_commit.approve_dcn_move_plan(pool, 3, 5), pool)
+    pool, out = _run(lambda: nac_commit.approve_dcn_move_plan(pool, 9003, 5), pool)
 check("a denied move plan refuses 403", isinstance(out, nac_commit.CommitError) and out.status == 403, repr(out))
 check("...and its stored request is cleared, committed despite the rollback, matched on the refused id",
       _cleared_for(pool, "dcn_move_plans", "P1"), pool.conn.committed)
@@ -1486,7 +1486,7 @@ _reach = {"id": 9, "server": "box1", "slot": "web", "subject": "host.example", "
 pool = _StorePool(_reach, _reach)
 try:
     with _Patch((nac_approval, "grant_confirmation", _plan_denied)):
-        asyncio.run(service_reach.approve_reach(pool, 3, 9))
+        asyncio.run(service_reach.approve_reach(pool, 9003, 9))
     out = None
 except (service_reach.ReachError, TypeError) as e:
     out = e
@@ -1548,12 +1548,12 @@ async def _device_flow(stored_request=None):
     with _Patch(*_DEVICE_PATCHES):
         if stored_request is None:
             try:
-                click = await nac_commit.approve_dcn_store(pool, 3, 8)
+                click = await nac_commit.approve_dcn_store(pool, 9003, 8)
             except nac_commit.CommitError as e:
                 click = e
         filed = db.row.get("box_request")
         filed = json.loads(filed) if isinstance(filed, str) else filed
-        beat = await nac_commit.complete_box_requests(pool, 3, "box1")
+        beat = await nac_commit.complete_box_requests(pool, 9003, "box1")
     return click, filed, beat, db.row
 
 
@@ -1582,7 +1582,7 @@ check("a LEGACY device request stored without `server` is still found by the hea
 _other = json.dumps({"via": "device", "id": "D2", "request": "D2", "purpose": _store_purpose})
 db = _Db(dict(_mstore, box_request=_other))
 with _Patch(*_DEVICE_PATCHES):
-    beat_elsewhere = asyncio.run(nac_commit.complete_box_requests(_DbPool(db), 3, "box2"))
+    beat_elsewhere = asyncio.run(nac_commit.complete_box_requests(_DbPool(db), 9003, "box2"))
 check("...and another machine's heartbeat does not pick it up", beat_elsewhere == {"stores": [], "plans": []}
       and db.row.get("approved_at") is None, beat_elsewhere)
 _plan_q = []
@@ -1669,7 +1669,7 @@ def _check_race(label, winner, late, db, calls):
 _race_store = dict(_mstore, box_request=json.dumps(
     {"via": "device", "id": "D5", "request": "D5", "server": "box1", "purpose": _store_purpose}))
 w, l, d, c = asyncio.run(_race(_db_pool(_race_store),
-                               lambda p: nac_commit.approve_dcn_store(p, 3, 8, approved_by="user@machine"),
+                               lambda p: nac_commit.approve_dcn_store(p, 9003, 8, approved_by="user@machine"),
                                lambda f: (nac_approval, "grant_confirmation", f), _EXPIRED))
 _check_race("store, device lane (loser reads 'delivered' as lapsed)", w, l, d, c)
 
@@ -1733,10 +1733,10 @@ _plan_purpose = nac_stepup.purpose_for_plan_terms(
 for label, row, approve in (
         ("store, console lane", dict(_mstore, box_request=json.dumps(
             {"request": "C5", "server": "box1", "purpose": _store_purpose})),
-         lambda p: nac_commit.approve_dcn_store(p, 3, 8, approved_by="user@machine")),
+         lambda p: nac_commit.approve_dcn_store(p, 9003, 8, approved_by="user@machine")),
         ("move plan, console lane", dict(_plan, box_request=json.dumps(
             {"request": "C6", "server": "box1", "purpose": _plan_purpose})),
-         lambda p: nac_commit.approve_dcn_move_plan(p, 3, 5, approved_by="user@machine"))):
+         lambda p: nac_commit.approve_dcn_move_plan(p, 9003, 5, approved_by="user@machine"))):
     w, l, d, log = asyncio.run(_console_race(row, approve))
     check(f"{label}: the click approves it with the box's one-time approval",
           isinstance(w, dict) and w.get("approved") is True, repr(w))
@@ -1751,17 +1751,17 @@ for label, row, approve in (
 # Defensive: a machine answering "pending" for a row approved meanwhile (not what the box does
 # today — "delivered" is reported now — but the pending write is guarded and must hold).
 w, l, d, c = asyncio.run(_race(_db_pool(_race_store),
-                               lambda p: nac_commit.approve_dcn_store(p, 3, 8, approved_by="user@machine"),
+                               lambda p: nac_commit.approve_dcn_store(p, 9003, 8, approved_by="user@machine"),
                                lambda f: (nac_approval, "grant_confirmation", f), _PENDING))
 _check_race("store, defensive: a pending answer on a store approved meanwhile", w, l, d, c)
 
 _race_plan = dict(_plan, box_request=json.dumps({"request": "P5", "server": "box1", "purpose": "p"}))
 w, l, d, c = asyncio.run(_race(_db_pool(_race_plan),
-                               lambda p: nac_commit.approve_dcn_move_plan(p, 3, 5, approved_by="user@machine"),
+                               lambda p: nac_commit.approve_dcn_move_plan(p, 9003, 5, approved_by="user@machine"),
                                lambda f: (nac_stepup, "box_confirmation", f), _PENDING))
 _check_race("move plan, defensive: a pending answer on a plan approved meanwhile", w, l, d, c)
 w, l, d, c = asyncio.run(_race(_db_pool(_race_plan),
-                               lambda p: nac_commit.approve_dcn_move_plan(p, 3, 5, approved_by="user@machine"),
+                               lambda p: nac_commit.approve_dcn_move_plan(p, 9003, 5, approved_by="user@machine"),
                                lambda f: (nac_stepup, "box_confirmation", f), _EXPIRED))
 _check_race("move plan, refused lane", w, l, d, c)
 
@@ -1770,7 +1770,7 @@ _race_reach = dict(_reach, box_request=json.dumps(
 # Defensive only: this interleaving (the loser holding the row while the other approves) is
 # one FOR UPDATE forbids in Postgres. The fake here takes no lock; the case below does.
 w, l, d, c = asyncio.run(_race(_db_pool(_race_reach),
-                               lambda p: service_reach.approve_reach(p, 3, 9, approved_by="user@machine"),
+                               lambda p: service_reach.approve_reach(p, 9003, 9, approved_by="user@machine"),
                                lambda f: (nac_approval, "grant_confirmation", f), _EXPIRED))
 _check_race("reach grant, defensive (an ordering FOR UPDATE forbids)", w, l, d, c)
 
@@ -1790,7 +1790,7 @@ async def _reach_locked():
 
     async def attempt():
         try:
-            return await service_reach.approve_reach(pool, 3, 9, approved_by="user@machine")
+            return await service_reach.approve_reach(pool, 9003, 9, approved_by="user@machine")
         except service_reach.ReachError as e:
             return e
     with _Patch((nac_approval, "grant_confirmation", conf)):
@@ -1826,7 +1826,7 @@ async def _delivered_then(report_delivered=None):
     with _Patch((nac_stepup, "box_stepup_enrolled", _enrolled), (nac_dcn, "_dispatch_box", dispatch)):
         try:
             out = await nac_stepup.box_confirmation(
-                object(), 3, server="box1", purpose="op|x", details={"kind": "mgmt_op"},
+                object(), 9003, server="box1", purpose="op|x", details={"kind": "mgmt_op"},
                 existing={"request": "OLD", "server": "box1", "purpose": "op|x"}, **kw)
         except TypeError as e:          # no such keyword: reported as a FAIL, not a crash
             out = {"state": f"TypeError: {e}"}
@@ -1909,11 +1909,11 @@ def _mutant(module, name):
 
 
 for label, row, approve, target, table, module, reread in (
-        ("store", _race_store, lambda p: nac_commit.approve_dcn_store(p, 3, 8, approved_by="user@machine"),
+        ("store", _race_store, lambda p: nac_commit.approve_dcn_store(p, 9003, 8, approved_by="user@machine"),
          lambda f: (nac_approval, "grant_confirmation", f), "dcn_stores", nac_commit, "_store_after_race"),
-        ("move plan", _race_plan, lambda p: nac_commit.approve_dcn_move_plan(p, 3, 5, approved_by="user@machine"),
+        ("move plan", _race_plan, lambda p: nac_commit.approve_dcn_move_plan(p, 9003, 5, approved_by="user@machine"),
          lambda f: (nac_stepup, "box_confirmation", f), "dcn_move_plans", nac_commit, "_plan_after_race"),
-        ("reach grant", _race_reach, lambda p: service_reach.approve_reach(p, 3, 9, approved_by="user@machine"),
+        ("reach grant", _race_reach, lambda p: service_reach.approve_reach(p, 9003, 9, approved_by="user@machine"),
          lambda f: (nac_approval, "grant_confirmation", f), "service_reach_grants", service_reach,
          "_reach_after_race")):
     w, l, d = asyncio.run(_race_then_discard(row, approve, target, table))
@@ -1951,10 +1951,10 @@ async def _discard_mid_approval(row, approve, target, table, error):
 
 
 for label, row, approve, target, table, error in (
-        ("move plan", _race_plan, lambda p: nac_commit.approve_dcn_move_plan(p, 3, 5, approved_by="user@machine"),
+        ("move plan", _race_plan, lambda p: nac_commit.approve_dcn_move_plan(p, 9003, 5, approved_by="user@machine"),
          lambda f: (nac_stepup, "box_confirmation", f), "dcn_move_plans", nac_commit.CommitError),
         ("reach grant (defensive: FOR UPDATE holds the row)", _race_reach,
-         lambda p: service_reach.approve_reach(p, 3, 9, approved_by="user@machine"),
+         lambda p: service_reach.approve_reach(p, 9003, 9, approved_by="user@machine"),
          lambda f: (nac_approval, "grant_confirmation", f), "service_reach_grants", service_reach.ReachError)):
     out, d = asyncio.run(_discard_mid_approval(row, approve, target, table, error))
     check(f"{label}: the approval is refused 409, never reported granted",

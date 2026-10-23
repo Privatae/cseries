@@ -295,3 +295,31 @@ jobs:
           # A report only: another job's prune can remove a snapshot while this
           # counts it ("snapshot ... does not exist").
           docker system df || true
+
+  installer:
+    # The installer's tests (npx cseries, packages/cseries), as GitHub runs them.
+    # They stand in a fake for every program the installer runs, sudo and the
+    # bastion included, so they need no image and touch nothing on the runner,
+    # and they leave their files in temporary directories: TMPDIR in the job's
+    # directory, so those go with it.
+    needs: current
+    if: needs.current.outputs.skip != 'true'
+    runs-on: platform
+    steps:
+      - name: fetch the PR
+        run: |
+          set -euo pipefail
+          git init -q .
+          git -c http.extraHeader="Authorization: token ${{ gitea.token }}" \
+            fetch -q --depth=1 "${{ gitea.server_url }}/${{ gitea.repository }}.git" \
+            "refs/pull/${{ gitea.event.pull_request.number }}/head"
+          git checkout -q --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "${{ gitea.event.pull_request.head.sha }}"
+      - name: npm test
+        run: |
+          set -euo pipefail
+          mkdir -p ../tmp
+          export TMPDIR="$(cd ../tmp && pwd)"
+          cd packages/cseries
+          node --version
+          npm test

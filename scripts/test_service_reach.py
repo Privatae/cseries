@@ -233,63 +233,63 @@ async def main():
     # ── 2. the subject is what the box reported ─────────────────────────────
     db = DB(pairing_host=None)
     try:
-        await service_reach.propose_reach(db, 3, "box1", "forge")
+        await service_reach.propose_reach(db, 9003, "box1", "forge")
         check("no pairing_host report → no draft", False)
     except service_reach.ReachError as e:
         check("no pairing_host report → no draft", e.status == 409 and "0.36.0" in e.detail)
     db = DB(pairing_host="h.example")
-    p = await service_reach.propose_reach(db, 3, "box1", "forge", note="n")
+    p = await service_reach.propose_reach(db, 9003, "box1", "forge", note="n")
     check("the draft's subject is the box-reported pairing name",
           p["subject"] == "h.example" and p["status"] == "draft")
-    again = await service_reach.propose_reach(db, 3, "box1", "forge")
+    again = await service_reach.propose_reach(db, 9003, "box1", "forge")
     check("drafting twice returns the same live grant", again["existing"] and again["grant_id"] == p["grant_id"])
     try:
-        await service_reach.propose_reach(db, 3, "box1", "../x")
+        await service_reach.propose_reach(db, 9003, "box1", "../x")
         check("a bad slot name is refused", False)
     except service_reach.ReachError as e:
         check("a bad slot name is refused", e.status == 400)
 
     # mirrors on a draft, and signed on approval
     dbm = DB()
-    pm = await service_reach.propose_reach(dbm, 3, "box1", "wiki", mirrors=mt["mirrors"])
+    pm = await service_reach.propose_reach(dbm, 9003, "box1", "wiki", mirrors=mt["mirrors"])
     stored = json.loads(dbm.rows[pm["grant_id"]]["mirrors"])
     check("a draft stores its mirror list", len(stored) == 2 and stored[0]["repo"] in ("mirrors/requests", "mirrors/flask"))
     try:
-        await service_reach.propose_reach(dbm, 3, "box1", "wiki2", mirrors=[{"url": "http://x/y", "repo": "m/y"}])
+        await service_reach.propose_reach(dbm, 9003, "box1", "wiki2", mirrors=[{"url": "http://x/y", "repo": "m/y"}])
         check("a bad mirror source refuses the draft", False)
     except service_reach.ReachError as e:
         check("a bad mirror source refuses the draft", e.status == 400)
     # The draft's list: None keeps it, a new list replaces it (and drops any ask filed
     # on the machine for the old one), [] clears it.
     dbm.rows[pm["grant_id"]]["box_request"] = json.dumps({"request": "r-old"})
-    keep = await service_reach.propose_reach(dbm, 3, "box1", "wiki")
+    keep = await service_reach.propose_reach(dbm, 9003, "box1", "wiki")
     check("re-drafting without mirrors keeps the draft's list and says what it holds",
           len(json.loads(dbm.rows[pm["grant_id"]]["mirrors"])) == 2 and len(keep["mirrors"]) == 2
           and dbm.rows[pm["grant_id"]]["box_request"] is not None)
-    one = await service_reach.propose_reach(dbm, 3, "box1", "wiki", mirrors=mt["mirrors"][:1])
+    one = await service_reach.propose_reach(dbm, 9003, "box1", "wiki", mirrors=mt["mirrors"][:1])
     check("a new list replaces a draft's and drops the ask filed for the old list",
           len(json.loads(dbm.rows[pm["grant_id"]]["mirrors"])) == 1 and len(one["mirrors"]) == 1
           and dbm.rows[pm["grant_id"]]["box_request"] is None)
-    await service_reach.propose_reach(dbm, 3, "box1", "wiki", mirrors=[])
+    await service_reach.propose_reach(dbm, 9003, "box1", "wiki", mirrors=[])
     check("an explicit empty list clears a draft's mirrors", json.loads(dbm.rows[pm["grant_id"]]["mirrors"]) == [])
-    await service_reach.propose_reach(dbm, 3, "box1", "wiki", mirrors=mt["mirrors"])
+    await service_reach.propose_reach(dbm, 9003, "box1", "wiki", mirrors=mt["mirrors"])
 
     box_state.clear()
     box_state.update({"state": "not_enrolled"})
     seen = service_reach.mirrors_digest(mt["mirrors"])
     for label, dg in {"no fingerprint": None, "a stale fingerprint": service_reach.mirrors_digest(mt["mirrors"][:1])}.items():
         try:
-            await service_reach.approve_reach(dbm, 3, pm["grant_id"], stepup_code="123456", ttl_days=30,
+            await service_reach.approve_reach(dbm, 9003, pm["grant_id"], stepup_code="123456", ttl_days=30,
                                               seen_mirrors_digest=dg)
             check(f"approving with the Host's code needs the list the person saw ({label})", False)
         except service_reach.ReachError as e:
             check(f"approving with the Host's code needs the list the person saw ({label})",
                   e.status == 409 and dbm.rows[pm["grant_id"]]["approved_at"] is None)
-    await service_reach.approve_reach(dbm, 3, pm["grant_id"], stepup_code="123456", ttl_days=30,
+    await service_reach.approve_reach(dbm, 9003, pm["grant_id"], stepup_code="123456", ttl_days=30,
                                       seen_mirrors_digest=seen)
     stm = json.loads(dbm.rows[pm["grant_id"]]["signed_terms"])
     check("approval signs the mirror list into the terms", len(stm.get("mirrors") or []) == 2)
-    late = await service_reach.propose_reach(dbm, 3, "box1", "wiki", mirrors=mt["mirrors"][:1])
+    late = await service_reach.propose_reach(dbm, 9003, "box1", "wiki", mirrors=mt["mirrors"][:1])
     check("an approved grant is not edited, and the reply says so instead of echoing the new list",
           len(late["mirrors"]) == 2 and "mirrors_unchanged" in late
           and len(json.loads(dbm.rows[pm["grant_id"]]["signed_terms"])["mirrors"]) == 2)
@@ -304,20 +304,20 @@ async def main():
           and len(raced["mirrors"]) == 2)
     check("a sync's wait covers one queued behind another (twice the list's work)",
           service_reach.mirror_wait_s(2) >= 60 + 2 * 2 * (20 + 60 + 1200 + 15))
-    listed = {g["id"]: g for g in await service_reach.list_reach(dbm, 3)}
+    listed = {g["id"]: g for g in await service_reach.list_reach(dbm, 9003)}
     check("the list view carries the fingerprint the page sends back",
           listed[pm["grant_id"]]["mirrors_digest"] == seen)
 
     # ── 3. approval ─────────────────────────────────────────────────────────
     gid = p["grant_id"]
     try:
-        await service_reach.approve_reach(db, 3, gid, stepup_code="000000")
+        await service_reach.approve_reach(db, 9003, gid, stepup_code="000000")
         check("a wrong step-up code refuses", False)
     except service_reach.ReachError as e:
         check("a wrong step-up code refuses", e.status == 403)
     box_state.clear()
     box_state.update({"state": "pending", "request": {"request": "r-1"}})
-    pend = await service_reach.approve_reach(db, 3, gid)
+    pend = await service_reach.approve_reach(db, 9003, gid)
     check("a machine-held factor: pending, stored, no signature",
           pend["pending_on_box"] and db.rows[gid]["box_request"] and db.rows[gid]["signature"] is None)
     seen = box_state.get("seen") or {}
@@ -326,7 +326,7 @@ async def main():
           and (seen.get("details") or {}).get("kind") == "service_reach_grant")
     box_state.clear()
     box_state.update({"state": "approved", "approval": "APPROVAL-1"})
-    ok = await service_reach.approve_reach(db, 3, gid)
+    ok = await service_reach.approve_reach(db, 9003, gid)
     st = json.loads(db.rows[gid]["signed_terms"])
     check("approved on the machine: its approval rides in the signed terms",
           ok["approved"] and ok["approved_where"] == "box" and st.get("approval") == "APPROVAL-1")
@@ -335,30 +335,30 @@ async def main():
           ("box1", "forge", "h.example") and st["ttl_days"] == 365 and st.get("expires"))
     # host-code path on a second grant
     db2 = DB()
-    g2 = (await service_reach.propose_reach(db2, 3, "box1", "wiki"))["grant_id"]
+    g2 = (await service_reach.propose_reach(db2, 9003, "box1", "wiki"))["grant_id"]
     box_state.clear()
     box_state.update({"state": "not_enrolled"})
-    r2 = await service_reach.approve_reach(db2, 3, g2, stepup_code="123456", ttl_days=30)
+    r2 = await service_reach.approve_reach(db2, 9003, g2, stepup_code="123456", ttl_days=30)
     st2 = json.loads(db2.rows[g2]["signed_terms"])
     check("no machine factor: the Host's code approves, no approval field",
           r2["approved_where"] == "host" and "approval" not in st2 and st2["ttl_days"] == 30)
 
     # ── 4. verified set, drift, push ────────────────────────────────────────
-    exp = await service_reach.expected_reach_set(db, 3, "box1")
+    exp = await service_reach.expected_reach_set(db, 9003, "box1")
     check("the box's expected set lists the verified grant",
           exp == [{"grant_id": gid, "signature": db.rows[gid]["signature"]}], str(exp))
-    check("another machine's set does not list it", await service_reach.expected_reach_set(db, 3, "box2") == [])
+    check("another machine's set does not list it", await service_reach.expected_reach_set(db, 9003, "box2") == [])
     db.rows[gid]["signed_terms"] = json.dumps({**st, "slot": "other"})  # tampered
-    check("a tampered row is not in the set", await service_reach.expected_reach_set(db, 3, "box1") == [])
+    check("a tampered row is not in the set", await service_reach.expected_reach_set(db, 9003, "box1") == [])
     db.rows[gid]["signed_terms"] = json.dumps(st)
     forged = {**st, "kind": "dcn_store_grant"}
     db.rows[gid]["signed_terms"] = json.dumps(forged)
     db.rows[gid]["signature"] = base64.b64encode(priv.sign(nac_stepup._canonical(forged))).decode()
     check("a validly signed record of another kind is not a reach grant",
-          await service_reach.expected_reach_set(db, 3, "box1") == [])
+          await service_reach.expected_reach_set(db, 9003, "box1") == [])
     db.rows[gid]["signed_terms"] = json.dumps(st)
     db.rows[gid]["signature"] = base64.b64encode(priv.sign(nac_stepup._canonical(st))).decode()
-    exp = await service_reach.expected_reach_set(db, 3, "box1")
+    exp = await service_reach.expected_reach_set(db, 9003, "box1")
     sig = exp[0]["signature"]
     check("drift: nothing held → re-push", service_reach.reach_drift_ids(exp, {"service_grants": []}) == [gid])
     check("drift: held with the same signature → nothing",
@@ -380,7 +380,7 @@ async def main():
     from server.network import nac_dcn, nac_mgmt
     nac_dcn._dispatch_box = _dispatch
     nac_mgmt.audit_mgmt = _audit
-    res = await service_reach.sync_reach_grant(db, 3, gid)
+    res = await service_reach.sync_reach_grant(db, 9003, gid)
     payload = json.loads(base64.b64decode(sent["args"][0]))
     check("the push is service_grant_sync to the grant's machine",
           res["state"] == "ok" and sent["op"] == "service_grant_sync" and sent["server"] == "box1")
@@ -388,7 +388,7 @@ async def main():
           base64.b64decode(payload["terms_canonical"]) == nac_stepup._canonical(st)
           and payload["signature"] == sig and base64.b64decode(payload["verify_pubkey"]) == pub_raw
           and payload["grant_id"] == gid)
-    await service_reach.drop_reach_grant(db, 3, gid, "box1")
+    await service_reach.drop_reach_grant(db, 9003, gid, "box1")
     check("a revoke pushes service_grant_drop with the id", sent["op"] == "service_grant_drop" and sent["args"] == [str(gid)])
 
 
@@ -427,15 +427,15 @@ nac_approval._device_status = _status
 async def device_flow():
     t = {"server": "box1", "slot": "forge", "subject": "h.example", "ttl_days": 30}
     first = await nac_approval.grant_confirmation(
-        None, 3, server="box1", purpose=service_reach.purpose_for_reach_terms(t),
+        None, 9003, server="box1", purpose=service_reach.purpose_for_reach_terms(t),
         details=service_reach.reach_request_details(t))
     second = await nac_approval.grant_confirmation(
-        None, 3, server="box1", purpose=service_reach.purpose_for_reach_terms(t),
+        None, 9003, server="box1", purpose=service_reach.purpose_for_reach_terms(t),
         details=service_reach.reach_request_details(t), existing=first["request"])
     t2 = {**t, "ttl_days": 31}
     n_before = len(calls)
     await nac_approval.grant_confirmation(
-        None, 3, server="box1", purpose=service_reach.purpose_for_reach_terms(t2),
+        None, 9003, server="box1", purpose=service_reach.purpose_for_reach_terms(t2),
         details=service_reach.reach_request_details(t2), existing=first["request"])
     refiled = calls[n_before:] and calls[n_before][0] == "file"
 
@@ -443,7 +443,7 @@ async def device_flow():
         return None
     nac_approval.find_device = _no_device
     unseen = await nac_approval.grant_confirmation(
-        None, 3, server="box1", purpose="p", details={"kind": "service_reach_grant", "server": "box1"})
+        None, 9003, server="box1", purpose="p", details={"kind": "service_reach_grant", "server": "box1"})
     return first, second, unseen, refiled
 
 first, second, unseen, refiled = asyncio.run(device_flow())

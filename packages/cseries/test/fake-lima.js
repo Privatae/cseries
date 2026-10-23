@@ -77,6 +77,14 @@ function fakeLima(paths, opts = {}) {
     guestShell: guestShell(root, { restartFails: opts.wallFails, noTable: opts.wallMissing }),
   };
 
+  // The machine's own sudo, for the context's sudoPaths. bastion.js looks for
+  // sudo on the disk before it runs it, and this runner answers every sudo,
+  // so without it a test would pass or fail on whether this computer has a
+  // sudo its account can see (a CI account may not). It is never run.
+  m.sudoPaths = [path.join(root, 'sudo-bin', 'sudo')];
+  fs.mkdirSync(path.dirname(m.sudoPaths[0]), { recursive: true });
+  fs.writeFileSync(m.sudoPaths[0], '#!/bin/sh\necho "the fake machine answers sudo; this file is never run" >&2\nexit 2\n', { mode: 0o755 });
+
   // The program the sudo script installs: a wrapper around fake-bastion.js.
   const program = Buffer.from(`#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(__dirname, 'fake-bastion.js'))} "$@"\n`);
   const s = signer();

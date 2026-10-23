@@ -902,6 +902,14 @@ jobs:
       HOST_DIGEST: ${{ needs.merge.outputs.host }}
       POSTGRES_DIGEST: ${{ needs.merge.outputs.postgres }}
     steps:
+      # The whole history and its tags, for the notes' list of changes since
+      # the previous release.
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
       - name: The guest images
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -938,6 +946,8 @@ jobs:
             echo
             echo "Guest images for x64 and arm64 are attached, each with its .sha256: WSL's root filesystem (Windows) and Lima's qcow2 disk (macOS and Linux)."
             echo "Install with \`npx cseries@$VERSION\`."
+            echo
+            python3 .github/scripts/release.py changes "$TAG"
           } > "$RUNNER_TEMP/notes.md"
           if ! gh release view "$TAG" > /dev/null 2>&1; then
             gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"

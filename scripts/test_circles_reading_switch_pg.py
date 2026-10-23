@@ -11,7 +11,7 @@ contact is on (contacts.host_reads, v220; server/circles_reading.py), and
 proves the default stays closed.
 
 TWO HOSTS, TWO DATABASES, as scripts/test_circles_host_topics_pg.py does it.
-Host A (1, "Ivy") has two operators, me@ and carol@; Host B (122, "Juno") is
+Host A (1, "Ivy") has two operators, me@ and carol@; Host B (9122, "Juno") is
 Ana's. brain_service's pool and entity id are switched to whichever Host acts,
 so a send runs A's real route, A's real direct-lane sender and B's real
 PeerServer with a real signed slip, storing into B's own database. The relay
@@ -95,7 +95,7 @@ async def section(name, fn):
         check(f"{name.split()[0]} ran to the end", False, f"{type(e).__name__}: {e}")
 
 
-A, B, BENS, Z = 1, 122, 130, 140
+A, B, BENS, Z = 1, 9122, 130, 140
 ME, CAROL, ANA, BEN = "me@example.com", "carol@example.com", "ana@example.com", "ben@example.com"
 NAMES = {A: "Ivy", B: "Juno", BENS: "Cato", Z: "Zed"}
 

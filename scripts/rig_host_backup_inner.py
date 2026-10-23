@@ -33,7 +33,7 @@ from server import age_keys, backup_key, brain_service
 from server import host_backup as hb
 from server.vault import identity
 
-EID = 3
+EID = 9003
 BIG_MB = int(os.environ.get("RIG_BIG_MB", "96"))
 FAILED = []
 PASSED = []
@@ -350,7 +350,7 @@ async def main():
     print("== the owner saves their recovery key and confirms it on the Host")
     rec_ident, rec_rec = age_keys.new_pair()             # made in the owner's browser
     fp = backup_key.fingerprint(age_keys.recipient_bytes(rec_rec))
-    bridge.recovery = {"recipient": rec_rec, "fingerprint": fp, "label": "Host 3 recovery key",
+    bridge.recovery = {"recipient": rec_rec, "fingerprint": fp, "label": "Host 9003 recovery key",
                        "saved_at": "2026-09-28T20:00:00Z"}
     offered = await hb.pin_recovery_key(pool, EID)
     check("the key waits for the owner: nothing is pinned on the platform's word",
@@ -408,12 +408,12 @@ async def main():
     from server.network import nac_stepup
     await pool.execute(
         "INSERT INTO mcp_client_tokens (id, entity_id, name, token_hash, url_handle, operator_kind, notes) "
-        "VALUES (70, 3, 'old-laptop', '\\x01', 'h70', 'bastion', "
+        "VALUES (70, 9003, 'old-laptop', '\\x01', 'h70', 'bastion', "
         "'{\"wg_bastion_pubkey\": \"pk70\", \"wg_bastion_ip\": \"fd00::70/128\"}'::jsonb)")
     await pool.execute("SELECT setval(pg_get_serial_sequence('mcp_client_tokens', 'id'), 70)")
     await pool.execute(
         "INSERT INTO nac_mgmt_grants (id, entity_id, server, ops, approved_at) "
-        "VALUES (70, 3, 'old-laptop', '[\"uptime\"]'::jsonb, now())")
+        "VALUES (70, 9003, 'old-laptop', '[\"uptime\"]'::jsonb, now())")
     old_phone = await nac_stepup.ensure_stepup_secret(pool)
     await nac_stepup.mark_enrolled(pool)
     # An approved ingress rule (nac_policy -> nac_profiles) and a memory-domain
@@ -425,7 +425,7 @@ async def main():
     await pool.execute("INSERT INTO domain_registry (id, name, domain_group) VALUES ('rig_old', 'rig old', 'g') "
                        "ON CONFLICT DO NOTHING")
     await pool.execute("INSERT INTO entity_domain_access (entity_id, domain_id, access_level) "
-                       "VALUES (3, 'rig_old', 'read')")
+                       "VALUES (9003, 'rig_old', 'read')")
     (Path("/var/lib/cseries/app-state/user-files/notes.txt")).write_text("restore point notes\n")
     Path("/var/lib/cseries/proj/restore-point.txt").write_text("here at the restore point\n")
     r2 = await hb.run_once(pool, EID, "manual")
@@ -442,7 +442,7 @@ async def main():
     check("it waits as an offer, and the key pinned before is no longer used",
           offer["pinned"] is None and offer["offer"]["fingerprint"] != fp
           and not await hb.recipients(pool, EID), offer)
-    bridge.recovery = {"recipient": rec_rec, "fingerprint": fp, "label": "Host 3 recovery key",
+    bridge.recovery = {"recipient": rec_rec, "fingerprint": fp, "label": "Host 9003 recovery key",
                        "saved_at": "2026-09-28T20:00:00Z"}
     await hb.pin_recovery_key(pool, EID)
     await hb.adopt_recovery_offer(pool, EID, fp)          # the owner confirms the key they hold
@@ -498,7 +498,7 @@ async def main():
 
 
 APPS = Path("/var/lib/cseries")
-LOST: dict = {}          # Host 3's last backup and the recovery key that opens it
+LOST: dict = {}          # Host 9003's last backup and the recovery key that opens it
 
 
 async def new_pool():
@@ -551,7 +551,7 @@ async def restore_checks(pool, bridge, rec_ident, point):
     await nac_stepup.mark_enrolled(pool)
     await pool.execute(
         "INSERT INTO mcp_client_tokens (entity_id, name, token_hash, url_handle, operator_kind) "
-        "VALUES (3, 'new-desktop', '\\x02', 'h71', 'bastion')")
+        "VALUES (9003, 'new-desktop', '\\x02', 'h71', 'bastion')")
     # The ingress rule is replaced by a new one, and the domain grant moves to
     # a domain that did not exist at the backup.
     await pool.execute("INSERT INTO nac_profiles (id, name, enforcement) VALUES (902, 'rig-allow-2', 'allow')")
@@ -563,35 +563,35 @@ async def restore_checks(pool, bridge, rec_ident, point):
     await pool.execute("INSERT INTO domain_registry (id, name, domain_group) VALUES ('rig_new', 'rig new', 'g')")
     await pool.execute("DELETE FROM entity_domain_access WHERE domain_id = 'rig_old'")
     await pool.execute("INSERT INTO entity_domain_access (entity_id, domain_id, access_level) "
-                       "VALUES (3, 'rig_new', 'read')")
+                       "VALUES (9003, 'rig_new', 'read')")
     # And the bastion's backup key is retired (say, stolen) and the owner made
     # a new recovery key. The restore must not bring any of it back.
-    ident = identity.user_identity("3")
+    ident = identity.user_identity("9003")
     await backup_key.retire(pool, ident, "bastion", "nas-box")
     k2_ident, k2_rec = age_keys.new_pair()
     k2_raw = age_keys.recipient_bytes(k2_rec)
     await backup_key.put_active(pool, ident=ident, pub_raw=k2_raw, sealed=None,
-                                origin="owner-browser", kind="host-recovery", label="Host 3 new key")
+                                origin="owner-browser", kind="host-recovery", label="Host 9003 new key")
     # The account page holds that new key now (the Host uses a key only while
     # it is the owner's current one: host_backup.pin_recovery_key).
     bridge.recovery = {"recipient": k2_rec, "fingerprint": backup_key.fingerprint(k2_raw),
-                       "label": "Host 3 new key", "saved_at": "2026-09-28T22:00:00Z"}
+                       "label": "Host 9003 new key", "saved_at": "2026-09-28T22:00:00Z"}
     bridge.recovery = {"recipient": k2_rec, "fingerprint": backup_key.fingerprint(k2_raw),
-                       "label": "Host 3 new key", "saved_at": "2026-09-28T21:30:00Z"}
+                       "label": "Host 9003 new key", "saved_at": "2026-09-28T21:30:00Z"}
 
-    avail = await hr.available(pool, 3)
+    avail = await hr.available(pool, 9003)
     listed = {b["stamp"]: b for b in avail["backups"]}
     check("Settings lists the backups, newest first, none with its key ready yet",
           point["stamp"] in listed and not listed[point["stamp"]]["key_ready"], avail)
     # The browser: fetch the sealed key file and the Host's recipient…
-    side = await hr.sidecar_for_browser(pool, 3, point["stamp"])
+    side = await hr.sidecar_for_browser(pool, 9003, point["stamp"])
     check("what the page is given carries no key that opens anything",
           "AGE-SECRET-KEY" not in json.dumps(side).upper() and side["host_recipient"].startswith("age1"))
     # …open it with the recovery key (in the page), check it, seal it to the Host.
     opened = age_open(rec_ident, side["sidecar"].encode())
     body = json.loads(opened.stdout)
     check("the recovery key opens the backup's key file, and it names this backup of this Host",
-          opened.returncode == 0 and body["stamp"] == point["stamp"] and body["entity_id"] == 3)
+          opened.returncode == 0 and body["stamp"] == point["stamp"] and body["entity_id"] == 9003)
     resealed = subprocess.run([AGE, "-a", "-r", side["host_recipient"]], input=opened.stdout,
                               capture_output=True).stdout
     del opened, body
@@ -599,7 +599,7 @@ async def restore_checks(pool, bridge, rec_ident, point):
     check("the Host takes the resealed file, and the backup verifies as its own",
           res["key_ready"] and res["verified"] is True, res)
 
-    staged = await hr.stage(pool, 3, point["stamp"])
+    staged = await hr.stage(pool, 9003, point["stamp"])
     check("staging finished and asked for a restart", staged["state"] == "staged" and restarts == [1], staged)
     runs = await hb.last_runs(pool, limit=3)
     check("it backed up how the Host was first", runs[0]["reason"] == "before-restore"
@@ -632,7 +632,7 @@ async def restore_checks(pool, bridge, rec_ident, point):
         again = boot("swap", "hostmem")
     check("after that, restarts never undo it", again.returncode == 3
           and (APPS / "app-state/user-files/notes.txt").read_text() == "restore point notes\n", again.stderr)
-    fin = await hr.finish(pool, 3)
+    fin = await hr.finish(pool, 9003)
     check("finished ok, and what was set aside is cleared", fin and fin["state"] == "ok"
           and "hostmem_before_restore" not in databases() and not hr.PREVIOUS.exists()
           and hr.read_plan() is None, fin)
@@ -659,7 +659,7 @@ async def restore_checks(pool, bridge, rec_ident, point):
     check("the lost phone's does not",
           old_phone != new_phone and not nac_stepup.verify_totp(
               await nac_stepup.ensure_stepup_secret(pool), nac_stepup.current_code(old_phone)))
-    after = await hb.run_once(pool, 3, "manual")
+    after = await hb.run_once(pool, 9003, "manual")
     LOST.update(key=k2_ident, stamp=after["stamp"])
     check("backups carry on from the restored Host", after["state"] == "ok", after)
     ablob = Store.objects.get("/" + (after["object"] or ""))
@@ -672,14 +672,14 @@ async def restore_checks(pool, bridge, rec_ident, point):
 
 
 async def new_number_checks(bridge):
-    """Host 3 is lost. Its owner's new Host is number 5, with its own bastion,
-    its own second factor and its own recovery key. They restore Host 3's
+    """Host 9003 is lost. Its owner's new Host is number 5, with its own bastion,
+    its own second factor and its own recovery key. They restore Host 9003's
     last backup onto it."""
     from server import host_restore as hr
     from server.network import hub_peers, nac_stepup
     hr._restart = lambda: None
     print("== a lost Host's backup, restored onto a Host with another number")
-    psql("postgres", "ALTER DATABASE hostmem RENAME TO hostmem_host3_lost", "CREATE DATABASE hostmem")
+    psql("postgres", "ALTER DATABASE hostmem RENAME TO hostmem_host9003_lost", "CREATE DATABASE hostmem")
     subprocess.run(["psql", "-h", "/run/postgresql", "-U", "entity", "-d", "hostmem",
                     "--single-transaction", "-q", "-f", "/work/init-db.sql"], capture_output=True)
     for f in sorted(Path("/work/migrations").glob("v*.sql"), key=lambda p: int(p.name[1:].split("_")[0])):
@@ -705,25 +705,25 @@ async def new_number_checks(bridge):
     bridge.recovery = {"recipient": k5_rec, "fingerprint": backup_key.fingerprint(k5_raw),
                        "label": "Host 5 recovery key", "saved_at": "2026-09-29T01:00:00Z"}
 
-    # The owner's browser: Host 3's backup, its key resealed to Host 5 (the page
+    # The owner's browser: Host 9003's backup, its key resealed to Host 5 (the page
     # showed both numbers and the owner confirmed).
     side = await hr.sidecar_for_browser(pool, 5, LOST["stamp"])
     opened = age_open(LOST["key"], side["sidecar"].encode())
     body = json.loads(opened.stdout)
-    check("the backup's key file names Host 3, and this is Host 5",
-          opened.returncode == 0 and body["entity_id"] == 3 and side["entity_id"] == 5, (opened.stderr, side))
+    check("the backup's key file names Host 9003, and this is Host 5",
+          opened.returncode == 0 and body["entity_id"] == 9003 and side["entity_id"] == 5, (opened.stderr, side))
     resealed = subprocess.run([AGE, "-a", "-r", side["host_recipient"]], input=opened.stdout,
                               capture_output=True).stdout
     got = await hr.accept_resealed(pool, LOST["stamp"], resealed, via="browser")
-    check("Host 5 cannot verify Host 3's backup as its own, and says so", got["verified"] is False, got)
+    check("Host 5 cannot verify Host 9003's backup as its own, and says so", got["verified"] is False, got)
     refused = await hr.stage(pool, 5, LOST["stamp"])
     check("  so it is not staged without the owner's say-so",
           refused["state"] == "failed" and "cannot confirm" in (refused.get("error") or ""), refused)
     await hr.accept_resealed(pool, LOST["stamp"], resealed, via="browser")
     staged = await hr.stage(pool, 5, LOST["stamp"], unverified_ok=True)     # the owner said so
     plan = hr.read_plan() or {}
-    check("staged, the plan knows the backup is Host 3's and this is Host 5",
-          staged["state"] == "staged" and plan.get("backup_entity_id") == 3 and plan.get("live_entity_id") == 5,
+    check("staged, the plan knows the backup is Host 9003's and this is Host 5",
+          staged["state"] == "staged" and plan.get("backup_entity_id") == 9003 and plan.get("live_entity_id") == 5,
           (staged, plan))
     await pool.close()
     b = boot("swap", "hostmem")
@@ -732,8 +732,8 @@ async def new_number_checks(bridge):
           b.returncode == 0 and c.returncode == 0, (b.stderr, c.stdout, c.stderr))
     pool = await new_pool()
     ids = sorted(r["id"] for r in await pool.fetch("SELECT id FROM entity_registry"))
-    check("the restored Host is Host 5 now: no row for Host 3 is left",
-          5 in ids and 3 not in ids, ids)
+    check("the restored Host is Host 5 now: no row for Host 9003 is left",
+          5 in ids and 9003 not in ids, ids)
     got = await notes(pool)
     check("the restored data is here", "restore point" in got, got)
     check("and it is Host 5's", await pool.fetchval(
@@ -742,25 +742,25 @@ async def new_number_checks(bridge):
           (APPS / "app-state/user-files/notes.txt").read_text() == "restore point notes\n")
     toks = {r["name"]: r["revoked_at"] for r in await pool.fetch("SELECT name, revoked_at FROM mcp_client_tokens")}
     peers = [p["id"] for p in await pool.fetch(hub_peers._ACTIVE_BASTIONS_SQL)]
-    check("Host 5's own bastion is kept, and none of Host 3's bastions are",
+    check("Host 5's own bastion is kept, and none of Host 9003's bastions are",
           list(toks) == ["host5-desk"] and len(peers) == 1, (toks, peers))
-    check("Host 3's management grants are gone",
+    check("Host 9003's management grants are gone",
           await pool.fetchval("SELECT count(*) FROM nac_mgmt_grants") == 0)
     check("Host 5's phone is the second factor", await nac_stepup.verify_stepup(pool, nac_stepup.current_code(phone5)))
     who = await hb.recipients(pool, 5)
     check("backups now go to Host 5's recovery key only",
           [r["fingerprint"] for r in who] == [backup_key.fingerprint(k5_raw)], who)
-    lost = await asyncpg.connect(host="/run/postgresql", user="entity", database="hostmem_host3_lost")
+    lost = await asyncpg.connect(host="/run/postgresql", user="entity", database="hostmem_host9003_lost")
     sign3 = await lost.fetchval("SELECT secret FROM kernel_secrets WHERE id = 'entity_sign'")
     await lost.close()
     sign5 = await pool.fetchval("SELECT secret FROM kernel_secrets WHERE id = 'entity_sign'")
-    check("Host 3's signing identity is not Host 5's", sign5 is None or sign5 != sign3, (sign3 is None, sign5 is None))
+    check("Host 9003's signing identity is not Host 5's", sign5 is None or sign5 != sign3, (sign3 is None, sign5 is None))
     hr.mark_started()
     fin = await hr.finish(pool, 5)
     check("finished", fin and fin["state"] == "ok", fin)
     last = await hb.run_once(pool, 5, "manual")
     lblob = Store.objects.get("/" + (last["object"] or ""))
-    check("Host 5 backs up, and its recovery key opens it (Host 3's does not)",
+    check("Host 5 backs up, and its recovery key opens it (Host 9003's does not)",
           last["state"] == "ok" and members(k5_ident, lblob) is not None and members(LOST["key"], lblob) is None,
           last)
     await pool.close()

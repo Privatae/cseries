@@ -190,8 +190,9 @@ async def door(pool, entity_id: int, reader: str) -> list[dict]:
     `accept` is None when the card cannot be answered as it stands (a knock
     naming no group, a machine request whose offer is no longer open); Not now
     is then the archive. A blocked sender's card is not listed, by the rule
-    admission uses today. A found Host is listed while the peering is current
-    and resolved and no host contact for it exists (Connect writes a pending
+    admission uses today. A found Host is listed while the peering is current,
+    reported active by the machine (list_peerings' `requestable`) and resolved,
+    and no host contact for it exists (Connect writes a pending
     one, contacts.request_peer_service), so either answer takes it away. It is
     one card per Host, from the newest notice, however many of your machines
     reported it (peer_discovery writes a notice per machine and Host). And it
@@ -263,7 +264,10 @@ async def door(pool, entity_id: int, reader: str) -> list[dict]:
             pid = _int(peering.get("peer_entity_id")) if peering is not None else None
             if pid is not None:
                 notices.setdefault(pid, []).append(mid)
-            if peering is None or not peering.get("current"):
+            # Connect is a connection request, so a found Host is listed only
+            # while the request route would take it: the machine still names
+            # it and reports the pairing active (list_peerings' `requestable`).
+            if peering is None or not peering.get("requestable"):
                 continue
             if pid is None or pid == int(entity_id) or pid in held or pid in hosts_blocked:
                 continue

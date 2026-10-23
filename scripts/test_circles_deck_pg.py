@@ -176,18 +176,23 @@ class Rows:
 
     async def machine(self, hostname, peers):
         """A bastion this Host is paired to, announcing `peers`
-        [(host_name, entity_id or None, current)]: the rows
-        peer_discovery.list_peerings reads."""
+        [(host_name, entity_id or None, current[, state])]: the rows
+        peer_discovery.list_peerings reads. `state` is the pairing state the
+        box reports with the name, "active" when not given; None sends none."""
         self._n += 1
         tid = await self.pool.fetchval(
             "INSERT INTO mcp_client_tokens (entity_id, name, token_hash, url_handle, operator_kind) "
             "VALUES ($1, $2, $3, $4, 'bastion') RETURNING id",
             E, hostname, uuid.uuid4().bytes, f"h{self._n}-{uuid.uuid4().hex[:8]}")
-        announced = [{"host_name": h} for h, _eid, current in peers if current]
+        announced = []
+        for h, _eid, current, *state in peers:
+            if current:
+                st = state[0] if state else "active"
+                announced.append({"host_name": h, **({"state": st} if st else {})})
         await self.pool.execute(
             "INSERT INTO network_bastion_heartbeat (token_id, hostname, peers) VALUES ($1, $2, $3::jsonb)",
             tid, hostname, json.dumps(announced))
-        for h, eid, _current in peers:
+        for h, eid, _current, *_state in peers:
             await self.pool.execute(
                 "INSERT INTO network_bastion_peer (token_id, peer_host_name, peer_handle, peer_entity_id, "
                 "notified_at) VALUES ($1, $2, $3, $4, now())", tid, h, h.split(".")[0], eid)
@@ -531,7 +536,8 @@ async def door_cases(pool, rows, D, httpx):
     g = await roster.create_group(pool, E, name="Climbing")
     tid = await rows.machine("studio-mac", [
         ("kiwi.example", 204, True), ("lime.example", 205, True),
-        ("juno.example", 130, True), ("gone.example", 206, False), ("unresolved.example", None, True)])
+        ("juno.example", 130, True), ("gone.example", 206, False), ("unresolved.example", None, True),
+        ("waiting.example", 211, True, "pending"), ("nostate.example", 212, True, None)])
 
     async def offer(peer):
         return await pool.fetchval(
@@ -581,6 +587,10 @@ async def door_cases(pool, rows, D, httpx):
         "a found Host you already hold": await rows.new_peer_notice(tid, "juno.example"),
         "a dormant peering": await rows.new_peer_notice(tid, "gone.example"),
         "an unresolved peering": await rows.new_peer_notice(tid, "unresolved.example"),
+        # Named on the latest beat, but not as an active pairing: Connect would
+        # be refused (contacts.request_peer_service), so there is no card.
+        "a peering the machine reports pending": await rows.new_peer_notice(tid, "waiting.example"),
+        "a peering named with no state": await rows.new_peer_notice(tid, "nostate.example"),
         "an archived card": await rows.inbox(209, E, "x", kind="endpoint_request", subject="Connection request"),
         "an ordinary notice": await rows.inbox(E, E, "Sites v1.2 is available", kind="system_notification",
                                                subject="Sites v1.2 is available"),

@@ -892,7 +892,7 @@ class DecidePool:
 
 def _decide_later(session="sess-1", then_nudge=None):
     async def _go():
-        await TK.decide_ticket_service(DecidePool(session), 3, 41, option_id="ember", actor="user")
+        await TK.decide_ticket_service(DecidePool(session), 9003, 41, option_id="ember", actor="user")
         if then_nudge:
             S.push_nudge(session, then_nudge)       # the Circles card's own nudge
     asyncio.get_running_loop().call_later(0.3, lambda: asyncio.ensure_future(_go()))
@@ -2458,7 +2458,7 @@ async def _decide_after_end():
     try:
         with Outside(h) as out:
             res = await TK.decide_ticket_service(
-                EndedAskPool("sess-gone"), 3, 41, option_id="ember", actor="user")
+                EndedAskPool("sess-gone"), 9003, 41, option_id="ember", actor="user")
             for _ in range(100):
                 if h.calls:
                     break
@@ -2707,7 +2707,7 @@ async def _answer_scheduled(room):
     try:
         with Outside(h) as out:
             res = await TK.decide_ticket_service(
-                ScheduledAskPool("sess-gone", room), 3, 41, option_id="ember", actor="user")
+                ScheduledAskPool("sess-gone", room), 9003, 41, option_id="ember", actor="user")
             for _ in range(100):
                 if h.calls:
                     break
@@ -4405,7 +4405,7 @@ try:
     _PC12._http_request, _PC12.resolve_endpoint, _ME12._get_memory_embedding = _fake_http, _ep, _noemb
     try:
         async def _pii_go():
-            await _ME12.write_turn_row(_PiiPool(), 3, "sess-1", "assistant", _n1_content, tags=_n1_tags)
+            await _ME12.write_turn_row(_PiiPool(), 9003, "sess-1", "assistant", _n1_content, tags=_n1_tags)
             return await _PQ12.drain_once()
         _drained = asyncio.run(_pii_go())
     finally:
@@ -4421,7 +4421,7 @@ try:
         async def fetch(self, q, *a):
             return [{"id": 77, "content": _landed.get("content"), "metadata": _landed.get("md"),
                      "created_at": None, "project_id": None, "source_session": "sess-1"}]
-    _t12 = asyncio.run(_ME12.recall_recent_turns(_RecallPool(), 3, "sess-1"))
+    _t12 = asyncio.run(_ME12.recall_recent_turns(_RecallPool(), 9003, "sess-1"))
     check("the real PII path lands the tokenized row with the marker and no model_content, and "
           "recall splits it: the tokenized Host words, a budget note, never the stop line",
           _drained == 1 and _landed.get("content", "").startswith("[ORG_1] REPLY.")
@@ -5325,7 +5325,7 @@ try:
 
     async def _nop_report(*a, **k):
         return None
-    _BS.get_pool, _BS._entity_id, INF._report_config_change_to_central = (lambda: _rp_set), 3, _nop_report
+    _BS.get_pool, _BS._entity_id, INF._report_config_change_to_central = (lambda: _rp_set), 9003, _nop_report
     try:
         _set_on = asyncio.run(INF.apply_role_route(INF.SetRoleModel(role="chat", provider="kimi", model="k3",
                                                                     reasoning_inline=True)))
@@ -5586,7 +5586,7 @@ async def _r14_durable_route():
         # every turn, and the runtime loads that session
         return S.EntitySession(
             session_id=session_id, entity_id=9003,
-            entity={"id": 3, "name": "Nova", "behavioral_params": {},
+            entity={"id": 9003, "name": "Nova", "behavioral_params": {},
                     "permission_overrides": {"bot_capabilities": 255}},
             interaction_context=h.interaction_context)
     h.rt._load_session_from_db = load

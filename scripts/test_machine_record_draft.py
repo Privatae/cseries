@@ -108,7 +108,7 @@ ROOT = "/var/lib/privatae-bastion/store"
 
 def test_a_beat_with_a_root_drafts_the_store_once():
     pool = Pool(existing=None)
-    assert _run(topology.upsert_heartbeat(pool, 3, _beat(machine_record_root=ROOT))) is not None
+    assert _run(topology.upsert_heartbeat(pool, 9003, _beat(machine_record_root=ROOT))) is not None
     ins = pool.store_inserts()
     assert len(ins) == 1, f"{len(ins)} store inserts for one beat"
     q, a = ins[0]
@@ -124,7 +124,7 @@ def test_a_beat_with_a_root_drafts_the_store_once():
 def test_an_existing_row_makes_no_second_draft():
     """Idempotent per beat: the existence read answers, no INSERT follows."""
     pool = Pool(existing={"id": 99, "status": "draft"})
-    _run(topology.upsert_heartbeat(pool, 3, _beat(machine_record_root=ROOT)))
+    _run(topology.upsert_heartbeat(pool, 9003, _beat(machine_record_root=ROOT)))
     assert pool.store_lookups(), "the draft path never checked for an existing row"
     assert pool.store_inserts() == [], "a second draft was filed for a store that exists"
 
@@ -136,7 +136,7 @@ def test_a_revoked_row_is_not_revived_by_the_beat():
     store the user revoked is the host nagging. The existence read sees the
     revoked row and stops."""
     pool = Pool(existing={"id": 99, "status": "revoked"})
-    _run(topology.upsert_heartbeat(pool, 3, _beat(machine_record_root=ROOT)))
+    _run(topology.upsert_heartbeat(pool, 9003, _beat(machine_record_root=ROOT)))
     assert pool.store_inserts() == []
     assert not any("UPDATE dcn_stores SET status='draft'" in q for q, _ in pool.sql), (
         "the beat revived a store the user revoked")
@@ -145,21 +145,21 @@ def test_a_revoked_row_is_not_revived_by_the_beat():
 def test_a_beat_without_a_root_drafts_nothing():
     """Older bastions send no key. Absent is absent; no draft, no lookup."""
     pool = Pool(existing=None)
-    _run(topology.upsert_heartbeat(pool, 3, _beat()))
+    _run(topology.upsert_heartbeat(pool, 9003, _beat()))
     assert pool.store_lookups() == [] and pool.store_inserts() == []
 
 
 def test_a_bad_root_shape_drafts_nothing_and_does_not_fail_the_beat():
     for bad in ("relative/store", "/root/../etc", "", "x" * 600, "../../store"):
         pool = Pool(existing=None)
-        row = _run(topology.upsert_heartbeat(pool, 3, _beat(machine_record_root=bad)))
+        row = _run(topology.upsert_heartbeat(pool, 9003, _beat(machine_record_root=bad)))
         assert row is not None, f"the beat FAILED on a bad root {bad!r} — the beat is liveness"
         assert pool.store_inserts() == [], f"a draft was filed at {bad!r}"
 
 
 def test_a_windows_root_is_accepted():
     pool = Pool(existing=None)
-    _run(topology.upsert_heartbeat(pool, 3, _beat(machine_record_root=r"C:\Users\c\AppData\Roaming\privatae-bastion\store")))
+    _run(topology.upsert_heartbeat(pool, 9003, _beat(machine_record_root=r"C:\Users\c\AppData\Roaming\privatae-bastion\store")))
     assert len(pool.store_inserts()) == 1
 
 
@@ -172,7 +172,7 @@ def test_purpose_is_a_closed_vocabulary():
     for kwargs in ({"store_class": "machine", "server": "b", "root": "/r", "purpose": "documents"},
                    {"store_class": "cabinet", "bucket": "b", "purpose": "machine_record"}):
         with contextlib.suppress(ValueError):
-            _run(np_.propose_dcn_store(pool, 3, **kwargs))
+            _run(np_.propose_dcn_store(pool, 9003, **kwargs))
             raise AssertionError(f"accepted {kwargs}")
 
 
@@ -180,7 +180,7 @@ def test_the_draft_path_never_approves():
     """Nothing in the draft path may touch approved_at, signed_terms or status
     other than the INSERT's own 'draft'."""
     pool = Pool(existing=None)
-    _run(topology.upsert_heartbeat(pool, 3, _beat(machine_record_root=ROOT)))
+    _run(topology.upsert_heartbeat(pool, 9003, _beat(machine_record_root=ROOT)))
     for q, _ in pool.sql:
         if "dcn_stores" in q and "INSERT" not in q and "SELECT" not in q:
             raise AssertionError(f"the draft path wrote to dcn_stores outside the INSERT: {q[:80]}")

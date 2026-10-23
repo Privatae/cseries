@@ -383,12 +383,18 @@ def test_other_bastion_rank_orders_binary_below_paired():
 class Pool:
     """Enough asyncpg surface for the service: records every statement, answers
     the few SELECTs the paths need, and tracks the grant rows it was handed."""
-    def __init__(self, *, anchor_host=ANCHOR, pairings=None, live_grant=False):
+    def __init__(self, *, anchor_host=ANCHOR, pairings=None, live_grant=False,
+                 attempts=None, stored_subject=False):
         self.sql: list[tuple[str, tuple]] = []
         self.anchor_host = anchor_host
         self.pairings = pairings if pairings is not None else [
             {"host_name": SUBJECT, "handle": HANDLE, "state": "pending", "since": ""}]
         self.live_grant = live_grant
+        # The heartbeat row's unapproved_pairing_attempts (None = column NULL).
+        self.attempts = attempts
+        # Whether the durable network_bastion_pairing row knows SUBJECT: it keeps
+        # every subject a box ever reported, including ones it no longer does.
+        self.stored_subject = stored_subject
         self.next_id = 41
 
     async def execute(self, q, *a):
@@ -399,11 +405,13 @@ class Pool:
         if "FROM network_bastion_heartbeat" in q:
             return {"token_id": 7, "hostname": SERVER,
                     "anchor": json.dumps({"anchor_host": self.anchor_host, "owner": "Alex"}) if self.anchor_host else None,
-                    "pairings": json.dumps(self.pairings)}
+                    "pairings": json.dumps(self.pairings),
+                    "unapproved_pairing_attempts":
+                        json.dumps(self.attempts) if self.attempts is not None else None}
         if "FROM nac_pairing_grants" in q:
             return {"id": 40} if self.live_grant else None
         if "FROM network_bastion_pairing" in q:
-            return None
+            return {"subject_handle": HANDLE} if self.stored_subject else None
         return None
 
     async def fetchval(self, q, *a):
@@ -479,7 +487,7 @@ def test_approve_signs_stores_and_pushes_grant_sync(monkeypatch):
     relay = Relay()
     _wire(monkeypatch, relay)
     pool = Pool()
-    res = _run(pg.approve_pairing(pool, 3, SERVER, SUBJECT, ["dcn", "observe"], stepup_code="123456"))
+    res = _run(pg.approve_pairing(pool, 9003, SERVER, SUBJECT, ["dcn", "observe"], stepup_code="123456"))
     assert res["approved"] and res["delivered"] and res["state"] == "active"
     assert res["caps"] == ["observe", "dcn"] and res["subject_handle"] == HANDLE
     # one dispatch: [terms_b64, signature_b64, verify_pubkey_b64] — the third is the
@@ -504,7 +512,7 @@ def test_approve_refuses_without_a_valid_stepup_and_sends_nothing(monkeypatch):
     relay = Relay()
     _wire(monkeypatch, relay)
     try:
-        _run(pg.approve_pairing(Pool(), 3, SERVER, SUBJECT, ["observe"], stepup_code="000000"))
+        _run(pg.approve_pairing(Pool(), 9003, SERVER, SUBJECT, ["observe"], stepup_code="000000"))
         assert False, "approved without step-up"
     except pg.PairingError as e:
         assert e.status == 403
@@ -515,20 +523,20 @@ def test_approve_refuses_on_a_machine_anchored_elsewhere_or_unanchored(monkeypat
     relay = Relay()
     _wire(monkeypatch, relay, own="other" + ZONE)
     try:
-        _run(pg.approve_pairing(Pool(), 3, SERVER, SUBJECT, [], stepup_code="123456"))
+        _run(pg.approve_pairing(Pool(), 9003, SERVER, SUBJECT, [], stepup_code="123456"))
         assert False
     except pg.PairingError as e:
         assert e.status == 403 and "anchored to" in e.detail
     _wire(monkeypatch, relay)
     try:
-        _run(pg.approve_pairing(Pool(anchor_host=None), 3, SERVER, SUBJECT, [], stepup_code="123456"))
+        _run(pg.approve_pairing(Pool(anchor_host=None), 9003, SERVER, SUBJECT, [], stepup_code="123456"))
         assert False
     except pg.PairingError as e:
         assert e.status == 409 and "not anchored" in e.detail
     # own handle unresolvable → the anchor check cannot be made → 409, never proceed
     _wire(monkeypatch, relay, own=None)
     try:
-        _run(pg.approve_pairing(Pool(), 3, SERVER, SUBJECT, [], stepup_code="123456"))
+        _run(pg.approve_pairing(Pool(), 9003, SERVER, SUBJECT, [], stepup_code="123456"))
         assert False
     except pg.PairingError as e:
         assert e.status == 409 and "handle" in e.detail
@@ -538,11 +546,11 @@ def test_approve_refuses_on_a_machine_anchored_elsewhere_or_unanchored(monkeypat
 def test_ttl_days_zero_means_no_expiry_and_negative_is_refused(monkeypatch):
     relay = Relay()
     _wire(monkeypatch, relay)
-    res = _run(pg.approve_pairing(Pool(), 3, SERVER, SUBJECT, ["observe"], stepup_code="123456", ttl_days=0))
+    res = _run(pg.approve_pairing(Pool(), 9003, SERVER, SUBJECT, ["observe"], stepup_code="123456", ttl_days=0))
     terms = json.loads(base64.b64decode(relay.calls[0][2][0]))
     assert res["expires"] == "" and terms["expires"] == ""
     try:
-        _run(pg.approve_pairing(Pool(), 3, SERVER, SUBJECT, ["observe"], stepup_code="123456", ttl_days=-1))
+        _run(pg.approve_pairing(Pool(), 9003, SERVER, SUBJECT, ["observe"], stepup_code="123456", ttl_days=-1))
         assert False
     except pg.PairingError as e:
         assert e.status == 400
@@ -552,16 +560,47 @@ def test_ttl_days_zero_means_no_expiry_and_negative_is_refused(monkeypatch):
 def test_approve_refuses_a_subject_the_box_never_reported(monkeypatch):
     _wire(monkeypatch, Relay())
     try:
-        _run(pg.approve_pairing(Pool(pairings=[]), 3, SERVER, SUBJECT, [], stepup_code="123456"))
+        _run(pg.approve_pairing(Pool(pairings=[]), 9003, SERVER, SUBJECT, [], stepup_code="123456"))
         assert False
     except pg.PairingError as e:
         assert e.status == 404
 
 
+def test_approve_refuses_a_subject_only_an_old_stored_row_remembers(monkeypatch):
+    # The box no longer reports the subject — not as a pairing, not as an
+    # attempt — but the durable row still remembers it from an earlier beat.
+    # That is history, not a pairing: approving it would sign a live grant for
+    # a host the machine has stopped holding.
+    relay = Relay()
+    _wire(monkeypatch, relay)
+    pool = Pool(pairings=[{"host_name": "other.zone.example.test", "handle": "other",
+                           "state": "active", "since": ""}],
+                attempts=[], stored_subject=True)
+    try:
+        _run(pg.approve_pairing(pool, 3, SERVER, SUBJECT, ["observe"], stepup_code="123456"))
+        assert False, "approved a subject the box does not report now"
+    except pg.PairingError as e:
+        assert e.status == 404, e.detail
+    assert relay.calls == [], "nothing may reach the box for a stale subject"
+    joined = "\n".join(q for q, _ in pool.sql)
+    assert "INSERT INTO nac_pairing_grants" not in joined, "a grant row was written"
+
+
+def test_approve_accepts_a_subject_the_box_lists_only_as_an_unapproved_attempt(monkeypatch):
+    # The other half of "reported now": the latest beat names the subject only
+    # under unapproved attempts, which is still the box reporting it.
+    relay = Relay()
+    _wire(monkeypatch, relay)
+    pool = Pool(pairings=[], attempts=[{"host_name": SUBJECT, "handle": HANDLE, "since": ""}])
+    res = _run(pg.approve_pairing(pool, 3, SERVER, SUBJECT, ["observe"], stepup_code="123456"))
+    assert res["approved"] and res["subject_handle"] == HANDLE, res
+    assert len(relay.calls) == 1
+
+
 def test_approve_on_an_offline_box_keeps_the_grant_undelivered(monkeypatch):
     _wire(monkeypatch, Relay(offline=True))
     pool = Pool()
-    res = _run(pg.approve_pairing(pool, 3, SERVER, SUBJECT, ["session"], stepup_code="123456"))
+    res = _run(pg.approve_pairing(pool, 9003, SERVER, SUBJECT, ["session"], stepup_code="123456"))
     assert res["approved"] and res["delivered"] is False and res["state"] == "offline"
     assert "next check-in" in res["note"]
     joined = "\n".join(q for q, _ in pool.sql)
@@ -574,7 +613,7 @@ def test_deny_records_here_and_sends_nothing(monkeypatch):
     pool = Pool()
     # via="ui" as the Network app's route passes it: only that surface is recorded as
     # the person (nac_commit.approver_for); the host tool's refusals record "host".
-    res = _run(pg.deny_pairing(pool, 3, SERVER, SUBJECT, denied_by="alex", via="ui"))
+    res = _run(pg.deny_pairing(pool, 9003, SERVER, SUBJECT, denied_by="alex", via="ui"))
     assert res["denied"] and relay.calls == []
     q, a = next((q, a) for q, a in pool.sql if "INSERT INTO network_bastion_pairing" in q)
     assert "denied_at" in q and a[:2] == (7, SUBJECT) and a[2] == "alex"
@@ -584,7 +623,7 @@ def test_revoke_signs_revoke_terms_pushes_drop_and_needs_no_stepup(monkeypatch):
     relay = Relay()
     _wire(monkeypatch, relay, stepup_ok=False)
     pool = Pool(live_grant=True)
-    res = _run(pg.revoke_pairing(pool, 3, SERVER, SUBJECT))
+    res = _run(pg.revoke_pairing(pool, 9003, SERVER, SUBJECT))
     assert res["revoked"] and res["delivered"] and res["had_grant"]
     server, op, args = relay.calls[0]
     assert (server, op) == (SERVER, pg.OP_GRANT_DROP)
@@ -601,7 +640,7 @@ def test_revoke_signs_revoke_terms_pushes_drop_and_needs_no_stepup(monkeypatch):
 def test_revoke_marks_revoked_here_even_when_the_box_is_offline(monkeypatch):
     _wire(monkeypatch, Relay(offline=True))
     pool = Pool(live_grant=True)
-    res = _run(pg.revoke_pairing(pool, 3, SERVER, SUBJECT))
+    res = _run(pg.revoke_pairing(pool, 9003, SERVER, SUBJECT))
     assert res["revoked"] and res["delivered"] is False and "quarantine_bastion" in res["note"]
     assert any("SET revoked_at=now(), revoke_terms_canonical" in q for q, _ in pool.sql)
 
@@ -610,11 +649,11 @@ def test_consent_signs_and_pushes_anchor_consent_with_stepup(monkeypatch):
     relay = Relay()
     _wire(monkeypatch, relay)
     try:
-        _run(pg.consent_anchor_rotation(Pool(), 3, SERVER, "b" + ZONE, stepup_code="000000"))
+        _run(pg.consent_anchor_rotation(Pool(), 9003, SERVER, "b" + ZONE, stepup_code="000000"))
         assert False, "consented without step-up"
     except pg.PairingError as e:
         assert e.status == 403 and relay.calls == []
-    res = _run(pg.consent_anchor_rotation(Pool(), 3, SERVER, "b" + ZONE, stepup_code="123456", days=90))
+    res = _run(pg.consent_anchor_rotation(Pool(), 9003, SERVER, "b" + ZONE, stepup_code="123456", days=90))
     assert res["consented"] and res["delivered"]
     server, op, args = relay.calls[0]
     assert (server, op) == (SERVER, pg.OP_ANCHOR_CONSENT) and len(args) == 2
@@ -665,7 +704,7 @@ def test_ingest_asks_once_then_raises_unapproved_daily(monkeypatch):
     # first sight of an already-old pending pairing → ONE ask, no reminder with it,
     # and the daily clock starts from this beat (note 7)
     pool = NotifyPool(row())
-    out = _run(pg.record_and_notify(pool, 3, 7, SERVER, pairings, None, is_anchor=True))
+    out = _run(pg.record_and_notify(pool, 9003, 7, SERVER, pairings, None, is_anchor=True))
     assert out["pending_raised"] == 1 and out["unapproved_raised"] == 0
     assert [p.get("event") for p in sent if "event" in p] == ["pairing_pending"]
     assert any("SET pending_notified_at = now(), unapproved_raised_at = now()" in q for q, _ in pool.sql)
@@ -676,27 +715,27 @@ def test_ingest_asks_once_then_raises_unapproved_daily(monkeypatch):
     sent.clear()
     pool = NotifyPool(row(pending_notified_at=now - dt.timedelta(hours=3),
                           unapproved_raised_at=now - dt.timedelta(hours=3)))
-    out = _run(pg.record_and_notify(pool, 3, 7, SERVER, pairings, None, is_anchor=True))
+    out = _run(pg.record_and_notify(pool, 9003, 7, SERVER, pairings, None, is_anchor=True))
     assert out["unapproved_raised"] == 0 and sent == []
     # asked 25h ago, raised then → unapproved raised once
     pool = NotifyPool(row(pending_notified_at=now - dt.timedelta(hours=25),
                           unapproved_raised_at=now - dt.timedelta(hours=25)))
-    out = _run(pg.record_and_notify(pool, 3, 7, SERVER, pairings, None, is_anchor=True))
+    out = _run(pg.record_and_notify(pool, 9003, 7, SERVER, pairings, None, is_anchor=True))
     assert out["unapproved_raised"] == 1
     assert [p.get("event") for p in sent if "event" in p] == ["pairing_unapproved"]
     # raised an hour ago → silent
     sent.clear()
     pool = NotifyPool(row(pending_notified_at=now - dt.timedelta(days=2),
                           unapproved_raised_at=now - dt.timedelta(hours=1)))
-    out = _run(pg.record_and_notify(pool, 3, 7, SERVER, pairings, None, is_anchor=True))
+    out = _run(pg.record_and_notify(pool, 9003, 7, SERVER, pairings, None, is_anchor=True))
     assert out["unapproved_raised"] == 0 and sent == []
     # denied → silent forever
     pool = NotifyPool(row(denied_at=now))
-    out = _run(pg.record_and_notify(pool, 3, 7, SERVER, pairings, None, is_anchor=True))
+    out = _run(pg.record_and_notify(pool, 9003, 7, SERVER, pairings, None, is_anchor=True))
     assert out["pending_raised"] == 0 and sent == []
     # an older bastion (no fields) is a no-op, not a retraction
     pool = NotifyPool([])
-    assert _run(pg.record_and_notify(pool, 3, 7, SERVER, None, None)) == {"pending_raised": 0, "unapproved_raised": 0, "resynced": 0}
+    assert _run(pg.record_and_notify(pool, 9003, 7, SERVER, None, None)) == {"pending_raised": 0, "unapproved_raised": 0, "resynced": 0}
     assert pool.sql == []
 
 
@@ -717,7 +756,7 @@ def test_ingest_on_a_member_host_informs_once_and_never_asks_to_approve(monkeypa
     pairings = [{"host_name": SUBJECT, "handle": HANDLE, "state": "pending", "since": ""}]
     pool = NotifyPool([{"subject": SUBJECT, "subject_handle": HANDLE, "since": "",
                         "pending_notified_at": None, "unapproved_raised_at": None, "denied_at": None}])
-    out = _run(pg.record_and_notify(pool, 3, 7, SERVER, pairings, None, is_anchor=False))
+    out = _run(pg.record_and_notify(pool, 9003, 7, SERVER, pairings, None, is_anchor=False))
     assert out["pending_raised"] == 1
     assert sent[0]["inbox_subject"].startswith("A new host is asking to join") and sent[0]["is_anchor"] is False
     assert "manage_pairing op='approve'" not in sent[1]["content"] and "admin decides" in sent[1]["content"]
@@ -726,7 +765,7 @@ def test_ingest_on_a_member_host_informs_once_and_never_asks_to_approve(monkeypa
     pool = NotifyPool([{"subject": SUBJECT, "subject_handle": HANDLE, "since": "",
                         "pending_notified_at": now - dt.timedelta(days=5),
                         "unapproved_raised_at": now - dt.timedelta(days=5), "denied_at": None}])
-    out = _run(pg.record_and_notify(pool, 3, 7, SERVER, pairings, None, is_anchor=False))
+    out = _run(pg.record_and_notify(pool, 9003, 7, SERVER, pairings, None, is_anchor=False))
     assert out == {"pending_raised": 0, "unapproved_raised": 0, "resynced": 0} and sent == []
     assert relay.calls == []
 
@@ -744,7 +783,7 @@ def test_ingest_failed_inbox_write_leaves_no_host_message_and_no_mark(monkeypatc
     monkeypatch.setattr(pg, "_dispatch", Relay())
     pool = NotifyPool([{"subject": SUBJECT, "subject_handle": HANDLE, "since": "",
                         "pending_notified_at": None, "unapproved_raised_at": None, "denied_at": None}])
-    out = _run(pg.record_and_notify(pool, 3, 7, SERVER,
+    out = _run(pg.record_and_notify(pool, 9003, 7, SERVER,
                                     [{"host_name": SUBJECT, "handle": HANDLE, "state": "pending", "since": ""}],
                                     None, is_anchor=True))
     assert out["pending_raised"] == 0 and sent == []
@@ -779,7 +818,7 @@ def test_ingest_retries_an_undelivered_grant_while_the_box_reports_pending(monke
     now = dt.datetime.now(dt.timezone.utc)
     pool = P([{"subject": SUBJECT, "subject_handle": HANDLE, "since": "",
                "pending_notified_at": now, "unapproved_raised_at": now, "denied_at": None}])
-    out = _run(pg.record_and_notify(pool, 3, 7, SERVER,
+    out = _run(pg.record_and_notify(pool, 9003, 7, SERVER,
                                     [{"host_name": SUBJECT, "handle": HANDLE, "state": "pending", "since": ""}], None,
                                     is_anchor=True))
     assert out["resynced"] == 1
@@ -867,7 +906,7 @@ def test_an_anchor_in_our_own_zone_but_not_ours_is_refused(monkeypatch):
     relay = Relay()
     _wire(monkeypatch, relay, own=("entity-1" + ZONE,))
     try:
-        _run(pg.approve_pairing(Pool(anchor_host="attacker" + ZONE), 3, SERVER,
+        _run(pg.approve_pairing(Pool(anchor_host="attacker" + ZONE), 9003, SERVER,
                                 SUBJECT, ["observe"], stepup_code="123456"))
         assert False, "approved on a machine anchored to someone else"
     except pg.PairingError as e:

@@ -248,8 +248,8 @@ async def main() -> int:
     from server.peer import handlers as H
     from server.peer import peer_server as PS
 
-    GID = R.new_group_id(3)
-    OWNER, ALICE, BOB, CAROL = 3, 122, 123, 124
+    GID = R.new_group_id(9003)
+    OWNER, ALICE, BOB, CAROL = 9003, 9122, 9123, 124
     brain_service._entity_id = OWNER
 
     # Real keys. Each entity signs with its own; the roster pins the public
@@ -356,7 +356,7 @@ async def main() -> int:
 
     # Mutate each signed field in turn. Every one must break the signature or
     # the binding; none may quietly pass.
-    for field, bad in (("group", R.new_group_id(3)), ("ballot", "other"),
+    for field, bad in (("group", R.new_group_id(9003)), ("ballot", "other"),
                        ("choice", "vela"), ("voter", BOB), ("seq", 99),
                        ("nonce", "0" * 32), ("signed_at", _now().isoformat()),
                        ("v", 2), ("kind", "not_a_vote")):
@@ -372,7 +372,7 @@ async def main() -> int:
 
     # ── 2. a vote is bound to ONE question ──────────────────────────────────
     print("\n2. binding")
-    ok4, why4, _ = V.verify_vote(vote, verify_pubkey=keys[ALICE][1], group_id=R.new_group_id(3),
+    ok4, why4, _ = V.verify_vote(vote, verify_pubkey=keys[ALICE][1], group_id=R.new_group_id(9003),
                                  ballot_id="name-it", choices=ballot["choices"])
     check(not ok4 and "different group" in why4,
           "a signature lifted into another GROUP is refused as a binding failure", why4)
@@ -475,10 +475,10 @@ async def main() -> int:
 
     # ── 6. the group app grant ──────────────────────────────────────────────
     print("\n6. the group app grant")
-    res_str = AL.group_app_resource(GID, "veterans")
-    check(res_str == f"group:{GID}:app:veterans", "a group grant's resource names the group AND the app", res_str)
+    res_str = AL.group_app_resource(GID, "gardening")
+    check(res_str == f"group:{GID}:app:gardening", "a group grant's resource names the group AND the app", res_str)
     check(AL.group_from_resource(res_str) == GID, "and parses back to the group")
-    check(AL.group_from_resource("app:veterans") is None,
+    check(AL.group_from_resource("app:gardening") is None,
           "a per-contact resource carries no group, so the membership gate does not engage")
     for bad in ("group::app:x", f"group:{GID}", "group:nope:app:x", "", None, 7):
         check(AL.group_from_resource(bad) is None, f"a malformed group resource yields no group ({bad!r})")
@@ -501,7 +501,7 @@ async def main() -> int:
     from server.applications import registry as REG
 
     async def fake_get(p, app_id):
-        return FakeApp() if app_id == "veterans" else None
+        return FakeApp() if app_id == "gardening" else None
 
     REG.get = fake_get
 
@@ -511,9 +511,9 @@ async def main() -> int:
     AL._hand_to_live_process = no_live
 
     import uuid as _uuid
-    params = {"app_id": "veterans", "action": "probe", "payload": {},
+    params = {"app_id": "gardening", "action": "probe", "payload": {},
               "message_id": str(_uuid.uuid4())}
-    info = {"allowed_ops": ["app:veterans"], "resource": res_str}
+    info = {"allowed_ops": ["app:gardening"], "resource": res_str}
     ok_del = await AL.app_deliver(ALICE, info, params)
     check(ok_del.get("ok"), "a group-scoped delivery from a CURRENT member is admitted", ok_del)
 
@@ -528,14 +528,14 @@ async def main() -> int:
 
     # The same delivery under a PER-CONTACT slip still works: removing someone
     # from a group must not cut a grant that was never group-scoped.
-    plain = await AL.app_deliver(ALICE, {"allowed_ops": ["app:veterans"], "resource": "app:veterans"},
+    plain = await AL.app_deliver(ALICE, {"allowed_ops": ["app:gardening"], "resource": "app:gardening"},
                                  {**params, "message_id": str(_uuid.uuid4())})
     check(plain.get("ok"), "a per-contact grant is untouched by group membership", plain)
 
     apool.members[ALICE]["removed_at"] = None
     apool.members[CAROL]["removed_at"] = _now()
     apool.outbox.clear()
-    fan = await AL.grant_group(apool, "veterans", GID, OWNER)
+    fan = await AL.grant_group(apool, "gardening", GID, OWNER)
     peers = sorted(q["peer_entity_id"] for q in fan["queued"])
     check(peers == [ALICE, BOB],
           "the fan-out queues one grant per CURRENT member — not the removed one, not this host", peers)
@@ -599,7 +599,7 @@ async def main() -> int:
         async def fetch(self, sql, *a):
             s = " ".join(sql.split())
             if "FROM group_app_grants" in s:
-                return [{"group_id": GID, "app_id": "veterans"}]
+                return [{"group_id": GID, "app_id": "gardening"}]
             if "FROM group_members m" in s and "NOT EXISTS" in s:
                 out = []
                 for m in self._member_rows(include_removed=False):
@@ -681,7 +681,7 @@ async def main() -> int:
             return await super().fetch(sql, *a)
 
     n_un = await LANE.revoke_app_group_slips(
-        UninstallPool(group_id=GID, owner=OWNER, members=members), "veterans")
+        UninstallPool(group_id=GID, owner=OWNER, members=members), "gardening")
     check(n_un == 1 and ("contract.revoke", "slip-app-9") in revoked,
           "and that revocation reaches contract.revoke", revoked)
 

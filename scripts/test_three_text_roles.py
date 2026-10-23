@@ -437,7 +437,7 @@ def _routes(routing, served=None, keyed=()):
     _ic.resolve_role_route, _I._direct_models, _I._provider_status = \
         _resolve, _direct, _provider_status
     try:
-        return asyncio.run(WR.research_routes(object(), 3))
+        return asyncio.run(WR.research_routes(object(), 9003))
     finally:
         _ic.resolve_role_route, _I._direct_models, _I._provider_status = _o
 

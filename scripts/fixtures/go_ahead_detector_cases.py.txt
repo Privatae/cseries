@@ -1618,7 +1618,7 @@ for text, want in R7_CATEGORIES:
 # and the wait is reported.
 def _drive_prog(tool_reads, wait_cap=300):
     prog = _sc._NO_GO_AHEAD_PROG
-    for k, v in {"__TOKEN__": "'tok'", "__RUN__": "'r1'", "__EID__": "163", "__ASK__": repr(_sc.NO_GO_AHEAD_ASK),
+    for k, v in {"__TOKEN__": "'tok'", "__RUN__": "'r1'", "__EID__": "9163", "__ASK__": repr(_sc.NO_GO_AHEAD_ASK),
                  "__TURN__": "240", "__WAIT__": "30", "__TOOLS_WAIT__": str(wait_cap)}.items():
         prog = prog.replace(k, v)
     prog = prog.replace("asyncio.run(main())", "")

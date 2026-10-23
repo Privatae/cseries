@@ -35,7 +35,7 @@ from server.applications.artifacts import ArtifactError  # noqa: E402
 from server.applications.desktop_contract import TEMPLATE_HTML  # noqa: E402
 from server.routes import designs as D  # noqa: E402
 
-EID = 3
+EID = 9003
 
 
 class Pool:

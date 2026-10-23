@@ -212,7 +212,7 @@ def _engine(db, *, armed=True):
 
 
 def _list(db):
-    return json.loads(json.dumps(asyncio.run(nac_commit.policy_list(db, 3)), default=str))
+    return json.loads(json.dumps(asyncio.run(nac_commit.policy_list(db, 9003)), default=str))
 
 
 def _by_id(listed, rid):
@@ -378,7 +378,7 @@ if view:
 
 # Removing the failing rules lifts the lock at the next read, and the engine agrees.
 for rid in (2, 3):
-    out = asyncio.run(nac_commit.revoke_policy(db, 3, rid, stepup_code="123456"))
+    out = asyncio.run(nac_commit.revoke_policy(db, 9003, rid, stepup_code="123456"))
 listed = _list(db)
 check("after the failing rules are revoked, the next read reports the lock lifted",
       listed["engine"]["tamper"] is False and all(r.get("integrity") == "ok" for r in listed["policy"]),
@@ -426,7 +426,7 @@ db2.fail_engine_load = False
 print("   the Host's nac_status and get_network carry it")
 _engine(db)
 db.policy.append(_rule(8, "tampered", "allow", _MCP, pid=6, tamper=True))
-snap = asyncio.run(nac_commit.status_snapshot(db, 3))
+snap = asyncio.run(nac_commit.status_snapshot(db, 9003))
 check("nac_status (status_snapshot) reports policy.engine.tamper and the failing row",
       snap.get("policy", {}).get("engine", {}).get("tamper") is True
       and any(r.get("integrity") == "failed" for r in snap["policy"].get("policy", [])), snap.get("policy"))
@@ -466,7 +466,7 @@ try:
     check("its removal still asks for the code, and says the reason is the key",
           h1.get("revoke_needs_code") is True and h1.get("revoke_code_reason") == "key_unreadable", h1)
     try:
-        asyncio.run(nac_commit.revoke_policy(db3, 3, 1))
+        asyncio.run(nac_commit.revoke_policy(db3, 9003, 1))
         err3 = None
     except nac_commit.CommitError as e:
         err3 = e
@@ -483,7 +483,7 @@ try:
               "can&#39;t read its signing key right now" in c or "can't read its signing key right now" in c, c)
         check("...no lock banner and no 'signature fails'",
               "nac-lock-banner" not in v["html"] and "signature fails" not in c, c)
-    out = asyncio.run(nac_commit.revoke_policy(db3, 3, 1, stepup_code="123456"))
+    out = asyncio.run(nac_commit.revoke_policy(db3, 9003, 1, stepup_code="123456"))
     check("with the code it is removed", out.get("revoked") is True, out)
 finally:
     _key_state["readable"] = True
@@ -491,7 +491,7 @@ listed = _list(db3)
 check("with the key readable, a quarantine's reason is 'keeps_out'",
       _by_id(listed, 2).get("revoke_code_reason") == "keeps_out", _by_id(listed, 2))
 try:
-    asyncio.run(nac_commit.revoke_policy(db3, 3, 2))
+    asyncio.run(nac_commit.revoke_policy(db3, 9003, 2))
     err4 = None
 except nac_commit.CommitError as e:
     err4 = e
@@ -557,7 +557,7 @@ print("3. an expired management grant: the gate skips it, so the card says so an
 
 
 def _grant(gid, server, ops, deny, *, expires, col_expires="same", approved=True):
-    terms = {"entity": 3, "server": server, "ops": ops, "deny": deny, "intent": None,
+    terms = {"entity": 9003, "server": server, "ops": ops, "deny": deny, "intent": None,
              "expires": expires.isoformat()}
     col = expires if col_expires == "same" else col_expires
     return {"id": gid, "server": server, "ops": json.dumps(ops), "deny": json.dumps(deny),
@@ -578,7 +578,7 @@ db4.grants = [
     _grant(4, "sigpast.box", [], ["rm"], expires=_past, col_expires=_future),   # column says live
     _grant(5, "draft.box", ["status"], [], expires=_future, approved=False),
 ]
-gl = json.loads(json.dumps(asyncio.run(nac_commit.mgmt_grants_list(db4, 3)), default=str))
+gl = json.loads(json.dumps(asyncio.run(nac_commit.mgmt_grants_list(db4, 9003)), default=str))
 g = {x["id"]: x for x in gl["grants"]}
 loaded = {x["server"] for x in asyncio.run(nac_mgmt.load_mgmt_grants(db4, _PUB))}
 check("the gate loads only the live grant (column OR signed expiry skips the rest)",
@@ -597,13 +597,13 @@ check("the list sends neither the signed terms nor the helper column",
       all("signed_terms" not in x and "col_expired" not in x for x in gl["grants"]), sorted(g[1]))
 for gid in (2, 3, 4):
     try:
-        out = asyncio.run(nac_commit.revoke_mgmt_grant(db4, 3, gid))
+        out = asyncio.run(nac_commit.revoke_mgmt_grant(db4, 9003, gid))
     except nac_commit.CommitError as e:
         out = {"refused": e.status, "detail": e.detail}
     check(f"revoking expired grant {gid} ({g[gid]['server']}) needs no code",
           out.get("revoked") is True and out.get("stepped_up") is False, out)
 try:
-    asyncio.run(nac_commit.revoke_mgmt_grant(db4, 3, 1))
+    asyncio.run(nac_commit.revoke_mgmt_grant(db4, 9003, 1))
     err5 = None
 except nac_commit.CommitError as e:
     err5 = e
@@ -616,7 +616,7 @@ db4b.grants = [_grant(1, "live.box", ["status"], ["rm"], expires=_future),
                _grant(2, "old.box", ["status"], ["rm"], expires=_past),
                _grant(6, "plain.box", ["status"], [], expires=_future),
                _grant(5, "draft.box", ["status"], [], expires=_future, approved=False)]
-gl = json.loads(json.dumps(asyncio.run(nac_commit.mgmt_grants_list(db4b, 3)), default=str))
+gl = json.loads(json.dumps(asyncio.run(nac_commit.mgmt_grants_list(db4b, 9003)), default=str))
 v, err = _node({"reads": {"/nac/mgmt/grants": gl}, "future": _future.isoformat(), "past": _past.isoformat(),
                "skewed": (dt.datetime.now(dt.timezone.utc) + dt.timedelta(minutes=5)).isoformat(),
                "justpast": (dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=20)).isoformat()}, """

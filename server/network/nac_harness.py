@@ -960,6 +960,48 @@ async def service_endpoint(pool, server: str, tunnel_port: int) -> Optional[str]
 HOST_HARNESS_MODES = frozenset({"service"})
 
 
+# A worktree run's tree comes back packed by the machine, which copies back only
+# plain files and folders: a link, pipe, device or socket, a folder nested too
+# deep, or a name that changed while it was packed is left out. The machine
+# names what it left out in `worktree_skipped` (at most this many) and counts all
+# of it in `worktree_skipped_count`. Without a sentence saying so, a tree that
+# came back short reads as the agent having deleted those files.
+WORKTREE_SKIPPED_SHOWN = 100
+_WORKTREE_SKIPPED_NAME_MAX = 1024
+
+
+def note_worktree_skipped(result) -> Optional[str]:
+    """Narrow the two skipped-entry keys of a worktree run's result in place
+    and return the plain sentence that goes beside them, or None when nothing
+    was left out. Keys the Host does not know are passed through untouched; only
+    these two are read, and a wrong type reads as absent."""
+    if not isinstance(result, dict):
+        return None
+    names = result.get("worktree_skipped")
+    names = ([str(n)[:_WORKTREE_SKIPPED_NAME_MAX] for n in names if isinstance(n, str)]
+             if isinstance(names, list) else [])[:WORKTREE_SKIPPED_SHOWN]
+    count = result.get("worktree_skipped_count")
+    if isinstance(count, bool) or not isinstance(count, int) or count < len(names):
+        count = len(names)
+    if "worktree_skipped" in result:
+        result["worktree_skipped"] = names
+    if "worktree_skipped_count" in result:
+        result["worktree_skipped_count"] = count
+    if count <= 0:
+        return None
+    what = "1 entry was" if count == 1 else f"{count} entries were"
+    if names and len(names) == count:
+        where = "It is listed in worktree_skipped." if count == 1 else "All are listed in worktree_skipped."
+    elif names:
+        where = f"The first {len(names)} are listed in worktree_skipped."
+    else:
+        where = "The machine did not say which."
+    return (f"{what} not copied back from the machine: it returns only plain files and "
+            f"folders, and leaves out links, pipes, devices, sockets, folders nested too "
+            f"deep and names that changed while it packed. {where} The returned tree does "
+            f"not have them.")
+
+
 def host_mode_refusal(eid: int, mode: str) -> str:
     """'' when this Host may dispatch `mode` (already normalised); else the refusal's words.
     The operator is the same entity the tool list admits operator tools for."""
@@ -1273,6 +1315,10 @@ async def run_harness_op(pool, eid: int, server: str, harness_id: str, *,
     except Exception:
         result = {"raw": result_json.decode("utf-8", "replace")}
     await nac_mgmt.audit_mgmt(pool, eid, server, nac_mgmt.HARNESS_RUN_OP, exit_code=code, decision="ran")
+    if mode == "worktree" and isinstance(result, dict):
+        skipped_note = note_worktree_skipped(result)
+        if skipped_note:
+            result["worktree_skipped_note"] = skipped_note
     if mode == "service" and service_op == "up" and code == 0 and isinstance(result, dict):
         # Where this Host now reaches the server: the box's tunnel address + the slot's port.
         try:

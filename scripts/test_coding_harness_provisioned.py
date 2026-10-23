@@ -83,7 +83,7 @@ def main() -> int:
             hroutes.harness_validity, brain_service.get_pool, registry.list_active)
     try:
         hk._PRIMARY_CREDS = creds
-        hk._resolve_pool_entity = lambda: (object(), 163)
+        hk._resolve_pool_entity = lambda: (object(), 9163)
         installer._sync_app_harness = fake_sync
         vault_api.open_secret = fake_open_secret
         harness_state.is_disconnected = fake_is_disconnected

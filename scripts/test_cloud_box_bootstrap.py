@@ -81,7 +81,7 @@ GOOD = {
     "machine_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7",
     "acme_dns": {"api_base": "https://acme.example.test",
                  "credential": {"username": "c36f50e8-4632-44f0-83fe-e070fef28a10",
-                                "password": "htB9mR9DYgcu9bX_afHF62erXaH2TS7bg9KW3F7Z",
+                                "password": "invented-acme-dns-password-for-tests-0000",
                                 "fulldomain": "d420c923-bbd7-4056-ab64-c3ca54c9b3cf.acme.example.test",
                                 "subdomain": "d420c923-bbd7-4056-ab64-c3ca54c9b3cf",
                                 "allowfrom": ["203.0.113.40/32"]}},

@@ -34,7 +34,7 @@ if not DSN:
 
 from server.network import pairing_grants as pg  # noqa: E402
 
-EID, TOKEN, MACHINE = 3, 7, "box-a"
+EID, TOKEN, MACHINE = 9003, 7, "box-a"
 FAILS = []
 INBOX: list = []
 HOSTMSG: list = []

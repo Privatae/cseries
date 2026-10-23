@@ -231,18 +231,18 @@ try:
         except pj.ProjectsError as e:
             return e
 
-    e = refused(pj.plan_repo_mount(ProjPool(), 3, "owner/nothere"))
+    e = refused(pj.plan_repo_mount(ProjPool(), 9003, "owner/nothere"))
     check("A repository the Host cannot see is refused", e is not None and e.status == 404, e)
-    e = refused(pj.plan_repo_mount(ProjPool(), 3, "owner/private"))
+    e = refused(pj.plan_repo_mount(ProjPool(), 9003, "owner/private"))
     check("Read-only → refused, with the fork offer", e is not None and e.status == 409 and "Fork it" in e.detail, e)
-    e = refused(pj.plan_repo_mount(ProjPool(), 3, "owner/mirror"))
+    e = refused(pj.plan_repo_mount(ProjPool(), 9003, "owner/mirror"))
     check("A pull mirror refuses pushes → the fork offer", e is not None and e.status == 409, e)
-    e = refused(pj.plan_repo_mount(ProjPool(live={"id": 7, "name": "Circles"}), 3, "owner/repo"))
+    e = refused(pj.plan_repo_mount(ProjPool(live={"id": 7, "name": "Circles"}), 9003, "owner/repo"))
     check("Already in use → refused, naming the project and offering the fork",
           e is not None and e.status == 409 and "“Circles”" in e.detail and "Fork it" in e.detail, e)
-    ok = asyncio.run(pj.plan_repo_mount(ProjPool(), 3, "owner/repo"))
+    ok = asyncio.run(pj.plan_repo_mount(ProjPool(), 9003, "owner/repo"))
     check("A writable, unused repository mounts", ok["repo"] == "owner/repo" and ok["fork"] is False)
-    fk = asyncio.run(pj.plan_repo_mount(ProjPool(live={"id": 7, "name": "Circles"}), 3, "owner/repo", fork=True))
+    fk = asyncio.run(pj.plan_repo_mount(ProjPool(live={"id": 7, "name": "Circles"}), 9003, "owner/repo", fork=True))
     check("A fork is allowed where a mount is not", fk["fork"] is True)
 
     # F. delete refused before anything changes
@@ -254,11 +254,11 @@ try:
         return pj_forge.Forge("platform", "owner/repo")
     pj_forge.project_forge = _platform
     try:
-        e = refused(pj.project_archive_service(pool, 3, 5, delete_repo=True))
+        e = refused(pj.project_archive_service(pool, 9003, 5, delete_repo=True))
         check("Deleting a repository the Host does not own is refused, and nothing is archived",
               e is not None and e.status == 409 and "belongs to owner" in e.detail and not pool.executed, e)
         info = asyncio.run(pj.project_repository_service(
-            ProjPool(row={"id": 5, "name": "P", "repo": "owner/repo", "auto_merge": False}), 3, 5))
+            ProjPool(row={"id": 5, "name": "P", "repo": "owner/repo", "auto_merge": False}), 9003, 5))
         check("Auto-Approve is not offered where the Host cannot merge (a platform repository)",
               info["host_can_merge"] is False and info["can_delete"] is False)
 
@@ -267,16 +267,16 @@ try:
         pj_forge.project_forge = _shop
         pool2 = ProjPool(row={"id": 9, "name": "Shop", "repo": "entity-9003/shop-p9", "auto_merge": True},
                          others=[{"id": 4, "name": "Old shop", "status": "archived"}])
-        e = refused(pj.project_archive_service(pool2, 3, 9, delete_repo=True))
+        e = refused(pj.project_archive_service(pool2, 9003, 9, delete_repo=True))
         check("…and where another project (even archived) still uses it",
               e is not None and "“Old shop”, archived" in e.detail and not pool2.executed, e)
         pool3 = ProjPool(row={"id": 9, "name": "Shop", "repo": "entity-9003/shop-p9", "auto_merge": True})
-        out = asyncio.run(pj.project_archive_service(pool3, 3, 9, delete_repo=True))
+        out = asyncio.run(pj.project_archive_service(pool3, 9003, 9, delete_repo=True))
         check("The Host's own, unshared repository is deleted after the archive, and the project forgets it",
               out.get("repo_deleted") is True and any(c[0] == "DELETE" for c in forge.calls)
               and any("repo = NULL" in q for q in pool3.executed), out)
         info = asyncio.run(pj.project_repository_service(
-            ProjPool(row={"id": 9, "name": "Shop", "repo": "entity-9003/shop-p9", "auto_merge": True}), 3, 9))
+            ProjPool(row={"id": 9, "name": "Shop", "repo": "entity-9003/shop-p9", "auto_merge": True}), 9003, 9))
         check("Auto-Approve is offered where the Host can merge", info["host_can_merge"] is True)
     finally:
         pj_forge.project_forge = _pf_real

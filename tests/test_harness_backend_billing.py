@@ -103,16 +103,17 @@ def test_an_open_window_keeps_the_callers_own_key(monkeypatch, charge_spy):
 
 
 def test_the_app_runtime_lane_passes_the_key_too(monkeypatch, charge_spy):
-    """The lane the defect was MEASURED on: entity-9128/app-rt-trading-bot,
-    8,258.5s delivered with no harness_compute_log row at any timestamp."""
-    bridge = _Bridge({"ready_duration_s": 8258.503677,
+    """The app-runtime lane is where the defect showed: a pod app's window
+    delivered thousands of seconds with no harness_compute_log row at any
+    timestamp."""
+    bridge = _Bridge({"ready_duration_s": 4321.5,
                       "window_id": "win-abc123"})
     monkeypatch.setattr(hb, "_bridge", lambda: bridge)
-    asyncio.run(hb._release_and_bill_app("trading-bot"))
-    assert charge_spy["session_id"] == "app-rt:trading-bot"
+    asyncio.run(hb._release_and_bill_app("widget-runner"))
+    assert charge_spy["session_id"] == "app-rt:widget-runner"
     assert charge_spy["harness"] == hb._APP_RT_MARK
     assert charge_spy["run_id"] == "win-abc123"
-    assert charge_spy["compute_s"] == pytest.approx(8258.503677)
+    assert charge_spy["compute_s"] == pytest.approx(4321.5)
 
 
 def test_an_app_window_is_billed_at_the_ceiling_it_ran_at(monkeypatch, charge_spy):

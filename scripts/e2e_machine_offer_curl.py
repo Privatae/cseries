@@ -27,7 +27,7 @@ from server.peer import peer_client
 from server.applications.tokens import AppToken
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
-SERVER, SUBJECT, HANDLE, PEER = "box-a", "friend.zone.example.test", "friend", 122
+SERVER, SUBJECT, HANDLE, PEER = "box-a", "friend.zone.example.test", "friend", 9122
 ANCHOR = "entity-1.zone.example.test"
 TRACE = os.environ.get("T2596_TRACE", "/tmp/t2596_trace.log")
 BASTION_VERSION = os.environ.get("T2596_BASTION_VERSION", "0.29.0")

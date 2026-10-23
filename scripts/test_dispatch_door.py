@@ -132,11 +132,11 @@ def main() -> int:
         raise RuntimeError("db down")
 
     sa._build_tool_schemas = fake_schemas
-    r = asyncio.run(sa.scope_name_refusal(gw._Pool(), 163, ["functions.context_ingest"]))
+    r = asyncio.run(sa.scope_name_refusal(gw._Pool(), 9163, ["functions.context_ingest"]))
     check("door refuses the measured scope", bool(r) and "'context_ingest'" in r, str(r))
     check("door passes a real scope",
-          asyncio.run(sa.scope_name_refusal(gw._Pool(), 163, ["context_ingest"])) is None)
-    r = asyncio.run(sa.scope_name_refusal(gw._Pool(), 163, ["staging_area"],
+          asyncio.run(sa.scope_name_refusal(gw._Pool(), 9163, ["context_ingest"])) is None)
+    r = asyncio.run(sa.scope_name_refusal(gw._Pool(), 9163, ["staging_area"],
                                           intent="stage this material into my context"))
     check("door: an invented name is refused with the closest offered tool for its intent",
           bool(r) and "'staging_area' (closest: 'context_ingest'" in r, str(r))
@@ -145,10 +145,10 @@ def main() -> int:
     from mastercode.runtime.tool_call_ledger import known_tool_schema
     check("negative control: code_read is a real registry tool", known_tool_schema("code_read") is not None)
     check("door passes a real tool the schema build left out",
-          asyncio.run(sa.scope_name_refusal(gw._Pool(), 163, ["code_read"])) is None)
+          asyncio.run(sa.scope_name_refusal(gw._Pool(), 9163, ["code_read"])) is None)
     sa._build_tool_schemas = broken_schemas
     check("a failed schema build leaves the door open",
-          asyncio.run(sa.scope_name_refusal(gw._Pool(), 163, ["functions.context_ingest"])) is None)
+          asyncio.run(sa.scope_name_refusal(gw._Pool(), 9163, ["functions.context_ingest"])) is None)
     sa._build_tool_schemas = _orig_build
 
     # ── 4. Run time: asked for tools, holds none → never started. ──────────

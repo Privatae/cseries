@@ -430,7 +430,7 @@ def test_a_heartbeat_with_posture_reaches_the_row():
     # `alerts` before v150. Grepping the source would pass with the narrower
     # deleted, so this reads the statement AND its arguments.
     pool = Pool()
-    assert _run(topology.upsert_heartbeat(pool, 3, _beat(posture=dict(CLEAN_POSTURE)))) is not None
+    assert _run(topology.upsert_heartbeat(pool, 9003, _beat(posture=dict(CLEAN_POSTURE)))) is not None
     q, args = pool.insert()
     assert "posture" in q, "`posture` is not in the INSERT at all"
     assert "posture         = COALESCE(EXCLUDED.posture" in q, \
@@ -442,7 +442,7 @@ def test_a_heartbeat_with_posture_reaches_the_row():
 
 def test_a_beat_with_no_posture_stores_nothing_and_retracts_nothing():
     pool = Pool()
-    assert _run(topology.upsert_heartbeat(pool, 3, _beat())) is not None
+    assert _run(topology.upsert_heartbeat(pool, 9003, _beat())) is not None
     q, args = pool.insert()
     # The column must be THERE and the value absent — asserting only the
     # absence passes vacuously once the column is dropped from the writer.
@@ -612,12 +612,12 @@ def test_a_malformed_critical_count_is_read_as_no_criticals_not_as_an_edge():
 
 def test_the_debounce_admits_one_wake_per_window_per_entity():
     topology._oversight_wake_last.clear()
-    assert topology._wake_debounce_ok(3, 1000.0) is True
-    assert topology._wake_debounce_ok(3, 1000.0 + 59.0) is False
+    assert topology._wake_debounce_ok(9003, 1000.0) is True
+    assert topology._wake_debounce_ok(9003, 1000.0 + 59.0) is False
     # Another entity is not throttled by this one's incident.
     assert topology._wake_debounce_ok(4, 1000.0 + 1.0) is True
     # Past the window, the same entity may wake again.
-    assert topology._wake_debounce_ok(3, 1000.0 + topology.OVERSIGHT_WAKE_DEBOUNCE_S) is True
+    assert topology._wake_debounce_ok(9003, 1000.0 + topology.OVERSIGHT_WAKE_DEBOUNCE_S) is True
     topology._oversight_wake_last.clear()
 
 
@@ -641,8 +641,8 @@ def test_the_wake_fires_exactly_once_per_edge_and_is_never_awaited():
             low = {"alerts": {"critical": 0}}
             high = {"alerts": {"critical": 1}}
             higher = {"alerts": {"critical": 5}}
-            fired = [topology._maybe_wake_oversight(None, 3, low, high),
-                     topology._maybe_wake_oversight(None, 3, high, higher)]
+            fired = [topology._maybe_wake_oversight(None, 9003, low, high),
+                     topology._maybe_wake_oversight(None, 9003, high, higher)]
             await asyncio.sleep(0)
             return fired
         fired = _run(_drive())
@@ -650,7 +650,7 @@ def test_the_wake_fires_exactly_once_per_edge_and_is_never_awaited():
         topology._oversight_wake = real
         topology._oversight_wake_last.clear()
     assert fired == [True, False], "the second beat was still critical, not a new edge"
-    assert calls == [3], f"the wake ran {len(calls)} times for one edge"
+    assert calls == [9003], f"the wake ran {len(calls)} times for one edge"
 
 
 def test_the_wake_goes_through_run_direct_op_and_not_the_tool_function():
@@ -687,7 +687,7 @@ def _notify(result, min_severity):
     real = mh.handle_inbox_append
     mh.handle_inbox_append = _append
     try:
-        out = _run(ov.notify_new_findings(None, 3, result, min_severity=min_severity))
+        out = _run(ov.notify_new_findings(None, 9003, result, min_severity=min_severity))
     finally:
         mh.handle_inbox_append = real
     return out, sent
@@ -770,7 +770,7 @@ def _seed(pool):
 
     mh.handle_calendar_append = _append
     try:
-        return _run(ov.ensure_oversight_ingest_task(pool, 3))
+        return _run(ov.ensure_oversight_ingest_task(pool, 9003))
     finally:
         mh.handle_calendar_append = real
 

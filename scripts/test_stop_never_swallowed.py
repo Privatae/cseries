@@ -250,7 +250,7 @@ async def run_ship(stop: str | None):
     seen: dict = {}
     try:
         ship = asyncio.create_task(SHIP.ship_now(
-            object(), 3, {"kind": "s3", "cred_name": "mine"}, src=dict(SRC)))
+            object(), 9003, {"kind": "s3", "cred_name": "mine"}, src=dict(SRC)))
 
         def stop_now() -> None:
             _where(ship, seen)

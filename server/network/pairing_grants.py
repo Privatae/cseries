@@ -967,7 +967,8 @@ class PairingError(Exception):
 async def _bastion_row(pool, server: str) -> Optional[dict]:
     try:
         r = await pool.fetchrow(
-            "SELECT token_id, hostname, anchor, pairings, gateway_version "
+            "SELECT token_id, hostname, anchor, pairings, unapproved_pairing_attempts, "
+            "gateway_version "
             "FROM network_bastion_heartbeat "
             "WHERE hostname=$1 ORDER BY last_seen_at DESC LIMIT 1", server)
     except Exception:
@@ -977,6 +978,8 @@ async def _bastion_row(pool, server: str) -> Optional[dict]:
     from server.network.topology import _json_or
     return {"token_id": r["token_id"], "hostname": r["hostname"],
             "anchor": _json_or(r["anchor"], None), "pairings": _json_or(r["pairings"], None),
+            "unapproved_pairing_attempts": (_json_or(r["unapproved_pairing_attempts"], None)
+                                            if "unapproved_pairing_attempts" in r.keys() else None),
             # Read the way topology.py reads its newer columns — present or not,
             # never a KeyError. Absent reads as UNKNOWN, and unknown is refused
             # for a scoped grant (_refuse_scope_the_box_cannot_enforce), so a row
@@ -1580,17 +1583,21 @@ async def approve_pairing(pool, eid: int, server: str, subject: str, caps: Any,
                                 "alongside it — approve with caps ['inference'] (plus any others), "
                                 "or drop the model list")
     row = await _anchored_here(pool, eid, server)
-    reported = {p.get("host_name"): p for p in (row.get("pairings") or [])}
+    # Only a pairing the box reports NOW can be approved: its pairings, or its
+    # unapproved attempts, as the heartbeat row holds them after the latest
+    # beat (topology.upsert_heartbeat). The durable network_bastion_pairing
+    # row is not enough — it keeps every subject the box ever reported, so a
+    # pairing removed from the machine months ago would still be found there
+    # and signed into a live grant the box no longer has a pairing for.
+    reported = {}
+    for col in ("unapproved_pairing_attempts", "pairings"):
+        listed = row.get(col)
+        for p in (listed if isinstance(listed, list) else []):
+            if isinstance(p, dict) and p.get("host_name"):
+                reported[p["host_name"]] = p
     if subject not in reported:
-        # The last beat may have listed it only under unapproved attempts; the
-        # durable row remembers every subject the box ever reported.
-        known = await pool.fetchrow(
-            "SELECT subject_handle FROM network_bastion_pairing WHERE token_id=$1 AND subject=$2",
-            row["token_id"], subject)
-        if known is None:
-            raise PairingError(404, f"'{subject}' has not paired on '{server}' — the box has not "
-                                    f"reported it; nothing to approve")
-        reported[subject] = {"host_name": subject, "handle": known["subject_handle"] or ""}
+        raise PairingError(404, f"'{subject}' is not paired on '{server}' — the box does not "
+                                f"report it now; nothing to approve")
     if not await _verify_stepup(pool, str(stepup_code or "")):
         raise PairingError(403, "admitting a host on your machine widens access — it needs a "
                                 "valid step-up code (enroll a second factor at /nac/stepup/enroll first)")

@@ -372,7 +372,7 @@ def _pull_out(pool, dcn):
     loop = asyncio.new_event_loop()
     try:
         loop.run_until_complete(
-            osx._pull_one(pool, 3, pool.stores[0], pool.stores[0]["server"],
+            osx._pull_one(pool, 9003, pool.stores[0], pool.stores[0]["server"],
                           _finding, dcn, out))
         # The caller commits cursors AFTER the ledger write; do the same here so
         # these tests measure the committed state rather than the intent.
@@ -493,7 +493,7 @@ def _stores(pool):
     import asyncio
     loop = asyncio.new_event_loop()
     try:
-        return loop.run_until_complete(machine_record_stores(pool, 3))
+        return loop.run_until_complete(machine_record_stores(pool, 9003))
     finally:
         loop.close()
 
@@ -737,7 +737,7 @@ def _pull_store(pool, force):
     from mastercode.runtime import oversight_store as osx
     loop = asyncio.new_event_loop()
     try:
-        return loop.run_until_complete(osx.pull_store_findings(pool, 3, _finding, force=force))
+        return loop.run_until_complete(osx.pull_store_findings(pool, 9003, _finding, force=force))
     finally:
         loop.close()
 
@@ -772,7 +772,7 @@ def test_the_poll_gate_cannot_silently_never_fire():
             dt.now.return_value = fake_now
             loop = asyncio.new_event_loop()
             try:
-                if loop.run_until_complete(osx._due_this_pass(None, 3)):
+                if loop.run_until_complete(osx._due_this_pass(None, 9003)):
                     fired += 1
             finally:
                 loop.close()
@@ -840,7 +840,7 @@ def test_run_oversight_ingest_carries_force_and_the_store_findings_to_the_plan()
             loop = asyncio.new_event_loop()
             try:
                 return loop.run_until_complete(
-                    ov.run_oversight_ingest(LedgerPool(), 3, force_store=force_store))
+                    ov.run_oversight_ingest(LedgerPool(), 9003, force_store=force_store))
             finally:
                 loop.close()
 
@@ -892,7 +892,7 @@ def test_cursors_are_not_committed_when_any_row_failed_to_write():
              mock.patch.object(ov, "apply_findings", fake_apply):
             loop = asyncio.new_event_loop()
             try:
-                return loop.run_until_complete(ov.run_oversight_ingest(LedgerPool(), 3))
+                return loop.run_until_complete(ov.run_oversight_ingest(LedgerPool(), 9003))
             finally:
                 loop.close()
 
@@ -959,7 +959,7 @@ def test_a_store_whose_read_raises_still_gets_a_row_and_the_others_still_fold():
     try:
         loop = asyncio.new_event_loop()
         try:
-            out = loop.run_until_complete(osx.pull_store_findings(pool, 3, _finding, force=True))
+            out = loop.run_until_complete(osx.pull_store_findings(pool, 9003, _finding, force=True))
         finally:
             loop.close()
     finally:
@@ -1031,7 +1031,7 @@ def _pull_with_accounting(files, ca, bastions):
             loop = asyncio.new_event_loop()
             try:
                 return loop.run_until_complete(
-                    osx.pull_store_findings(pool, 3, _finding, force=True, bastions=bastions))
+                    osx.pull_store_findings(pool, 9003, _finding, force=True, bastions=bastions))
             finally:
                 loop.close()
     finally:
@@ -1154,7 +1154,7 @@ def test_the_verdict_reaches_the_ingest_result():
          mock.patch.object(ov, "apply_findings", fake_apply):
         loop = asyncio.new_event_loop()
         try:
-            res = loop.run_until_complete(ov.run_oversight_ingest(LedgerPool(), 3))
+            res = loop.run_until_complete(ov.run_oversight_ingest(LedgerPool(), 9003))
         finally:
             loop.close()
     assert seen["bastions"] and seen["bastions"][0]["hostname"] == "box-a", seen
@@ -1210,7 +1210,7 @@ def test_a_missing_host_ca_is_one_row_under_the_host_not_per_machine():
             loop = asyncio.new_event_loop()
             try:
                 out = loop.run_until_complete(osx.pull_store_findings(
-                    pool, 3, _finding, force=True,
+                    pool, 9003, _finding, force=True,
                     bastions=[{"hostname": "box-a", "hardware_fingerprint": fp},
                               {"hostname": "second-box", "hardware_fingerprint": fp}]))
             finally:
@@ -1249,7 +1249,7 @@ def test_a_failed_stat_raises_the_accounting_row_on_its_own():
             loop = asyncio.new_event_loop()
             try:
                 out = loop.run_until_complete(osx.pull_store_findings(
-                    pool, 3, _finding, force=True,
+                    pool, 9003, _finding, force=True,
                     bastions=[{"hostname": "box-a", "hardware_fingerprint": fp}]))
             finally:
                 loop.close()
@@ -1281,7 +1281,7 @@ def test_a_raise_in_the_verifier_does_not_take_the_journal_down():
             loop = asyncio.new_event_loop()
             try:
                 out = loop.run_until_complete(osx.pull_store_findings(
-                    pool, 3, _finding, force=True,
+                    pool, 9003, _finding, force=True,
                     bastions=[{"hostname": "box-a", "hardware_fingerprint": fp}]))
             finally:
                 loop.close()

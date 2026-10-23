@@ -66,7 +66,7 @@ class _Pool:
         if "FROM entity_tickets" in sql and "turn_type_proposal" in sql:
             return self.open_card
         if "display_name FROM entity_registry" in sql:
-            return "Host 3"
+            return "Host 9003"
         if "UPDATE turn_types t SET once_grant = '{}'::jsonb" in sql:
             g, self.once = self.once, None
             self.writes.append(("consume_once", a))
@@ -168,8 +168,8 @@ def main() -> int:
 
     # ── 2. The card.
     prop = tta.normalize_spec({"tool_groups": [g0], "grant": ["read_context"], "keys": ["stripe-live"]})
-    s = tta.card_sitrep("Host 3", "Finance", prop, action="activate", reason="because\nthe user asked")
-    check("the card names the Host and the type", s.startswith("Host 3 wants a Finance turn type."), s)
+    s = tta.card_sitrep("Host 9003", "Finance", prop, action="activate", reason="because\nthe user asked")
+    check("the card names the Host and the type", s.startswith("Host 9003 wants a Finance turn type."), s)
     check("the card says what the type CANNOT use", "It cannot use:" in s and g0 not in s.split("It cannot use:")[1], s)
     check("the Host's reason is one flattened line", "Why: because the user asked" in s and s.count("\n") == 3, s)
     opts = [o["id"] for o in tta.card_options("activate")]
@@ -177,7 +177,7 @@ def main() -> int:
     check("a change card offers Once only when it adds something",
           [o["id"] for o in tta.card_options("change", widens=True)] == ["change", "once", "keep"]
           and [o["id"] for o in tta.card_options("change", widens=False)] == ["change", "keep"])
-    s = tta.card_sitrep("Host 3", "Finance", prop, action="retire")
+    s = tta.card_sitrep("Host 9003", "Finance", prop, action="retire")
     check("the retire card says the thread would run with everything the Host holds",
           "run with everything your Host holds" in s, s)
 
@@ -325,7 +325,7 @@ def main() -> int:
           f"{r} {sets}")
     r = run(tta.request_change(_Pool(row=_row()), 7, TID, {"nonsense": 1}, ""))
     check("a change that names nothing is refused", r.get("status") == "error" and "nothing" in r["result"])
-    s2 = tta.card_sitrep("Host 3", "Finance", tta.normalize_spec({"keywords": ["invoice"]}), action="activate")
+    s2 = tta.card_sitrep("Host 9003", "Finance", tta.normalize_spec({"keywords": ["invoice"]}), action="activate")
     check("the card always says what the type reads and the words that mean it",
           "Reads: everything your Host reads" in s2 and "Words that mean it: invoice" in s2, s2)
 

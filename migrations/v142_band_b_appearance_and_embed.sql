@@ -32,7 +32,7 @@
 -- CREATE TABLE below is therefore a pure no-op on all of them and only matters
 -- for a brand-new entity.
 --
--- Two hosts (102 and 3) store those columns in a different PHYSICAL ORDER,
+-- Two hosts store those columns in a different PHYSICAL ORDER,
 -- because they took the ALTERs in a different sequence than the others years
 -- apart. THAT IS NOT A SHAPE MISMATCH AND IT GETS NO STATEMENT HERE. Column
 -- order is not addressable in PostgreSQL without rewriting the table, every

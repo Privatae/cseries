@@ -181,9 +181,9 @@ async def main() -> int:
     from server.peer import peer_client as PC
     from server.routes import contacts as C
 
-    GID = R.new_group_id(3)
-    OTHER_GID = R.new_group_id(3)
-    OWNER, ALICE, BOB = 3, 122, 123
+    GID = R.new_group_id(9003)
+    OTHER_GID = R.new_group_id(9003)
+    OWNER, ALICE, BOB = 9003, 9122, 9123
     brain_service._entity_id = OWNER
 
     # ── 1. the kind exists at both ends of the wire ─────────────────────────

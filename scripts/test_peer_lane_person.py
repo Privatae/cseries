@@ -72,7 +72,7 @@ def check(label: str, cond: bool, extra: object = "") -> None:
         FAILS.append(label)
 
 
-PEER = 122
+PEER = 9122
 SLIP = {"terms": {"resource": "peer:inbox"}}
 
 
@@ -211,7 +211,7 @@ def main() -> int:
     # _identify is the mechanism inbox_request already uses; its docstring argues
     # that a knocker must not choose the name on the card "and this must not
     # reopen". inbox_deliver reopened it. Without this the direct lane also wrote
-    # no host name at all, so one peer's thread titled "Host 122" for messages that
+    # no host name at all, so one peer's thread titled "Host 9122" for messages that
     # came direct and with its real handle for the ones that came by bridge.
     r = deliver({"body": "hi"})
     inner = captured[0].get("payload") if captured else {}
@@ -352,15 +352,15 @@ def main() -> int:
     from server.routes.messages import dm_thread_id
     from server.routes.messages import people_thread_id
     import server.brain_service as _bs2
-    _bs2._entity_id = 3
+    _bs2._entity_id = 9003
 
     _with_contact(None)
-    hijack = dm_thread_id(3, 4242)          # A<->C, a thread B has no part in
+    hijack = dm_thread_id(9003, 4242)         # A<->C, a thread B has no part in
     r = deliver({"body": "hi", "thread_id": hijack})
     check("a thread_id the sender chose is NOT stored",
           captured[0].get("thread_id") != hijack, captured[0].get("thread_id"))
     check("...it is the host pair WE compute for this peer",
-          captured[0].get("thread_id") == dm_thread_id(3, PEER), captured)
+          captured[0].get("thread_id") == dm_thread_id(9003, PEER), captured)
 
     # person<->person: both ends named -> the People pair, matching the readers,
     # which select on both columns being NOT NULL.
@@ -380,7 +380,7 @@ def main() -> int:
     r = deliver({"body": "hi", "thread_id": hijack, "from_user_email": "alice@example.com"})
     check("a refuted person claim to this Host collapses to the HOST thread, matching "
           "where the row actually files",
-          captured and captured[0].get("thread_id") == dm_thread_id(3, PEER), captured)
+          captured and captured[0].get("thread_id") == dm_thread_id(9003, PEER), captured)
 
     print("\n── 5e. bastion-supplied names are scrubbed on the way into storage ──")
     # _identify now stamps peer_handle onto EVERY delivered message, not just a
@@ -469,7 +469,7 @@ def main() -> int:
     check("[guard] a person writing to this HOST with no contact is unchanged: delivered, the "
           "person kept unnamed, in our conversation with that Host",
           r.get("ok") is True and captured and captured[0].get("from_user_email") == "alice@example.com"
-          and captured[0].get("thread_id") == dm_thread_id(3, PEER)
+          and captured[0].get("thread_id") == dm_thread_id(9003, PEER)
           and "from_user_name" not in (captured[0].get("payload") or {}), (r, captured))
 
     _with_contact({"peer_entity_id": PEER, "display_name": "Alice", "status": "active"})

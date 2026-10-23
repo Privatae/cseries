@@ -234,6 +234,77 @@ async def main(dsn: str) -> int:
     check("gamma" in calls[before:],
           f"an unresolved peer IS retried on the next beat (calls: {calls[before:]})")
 
+    # 11. Each peering carries the pairing STATE the machine reports for it on
+    #     its latest beat, and only a current peering reported active is
+    #     requestable. The heartbeat row's peers array is what
+    #     topology.upsert_heartbeat writes; it is set directly here so each
+    #     shape the box can send is tested on its own.
+    def by_handle(listed):
+        return {p["peer_handle"]: p for p in listed}
+
+    # Until now this box has never reported peers on its heartbeat row
+    # (peers IS NULL): the peerings are current by the time window, and no
+    # state was ever said, so none may be asked.
+    listed = by_handle(await peer_discovery.list_peerings(pool, 42))
+    check(all(p.get("state") is None and p.get("requestable") is False for p in listed.values()),
+          "a box that never reported peers gives no state, and nothing is requestable: "
+          f"{[(h, p.get('state'), p.get('requestable')) for h, p in listed.items()]}")
+
+    import json
+    announced = [
+        {"host_name": "beta.host.example.test", "handle": "beta", "state": "active"},
+        {"host_name": "gamma.host.example.test", "handle": "gamma", "state": "pending"},
+        {"host_name": "delta.host.example.test", "handle": "delta", "state": "revoked"},
+        {"host_name": "eps.host.example.test", "handle": "eps"},
+        # Named twice: an active entry beside a revoked one is not active.
+        {"host_name": "evil.example.ai", "handle": "evil", "state": "active"},
+        {"host_name": "evil.example.ai", "handle": "evil", "state": "revoked"},
+    ]
+    async with pool.acquire() as c:
+        await c.execute("UPDATE network_bastion_heartbeat SET peers = $1::jsonb WHERE token_id = 7",
+                        json.dumps(announced))
+    listed = by_handle(await peer_discovery.list_peerings(pool, 42))
+    want = {"beta": ("active", True), "gamma": ("pending", False), "delta": ("revoked", False),
+            "eps": (None, False)}
+    for handle, (state, requestable) in want.items():
+        p = listed.get(handle) or {}
+        check(p.get("current") is True and p.get("state") == state
+              and p.get("requestable") is requestable,
+              f"{handle}: current, state {state!r}, requestable {requestable} "
+              f"(got current {p.get('current')!r}, state {p.get('state')!r}, "
+              f"requestable {p.get('requestable')!r})")
+    evil = next((p for p in listed.values() if p["peer_host_name"] == "evil.example.ai"), {})
+    check(evil.get("state") == "revoked" and evil.get("requestable") is False,
+          f"a Host named both active and revoked reads as revoked and is not requestable "
+          f"(got {evil.get('state')!r}, {evil.get('requestable')!r})")
+
+    # An entry with no state beside an active one is not active either.
+    async with pool.acquire() as c:
+        await c.execute("UPDATE network_bastion_heartbeat SET peers = $1::jsonb WHERE token_id = 7",
+                        json.dumps([{"host_name": "beta.host.example.test", "state": "active"},
+                                    {"host_name": "beta.host.example.test"}]))
+    beta = by_handle(await peer_discovery.list_peerings(pool, 42)).get("beta") or {}
+    check(beta.get("state") is None and beta.get("requestable") is False,
+          f"a Host named active and again with no state has no state and is not requestable "
+          f"(got {beta.get('state')!r}, {beta.get('requestable')!r})")
+
+    # A Host the latest beat does not name has no state now, whatever it had.
+    async with pool.acquire() as c:
+        await c.execute("UPDATE network_bastion_heartbeat SET peers = '[]'::jsonb WHERE token_id = 7")
+    listed = await peer_discovery.list_peerings(pool, 42)
+    check(all(p["current"] is False and p.get("state") is None and p.get("requestable") is False
+              for p in listed),
+          "once the box names nobody, no peering has a state or is requestable")
+
+    # requestable_peering is the one lookup the request route and the Circles
+    # archive guard share: only a requestable peering of that entity id.
+    rows = [{"peer_entity_id": 5, "requestable": False, "current": True, "state": "pending"},
+            {"peer_entity_id": 6, "requestable": True, "current": True, "state": "active"}]
+    check(getattr(peer_discovery, "requestable_peering", None) is not None
+          and peer_discovery.requestable_peering(rows, 5) is None
+          and (peer_discovery.requestable_peering(rows, 6) or {}).get("peer_entity_id") == 6,
+          "requestable_peering finds only a requestable peering of that Host")
+
     await pool.close()
     for line in notes:
         print(line)

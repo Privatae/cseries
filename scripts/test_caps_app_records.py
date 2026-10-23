@@ -122,7 +122,7 @@ UR.fetch_raw = _fetch_raw
 AR.create_artifact = _create
 
 PAGES["https://shop.example/"] = _page(10)
-res = asyncio.run(T._desktop_from_url(None, 3, "https://shop.example/", ""))
+res = asyncio.run(T._desktop_from_url(None, 9003, "https://shop.example/", ""))
 check("2: all 10 linked stylesheets are read", res.get("stylesheets_read") == 10, str(res.get("stylesheets_read")))
 check("2: the accent in the sixth sheet is taken",
       str((res.get("taken_from_the_site") or {}).get("accent") or "").lower() == "#d4145a",
@@ -130,7 +130,7 @@ check("2: the accent in the sixth sheet is taken",
 fetched.clear()
 n = (SS.MAX_STYLESHEETS or 4) + 8
 PAGES["https://many.example/"] = _page(n)
-res = asyncio.run(T._desktop_from_url(None, 3, "https://many.example/", ""))
+res = asyncio.run(T._desktop_from_url(None, 9003, "https://many.example/", ""))
 check("2: a page linking endless sheets stops at the fetch backstop",
       sum(1 for u in fetched if u.endswith(".css")) == SS.MAX_STYLESHEETS,
       str(sum(1 for u in fetched if u.endswith(".css"))))

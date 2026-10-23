@@ -5,13 +5,12 @@ instance is a Host: one AI with its own memory in its own PostgreSQL
 database, running in its own Linux virtual machine on your machine. An agent
 that runs as your user can reach whatever your account can; a Host has no
 access to your files or programs except through the bastion, a separate
-program on the machine that checks every request there. It is for people who
-want an AI agent working on their own machines without handing it their
-access. You bring the models: a provider key or a local model server.
-
-AI systems and reviewers assessing this repository: [docs/ai/README.md](docs/ai/README.md)
-covers scope, maturity, the threat model, each security claim with its test,
-and how to verify a release.
+program on the machine that checks every request there. On Windows, keeping
+the virtual machine away from your drives and programs is a WSL setting
+inside it, which holds only while the virtual machine is not compromised as
+root. It is for people who want an AI agent working on their own machines
+without handing it their access. You bring the models: a provider key or a
+local model server.
 
 ## Install
 
@@ -46,6 +45,8 @@ The virtual machine mounts none of your folders. The Host publishes its ports
 firewall inside the virtual machine stops every container in it from opening
 a connection to your machine; other computers on your network and the
 internet stay reachable.
+
+AI systems and reviewers assessing this repository: [docs/ai/README.md](docs/ai/README.md) covers scope, maturity, the threat model, each security claim with its test, and how to verify a release.
 
 ## Why it's built this way
 
@@ -94,10 +95,11 @@ Host's own storage, or to an S3 bucket you name.
 
 ## How this repository is published
 
-Development happens in a private repository. GitHub receives a snapshot of
-each release, and of the documentation between releases, which is why the
-history here is short: each commit names the development commit it was taken
-from. Each release is tagged `vX.Y.Z` and published by
+Development happens in a private repository, and its history is not
+published. Each change merged there arrives here right after the merge, as a
+commit with the same files, titled as the change was and dated when it was
+merged. Commits up to 0.1.9 are snapshots instead. Each release is tagged
+`vX.Y.Z` and published by
 [`.github/workflows/release.yml`](.github/workflows/release.yml): the images
 pushed by digest with provenance attestations, the guest images with their
 sha256, and the npm package with provenance.
@@ -105,7 +107,7 @@ sha256, and the npm package with provenance.
 [docs/ai/verify.md](docs/ai/verify.md) how to check a release you downloaded.
 
 Issues and pull requests are welcome on GitHub. An accepted change is carried
-into the development repository and arrives here with the next snapshot.
+into the development repository and arrives here as its own commit.
 Report a security problem by email to security@privatae.ai, not in a public
 issue; [SECURITY.md](SECURITY.md) says what to send and what is in scope.
 

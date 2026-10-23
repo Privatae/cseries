@@ -97,7 +97,7 @@ def _run(coro):
 
 def test_a_beat_with_holes_reaches_the_row():
     pool = Pool()
-    assert _run(topology.upsert_heartbeat(pool, 3, _beat(
+    assert _run(topology.upsert_heartbeat(pool, 9003, _beat(
         machine_record_dropped={"observe-host": 3, "findings": 1}))) is not None
     q, args = pool.insert()
     cols = q.split("(", 1)[1].split(")", 1)[0]
@@ -109,13 +109,13 @@ def test_a_beat_with_holes_reaches_the_row():
 
 def test_the_update_path_preserves_like_its_neighbours_and_stores_whole_as_empty():
     pool = Pool()
-    _run(topology.upsert_heartbeat(pool, 3, _beat(machine_record_dropped={"observe-host": 1})))
+    _run(topology.upsert_heartbeat(pool, 9003, _beat(machine_record_dropped={"observe-host": 1})))
     q, _ = pool.insert()
     assert "record_dropped  = COALESCE(EXCLUDED.record_dropped, network_bastion_heartbeat.record_dropped)" in q, \
         "an absent value (a pairing no longer entitled to observe) must not erase the last reading"
     # {} from the box is WHOLE and must be stored as {}, never collapsed to NULL.
     pool = Pool()
-    _run(topology.upsert_heartbeat(pool, 3, _beat(machine_record_dropped={})))
+    _run(topology.upsert_heartbeat(pool, 9003, _beat(machine_record_dropped={})))
     _, args = pool.insert()
     assert args[-1] == "{}", f"a whole record was stored as {args[-1]!r}, want '{{}}'"
 
@@ -123,7 +123,7 @@ def test_the_update_path_preserves_like_its_neighbours_and_stores_whole_as_empty
 def test_an_absent_or_malformed_value_is_stored_as_null():
     for beat in (_beat(), _beat(machine_record_dropped="junk"), _beat(machine_record_dropped=[1])):
         pool = Pool()
-        assert _run(topology.upsert_heartbeat(pool, 3, beat)) is not None
+        assert _run(topology.upsert_heartbeat(pool, 9003, beat)) is not None
         q, args = pool.insert()
         assert "record_dropped" in q
         assert args[-1] is None, f"a malformed/absent value was stored as {args[-1]!r}, want NULL"
@@ -136,7 +136,7 @@ def test_every_column_lines_up_with_its_argument():
     column list against the argument tuple with a DISTINCT value in every
     jsonb column that can carry one, so a swap anywhere is caught."""
     pool = Pool()
-    _run(topology.upsert_heartbeat(pool, 3, _beat(
+    _run(topology.upsert_heartbeat(pool, 9003, _beat(
         machine_record_dropped={"observe-host": 7},
         posture={"ufw": "active"}, findings={"baseline": "ok", "critical": 1},
         alerts={"firing": 2, "critical": 1, "warning": 1, "at": "2026-09-19T10:00:00Z",
@@ -190,7 +190,7 @@ def test_nan_and_infinity_do_not_take_the_beat_down():
     every other field on it be lost. Through the REAL writer: the beat lands,
     and this field is NULL (unreadable -> not reported), never {}."""
     pool = Pool()
-    assert _run(topology.upsert_heartbeat(pool, 3, _beat(
+    assert _run(topology.upsert_heartbeat(pool, 9003, _beat(
         machine_record_dropped={"observe-host": float("nan"), "observe-net": float("inf"),
                                 "observe-units": 2}))) is not None
     _, args = pool.insert()

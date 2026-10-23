@@ -80,10 +80,10 @@ async def _no_key(pool, eid):
 nac_mgmt_stepup.entity_verify_pubkey = _no_key
 sys.modules["server.network.nac_stepup"] = nac_mgmt_stepup
 
-ok, why, decision = asyncio.run(nac_mgmt.gate_op(_NoGrantPool(), 3, "web-1", "ctx_extract"))
+ok, why, decision = asyncio.run(nac_mgmt.gate_op(_NoGrantPool(), 9003, "web-1", "ctx_extract"))
 check("gate_op: no signed grant → refused, in the gate's own words, audited as denied-pod",
       ok is False and why == "no signed grant (default-deny)" and decision == "denied-pod", (ok, why, decision))
-g = asyncio.run(nac_mgmt.gate_servers(_NoGrantPool(), 3, "ctx_extract", ["web-1", "web-2", None]))
+g = asyncio.run(nac_mgmt.gate_servers(_NoGrantPool(), 9003, "ctx_extract", ["web-1", "web-2", None]))
 check("gate_servers: one load, every server decided, empties skipped",
       set(g) == {"web-1", "web-2"} and all(v[0] is False for v in g.values()), g)
 check("gate_op is the SAME decision mgmt_run runs (mgmt_decision + the holds), not a second gate",
@@ -97,7 +97,7 @@ check("gate_op is the SAME decision mgmt_run runs (mgmt_decision + the holds), n
 from server.routes import context_extract as ce  # noqa: E402
 
 print("\nthe extraction lane")
-ENTITY, CTX_ID = 3, 480
+ENTITY, CTX_ID = 9003, 480
 PNG = b"\x89PNG\r\n\x1a\n" + os.urandom(64)
 OCR = {"server": "laptop.example", "token_id": 11, "tools": ["ocr", "pdf-text"], "prep_tools": [], "pull": False}
 OCR2 = {"server": "desk.example", "token_id": 12, "tools": ["ocr"], "prep_tools": [], "pull": False}

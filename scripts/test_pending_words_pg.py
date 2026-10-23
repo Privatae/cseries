@@ -104,17 +104,17 @@ except ImportError:          # main: nothing holds the words
     PW = None
 
 S.HOLD_S = 0.3
-E = 3
+E = 9003
 FAILED = 0
 # The room the words are typed into: a Circles topic. There is no original
 # conversation, so every room names a thread.
 ROOM_THREAD = "5d0e3a51-1c1b-4c4f-9a6e-2b7f3c9e1a10"
-THREAD_KEY = f"thread|3|{ROOM_THREAD}"
+THREAD_KEY = f"thread|9003|{ROOM_THREAD}"
 ROOM = {"app_id": "circles", "project_id": None, "thread_id": ROOM_THREAD, "history_context": None}
 # The Workbench's own page for its route: a project, which is what its
 # GET /api/brain/pending keys by (compose_thread_key: project|E|N).
 WB_PROJECT = 5
-THREAD_KEY_WB = f"project|3|{WB_PROJECT}"
+THREAD_KEY_WB = f"project|9003|{WB_PROJECT}"
 ROOM_WB = {"app_id": "workbench", "project_id": WB_PROJECT, "thread_id": None, "history_context": None}
 
 

@@ -110,7 +110,7 @@ function limaRun(argv, m, p) {
   return main(argv, {
     platform: m.platform, arch: 'x64', env: {}, paths: p, out, runner: m.runner, net: m.net,
     sleep: async () => {}, prompt: async () => false, portState: async () => 'free', freeBytes: () => 64 * 1024 ** 3,
-    releaseInfo: { release: rel, placeholders: [], file: 'test' }, bastionKeys: m.bastionKeys,
+    releaseInfo: { release: rel, placeholders: [], file: 'test' }, bastionKeys: m.bastionKeys, sudoPaths: m.sudoPaths,
     netInterfaces: () => IFACES,
   }).then((code) => ({ code, out }));
 }

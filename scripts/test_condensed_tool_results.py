@@ -561,7 +561,7 @@ def part_bastion_list():
         check("manage_bastion op='latest': the service's answer as it came",
               r == {"status": "ok", "result": {"version": "0.45.0", "auto_update": {"on": True}}}, repr(r))
         r = run(T._exec_nac_status({}))
-        snap = run(_snap(None, 3))
+        snap = run(_snap(None, 9003))
         n_before, n_after = size({"status": "ok", "result": snap}), size(r)
         SIZES.append(("nac_status (condensed earlier, unchanged)", n_before, n_after, "server"))
         check(f"nac_status default on the same 25-bastion fleet stays small ({n_before:,} -> {n_after:,}; "

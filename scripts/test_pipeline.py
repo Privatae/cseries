@@ -518,12 +518,12 @@ def main() -> int:
     check("read(): a row naming no contexts never passes, whatever was posted (backstop)",
           fs.read({"statuses": [st("a", "success")]}, rowall, sha) is None
           and fs.read(None, rowall, sha) is None)
-    mine = {"statuses": [st("check/gates", "success", creator={"login": "host-3"}),
+    mine = {"statuses": [st("check/gates", "success", creator={"login": "host-9003"}),
                          st("check/smoke", "success", creator={"login": "gitea-actions"})]}
     check("read(): a status the Host's own account posted is not the CI's word",
-          fs.read(mine, row2, sha, {"host-3"}) is None
+          fs.read(mine, row2, sha, {"host-9003"}) is None
           and fs.read(mine, row2, sha)["ok"] is True)
-    na = fs.not_answered(mine, row2, sha, 120, ignore_creators={"host-3"})
+    na = fs.not_answered(mine, row2, sha, 120, ignore_creators={"host-9003"})
     check("not_answered(): a status only the Host's own account posted is named as the cause",
           "check/gates was posted by this Host's own forge account" in na["reason"], na["reason"])
     check("failure_text(): names each failed status, its description and its log",

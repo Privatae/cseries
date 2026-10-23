@@ -57,9 +57,9 @@ def check(cond, msg, extra=""):
         FAILS.append(msg)
 
 
-GID = "grp-3-" + uuid.uuid4().hex
-OWNER, ALICE, BOB = 3, 122, 123
-APP = "veterans"
+GID = "grp-9003-" + uuid.uuid4().hex
+OWNER, ALICE, BOB = 9003, 9122, 9123
+APP = "gardening"
 SCHEMA = f"grouptest_{os.getpid()}"
 
 
@@ -202,7 +202,7 @@ async def main() -> int:
 
         # ── 5. group scoping ────────────────────────────────────────────────
         # Two groups granting the SAME app to the SAME peer are two grants.
-        gid2 = "grp-3-" + uuid.uuid4().hex
+        gid2 = "grp-9003-" + uuid.uuid4().hex
         await pool.execute(
             "INSERT INTO groups (group_id, owner_entity_id, name) VALUES ($1, $2, $3)",
             gid2, OWNER, "second")

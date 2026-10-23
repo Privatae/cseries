@@ -110,7 +110,7 @@ S.DASHBOARD_BASE = base
 
 
 def compose(wallpaper):
-    return run(S.compose_clean_shell(None, 3, host_name="Nova", wallpaper_html=wallpaper))
+    return run(S.compose_clean_shell(None, 9003, host_name="Nova", wallpaper_html=wallpaper))
 
 
 scripty = ('<html><head><meta name="cseries-desktop" content="wallpaper"></head><body>'

@@ -14,7 +14,7 @@
   },
   "approvals": {
    "checked": "2026-10-22",
-   "status": "current"
+   "status": "changed"
   },
   "apps-overview": {
    "checked": "2026-10-20",
@@ -142,7 +142,7 @@
   },
   "settings-app": {
    "checked": "2026-10-22",
-   "status": "current"
+   "status": "changed"
   },
   "sites-app": {
    "checked": "2026-10-20",
@@ -161,7 +161,7 @@
    "status": "current"
   },
   "updates-and-versions": {
-   "checked": "2026-10-22",
+   "checked": "2026-10-23",
    "status": "current"
   },
   "what-a-host-cannot-do": {
@@ -194,7 +194,7 @@
   },
   "your-private-network": {
    "checked": "2026-10-22",
-   "status": "current"
+   "status": "changed"
   }
  },
  "schema": 1

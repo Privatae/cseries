@@ -90,7 +90,7 @@ def check(label: str, cond: bool, extra: object = "") -> None:
         FAILS.append(label)
 
 
-ME, JUNO, ZED = 1, 122, 130
+ME, JUNO, ZED = 1, 9122, 130
 ANA, BOB, CY, ZOE = "ana@example.com", "bob@example.com", "cy@example.com", "zoe@example.com"
 MY_PERSON = "me@example.com"
 #: The words today's domain-policy deny answers with (memory_handlers.py). A
@@ -165,7 +165,7 @@ async def main(dsn: str) -> int:
         permissions = ["read:peer_app", "write:peer_app"]
 
     async def fake_get(_pool, app_id):
-        return App() if app_id == "veterans" else None
+        return App() if app_id == "gardening" else None
 
     REG.get = fake_get
     os.environ["ENTITY_OPERATOR_EMAILS"] = MY_PERSON
@@ -289,17 +289,17 @@ async def main(dsn: str) -> int:
     check("B11 direct: the blocked Host's reciprocal slip is refused and not kept",
           refused(r) and held == 0, (r, held))
 
-    app_slip = slip(JUNO, ["app:veterans"], "app:veterans")
+    app_slip = slip(JUNO, ["app:gardening"], "app:gardening")
     mid = str(uuid.uuid4())
     r = await srv._serve(JUNO, {"op": "app.deliver", "slip": app_slip, "params": {
-        "app_id": "veterans", "action": "msg", "payload": {"x": 1}, "message_id": mid}})
+        "app_id": "gardening", "action": "msg", "payload": {"x": 1}, "message_id": mid}})
     got = await pool.fetchval("SELECT count(*) FROM peer_app_inbox WHERE message_id = $1::uuid", mid)
     check("B12 direct: the blocked Host's app delivery is refused and not stored",
           refused(r) and got == 0, (r, got))
-    grant = {"contract_id": "c-app", "terms": {"issuer": JUNO, "grantee": ME, "resource": "app:veterans",
-                                               "allowed_ops": ["app:veterans"]}}
+    grant = {"contract_id": "c-app", "terms": {"issuer": JUNO, "grantee": ME, "resource": "app:gardening",
+                                               "allowed_ops": ["app:gardening"]}}
     r = await srv._serve(JUNO, {"op": "app.grant", "slip": msg_slip[JUNO],
-                                "params": {"app_id": "veterans", "app_slip": grant}})
+                                "params": {"app_id": "gardening", "app_slip": grant}})
     kept = await pool.fetchval("SELECT count(*) FROM peer_app_slips WHERE peer_entity_id = $1", JUNO)
     check("B13 direct: the blocked Host's app grant is refused and not kept",
           refused(r) and kept == 0, (r, kept))
@@ -310,10 +310,10 @@ async def main(dsn: str) -> int:
     for m in (JUNO, ME):
         await pool.execute("INSERT INTO group_members (group_id, member_entity_id, role) "
                            "VALUES ($1, $2, 'member')", gid, m)
-    gslip = slip(JUNO, ["app:veterans"], f"group:{gid}:app:veterans")
+    gslip = slip(JUNO, ["app:gardening"], f"group:{gid}:app:gardening")
     mid = str(uuid.uuid4())
     r = await srv._serve(JUNO, {"op": "app.deliver", "slip": gslip, "params": {
-        "app_id": "veterans", "action": "msg", "payload": {"x": 2}, "message_id": mid}})
+        "app_id": "gardening", "action": "msg", "payload": {"x": 2}, "message_id": mid}})
     check("B14 direct: a group-scoped app delivery is left to the group's roster (still stored)",
           admitted(r), r)
 
@@ -322,17 +322,17 @@ async def main(dsn: str) -> int:
     # roster holds the sender.
     def group_grant(group_id):
         return {"contract_id": "c-g-" + uuid.uuid4().hex[:8], "terms": {
-            "issuer": JUNO, "grantee": ME, "resource": f"group:{group_id}:app:veterans",
-            "allowed_ops": ["app:veterans"]}}
+            "issuer": JUNO, "grantee": ME, "resource": f"group:{group_id}:app:gardening",
+            "allowed_ops": ["app:gardening"]}}
 
     not_ours = f"grp-{ZED}-" + uuid.uuid4().hex
     r = await srv._serve(JUNO, {"op": "app.grant", "slip": msg_slip[JUNO],
-                                "params": {"app_id": "veterans", "app_slip": group_grant(not_ours)}})
+                                "params": {"app_id": "gardening", "app_slip": group_grant(not_ours)}})
     kept = await pool.fetchval("SELECT count(*) FROM peer_app_slips WHERE peer_entity_id = $1", JUNO)
     check("B14a direct: the blocked Host's app grant naming a group it is not in is refused and not kept",
           refused(r) and kept == 0, (r, kept))
     r = await srv._serve(JUNO, {"op": "app.grant", "slip": msg_slip[JUNO],
-                                "params": {"app_id": "veterans", "app_slip": group_grant(gid)}})
+                                "params": {"app_id": "gardening", "app_slip": group_grant(gid)}})
     check("B14b direct: its grant for a group the roster holds it in is left to the roster (stored)",
           admitted(r), r)
     await pool.execute("DELETE FROM peer_app_slips WHERE peer_entity_id = $1", JUNO)

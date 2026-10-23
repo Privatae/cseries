@@ -119,7 +119,7 @@ def b16():
     real = T.create_ticket_service
     T.create_ticket_service = fake_create
     try:
-        run(T.raise_phase_gate_ticket(pool, 3, project_id=9, phase_id=42))
+        run(T.raise_phase_gate_ticket(pool, 9003, project_id=9, phase_id=42))
     finally:
         T.create_ticket_service = real
     sitrep = seen.get("sitrep") or ""
@@ -201,7 +201,7 @@ def _slip_kit():
     key = Ed25519PrivateKey.generate()
     pub = key.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
 
-    def slip(issuer=3, grantee=9, ops=("message",), cid="slip-real-1", hours=1,
+    def slip(issuer=9003, grantee=9, ops=("message",), cid="slip-real-1", hours=1,
              exp_s=None, issued_s=None):
         now = datetime.now(timezone.utc)
         exp = now + (timedelta(seconds=exp_s) if exp_s is not None else timedelta(hours=hours))
@@ -247,7 +247,7 @@ def b17():
     big = "y" * (bound + 1)
     refusal = getattr(MH, "cross_host_body_refusal", lambda _b: None)
     try:
-        run(MS.send_message_service(Rec(), 3, to_entity_id=5, body=big))
+        run(MS.send_message_service(Rec(), 9003, to_entity_id=5, body=big))
         check("the sender refuses past the receiver's bound, in the receiver's words", False)
     except MS.MessageError as e:
         check("the sender refuses past the receiver's bound, in the receiver's words",
@@ -264,7 +264,7 @@ def b17():
         real_gp, real_eid = bs.get_pool, MH._entity_id
         real_trust = getattr(MH, "_slip_trust", None)
         bs.get_pool = lambda: pool
-        MH._entity_id = lambda: 3
+        MH._entity_id = lambda: 9003
 
         async def _t():
             return _trust
@@ -362,7 +362,7 @@ def b21():
     real = T._row_to_dict
     T._row_to_dict = lambda r: {}
     try:
-        out = run(T.list_tickets_service(pool, 3, limit=2, offset=4))
+        out = run(T.list_tickets_service(pool, 9003, limit=2, offset=4))
     finally:
         T._row_to_dict = real
     check("tickets page — OFFSET in the statement, next_offset in the answer",
@@ -395,7 +395,7 @@ def b21():
     pool = Rec(fetch=lambda sql, args: [])
     real_gp, real_eid = bs.get_pool, MH._entity_id
     bs.get_pool = lambda: pool
-    MH._entity_id = lambda: 3
+    MH._entity_id = lambda: 9003
     try:
         out = run(MH.handle_inbox_list({"limit": 20, "offset": 40}))
         out_c = run(MH.handle_calendar_list({"limit": 20, "offset": 60}))
@@ -468,7 +468,7 @@ def n6():
     pool = _activity_pool(tool_rows, research_rows)
     seen, before, pages = [], None, 0
     while pages < 60:
-        out = run(P.get_project_activity_service(pool, 3, 7, limit=7, before=before))
+        out = run(P.get_project_activity_service(pool, 9003, 7, limit=7, before=before))
         pages += 1
         for e in out["events"]:
             seen.append(e.get("args", {}).get("url") if e["kind"] == "tool_call" else e["memory_id"])
@@ -493,7 +493,7 @@ def n6():
     pool = _activity_pool(dup_rows, [])
     got, before, pages = [], None, 0
     while pages < 40:
-        out = run(P.get_project_activity_service(pool, 3, 7, limit=3, before=before))
+        out = run(P.get_project_activity_service(pool, 9003, 7, limit=3, before=before))
         pages += 1
         got += [e["args"].get("query") for e in out["events"] if e["tool"] == "recall"]
         before = out.get("next_before")
@@ -503,7 +503,7 @@ def n6():
           sorted(got) == [f"q{k}" for k in range(5)], got)
     # The first form of the cursor, a bare timestamp, still means strictly older.
     pool = _activity_pool(tool_rows, research_rows)
-    out = run(P.get_project_activity_service(pool, 3, 7, limit=200,
+    out = run(P.get_project_activity_service(pool, 9003, 7, limit=200,
                                              before=(base - timedelta(seconds=25)).isoformat()))
     check("a bare ISO `before` is still accepted as strictly older",
           out["events"] and all(e["at"] < (base - timedelta(seconds=25)).isoformat()
@@ -545,7 +545,7 @@ def b22():
                     "opened_at": None}
         return None
     try:
-        res = run(S.open_service(Rec(fetchrow=fr), 3, category="question", title="t",
+        res = run(S.open_service(Rec(fetchrow=fr), 9003, category="question", title="t",
                                  problem="p" * 12_000,
                                  files=[f"f{i}.md" for i in range(14)],
                                  include_errors=False, include_inference=False))
@@ -677,8 +677,8 @@ def r4():
         # 60 messages share ONE timestamp across a page edge — a timestamp
         # cursor alone would skip or repeat them.
         ts = t0 + timedelta(seconds=(i if i < 120 else 120 if i < 180 else i))
-        rows.append({"message_id": _uuid.uuid4(), "from_entity_id": 3 if i % 2 else 7,
-                     "to_entity_id": 7 if i % 2 else 3, "body": f"m{i}", "sent_at": ts,
+        rows.append({"message_id": _uuid.uuid4(), "from_entity_id": 9003 if i % 2 else 7,
+                     "to_entity_id": 7 if i % 2 else 9003, "body": f"m{i}", "sent_at": ts,
                      "read_at": None, "from_name": None, "peer_name": None,
                      "from_user_email": None, "to_user_email": None, "from_user_name": None,
                      "payload": {}, "ts": ts})
@@ -687,7 +687,7 @@ def r4():
 
     pool = _ThreadPool(rows, asc_outer=False)
     try:
-        first = run(MS.thread_service(pool, 3, tid, limit=100))
+        first = run(MS.thread_service(pool, 9003, tid, limit=100))
     except TypeError as e:
         check("thread_service takes limit and before", False, repr(e))
         first = None
@@ -698,14 +698,14 @@ def r4():
             n += 1
             if not page.get("next_before") or n > 10:
                 break
-            page = run(MS.thread_service(pool, 3, tid, limit=100, before=page["next_before"]))
+            page = run(MS.thread_service(pool, 9003, tid, limit=100, before=page["next_before"]))
         check("a 250-message thread comes back a page at a time with its true total",
               first.get("total") == 250 and len(first["messages"]) == 100
               and first["messages"][-1]["body"] == "m249", (first.get("total"), len(first["messages"])))
         check("paging by next_before returns every message exactly once (60 share a timestamp)",
               sorted(seen) == want and len(seen) == 250 and n == 3, (len(seen), len(set(seen)), n))
         try:
-            run(MS.thread_service(pool, 3, tid, before="not-a-cursor"))
+            run(MS.thread_service(pool, 9003, tid, before="not-a-cursor"))
             bad = None
         except MS.MessageError as e:
             bad = e
@@ -714,7 +714,7 @@ def r4():
 
     # ── a page is bounded by rows and by bytes, and its cursor follows ─
     pool = _ThreadPool(rows, asc_outer=False)
-    huge = run(MS.thread_service(pool, 3, tid, limit=10**9))
+    huge = run(MS.thread_service(pool, 9003, tid, limit=10**9))
     check("a huge limit is held to the page ceiling (never the whole thread in one read)",
           len(huge["messages"]) <= MS.THREAD_PAGE_MAX and pool.last_args[-2] <= MS.THREAD_PAGE_MAX + 1,
           (len(huge["messages"]), pool.last_args[-2]))
@@ -724,7 +724,7 @@ def r4():
                     "sent_at": t0 + timedelta(minutes=10, seconds=i)})
     bpool = _ThreadPool(big, asc_outer=False)
     budget = MS.thread_page_budget()
-    p1 = run(MS.thread_service(bpool, 3, tid, limit=100))
+    p1 = run(MS.thread_service(bpool, 9003, tid, limit=100))
     body_bytes = sum(len(m["body"].encode()) for m in p1["messages"])
     check("a page of long messages stops at the byte budget, and says there is more",
           0 < len(p1["messages"]) < 40 and body_bytes <= max(budget, 20_004)
@@ -735,11 +735,11 @@ def r4():
         n += 1
         if not page.get("next_before") or n > 60:
             break
-        page = run(MS.thread_service(bpool, 3, tid, limit=100, before=page["next_before"]))
+        page = run(MS.thread_service(bpool, 9003, tid, limit=100, before=page["next_before"]))
     check("next_before follows the rows actually returned — every long message once",
           sorted(seen) == sorted(m["body"][:4] for m in big) and len(seen) == 40, (len(seen), n))
     one = [{**rows[0], "message_id": _uuid.uuid4(), "body": "Z" * (budget + 50_000)}]
-    po = run(MS.thread_service(_ThreadPool(one, asc_outer=False), 3, tid))
+    po = run(MS.thread_service(_ThreadPool(one, asc_outer=False), 9003, tid))
     check("one message larger than the budget still comes back on its own page",
           len(po["messages"]) == 1 and po.get("next_before") is None, len(po["messages"]))
 
@@ -763,7 +763,7 @@ def r4():
     try:
         cpool = _ThreadPool(rows, asc_outer=True)
         BS.get_pool = lambda: cpool
-        C._entity_id = lambda: 3
+        C._entity_id = lambda: 9003
 
         async def _name():
             return "Me"
@@ -820,7 +820,7 @@ def r6b1():
         async def _policy(pool_, from_address, from_eid, entity_id, kind):
             asked.append((from_eid, kind))
             return not (from_eid is not None and int(from_eid) in deny_hosts)
-        bs.get_pool, MH._entity_id, DP.check_inbound_allowed = (lambda: pool), (lambda: 3), _policy
+        bs.get_pool, MH._entity_id, DP.check_inbound_allowed = (lambda: pool), (lambda: 9003), _policy
         try:
             out = run(MH.handle_inbox_append(payload))
         finally:
@@ -833,7 +833,7 @@ def r6b1():
     # with from_entity_id forced to the sender (9) by the bridge.
     spoof = {"subject": "Message", "message_kind": "message", "from_entity_id": 9,
              "from_address": "9@entity.localhost", "sender_verified": True,
-             "payload": {}, "direction": "outbound", "outbound_to_entity_id": 3}
+             "payload": {}, "direction": "outbound", "outbound_to_entity_id": 9003}
     out, row, _ = _send({**spoof, "body": "x" * (2 * 1024 * 1024)})
     check("a 2 MiB message from another host labelled 'outbound' is refused by the bound",
           out.get("too_large") is True and row is None, (out, row))
@@ -847,16 +847,16 @@ def r6b1():
           (out, row, asked))
     # The bridge's genuine outbound copy carries THIS Host's own id.
     out, row, asked = _send({"subject": "Message", "message_kind": "message", "body": "my own send",
-                             "from_entity_id": 3, "from_address": "3@entity.localhost",
+                             "from_entity_id": 9003, "from_address": "9003@entity.localhost",
                              "direction": "outbound", "outbound_to_entity_id": 9, "payload": {}},
                             deny_hosts=(9,))
     check("a genuine outbound copy (from this Host) still lands, to the peer, unchecked",
-          out.get("ok") is True and row == (3, 9)
+          out.get("ok") is True and row == (9003, 9)
           and not asked, (out, row, asked))
     out, row, _ = _send({"subject": "Message", "message_kind": "message", "body": "x" * 300_000,
                          "direction": "outbound", "outbound_to_entity_id": 9, "payload": {}})
     check("the local write path (no from_entity_id) still writes an outbound copy, unbounded",
-          out.get("ok") is True and row == (3, 9), (out, row))
+          out.get("ok") is True and row == (9003, 9), (out, row))
 
 
 # ── security: the receiving Host checks the slip itself ──────────────
@@ -876,7 +876,7 @@ def r7():
 
         async def _t():
             return trust_obj
-        bs.get_pool, MH._entity_id, DP.check_inbound_allowed = (lambda: pool), (lambda: 3), _policy
+        bs.get_pool, MH._entity_id, DP.check_inbound_allowed = (lambda: pool), (lambda: 9003), _policy
         MH._slip_trust = _t
         try:
             kw = {"verified_slip": verified_slip} if verified_slip is not None else {}
@@ -932,7 +932,7 @@ def r7():
     check("a slip granted to another host is refused (grantee must be the sender)",
           out.get("blocked") is True and not stored, (out, stored))
 
-    out, stored, _ = _send(base, verified_slip={"issuer": 3, "grantee": 9, "allowed_ops": ["message"]})
+    out, stored, _ = _send(base, verified_slip={"issuer": 9003, "grantee": 9, "allowed_ops": ["message"]})
     check("the direct lane's in-process verification admits (verified_slip=, not a payload field)",
           out.get("ok") is True and stored, (out, stored))
 
@@ -957,7 +957,7 @@ def r7():
         _srvpkg.main = stub
         pool = Rec(fetchval=lambda sql, a: "11111111-1111-1111-1111-111111111111")
         saved = (bs.get_pool, MH._entity_id)
-        bs.get_pool, MH._entity_id = (lambda: pool), (lambda: 3)
+        bs.get_pool, MH._entity_id = (lambda: pool), (lambda: 9003)
         if real_lookup is not None:
             MH._slip_trust = real_lookup
         try:
@@ -1044,7 +1044,7 @@ def r7():
                      ("grantee not a number (re-signed)", mk(grantee="abc"))):
         try:
             ok, reason, _ = SV.verify_slip(sl, 9, "message", trusted_keys=trust.keys,
-                                           revoked_ids=set(), expected_issuer=3)
+                                           revoked_ids=set(), expected_issuer=9003)
             r = (ok, reason)
         except Exception as e:  # noqa: BLE001
             r = ("raised", repr(e))
@@ -1067,7 +1067,7 @@ def r7():
     async def _deliver(peer_id, info, params):
         delivered.append(params)
         return {"ok": True}
-    ps = PeerServer(trust=_Ready(), handlers={"inbox.deliver": _deliver}, my_entity_id=3)
+    ps = PeerServer(trust=_Ready(), handlers={"inbox.deliver": _deliver}, my_entity_id=9003)
     for what, sl in (("terms a string", {**good, "terms": "x"}),
                      ("key_id a list", {**good, "terms": {**good["terms"], "key_id": ["k1"]}}),
                      ("grantee not a number (re-signed)", mk(grantee="abc"))):
@@ -1560,7 +1560,7 @@ def g4x4():
         # 60 messages share ONE timestamp across a page edge.
         sec = i if i < 120 else 120 if i < 180 else i
         rows.append({"id": 1000 + i, "thread_id": 1, "session_id": 9,
-                     "sender_entity_id": 4 if i % 2 else 3, "sender_type": "entity",
+                     "sender_entity_id": 4 if i % 2 else 9003, "sender_type": "entity",
                      "content": f"g{i}", "created_at": (t0 + timedelta(seconds=sec)).isoformat()})
     want = sorted(r["content"] for r in rows)
 
@@ -1574,7 +1574,7 @@ def g4x4():
 
     saved = (C.server_main.get_bridge_client, C._entity_id, C._entity_display_name)
     try:
-        C._entity_id = lambda: 3
+        C._entity_id = lambda: 9003
 
         async def _name():
             return "Me"

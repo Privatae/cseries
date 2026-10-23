@@ -205,7 +205,7 @@ check("a denied image:* is refused, pointing at harness:run",
       r is None and "never enforced" in (err or "") and "'harness:run'" in (err or ""), err)
 check("... and that is what the gate does",
       nac_mgmt.harness_image_allowed([{"server": "b", "ops": ["harness:run", "image:*"]},
-                                      {"server": "b", "ops": [], "deny": ["image:*"]}], 3, "b", "x", mode="git"))
+                                      {"server": "b", "ops": [], "deny": ["image:*"]}], 9003, "b", "x", mode="git"))
 
 # 5
 pool, r, err = draft(server="new-box", purposes=["observe"])
@@ -281,15 +281,15 @@ _pull = "model_pull|qwen3-embedding:4b|embed|3000000000|"
 _details = base64.b64encode(json.dumps({"kind": "model_pull"}).encode()).decode()
 _other = base64.b64encode(json.dumps({"kind": "dcn_store_grant"}).encode()).decode()
 check("a model_pull ask is allowed",
-      nac_mgmt.host_stepup_refusal(3, 11, "stepup_request", [_pull, _details]) is None)
+      nac_mgmt.host_stepup_refusal(9003, 11, "stepup_request", [_pull, _details]) is None)
 check("any other kind is refused, naming the model_pull shape",
       all(w and "model_pull|<model>" in w for w in (
-          nac_mgmt.host_stepup_refusal(3, 11, "stepup_request", ["dcn_store_grant|x", _other]),
-          nac_mgmt.host_stepup_refusal(3, 11, "stepup_request", [_pull, _other]),
-          nac_mgmt.host_stepup_refusal(3, 11, "stepup_request", ["critical_action|x", _details]))))
+          nac_mgmt.host_stepup_refusal(9003, 11, "stepup_request", ["dcn_store_grant|x", _other]),
+          nac_mgmt.host_stepup_refusal(9003, 11, "stepup_request", [_pull, _other]),
+          nac_mgmt.host_stepup_refusal(9003, 11, "stepup_request", ["critical_action|x", _details]))))
 check("a malformed model_pull ask goes to the machine, whose words say what is wrong",
-      nac_mgmt.host_stepup_refusal(3, 11, "stepup_request", [_pull]) is None
-      and nac_mgmt.host_stepup_refusal(3, 11, "stepup_request", [_pull, "not base64!"]) is None)
+      nac_mgmt.host_stepup_refusal(9003, 11, "stepup_request", [_pull]) is None
+      and nac_mgmt.host_stepup_refusal(9003, 11, "stepup_request", [_pull, "not base64!"]) is None)
 skill_pull = skill[skill.index("## Putting a model on someone's machine"):]
 check("the skill names the ask's exact arguments and the restart answer",
       "model_pull|<model>|<role>|<max_bytes>|<replaces>" in skill_pull
@@ -334,7 +334,7 @@ nac_mgmt.audit_mgmt = _audit
 nac_mgmt.get_mgmt_relay = lambda: _relay
 try:
     def _run(op, args, origin="tool"):
-        return asyncio.run(nac_mgmt.run_mgmt_op(_GatePool(), 3, "box-9", op, args,
+        return asyncio.run(nac_mgmt.run_mgmt_op(_GatePool(), 9003, "box-9", op, args,
                                                 token_id=21, origin=origin))
     r1 = _run("stepup_request", [_pull, _details])
     check("run_mgmt_op: the Host's model_pull ask reaches the machine",
@@ -362,7 +362,7 @@ check("the result says 30 days, never longer, and echoes no ttl",
       r and r["lasts"].startswith("30 days") and "never longer" in r["lasts"] and "ttl_days" not in r, r)
 for ttl in (31, 3650, -1):
     try:
-        asyncio.run(nac_commit.approve_mgmt_grant(object(), 3, 1, stepup_code="000000", ttl_days=ttl))
+        asyncio.run(nac_commit.approve_mgmt_grant(object(), 9003, 1, stepup_code="000000", ttl_days=ttl))
         ok = False
     except nac_commit.CommitError as e:
         ok = e.status == 400 and "1 to 30 days" in e.detail
@@ -382,7 +382,7 @@ class _DbPool:
 
 for ttl in (None, 0, 1, 30):
     try:
-        asyncio.run(nac_commit.approve_mgmt_grant(_DbPool(), 3, 1, stepup_code="000000", ttl_days=ttl))
+        asyncio.run(nac_commit.approve_mgmt_grant(_DbPool(), 9003, 1, stepup_code="000000", ttl_days=ttl))
         ok = False
     except _Reached:
         ok = True

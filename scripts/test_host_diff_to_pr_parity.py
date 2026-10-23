@@ -748,7 +748,7 @@ def part_g_projects():
         P.fork_repo_for_project, P.ensure_project_repo = fork, own_repo
         P.ensure_project_dir = lambda pid: None
         T._write_started_from = _no_marker
-        r = run(T._exec_create_project({"name": "cseries fix", "repo": "owner/repo"}, 3, _Pool()))
+        r = run(T._exec_create_project({"name": "cseries fix", "repo": "owner/repo"}, 9003, _Pool()))
         check("G1 create_project repo= mounts the repository",
               r.get("status") == "ok" and ("insert_mounted", "owner/repo") in calls
               and ("mount", 77, "owner/repo") in calls and ("own_repo", 77) not in calls, (r, calls))
@@ -760,7 +760,7 @@ def part_g_projects():
               and ("fork", 78, "owner/repo") in calls
               and r["result"].get("forked_from") == "owner/repo", (r, calls))
         calls.clear()
-        r = run(T._exec_create_project({"name": "locked", "repo": "owner/locked"}, 3, _Pool()))
+        r = run(T._exec_create_project({"name": "locked", "repo": "owner/locked"}, 9003, _Pool()))
         check("G3 a repository the Host can only read is refused before any row, naming the fork",
               r.get("status") != "ok" and "Fork it" in str(r.get("result"))
               and not any(c[0].startswith("insert") for c in calls), (r, calls))

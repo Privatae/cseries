@@ -25,8 +25,8 @@ T = datetime(2026, 9, 23, tzinfo=timezone.utc)
 def row(kind, decision_id):
     return {"message_id": "m-" + kind, "thread_id": "t", "from_address": "a", "to_address": "b",
             "subject": "s", "body_format": "text/plain", "message_kind": kind, "sent_at": T,
-            "delivered_at": None, "read_at": None, "archived_at": None, "from_entity_id": 3,
-            "to_entity_id": 3, "from_user_email": None, "decision_id": decision_id}
+            "delivered_at": None, "read_at": None, "archived_at": None, "from_entity_id": 9003,
+            "to_entity_id": 9003, "from_user_email": None, "decision_id": decision_id}
 
 
 class Pool:
@@ -40,7 +40,7 @@ class Pool:
 def main() -> int:
     brain_service._pool = Pool()
     real = mh._entity_id
-    mh._entity_id = lambda: 3
+    mh._entity_id = lambda: 9003
     try:
         out = asyncio.run(mh.handle_inbox_list({}))
     finally:

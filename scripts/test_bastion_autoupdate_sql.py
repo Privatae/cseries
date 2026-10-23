@@ -48,7 +48,7 @@ BEAT_SQL = ("INSERT INTO network_bastion_heartbeat (token_id, hostname, gateway_
             "last_seen_at) VALUES ($1, $2, $3, $4, now() - ($5::text)::interval)")
 
 
-async def token(c, tid, entity=3, revoked=False):
+async def token(c, tid, entity=9003, revoked=False):
     await c.execute(TOKEN_SQL, tid, entity, tid.to_bytes(4, "big"),
                     f"box-{tid}", __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
                     if revoked else None)
@@ -68,8 +68,8 @@ async def main(dsn) -> int:
         # migration after it, it must still be a no-op.
         await c.execute(mig)
         await c.execute(mig)
-        for tid, entity, revoked in ((7, 3, False), (8, 3, False), (9, 3, True), (10, 3, False),
-                                     (11, 99, False), (12, 3, False)):
+        for tid, entity, revoked in ((7, 9003, False), (8, 9003, False), (9, 9003, True), (10, 9003, False),
+                                     (11, 99, False), (12, 9003, False)):
             await token(c, tid, entity, revoked)
         for row in ((7, "box-7", "0.33.0", None, "0"), (8, "box-8", "0.32.2", "0.33.0", "2 hours"),
                     (9, "box-9", "0.33.0", None, "0"), (10, "box-10", "0.33.0", None, "0"),
@@ -96,10 +96,10 @@ async def main(dsn) -> int:
     saved = (nac_commit.update_bastions, bau._online_now)
     try:
         nac_commit.update_bastions, bau._online_now = fake_update, online_first
-        await bau._direct(pool, 3, "0.33.0", ring0=True)
+        await bau._direct(pool, 9003, "0.33.0", ring0=True)
         first = {r["token_id"]: (r["online_at_told"], r["told_at"]) for r in await pool.fetch(q)}
         nac_commit.update_bastions, bau._online_now = fake_update, online_second
-        await bau._direct(pool, 3, "0.33.0", ring0=True)
+        await bau._direct(pool, 9003, "0.33.0", ring0=True)
         second = {r["token_id"]: (r["online_at_told"], r["told_at"]) for r in await pool.fetch(q)}
     finally:
         nac_commit.update_bastions, bau._online_now = saved
@@ -109,7 +109,7 @@ async def main(dsn) -> int:
           first == second, f"{first} vs {second}")
 
     opened = await pool.fetchval("SELECT now() - interval '1 day'")
-    await bau._observe(pool, 3, "0.33.0", opened)
+    await bau._observe(pool, 9003, "0.33.0", opened)
     took1 = {r["token_id"]: r["took_at"] for r in await pool.fetch(q)}
     check("observe marks every machine of this Host on the version, told or not "
           "(box-10 got there by a manual update)",
@@ -119,7 +119,7 @@ async def main(dsn) -> int:
     check("observe skips a machine that last reported the version days ago and is silent "
           "(a re-published old version must not count the dead as having taken it)",
           12 not in took1, str(took1))
-    await bau._observe(pool, 3, "0.33.0", opened)
+    await bau._observe(pool, 9003, "0.33.0", opened)
     took2 = {r["token_id"]: r["took_at"] for r in await pool.fetch(q)}
     check("the first sighting wins", took1[7] == took2[7] and took1[10] == took2[10])
     # A machine that took it by hand and wedged 40 minutes ago, while passes were
@@ -127,12 +127,12 @@ async def main(dsn) -> int:
     async with pool.acquire() as c:
         await token(c, 13)
         await c.execute(BEAT_SQL, 13, "wedged-by-hand", "0.33.0", None, "40 minutes")
-    await bau._observe(pool, 3, "0.33.0", opened)
+    await bau._observe(pool, 9003, "0.33.0", opened)
     took3 = {r["token_id"]: r["took_at"] for r in await pool.fetch(q)}
     check("a machine that beat on the version after the canary opened counts, even if silent now",
           took3.get(13) is not None, str(took3))
     await pool.execute("DELETE FROM bastion_autoupdate_watch WHERE token_id = 13")
-    await bau._observe(pool, 3, "0.33.0", None)
+    await bau._observe(pool, 9003, "0.33.0", None)
     took4 = {r["token_id"]: r["took_at"] for r in await pool.fetch(q)}
     check("with no opening time, only the last 15 minutes count", 13 not in took4, str(took4))
     await pool.execute("DELETE FROM mcp_client_tokens WHERE id = 13")

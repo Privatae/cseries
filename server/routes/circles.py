@@ -904,11 +904,14 @@ async def _list_bastion_peers_without_thread(eid: int, have: set[str]) -> list[d
     widening any authorization — which discovery must never do.
 
     A DORMANT peering (the bastion stopped announcing it) is not listed: it is
-    history, and belongs in Network rather than at the top of Circles. A peering
+    history, and belongs in Network rather than at the top of Circles. Nor is
+    one the bastion reports as pending or revoked, or names with no state: a
+    peer listed here is one the user can send a connection request to, and
+    contacts.request_peer_service refuses every one of those. A peering
     whose entity id has not resolved yet cannot be opened, so it is not listed
-    either — it appears on the beat that resolves it. list_peerings
-    (peer_discovery.py:242-277) returns peer_entity_id (None until resolved) and
-    `current`, which is exactly what this filters on.
+    either — it appears on the beat that resolves it. list_peerings returns
+    peer_entity_id (None until resolved) and `requestable` (current and
+    reported active), which is exactly what this filters on.
     """
     pool = brain_service.get_pool()
     if pool is None:
@@ -936,7 +939,7 @@ async def _list_bastion_peers_without_thread(eid: int, have: set[str]) -> list[d
     out, seen = [], set()
     for p in peerings:
         pid = p.get("peer_entity_id")
-        if not p.get("current") or pid is None:
+        if not p.get("requestable") or pid is None:
             continue
         key = str(pid)
         if key in have or key in seen:
@@ -3444,15 +3447,16 @@ async def delete_thread(kind: str, ref: str, request: Request) -> dict:
         # filtering), so archiving would hide a Host you are still sharing a
         # machine with — and that peering is precisely the fact this feature
         # exists to keep in front of the user. Refused while the peering is
-        # current; once the bastion stops announcing it, or the bastion is
+        # current and the bastion reports it active (the same peering the Hosts
+        # list shows, _list_bastion_peers_without_thread); once the bastion
+        # stops announcing it, reports it pending or revoked, or the bastion is
         # revoked, it clears normally. Refused rather than silently no-op'd: a
         # Clear that reports success and changes nothing is worse than one that
         # says why.
         try:
             from server.network import peer_discovery
-            live_peer = next(
-                (p for p in await peer_discovery.list_peerings(pool, eid)
-                 if p.get("peer_entity_id") == peer and p.get("current")), None)
+            live_peer = peer_discovery.requestable_peering(
+                await peer_discovery.list_peerings(pool, eid), peer)
         except Exception as exc:  # noqa: BLE001 - never block a clear on this
             log.info("peering check skipped for peer %s: %s", peer, exc)
             live_peer = None

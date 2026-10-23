@@ -31,7 +31,7 @@ import server.routes.network as N
 from server.network import machine_offers as mo, pairing_grants as pg, bastion_enroll as be
 from server.peer import peer_client
 
-SERVER, SUBJECT, HANDLE, PEER = "box-a", "friend.zone.example.test", "friend", 122
+SERVER, SUBJECT, HANDLE, PEER = "box-a", "friend.zone.example.test", "friend", 9122
 ANCHOR = "entity-1.zone.example.test"
 
 class Pool:

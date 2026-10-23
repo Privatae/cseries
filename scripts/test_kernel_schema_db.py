@@ -5,8 +5,8 @@
      BEFORE the migrations — so rows a migration seeds for the entity carry the
      Host's id: v019/v037/v038/v054 seed entity_domain_access from
      entity_registry. Measured 2026-10-01: a fresh build seeds 11 rows; on an
-     entity-1 clone renumbered to 3 afterwards (what this module used to do)
-     all 11 stay under entity 1 while entity_registry says 3 — no foreign key
+     entity-1 clone renumbered to 9003 afterwards (what this module used to do)
+     all 11 stay under entity 1 while entity_registry says 9003 — no foreign key
      notices (review of preview-animated at fa0dccbe). The id-0 'Platform' row
      v094/v105 add is the platform's, not the entity's;
   U. upto=165 is the schema a Host had before v165: no v165 in the ledger, and
@@ -53,7 +53,7 @@ def q(dsn: str, sql: str) -> str:
 
 def main(server: str) -> None:
     print("E. the entity id is set before the migrations seed")
-    for eid in (3, 1):
+    for eid in (9003, 1):
         with ks.kernel_schema_db(server, entity_id=eid) as dsn:
             row = q(dsn, "SELECT string_agg(id || '/' || coalesce(privatae_entity_id::text, '-'), ',') "
                          "FROM entity_registry WHERE id <> 0")
@@ -97,7 +97,7 @@ def main(server: str) -> None:
         check("another tree's template is dropped", other in dropped and other not in left, dropped)
         check("a build whose process is gone is dropped", dead_build in dropped and dead_build not in left, dropped)
         check("a build still in progress is kept", live_build in left)
-        check("this tree's templates are kept", mine in left and ks.template_name(ROOT, 3) in left,
+        check("this tree's templates are kept", mine in left and ks.template_name(ROOT, 9003) in left,
               sorted(n for n in left if n.startswith("kernel_")))
     finally:
         for name in (other, dead_build, live_build):

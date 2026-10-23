@@ -83,12 +83,12 @@ async def main() -> int:
     from server.peer import handlers as H
     from server import brain_service
 
-    brain_service._entity_id = 3
+    brain_service._entity_id = 9003
     pool = StubPool()
     brain_service._pool = pool
 
     # ── 1. the deliver action is derived from params ────────────────────────
-    check(L.action_for_deliver({"app_id": "veterans"}) == "app:veterans",
+    check(L.action_for_deliver({"app_id": "gardening"}) == "app:gardening",
           "app.deliver's action is app:<app_id> from its own params")
     check(L.action_for_deliver({"app_id": "Bad App!"}) is None, "a malformed app_id yields no action")
     check(L.action_for_deliver({}) is None, "missing app_id yields no action")
@@ -113,15 +113,15 @@ async def main() -> int:
         called.append(params)
         return {"ok": True}
 
-    srv = PS.PeerServer(trust=Trust(), handlers={"app.deliver": h}, my_entity_id=3)
-    r = await srv._serve(122, {"op": "app.deliver", "slip": {"x": 1}, "params": {"app_id": "no way"}})
+    srv = PS.PeerServer(trust=Trust(), handlers={"app.deliver": h}, my_entity_id=9003)
+    r = await srv._serve(9122, {"op": "app.deliver", "slip": {"x": 1}, "params": {"app_id": "no way"}})
     check(not r.get("ok") and "unknown op" in (r.get("error") or ""),
           "server refuses app.deliver whose params name no valid app, as an unknown op", r)
     check(not called, "and never reaches the handler")
 
     # The installed-app registry both receiver ops consult, stubbed once.
     from server.applications import registry as R
-    apps = {"veterans": FakeApp(["read:peer_app", "write:peer_app"]),
+    apps = {"gardening": FakeApp(["read:peer_app", "write:peer_app"]),
             "mute": FakeApp(["read:calendar"]),
             "gone": FakeApp(["read:peer_app"], status="uninstalled")}
 
@@ -131,28 +131,28 @@ async def main() -> int:
     R.get = fake_get
 
     # ── 2. app.grant stores only a slip naming (them -> us) ─────────────────
-    def slip(issuer=122, grantee=3, ops=("app:veterans",)):
+    def slip(issuer=9122, grantee=9003, ops=("app:gardening",)):
         return {"contract_id": "c-app-1",
                 "terms": {"issuer": issuer, "grantee": grantee, "allowed_ops": list(ops),
                           "expires_at": "2026-12-01T00:00:00+00:00", "contract_id": "c-app-1"}}
 
     pool.execs.clear()
-    r = await L.app_grant(122, {"allowed_ops": ["message"]}, {"app_id": "veterans", "app_slip": slip()})
+    r = await L.app_grant(9122, {"allowed_ops": ["message"]}, {"app_id": "gardening", "app_slip": slip()})
     check(r.get("ok") and r.get("stored"), "a well-formed app slip from the presenting peer is stored", r)
     check(any("INSERT INTO peer_app_slips" in s for s, _ in pool.execs), "into peer_app_slips")
     stored_args = [a for s, a in pool.execs if "INSERT INTO peer_app_slips" in s][0]
-    check(stored_args[0] == 122 and stored_args[1] == "veterans",
+    check(stored_args[0] == 9122 and stored_args[1] == "gardening",
           "keyed by the CERT's peer id and the app id", stored_args[:2])
 
-    r = await L.app_grant(122, {}, {"app_id": "veterans", "app_slip": slip(issuer=999)})
+    r = await L.app_grant(9122, {}, {"app_id": "gardening", "app_slip": slip(issuer=999)})
     check(not r.get("ok"), "a slip issued by a THIRD host is refused — cannot be parked under this peer", r)
-    r = await L.app_grant(122, {}, {"app_id": "veterans", "app_slip": slip(grantee=7)})
+    r = await L.app_grant(9122, {}, {"app_id": "gardening", "app_slip": slip(grantee=7)})
     check(not r.get("ok"), "a slip naming another grantee is refused", r)
-    r = await L.app_grant(122, {}, {"app_id": "veterans", "app_slip": slip(ops=("app:other",))})
+    r = await L.app_grant(9122, {}, {"app_id": "gardening", "app_slip": slip(ops=("app:other",))})
     check(not r.get("ok"), "a slip whose allowed_ops do not cover this app is refused", r)
-    r = await L.app_grant(122, {}, {"app_id": "veterans", "app_slip": "nope"})
+    r = await L.app_grant(9122, {}, {"app_id": "gardening", "app_slip": "nope"})
     check(not r.get("ok"), "a non-object slip is refused", r)
-    r = await L.app_grant(122, {}, {"app_id": "../x", "app_slip": slip()})
+    r = await L.app_grant(9122, {}, {"app_id": "../x", "app_slip": slip()})
     check(not r.get("ok"), "a malformed app_id is refused", r)
 
     # ── 3. app.deliver: installed + declared, idempotent ────────────────────
@@ -160,44 +160,44 @@ async def main() -> int:
         return None
 
     L._hand_to_live_process = no_live
-    info = {"allowed_ops": ["app:veterans"]}
+    info = {"allowed_ops": ["app:gardening"]}
     mid = str(uuid.uuid4())
-    params = {"app_id": "veterans", "action": "probe", "payload": {"c": ["abc"]}, "message_id": mid}
-    r = await L.app_deliver(122, info, params)
+    params = {"app_id": "gardening", "action": "probe", "payload": {"c": ["abc"]}, "message_id": mid}
+    r = await L.app_deliver(9122, info, params)
     check(r.get("ok") and r.get("stored") and r.get("duplicate") is False,
           "a delivery for an installed, declared app is stored", r)
-    check(pool.rows and pool.rows[-1][1] == 122,
+    check(pool.rows and pool.rows[-1][1] == 9122,
           "peer_entity_id on the row is the CERT identity, never a param", pool.rows[-1][:3] if pool.rows else None)
-    r2 = await L.app_deliver(122, info, params)
+    r2 = await L.app_deliver(9122, info, params)
     check(r2.get("ok") and r2.get("duplicate") is True, "the same message_id again is a duplicate, not a row", r2)
     check(len(pool.rows) == 1, "exactly one row stored for two deliveries of one id")
 
-    r = await L.app_deliver(122, {"allowed_ops": ["app:mute"]},
+    r = await L.app_deliver(9122, {"allowed_ops": ["app:mute"]},
                             {**params, "app_id": "mute", "message_id": str(uuid.uuid4())})
     check(not r.get("ok") and "peer traffic" in (r.get("error") or ""),
           "an installed app that never declared read:peer_app is refused", r)
-    r = await L.app_deliver(122, {"allowed_ops": ["app:gone"]},
+    r = await L.app_deliver(9122, {"allowed_ops": ["app:gone"]},
                             {**params, "app_id": "gone", "message_id": str(uuid.uuid4())})
     check(not r.get("ok") and "not installed" in (r.get("error") or ""), "an uninstalled app is refused", r)
-    r = await L.app_deliver(122, {"allowed_ops": ["app:nothere"]},
+    r = await L.app_deliver(9122, {"allowed_ops": ["app:nothere"]},
                             {**params, "app_id": "nothere", "message_id": str(uuid.uuid4())})
     check(not r.get("ok") and "not installed" in (r.get("error") or ""), "an unknown app is refused", r)
-    r = await L.app_deliver(122, {"allowed_ops": ["app:other"]},
+    r = await L.app_deliver(9122, {"allowed_ops": ["app:other"]},
                             {**params, "message_id": str(uuid.uuid4())})
     check(not r.get("ok"), "a slip whose ops do not cover the named app is refused by the handler too", r)
-    r = await L.app_deliver(122, info, {**params, "message_id": "not-a-uuid"})
+    r = await L.app_deliver(9122, info, {**params, "message_id": "not-a-uuid"})
     check(not r.get("ok"), "message_id must be a UUID", r)
-    r = await L.app_deliver(122, info, {**params, "action": "bad action!", "message_id": str(uuid.uuid4())})
+    r = await L.app_deliver(9122, info, {**params, "action": "bad action!", "message_id": str(uuid.uuid4())})
     check(not r.get("ok"), "a malformed action is refused", r)
-    r = await L.app_deliver(122, info, {**params, "payload": {"big": "x" * (L.MAX_PAYLOAD_BYTES + 1)},
+    r = await L.app_deliver(9122, info, {**params, "payload": {"big": "x" * (L.MAX_PAYLOAD_BYTES + 1)},
                                         "message_id": str(uuid.uuid4())})
     check(not r.get("ok"), "an oversized payload is refused", r)
 
     # ── 3b. app.grant is bounded to apps installed here that accept peers ───
-    r = await L.app_grant(122, {}, {"app_id": "mute", "app_slip": slip(ops=("app:mute",))})
+    r = await L.app_grant(9122, {}, {"app_id": "mute", "app_slip": slip(ops=("app:mute",))})
     check(not r.get("ok") and "peer traffic" in (r.get("error") or ""),
           "a slip for an installed app that never declared read:peer_app is not stored", r)
-    r = await L.app_grant(122, {}, {"app_id": "nothere", "app_slip": slip(ops=("app:nothere",))})
+    r = await L.app_grant(9122, {}, {"app_id": "nothere", "app_slip": slip(ops=("app:nothere",))})
     check(not r.get("ok") and "not installed" in (r.get("error") or ""),
           "a slip for an app not installed here is not stored (no unbounded rows per app_id string)", r)
 
@@ -253,7 +253,7 @@ async def main() -> int:
     PC.send_to_peer = fake_send
     live_slip = {"contract_id": "c1", "terms": {"expires_at": "2099-01-01T00:00:00+00:00",
                                                 "issued_at": "2099-01-01T00:00:00+00:00"}}
-    base_row = {"id": 7, "app_id": "veterans", "peer_entity_id": 122, "op": L.OP_DELIVER,
+    base_row = {"id": 7, "app_id": "gardening", "peer_entity_id": 9122, "op": L.OP_DELIVER,
                 "action": "probe", "payload": {"k": "v"}, "message_id": uuid.uuid4(), "attempts": 0}
 
     # no slip on file -> queued with backoff, nothing on the wire
@@ -291,7 +291,7 @@ async def main() -> int:
 
     # peer answers not installed -> refused
     async def not_installed(peer, op, slip_, params, **kw):
-        return {"ok": False, "receiver": True, "error": "app 'veterans' is not installed on this host"}
+        return {"ok": False, "receiver": True, "error": "app 'gardening' is not installed on this host"}
     PC.send_to_peer = not_installed
     out = await L.attempt(p, dict(base_row))
     check(out["status"] == "refused", "a peer that says the app is not installed is final", out)
@@ -315,12 +315,12 @@ async def main() -> int:
                 return None      # conflict: pretend the row exists
             return {"id": 3, "status": "delivered", "message_id": args[2], "attempts": 1}
     ep = EnqPool()
-    row = await L.enqueue(ep, "veterans", 122, L.OP_DELIVER, "probe", {}, uuid.uuid4())
+    row = await L.enqueue(ep, "gardening", 9122, L.OP_DELIVER, "probe", {}, uuid.uuid4())
     ins = [s for s, _ in ep.execs if "INSERT INTO peer_app_outbox" in s][0]
     check("ON CONFLICT (app_id, peer_entity_id, message_id)" in ins,
           "the outbox insert conflicts on (app, peer, message_id), not message_id alone", ins)
     sel = [(s, a) for s, a in ep.execs if s.startswith("SELECT id, status")][0]
-    check("app_id = $1 AND peer_entity_id = $2 AND message_id = $3" in sel[0] and sel[1][:2] == ("veterans", 122),
+    check("app_id = $1 AND peer_entity_id = $2 AND message_id = $3" in sel[0] and sel[1][:2] == ("gardening", 9122),
           "the re-select after a conflict is scoped to THIS app and THIS peer", sel)
     inbox_ins = [s for s, _ in pool.execs if "INSERT INTO peer_app_inbox" in s][0]
     check("ON CONFLICT (app_id, peer_entity_id, message_id)" in inbox_ins,
@@ -357,38 +357,38 @@ async def main() -> int:
           "installer.uninstall_app deletes the inbox only under purge=True, like every other artifact")
 
     # ── 5b. transient receiver answers are STRUCTURED, not prose ────────────
-    r = await L.app_deliver(122, info, {**params, "message_id": str(uuid.uuid4()), "app_id": "veterans"})
+    r = await L.app_deliver(9122, info, {**params, "message_id": str(uuid.uuid4()), "app_id": "gardening"})
     check(r.get("ok"), "sanity: a good delivery still lands")
     brain_service._pool = None
-    r = await L.app_deliver(122, info, {**params, "message_id": str(uuid.uuid4())})
+    r = await L.app_deliver(9122, info, {**params, "message_id": str(uuid.uuid4())})
     check(r.get("ok") is False and r.get("retryable") is True, "no pool → retryable: True on the answer", r)
-    r = await L.app_grant(122, {}, {"app_id": "veterans", "app_slip": slip()})
+    r = await L.app_grant(9122, {}, {"app_id": "gardening", "app_slip": slip()})
     check(r.get("ok") is False and r.get("retryable") is True, "no pool on grant → retryable: True", r)
     brain_service._pool = pool
-    r = await L.app_deliver(122, {"allowed_ops": ["app:nothere"]},
+    r = await L.app_deliver(9122, {"allowed_ops": ["app:nothere"]},
                             {**params, "app_id": "nothere", "message_id": str(uuid.uuid4())})
     check(r.get("ok") is False and not r.get("retryable"), "not installed → NOT retryable (final)", r)
-    srv2 = PS.PeerServer(trust=Trust(), handlers={"x": h}, my_entity_id=3)
+    srv2 = PS.PeerServer(trust=Trust(), handlers={"x": h}, my_entity_id=9003)
     PS._SLIPLESS_OPS.add("x")
     try:
         async def raising(peer_id, slip_info, params):
             raise RuntimeError("boom")
         srv2._handlers["x"] = raising
-        rr = await srv2._serve(122, {"op": "x", "params": {}})
+        rr = await srv2._serve(9122, {"op": "x", "params": {}})
         check(rr.get("retryable") is True and rr.get("error") == "handler error",
               "a handler that raises is reported retryable on the envelope", rr)
 
         async def transient(peer_id, slip_info, params):
             return {"ok": False, "retryable": True, "error": "this host is not ready"}
         srv2._handlers["x"] = transient
-        rr = await srv2._serve(122, {"op": "x", "params": {}})
+        rr = await srv2._serve(9122, {"op": "x", "params": {}})
         check(rr.get("receiver") is True and rr.get("retryable") is True,
               "a handler's retryable flag rides through the receiver:true wrapper", rr)
 
         async def final(peer_id, slip_info, params):
             return {"ok": False, "error": "no"}
         srv2._handlers["x"] = final
-        rr = await srv2._serve(122, {"op": "x", "params": {}})
+        rr = await srv2._serve(9122, {"op": "x", "params": {}})
         check(rr.get("receiver") is True and rr.get("retryable") is False,
               "a handler's plain refusal is retryable: False on the envelope", rr)
     finally:
@@ -430,7 +430,7 @@ async def main() -> int:
 
     # ── 6. /send reports an existing row as what it is, never as queued ─────
     class FakeTok:
-        app_id = "veterans"
+        app_id = "gardening"
         permissions = ["read:peer_app", "write:peer_app"]
 
     class FakeReq:
@@ -455,7 +455,7 @@ async def main() -> int:
     PR.app_lane.enqueue = enqueue_existing
     PR.app_lane.attempt = no_attempt
     brain_service._pool = StubPool()
-    out = await PR.send(PR.SendIn(peer_entity_id=122, action="probe", payload={}, message_id=str(existing_id)),
+    out = await PR.send(PR.SendIn(peer_entity_id=9122, action="probe", payload={}, message_id=str(existing_id)),
                         FakeReq())
     check(out.get("queued") is False and out.get("existing") is True and out.get("status") == "delivered",
           "/send with a message_id already sent to this peer reports the existing row, queued=False", out)
@@ -466,7 +466,7 @@ async def main() -> int:
     # would have driven the lane as an app called 'host' — coverage in name only.
     from fastapi import HTTPException as _HX
     got = await PR._app_id(FakeReq(), "other")
-    check(got == "veterans", "an app's token is the app — an app_id it sends is IGNORED, never honoured", got)
+    check(got == "gardening", "an app's token is the app — an app_id it sends is IGNORED, never honoured", got)
 
     class HostTok:
         app_id = PR.HOST_TOKEN_APP_ID
@@ -475,10 +475,10 @@ async def main() -> int:
     class HostReq:
         class state:
             app_token = HostTok()
-    got = await PR._app_id(HostReq(), "veterans")
-    check(got == "veterans", "the host names an installed app that accepts peers and drives it", got)
-    got = await PR._app_id(HostReq(), "veterans", need="write:peer_app")
-    check(got == "veterans", "and may drive the write half when the app declared write:peer_app", got)
+    got = await PR._app_id(HostReq(), "gardening")
+    check(got == "gardening", "the host names an installed app that accepts peers and drives it", got)
+    got = await PR._app_id(HostReq(), "gardening", need="write:peer_app")
+    check(got == "gardening", "and may drive the write half when the app declared write:peer_app", got)
     for bad, why in ((None, "no app named"), ("nothere", "not installed"), ("mute", "no read:peer_app"),
                      ("../x", "malformed"), ("host", "'host' is not an app")):
         try:

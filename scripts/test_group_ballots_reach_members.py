@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """A member can vote on its owner's ballot, more than once, in a big group.
 
-THE BUG (measured by the end-to-end peer-group test, entity 9163 owner, 164
-member): the owner opened a ballot, 164 synced, and 164's vote answered 404
+THE BUG (measured by the end-to-end peer-group test, entity 9163 owner, 9164
+member): the owner opened a ballot, 9164 synced, and 9164's vote answered 404
 "no such ballot". cast_vote looks the ballot up in the MEMBER's own pod, and
 nothing ever put it there — group.roster_fetch carried members only.
 
@@ -124,8 +124,8 @@ class Pool:
         return "OK"
 
 
-GID = "grp-163-" + "0" * 32
-OWNER, MEMBER = 163, 164
+GID = "grp-9163-" + "0" * 32
+OWNER, MEMBER = 9163, 9164
 
 
 def owner_pool():

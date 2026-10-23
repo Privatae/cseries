@@ -105,6 +105,42 @@ async def main(dsn: str) -> int:
         pool, 7, "desktop-01",
         [{"host_name": "beta.host.example.test", "handle": "beta", "since": ""}])
 
+    # The heartbeat row's peers array, as topology.upsert_heartbeat writes it
+    # from the same beat: the box names beta and reports the pairing's state.
+    import json
+
+    async def report(*entries):
+        async with pool.acquire() as c:
+            await c.execute("UPDATE network_bastion_heartbeat SET peers = $1::jsonb WHERE token_id = 7",
+                            None if entries == (None,) else json.dumps(list(entries)))
+
+    BETA = "beta.host.example.test"
+
+    def live_peer_for(peerings, peer_id):
+        """The lookup delete_thread's archive guard uses for kind='entity'.
+        Missing (an older peer_discovery), it answers a placeholder that every
+        check below reads as wrong, so the run fails instead of stopping."""
+        find = getattr(peer_discovery, "requestable_peering", None)
+        return find(peerings, peer_id) if find else {"missing": "requestable_peering"}
+
+    # 0. Named, but not as an active pairing: not listed. A peer listed here is
+    #    one the user can send a connection request to, and the request route
+    #    refuses every one of these.
+    for entries, what in (([{"host_name": BETA, "state": "pending"}], "a pending pairing"),
+                          ([{"host_name": BETA, "state": "revoked"}], "a revoked pairing"),
+                          ([{"host_name": BETA}], "a pairing named with no state"),
+                          ([{"host_name": BETA, "state": "active"},
+                            {"host_name": BETA, "state": "revoked"}],
+                           "a pairing named both active and revoked"),
+                          ([None], "a box that never reported peers")):
+        await report(*entries)
+        check(await circles._list_bastion_peers_without_thread(ME, set()) == [],
+              f"{what} is not listed in Circles")
+        check(live_peer_for(await peer_discovery.list_peerings(pool, ME), PEER) is None,
+              f"{what} does not hold the channel open (the archive guard's lookup finds nothing)")
+
+    await report({"host_name": BETA, "state": "active"})
+
     # 1. The peer is in the Hosts list with NO messages exchanged.
     items = await circles._list_bastion_peers_without_thread(ME, set())
     check(len(items) == 1, f"a live peering appears in Hosts with no messages (got {len(items)})")
@@ -141,11 +177,6 @@ async def main(dsn: str) -> int:
     # 5. The archive guard reads the same liveness the list does.
     async with pool.acquire() as c:
         await c.execute("UPDATE network_bastion_peer SET last_seen_at = now()")
-
-    def live_peer_for(peerings, peer_id):
-        """The exact predicate delete_thread uses for kind='entity'."""
-        return next((p for p in peerings
-                     if p.get("peer_entity_id") == peer_id and p.get("current")), None)
 
     live = live_peer_for(await peer_discovery.list_peerings(pool, ME), PEER)
     check(live is not None, "a live peering is found by the archive guard's predicate")

@@ -222,9 +222,9 @@ from host_ops_stubs import MRelay, Pool, Relay  # noqa: E402
 def card_once(name: str, params: str) -> int:
     """Rung 7: an apply first puts the card in front of the person; the
     person's 'Do it once' is what files the device ask. Returns the ticket."""
-    res = run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", [name, params], wait_s=0))
+    res = run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", [name, params], wait_s=0))
     tid = json.loads(res["stdout"])["ticket_id"]
-    run(tk.decide_ticket_service(pool, 3, tid, option_id="once", actor="user"))
+    run(tk.decide_ticket_service(pool, 9003, tid, option_id="once", actor="user"))
     return tid
 
 
@@ -249,7 +249,7 @@ PARAMS = '{"count":2,"name":"x"}'
 
 # ── 3. op_dry_run ─────────────────────────────────────────────────────────────
 print("op_dry_run")
-res = run(nac_ops.run_door(pool, 3, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "x", "count": 2}']))
+res = run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "x", "count": 2}']))
 ops_called = [c[1] for c in mrelay.calls]
 check("the op is synced then dry-run", ops_called == ["op_sync", "op_dry_run"])
 sync_args = mrelay.calls[0][2]
@@ -259,7 +259,7 @@ check("op_sync carries terms, signature and the bundle", len(sync_args) == 3 and
 check("op_run terms: one use, a nonce, canonical params, this machine, the op's sha256",
       t["kind"] == "op_run" and t["uses"] == 1 and len(t["nonce"]) == 32 and t["params"] == PARAMS
       and t["server"] == "box-7" and t["sha256"] == nac_ops.op_dir_digest(nac_ops.read_op_dir(d_root))
-      and t["privilege"] == "root" and t["entity"] == 3 and "approval" not in t and "changes_sha256" not in t)
+      and t["privilege"] == "root" and t["entity"] == 9003 and "approval" not in t and "changes_sha256" not in t)
 exp = dt.datetime.strptime(t["expires"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=dt.timezone.utc)
 left = (exp - dt.datetime.now(dt.timezone.utc)).total_seconds()
 check("the terms expire within the box's 24 h (4 h here)", 3.9 * 3600 < left <= 4 * 3600)
@@ -272,7 +272,7 @@ check("the dry run is kept with its change list, its expiry a datetime for the d
       pool.runs and pool.runs[-1]["state"] == "dry_run" and pool.runs[-1]["changes_sha256"] == "c" * 64
       and pool.runs[-1]["nonce"] == t["nonce"] and isinstance(pool.runs[-1]["expires"], dt.datetime))
 try:
-    run(nac_ops.run_door(pool, 3, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "x"}']))
+    run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "x"}']))
     check("a missing param is refused here, never sent to the box (a refusal there is a strike)", False)
 except nac_ops.OpError as e:
     check("a missing param is refused here, never sent to the box (a refusal there is a strike)",
@@ -283,23 +283,23 @@ for label, bad in {"an integer out of range": '{"name": "x", "count": 9}', "a st
                    "past int64": '{"name": "x", "count": 99999999999999999999}'}.items():
     n = len(mrelay.calls)
     try:
-        run(nac_ops.run_door(pool, 3, "box-7", 77, "op_dry_run", ["write-hello", bad]))
+        run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_dry_run", ["write-hello", bad]))
         check(f"{label}: refused here", False)
     except nac_ops.OpError:
         check(f"{label}: refused here, nothing sent", len(mrelay.calls) == n)
 check("audited", ("box-7", "op_dry_run", 0, "dry-run") in audits)
 try:
-    run(nac_ops.run_door(pool, 3, "box-7", 77, "op_dry_run", ["write-hello", '{"nope": 1}']))
+    run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_dry_run", ["write-hello", '{"nope": 1}']))
     check("a param op.yaml does not declare is refused before the box", False)
 except nac_ops.OpError as e:
     check("a param op.yaml does not declare is refused before the box", "nope" in e.detail and e.status == 400)
 try:
-    run(nac_ops.run_door(pool, 3, "box-7", 77, "op_dry_run", ["no-such-op", "{}"]))
+    run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_dry_run", ["no-such-op", "{}"]))
     check("an op nobody built is named as missing", False)
 except nac_ops.OpError as e:
     check("an op nobody built is named as missing", e.status == 404 and "target op" in e.detail)
 mrelay.refuse["op_dry_run"] = "op_dry_run refused: the run changed /etc/x, which is outside the op's declared effects"
-res = run(nac_ops.run_door(pool, 3, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "y", "count": 2}']))
+res = run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "y", "count": 2}']))
 check("the box's refusal is the answer, in the lane's 126 shape",
       res["exit"] == 126 and "outside the op's declared effects" in res["stderr"] and pool.runs[-1]["state"] == "refused")
 del mrelay.refuse["op_dry_run"]
@@ -307,18 +307,18 @@ del mrelay.refuse["op_dry_run"]
 # ── 4. op_apply ───────────────────────────────────────────────────────────────
 print("op_apply")
 try:
-    run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-hello", '{"name": "z", "count": 2}']))
+    run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-hello", '{"name": "z", "count": 2}']))
     check("an apply with no live dry run is refused with the way on", False)
 except nac_ops.OpError as e:
     check("an apply with no live dry run is refused with the way on", e.status == 409 and "op_dry_run" in e.detail)
 mrelay.calls.clear()
 relay.calls.clear()
 relay.device_state = "pending"
-res = run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-hello", '{"count": 2, "name": "x"}'], wait_s=0))
+res = run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-hello", '{"count": 2, "name": "x"}'], wait_s=0))
 check("the card first (rung 7): 'asked', nothing on the device, nothing on the box",
       res["exit"] == 0 and json.loads(res["stdout"])["state"] == "asked" and not relay.calls and not mrelay.calls)
-run(tk.decide_ticket_service(pool, 3, json.loads(res["stdout"])["ticket_id"], option_id="once", actor="user"))
-res = run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-hello", '{"count": 2, "name": "x"}'], wait_s=0))
+run(tk.decide_ticket_service(pool, 9003, json.loads(res["stdout"])["ticket_id"], option_id="once", actor="user"))
+res = run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-hello", '{"count": 2, "name": "x"}'], wait_s=0))
 check("pending: a pending result, nothing dispatched to the box, the run awaiting",
       res.get("state") == "pending_approval" and res["exit"] is None and not mrelay.calls
       and pool.runs[0]["state"] == "awaiting" and "device" in res["next"])
@@ -334,7 +334,7 @@ check("the device is asked with the op_run details — the terms' fields and the
 check("the purpose the device derives from those details is the box's",
       res["request"]["purpose"] == nac_ops.purpose_run("box-7", "write-hello", dry["sha256"], PARAMS, dry_expires, "c" * 64))
 relay.device_state = "approved"
-res = run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-hello", '{"count": 2, "name": "x"}'], wait_s=1))
+res = run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-hello", '{"count": 2, "name": "x"}'], wait_s=1))
 ops_called = [c[1] for c in mrelay.calls]
 check("approved: synced (idempotent) then applied", ops_called == ["op_sync", "op_apply"])
 ta = terms_of(mrelay.calls[1][2][0])
@@ -347,22 +347,22 @@ check("applied: committed list and the run marked applied with its approval",
       and pool.runs[0]["state"] == "applied" and pool.runs[0]["approval"] == '{"v":1,"sig":"x"}'
       and audits[-1][3] == "applied")
 try:
-    run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-hello", PARAMS]))
+    run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-hello", PARAMS]))
     check("an applied run is not applied twice from the pod either", False)
 except nac_ops.OpError as e:
     check("an applied run is not applied twice from the pod either", e.status == 409)
 # A box refusal on apply: the box's words, the way on, the run refused.
-run(nac_ops.run_door(pool, 3, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "q", "count": 1}']))
+run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "q", "count": 1}']))
 card_once("write-hello", '{"name": "q", "count": 1}')
 mrelay.refuse["op_apply"] = "op_apply refused: refused before commit: the apply would change something other than what the dry run showed"
-res = run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-hello", '{"name": "q", "count": 1}'], wait_s=1))
+res = run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-hello", '{"name": "q", "count": 1}'], wait_s=1))
 check("a box refusal on apply: its words, plus dry-run again; the run refused",
       res["exit"] == 126 and "other than what the dry run showed" in res["stderr"] and "dry-run again" in res["stderr"]
       and pool.runs[-1]["state"] == "refused")
 del mrelay.refuse["op_apply"]
 # The apply's answer lost: the row is 'sent', a retry is refused with the truth, and the
 # box's own "applied already" closes it as applied.
-run(nac_ops.run_door(pool, 3, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "t", "count": 1}']))
+run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "t", "count": 1}']))
 card_once("write-hello", '{"name": "t", "count": 1}')
 from server.network import nac_mgmt as _nm  # noqa: E402
 _orig = mrelay.dispatch_detailed
@@ -376,7 +376,7 @@ async def _lost(token_id, op, args, timeout, approval=""):
 
 mrelay.dispatch_detailed = _lost
 try:
-    run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-hello", '{"name": "t", "count": 1}'], wait_s=1))
+    run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-hello", '{"name": "t", "count": 1}'], wait_s=1))
     check("a lost answer is a 504, never a refusal", False)
 except nac_ops.OpError as e:
     check("a lost answer is a 504, never a refusal", e.status == 504 and pool.runs[-1]["state"] == "sent")
@@ -386,53 +386,53 @@ sent_row = pool.runs[-1]
 relay.calls.clear()
 mrelay.calls.clear()
 mrelay.status = {"found": True, "nonce_burned": True, "applied": False, "error": "refused before commit: the apply would change something other than what the dry run showed"}
-res = run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-hello", '{"name": "t", "count": 1}'], wait_s=1))
+res = run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-hello", '{"name": "t", "count": 1}'], wait_s=1))
 check("a lost answer is read from the box: attempted and refused there reads as refused, never applied",
       not relay.calls and [c[1] for c in mrelay.calls] == ["op_run_status"] and res["exit"] == 126
       and "other than what the dry run showed" in res["stderr"] and sent_row["state"] == "refused")
 # a commit that stopped part-way names what landed — never a plain refusal
-run(nac_ops.run_door(pool, 3, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "p", "count": 1}']))
+run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "p", "count": 1}']))
 card_once("write-hello", '{"name": "p", "count": 1}')
 mrelay.dispatch_detailed = _lost
 try:
-    run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-hello", '{"name": "p", "count": 1}'], wait_s=1))
+    run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-hello", '{"name": "p", "count": 1}'], wait_s=1))
 except nac_ops.OpError:
     pass
 mrelay.dispatch_detailed = _orig
 mrelay.status = {"found": True, "nonce_burned": True, "applied": False, "error": "commit: disk full (1 change(s) landed before it)",
                  "committed": ["created_dir /srv/hostop", "created /srv/hostop/hello.txt"]}
-res = run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-hello", '{"name": "p", "count": 1}'], wait_s=1))
+res = run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-hello", '{"name": "p", "count": 1}'], wait_s=1))
 check("a commit that stopped part-way: what landed is named, never a plain refusal",
       res["exit"] == 126 and "LANDED" in res["stderr"] and "/srv/hostop/hello.txt" in res["stderr"] and pool.runs[-1]["state"] == "refused"
       and pool.runs[-1]["result"].get("partial") is True)
 # applied with a failed verify: applied, and the verify said
-run(nac_ops.run_door(pool, 3, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "v", "count": 1}']))
+run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "v", "count": 1}']))
 card_once("write-hello", '{"name": "v", "count": 1}')
 mrelay.dispatch_detailed = _lost
 try:
-    run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-hello", '{"name": "v", "count": 1}'], wait_s=1))
+    run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-hello", '{"name": "v", "count": 1}'], wait_s=1))
 except nac_ops.OpError:
     pass
 mrelay.dispatch_detailed = _orig
 mrelay.status = {"found": True, "nonce_burned": True, "applied": True, "error": "verify: the sandbox could not start",
                  "committed": ["created /srv/hostop/hello.txt"], "verify_error": "the sandbox could not start"}
-res = run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-hello", '{"name": "v", "count": 1}'], wait_s=1))
+res = run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-hello", '{"name": "v", "count": 1}'], wait_s=1))
 check("applied with a failed verify reads as applied, the verify said",
       res["exit"] == 0 and json.loads(res["stdout"])["state"] == "applied" and "verify" in json.loads(res["stdout"])["note"]
       and pool.runs[-1]["state"] == "applied")
 # (b) attempted, record gone: the outcome is not knowable — said as it is, the row stays 'sent'
-run(nac_ops.run_door(pool, 3, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "t2", "count": 1}']))
+run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "t2", "count": 1}']))
 card_once("write-hello", '{"name": "t2", "count": 1}')
 mrelay.dispatch_detailed = _lost
 try:
-    run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-hello", '{"name": "t2", "count": 1}'], wait_s=1))
+    run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-hello", '{"name": "t2", "count": 1}'], wait_s=1))
 except nac_ops.OpError:
     pass
 mrelay.dispatch_detailed = _orig
 sent2 = pool.runs[-1]
 mrelay.status = {"found": False, "nonce_burned": True}
 try:
-    run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-hello", '{"name": "t2", "count": 1}'], wait_s=1))
+    run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-hello", '{"name": "t2", "count": 1}'], wait_s=1))
     check("attempted with the record gone: not knowable, said so", False)
 except nac_ops.OpError as e:
     check("attempted with the record gone: not knowable, said so", e.status == 409 and "cannot be read" in e.detail and sent2["state"] == "sent")
@@ -440,33 +440,33 @@ except nac_ops.OpError as e:
 mrelay.status = {"found": False, "nonce_burned": False}
 relay.calls.clear()
 mrelay.calls.clear()
-res = run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-hello", '{"name": "t2", "count": 1}'], wait_s=1))
+res = run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-hello", '{"name": "t2", "count": 1}'], wait_s=1))
 ta2 = terms_of(mrelay.calls[-1][2][0])
 check("never arrived: the same run is re-sent under its approval, no fresh ask, and lands",
       not relay.calls and [c[1] for c in mrelay.calls] == ["op_run_status", "op_sync", "op_apply"]
       and ta2["nonce"] == sent2["nonce"] and ta2["approval"] == sent2["approval"] and res["exit"] == 0
       and sent2["state"] == "applied")
 # (d) a lapsed approval is never re-sent
-run(nac_ops.run_door(pool, 3, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "t3", "count": 1}']))
+run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "t3", "count": 1}']))
 card_once("write-hello", '{"name": "t3", "count": 1}')
 mrelay.dispatch_detailed = _lost
 try:
-    run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-hello", '{"name": "t3", "count": 1}'], wait_s=1))
+    run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-hello", '{"name": "t3", "count": 1}'], wait_s=1))
 except nac_ops.OpError:
     pass
 mrelay.dispatch_detailed = _orig
 sent3 = pool.runs[-1]
 sent3["approval"] = json.dumps({"v": 1, "sig": "x", "expires": "2020-01-01T00:00:00Z"})
 mrelay.calls.clear()
-res = run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-hello", '{"name": "t3", "count": 1}'], wait_s=1))
+res = run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-hello", '{"name": "t3", "count": 1}'], wait_s=1))
 check("never arrived but the approval lapsed: refused with the way on, nothing re-sent",
       res["exit"] == 126 and "lapsed" in res["stderr"] and [c[1] for c in mrelay.calls] == ["op_run_status"]
       and sent3["state"] == "refused")
-run(nac_ops.run_door(pool, 3, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "t5", "count": 1}']))
+run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "t5", "count": 1}']))
 card_once("write-hello", '{"name": "t5", "count": 1}')
 mrelay.dispatch_detailed = _lost
 try:
-    run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-hello", '{"name": "t5", "count": 1}'], wait_s=1))
+    run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-hello", '{"name": "t5", "count": 1}'], wait_s=1))
 except nac_ops.OpError:
     pass
 mrelay.dispatch_detailed = _orig
@@ -474,60 +474,60 @@ sent5 = pool.runs[-1]
 sent5["approval"] = "console-id-1"
 sent5["created_at"] = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=25)
 mrelay.calls.clear()
-res = run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-hello", '{"name": "t5", "count": 1}'], wait_s=1))
+res = run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-hello", '{"name": "t5", "count": 1}'], wait_s=1))
 check("a console approval lapses with the box's day: nothing re-sent after it",
       res["exit"] == 126 and "lapsed" in res["stderr"] and [c[1] for c in mrelay.calls] == ["op_run_status"])
 # (e) a box that cannot answer op_run_status (older than 0.37.0): said as it is
-run(nac_ops.run_door(pool, 3, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "t4", "count": 1}']))
+run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "t4", "count": 1}']))
 card_once("write-hello", '{"name": "t4", "count": 1}')
 mrelay.dispatch_detailed = _lost
 try:
-    run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-hello", '{"name": "t4", "count": 1}'], wait_s=1))
+    run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-hello", '{"name": "t4", "count": 1}'], wait_s=1))
 except nac_ops.OpError:
     pass
 mrelay.dispatch_detailed = _orig
 mrelay.refuse["op_run_status"] = "unknown op"
 try:
-    run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-hello", '{"name": "t4", "count": 1}'], wait_s=1))
+    run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-hello", '{"name": "t4", "count": 1}'], wait_s=1))
     check("a box that cannot report the run: said as it is, the row stays sent", False)
 except nac_ops.OpError as e:
     check("a box that cannot report the run: said as it is, the row stays sent", e.status == 409 and "cannot report" in e.detail
           and pool.runs[-1]["state"] == "sent")
 del mrelay.refuse["op_run_status"]
 mrelay.status = {"found": False, "nonce_burned": False}
-run(nac_ops.run_door(pool, 3, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "u", "count": 1}']))
+run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "u", "count": 1}']))
 card_once("write-hello", '{"name": "u", "count": 1}')
 mrelay.refuse["op_apply"] = "op_apply refused: this op_run was applied already"
 mrelay.status = {"found": True, "nonce_burned": True, "applied": True, "committed": ["created /srv/hostop/hello.txt"], "changes_sha256": "c" * 64}
-res = run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-hello", '{"name": "u", "count": 1}'], wait_s=1))
+res = run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-hello", '{"name": "u", "count": 1}'], wait_s=1))
 check("the box's 'applied already' is resolved from op_run_status: applied there reads as applied, with its note",
       res["exit"] == 0 and json.loads(res["stdout"])["state"] == "applied" and "lost" in json.loads(res["stdout"])["note"]
       and json.loads(res["stdout"])["committed"] == ["created /srv/hostop/hello.txt"] and pool.runs[-1]["state"] == "applied")
 mrelay.status = {"found": False, "nonce_burned": True}
-run(nac_ops.run_door(pool, 3, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "u2", "count": 1}']))
+run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "u2", "count": 1}']))
 card_once("write-hello", '{"name": "u2", "count": 1}')
 try:
-    run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-hello", '{"name": "u2", "count": 1}'], wait_s=1))
+    run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-hello", '{"name": "u2", "count": 1}'], wait_s=1))
     check("'applied already' with no record: never called applied", False)
 except nac_ops.OpError as e:
     check("'applied already' with no record: never called applied", e.status == 409 and pool.runs[-1]["state"] == "sent")
 del mrelay.refuse["op_apply"]
 mrelay.status = {"found": False, "nonce_burned": False}
 # Denied on the device.
-run(nac_ops.run_door(pool, 3, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "r", "count": 1}']))
+run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_dry_run", ["write-hello", '{"name": "r", "count": 1}']))
 card_once("write-hello", '{"name": "r", "count": 1}')
 relay.device_state = "denied"
-res = run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-hello", '{"name": "r", "count": 1}'], wait_s=1))
+res = run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-hello", '{"name": "r", "count": 1}'], wait_s=1))
 check("denied on the device: 126, denied-person, nothing dispatched",
       res["exit"] == 126 and "refused" in res["stderr"] and audits[-1][3] == "denied-person"
       and mrelay.calls[-1][1] != "op_apply")
 relay.device_state = "approved"
 # A box that gates nothing cannot take an op apply either: said, not sent.
 ungated = Pool(enforcing={"grants": [], "op_view_closed": True})
-run(nac_ops.run_door(ungated, 3, "box-7", 77, "op_dry_run", ["write-hello", PARAMS]))
+run(nac_ops.run_door(ungated, 9003, "box-7", 77, "op_dry_run", ["write-hello", PARAMS]))
 mrelay.calls.clear()
 try:
-    run(nac_ops.run_door(ungated, 3, "box-7", 77, "op_apply", ["write-hello", PARAMS], wait_s=1))
+    run(nac_ops.run_door(ungated, 9003, "box-7", 77, "op_apply", ["write-hello", PARAMS], wait_s=1))
     check("a box reporting no write gate: refused with the reason before any card, never sent unapproved terms", False)
 except nac_ops.OpError as e:
     check("a box reporting no write gate: refused with the reason before any card, never sent unapproved terms",
@@ -536,7 +536,7 @@ except nac_ops.OpError as e:
 # ── 5. op_grant ───────────────────────────────────────────────────────────────
 print("op_grant")
 try:
-    run(nac_ops.run_door(pool, 3, "box-7", 77, "op_grant", ["write-hello", '{"count": {"min": 1, "max": 2}}']))
+    run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_grant", ["write-hello", '{"count": {"min": 1, "max": 2}}']))
     check("a grant for a root op is refused: root is never reusable", False)
 except nac_ops.OpError as e:
     check("a grant for a root op is refused: root is never reusable", "never reusable" in e.detail)
@@ -545,14 +545,14 @@ relay.calls.clear()
 relay.device_state = "pending"
 BOUNDS = '{"count":{"max":2,"min":1}}'
 try:
-    run(nac_ops.run_door(pool, 3, "box-7", 77, "op_grant", ["write-user", '{"count": {"min": 1, "max": 2}}', "5", "10"], wait_s=0))
+    run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_grant", ["write-user", '{"count": {"min": 1, "max": 2}}', "5", "10"], wait_s=0))
     check("a grant is never asked for without a dry run inside its bounds (rung 7: a card never appears without one)", False)
 except nac_ops.OpError as e:
     check("a grant is never asked for without a dry run inside its bounds (rung 7: a card never appears without one)",
           e.status == 409 and "op_dry_run" in e.detail)
-run(nac_ops.run_door(pool, 3, "box-7", 77, "op_dry_run", ["write-user", '{"name": "x", "count": 2}']))
+run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_dry_run", ["write-user", '{"name": "x", "count": 2}']))
 mrelay.calls.clear()
-res = run(nac_ops.run_door(pool, 3, "box-7", 77, "op_grant", ["write-user", '{"count": {"min": 1, "max": 2}}', "5", "10"], wait_s=0))
+res = run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_grant", ["write-user", '{"count": {"min": 1, "max": 2}}', "5", "10"], wait_s=0))
 gt = pool.tickets[json.loads(res["stdout"])["ticket_id"]]
 check("op_grant raises the card on that dry run — from now on recommended, the bounds, uses and days proposed — nothing synced",
       json.loads(res["stdout"])["state"] == "asked" and gt["metadata"]["op_ask"]["grant"]["bounds"] == BOUNDS
@@ -561,20 +561,20 @@ check("op_grant raises the card on that dry run — from now on recommended, the
 for label, bad in {"a field the type does not read": '{"count": {"values": ["1"]}}', "wider than the op": '{"count": {"min": 0, "max": 9}}',
                    "an unknown field": '{"count": {"min": 1, "root": "/x"}}', "a param the op lacks": '{"nope": {"min": 1}}'}.items():
     try:
-        run(nac_ops.run_door(pool, 3, "box-7", 77, "op_grant", ["write-user", bad, "5", "10"], wait_s=0))
+        run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_grant", ["write-user", bad, "5", "10"], wait_s=0))
         check(f"bounds refused here: {label}", False)
     except nac_ops.OpError:
         check(f"bounds refused here: {label}", True)
 n_before = len(pool.tickets)
-res = run(nac_ops.run_door(pool, 3, "box-7", 77, "op_grant", ["write-user", '{"count": {"min": 1, "max": 2}}', "5", "10"], wait_s=0))
+res = run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_grant", ["write-user", '{"count": {"min": 1, "max": 2}}', "5", "10"], wait_s=0))
 check("asked again while the card is open: the same card, no second ticket",
       len(pool.tickets) == n_before and json.loads(res["stdout"])["ticket_id"] == gt["id"])
-run(tk.decide_ticket_service(pool, 3, gt["id"], option_id="grant", actor="user"))
+run(tk.decide_ticket_service(pool, 9003, gt["id"], option_id="grant", actor="user"))
 g = pool.runs[-1]
 check("the person's 'from now on' makes the grant row under one nonce, awaiting, and asks the device; nothing synced",
       g["kind"] == "op_grant" and g["state"] == "awaiting" and g["bounds"] == BOUNDS and g["uses"] == 5 and not mrelay.calls)
 details = json.loads(base64.b64decode([c for c in relay.calls if c[1] == "device_request"][0][2][0]))
-res = run(nac_ops.run_door(pool, 3, "box-7", 77, "op_grant", ["write-user", '{"count": {"min": 1, "max": 2}}', "5", "10"], wait_s=0))
+res = run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_grant", ["write-user", '{"count": {"min": 1, "max": 2}}', "5", "10"], wait_s=0))
 check("the device is asked with the op_grant details, and the Host's next call waits on the same ask",
       res.get("state") == "pending_approval"
       and details["kind"] == "op_grant" and details["bounds"] == BOUNDS and details["uses"] == 5
@@ -583,7 +583,7 @@ check("the device is asked with the op_grant details, and the Host's next call w
 exp = g["expires"]
 check("expires in the days asked (≤ 30)", 9.9 * 86400 < (exp - dt.datetime.now(dt.timezone.utc)).total_seconds() <= 10 * 86400)
 relay.device_state = "approved"
-res = run(nac_ops.run_door(pool, 3, "box-7", 77, "op_grant", ["write-user", '{"count": {"min": 1, "max": 2}}', "5", "10"], wait_s=1))
+res = run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_grant", ["write-user", '{"count": {"min": 1, "max": 2}}', "5", "10"], wait_s=1))
 tg = terms_of(mrelay.calls[0][2][0])
 check("approved: op_sync with the grant terms — user, bounds, uses, the approval — installed, and the card's own run goes through it",
       [c[1] for c in mrelay.calls] == ["op_sync", "op_grant_run"] and len(mrelay.calls[0][2]) == 3 and tg["kind"] == "op_grant"
@@ -593,7 +593,7 @@ check("approved: op_sync with the grant terms — user, bounds, uses, the approv
       and ("box-7", "op_grant", 0, "grant-installed") in audits)
 mrelay.calls.clear()
 relay.calls.clear()
-res = run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-user", '{"name": "x", "count": 2}'], wait_s=0))
+res = run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-user", '{"name": "x", "count": 2}'], wait_s=0))
 check("under the grant an apply runs through op_grant_run with no tap, and is recorded",
       res["exit"] == 0 and mrelay.calls[-1][1] == "op_grant_run" and mrelay.calls[-1][2] == [g["nonce"], "apply", '{"count":2,"name":"x"}']
       and not relay.calls and json.loads(res["stdout"])["state"] == "applied" and audits[-1][3] == "applied-grant"
@@ -601,9 +601,9 @@ check("under the grant an apply runs through op_grant_run with no tap, and is re
 # Params outside the grant's bounds take the once-path — a dry run of their own, never a
 # refusal from the box (which would count against the host).
 mrelay.calls.clear()
-res = run(nac_ops.run_door(pool, 3, "box-7", 77, "op_dry_run", ["write-user", '{"name": "x", "count": 5}']))
+res = run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_dry_run", ["write-user", '{"name": "x", "count": 5}']))
 check("params outside the grant's bounds take the once-path", [c[1] for c in mrelay.calls] == ["op_sync", "op_dry_run"])
-res = run(nac_ops.run_door(pool, 3, "box-7", 77, "op_dry_run", ["write-user", '{"name": "x", "count": 2}']))
+res = run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_dry_run", ["write-user", '{"name": "x", "count": 2}']))
 check("and so does a dry run", mrelay.calls[-1][1] == "op_grant_run" and mrelay.calls[-1][2][1] == "dry_run")
 # A dry run under the grant never feeds a once-path apply (its nonce and expiry are the grant's).
 grant_dry = pool.runs[-1]
@@ -621,7 +621,7 @@ async def _lost_grant(token_id, op, args, timeout, approval=""):
 
 mrelay.dispatch_detailed = _lost_grant
 try:
-    run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-user", '{"name": "x", "count": 2}'], wait_s=0))
+    run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-user", '{"name": "x", "count": 2}'], wait_s=0))
     check("a lost grant-run answer is a 504 with the row left 'sent'", False)
 except nac_ops.OpError as e:
     check("a lost grant-run answer is a 504 with the row left 'sent'", e.status == 504 and pool.runs[-1]["state"] == "sent"
@@ -630,7 +630,7 @@ mrelay.dispatch_detailed = _orig
 # The same params are not sent again inside the run's own budget — the
 # machine may still be running the lost one. Past it (aged here) the run goes and says so.
 try:
-    run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-user", '{"name": "x", "count": 2}'], wait_s=0))
+    run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-user", '{"name": "x", "count": 2}'], wait_s=0))
     check("the same params again, inside the run's budget, are held back with the words", False)
 except nac_ops.OpError as e:
     check("the same params again, inside the run's budget, are held back with the words", e.status == 409 and "answer was lost" in e.detail)
@@ -639,7 +639,7 @@ pool.runs[-1]["created_at"] -= dt.timedelta(seconds=nac_mgmt.mgmt_op_budget("op_
 _wc = mrelay.worker_count
 mrelay.worker_count = lambda token_id: 0
 try:
-    run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-user", '{"name": "x", "count": 2}'], wait_s=0))
+    run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-user", '{"name": "x", "count": 2}'], wait_s=0))
     check("no worker under a grant: 502, the row refused, no use counted", False)
 except nac_ops.OpError as e:
     check("no worker under a grant: 502, the row refused, no use counted", e.status == 502 and pool.runs[-1]["state"] == "refused"
@@ -647,7 +647,7 @@ except nac_ops.OpError as e:
 mrelay.worker_count = _wc
 # A refusal AFTER the box took the use (the run itself failed) counts as one here too.
 mrelay.refuse["op_grant_run"] = "op_grant_run refused: refused: the run changed /etc/x, which is outside the op's declared effects"
-run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-user", '{"name": "x", "count": 2}'], wait_s=0))
+run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-user", '{"name": "x", "count": 2}'], wait_s=0))
 check("a refusal after the spend counts as a use here", json.loads(pool.runs[-1]["report"])["spent"] is True)
 del mrelay.refuse["op_grant_run"]
 for words, want in {"op_grant_run refused: the op exited 2 in apply mode: param x approved": True,
@@ -668,21 +668,21 @@ for words, want in {"op_grant_run refused: the op exited 2 in apply mode: param 
                     "something new the box says": False}.items():
     check(f"spent by the box's words, anchored: {words[:40]}", nac_ops.grant_use_spent(words) is want)
 mrelay.refuse["op_grant_run"] = "refused: this host's write lanes are quarantined on this machine until 2099-01-01T00:00:00Z"
-run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-user", '{"name": "x", "count": 2}'], wait_s=0))
+run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-user", '{"name": "x", "count": 2}'], wait_s=0))
 check("a quarantine refusal is not a spent use", json.loads(pool.runs[-1]["report"])["spent"] is False)
 del mrelay.refuse["op_grant_run"]
 # Four applies are known spent now (the card's own, one applied, one sent, one refused after the spend)
 # against uses=5: one more, then the pod itself takes the once-path and drops its copy, before the box ever refuses.
 for _ in range(1):
-    run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-user", '{"name": "x", "count": 2}'], wait_s=0))
+    run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-user", '{"name": "x", "count": 2}'], wait_s=0))
 mrelay.calls.clear()
 relay.calls.clear()
-res = run(nac_ops.run_door(pool, 3, "box-7", 77, "op_dry_run", ["write-user", '{"name": "x", "count": 2}']))
+res = run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_dry_run", ["write-user", '{"name": "x", "count": 2}']))
 check("every use spent by this side's count: the once-path, the grant dropped here, no refusal from the box",
       [c[1] for c in mrelay.calls] == ["op_sync", "op_dry_run"] and g["state"] == "dropped")
 relay.device_state = "pending"
 relay.calls.clear()
-res = run(nac_ops.run_door(pool, 3, "box-7", 77, "op_apply", ["write-user", '{"name": "x", "count": 2}'], wait_s=0))
+res = run(nac_ops.run_door(pool, 9003, "box-7", 77, "op_apply", ["write-user", '{"name": "x", "count": 2}'], wait_s=0))
 check("and the apply after it asks the person (the card), from the once-path dry run, never from the grant's",
       json.loads(res["stdout"])["state"] == "asked" and not relay.calls
       and pool.tickets[json.loads(res["stdout"])["ticket_id"]]["metadata"]["op_ask"]["expires"]
@@ -700,15 +700,15 @@ nac_mgmt._gate_state = _state
 nac_mgmt.mgmt_decision = lambda grants, eid, server, op, suspended, quarantined: op in ("op_dry_run", "op_apply")
 nac_mgmt.mgmt_denied_by = lambda grants, server, op: None
 mrelay.calls.clear()
-res = run(nac_mgmt.run_mgmt_op(pool, 3, "box-7", "op_grant", ["write-user", "{}"], origin="tool"))
+res = run(nac_mgmt.run_mgmt_op(pool, 9003, "box-7", "op_grant", ["write-user", "{}"], origin="tool"))
 check("ungranted door op: the pod gate's 126, nac_ops never reached",
       res["exit"] == 126 and "not permitted" in res["stderr"] and not mrelay.calls)
-res = run(nac_mgmt.run_mgmt_op(pool, 3, "box-7", "op_dry_run", ["write-hello", '{"name": "m", "count": 1}'], origin="tool"))
+res = run(nac_mgmt.run_mgmt_op(pool, 9003, "box-7", "op_dry_run", ["write-hello", '{"name": "m", "count": 1}'], origin="tool"))
 check("granted: handed to nac_ops after the gate", res["exit"] == 0 and [c[1] for c in mrelay.calls] == ["op_sync", "op_dry_run"])
-res = run(nac_mgmt.run_mgmt_op(pool, 3, "box-7", "op_apply", ["write-hello", '{"name": "never", "count": 1}'], origin="tool"))
+res = run(nac_mgmt.run_mgmt_op(pool, 9003, "box-7", "op_apply", ["write-hello", '{"name": "never", "count": 1}'], origin="tool"))
 check("the pod's own refusal (no dry run) comes back in the lane's 126 shape, not an error",
       res["exit"] == 126 and "op_dry_run" in res["stderr"])
-res = run(nac_mgmt.run_mgmt_op(pool, 3, "box-7", "op_dry_run", ["write-hello", "[" * 60000], origin="tool"))
+res = run(nac_mgmt.run_mgmt_op(pool, 9003, "box-7", "op_dry_run", ["write-hello", "[" * 60000], origin="tool"))
 check("deeply nested params: refused with the shape named, audited", res["exit"] == 126 and "JSON object" in res["stderr"]
       and audits[-1][3] == "refused-pod")
 check("budgets: a dry run waits the sandbox's ceiling, an apply twice it",

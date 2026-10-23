@@ -483,7 +483,7 @@ async def main() -> int:
     for kind, want in [("group_join", True), ("rendezvous_intro", True),
                        ("endpoint_request", True), ("message", False)]:
         got = await DP.check_inbound_allowed(
-            deny, "9122@entity.localhost", 9122, 3, kind)
+            deny, "9122@entity.localhost", 9122, 9003, kind)
         check(got is want,
               f"under a '*' deny posture a {kind!r} from a stranger is "
               f"{'admitted' if want else 'refused'}", got)

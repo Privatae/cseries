@@ -19,10 +19,23 @@ checked, file names included. Every tracked text file is scanned, and every
 member of each .cseries bundle. Each hit prints as `path:line: listed term`;
 the term and the line are never printed.
 
+A line is read three ways, and a term found in any of them counts:
+  - as written;
+  - with each backslash escape (\\n, \\t, \\b, \\x41, \\u00e9 ...) read as a
+    space, so a term written straight after "\\n" in a string literal is not
+    glued to the escape's letter. The first reading still holds, so a term
+    after a Windows path separator is found too;
+  - through every base64 or base64url run of 24 or more characters in it that
+    decodes to text (UTF-8, at least 90% printable): the decoded text is read
+    the same three ways, two levels deep. Signed payloads, data URIs and
+    encoded fixtures carry text no other reading can see.
+
 Exit 0 = clean; 1 = a listed term was found; 2 = the key or digests are missing.
 """
 
 import argparse
+import base64
+import binascii
 import hmac
 import os
 import re
@@ -41,6 +54,41 @@ BINARY_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".ico", ".woff", ".woff2
               ".ttf", ".otf", ".eot", ".pdf", ".gz", ".tgz", ".zip", ".wasm",
               ".mp3", ".mp4", ".webm", ".ogg", ".wav", ".bin", ".der", ".raw"}
 
+# A backslash escape as a string literal or a pattern spells it: \xHH, \uHHHH,
+# \UHHHHHHHH, or a backslash and one letter or digit.
+ESCAPE = re.compile(r"\\(?:x[0-9A-Fa-f]{2}|u[0-9A-Fa-f]{4}|U[0-9A-Fa-f]{8}|[A-Za-z0-9])")
+# A run of the base64 alphabet, standard or url-safe, long enough to hold a
+# word: 24 characters decode to 18 bytes.
+BASE64_RUN = re.compile(r"[A-Za-z0-9+/_-]{24,}={0,2}")
+_URLSAFE = str.maketrans("-_", "+/")
+BASE64_DEPTH = 2
+
+
+def base64_texts(line: str):
+    """The decoded text of each base64 run in the line that decodes to text."""
+    for m in BASE64_RUN.finditer(line):
+        run = m.group(0).rstrip("=").translate(_URLSAFE)
+        if len(run) % 4 == 1:
+            run = run[:-1]
+        try:
+            text = base64.b64decode(run + "=" * (-len(run) % 4)).decode("utf-8")
+        except (binascii.Error, ValueError):
+            continue
+        if text and sum(c.isprintable() or c in "\t\r\n" for c in text) >= 0.9 * len(text):
+            yield text
+
+
+def readings(line: str, depth: int = 0):
+    """The line as written, with its escapes read as spaces, and the text
+    base64 in it decodes to, read the same way."""
+    yield line
+    if "\\" in line:
+        yield ESCAPE.sub(" ", line)
+    if depth < BASE64_DEPTH:
+        for text in base64_texts(line):
+            for sub in text.splitlines():
+                yield from readings(sub, depth + 1)
+
 
 class Matcher:
     def __init__(self, key: bytes, digests: set[str]):
@@ -55,13 +103,16 @@ class Matcher:
             self._seen[gram] = hit
         return hit
 
-    def line_has_term(self, line: str) -> bool:
-        toks = re.findall(r"[a-z0-9]+", line.lower())
+    def _tokens_have_term(self, text: str) -> bool:
+        toks = re.findall(r"[a-z0-9]+", text.lower())
         for n in range(1, MAX_TOKENS + 1):
             for i in range(len(toks) - n + 1):
                 if self._listed(" ".join(toks[i:i + n])):
                     return True
         return False
+
+    def line_has_term(self, line: str) -> bool:
+        return any(self._tokens_have_term(r) for r in readings(line))
 
 
 def tracked_files(root: str) -> list[str]:

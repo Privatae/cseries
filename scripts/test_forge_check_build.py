@@ -153,7 +153,7 @@ def scenario(*, forge=None, build_ok=True, approved=True, pushed=True, acc_ok=Tr
     patch(t, "_append_build_activity", lambda p, tid, msg: _rec(ev, "activity", (msg,)))
     patch(t, "_get_runtime_dispatch", lambda: None)
     from server.routes import gitea_client as gc
-    patch(gc, "gitea_creds", lambda: ("host-3", "tok", "git.invalid"))
+    patch(gc, "gitea_creds", lambda: ("host-9003", "tok", "git.invalid"))
     patch(pl, "load_approved", load_approved)
     patch(fs, "wait", wait)
     patch(pg, "sync_project_repo", sync)
@@ -238,7 +238,7 @@ def run_gate(*, pipe=PIPE, approved=True, prs=None, statuses=None, forge_error=N
     saved = [(pf, "open_forge", pf.open_forge), (pf, "project_forge", pf.project_forge),
              (pl, "load_approved", pl.load_approved), (gc, "gitea_creds", gc.gitea_creds)]
     pf.open_forge, pf.project_forge, pl.load_approved = open_forge, project_forge, load_approved
-    gc.gitea_creds = lambda: ("host-3", "tok", "git.invalid")
+    gc.gitea_creds = lambda: ("host-9003", "tok", "git.invalid")
     from server.routes import forge_status as fs
     import functools
     saved.append((fs, "wait", fs.wait))
@@ -274,7 +274,7 @@ def gate_tests():
           r and "has not yet passed the build pull request's latest commit (ccccccc" in r and sha == HEAD, r)
     (r, _), _ = run_gate(statuses=st("failure"))
     check("gate: the head failed → held", r and "CI failed the build pull request's latest commit" in r, r)
-    (r, _), _ = run_gate(statuses=st("success", who="host-3"))
+    (r, _), _ = run_gate(statuses=st("success", who="host-9003"))
     check("gate: a pass the Host's own account posted does not count", r is not None, r)
     (r, sha), calls = run_gate(pipe={"format": "privatae.pipeline/v1", "check": [{"provider": "harness-check"}]})
     check("gate: no gitea-actions row → go, and the forge is never asked", r is None and not calls, f"{r} {calls}")

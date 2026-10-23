@@ -38,8 +38,8 @@
 -- thing that ever created this table was _ensure_pairing_table() in
 -- server/network/bastion_enroll.py, called on the mint and redeem paths. Which
 -- means a host got the table the first time somebody paired a machine, and not
--- before — so it is live on 4 of 8 hosts (102, 122, 128, 3) and absent on the
--- other 4 (121, 123, 130, 55), exactly matching who has paired something.
+-- before — so it is live on 4 of 8 hosts and absent on the other 4, exactly
+-- matching who has paired something.
 -- Deleting that helper with no declaration behind it would leave the four
 -- unpaired hosts unable to mint a token at all.
 --

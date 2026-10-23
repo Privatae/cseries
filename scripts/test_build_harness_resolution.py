@@ -324,7 +324,7 @@ def main() -> int:
             inserted["args"] = args
             return {"task_id": 42}
     tid = asyncio.run(t._factory_build_task_start(
-        _Pool(), 3, title="t", intent="i", project_id=211, harness="kimi"))
+        _Pool(), 9003, title="t", intent="i", project_id=211, harness="kimi"))
     res = {}
     try:
         res = json.loads(inserted["args"][-1])
@@ -464,7 +464,7 @@ def main() -> int:
 
     inserted.clear()
     tid = asyncio.run(t._factory_build_task_start(
-        _Pool(), 3, title="t", intent="i", project_id=211, harness="claude-code",
+        _Pool(), 9003, title="t", intent="i", project_id=211, harness="claude-code",
         model="claude-opus-5"))
     res = {}
     try:

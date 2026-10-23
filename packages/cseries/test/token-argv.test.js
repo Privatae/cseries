@@ -81,7 +81,7 @@ function limaRun(platform) {
   return main([], {
     platform, arch: 'x64', env: {}, paths: p, out, runner: m.runner, net: m.net,
     sleep: async () => {}, prompt: async () => false, portState: async () => 'free', freeBytes: () => 64 * 1024 ** 3,
-    releaseInfo: { release: r, placeholders: [], file: 'test' }, bastionKeys: m.bastionKeys,
+    releaseInfo: { release: r, placeholders: [], file: 'test' }, bastionKeys: m.bastionKeys, sudoPaths: m.sudoPaths,
   }).then((code) => ({ code, out, m }));
 }
 
@@ -127,16 +127,34 @@ for (const platform of ['linux', 'darwin']) {
 }
 
 test('the sudo script stops before pair when this /bin/sh has no builtin printf', () => {
+  const fs = require('node:fs');
+  const path = require('node:path');
+  // This script really runs, and set-mode comes before pair, so the program
+  // it starts is fake-bastion.js in a temp folder, with that folder as HOME:
+  // the machine running the test may have a real bastion installed.
+  const dir = tmpdir();
+  const home = path.join(dir, 'home');
+  fs.mkdirSync(home);
+  const program = path.join(dir, 'privatae-bastion');
+  fs.writeFileSync(program, `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(path.join(__dirname, 'fake-bastion.js'))} "$@"\n`, { mode: 0o755 });
+  const log = path.join(dir, 'bastion-calls.log');
   const plan = { release: null, pair: { enroll: 'https://127.0.0.1:8810/v1/local/redeem', token: `${CANARY}-1` }, anchor: false, enroll: false };
   const script = posixElevated.bastionInstallScript({
-    platform: 'linux', nonce: 'abcd', program: '/usr/local/bin/privatae-bastion', unit: '', install: null, serviceInstall: false,
+    platform: 'linux', nonce: 'abcd', program, unit: '', install: null, serviceInstall: false,
     hostCa: null, host: null, commands: bastionCommands(plan, posixElevated.CA_VAR),
   });
   // `command` answering as if printf were a program on PATH.
-  const fake = script.replace('set -u', 'set -u\ncommand() { echo "printf is /usr/bin/printf"; }');
-  const r = require('node:child_process').spawnSync('/bin/sh', ['-s'], { input: fake });
+  const fake = script.replace('set -u', 'set -u\ncommand() { echo "printf is /usr/bin/printf"; }')
+    .replace(/^HOME=\/root$/m, `HOME=${home}`);
+  assert.ok(fake.includes(`exe='${program}'`) && !fake.includes('/usr/local/bin') && !fake.includes('HOME=/root'),
+    'the script runs only the fake bastion, with a temp HOME');
+  const r = require('node:child_process').spawnSync('/bin/sh', ['-s'], {
+    input: fake, env: { ...process.env, FAKE_BASTION_LOG: log },
+  });
   const text = r.stdout.toString();
   assert.equal(r.status, 16, text);
   assert.match(text, /^error=this \/bin\/sh has no builtin printf/m);
   assert.ok(!text.includes(CANARY));
+  const calls = fs.readFileSync(log, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
+  assert.deepEqual(calls.map((c) => c.args), [['set-mode', 'networked']], 'the fake ran set-mode, and pair never started');
 });

@@ -160,7 +160,7 @@ def test_the_card_names_what_waits_and_what_needs_the_host():
                  "error": "step 2 (roll) failed on box-d: rollout did not finish", "needs_host": True,
                  "last_seen": now, "step_name": "roll", "machine": "box-d", "step_state": "failed"},
             ]
-    lines, as_of = asyncio.run(lc._fetch_ships(Pool(), 3))
+    lines, as_of = asyncio.run(lc._fetch_ships(Pool(), 9003))
     text = "\n".join(lines)
     assert "1 pipeline run(s) under way." in text and "pipeline bridge run 9" in text \
         and "waiting for the tap" in text, text

@@ -53,7 +53,7 @@ def _desc(schemas, name):
                  if s["function"]["name"] == name), None)
 
 
-with_grant = asyncio.run(T._build_tool_schemas(_Pool(True), 3))
+with_grant = asyncio.run(T._build_tool_schemas(_Pool(True), 9003))
 without = asyncio.run(T._build_tool_schemas(_Pool(False), 55))
 
 d_with, d_without = _desc(with_grant, "local_grep"), _desc(without, "local_grep")
@@ -78,7 +78,7 @@ _real_surface_allows = T._surface_allows
 T._surface_allows = lambda schema, surface: (
     schema["function"]["name"] != "code_grep" and _real_surface_allows(schema, surface))
 try:
-    hidden = asyncio.run(T._build_tool_schemas(_Pool(True), 3))
+    hidden = asyncio.run(T._build_tool_schemas(_Pool(True), 9003))
 finally:
     T._surface_allows = _real_surface_allows
 check("a surface without code_grep gets no pointer, though the gate holds",

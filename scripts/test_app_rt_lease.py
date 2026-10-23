@@ -119,9 +119,9 @@ hb.forget_app(APP)
 check("forget_app removes the state entry", APP not in hb._state)
 
 # ── cold wakes are single-flight, and a failed one backs off ────────
-# entity-9128, 2026-09-03 23:36: with the pod not yet Ready, every asset
-# request of the open window fired its own cold wake (dozens of 504s a
-# minute). One wake in flight per app; a failed wake is remembered.
+# With the pod not yet Ready, every asset request of the open window used to
+# fire its own cold wake (dozens of 504s a minute). One wake in flight per
+# app; a failed wake is remembered.
 reset()
 hb._wake_locks.pop(APP, None)
 slow_calls = {"n": 0}
@@ -156,10 +156,10 @@ check("after the backoff the next request wakes again and gets the pod",
       host == "[fd00::8]:8850" and hb._state[APP].get("cold_failed_at") is None, str(host))
 
 # ── a RESIDENT hold survives a wake that has not answered yet ───────
-# entity-9128, 2026-09-03: the trading bot's wake 504'd at 60s (the pod was still
-# installing itself), the hold was never taken, and the operator's idle sweep
-# reaped the pod 15 minutes later. The hold must be independent of the wake
-# result and keep re-waking until the pod answers.
+# A wake can 504 at 60s while the pod is still installing itself. If the hold
+# is only taken after a good wake it is never taken, and the operator's idle
+# sweep reaps the pod 15 minutes later. The hold must be independent of the
+# wake result and keep re-waking until the pod answers.
 reset()
 attempts = {"n": 0}
 
@@ -205,10 +205,10 @@ check("app_release ends the hold", hb._state[APP].get("resident") is False
 hb.APP_RT_RESIDENT_RETRY_S = orig_retry
 
 # ── a re-install recycles the pod, and keeps a resident hold ────────
-# entity-9128, 2026-09-03 23:44: "Install as my app" wrote v0.4.0 and the new
-# descriptor, but the RUNNING pod kept serving v0.3.0 source — a pod fetches
-# its source once, at creation. recycle_app drops it so the next wake fetches
-# the new source; the resident switch survives.
+# "Install as my app" wrote a new version and the new descriptor, but the
+# RUNNING pod kept serving the old source — a pod fetches its source once, at
+# creation. recycle_app drops it so the next wake fetches the new source; the
+# resident switch survives.
 reset()
 hb._wake_locks.pop(APP, None)
 rec = _with_bridge(FakeBridge())

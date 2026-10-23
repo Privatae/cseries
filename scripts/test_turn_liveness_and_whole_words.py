@@ -345,7 +345,7 @@ async def whole_words():
     async def _audit(**_kw):
         return None
     saved = (CR._entity_id, CR._audit)
-    CR._entity_id, CR._audit = (lambda: 3), _audit
+    CR._entity_id, CR._audit = (lambda: 9003), _audit
     words = ("Please use the blue palette and keep the header. " * 120).strip()   # ~6 KB
     try:
         out = await CR.nudge(Req({"session_id": "s-whole-words", "text": words}))

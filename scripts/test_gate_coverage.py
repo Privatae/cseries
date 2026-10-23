@@ -3,8 +3,8 @@
 
 THE DEFECT THIS EXISTS FOR (measured on one ship).
 scripts/ held 129 test_*.py files. Smoke invoked 88 of them. The other 41 ran
-nowhere at all — not in smoke, not in a runbook, not in CI, because there is no
-CI on this repo (no .gitea/workflows, no .github/workflows, no active git hooks;
+nowhere at all — not in smoke, not in a runbook, not in CI, because the repo
+had no CI then (no .gitea/workflows, no .github/workflows, no active git hooks;
 all three verified absent that day).
 
 Of those 41, eighteen were container-free and passed on the spot. They were
@@ -294,13 +294,38 @@ def main() -> int:
         check(f"{reader} reads gates-store-apps.txt", "gates-store-apps.txt" in rtext,
               f"scripts/{reader} must read scripts/gates-store-apps.txt: the kernel\n"
               "lane's runners to leave those gates out, store_app_gates.sh to run them.")
+    # The public CI's pytest is a kernel run too, so it leaves the store apps'
+    # tests/ entries out the way pre_merge_gates.sh's does. Its own step script
+    # runs here with pytest replaced by a print of the arguments it would get.
+    wf = os.path.join(root, ".github", "workflows", "test.yml")
+    if os.path.exists(wf):
+        import subprocess
+        import yaml
+        doc = yaml.safe_load(open(wf, encoding="utf-8")) or {}
+        runs = [str(s.get("run")) for job in (doc.get("jobs") or {}).values()
+                for s in (job.get("steps") or []) if "-m pytest" in str(s.get("run") or "")]
+        args: list[str] = []
+        for run in runs:
+            r = subprocess.run(["bash", "-eo", "pipefail", "-c",
+                                run.replace("python3 -m pytest", "printf '%s\\n'")],
+                               cwd=root, capture_output=True, text=True, timeout=60)
+            args += r.stdout.split() if r.returncode == 0 else [f"(the step failed: {r.stderr.strip()})"]
+        _, store_tests, _ = read_store_registry(root)
+        missing = [t for t in store_tests if f"--ignore={t}" not in args]
+        check(".github/workflows/test.yml's pytest leaves out every store app's tests/ entry",
+              bool(runs) and not missing,
+              f"not left out: {missing}; pytest's arguments there: {args}" if runs
+              else "no step of .github/workflows/test.yml runs `python3 -m pytest`")
 
     # ── 4. tests/ is in a lane too ────────────────────────────────────────
     # THE BLIND SPOT THIS RATCHET ITSELF HAD. Everything above
     # polices scripts/. The repo also has tests/ — 26 files, 519 tests — and it
     # was invoked by NOTHING: not smoke, not pre_merge_gates, not either list,
     # and this repo had no CI then. Ten of those tests were failing and
-    # nothing could say so.
+    # nothing could say so. (CI runs tests/ now too: on the forge the gates job
+    # of .gitea/workflows/check.yml, through pre_merge_gates.sh, on every pull
+    # request; on GitHub .github/workflows/test.yml, on every push to main and
+    # every pull request. This lane still has to.)
     #
     # This file is the thing meant to notice a suite running nowhere, and it
     # could not see this one because its contract named a DIRECTORY rather than

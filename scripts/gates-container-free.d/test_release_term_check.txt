@@ -1,0 +1,6 @@
+# The release term check finds a listed term however the tree spells it: as
+# plain text, in a file name or bundle member, straight after a backslash
+# escape in a literal, and inside base64 or base64url (also nested, and in
+# bundle members). Invented terms and a fresh key in throwaway trees; runs
+# nothing else.
+test_release_term_check.py

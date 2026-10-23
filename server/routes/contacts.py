@@ -1025,7 +1025,11 @@ async def request_peer_service(pool, *, peer_entity_id: int, note: str | None = 
 
     A DORMANT peering does not qualify. The machine stopped saying it serves
     them, so the shared-machine fact that justified the request is no longer
-    true; list_peerings returns `current` for exactly this.
+    true; list_peerings returns `current` for exactly this. Nor does a peering
+    the machine reports as pending or revoked, or names with no state or an
+    unknown one: only an active pairing is a Host the machine serves.
+    list_peerings' `requestable` is both conditions, and requestable_peering
+    is the lookup.
 
     The announcement still authorizes nothing beyond this knock. The receiver
     treats the endpoint_request the way it treats one arriving by phone alias,
@@ -1041,9 +1045,8 @@ async def request_peer_service(pool, *, peer_entity_id: int, note: str | None = 
     if eid == me:
         raise ContactsError(400, "that is this host")
 
-    peerings = await peer_discovery.list_peerings(pool, me)
-    match = next((p for p in peerings
-                  if p.get("current") and p.get("peer_entity_id") == eid), None)
+    match = peer_discovery.requestable_peering(
+        await peer_discovery.list_peerings(pool, me), eid)
     if match is None:
         raise ContactsError(
             404, "that host is not on a machine you share — a connection request may only be "

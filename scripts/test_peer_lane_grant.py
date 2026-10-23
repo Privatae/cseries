@@ -90,14 +90,14 @@ async def main() -> int:
         return p
 
     # ── 1. we asked them: admitted ──────────────────────────────────────────
-    use(StubPool(pending={122}))
+    use(StubPool(pending={9122}))
     appended.clear()
-    r = await H.inbox_grant(122, None, params())
+    r = await H.inbox_grant(9122, None, params())
     check(r.get("ok"), "a grant from a peer we have a pending request with is admitted", r)
     check(len(appended) == 1, "and it reaches the inbox append path")
     if appended:
         p = appended[0]
-        check(p["from_entity_id"] == 122, "attribution comes from the CERT, not the caller")
+        check(p["from_entity_id"] == 9122, "attribution comes from the CERT, not the caller")
         check(p["payload"].get("contact_slip") == SLIP,
               "the contact_slip is carried — it is the whole point of the grant")
         check(p["payload"].get("from_handle") == "speed",
@@ -119,9 +119,9 @@ async def main() -> int:
     # v048_circles_contacts_policy.sql:20). The claim was corrected rather than
     # the query widened, and these pin the two properties that were missing:
     # the row must be recent, and the check must happen under the lock.
-    pool = StubPool(pending={122})
+    pool = StubPool(pending={9122})
     use(pool)
-    await H.inbox_grant(122, None, params())
+    await H.inbox_grant(9122, None, params())
     sql = pool.queries[-1][0] if pool.queries else ""
     check("status = 'pending'" in sql, "the precondition reads a pending contacts row", sql)
     check("interval" in sql and "last_contact_at" in sql,
@@ -149,10 +149,10 @@ async def main() -> int:
             self.pending.discard(int(args[0]))   # the row closes once it is used
             return 1 if ok else 0
 
-    use(OneShotPool(pending={122}))
+    use(OneShotPool(pending={9122}))
     appended.clear()
-    rs = await asyncio.gather(H.inbox_grant(122, None, params(message_id="m-a")),
-                              H.inbox_grant(122, None, params(message_id="m-b")))
+    rs = await asyncio.gather(H.inbox_grant(9122, None, params(message_id="m-a")),
+                              H.inbox_grant(9122, None, params(message_id="m-b")))
     check(sum(1 for r in rs if r.get("ok")) == 1,
           "two grants racing from one peer: exactly ONE is admitted", rs)
     check(len(appended) == 1, "and exactly one is stored", len(appended))
@@ -160,29 +160,29 @@ async def main() -> int:
     # ── 3. fails CLOSED when the precondition cannot be checked ─────────────
     # Unlike the knock's slot cap, which fails open: a knock confers nothing, a
     # grant installs a credential.
-    use(StubPool(pending={122}, raises=True))
+    use(StubPool(pending={9122}, raises=True))
     appended.clear()
-    r = await H.inbox_grant(122, None, params())
+    r = await H.inbox_grant(9122, None, params())
     check(not r.get("ok"), "a precondition that cannot run REFUSES (fails closed)", r)
     check(not appended, "and stores nothing")
     use(None)
-    r = await H.inbox_grant(122, None, params())
+    r = await H.inbox_grant(9122, None, params())
     check(not r.get("ok"), "no pool at all also refuses", r)
 
     # ── 4. only grant kinds, and only host grants ───────────────────────────
-    use(StubPool(pending={122}))
+    use(StubPool(pending={9122}))
     appended.clear()
-    r = await H.inbox_grant(122, None, params(message_kind="message"))
+    r = await H.inbox_grant(9122, None, params(message_kind="message"))
     check(not r.get("ok"), "`message` must never arrive as a grant", r)
-    r = await H.inbox_grant(122, None, params(message_kind="endpoint_request"))
+    r = await H.inbox_grant(9122, None, params(message_kind="endpoint_request"))
     check(not r.get("ok"), "a request is not a grant on this op", r)
-    r = await H.inbox_grant(122, None, params(payload={"contact_slip": SLIP, "kind": "human"}))
+    r = await H.inbox_grant(9122, None, params(payload={"contact_slip": SLIP, "kind": "human"}))
     check(not r.get("ok"), "a HUMAN grant is refused — this lane cannot attest a person", r)
     check("bridge" in (r.get("error") or ""), "and it says where a human grant does go", r)
     check(not appended, "none of those stored anything")
 
     # ── 5. the payload allow-list ───────────────────────────────────────────
-    use(StubPool(pending={122}))
+    use(StubPool(pending={9122}))
     appended.clear()
     # The forged keys here are deliberately ones _identify does NOT set.
     #
@@ -197,7 +197,7 @@ async def main() -> int:
     # (inbox-pane reads from_display_name ?? display_name ?? from_handle ??
     # handle), so they are exactly what a sender would forge to choose the name
     # once the from_* pair is taken.
-    await H.inbox_grant(122, None, params(payload={
+    await H.inbox_grant(9122, None, params(payload={
         "contact_slip": SLIP, "kind": "host",
         "from_display_name": "TOTALLY NOT SPEED", "from_handle": "evil",
         "display_name": "PICKED BY SENDER", "handle": "evil-handle",

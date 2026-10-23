@@ -53,7 +53,7 @@ class Pool:
     async def fetchval(self, q, *a):
         self.sql.append((q, a))
         if "FROM mcp_client_tokens" in q and "operator_kind" in q:
-            return 1 if a in ((7, 3), (9, 3)) else None  # tokens 7 and 9 belong to one Host
+            return 1 if a in ((7, 9003), (9, 9003)) else None  # tokens 7 and 9 belong to one Host
         if "SELECT token_id FROM network_bastion_heartbeat" in q:
             return 7
         if "FROM network_bastion_heartbeat WHERE token_id=$1 AND hostname=$2" in q:
@@ -126,7 +126,7 @@ def test_a_pending_order_is_delivered_with_its_id_and_nothing_is_cleared():
     """An empty answer list is a box that has answered nothing yet — the
     agents-list inference ('absent means gone') must not leak in here."""
     pool = Pool()
-    res = _run(topology.upsert_heartbeat(pool, 3, _beat(contain_results=[])))
+    res = _run(topology.upsert_heartbeat(pool, 9003, _beat(contain_results=[])))
     assert pool.cleared() == [], f"an order was cleared off a beat that did not answer it: {pool.cleared()}"
     assert res.get("contain_findings") == [{"id": 11, "fp": FP}], res.get("contain_findings")
 
@@ -135,7 +135,7 @@ def test_a_box_that_predates_the_answer_key_gets_the_order_and_it_stays_open():
     """A bastion before 0.32.0 sends no `contain_results` and ignores the
     directive. The order is delivered (harmless) and waits out the TTL."""
     pool = Pool()
-    res = _run(topology.upsert_heartbeat(pool, 3, _beat()))
+    res = _run(topology.upsert_heartbeat(pool, 9003, _beat()))
     assert pool.cleared() == [], pool.cleared()
     assert res.get("contain_findings") == [{"id": 11, "fp": FP}], res
 
@@ -144,7 +144,7 @@ def test_a_box_that_predates_the_answer_key_gets_the_order_and_it_stays_open():
 
 def test_the_boxs_answer_clears_the_order_with_its_outcome_and_count():
     pool = Pool()
-    res = _run(topology.upsert_heartbeat(pool, 3, _beat(contain_results=[_answer()])))
+    res = _run(topology.upsert_heartbeat(pool, 9003, _beat(contain_results=[_answer()])))
     assert pool.cleared() == [(11, "killed", 3)], pool.cleared()
     assert "contain_findings" not in res, f"an answered order was delivered again: {res}"
     assert pool.audited_exit() == [(f"killed finding {FP[:12]} (3 stopped)", 0)], pool.audited_exit()
@@ -152,7 +152,7 @@ def test_the_boxs_answer_clears_the_order_with_its_outcome_and_count():
 
 def test_a_refusal_is_cleared_and_audited_as_not_carried_out():
     pool = Pool()
-    _run(topology.upsert_heartbeat(pool, 3, _beat(contain_results=[_answer(outcome="in_baseline", stopped=0)])))
+    _run(topology.upsert_heartbeat(pool, 9003, _beat(contain_results=[_answer(outcome="in_baseline", stopped=0)])))
     assert pool.cleared() == [(11, "in_baseline", 0)], pool.cleared()
     assert pool.audited_exit() == [(f"in-baseline finding {FP[:12]}", 1)], pool.audited_exit()
 
@@ -162,14 +162,14 @@ def test_an_answer_naming_another_fingerprint_clears_nothing():
     this order. Clearing on it would record an outcome for something the
     user never asked about."""
     pool = Pool()
-    res = _run(topology.upsert_heartbeat(pool, 3, _beat(contain_results=[_answer(fp=FP2)])))
+    res = _run(topology.upsert_heartbeat(pool, 9003, _beat(contain_results=[_answer(fp=FP2)])))
     assert pool.cleared() == [], pool.cleared()
     assert res.get("contain_findings") == [{"id": 11, "fp": FP}], res
 
 
 def test_an_answer_for_another_order_clears_nothing():
     pool = Pool()
-    res = _run(topology.upsert_heartbeat(pool, 3, _beat(contain_results=[_answer(oid=12)])))
+    res = _run(topology.upsert_heartbeat(pool, 9003, _beat(contain_results=[_answer(oid=12)])))
     assert pool.cleared() == [], pool.cleared()
     assert res.get("contain_findings") == [{"id": 11, "fp": FP}], res
 
@@ -178,7 +178,7 @@ def test_an_unknown_outcome_word_is_stored_as_unrecognised():
     """The box's word goes into the audit; a word this host does not know is
     not written through verbatim."""
     pool = Pool()
-    _run(topology.upsert_heartbeat(pool, 3, _beat(contain_results=[_answer(outcome="<script>", stopped=0)])))
+    _run(topology.upsert_heartbeat(pool, 9003, _beat(contain_results=[_answer(outcome="<script>", stopped=0)])))
     assert pool.cleared() == [(11, "unrecognised", 0)], pool.cleared()
 
 
@@ -188,18 +188,18 @@ def test_malformed_answers_clear_nothing():
                 [{"id": 11, "fp": "not-hex", "outcome": "killed"}],
                 ["killed"], {"11": "killed"}, None):
         pool = Pool()
-        _run(topology.upsert_heartbeat(pool, 3, _beat(contain_results=bad)))
+        _run(topology.upsert_heartbeat(pool, 9003, _beat(contain_results=bad)))
         assert pool.cleared() == [], (bad, pool.cleared())
     # True == 1 in Python: a bool must not answer order 1.
     pool = Pool(pending=[{"id": 1, "fp": FP, "lapsed": False}])
-    _run(topology.upsert_heartbeat(pool, 3, _beat(contain_results=[
+    _run(topology.upsert_heartbeat(pool, 9003, _beat(contain_results=[
         {"id": True, "fp": FP, "outcome": "killed", "stopped": 1}])))
     assert pool.cleared() == [], f"a boolean answered order 1: {pool.cleared()}"
 
 
 def test_a_negative_or_non_int_stopped_count_is_zero():
     pool = Pool()
-    _run(topology.upsert_heartbeat(pool, 3, _beat(contain_results=[_answer(stopped=-4)])))
+    _run(topology.upsert_heartbeat(pool, 9003, _beat(contain_results=[_answer(stopped=-4)])))
     assert pool.cleared() == [(11, "killed", 0)], pool.cleared()
 
 
@@ -207,7 +207,7 @@ def test_a_negative_or_non_int_stopped_count_is_zero():
 
 def test_an_unanswered_order_older_than_the_ttl_lapses_and_is_not_delivered():
     pool = Pool(pending=[{"id": 11, "fp": FP, "lapsed": True}])
-    res = _run(topology.upsert_heartbeat(pool, 3, _beat(contain_results=[])))
+    res = _run(topology.upsert_heartbeat(pool, 9003, _beat(contain_results=[])))
     assert pool.cleared() == [(11, "expired", 0)], pool.cleared()
     assert "contain_findings" not in res, res
     assert pool.audited_exit() == [(f"expired finding {FP[:12]}", 1)], pool.audited_exit()
@@ -216,13 +216,13 @@ def test_an_unanswered_order_older_than_the_ttl_lapses_and_is_not_delivered():
 def test_an_answer_wins_over_a_lapse_on_the_same_beat():
     """The box DID answer; the order's age does not rewrite what happened."""
     pool = Pool(pending=[{"id": 11, "fp": FP, "lapsed": True}])
-    _run(topology.upsert_heartbeat(pool, 3, _beat(contain_results=[_answer()])))
+    _run(topology.upsert_heartbeat(pool, 9003, _beat(contain_results=[_answer()])))
     assert pool.cleared() == [(11, "killed", 3)], pool.cleared()
 
 
 def test_the_lapse_uses_the_one_ttl():
     pool = Pool()
-    _run(topology.upsert_heartbeat(pool, 3, _beat()))
+    _run(topology.upsert_heartbeat(pool, 9003, _beat()))
     q, a = next((q, a) for q, a in pool.sql if "FROM nac_finding_contain WHERE token_id=$1" in q)
     assert a == (7, topology.CONTAIN_PENDING_TTL), a
     assert "cleared_at IS NULL" in q, q
@@ -232,7 +232,7 @@ def test_the_lapse_is_computed_by_the_database_against_the_one_ttl():
     """The fake pool hands `lapsed` back, so pin the statement that computes
     it: the database's clock, the same TTL as the reaper, open rows only."""
     pool = Pool()
-    _run(topology.upsert_heartbeat(pool, 3, _beat()))
+    _run(topology.upsert_heartbeat(pool, 9003, _beat()))
     q = next(q for q, a in pool.sql if "FROM nac_finding_contain WHERE token_id=$1" in q)
     # MUTATION: compute lapse in Python, or against another interval.
     # RESULT: red.
@@ -243,7 +243,7 @@ def test_a_late_answer_rewrites_an_expiry_within_the_window():
     """The reaper expired the order a minute before the box's answer landed:
     the answer is what happened, so it replaces 'expired' and says so."""
     pool = Pool(pending=[], expired=[{"id": 11, "fp": FP}])
-    _run(topology.upsert_heartbeat(pool, 3, _beat(contain_results=[_answer()])))
+    _run(topology.upsert_heartbeat(pool, 9003, _beat(contain_results=[_answer()])))
     # MUTATION: drop the late-answer pass.  RESULT: red.
     assert pool.rewritten() == [(11, "killed", 3)], pool.rewritten()
     assert pool.audited_exit() == [
@@ -254,7 +254,7 @@ def test_a_late_answer_rewrites_an_expiry_within_the_window():
 
 def test_a_late_answer_for_another_fingerprint_rewrites_nothing():
     pool = Pool(pending=[], expired=[{"id": 11, "fp": FP2}])
-    _run(topology.upsert_heartbeat(pool, 3, _beat(contain_results=[_answer()])))
+    _run(topology.upsert_heartbeat(pool, 9003, _beat(contain_results=[_answer()])))
     assert pool.rewritten() == [], pool.rewritten()
 
 
@@ -265,14 +265,14 @@ def test_run_mgmt_op_uses_the_token_the_caller_resolved():
     restore = _mgmt_open_gate(nac_mgmt)
     try:
         pool = Pool()
-        _run(nac_mgmt.run_mgmt_op(pool, 3, "box", nac_mgmt.CONTAIN_OP, ["finding:" + FP], token_id=7))
+        _run(nac_mgmt.run_mgmt_op(pool, 9003, "box", nac_mgmt.CONTAIN_OP, ["finding:" + FP], token_id=7))
         assert [a for q, a in pool.sql if "INSERT INTO nac_finding_contain" in q] == [(7, FP, None)]
         # MUTATION: ignore token_id and look up by hostname.  RESULT: red — no 404.
         # Token 9 IS this entity's bastion, but it does not report "box": the
         # order must not be queued against it.
         other = Pool()
         try:
-            _run(nac_mgmt.run_mgmt_op(other, 3, "box", nac_mgmt.CONTAIN_OP, ["finding:" + FP], token_id=9))
+            _run(nac_mgmt.run_mgmt_op(other, 9003, "box", nac_mgmt.CONTAIN_OP, ["finding:" + FP], token_id=9))
             raise AssertionError("a token that does not report this hostname was used")
         except nac_mgmt.MgmtError as e:
             assert e.status == 404 and "does not report" in e.detail, (e.status, e.detail)
@@ -292,7 +292,7 @@ def test_an_ambiguous_hostname_is_refused_when_no_token_is_given():
         pool.live_for_hostname = 2
         # MUTATION: drop the ambiguity check.  RESULT: red — the order is queued.
         try:
-            _run(nac_mgmt.run_mgmt_op(pool, 3, "box", nac_mgmt.CONTAIN_OP, ["finding:" + FP]))
+            _run(nac_mgmt.run_mgmt_op(pool, 9003, "box", nac_mgmt.CONTAIN_OP, ["finding:" + FP]))
             raise AssertionError("an ambiguous hostname was resolved by guessing")
         except nac_mgmt.MgmtError as e:
             assert e.status == 409 and "bastion card" in e.detail, (e.status, e.detail)
@@ -300,7 +300,7 @@ def test_an_ambiguous_hostname_is_refused_when_no_token_is_given():
         assert ("ambiguous-hostname", 1) in pool.audited_exit(), pool.audited_exit()
         # One live bastion: unchanged behaviour.
         one = Pool()
-        _run(nac_mgmt.run_mgmt_op(one, 3, "box", nac_mgmt.CONTAIN_OP, ["finding:" + FP]))
+        _run(nac_mgmt.run_mgmt_op(one, 9003, "box", nac_mgmt.CONTAIN_OP, ["finding:" + FP]))
         assert [a for q, a in one.sql if "INSERT INTO nac_finding_contain" in q] == [(7, FP, None)]
     finally:
         restore()
@@ -332,14 +332,14 @@ def test_the_reaper_lapses_finding_orders_for_a_box_that_stopped_beating():
 
 def test_request_contain_finding_validates_the_fingerprint_and_the_bastion():
     pool = Pool()
-    assert _run(topology.request_contain_finding(pool, 3, 7, "abc")) == "bad_fp"
-    assert _run(topology.request_contain_finding(pool, 3, 7, FP.upper())) == "bad_fp", \
+    assert _run(topology.request_contain_finding(pool, 9003, 7, "abc")) == "bad_fp"
+    assert _run(topology.request_contain_finding(pool, 9003, 7, FP.upper())) == "bad_fp", \
         "the fingerprint is lowercase hex; the caller normalises, the store does not guess"
     assert _run(topology.request_contain_finding(pool, 4, 7, FP)) is False, "another entity's bastion"
-    assert _run(topology.request_contain_finding(pool, 3, 7, FP)) == "queued"
+    assert _run(topology.request_contain_finding(pool, 9003, 7, FP)) == "queued"
     ins = [a for q, a in pool.sql if "INSERT INTO nac_finding_contain" in q]
     assert ins == [(7, FP, None)], ins
-    assert _run(topology.request_contain_finding(Pool(insert_tag="INSERT 0 0"), 3, 7, FP)) == "open"
+    assert _run(topology.request_contain_finding(Pool(insert_tag="INSERT 0 0"), 9003, 7, FP)) == "open"
 
 
 def _mgmt_open_gate(nac_mgmt):
@@ -373,14 +373,14 @@ def test_run_mgmt_op_routes_a_finding_arg_to_the_finding_queue():
     restore = _mgmt_open_gate(nac_mgmt)
     try:
         pool = Pool()
-        res = _run(nac_mgmt.run_mgmt_op(pool, 3, "box", nac_mgmt.CONTAIN_OP, ["finding:" + FP.upper()]))
+        res = _run(nac_mgmt.run_mgmt_op(pool, 9003, "box", nac_mgmt.CONTAIN_OP, ["finding:" + FP.upper()]))
         assert res["exit"] == 0 and '"finding": "' + FP + '"' in res["stdout"], res
         assert [a for q, a in pool.sql if "INSERT INTO nac_finding_contain" in q] == [(7, FP, None)], \
             "the fingerprint must be normalised to lowercase before it is stored"
         assert not any("INSERT INTO nac_agent_contain" in q for q, a in pool.sql), \
             "a finding order must never be written as an agent pid order"
         try:
-            _run(nac_mgmt.run_mgmt_op(Pool(), 3, "box", nac_mgmt.CONTAIN_OP, ["finding:nothex"]))
+            _run(nac_mgmt.run_mgmt_op(Pool(), 9003, "box", nac_mgmt.CONTAIN_OP, ["finding:nothex"]))
             raise AssertionError("a malformed fingerprint was accepted")
         except nac_mgmt.MgmtError as e:
             assert e.status == 400, e.status
@@ -396,7 +396,7 @@ def test_a_finding_order_is_refused_without_the_grant():
     nac_mgmt.mgmt_decision = lambda *a, **k: False
     try:
         pool = Pool()
-        res = _run(nac_mgmt.run_mgmt_op(pool, 3, "box", nac_mgmt.CONTAIN_OP, ["finding:" + FP]))
+        res = _run(nac_mgmt.run_mgmt_op(pool, 9003, "box", nac_mgmt.CONTAIN_OP, ["finding:" + FP]))
         assert res["exit"] == 126, res
         assert not any("INSERT INTO nac_finding_contain" in q for q, a in pool.sql), \
             "an ungranted finding order was queued"

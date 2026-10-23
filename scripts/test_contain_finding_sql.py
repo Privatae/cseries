@@ -43,7 +43,7 @@ from kernel_schema import kernel_schema_db, throwaway_server  # noqa: E402
 
 FP = "0123456789abcdef0123456789abcdef"
 FP2 = "fedcba9876543210fedcba9876543210"
-ENTITY, TOKEN = 3, 7
+ENTITY, TOKEN = 9003, 7
 
 # The rows the functions join against, in the REAL tables: a bastion token of
 # this entity and its heartbeat.
@@ -88,27 +88,27 @@ async def run(dsn: str) -> None:
         check("v172 applies twice (idempotent)", True)
 
         # ── one open order per fingerprint, enforced by the index ──
-        q1 = await topology.request_contain_finding(conn, 3, 7, FP)
-        q2 = await topology.request_contain_finding(conn, 3, 7, FP)
+        q1 = await topology.request_contain_finding(conn, 9003, 7, FP)
+        q2 = await topology.request_contain_finding(conn, 9003, 7, FP)
         check("the first order is queued, a second for the same fingerprint is 'open'",
               (q1, q2) == ("queued", "open"), (q1, q2))
 
         # ── delivery, then the box's answer clears it with its own words ──
         oid = await conn.fetchval("SELECT id FROM nac_finding_contain WHERE fp=$1", FP)
         result: dict = {}
-        await topology._reconcile_finding_contain(conn, 3, 7, {"hostname": "box"}, result)
+        await topology._reconcile_finding_contain(conn, 9003, 7, {"hostname": "box"}, result)
         # Since v179 an order carries the person's approval to the box; one placed
         # without an approval is delivered with approval None.
         check("a pending order is delivered with its id (and no approval)",
               result.get("contain_findings") == [{"id": oid, "fp": FP, "approval": None}], result)
         result = {}
-        await topology._reconcile_finding_contain(conn, 3, 7, {"hostname": "box", "contain_results": [
+        await topology._reconcile_finding_contain(conn, 9003, 7, {"hostname": "box", "contain_results": [
             {"id": oid, "fp": FP, "outcome": "killed", "stopped": 2, "at": "x"}]}, result)
         row = await conn.fetchrow("SELECT cleared_at, outcome, stopped FROM nac_finding_contain WHERE id=$1", oid)
         check("the answer clears it: outcome and count stored, not delivered again",
               row["cleared_at"] is not None and row["outcome"] == "killed" and row["stopped"] == 2
               and "contain_findings" not in result, (dict(row), result))
-        q3 = await topology.request_contain_finding(conn, 3, 7, FP)
+        q3 = await topology.request_contain_finding(conn, 9003, 7, FP)
         check("once cleared, the same fingerprint can be ordered again", q3 == "queued", q3)
 
         # ── the lapse, on the database's own clock ──
@@ -117,7 +117,7 @@ async def run(dsn: str) -> None:
                            "VALUES (7, $1, now() - interval '2 hours'), (7, $2, now() - interval '5 minutes')",
                            FP, FP2)
         result = {}
-        await topology._reconcile_finding_contain(conn, 3, 7, {"hostname": "box"}, result)
+        await topology._reconcile_finding_contain(conn, 9003, 7, {"hostname": "box"}, result)
         rows = {r["fp"]: r for r in await conn.fetch("SELECT fp, cleared_at, outcome FROM nac_finding_contain")}
         check("an order older than the TTL lapses as 'expired' (computed by the database)",
               rows[FP]["outcome"] == "expired" and rows[FP]["cleared_at"] is not None, dict(rows[FP]))
@@ -150,7 +150,7 @@ async def run(dsn: str) -> None:
                    {"id": ids["old"], "fp": FP2, "outcome": "killed", "stopped": 1, "at": "x"},
                    {"id": ids["done"], "fp": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "outcome": "in_baseline",
                     "stopped": 0, "at": "x"}]
-        await topology._reconcile_finding_contain(conn, 3, 7, {"hostname": "box", "contain_results": answers}, {})
+        await topology._reconcile_finding_contain(conn, 9003, 7, {"hostname": "box", "contain_results": answers}, {})
         got = {r["id"]: r["outcome"] for r in await conn.fetch("SELECT id, outcome FROM nac_finding_contain")}
         check("a late answer rewrites an expiry inside the window", got[ids["recent"]] == "killed", got)
         check("…but not one expired outside the window", got[ids["old"]] == "expired", got)

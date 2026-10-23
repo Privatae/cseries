@@ -140,7 +140,7 @@ async def _run(conn):
           row is not None and md.get("held") is True and md.get("turn_token") == tok
           and md.get("close_turn", {}).get("handoff") == {"next_step": "x"}, dict(row) if row else None)
     rid2 = await ME.write_turn_row_by_token(
-        pool, eid, "sess-db", "assistant", "Elm Lantern is building — task 420.\n\nEmber Wake landed.",
+        pool, eid, "sess-db", "assistant", "Elm Lantern is building — task 420.\n\nElm Lantern landed.",
         token=tok, held=False, project_id=project, tags={"app_id": "workbench", "go_ahead": {"final_asks": None}},
         created_at=datetime.now(timezone.utc))
     rows = await conn.fetch("SELECT id, content, metadata, created_at FROM entity_memory "

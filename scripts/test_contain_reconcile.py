@@ -55,7 +55,7 @@ class Pool:
     async def fetchval(self, q, *a):
         self.sql.append((q, a))
         if "FROM mcp_client_tokens" in q and "operator_kind" in q:
-            return 1 if a == (7, 3) else None  # token 7 belongs to one Host only
+            return 1 if a == (7, 9003) else None  # token 7 belongs to one Host only
         return None
 
     async def fetchrow(self, q, *a):
@@ -154,7 +154,7 @@ def test_an_absent_agents_key_holds_the_order():
     box withheld the key): nothing cleared, nothing delivered, and the hold is
     the one trace there is, so it must be written."""
     pool = Pool()
-    res, lines = _with_log(topology.upsert_heartbeat(pool, 3, _beat()))
+    res, lines = _with_log(topology.upsert_heartbeat(pool, 9003, _beat()))
     assert res is not None
     assert pool.cleared() == [], f"a pending containment was cleared off a beat that could not look: {pool.cleared()}"
     assert "contain" not in res, f"a kill was delivered to a box that cannot see its agents: {res}"
@@ -167,7 +167,7 @@ def test_a_null_agents_key_holds_the_order():
     """`agents: null` — a client marshalling a nil slice — is not a list the box
     measured. Same as absent: held, not read as 'all gone'."""
     pool = Pool()
-    res = _run(topology.upsert_heartbeat(pool, 3, _beat(agents=None)))
+    res = _run(topology.upsert_heartbeat(pool, 9003, _beat(agents=None)))
     assert pool.cleared() == [], pool.cleared()
     assert "contain" not in res, res
 
@@ -177,7 +177,7 @@ def test_an_agents_value_that_is_not_a_list_holds_the_order():
     the host cannot read, and iterating it as if it were a list would find no
     pid and clear the order."""
     pool = Pool()
-    res = _run(topology.upsert_heartbeat(pool, 3, _beat(agents={})))
+    res = _run(topology.upsert_heartbeat(pool, 9003, _beat(agents={})))
     assert pool.cleared() == [], f"a non-list agents value was read as 'all gone': {pool.cleared()}"
     assert "contain" not in res, res
 
@@ -187,7 +187,7 @@ def test_an_empty_list_without_agent_observe_holds_the_order():
     (agents_other.go, a failed /proc walk) and advertises agent-observe only
     when it has an enumerator. [] without the capability is 'not looked'."""
     pool = Pool()
-    res, lines = _with_log(topology.upsert_heartbeat(pool, 3, _beat(caps=("embed",), agents=[])))
+    res, lines = _with_log(topology.upsert_heartbeat(pool, 9003, _beat(caps=("embed",), agents=[])))
     assert pool.cleared() == [], f"an unmeasured empty list cleared the containment: {pool.cleared()}"
     assert "contain" not in res, res
     assert any("agent-observe" in l and "not looked" in l for l in lines), lines
@@ -199,7 +199,7 @@ def test_an_empty_list_from_a_bastion_that_cannot_say_the_walk_happened_holds():
     Without `agent_scan_ok` the list is unmeasured: held, and the reason says
     which door."""
     pool = Pool()
-    res, lines = _with_log(topology.upsert_heartbeat(pool, 3, _beat(scan_ok=False, agents=[])))
+    res, lines = _with_log(topology.upsert_heartbeat(pool, 9003, _beat(scan_ok=False, agents=[])))
     assert pool.cleared() == [], f"an empty list the box did not vouch for cleared the containment: {pool.cleared()}"
     assert "contain" not in res, res
     assert any("agent_scan_ok" in l for l in lines), lines
@@ -212,11 +212,11 @@ def test_a_non_empty_list_delivers_and_clears_without_the_marker():
     list is done. Gating delivery on the marker made contain a no-op on every
     bastion shipped to date."""
     pool = Pool()
-    res = _run(topology.upsert_heartbeat(pool, 3, _beat(scan_ok=False, agents=[{"pid": PID, "signature": SIG}])))
+    res = _run(topology.upsert_heartbeat(pool, 9003, _beat(scan_ok=False, agents=[{"pid": PID, "signature": SIG}])))
     assert pool.cleared() == [], pool.cleared()
     assert res.get("contain") == [PID], f"an older box listing the agent did not get the order: {res}"
     pool = Pool()
-    res = _run(topology.upsert_heartbeat(pool, 3, _beat(scan_ok=False, agents=[{"pid": 1, "signature": "other"}])))
+    res = _run(topology.upsert_heartbeat(pool, 9003, _beat(scan_ok=False, agents=[{"pid": 1, "signature": "other"}])))
     assert pool.cleared() == [([PID], "done")], f"an agent gone from a measured non-empty list was not cleared: {pool.cleared()}"
     assert "contain" not in res, res
 
@@ -226,7 +226,7 @@ def test_agent_scan_ok_must_be_the_boolean_true():
     pool = Pool()
     b = _beat(scan_ok=False, agents=[])
     b["agent_scan_ok"] = "yes"
-    _run(topology.upsert_heartbeat(pool, 3, b))
+    _run(topology.upsert_heartbeat(pool, 9003, b))
     assert pool.cleared() == [], pool.cleared()
 
 
@@ -236,7 +236,7 @@ def test_an_empty_list_with_agent_observe_means_the_agent_is_gone():
     """The box looked and found nothing: the kill worked. Cleared as 'done',
     the audit says so, and no directive goes out for a pid that is gone."""
     pool = Pool()
-    res = _run(topology.upsert_heartbeat(pool, 3, _beat(agents=[])))
+    res = _run(topology.upsert_heartbeat(pool, 9003, _beat(agents=[])))
     assert pool.cleared() == [([PID], "done")], f"an observed absence did not clear the containment as done: {pool.cleared()}"
     assert pool.audited() == [f"done pid {PID}"], pool.audited()
     assert "contain" not in res, f"a directive was sent for an agent the box says is gone: {res}"
@@ -247,25 +247,25 @@ def test_a_clear_touches_only_open_rows():
     closed rows behind it (including the 'superseded' ones v164 wrote), and
     rewriting their cleared_at/outcome would falsify the record."""
     pool = Pool()
-    _run(topology.upsert_heartbeat(pool, 3, _beat(agents=[])))
+    _run(topology.upsert_heartbeat(pool, 9003, _beat(agents=[])))
     assert pool.clear_sql() and all("AND cleared_at IS NULL" in q for q in pool.clear_sql()), pool.clear_sql()
 
 
 def test_the_audit_exit_code_says_whether_the_order_was_carried_out():
     pool = Pool(pending=[{"pid": PID, "signature": SIG, "lapsed": True}])
-    _run(topology.upsert_heartbeat(pool, 3, _beat(agents=[{"pid": PID, "signature": SIG}])))
+    _run(topology.upsert_heartbeat(pool, 9003, _beat(agents=[{"pid": PID, "signature": SIG}])))
     assert pool.audited_exit() == [(f"expired pid {PID}", 1)], pool.audited_exit()
     pool = Pool()
-    _run(topology.upsert_heartbeat(pool, 3, _beat(agents=[{"pid": PID, "signature": "sshd"}])))
+    _run(topology.upsert_heartbeat(pool, 9003, _beat(agents=[{"pid": PID, "signature": "sshd"}])))
     assert pool.audited_exit() == [(f"pid-reused pid {PID}", 1)], pool.audited_exit()
     pool = Pool()
-    _run(topology.upsert_heartbeat(pool, 3, _beat(agents=[])))
+    _run(topology.upsert_heartbeat(pool, 9003, _beat(agents=[])))
     assert pool.audited_exit() == [(f"done pid {PID}", 0)], pool.audited_exit()
 
 
 def test_a_still_present_agent_is_delivered_not_cleared():
     pool = Pool()
-    res = _run(topology.upsert_heartbeat(pool, 3, _beat(agents=[{"pid": PID, "signature": SIG}])))
+    res = _run(topology.upsert_heartbeat(pool, 9003, _beat(agents=[{"pid": PID, "signature": SIG}])))
     assert pool.cleared() == [], pool.cleared()
     assert res.get("contain") == [PID], res
 
@@ -274,7 +274,7 @@ def test_a_pid_sent_as_a_digit_string_still_counts_as_present():
     """A dropped pid reads as an agent that is GONE and clears the order; a
     forked client sending "4242" must be coerced, not discarded."""
     pool = Pool()
-    res = _run(topology.upsert_heartbeat(pool, 3, _beat(agents=[{"pid": str(PID), "signature": SIG}])))
+    res = _run(topology.upsert_heartbeat(pool, 9003, _beat(agents=[{"pid": str(PID), "signature": SIG}])))
     assert pool.cleared() == [], f"a string pid was read as absence: {pool.cleared()}"
     assert res.get("contain") == [PID], res
 
@@ -285,7 +285,7 @@ def test_a_pid_now_wearing_another_signature_is_not_killed():
     """The number the user pointed at now belongs to a different process: the
     order is dropped as 'pid_reused', never delivered."""
     pool = Pool()
-    res = _run(topology.upsert_heartbeat(pool, 3, _beat(agents=[{"pid": PID, "signature": "sshd"}])))
+    res = _run(topology.upsert_heartbeat(pool, 9003, _beat(agents=[{"pid": PID, "signature": "sshd"}])))
     assert pool.cleared() == [([PID], "pid_reused")], pool.cleared()
     assert pool.audited() == [f"pid-reused pid {PID}"], pool.audited()
     assert "contain" not in res, f"a reused pid was sent for termination: {res}"
@@ -297,7 +297,7 @@ def test_a_signature_compares_with_itself_as_stored():
     itself and the order be dropped as a reuse that did not happen."""
     long = "Xx" * 40  # mixed case: stored as-is, never folded
     pool = Pool(pending=[{"pid": PID, "signature": long[:64], "lapsed": False}])
-    res = _run(topology.upsert_heartbeat(pool, 3, _beat(agents=[{"pid": PID, "signature": "  " + long + "  "}])))
+    res = _run(topology.upsert_heartbeat(pool, 9003, _beat(agents=[{"pid": PID, "signature": "  " + long + "  "}])))
     assert pool.cleared() == [], f"a signature mismatched itself: {pool.cleared()}"
     assert res.get("contain") == [PID], res
 
@@ -307,7 +307,7 @@ def test_a_reported_pid_with_no_signature_is_delivered_not_dropped():
     identity cannot be compared, and the order the user placed is delivered
     rather than dropped as pid_reused on a comparison that never happened."""
     pool = Pool()
-    res = _run(topology.upsert_heartbeat(pool, 3, _beat(agents=[{"pid": PID}])))
+    res = _run(topology.upsert_heartbeat(pool, 9003, _beat(agents=[{"pid": PID}])))
     assert pool.cleared() == [], f"a missing signature was read as a different process: {pool.cleared()}"
     assert res.get("contain") == [PID], res
 
@@ -316,14 +316,14 @@ def test_an_order_without_a_signature_relies_on_age_alone():
     """No signature recorded (an activity row from before kinds carried one):
     identity cannot be checked, so a present pid is delivered."""
     pool = Pool(pending=[{"pid": PID, "signature": None, "lapsed": False}])
-    res = _run(topology.upsert_heartbeat(pool, 3, _beat(agents=[{"pid": PID, "signature": "anything"}])))
+    res = _run(topology.upsert_heartbeat(pool, 9003, _beat(agents=[{"pid": PID, "signature": "anything"}])))
     assert pool.cleared() == [], pool.cleared()
     assert res.get("contain") == [PID], res
 
 
 def test_an_order_older_than_the_ttl_lapses_even_when_the_pid_is_present():
     pool = Pool(pending=[{"pid": PID, "signature": SIG, "lapsed": True}])
-    res = _run(topology.upsert_heartbeat(pool, 3, _beat(agents=[{"pid": PID, "signature": SIG}])))
+    res = _run(topology.upsert_heartbeat(pool, 9003, _beat(agents=[{"pid": PID, "signature": SIG}])))
     assert pool.cleared() == [([PID], "expired")], pool.cleared()
     assert pool.audited() == [f"expired pid {PID}"], pool.audited()
     assert "contain" not in res, f"a lapsed order was still delivered: {res}"
@@ -333,14 +333,14 @@ def test_an_order_older_than_the_ttl_lapses_on_a_beat_that_could_not_look():
     """Expiry is about the order's age, not the box's sight: a box that never
     looks again must not carry a dead order on its card forever."""
     pool = Pool(pending=[{"pid": PID, "signature": SIG, "lapsed": True}])
-    res = _run(topology.upsert_heartbeat(pool, 3, _beat()))
+    res = _run(topology.upsert_heartbeat(pool, 9003, _beat()))
     assert pool.cleared() == [([PID], "expired")], pool.cleared()
     assert "contain" not in res, res
 
 
 def test_an_order_inside_the_ttl_is_still_delivered():
     pool = Pool(pending=[{"pid": PID, "signature": SIG, "lapsed": False}])
-    res = _run(topology.upsert_heartbeat(pool, 3, _beat(agents=[{"pid": PID, "signature": SIG}])))
+    res = _run(topology.upsert_heartbeat(pool, 9003, _beat(agents=[{"pid": PID, "signature": SIG}])))
     assert pool.cleared() == [], pool.cleared()
     assert res.get("contain") == [PID], res
 
@@ -352,7 +352,7 @@ def test_lapse_is_judged_on_the_databases_clock_with_the_one_ttl():
     clock. The fake pool cannot evaluate SQL, so the text and the parameter
     are what is pinned, not the real-PG result."""
     pool = Pool()
-    _run(topology.upsert_heartbeat(pool, 3, _beat(agents=[])))
+    _run(topology.upsert_heartbeat(pool, 9003, _beat(agents=[])))
     q, a = next((q, a) for q, a in pool.sql if "FROM nac_agent_contain WHERE token_id=$1 AND cleared_at IS NULL" in q)
     assert "(requested_at < now() - $2::interval) AS lapsed" in q, q
     assert a == (7, topology.CONTAIN_PENDING_TTL), a
@@ -362,7 +362,7 @@ def test_a_null_lapsed_flag_does_not_expire():
     """A row the database could not date (NULL requested_at → NULL lapsed) is
     delivered, never expired on a guess."""
     pool = Pool(pending=[{"pid": PID, "signature": SIG, "lapsed": None}])
-    res = _run(topology.upsert_heartbeat(pool, 3, _beat(agents=[{"pid": PID, "signature": SIG}])))
+    res = _run(topology.upsert_heartbeat(pool, 9003, _beat(agents=[{"pid": PID, "signature": SIG}])))
     assert pool.cleared() == [] and res.get("contain") == [PID], (pool.cleared(), res)
 
 
@@ -371,7 +371,7 @@ def test_an_order_the_reaper_already_lapsed_is_not_audited_twice():
     this path writes no second 'expired' line for the same order."""
     pool = Pool(pending=[{"pid": PID, "signature": SIG, "lapsed": True}])
     pool.update_touches = False
-    _run(topology.upsert_heartbeat(pool, 3, _beat(agents=[])))
+    _run(topology.upsert_heartbeat(pool, 9003, _beat(agents=[])))
     assert pool.cleared() != [], "the UPDATE must still be attempted"
     assert pool.audited() == [], f"an order already lapsed by the reaper was audited again: {pool.audited()}"
     # The audit is fed by RETURNING, so the statement's shape is load-bearing
@@ -385,7 +385,7 @@ def test_an_order_the_reaper_already_lapsed_is_not_audited_twice():
 
 def test_request_contain_records_the_signature_and_says_queued():
     pool = Pool()
-    got = _run(topology.request_contain(pool, 3, 7, PID))
+    got = _run(topology.request_contain(pool, 9003, 7, PID))
     assert got == "queued", got
     ins = [(q, a) for q, a in pool.sql if "INSERT INTO nac_agent_contain" in q]
     assert len(ins) == 1, ins
@@ -410,14 +410,14 @@ def test_request_contain_refuses_a_revoked_bastion():
     will never beat again, and the card would count it. The fake pool cannot
     evaluate SQL, so the predicate itself is pinned."""
     pool = Pool()
-    _run(topology.request_contain(pool, 3, 7, PID))
+    _run(topology.request_contain(pool, 9003, 7, PID))
     own = [q for q, a in pool.sql if "FROM mcp_client_tokens" in q]
     assert own and "revoked_at IS NULL" in own[0] and "operator_kind='bastion'" in own[0], own
 
 
 def test_request_contain_says_open_when_the_order_already_exists():
     pool = Pool(insert_tag="INSERT 0 0")
-    got = _run(topology.request_contain(pool, 3, 7, PID))
+    got = _run(topology.request_contain(pool, 9003, 7, PID))
     assert got == "open", got
 
 
@@ -482,7 +482,7 @@ def test_list_observations_carries_when_the_order_was_placed():
                          "acknowledged": False,
                          "contain_pending_since": datetime(2026, 9, 19, 22, 0, tzinfo=timezone.utc)})]
     p = P()
-    out = _run(nac_agents.list_observations(p, 3))
+    out = _run(nac_agents.list_observations(p, 9003))
     assert "AS contain_pending_since" in p.q and "FROM nac_agent_contain c" in p.q, p.q
     assert out[0]["contain_pending_since"] == "2026-09-19T22:00:00+00:00", out[0]["contain_pending_since"]
 
@@ -561,16 +561,16 @@ def test_a_beat_without_a_schedulers_key_keeps_the_stored_inventory():
     The upsert parameter is None for an absent key (the SQL COALESCEs it to
     the stored value) and "[]" for an explicit empty list."""
     pool = Pool(pending=[])
-    _run(topology.upsert_heartbeat(pool, 3, _beat()))
+    _run(topology.upsert_heartbeat(pool, 9003, _beat()))
     assert pool.heartbeat_arg(17) is None, f"an absent schedulers key was written as {pool.heartbeat_arg(17)!r}"
     pool = Pool(pending=[])
-    _run(topology.upsert_heartbeat(pool, 3, _beat(schedulers=[])))
+    _run(topology.upsert_heartbeat(pool, 9003, _beat(schedulers=[])))
     assert pool.heartbeat_arg(17) == "[]", pool.heartbeat_arg(17)
 
 
 def test_the_upsert_sql_keeps_schedulers_on_a_null_parameter():
     pool = Pool(pending=[])
-    _run(topology.upsert_heartbeat(pool, 3, _beat()))
+    _run(topology.upsert_heartbeat(pool, 9003, _beat()))
     q = next(q for q, a in pool.sql if "INSERT INTO network_bastion_heartbeat" in q)
     assert "schedulers      = COALESCE($17::jsonb, network_bastion_heartbeat.schedulers)" in q, q
     assert "COALESCE($17::jsonb, '[]'::jsonb)" in q, q

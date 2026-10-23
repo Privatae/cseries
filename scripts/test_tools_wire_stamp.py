@@ -125,7 +125,7 @@ class _LedgerPool:
         return []
 
 
-_w = asyncio.run(_cb.window_report(_LedgerPool(), 3))
+_w = asyncio.run(_cb.window_report(_LedgerPool(), 9003))
 _pc = (_w.get("last_turn") or {}).get("per_call") or []
 check(_pc == [{"in": 1000, "cached": 800, "cache_write": 100, "out": 50, "usd": 0.001},
               {"in": 1200, "cached": 1000, "cache_write": 0, "out": 40}],

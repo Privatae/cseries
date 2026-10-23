@@ -326,10 +326,10 @@ class _RetirePool:
 
 
 _rp = _RetirePool()
-n = asyncio.run(_ti.retire_bundle_text(_rp, 3, "box-a-ledger.tickets.gz"))
+n = asyncio.run(_ti.retire_bundle_text(_rp, 9003, "box-a-ledger.tickets.gz"))
 check("retire_bundle_text dismisses the extracted rows hanging off the bundle file, by name, and counts them",
       n == 3 and "source = 'extracted'" in _rp.sql[0][0] and "media_parent_id IN" in _rp.sql[0][0]
-      and _rp.sql[0][1] == (3, "box-a-ledger.tickets.gz"), _rp.sql)
+      and _rp.sql[0][1] == (9003, "box-a-ledger.tickets.gz"), _rp.sql)
 check("the file row itself is never touched, and a piece the user promoted stays",
       "SET status = 'dismissed'" in _rp.sql[0][0] and "source = 'extracted'" in _rp.sql[0][0]
       and "status NOT IN ('dismissed', 'promoted')" in _rp.sql[0][0])
@@ -341,11 +341,11 @@ class _RaisingPool:
 
 
 res_ok = {"errors": []}
-asyncio.run(_ti._retire_after_import(_RaisingPool(), 3, "b.gz", res_ok))
+asyncio.run(_ti._retire_after_import(_RaisingPool(), 9003, "b.gz", res_ok))
 check("a failure to retire never fails the import: noted on the result, count 0",
       res_ok.get("bundle_text_retired") == 0 and "retiring it failed" in res_ok.get("note", ""), res_ok)
 res_err = {"errors": [{"kind": "ticket"}]}
-asyncio.run(_ti._retire_after_import(_rp, 3, "b.gz", res_err))
+asyncio.run(_ti._retire_after_import(_rp, 9003, "b.gz", res_err))
 check("an import with errors keeps the bundle's text", "bundle_text_retired" not in res_err and len(_rp.sql) == 1)
 src_ti = (ROOT / "brain/mastercode/runtime/ticket_import.py").read_text()
 check("run() goes through _retire_after_import", "await _retire_after_import(pool, int(entity_id), fname, res)" in src_ti)
@@ -353,7 +353,7 @@ check("run() goes through _retire_after_import", "await _retire_after_import(poo
 # ── the replay: the 06:23 read, through extract_context_file ─────────────
 from server.routes import context_extract as ce  # noqa: E402
 
-ENTITY, CTX_ID = 3, 480
+ENTITY, CTX_ID = 9003, 480
 
 
 class _Conn:

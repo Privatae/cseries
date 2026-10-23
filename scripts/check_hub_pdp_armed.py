@@ -93,7 +93,7 @@ async def part1() -> None:
             runner = await _stub(status, holder)
             hub_peers.HUB_CONTROL = f"http://127.0.0.1:{holder['port']}"
             try:
-                got = await hub_peers.arm_hub_pdp(None, 122)
+                got = await hub_peers.arm_hub_pdp(None, 9122)
                 check(got is expect, label)
                 if status == 204:
                     sent = holder.get("body", {}).get("key")
@@ -106,7 +106,7 @@ async def part1() -> None:
         # a forever-loop that must survive a Hub that is simply not there.
         hub_peers.HUB_CONTROL = "http://127.0.0.1:1"
         try:
-            got = await hub_peers.arm_hub_pdp(None, 122)
+            got = await hub_peers.arm_hub_pdp(None, 9122)
             check(got is False, "unreachable hub -> False, no raise")
         except Exception as e:
             check(False, f"unreachable hub raised {e!r}")
@@ -120,8 +120,8 @@ async def part1() -> None:
     saved = os.environ.pop("ENTITY_ID", None)
     try:
         check(hub_peers._pod_entity_id() is None, "no ENTITY_ID -> None (no fallback to 1)")
-        os.environ["ENTITY_ID"] = "122"
-        check(hub_peers._pod_entity_id() == 122, "ENTITY_ID=9122 -> 122")
+        os.environ["ENTITY_ID"] = "9122"
+        check(hub_peers._pod_entity_id() == 9122, "ENTITY_ID=9122 -> 122")
         os.environ["ENTITY_ID"] = "not-a-number"
         check(hub_peers._pod_entity_id() is None, "malformed ENTITY_ID -> None")
     finally:
@@ -157,7 +157,7 @@ async def part_loop() -> None:
     real_arm, real_conv, real_splay = (
         hub_peers.arm_hub_pdp, hub_peers._converge_once, loop_splay.splay)
     saved = os.environ.get("ENTITY_ID")
-    os.environ["ENTITY_ID"] = "122"
+    os.environ["ENTITY_ID"] = "9122"
     hub_peers.arm_hub_pdp = fake_arm
     hub_peers._converge_once = fake_converge
     loop_splay.splay = no_splay
@@ -166,7 +166,7 @@ async def part_loop() -> None:
             await hub_peers.reconcile_hub_peers_loop(None)
         except asyncio.CancelledError:
             pass
-        check(called == [122], f"loop armed for the pod's entity (called={called})")
+        check(called == [9122], f"loop armed for the pod's entity (called={called})")
     finally:
         hub_peers.arm_hub_pdp = real_arm
         hub_peers._converge_once = real_conv

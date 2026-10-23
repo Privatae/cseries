@@ -1,0 +1,2 @@
+# 2026-10-23 (release notes): the GitHub release's notes list the subject of each commit since the previous release's tag (the highest vX.Y.Z below this one in this tag's history, compared as numbers, never a tag from another line or a later version), say so on the first release, refuse a tag that is not vX.Y.Z, and the release job checks out the whole history to write them. Builds a throwaway git repository; no network, no container (needs git and PyYAML).
+test_release_notes_changes.py

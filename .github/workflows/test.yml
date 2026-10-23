@@ -1,0 +1,86 @@
+# The tests on every push to main and every pull request: the Python tests
+# that need no container, the tests of the installer (npx cseries), and two
+# checks of the tree: each security claim in docs/ai/claims.md cites a test
+# that exists, and the source holds nothing private.
+name: test
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+permissions: {}
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  python:
+    name: Python tests and tree checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14.4"
+
+      - name: The tests' Python packages, at the versions they pass with
+        run: python3 -m pip install -r scripts/requirements-gates.txt
+
+      # Without it the tests that drive the apps' pages in a browser skip.
+      - name: Chromium for the browser tests
+        run: python3 -m playwright install --with-deps chromium
+
+      # A store app's tests run on that app's own lane, never with the kernel's,
+      # so the tests/ entries in scripts/gates-store-apps.txt are left out here
+      # as scripts/pre_merge_gates.sh leaves them out.
+      - name: Python tests
+        run: |
+          ignore=()
+          while read -r gate app _; do
+            if [[ "$gate" == tests/*.py && -n "$app" ]]; then
+              ignore+=("--ignore=$gate")
+            fi
+          done < <(sed 's/#.*//' scripts/gates-store-apps.txt)
+          python3 -m pytest -q tests/ "${ignore[@]}"
+
+      - name: Each security claim cites a test that exists
+        run: python3 scripts/test_ai_claims.py
+
+      - name: The source holds nothing private
+        run: APP_ROOT="$PWD" python3 scripts/test_public_source_clean.py
+
+  installer:
+    name: Installer tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24.22.0"
+
+      - name: npm test
+        working-directory: packages/cseries
+        run: npm test

@@ -98,7 +98,7 @@ nac_mgmt.mgmt_decision = lambda grants, eid, server, op, suspended, quarantined:
 nac_mgmt.mgmt_denied_by = lambda grants, server, op: None
 
 GATING = {"write_gate": True, "device": True, "second_factor": True, "device_keys": ["K1"], "op_view_closed": True}
-EID = 3
+EID = 9003
 pool = Pool(enforcing=GATING, devices={"K1": (55, "phone")})
 
 

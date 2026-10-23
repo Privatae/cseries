@@ -139,7 +139,7 @@ print("3. look: kept files, web pictures behind a call with no tools")
 
 class Ctx:
     def __init__(self, args, pool=None):
-        self.args, self.entity_id, self.pool = args, 3, pool
+        self.args, self.entity_id, self.pool = args, 9003, pool
 
     def log(self, *a):
         pass
@@ -154,9 +154,9 @@ class FilePool:
         return self.rows.get(a)
 
 
-KEPT = {(3, "image.png"): {"id": 1752, "content": PNG_B64, "storage_backend": "pg",
+KEPT = {(9003, "image.png"): {"id": 1752, "content": PNG_B64, "storage_backend": "pg",
                            "metadata": {"kind": "file"}},
-        (3, "notes.pdf"): {"id": 9, "content": base64.b64encode(b"%PDF-1.4").decode(),
+        (9003, "notes.pdf"): {"id": 9, "content": base64.b64encode(b"%PDF-1.4").decode(),
                            "storage_backend": "pg", "metadata": {"kind": "file"}}}
 
 
@@ -208,7 +208,7 @@ url_reader.fetch_bytes, pg.call_model, icfg.resolve_role_route = fake_fetch, fak
 ap.model_reads_images = lambda p, m: True
 try:
     OWN = "gimg_" + "R" * 22
-    own_pool = FilePool({(OWN, 3): {"content_type": "image/png", "bytes": PNG,
+    own_pool = FilePool({(OWN, 9003): {"content_type": "image/png", "bytes": PNG,
                                      "prompt": "plush draft", "model": "app:blender-engine"}})
     out = run({"action": "look", "images": ["https://media.example/plush.jpg"]})
     check("a web picture with no question is refused before anything is fetched",
@@ -270,13 +270,13 @@ row = {"name": "blender-engine", "app_id": "blender-engine"}
 result = {"content": [{"type": "text", "text": "done"},
                       {"type": "image", "data": PNG_B64, "mimeType": "image/png"}]}
 tok = tp.begin_turn()
-kept = asyncio.run(mc._keep_app_images(StorePool(), 3, row, "render", dict(result)))
+kept = asyncio.run(mc._keep_app_images(StorePool(), 9003, row, "render", dict(result)))
 pics = tp.drain()
 text = kept["content"][1]["text"]
 check("in a turn: kept, named, and shown", "shown to you" in text and "/api/images/gimg_" in text
       and len(pics) == 1 and pics[0]["data"] == PNG_B64, (text, len(pics)))
 tp.end(tok)
-kept = asyncio.run(mc._keep_app_images(StorePool(), 3, row, "render", dict(result)))
+kept = asyncio.run(mc._keep_app_images(StorePool(), 9003, row, "render", dict(result)))
 text = kept["content"][1]["text"]
 check("outside a turn: kept, and it says how to look instead of claiming it was shown",
       "shown to you" not in text and "action='look'" in text, text)

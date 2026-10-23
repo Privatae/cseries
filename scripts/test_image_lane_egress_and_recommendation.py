@@ -139,7 +139,7 @@ check("a web picture for look is fetched on the proxy (url_reader.fetch_bytes, t
 # private destinations, so trust_env there would turn a working local model
 # into a 403 (review of this branch, F7).
 for _priv in ("http://192.168.1.20:11434/v1", "http://127.0.0.1:8080/v1",
-              "http://[fd00:aa::16]:11434/v1", "http://10.1.2.3:8000",
+              "http://[fd12:3456:789a::16]:11434/v1", "http://10.1.2.3:8000",
               "http://100.101.102.103:11434/v1"):
     check(f"a private/loopback endpoint is dialled direct: {_priv}",
           image_engine._session_kwargs(_priv) == {"trust_env": False},

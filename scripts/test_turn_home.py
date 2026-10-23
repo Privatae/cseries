@@ -365,7 +365,7 @@ async def _t4():
     pool = FakePool(fetchrow={"SELECT id, name FROM projects": _Row(id=9229, name="Fern")},
                     fetchval={"SELECT 1 FROM projects": 1},
                     fetch=[_Row(id=1, source_session="s1"), _Row(id=2, source_session="s1")])
-    res = await adopt_thread_core(pool, 3, 9229, "project", "9228")
+    res = await adopt_thread_core(pool, 9003, 9229, "project", "9228")
     _check(res.get("moved_turns") == 2, "project-source adoption moves the turns")
     upd = [s for s in pool.sql("fetch") if "UPDATE entity_memory" in s]
     _check(len(upd) == 1 and "project_id = $2::int" in upd[0] and "IS NULL" not in upd[0],
@@ -387,14 +387,14 @@ async def _t4():
     # Refusals.
     for ref, why in (("9229", "self"), ("abc", "non-int")):
         try:
-            await adopt_thread_core(pool, 3, 9229, "project", ref)
+            await adopt_thread_core(pool, 9003, 9229, "project", ref)
             fails.append(f"project-source adoption must refuse {why} ref={ref!r}")
         except ValueError:
             pass
     # The app source path is unchanged: IS NULL + source_context match.
     pool2 = FakePool(fetchrow={"SELECT id, name FROM projects": _Row(id=9229, name="Fern")},
                      fetch=[])
-    await adopt_thread_core(pool2, 3, 9229, "app", "workbench")
+    await adopt_thread_core(pool2, 9003, 9229, "app", "workbench")
     upd2 = [s for s in pool2.sql("fetch") if "UPDATE entity_memory" in s]
     _check(len(upd2) == 1 and "project_id IS NULL" in upd2[0]
            and "source_context'->>'kind' = $2" in upd2[0],
@@ -404,7 +404,7 @@ async def _t4():
     # filter) and without a regenerate's rows — the same set Split moves.
     pool3 = FakePool(fetchrow={"SELECT id, name FROM projects": _Row(id=9229, name="Fern")},
                      fetch=[])
-    await adopt_thread_core(pool3, 3, 9229, "thread",
+    await adopt_thread_core(pool3, 9003, 9229, "thread",
                             "6f1c2a3e-9b8d-4c7a-a1e2-0f3b4c5d6e7f")
     upd3 = [s for s in pool3.sql("fetch") if "UPDATE entity_memory" in s]
     _check(len(upd3) == 1 and "source_context'->>'kind' = 'thread'" in upd3[0]
@@ -416,7 +416,7 @@ async def _t4():
     # refuse them rather than adopt the user's whole Circles history.
     for ref in ("original", "self", "", "SELF"):
         try:
-            await adopt_thread_core(pool3, 3, 9229, "thread", ref)
+            await adopt_thread_core(pool3, 9003, 9229, "thread", ref)
             fails.append(f"thread-source adoption must refuse the legacy sentinel ref={ref!r}")
         except ValueError:
             pass
@@ -428,7 +428,7 @@ async def _t4():
     # style, regenerate rows out — the same set Split moves off it.
     pool4 = FakePool(fetchrow={"SELECT id, name FROM projects": _Row(id=9229, name="Fern")},
                      fetch=[_Row(id=1, source_session="s1")])
-    await adopt_thread_core(pool4, 3, 9229, "app", "Circles")
+    await adopt_thread_core(pool4, 9003, 9229, "app", "Circles")
     upd4 = [s for s in pool4.sql("fetch") if "UPDATE entity_memory" in s]
     _check(len(upd4) == 1 and "metadata->>'app_id' IS NULL" in upd4[0]
            and "IS DISTINCT FROM 'thread'" in upd4[0]
@@ -502,7 +502,7 @@ async def _t6():
     async def _user_row():
         return 8191
     task = asyncio.create_task(_user_row())
-    res = await rehome_turn(pool, 3, from_project=9228, to_project=9229,
+    res = await rehome_turn(pool, 9003, from_project=9228, to_project=9229,
                             user_row_task=task, session_id="s", turn_token="t6")
     _check(res["moved_user_row"] is True and res["to_name"] == "Fern LCSW Test Prep",
            f"rehome moves the user row and names the target: {res}")
@@ -525,7 +525,7 @@ async def _t6():
     # No user task and no turn token to find the row by: nothing moves and
     # NO marker lands — half a move is the split.
     pool2 = FakePool(fetchrow={"SELECT name FROM projects": _Row(name="T")})
-    res2 = await rehome_turn(pool2, 3, from_project=1, to_project=2, user_row_task=None, session_id="s")
+    res2 = await rehome_turn(pool2, 9003, from_project=1, to_project=2, user_row_task=None, session_id="s")
     _check(res2["moved_user_row"] is False and res2["marker"] is False,
            "with no user row to move, nothing moves and no marker lands")
     _check(not any("INSERT INTO entity_memory" in s for s in pool2.sql("execute")),

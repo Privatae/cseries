@@ -62,7 +62,7 @@ def world(monkeypatch):
 
 def test_a_site_becomes_a_desktop_in_its_palette(world):
     fetched, created = world
-    res = asyncio.run(T._desktop_from_url(None, 3, "https://acme.test", ""))
+    res = asyncio.run(T._desktop_from_url(None, 9003, "https://acme.test", ""))
     assert "error" not in res, res
     # The page, then its stylesheets resolved against the FINAL url.
     assert fetched == ["https://acme.test", "https://www.acme.test/css/site.css",
@@ -82,13 +82,13 @@ def test_a_site_becomes_a_desktop_in_its_palette(world):
 
 def test_a_given_name_is_used(world):
     _, created = world
-    res = asyncio.run(T._desktop_from_url(None, 3, "https://acme.test", "Night Shift"))
+    res = asyncio.run(T._desktop_from_url(None, 9003, "https://acme.test", "Night Shift"))
     assert res["name"] == "Night Shift" and created[0]["name"] == "Night Shift"
 
 
 def test_an_unreachable_site_is_an_error_and_creates_nothing(world):
     _, created = world
-    res = asyncio.run(T._desktop_from_url(None, 3, "https://nowhere.test", ""))
+    res = asyncio.run(T._desktop_from_url(None, 9003, "https://nowhere.test", ""))
     assert "could not read https://nowhere.test" in res["error"]
     assert created == []
 

@@ -76,7 +76,7 @@ def main() -> int:
         "embedding_base_url": "http://[2001:db8::a:b]:11434",  # the dead pin
     })
     r = asyncio.run(E.apply_embedding_switch(
-        pool, 3, "qwen3-embedding:4b", provider="local",
+        pool, 9003, "qwen3-embedding:4b", provider="local",
         base_url="http://[2001:db8::a:d]:11434", dim=2560, bastion="DESKTOP-X"))
     assert not r.get("error"), f"switch errored: {r}"
     assert pool.bp.get("embedding_bastion") == "DESKTOP-X", pool.bp
@@ -84,7 +84,7 @@ def main() -> int:
 
     # ── 2. pure-BYO switch clears the identity ──────────────────────────
     r = asyncio.run(E.apply_embedding_switch(
-        pool, 3, "some-external-model", provider="local",
+        pool, 9003, "some-external-model", provider="local",
         base_url="http://byo.example.internal:9000", dim=1024))
     assert not r.get("error"), f"BYO switch errored: {r}"
     assert "embedding_bastion" not in pool.bp, pool.bp
@@ -96,7 +96,7 @@ def main() -> int:
         "embedding_bastion": "DESKTOP-X", "embedding_dim": 2560,
     })
     pool.hb = {"reported_ip": "2001:db8::a:d"}  # the bastion's LIVE address
-    cfg = asyncio.run(ME._byo_embedding_config(pool, 3))
+    cfg = asyncio.run(ME._byo_embedding_config(pool, 9003))
     assert cfg.get("base_url") == "http://[2001:db8::a:d]:11434", \
         f"reader must resolve live, got {cfg}"
 
@@ -105,7 +105,7 @@ def main() -> int:
     #      bridge either (config-driven lanes take no cross-lane fallback;
     #      `{}` here used to silently send the vector to the bridge).
     pool.hb = None
-    cfg = asyncio.run(ME._byo_embedding_config(pool, 3))
+    cfg = asyncio.run(ME._byo_embedding_config(pool, 9003))
     assert cfg.get("backend_down") and not cfg.get("base_url"), \
         f"stale pin must never be dialed, and down must be flagged: {cfg}"
 
@@ -122,7 +122,7 @@ def main() -> int:
     EB.validate_embed_bastion_target = fake_validate
     E.apply_embedding_switch = fake_apply
     asyncio.run(EB.set_embed_bastion(
-        pool, 3, "DESKTOP-X", model="qwen3-embedding:4b", dim=2560))
+        pool, 9003, "DESKTOP-X", model="qwen3-embedding:4b", dim=2560))
     assert seen.get("bastion") == "DESKTOP-X", \
         f"set_embed_bastion must pass the identity: {seen}"
 
@@ -133,7 +133,7 @@ def main() -> int:
         "embedding_bastion": "DESKTOP-X", "embedding_dim": 2560,
     })
     pool.hb = {"reported_ip": "2001:db8::a:d"}
-    cfg = asyncio.run(ME._byo_embedding_config(pool, 3))
+    cfg = asyncio.run(ME._byo_embedding_config(pool, 9003))
     assert cfg.get("peer_forward"), f"bastion-lane cfg must carry peer_forward: {cfg}"
 
     async def tunnel_roundtrip():

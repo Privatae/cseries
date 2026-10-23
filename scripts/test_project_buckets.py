@@ -121,20 +121,20 @@ class _Pool:
 
 async def _stub_checks():
     pool = _Pool()
-    await P.update_project_service(pool, 3, 10, bucket_id=None)
+    await P.update_project_service(pool, 9003, 10, bucket_id=None)
     upd = next(q for k, q, _ in pool.calls if k == "execute")
     check("bucket_id=None UNFILES (folder_id = NULL), entity-scoped",
           "folder_id = NULL" in upd and "entity_id = $2" in upd, upd)
 
     pool = _Pool(folder_row=None)
     try:
-        await P.update_project_service(pool, 3, 10, bucket_id=99)
+        await P.update_project_service(pool, 9003, 10, bucket_id=99)
         check("filing into a bucket the entity does not own is refused", False)
     except P.ProjectsError as e:
         check("filing into a bucket the entity does not own is refused (404)", e.status == 404, str(e))
 
     pool = _Pool(folder_row={"id": 7})
-    await P.update_project_service(pool, 3, 10, bucket_id=7)
+    await P.update_project_service(pool, 9003, 10, bucket_id=7)
     writes = [q for k, q, _ in pool.calls if k == "execute"]
     upd = next(q for q in writes if "UPDATE projects" in q)
     check("filing writes folder_id = $N after the ownership check", "folder_id = $3" in upd, upd)
@@ -142,12 +142,12 @@ async def _stub_checks():
           "pg_advisory_xact_lock" in writes[0] and writes.index(upd) > 0, repr(writes))
 
     pool = _Pool()
-    await P.update_project_service(pool, 3, 10, name="x")
+    await P.update_project_service(pool, 9003, 10, name="x")
     upd = next(q for k, q, _ in pool.calls if k == "execute")
     check("a rename leaves folder_id alone (the _UNSET default)", "folder_id" not in upd, upd)
 
     pool = _Pool(folder_row={"id": 7}, count=12)
-    r = await P.delete_bucket_service(pool, 3, 7)
+    r = await P.delete_bucket_service(pool, 9003, 7)
     dels = [q for k, q, _ in pool.calls if k == "execute"]
     locks = [q for q in dels if "pg_advisory_xact_lock" in q]
     dels = [q for q in dels if "pg_advisory_xact_lock" not in q]
@@ -162,19 +162,19 @@ async def _stub_checks():
           repr(others))
 
     try:
-        await P.create_bucket_service(_Pool(), 3, "   ")
+        await P.create_bucket_service(_Pool(), 9003, "   ")
         check("an empty bucket name is refused", False)
     except P.ProjectsError as e:
         check("an empty bucket name is refused (400)", e.status == 400)
     try:
-        await P.create_bucket_service(_Pool(), 3, "Clients", color="javascript:alert(1)")
+        await P.create_bucket_service(_Pool(), 9003, "Clients", color="javascript:alert(1)")
         check("a non-swatch color is refused", False)
     except P.ProjectsError as e:
         check("a non-swatch color is refused (400)", e.status == 400)
 
 
     try:
-        await P.place_project_service(_Pool(), 3, 10, bucket_id=None, before_id=10)
+        await P.place_project_service(_Pool(), 9003, 10, bucket_id=None, before_id=10)
         check("a project cannot be placed in front of itself", False)
     except P.ProjectsError as e:
         check("a project cannot be placed in front of itself (400)", e.status == 400, str(e))

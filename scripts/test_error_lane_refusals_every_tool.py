@@ -7,7 +7,7 @@ Container-free: APP_ROOT=<repo> python3 scripts/test_error_lane_refusals_every_t
 No pod, no DB, no network, no model: a temp workspace and the real executors.
 
 One live run failed errors_clean
-with 12 platform rows on entity 9163 and 5 on 164. An earlier fix had marked
+with 12 platform rows on entity 9163 and 5 on 9164. An earlier fix had marked
 workspace_file alone; every one of the 17 was another tool refusing what the
 model sent (rows read from the two test Hosts' error lane):
 

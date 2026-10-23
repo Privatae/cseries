@@ -257,7 +257,7 @@ async def _by_email(_pool, **kw):
 circles._bridge_call = _bridge
 circles._audit = _noop
 circles._held_slip_for = _held
-circles._entity_id = lambda: 3
+circles._entity_id = lambda: 9003
 circles.brain_service.get_pool = lambda: object()
 contacts.find_human_contact = _human
 contacts._pool = lambda: object()

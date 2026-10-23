@@ -155,7 +155,7 @@ def lane(monkeypatch):
     monkeypatch.setattr(GC, "gitea_proxy", lambda: "http://127.0.0.1:13128")
     monkeypatch.setattr(GP, "_run_git", git)
     monkeypatch.setattr(brain_service, "get_pool", lambda: pool)
-    monkeypatch.setenv("ENTITY_ID", "3")
+    monkeypatch.setenv("ENTITY_ID", "9003")
     return fake, git, pool
 
 
@@ -215,7 +215,7 @@ def test_new_proposal_forks_branches_commits_pushes_to_fork_and_opens_pr(lane):
 
     assert len(pool.rows) == 1
     row = pool.rows[0]
-    assert row[0] == 3 and row[1] == "gitea:propose" and row[2] == "alex/widget"
+    assert row[0] == 9003 and row[1] == "gitea:propose" and row[2] == "alex/widget"
     assert row[PR_NUMBER] == 41 and row[OUTCOME] == "opened"
     # Reconstructable after the fork branch is gone: the paths and the sha.
     assert json.loads(row[FILES]) == ["probe.py", "docs/notes.md"] and row[8] == 2

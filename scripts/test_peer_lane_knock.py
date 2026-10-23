@@ -4,13 +4,13 @@
 Container-free on purpose: these are pure classification and gating decisions, so
 they run on EVERY merge rather than skipping without a Postgres.
 
-Background. The peer lane (`:8444`, mTLS, CEIGAS CA) was slip-gated end to end,
+Background. The peer lane (`:8444`, mTLS, CEIGAS CA) is slip-gated end to end,
 and a slip only exists once someone ACCEPTS a connection request. So the one
-message that STARTS a relationship could not travel on it and had to go by bridge
-— which keeps its connections in an in-process dict per DaemonSet pod with no
-forwarding between them. Measured: one Host's pod on bridge ::250, its peer
-on ::23f, the request answered `503 "entity 9122 not connected"`, and the estate
-held zero host↔host messages and zero slips. `inbox.request` closes that
+message that STARTS a relationship cannot travel on it and would have to go by
+bridge, which keeps its connections in an in-process dict per DaemonSet pod
+with no forwarding between them: a request between two Hosts connected to
+different pods is answered `503 "entity N not connected"`, so no first message
+and no slip can ever exist. `inbox.request` closes that
 bootstrap, and every assertion below guards a way it could go wrong.
 
 What is pinned:
@@ -83,13 +83,13 @@ def main() -> int:
     H.handle_inbox_append = fake_append
 
     print("\n── 1. a knock can never carry a `message` ──")
-    res = asyncio.run(H.inbox_request(122, None, {"message_kind": "message", "body": "hi"}))
+    res = asyncio.run(H.inbox_request(9122,None, {"message_kind": "message", "body": "hi"}))
     check("message_kind='message' is REFUSED on the slipless op",
           res.get("ok") is False and "not a request kind" in (res.get("error") or ""), res)
     check("...and nothing reached the inbox at all", not captured, captured)
 
     for bad in ("system_notification", "endpoint_grant", "permission_grant", "anything"):
-        r = asyncio.run(H.inbox_request(122, None, {"message_kind": bad}))
+        r = asyncio.run(H.inbox_request(9122,None, {"message_kind": bad}))
         check(f"...and so is {bad!r}", r.get("ok") is False, r)
     check("still nothing reached the inbox", not captured, captured)
 
@@ -116,7 +116,7 @@ def main() -> int:
 
     print("\n── 3. the knock never forges attestation ──")
     captured.clear()
-    res = asyncio.run(H.inbox_request(122, None, {"body": "we share a machine"}))
+    res = asyncio.run(H.inbox_request(9122,None, {"body": "we share a machine"}))
     check("a plain knock is accepted", res.get("ok") is True, res)
     p = captured[0] if captured else {}
     check("slip_authorized is NOT set — no slip was checked",
@@ -130,17 +130,17 @@ def main() -> int:
 
     print("\n── 4. identity is the CERT's, not the caller's claim ──")
     captured.clear()
-    asyncio.run(H.inbox_request(122, None, {
+    asyncio.run(H.inbox_request(9122,None, {
         "body": "x", "from_entity_id": 999, "payload": {"from_entity_id": 999}}))
     p = captured[0]
     check("from_entity_id is the peer_id the server read off the cert",
-          p.get("from_entity_id") == 122, p.get("from_entity_id"))
+          p.get("from_entity_id") == 9122, p.get("from_entity_id"))
     check("from_address is derived from that id, not supplied",
-          p.get("from_address") == "122@entity.localhost", p.get("from_address"))
+          p.get("from_address") == "9122@entity.localhost", p.get("from_address"))
 
     print("\n── 5. another tenant's free text is bounded here ──")
     captured.clear()
-    asyncio.run(H.inbox_request(122, None, {"body": "b" * 5000, "subject": "s" * 5000}))
+    asyncio.run(H.inbox_request(9122,None, {"body": "b" * 5000, "subject": "s" * 5000}))
     p = captured[0]
     check("body is capped at the boundary",
           len(p.get("body", "")) == H._MAX_BODY, len(p.get("body", "")))
@@ -154,7 +154,7 @@ def main() -> int:
     # host could present itself as a named person in a connection request.
     # Spreading the payload verbatim repeats that bug on a new lane.
     captured.clear()
-    asyncio.run(H.inbox_request(122, None, {"body": "x", "payload": {
+    asyncio.run(H.inbox_request(9122,None, {"body": "x", "payload": {
         "from_display_name": "Alex Rivera", "display_name": "Alex Rivera",
         "from_handle": "alex", "handle": "alex", "from_user_email": "alex@example.com",
         "from_user_name": "Alex", "kind": "human", "authorized_via_slip": True,
@@ -184,7 +184,7 @@ def main() -> int:
     # success, because the wrapper returned ok:True whatever the handler said.
     check("contact_request is NOT offered", "contact_request" not in H.REQUEST_KINDS,
           H.REQUEST_KINDS)
-    r = asyncio.run(H.inbox_request(122, None, {"message_kind": "contact_request"}))
+    r = asyncio.run(H.inbox_request(9122,None, {"message_kind": "contact_request"}))
     check("...and is refused if asked for", r.get("ok") is False, r)
 
     print("\n── 8. a refused handler is not reported as success ──")
@@ -192,7 +192,7 @@ def main() -> int:
         return {"ok": False, "blocked": True, "error": "blocked by domain policy"}
     H.handle_inbox_append = refusing_append
     srv = PS.PeerServer(trust=None, handlers=H.PEER_HANDLERS, my_entity_id=9003)
-    out = asyncio.run(srv._serve(122, {"op": "inbox.request", "slip": None,
+    out = asyncio.run(srv._serve(9122, {"op": "inbox.request", "slip": None,
                                        "params": {"body": "x"}}))
     check("_serve reports the refusal as a FAILURE",
           out.get("ok") is False, out)
@@ -207,15 +207,15 @@ def main() -> int:
     import server.brain_service as BS
     real_get_pool = BS.get_pool
     BS.get_pool = lambda: _Pool(1)          # one already waiting
-    r = asyncio.run(H.inbox_request(122, None, {"body": "again"}))
+    r = asyncio.run(H.inbox_request(9122,None, {"body": "again"}))
     check("a second unanswered knock from the same peer is refused",
           r.get("ok") is False and "already waiting" in (r.get("error") or ""), r)
     BS.get_pool = lambda: _Pool(0)          # the user answered it
     captured.clear()
-    r = asyncio.run(H.inbox_request(122, None, {"body": "after answering"}))
+    r = asyncio.run(H.inbox_request(9122,None, {"body": "after answering"}))
     check("...and the slot reopens once it is answered", r.get("ok") is True, r)
     BS.get_pool = lambda: None              # pool unavailable
-    r = asyncio.run(H.inbox_request(122, None, {"body": "degraded"}))
+    r = asyncio.run(H.inbox_request(9122,None, {"body": "degraded"}))
     check("...and the cap fails OPEN when it cannot be checked", r.get("ok") is True, r)
     BS.get_pool = real_get_pool
 
@@ -224,7 +224,7 @@ def main() -> int:
     # dedupes. The handler dropped it, which made that comment describe something
     # the lane did not do — handle_inbox_append only dedupes on a supplied id.
     captured.clear()
-    asyncio.run(H.inbox_request(122, None, {"body": "x", "message_id": "abc-123"}))
+    asyncio.run(H.inbox_request(9122,None, {"body": "x", "message_id": "abc-123"}))
     check("message_id reaches the inbox append",
           captured[0].get("message_id") == "abc-123", captured[0].get("message_id"))
 
@@ -233,7 +233,7 @@ def main() -> int:
     real_list = PD.list_peerings
 
     async def fake_peerings(pool, eid):
-        return [{"peer_entity_id": 122, "peer_handle": "8abb770bbfde71d0",
+        return [{"peer_entity_id": 9122, "peer_handle": "8abb770bbfde71d0",
                  "introduced_by": "DESKTOP-EXAMPLE1", "current": True}]
     PD.list_peerings = fake_peerings
 
@@ -243,7 +243,7 @@ def main() -> int:
     real_pool, BS.get_pool = BS.get_pool, lambda: _P()
 
     captured.clear()
-    asyncio.run(H.inbox_request(122, None, {"body": "x", "payload": {
+    asyncio.run(H.inbox_request(9122,None, {"body": "x", "payload": {
         "from_display_name": "Alex Rivera", "from_handle": "alex"}}))
     inner = captured[0]["payload"]
     check("the name comes from OUR peer list, not the sender's payload",
@@ -259,11 +259,11 @@ def main() -> int:
         return []
     PD.list_peerings = no_peerings
     captured.clear()
-    asyncio.run(H.inbox_request(122, None, {"body": "x", "payload": {
+    asyncio.run(H.inbox_request(9122,None, {"body": "x", "payload": {
         "from_display_name": "Alex Rivera", "from_handle": "alex"}}))
     inner = captured[0]["payload"]
     check("an UNKNOWN knocker gets a bare id, never the name it asked for",
-          inner.get("from_display_name") == "Host 122" and "from_handle" not in inner, inner)
+          inner.get("from_display_name") == "Host 9122" and "from_handle" not in inner, inner)
     PD.list_peerings = real_list
     BS.get_pool = real_pool
 
@@ -297,7 +297,7 @@ def main() -> int:
     async def refusing(peer_id, info, params):
         return {"ok": False, "error": "nope"}
     srv2 = PS.PeerServer(trust=None, handlers={"inbox.deliver": refusing}, my_entity_id=9003)
-    out = asyncio.run(srv2._serve(122, {"op": "inbox.deliver", "slip": None, "params": {}}))
+    out = asyncio.run(srv2._serve(9122, {"op": "inbox.deliver", "slip": None, "params": {}}))
     check("a slip-gated op with no slip is still refused before the handler",
           out.get("ok") is False and out.get("error") == "slip required", out)
 

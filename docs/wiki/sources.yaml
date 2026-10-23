@@ -609,8 +609,8 @@ updates-and-versions:
   - circles-web/src/cards/inbox-notes.tsx
   - brain/mastercode/runtime/host_changelog.py::ensure_weekly_changelog_task
   verified:
-    date: '2026-10-22'
-    digest: sha256:88bf6c404348826e2a45390f8fdb1948266fecdf31724065e2b6cc7bbbcf3414
+    date: '2026-10-23'
+    digest: sha256:79e0bafe5ca42cc9f3d7922ab9997e741622c235f8e6036dc1cd8777747f3c0b
 what-a-host-cannot-do:
   sources:
   - brain/mastercode/runtime/agent_grant.py::parse_grant

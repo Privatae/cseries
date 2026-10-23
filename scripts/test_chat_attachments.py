@@ -334,7 +334,7 @@ if cr is not None:
     ]
 
     async def drive():
-        cr._keep_attachments_on_host(3, atts)
+        cr._keep_attachments_on_host(9003, atts)
         for t in list(cr._KEEP_TASKS):
             await t
     try:

@@ -140,7 +140,7 @@ from mastercode import circles_threads as real_ct  # noqa: E402
 
 from book_mock_turns import REPLY_TAIL, REPLY_TOKENS, REPLY_USD, MockTurn, TurnHost, iso, now  # noqa: E402
 
-ENTITY = 128
+ENTITY = 9128
 HOST = "Ivy"
 ME = "robin@example.com"
 DINNER = "aaaaaaaa-0000-4000-8000-000000000001"
@@ -293,7 +293,8 @@ def reset():
         "door_rows": [],
         "peerings": [{"token_id": 5, "peer_host_name": "lark-host", "peer_handle": "Lark", "peer_since": None,
                       "peer_entity_id": 46, "first_seen_at": at(20), "last_seen_at": at(1), "notified_at": at(20),
-                      "bastion_name": "studio-mac", "bastion_hostname": "studio-mac", "current": True}],
+                      "bastion_name": "studio-mac", "bastion_hostname": "studio-mac", "current": True,
+                      "reported_state": "active"}],
         "events": [
             {"event_id": "e1", "event_type": "meeting", "event_at": iso(now() + timedelta(days=2, hours=3)),
              "summary": "Dinner with Ana · Corvo", "status": "scheduled"},

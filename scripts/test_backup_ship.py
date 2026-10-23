@@ -522,7 +522,7 @@ def _main() -> int:
     BS._s3_credential = creds                                  # type: ignore[assignment]
 
     pool = Pool(source)
-    out = asyncio.run(BS.ship_now(pool, 3, dict(target)))
+    out = asyncio.run(BS.ship_now(pool, 9003, dict(target)))
     check("a multi-part artifact ships", out["ok"] is True)
     landed = STATE.objects.get(f"backups/{BS.object_name(42, source['s3_key'])}")
     check("  and the destination holds the exact bytes",
@@ -538,7 +538,7 @@ def _main() -> int:
     bad_src = dict(source, sha256="0" * 64)
     pool = Pool(bad_src)
     try:
-        asyncio.run(BS.ship_now(pool, 3, dict(target)))
+        asyncio.run(BS.ship_now(pool, 9003, dict(target)))
         check("a source that does not match its digest is refused", False, "it shipped")
     except BS.ShipError as e:
         check("a source that does not match its digest is refused",
@@ -550,7 +550,7 @@ def _main() -> int:
     STATE.fail_with = 403
     pool = Pool(source)
     try:
-        asyncio.run(BS.ship_now(pool, 3, dict(target)))
+        asyncio.run(BS.ship_now(pool, 9003, dict(target)))
         check("a 403 from the bucket is classed", False, "it shipped")
     except BS.ShipError as e:
         check("a 403 from the bucket is classed as destination_refused",
@@ -562,19 +562,19 @@ def _main() -> int:
     # An expired signed URL is its own class — "try again", not "access denied".
     pool = Pool(dict(source, url=f"{base}/src/nope/missing"))
     try:
-        asyncio.run(BS.ship_now(pool, 3, dict(target)))
+        asyncio.run(BS.ship_now(pool, 9003, dict(target)))
         check("a dead source URL is classed", False, "it shipped")
     except BS.ShipError as e:
         check("a 404 source is source_unreachable", e.reason == "source_unreachable", e.reason)
 
     # No destination, no artifact: both are ordinary states with their own class.
     try:
-        asyncio.run(BS.ship_now(Pool(source), 3, None))
+        asyncio.run(BS.ship_now(Pool(source), 9003, None))
         check("no destination is refused", False)
     except BS.ShipError as e:
         check("no destination is refused with its own class", e.reason == "no_target")
     try:
-        asyncio.run(BS.ship_now(Pool(None), 3, dict(target)))
+        asyncio.run(BS.ship_now(Pool(None), 9003, dict(target)))
         check("no artifact yet is refused", False)
     except BS.ShipError as e:
         check("no artifact yet is refused with its own class", e.reason == "no_source")
@@ -583,7 +583,7 @@ def _main() -> int:
     pool = Pool(source)
     pool.running = True
     try:
-        asyncio.run(BS.ship_now(pool, 3, dict(target)))
+        asyncio.run(BS.ship_now(pool, 9003, dict(target)))
         check("a second concurrent ship is refused", False)
     except BS.ShipError as e:
         check("a second concurrent ship is refused", e.reason == "in_flight", e.reason)
@@ -595,7 +595,7 @@ def _main() -> int:
     STATE.fail_on_complete = True
     pool = Pool(source)
     try:
-        asyncio.run(BS.ship_now(pool, 3, dict(target)))
+        asyncio.run(BS.ship_now(pool, 9003, dict(target)))
         check("a failure at complete is reported", False, "it shipped")
     except BS.ShipError:
         check("a failure at complete is reported", True)
@@ -639,7 +639,7 @@ def _main() -> int:
             sent.clear()
             pool = Pool(source)
             try:
-                asyncio.run(BS.ship_now(pool, 3, dict(target, endpoint=endpoint)))
+                asyncio.run(BS.ship_now(pool, 9003, dict(target, endpoint=endpoint)))
                 check(f"the second copy is not sent to {label}", False, "it shipped")
             except BS.ShipError as e:
                 check(f"the second copy is not sent to {label}",
@@ -682,7 +682,7 @@ def _main() -> int:
         # No grant for the op: the bastion allowlist shape, exit 126.
         script[:] = [{"exit": 126, "stdout": "", "stderr": "not permitted"}]
         try:
-            asyncio.run(BS.ship_now(Pool(source), 3, dict(mtarget)))
+            asyncio.run(BS.ship_now(Pool(source), 9003, dict(mtarget)))
             check("an ungranted bastion op is refused", False)
         except BS.ShipError as e:
             check("an ungranted bastion op is classed bastion_refused",
@@ -699,7 +699,7 @@ def _main() -> int:
         ]
         calls.clear()
         pool = Pool(source)
-        out = asyncio.run(BS.ship_now(pool, 3, dict(mtarget)))
+        out = asyncio.run(BS.ship_now(pool, 9003, dict(mtarget)))
         check("a bastion fetch runs to completion", out["ok"] is True)
         check("  it heartbeats while the bastion is still pulling — the reaper "
               "must not kill a legitimately slow transfer",
@@ -727,7 +727,7 @@ def _main() -> int:
                       sidecar_key="domain-3/b/20260928T020000Z.key.age",
                       sidecar_sha256="ab" * 32, sidecar_bytes=300)
         SIGNED["sidecar_url"] = f"{base}/src/source/key.age"
-        asyncio.run(BS.ship_now(Pool(paired), 3, dict(mtarget)))
+        asyncio.run(BS.ship_now(Pool(paired), 9003, dict(mtarget)))
         starts = [c[2] for c in calls if c[2].get("op") == "start"]
         check("the backup and its key file both go to the machine, side by side, named by stamp",
               [x["rpath"] for x in starts] == ["20260928T020000Z.tar.zst.age",
@@ -738,7 +738,7 @@ def _main() -> int:
         script[:] = [{"exit": 0, "stdout": _json.dumps(
             {"id": "already-present", "state": "done"}), "stderr": ""}]
         calls.clear()
-        out = asyncio.run(BS.ship_now(Pool(source), 3, dict(mtarget)))
+        out = asyncio.run(BS.ship_now(Pool(source), 9003, dict(mtarget)))
         check("an artifact already on the machine short-circuits",
               out["ok"] and len(calls) == 1, f"{len(calls)} calls")
 
@@ -749,7 +749,7 @@ def _main() -> int:
                 {"state": "failed", "error": "sha256 mismatch"}), "stderr": ""},
         ]
         try:
-            asyncio.run(BS.ship_now(Pool(source), 3, dict(mtarget)))
+            asyncio.run(BS.ship_now(Pool(source), 9003, dict(mtarget)))
             check("a failed bastion fetch is reported", False)
         except BS.ShipError as e:
             check("a failed bastion fetch keeps the bastion's own words",
@@ -761,7 +761,7 @@ def _main() -> int:
             {"exit": 0, "stdout": _json.dumps({"state": "unknown"}), "stderr": ""},
         ]
         try:
-            asyncio.run(BS.ship_now(Pool(source), 3, dict(mtarget)))
+            asyncio.run(BS.ship_now(Pool(source), 9003, dict(mtarget)))
             check("a restarted bastion is reported", False)
         except BS.ShipError as e:
             check("a restarted bastion is bastion_unreachable, and says it will retry",
@@ -777,14 +777,14 @@ def _main() -> int:
     pool = Pool(source)
     pool.running = True
     pool.stale = True      # older than SOURCE_TIMEOUT_S
-    out = asyncio.run(BS.ship_now(pool, 3, dict(target)))
+    out = asyncio.run(BS.ship_now(pool, 9003, dict(target)))
     check("a STALE in-flight row is reaped and the ship proceeds", out["ok"] is True)
 
     pool = Pool(source)
     pool.running = True
     pool.stale = False     # a genuinely live transfer
     try:
-        asyncio.run(BS.ship_now(pool, 3, dict(target)))
+        asyncio.run(BS.ship_now(pool, 9003, dict(target)))
         check("a LIVE in-flight row still blocks", False, "it shipped")
     except BS.ShipError as e:
         check("a LIVE in-flight row still blocks", e.reason == "in_flight", e.reason)
@@ -798,7 +798,7 @@ def _main() -> int:
     real_cred = BS._s3_credential
     BS._s3_credential = cancelled
     try:
-        asyncio.run(BS.ship_now(pool, 3, dict(target)))
+        asyncio.run(BS.ship_now(pool, 9003, dict(target)))
         check("a cancellation propagates", False, "it returned normally")
     except asyncio.CancelledError:
         check("a cancellation propagates as cancellation, not as an error", True)
@@ -814,7 +814,7 @@ def _main() -> int:
     # ── the trigger, and its idempotency ─────────────────────────────────
     print("trigger:")
     pool = Pool(source)
-    out = asyncio.run(BS.ship_if_due(pool, 3, dict(target)))
+    out = asyncio.run(BS.ship_if_due(pool, 9003, dict(target)))
     check("ship_if_due sends an artifact that has not gone yet", out and out["ok"])
     # Built by the real function, so the test cannot drift from the key the
     # code writes — and so the prefix is genuinely part of it.
@@ -822,34 +822,34 @@ def _main() -> int:
     check("  the destination key includes the prefix",
           dest.endswith("/backups"), dest)
     pool.done_keys.add((int(source["export_id"]), dest))
-    out2 = asyncio.run(BS.ship_if_due(pool, 3, dict(target)))
+    out2 = asyncio.run(BS.ship_if_due(pool, 9003, dict(target)))
     check("  and does NOT send the same digest to the same place twice",
           out2 is None)
     # A different destination is a legitimate re-send of the same artifact.
     other = dict(target, address="otherbucket")
     check("  but the same artifact DOES go to a newly-chosen destination",
-          asyncio.run(BS.ship_if_due(Pool(source), 3, other))["ok"] is True)
+          asyncio.run(BS.ship_if_due(Pool(source), 9003, other))["ok"] is True)
     check("no destination: nothing to do, quietly",
-          asyncio.run(BS.ship_if_due(Pool(source), 3, None)) is None)
+          asyncio.run(BS.ship_if_due(Pool(source), 9003, None)) is None)
     check("no artifact: nothing to do, quietly",
-          asyncio.run(BS.ship_if_due(Pool(None), 3, dict(target))) is None)
+          asyncio.run(BS.ship_if_due(Pool(None), 9003, dict(target))) is None)
     # The copy a restore took of how the Host was just before it: with
     # platform storage off it is only staged, and the Host backs up again
     # right after a restore, so "send the newest" alone would never send it.
     pool = Pool(source)
     undo_id = int(source["export_id"]) + 100
     pool.undo = dict(source, export_id=undo_id, stored="staged")
-    out = asyncio.run(BS.ship_if_due(pool, 3, dict(target)))
+    out = asyncio.run(BS.ship_if_due(pool, 9003, dict(target)))
     check("the undo point a restore left is sent before the newest backup",
           out and out["ok"] and out["export_id"] == undo_id, out)
     pool.done_keys.add((undo_id, dest))
-    out = asyncio.run(BS.ship_if_due(pool, 3, dict(target)))
+    out = asyncio.run(BS.ship_if_due(pool, 9003, dict(target)))
     check("  and once it is there, the newest goes next",
           out and out["ok"] and out["export_id"] == int(source["export_id"]), out)
     # A destination saved by an older build must not crash the worker.
     check("a legacy nfs destination is skipped, not raised",
           asyncio.run(BS.ship_if_due(
-              Pool(source), 3, {"kind": "nfs", "address": "//srv/share"})) is None)
+              Pool(source), 9003, {"kind": "nfs", "address": "//srv/share"})) is None)
 
     # Two prefixes in the same bucket are two DESTINATIONS. Sharing one key
     # meant a user who moved backups from one prefix to another was told the
@@ -875,7 +875,7 @@ def _main() -> int:
     STATE.objects.pop(f"backups/{BS.object_name(42, source['s3_key'])}", None)
     pool = Pool(source)
     try:
-        out = asyncio.run(BS.ship_now(pool, 3, dict(target)))
+        out = asyncio.run(BS.ship_now(pool, 9003, dict(target)))
         check("an SSE-KMS bucket does not fail on its opaque ETag", out["ok"] is True)
     except BS.ShipError as e:
         check("an SSE-KMS bucket does not fail on its opaque ETag",
@@ -949,7 +949,7 @@ def _main() -> int:
                 return None
             BS._s3_heartbeat = _never
             BS._beat = _nobeat
-        task = asyncio.ensure_future(BS.ship_now(pool, 3, dict(target)))
+        task = asyncio.ensure_future(BS.ship_now(pool, 9003, dict(target)))
         await asyncio.sleep(BS.HEARTBEAT_STALE_S + 0.4)   # past the window
         in_flight = pool.running                          # must still be true
         reaped = await BS.reap_stale(pool)
@@ -1035,7 +1035,7 @@ def _main() -> int:
     _real_call = _hb.call
     _hb.call = fake_call
     try:
-        out = asyncio.run(BS.ship_now(Pool(staged_src), 3, dict(target)))
+        out = asyncio.run(BS.ship_now(Pool(staged_src), 9003, dict(target)))
         name = BS.object_name(77, staged_src["s3_key"])
         check("the backup ships", out["ok"] and STATE.objects.get(f"backups/{name}") == artifact)
         check("  and its key file lands next to it",
@@ -1045,7 +1045,7 @@ def _main() -> int:
               sorted(dropped) == sorted([staged_src["s3_key"], staged_src["sidecar_key"]]), dropped)
         dropped.clear()
         kept_src = dict(staged_src, stored="backup", export_id=78)
-        asyncio.run(BS.ship_now(Pool(kept_src), 3, dict(target)))
+        asyncio.run(BS.ship_now(Pool(kept_src), 9003, dict(target)))
         check("a copy kept in platform storage is never dropped", dropped == [], dropped)
         STATE.objects["source/key.age"] = b"tampered"
         try:

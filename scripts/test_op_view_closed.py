@@ -135,7 +135,7 @@ for label, enforcing in (("an older box (no op_view_closed)", GATING),
                          ("a box with no report at all", None)):
     for door in nac_ops.DOOR_OPS:
         try:
-            run(nac_ops.run_door(Pool(enforcing=enforcing), 3, "box-7", 77, door, ["write-hello", "{}"]))
+            run(nac_ops.run_door(Pool(enforcing=enforcing), 9003, "box-7", 77, door, ["write-hello", "{}"]))
             check(f"{label}: {door} is refused on this side", False)
         except nac_ops.OpError as e:
             check(f"{label}: {door} is refused on this side, saying why",
@@ -151,7 +151,7 @@ except nac_ops.OpError as e:
           "the bastion is not root" in e.detail and "0.45.0" not in e.detail, e.detail)
 # A box that says so gets past this check (the op itself is then looked up).
 try:
-    run(nac_ops.run_door(Pool(enforcing={**GATING, "op_view_closed": True}), 3, "box-7", 77, "op_dry_run",
+    run(nac_ops.run_door(Pool(enforcing={**GATING, "op_view_closed": True}), 9003, "box-7", 77, "op_dry_run",
                          ["no-such-op", "{}"]))
 except nac_ops.OpError as e:
     check("a box that says op_view_closed is not refused for it", "whole machine" not in e.detail, e.detail)

@@ -81,6 +81,8 @@ function makeContext(overrides = {}) {
     netInterfaces: overrides.netInterfaces || (() => os.networkInterfaces()),
     // Where systemd keeps each user's runtime folder (vm/lima.js autostart).
     userRunDir: overrides.userRunDir,
+    // Where to look for sudo; unset, bastion.js looks in SUDO_PATHS.
+    sudoPaths: overrides.sudoPaths,
     osRelease: overrides.osRelease || os.release(),
     // os.availableParallelism is Node 18.14 and later; the package takes any 18.
     machine: overrides.machine || {

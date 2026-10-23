@@ -85,7 +85,7 @@ rows = [
 ]
 peerings = [
     {"token_id": 3, "peer_host_name": "bob.host.example.test", "peer_entity_id": 42, "current": True},
-    {"token_id": 3, "peer_host_name": "a1b2.host.example.test", "peer_entity_id": 3, "current": True},
+    {"token_id": 3, "peer_host_name": "a1b2.host.example.test", "peer_entity_id": 9003, "current": True},
     # bob resolved on machine 3 only; machine 4's bob must not borrow it.
     {"token_id": 4, "peer_host_name": "bob.host.example.test", "peer_entity_id": None, "current": True},
     # zed is known on machine 3 but no longer announced.
@@ -120,9 +120,10 @@ order = [h["handle"] for h in bs["hosts"]]
 check("anchor first, then active, pending, revoked", order == ["alex", "bob", "zed", "old"], str(order))
 hmap = {h["handle"]: h for h in bs["hosts"]}
 check("anchor host flagged is_anchor", hmap["alex"]["is_anchor"] and not hmap["bob"]["is_anchor"])
-check("absent peer state reads active (pre-0.16 bastion)", hmap["bob"]["state"] == "active")
+check("absent peer state reads pending, never active", hmap["bob"]["state"] == "pending",
+      hmap["bob"]["state"])
 check("pending stays pending", hmap["zed"]["state"] == "pending")
-check("resolved peering gives the host id", hmap["bob"]["host_id"] == 42 and hmap["alex"]["host_id"] == 3)
+check("resolved peering gives the host id", hmap["bob"]["host_id"] == 42 and hmap["alex"]["host_id"] == 9003)
 check("host id carried even when not current", hmap["zed"]["host_id"] == 77)
 check("a peering no longer announced is not current", hmap["zed"]["current"] is False)
 check("a current peering is current", hmap["bob"]["current"] is True)
@@ -153,6 +154,24 @@ allowed = {"token_id", "machine", "online", "heard", "last_seen_at", "mode", "an
            "anchor", "hosts"}
 check("machine keys are exactly the narrowed set",
       all(set(m) == allowed for m in out), str([sorted(set(m) - allowed) for m in out]))
+
+# A state outside the vocabulary is not a pairing the machine admitted. Whatever
+# the beat says, only the three known words survive, and anything else must not
+# read as active, because active is what offers Request connection.
+odd = build_directory([bastion(11, "odd", mode="networked", peers=[
+    {"host_name": "kit.host.example.test", "handle": "kit", "state": "approved"},
+    {"host_name": "lux.host.example.test", "handle": "lux", "state": ""},
+    {"host_name": "max.host.example.test", "handle": "max", "state": None},
+    {"host_name": "ned.host.example.test", "handle": "ned", "state": " ACTIVE "},
+])], [{"token_id": 11, "peer_host_name": n + ".host.example.test", "peer_entity_id": i, "current": True}
+      for i, n in ((51, "kit"), (52, "lux"), (53, "max"), (54, "ned"))])
+ostate = {h["handle"]: h["state"] for h in odd[0]["hosts"]}
+check("an unknown state reads pending", ostate["kit"] == "pending", str(ostate))
+check("an empty or null state reads pending", ostate["lux"] == "pending" and ostate["max"] == "pending",
+      str(ostate))
+check("a known state is still read, case and spaces aside", ostate["ned"] == "active", str(ostate))
+check("no host is active unless the machine said active",
+      [h for h, s in ostate.items() if s == "active"] == ["ned"], str(ostate))
 
 check("garbage rows are skipped, not raised on",
       build_directory([{"id": "x"}, bastion(5, "ok", peers=["junk", {"host_name": ""}])], [])[0]["hosts"] == [])

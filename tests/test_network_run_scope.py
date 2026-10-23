@@ -104,7 +104,7 @@ def reached(monkeypatch):
     monkeypatch.setattr(nac_mgmt, "run_mgmt_op", _mgmt)
     monkeypatch.setattr(nac_harness, "run_harness_op", _harness)
     monkeypatch.setattr(BS, "get_pool", lambda: _Pool())
-    monkeypatch.setattr(BS, "_entity_id", 3, raising=False)
+    monkeypatch.setattr(BS, "_entity_id", 9003, raising=False)
     return calls
 
 

@@ -294,8 +294,9 @@ def section2():
             return "INSERT 1"
 
     class FakeRelay:
-        def __init__(self, stop=None):
+        def __init__(self, stop=None, reply=None):
             self.sent, self.timeouts, self.stop = [], [], stop
+            self.reply = reply if reply is not None else {"ok": True}
 
         def worker_count(self, token_id, lane="harness"):
             return 1
@@ -305,7 +306,7 @@ def section2():
             self.timeouts.append(timeout)
             if self.stop is not None:
                 raise self.stop
-            return json.dumps({"ok": True}).encode(), b"", 0
+            return json.dumps(self.reply).encode(), b"", 0
 
     async def _none(*a, **k):
         return None
@@ -371,6 +372,42 @@ def section2():
                   and "no live harness worker" not in err.detail, err and err.detail)
         check("...and the audit says the run started", any(str(d).startswith("stopped-waiting") for d in audits),
               audits)
+
+        # A worktree run whose tree came back short: the machine names what it
+        # left out (at most 100) and counts all of it. Keys the Host does not
+        # know pass through untouched, and the result says the skip in words.
+        reply = {"ok": True, "mode": "worktree", "worktree_b64": "", "run_ok": True,
+                 "worktree_skipped": ["link-to-etc", "fifo", 7, "deep/" * 3],
+                 "worktree_skipped_count": 250, "a_key_from_a_newer_box": {"x": 1}}
+        relay = FakeRelay(reply=reply)
+        nac_harness.get_harness_relay = lambda: relay
+        out = run(nac_harness.run_harness_op(FakePool(), OPERATOR, "box", "h1", image="my/agent:1",
+                                             mode="worktree", prompt="fix it"))
+        res = (out or {}).get("result") or {}
+        note = res.get("worktree_skipped_note") or ""
+        check("a key the Host does not know passes through untouched",
+              res.get("a_key_from_a_newer_box") == {"x": 1}, res)
+        check("the skipped entries are said in words, with the full count",
+              "250 entries were not copied back" in note, note)
+        check("...naming where the list is, and that it is only the first of them",
+              "The first 3 are listed in worktree_skipped" in note, note)
+        check("only names survive in the list (a number is not a path)",
+              res.get("worktree_skipped") == ["link-to-etc", "fifo", "deep/deep/deep/"],
+              res.get("worktree_skipped"))
+        relay = FakeRelay(reply={"ok": True, "mode": "worktree", "worktree_b64": ""})
+        nac_harness.get_harness_relay = lambda: relay
+        out = run(nac_harness.run_harness_op(FakePool(), OPERATOR, "box", "h1", image="my/agent:1",
+                                             mode="worktree", prompt="fix it"))
+        check("a run that left nothing out carries no note",
+              "worktree_skipped_note" not in ((out or {}).get("result") or {}), out)
+        for count, names, want in ((1, ["a"], "1 entry was not copied back"),
+                                   (2, ["a", "b"], "All are listed"),
+                                   ("9", ["a"], "1 entry was not copied back"),
+                                   (True, [], None), (5, None, "The machine did not say which")):
+            got = nac_harness.note_worktree_skipped(
+                {"worktree_skipped_count": count, "worktree_skipped": names})
+            check(f"note for count={count!r} names={names!r}",
+                  (got is None) if want is None else (want in (got or "")), got)
     finally:
         (nac_stepup.entity_verify_pubkey, nac_mgmt.load_mgmt_grants, nac_mgmt.load_suspended_servers,
          nac_mgmt.load_quarantined, nac_mgmt.audit_mgmt, nac_harness.resolve_agent_creds,

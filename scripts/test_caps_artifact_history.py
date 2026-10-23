@@ -131,7 +131,7 @@ print("3. restore brings the large file back; an old revision never deletes it")
 (W / "index.html").write_text("<h1>three</h1>")
 snap(W)
 try:
-    run(AR.revert_artifact(_Pool(), 3, 501, str(r1)))
+    run(AR.revert_artifact(_Pool(), 9003, 501, str(r1)))
     ok = True
 except Exception as e:  # noqa: BLE001
     ok = repr(e)
@@ -153,7 +153,7 @@ L = PROJECTS / "502"
 (L / "font.woff2").write_bytes(BIG)
 (L / "small.css").write_text("body{}")
 try:
-    res = run(AR.revert_artifact(_Pool(), 3, 502, "0001"))
+    res = run(AR.revert_artifact(_Pool(), 9003, 502, "0001"))
 except Exception as e:  # noqa: BLE001
     res = {"error": repr(e)}
 check("3: restoring a pre-fix revision KEEPS the big file it never recorded",
@@ -175,14 +175,14 @@ check("4: 25 writes keep 25 revisions", len(revs) == 25, str(len(revs)))
 check("4: the first revision is still restorable",
       (K / ".history" / "0001" / "index.html").is_file())
 try:
-    page = run(AR.list_history(_Pool(), 3, 503, limit=10, offset=20))
+    page = run(AR.list_history(_Pool(), 9003, 503, limit=10, offset=20))
 except TypeError as e:
     page = {"error": repr(e)}
 check("4: history pages with the true total",
       page.get("total") == 25 and len(page.get("history") or []) == 5
       and page.get("next_offset") is None, str(page)[:300])
 try:
-    first = run(AR.list_history(_Pool(), 3, 503, limit=10))
+    first = run(AR.list_history(_Pool(), 9003, 503, limit=10))
 except TypeError as e:
     first = {"error": repr(e)}
 check("4: the first page says where the next starts",
@@ -319,7 +319,7 @@ para = "lorem ipsum " * 50
 AR._BRIDGE_RATE.clear()
 long_after = "dolor sit amet " * 200        # 3,000 chars
 try:
-    res7 = run(AR.apply_bridge_edit(_Pool(), 3, 505, entry="index.html",
+    res7 = run(AR.apply_bridge_edit(_Pool(), 9003, 505, entry="index.html",
                                     before=para, after=long_after))
 except AR.ArtifactError as e:
     res7 = {"error": f"{e.status} {e.detail}"}
@@ -327,7 +327,7 @@ check("7: a 3,000-character edit on a 10 KB page applies",
       res7.get("applied") is True and long_after in (T / "index.html").read_text(), str(res7))
 page_len = len((T / "index.html").read_text())
 try:
-    run(AR.apply_bridge_edit(_Pool(), 3, 505, entry="index.html",
+    run(AR.apply_bridge_edit(_Pool(), 9003, 505, entry="index.html",
                              before="dolor sit amet dolor sit amet dolor sit amet",
                              after="x" * (page_len + 10)))
     refused = ""
@@ -340,7 +340,7 @@ check("7: an edit longer than the page itself is refused, naming the page's leng
 print("8. the artifact list takes an offset and reports the true total")
 pool = _Pool(total=450)
 try:
-    lst = run(AR.list_artifacts(pool, 3, limit=200, offset=400))
+    lst = run(AR.list_artifacts(pool, 9003, limit=200, offset=400))
 except TypeError as e:
     lst = {"error": repr(e)}
 check("8: the list reports the true total", lst.get("total") == 450, str(lst)[:200])
@@ -350,7 +350,7 @@ check("8: the last page holds the rest and says there is no next",
       len(lst.get("artifacts") or []) == 50 and "next_offset" in lst and lst["next_offset"] is None,
       str(lst)[:200])
 try:
-    mid = run(AR.list_artifacts(_Pool(total=450), 3, limit=200, offset=0))
+    mid = run(AR.list_artifacts(_Pool(total=450), 9003, limit=200, offset=0))
 except TypeError as e:
     mid = {"error": repr(e)}
 check("8: a full page points at the next", mid.get("next_offset") == 200, str(mid)[:200])

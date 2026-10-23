@@ -12,7 +12,7 @@ its unix socket), and runs the carry the way a boot does:
      that the live Host added after the backup: the carry must succeed, the
      live rule and grant are what the restored database holds, the domain
      they name is brought across, and every foreign key in the schema holds;
-  2. another Host number (the backup is Host 3's, this Host is 5), carried
+  2. another Host number (the backup is Host 9003's, this Host is 5), carried
      TWICE as if the boot were killed after the commit: Host 5's row is kept
      and holds the restored data, this Host's side of its Circles messages is
      renumbered, and every foreign key holds;
@@ -338,25 +338,25 @@ try:
         await r1.close()
         await l1.close()
 
-        print("== 2. the backup is Host 3's, this Host is 5; carried twice")
+        print("== 2. the backup is Host 9003's, this Host is 5; carried twice")
         r2, l2 = await conn("restored2"), await conn("live2")
-        await r2.execute("INSERT INTO entity_registry (id, display_name) VALUES (3, 'lost host')")
-        await r2.execute("INSERT INTO projects (entity_id, name) VALUES (3, 'site')")
+        await r2.execute("INSERT INTO entity_registry (id, display_name) VALUES (9003, 'lost host')")
+        await r2.execute("INSERT INTO projects (entity_id, name) VALUES (9003, 'site')")
         await r2.execute("INSERT INTO inbox_messages (from_address, to_address, subject, from_entity_id, to_entity_id) "
-                         "VALUES ('a', 'b', 'in', 8, 3), ('b', 'a', 'out', 3, 8)")
+                         "VALUES ('a', 'b', 'in', 8, 9003), ('b', 'a', 'out', 9003, 8)")
         await l2.execute("INSERT INTO entity_registry (id, display_name) VALUES (5, 'fresh host')")
         # Its integrations: a connection in its database (v201) and one in a
-        # pre-v201 SQLite file the swap brought back; both are Host 3's.
-        await integ_conn(r2, "ic-db", "3")
-        legacy2 = old_integrations_store(hr.LIVE, [("ic-file", "3")], [("ic-file", "mail", None)])
+        # pre-v201 SQLite file the swap brought back; both are Host 9003's.
+        await integ_conn(r2, "ic-db", "9003")
+        legacy2 = old_integrations_store(hr.LIVE, [("ic-file", "9003")], [("ic-file", "mail", None)])
         for i in (1, 2):
             try:
-                await hr.carry_rows(l2, r2, 3, 5, stamp="20260927T020000Z")
+                await hr.carry_rows(l2, r2, 9003, 5, stamp="20260927T020000Z")
                 ok = True
             except Exception as e:
                 ok = e
             check(f"carry {i} succeeds", ok is True, ok)
-        regs = [tuple(x) for x in await r2.fetch("SELECT id, display_name FROM entity_registry WHERE id IN (3, 5)")]
+        regs = [tuple(x) for x in await r2.fetch("SELECT id, display_name FROM entity_registry WHERE id IN (9003, 5)")]
         check("Host 5's row is there after both, holding the restored Host's data", regs == [(5, "lost host")], regs)
         check("its project is Host 5's", await r2.fetchval("SELECT entity_id FROM projects WHERE name = 'site'") == 5)
         check("this Host's side of its messages is 5 now; the other side is still 8",

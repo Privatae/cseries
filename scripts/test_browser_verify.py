@@ -594,7 +594,7 @@ class _PoolBP:
 for bp, want in ((None, False), ({}, False), ('{"timezone": "UTC"}', False),
                  ({"browser_proof": "yes"}, False), ({"browser_proof": True}, True),
                  ('{"browser_proof": true}', True)):
-    got = run(AV.browser_proof_enabled(_PoolBP(bp), 128))
+    got = run(AV.browser_proof_enabled(_PoolBP(bp), 9128))
     check(f"browser_proof_enabled({bp!r}) -> {want}", got is want, repr(got))
 
 
@@ -604,7 +604,7 @@ class _PoolRaises:
 
 
 check("an unreadable setting reads as OFF",
-      run(AV.browser_proof_enabled(_PoolRaises(), 128)) is False)
+      run(AV.browser_proof_enabled(_PoolRaises(), 9128)) is False)
 _gate_src = src.split("page = None", 1)[-1].split("if manifest is not None:", 1)[0]
 check("the proof consults the switch BEFORE waking the browser",
       "await browser_proof_enabled(pool, entity_id)" in _gate_src

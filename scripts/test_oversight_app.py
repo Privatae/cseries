@@ -127,7 +127,7 @@ def _machines(pool, bastions, machine=None):
 
     topology.list_bastions = fake
     brain_service._pool = pool
-    brain_service._entity_id = 3
+    brain_service._entity_id = 9003
     try:
         # `machine` passed EXPLICITLY: the route's default is FastAPI's Query(None)
         # object, which a direct call would receive as a truthy filter value.
@@ -318,7 +318,7 @@ def test_the_ingest_line_reports_the_standing_op_and_never_raises():
                              "last_ok": True, "last_error": None,
                              "runs_24h": 288, "failures_24h": 0}
     ing_call = [c for c in pool.calls if c[0] == "fetchrow"][0]
-    assert ing_call[2] == (3, ov.OVERSIGHT_TOOL), "the ingest is looked up by the ledger's own op name"
+    assert ing_call[2] == (9003, ov.OVERSIGHT_TOOL), "the ingest is looked up by the ledger's own op name"
     assert _machines(StubPool(ingest=None), [bastion()])["ingest"] is None
     broken = _machines(StubPool(ingest_raises=True), [bastion()])["ingest"]
     assert broken["status"] == "unknown", "an unreadable schedule must not sink the machines pane"

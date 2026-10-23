@@ -39,6 +39,7 @@ function run(argv, m, p, extra = {}) {
     portState: async () => 'free', freeBytes: () => 64 * 1024 ** 3,
     releaseInfo: { release: releaseFor(m), placeholders: [], file: 'test' },
     bastionKeys: m.bastionKeys,
+    sudoPaths: m.sudoPaths,
     ...extra,
   });
   return code.then((c) => ({ code: c, out }));

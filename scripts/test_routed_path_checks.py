@@ -56,7 +56,7 @@ from server.middleware.host_header import HostHeaderGuard, host_is_malformed  # 
 # ── A. the Host guard ───────────────────────────────────────────────────────
 for bad in ("x/api/system/health?", "x?y", "x#y", "user@x", "x\\y", "x y", "x\ty", "x\x00"):
     check(f"A Host that could not be a host is malformed: {bad!r}", host_is_malformed(bad))
-for good in ("localhost:8800", "127.0.0.1", "[::1]:8800", "[fd00:aa::23]", "h.host.example.test",
+for good in ("localhost:8800", "127.0.0.1", "[::1]:8800", "[fd12:3456:789a::23]", "h.host.example.test",
              "cseries.entity-1.svc.cluster.local:8800", "apps-host-a.host.example.test:443",
              "entity-1.zone.example.test", "name.test   ", "\tname.test", "trailing.dot.", "xn--l-0ga.test",
              "l\xe0.test"):

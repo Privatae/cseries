@@ -238,7 +238,7 @@ async def _registry_turn(session_id, make_followup=None, with_session=True):
             # refused it, or it failed first).
             yield "f:{}\n"
         await gate.wait()
-    rec, _ = reg.start_or_attach(thread_key="project|3|251", entity_id=9003, app_id="workbench",
+    rec, _ = reg.start_or_attach(thread_key="project|9003|251", entity_id=9003, app_id="workbench",
                                  message="Tidy the checkout.", make_inner=inner,
                                  make_followup=make_followup,
                                  room={"app_id": "workbench", "project_id": 251, "thread_id": None,
@@ -454,7 +454,7 @@ async def _scenario(when, typed, cid=None, origin="page", marker=None, merge=Fal
                             message=text, make_inner=lambda: make(text), make_followup=make,
                             room=rec.room, **({"nudge_keeps_copy": True} if keeps_copy else {}))
         return True
-    CR._audit, CR._entity_id = no_audit, (lambda: 3)
+    CR._audit, CR._entity_id = no_audit, (lambda: 9003)
     TR.get_turn_registry = lambda: reg
     S.answer_after_turn = answer_after
     PW.hold = held
@@ -486,7 +486,7 @@ async def _scenario(when, typed, cid=None, origin="page", marker=None, merge=Fal
             # The real ticket decide's delivery (routes/tickets._answer_to_turn):
             # the ask cards and the Circles Tickets pane call the same route.
             ask_out.update(_step(TK._answer_to_turn(
-                3, 77, {"asked_in_session": "late-sess-1", "asked_in": rec.room},
+                9003, 77, {"asked_in_session": "late-sess-1", "asked_in": rec.room},
                 {"label": "Blue"}, "blue", "", "user")))
             return bool(ask_out.get("answered_into_turn"))
         return reg.nudge(rec.turn_id, typed, client_id=cid) if cid else reg.nudge(rec.turn_id, typed)
@@ -1021,7 +1021,7 @@ async def _second_cancel(first: str, second: str):
         rows.append((role, content, kw.get("tags") or {}))
         return 1 if (kw.get("tags") or {}).get("origin") == "undelivered" else None
     ME.write_turn_row = write_row
-    key = "project|3|251"
+    key = "project|9003|251"
     room = {"app_id": "workbench", "project_id": 251, "thread_id": None, "history_context": None}
     words = "and make the dock blue"
     try:
@@ -1205,7 +1205,7 @@ async def _late_attach_during_refused_row():
     h.patch()
     order: list = []
     reg = TR.TurnRegistry()
-    rec = TR.TurnRecord(turn_id="t" * 32, thread_key="workbench|3|251", entity_id=9003,
+    rec = TR.TurnRecord(turn_id="t" * 32, thread_key="workbench|9003|251", entity_id=9003,
                         app_id="workbench", user_message="Check the north fence.", started_at=0.0)
     _wtr, _mark = ME.write_turn_row, TP.mark_index_ids_reattached
 

@@ -1837,10 +1837,11 @@
         }
 
         // The other Hosts this machine serves, as the machine reports them —
-        // with the pairing state when the box says it (0.16+).
+        // with the pairing state when the box says it (0.16+). A name with no
+        // state says so: shown bare it would read as an established pairing.
         if ((g.peers || []).length) {
             fields.push(['also serves',
-                (g.peers || []).map(p => esc(p.handle || p.host_name) + (p.state && p.state !== 'active' ? ' <span class="label-sys">(' + esc(p.state) + ')</span>' : '')).join(', '),
+                (g.peers || []).map(p => esc(p.handle || p.host_name) + (p.state !== 'active' ? ' <span class="label-sys">(' + esc(p.state || 'state not reported') + ')</span>' : '')).join(', '),
                 false, true]);
         }
 

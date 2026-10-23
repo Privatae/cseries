@@ -153,7 +153,7 @@ check("turn type: a skill read through `context` (a group the type holds) stays"
       "skill:desktop" in TCAT.searchable)
 CLOSED = dict(NO_APPS, status="closed")
 check("closed type: discovery_entries gives nothing",
-      asyncio.run(D.discovery_entries(None, 3, turn_type=CLOSED)) == [])
+      asyncio.run(D.discovery_entries(None, 9003, turn_type=CLOSED)) == [])
 
 # ── compact and full ────────────────────────────────────────────────────────
 check("compact_args: required marked *, an enum as its values, no descriptions",
@@ -258,7 +258,7 @@ D._turn_types = lambda pool, eid: asyncio.sleep(0, result=[ENTRIES[4]])
 D._harnesses = _boom
 D._machine_runtime = lambda: []
 try:
-    _got = asyncio.run(D.discovery_entries(None, 3))
+    _got = asyncio.run(D.discovery_entries(None, 9003))
 finally:
     (D._skills, D._apps, D._capability_cards, D._turn_types, D._harnesses, D._machine_runtime) = _saved
 check("a failing source gives [] and the others still arrive",

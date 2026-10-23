@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """The machine panel — what this host is USING, out of its plan, and where.
 
-2026-09-04, in order:
+What the panel has to get right, in order:
 
   - memory usage in the tool bar did not reflect a running app;
   - the total must match what is assigned (a 4G plan read as 4.6G);
@@ -13,8 +13,7 @@ The last one settles which number is the denominator. A memory LIMIT reserves
 nothing — it is `memory.max` on the cgroup, enforced only if the process
 reaches for it — so summing the ceilings this pod can see produced "4.6G" under
 a 4G plan, and dividing the plan across those ceilings would have capped a host
-at its slice while its node sat 98% idle (measured: one worker node held 914Mi
-of requests against 43047Mi allocatable).
+at its slice while its node sat almost entirely idle.
 
 So the panel reports:
   * `used_bytes`    — what everything is actually consuming;
@@ -78,7 +77,7 @@ SIDECAR_MI = _sys_mod._APP_RT_SIDECAR_MI
 HARNESS_MI = _sys_mod._HARNESS_MEM_MI
 
 MI = _MIB
-PLAN_MI = 4096                       # entity-9128 is on `pro`
+PLAN_MI = 4096                       # an example Host on the `pro` plan
 FAILURES = []
 
 
@@ -104,19 +103,19 @@ def units_by_id(m):
     return {u["id"]: u for u in m["units"]}
 
 
-# ── entity-9128, live on 2026-09-04 ──────────────────────────────────────
-# The live sample behind these numbers (kubectl top, dmz): entity 119Mi,
-# postgres 43Mi (60 through the kernel's own reader), hub 14Mi, trading-bot
-# 332Mi. Ceilings: entity 4Gi, postgres 512Mi, hub 128Mi, trading-bot 2048+64.
-print("the live entity-9128 shape")
+# ── one Host with one app pod ────────────────────────────────────────────
+# An example shape, not a measurement: entity 119Mi, postgres 60Mi, hub 14Mi,
+# widget-runner 332Mi. Ceilings: entity 4Gi, postgres 512Mi, hub 128Mi,
+# widget-runner 2048+64.
+print("one Host with one app pod")
 m = _machine(
     mem_used=119 * MI, mem_limit=4096 * MI, hub=_hub(), db=_db(),
-    apps=[{"app_id": "trading-bot", "placement": "pod",
+    apps=[{"app_id": "widget-runner", "placement": "pod",
            "rss_bytes": 332 * MI}],
-    pod_apps=[{"app_id": "trading-bot", "budget_mi": 2048}],
+    pod_apps=[{"app_id": "widget-runner", "budget_mi": 2048}],
     plan_bytes=PLAN_MI * MI)
 u = units_by_id(m)
-check("the app pod is a unit", "trading-bot" in u, sorted(u))
+check("the app pod is a unit", "widget-runner" in u, sorted(u))
 check("the denominator is the PLAN, not a sum of ceilings",
       m["plan_bytes"] == PLAN_MI * MI)
 check("used is what everything is actually consuming",
@@ -127,11 +126,11 @@ check("the ceiling total exceeds the plan, on purpose",
       m["ceiling_bytes"] == (4096 + 512 + 128 + 2048 + SIDECAR_MI) * MI
       > m["plan_bytes"])
 check("the app pod's ceiling carries its platform sidecar",
-      u["trading-bot"]["ceiling_bytes"] == (2048 + SIDECAR_MI) * MI)
+      u["widget-runner"]["ceiling_bytes"] == (2048 + SIDECAR_MI) * MI)
 check("nothing is partial when everything reported", m["partial"] is False)
 check("every unit says where it runs", all(x["where"] for x in m["units"]))
 check("the app pod says it is its own pod",
-      u["trading-bot"]["where"] == "its own pod")
+      u["widget-runner"]["where"] == "its own pod")
 check("host/database/network are in the host pod",
       all(u[k]["where"] == "host pod" for k in ("host", "database", "network")))
 
@@ -152,20 +151,20 @@ check("used is still reported", m["used_bytes"] == (119 + 60 + 14) * MI)
 print("an installed app that is asleep")
 m = _machine(mem_used=119 * MI, mem_limit=4096 * MI, hub=_hub(), db=_db(),
              apps=[],
-             pod_apps=[{"app_id": "trading-bot", "budget_mi": 2048}],
+             pod_apps=[{"app_id": "widget-runner", "budget_mi": 2048}],
              plan_bytes=PLAN_MI * MI)
 u = units_by_id(m)
-check("still listed while asleep", "trading-bot" in u)
+check("still listed while asleep", "widget-runner" in u)
 check("uses a knowable zero, not an unknown",
-      u["trading-bot"]["used_bytes"] == 0)
-check("and is marked not running", u["trading-bot"]["running"] is False)
+      u["widget-runner"]["used_bytes"] == 0)
+check("and is marked not running", u["widget-runner"]["running"] is False)
 check("a sleeping app does not make the total partial", m["partial"] is False)
 
 
 # ── an awake harness pod ────────────────────────────────────────────────
 print("an awake harness pod")
 m = _machine(mem_used=119 * MI, mem_limit=4096 * MI, hub=_hub(), db=_db(),
-             apps=[], pod_apps=[{"app_id": "trading-bot", "budget_mi": 2048}],
+             apps=[], pod_apps=[{"app_id": "widget-runner", "budget_mi": 2048}],
              harnesses=[{"app_id": "kimi-code", "harness_id": "kimi"}],
              plan_bytes=PLAN_MI * MI)
 u = units_by_id(m)
@@ -180,7 +179,7 @@ check("the plan is unmoved by it", m["plan_bytes"] == PLAN_MI * MI)
 
 print("no harness awake")
 m = _machine(mem_used=119 * MI, mem_limit=4096 * MI, hub=_hub(), db=_db(),
-             apps=[], pod_apps=[{"app_id": "trading-bot", "budget_mi": 2048}],
+             apps=[], pod_apps=[{"app_id": "widget-runner", "budget_mi": 2048}],
              harnesses=[], plan_bytes=PLAN_MI * MI)
 check("nothing is added while none is up", m["partial"] is False)
 check("and it leaves no unit behind",

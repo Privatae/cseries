@@ -8,8 +8,11 @@
 # not with the image, so its gates run on its own lane:
 #   - scripts/store_app_gates.sh runs them (--changed-from <ref>, --app <id>,
 #     --all), with pre_merge_gates.sh's pool, per-gate limits and hang_watch;
-#   - the `store-apps` job in .gitea/workflows/check.yml runs the ones whose app
-#     a pull request changed, beside the gates job;
+#   - the store-apps job of the forge's .gitea/workflows/check.yml, beside the
+#     gates job, runs the ones whose app a pull request changed
+#     (`--changed-from`). GitHub's .github/workflows/test.yml runs none of
+#     them: its pytest leaves out every tests/ entry here, as
+#     pre_merge_gates.sh does;
 #   - the store-lane publish of an app runs `--app <id>` first, and a red run
 #     stops that app's publish only.
 # pre_merge_gates.sh (the PR run and the ship's full run) and smoke_test.sh's

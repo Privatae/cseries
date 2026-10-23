@@ -76,7 +76,9 @@ for odd in ({}, {"merged": False}, {"merged": False, "state": "open"},
     rc, out = verdict(odd)
     check(f"4: an answer missing its state or head runs the checks {odd}", out == "", f"rc={rc} {out!r}")
 
-for name in ("gates", "build", "smoke", "scan"):
+# The four named jobs must be there, and every job but current and cleanup
+# (store-apps, installer, any added later) skips on the same verdict.
+for name in sorted({"gates", "build", "smoke", "scan"} | {n for n in jobs if n not in ("current", "cleanup")}):
     j = jobs.get(name, {})
     needs = j.get("needs")
     needs = [needs] if isinstance(needs, str) else (needs or [])

@@ -121,7 +121,7 @@ if have_nacl:
     from nacl.public import PrivateKey, SealedBox
     sk = PrivateKey.generate()
     pub = base64.b64encode(bytes(sk.public_key)).decode()
-    blobs = asyncio.run(seal.sealed_for_line(None, 3, ["registry:acme", "forge-read"], pub, "n" * 32,
+    blobs = asyncio.run(seal.sealed_for_line(None, 9003, ["registry:acme", "forge-read"], pub, "n" * 32,
                                              "2026-10-01T00:00:00Z", open_secret=open_secret))
     got = [json.loads(SealedBox(sk).decrypt(base64.b64decode(b))) for b in blobs]
     check("each declared credential is opened from the vault, in the op's order",
@@ -136,12 +136,12 @@ else:
           "(the image has it: requirements.txt PyNaCl; smoke runs this file there)")
     pub = CLAIM["public_key"]
 check("a name the vault lacks stops the line",
-      refused(seal.sealed_for_line, None, 3, ["registry:acme", "missing"], pub, "n" * 32, "x",
+      refused(seal.sealed_for_line, None, 9003, ["registry:acme", "missing"], pub, "n" * 32, "x",
               open_secret=open_secret, want="no credential named 'missing'") if have_nacl else
-      refused(seal.sealed_for_line, None, 3, ["missing"], pub, "n" * 32, "x",
+      refused(seal.sealed_for_line, None, 9003, ["missing"], pub, "n" * 32, "x",
               open_secret=open_secret, want="no credential named 'missing'"))
 check("a value that is not text stops the line",
-      refused(seal.sealed_for_line, None, 3, ["binary"], pub, "n" * 32, "x",
+      refused(seal.sealed_for_line, None, 9003, ["binary"], pub, "n" * 32, "x",
               open_secret=open_secret, want="not text"))
 
 if failures:

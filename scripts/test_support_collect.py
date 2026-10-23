@@ -1161,7 +1161,7 @@ class _RestorePool:
 
 def _restore_refusal(e):
     try:
-        run(_P.update_project_service(_RestorePool(e), 3, 5, status="active"))
+        run(_P.update_project_service(_RestorePool(e), 9003, 5, status="active"))
         return None
     except _P.ProjectsError as x:
         return x.status, x.detail

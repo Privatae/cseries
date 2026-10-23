@@ -119,7 +119,7 @@ MIGS = ("v001_a.sql", "v002_b.sql", "v139_host_recall_role.sql")
 DSN = "postgresql://entity@/kdb?host=/nonexistent/kernel-sock"
 
 
-def stubbed(text: str, eid: int = 3, fail: bool = False, dsn: str = DSN) -> list[str]:
+def stubbed(text: str, eid: int = 9003, fail: bool = False, dsn: str = DSN) -> list[str]:
     """Run the section of entrypoint.sh text `text` through ks.run_section
     with the stand-in psql: each psql call's log line. `fail`: creating the
     ledger fails."""
@@ -183,7 +183,7 @@ try:
                                "migrations/v002_b.sql", "migrations/v139_host_recall_role.sql"]
           and any("--single-transaction -f APP/init-db.sql" in c for c in calls), files_run(calls))
     renumber = next((i for i, c in enumerate(calls)
-                     if "-v eid=3" in c and "UPDATE entity_registry SET id = :'eid'" in c), None)
+                     if "-v eid=9003" in c and "UPDATE entity_registry SET id = :'eid'" in c), None)
     first_mig = next((i for i, c in enumerate(calls) if "-f APP/migrations/v001_a.sql" in c), None)
     check("the entity's own id lands before any migration",
           renumber is not None and first_mig is not None and renumber < first_mig, (renumber, first_mig))
@@ -364,7 +364,7 @@ try:
 
     print("D. upto=N is the tree before vN existed, without vN or anything later, or a refusal")
     # The measurement on THIS tree needs its history. CI fetches a PR with its
-    # history (.gitea/workflows/check.yml, since 2026-10-06); in a checkout
+    # history (the forge's .gitea/workflows/check.yml); in a checkout
     # without it (a shallow clone, a bare copy) the measurement is not run and
     # says so, and the mechanism is still proven below on histories this gate
     # builds — including a shallow clone's refusal.
@@ -550,8 +550,8 @@ try:
           "is not followed", got == r_v9, f"got {got[:10]}, before the first add {r_v9[:10]}")
 
     print("E. a template is named for what it was built as")
-    t1, t3 = ks.template_name(ROOT, 1), ks.template_name(ROOT, 3)
-    check("entity 1 and entity 9003 are different templates", t1 != t3 and t1.endswith("_e1") and t3.endswith("_e3"),
+    t1, t3 = ks.template_name(ROOT, 1), ks.template_name(ROOT, 9003)
+    check("entity 1 and entity 9003 are different templates", t1 != t3 and t1.endswith("_e1") and t3.endswith("_e9003"),
           (t1, t3))
     longest = f"{t1}_u99999_{'0' * 10}"
     check("every name fits postgres' 63 characters (the longest an upto name can be)", len(longest) <= 63, longest)

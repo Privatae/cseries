@@ -104,18 +104,18 @@ def main() -> int:
     orig_resolve = pv.resolve
     pv.resolve = fake_resolve
     try:
-        raw, canon = run(hk._fallback_bytes(object(), 3, "opencode"))
+        raw, canon = run(hk._fallback_bytes(object(), 9003, "opencode"))
         check("opencode fallback resolves the canonical openrouter key",
               raw == b"sk-or-live" and canon == "openrouter")
 
-        raw, canon = run(hk._fallback_bytes(object(), 3, "grok"))
+        raw, canon = run(hk._fallback_bytes(object(), 9003, "grok"))
         check("vendor CLI gets no bytes from the fallback path",
               raw is None and canon == "")
 
         # one Host's exact live scenario: an OpenRouter key and NO Kimi key.
         # Kimi Code must come back not-connected — not running on a borrowed
         # generic key.
-        raw, canon = run(hk._fallback_bytes(object(), 3, "kimi"))
+        raw, canon = run(hk._fallback_bytes(object(), 9003, "kimi"))
         check("kimi with only an openrouter key stored gets NOTHING "
               "(not connected beats silently borrowed)",
               raw is None and canon == "")
@@ -124,7 +124,7 @@ def main() -> int:
             raise RuntimeError("vault down")
 
         pv.resolve = raising_resolve
-        raw, canon = run(hk._fallback_bytes(object(), 3, "opencode"))
+        raw, canon = run(hk._fallback_bytes(object(), 9003, "opencode"))
         check("a raising resolver degrades to no-fallback, never raises",
               raw is None and canon == "")
     finally:

@@ -22,7 +22,7 @@ sys.path[:0] = [_ROOT, os.path.join(_ROOT, "brain")]
 
 from server.network import nac_commit  # noqa: E402
 
-EID = 3
+EID = 9003
 LATEST = "0.17.0"
 
 # Three machines behind, one already current, one that has never checked in.

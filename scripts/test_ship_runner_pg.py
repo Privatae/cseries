@@ -85,7 +85,7 @@ try:
 except ImportError:
     HAVE_NACL = False
 
-EID = 3
+EID = 9003
 failures: list[str] = []
 
 

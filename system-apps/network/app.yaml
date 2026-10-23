@@ -406,7 +406,12 @@ system: true
 #   refuses every machine with a device fingerprint, so Ingress shows a banner
 #   saying the rules did not load and each such Posture card reads refused,
 #   instead of no banner and "not checked".
-version: "1.20.2"
+# 1.20.3 (2026-10-23): a Host a machine names without a pairing state reads as
+#   not usable. The machine card's "Other Hosts on this machine" shows it
+#   waiting for the anchor with no Request connection (the directory used to
+#   read a missing state as active), and the details' "also serves" line says
+#   "state not reported" instead of showing the name bare.
+version: "1.20.3"
 # Network is NOT a conversational surface — the user operates it directly and
 # talks to the host in Circles/the Workbench. So this is the code-true source for
 # the ENVIRONMENT CATALOG (topology block + describe_app), NOT a surface_role

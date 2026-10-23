@@ -44,7 +44,7 @@ ANCHOR = "entity-1.zone.example.test"
 SERVER = "box-a"
 SUBJECT = "a1b2c3d4e5f60718.zone.example.test"
 HANDLE = "a1b2c3d4e5f60718"
-PEER = 122
+PEER = 9122
 MODEL = "qwen4-embed"
 
 # Fixed vector — a grant with a MODEL SCOPE. The box parses these exact bytes
@@ -274,7 +274,7 @@ def test_describe_models_says_what_the_scope_means():
 def test_approve_signs_the_model_scope_and_stores_it(monkeypatch):
     relay, pool = Relay(), Pool(pairings=_REPORTED)
     _wire(monkeypatch, relay)
-    res = _run(pg.approve_pairing(pool, 3, SERVER, SUBJECT, ["inference"],
+    res = _run(pg.approve_pairing(pool, 9003, SERVER, SUBJECT, ["inference"],
                                   stepup_code="123456", models=["Qwen4-Embed"]))
     assert res["approved"] and res["models"] == [MODEL]
     assert res["may_use"] == MODEL
@@ -292,7 +292,7 @@ def test_approve_refuses_models_without_the_inference_cap(monkeypatch):
     relay, pool = Relay(), Pool(pairings=_REPORTED)
     _wire(monkeypatch, relay)
     try:
-        _run(pg.approve_pairing(pool, 3, SERVER, SUBJECT, ["observe"],
+        _run(pg.approve_pairing(pool, 9003, SERVER, SUBJECT, ["observe"],
                                 stepup_code="123456", models=[MODEL]))
         assert False, "a model scope on a grant with no inference lane was accepted"
     except pg.PairingError as e:
@@ -303,7 +303,7 @@ def test_approve_refuses_models_without_the_inference_cap(monkeypatch):
 def test_approve_with_no_models_is_unchanged(monkeypatch):
     relay, pool = Relay(), Pool(pairings=_REPORTED)
     _wire(monkeypatch, relay)
-    res = _run(pg.approve_pairing(pool, 3, SERVER, SUBJECT, ["inference"], stepup_code="123456"))
+    res = _run(pg.approve_pairing(pool, 9003, SERVER, SUBJECT, ["inference"], stepup_code="123456"))
     assert res["models"] == []
     terms = json.loads(base64.b64decode(relay.calls[0][2][0]))
     assert "models" not in terms
@@ -314,7 +314,7 @@ def test_approve_with_no_models_is_unchanged(monkeypatch):
 def test_redeem_dispatches_the_anchor_only_op_and_returns_the_subject(monkeypatch):
     relay, pool = Relay(), Pool()
     _wire(monkeypatch, relay)
-    res = _run(pg.redeem_on_box(pool, 3, SERVER, "skb_abc"))
+    res = _run(pg.redeem_on_box(pool, 9003, SERVER, "skb_abc"))
     assert res["subject"] == SUBJECT and res["state"] == "pending"
     server, op, args = relay.calls[0]
     assert (server, op) == (SERVER, "pairing_redeem"), \
@@ -329,7 +329,7 @@ def test_redeem_refuses_on_a_machine_anchored_elsewhere(monkeypatch):
     relay, pool = Relay(), Pool()
     _wire(monkeypatch, relay, own="someone-else.zone.example.test")
     try:
-        _run(pg.redeem_on_box(pool, 3, SERVER, "skb_abc"))
+        _run(pg.redeem_on_box(pool, 9003, SERVER, "skb_abc"))
         assert False, "redeemed on a machine this host does not anchor"
     except pg.PairingError as e:
         assert e.status == 403
@@ -340,7 +340,7 @@ def test_redeem_on_an_offline_box_says_so_rather_than_queueing(monkeypatch):
     relay, pool = Relay(offline=True), Pool()
     _wire(monkeypatch, relay)
     try:
-        _run(pg.redeem_on_box(pool, 3, SERVER, "skb_abc"))
+        _run(pg.redeem_on_box(pool, 9003, SERVER, "skb_abc"))
         assert False, "an offline box reported success"
     except pg.PairingError as e:
         # Unlike a grant sync there is nothing to retry later: the token is
@@ -353,7 +353,7 @@ def test_redeem_surfaces_the_boxs_refusal(monkeypatch):
     relay, pool = Relay(exit_code=126, stderr="refused: op is answered only on the anchor host's pairing"), Pool()
     _wire(monkeypatch, relay)
     try:
-        _run(pg.redeem_on_box(pool, 3, SERVER, "skb_abc"))
+        _run(pg.redeem_on_box(pool, 9003, SERVER, "skb_abc"))
         assert False, "a refusal read as success"
     except pg.PairingError as e:
         assert "anchor" in e.detail
@@ -366,7 +366,7 @@ def test_accept_checks_the_second_factor_before_asking_anyone_to_mint(monkeypatc
     pool = Pool(offer=_offer_row())
     _wire(monkeypatch, relay, peer=peer)
     try:
-        _run(mo.accept_inbound(pool, 3, 9, server=SERVER, caps=["inference"],
+        _run(mo.accept_inbound(pool, 9003, 9, server=SERVER, caps=["inference"],
                                models=[MODEL], stepup_code="000000"))
         assert False, "a wrong step-up code was accepted"
     except mo.OfferError as e:
@@ -379,7 +379,7 @@ def test_accept_fetches_a_token_redeems_it_and_signs_the_scope(monkeypatch):
     relay, peer = Relay(), PeerLane(token="skb_fresh")
     pool = Pool(offer=_offer_row())
     _wire(monkeypatch, relay, peer=peer)
-    res = _run(mo.accept_inbound(pool, 3, 9, server=SERVER, caps=["inference"],
+    res = _run(mo.accept_inbound(pool, 9003, 9, server=SERVER, caps=["inference"],
                                  models=[MODEL], stepup_code="123456"))
     assert res["accepted"] and res["subject"] == SUBJECT and res["models"] == [MODEL]
     assert res["may_use"] == MODEL
@@ -398,7 +398,7 @@ def test_accept_refuses_an_approval_that_names_no_models(monkeypatch):
     pool = Pool(offer=_offer_row())
     _wire(monkeypatch, relay, peer=peer)
     try:
-        _run(mo.accept_inbound(pool, 3, 9, server=SERVER, caps=["inference"],
+        _run(mo.accept_inbound(pool, 9003, 9, server=SERVER, caps=["inference"],
                                models=[], stepup_code="123456"))
         assert False, "an unscoped approval went through the sharing path"
     except mo.OfferError as e:
@@ -411,7 +411,7 @@ def test_accept_refuses_a_ceiling_wider_than_the_inference_lane(monkeypatch):
     pool = Pool(offer=_offer_row())
     _wire(monkeypatch, relay, peer=peer)
     try:
-        _run(mo.accept_inbound(pool, 3, 9, server=SERVER, caps=["dcn"],
+        _run(mo.accept_inbound(pool, 9003, 9, server=SERVER, caps=["dcn"],
                                models=[MODEL], stepup_code="123456"))
         assert False, "a data family rode in on a model-sharing card"
     except mo.OfferError as e:
@@ -424,7 +424,7 @@ def test_accept_never_falls_back_to_the_platform_relay(monkeypatch):
     pool = Pool(offer=_offer_row())
     _wire(monkeypatch, relay, peer=peer)
     try:
-        _run(mo.accept_inbound(pool, 3, 9, server=SERVER, caps=["inference"],
+        _run(mo.accept_inbound(pool, 9003, 9, server=SERVER, caps=["inference"],
                                models=[MODEL], stepup_code="123456"))
         assert False, "the direct lane was down and something still happened"
     except mo.OfferError as e:
@@ -491,7 +491,7 @@ def test_accept_archives_the_askers_card(monkeypatch):
     relay, peer = Relay(), PeerLane(token="skb_fresh")
     pool = Pool(offer=_offer_row())
     _wire(monkeypatch, relay, peer=peer)
-    res = _run(mo.accept_inbound(pool, 3, 9, server=SERVER, caps=["inference"],
+    res = _run(mo.accept_inbound(pool, 9003, 9, server=SERVER, caps=["inference"],
                                  models=[MODEL], stepup_code="123456"))
     assert res["accepted"]
     assert _card_archives(pool) == [("machine_request", PEER, 9)]
@@ -505,7 +505,7 @@ def test_a_refused_answer_leaves_the_card(monkeypatch):
     pool = Pool(offer=_offer_row())
     _wire(monkeypatch, relay, peer=peer)
     try:
-        _run(mo.accept_inbound(pool, 3, 9, server=SERVER, caps=["inference"],
+        _run(mo.accept_inbound(pool, 9003, 9, server=SERVER, caps=["inference"],
                                models=[MODEL], stepup_code="000000"))
         assert False, "a wrong step-up code was accepted"
     except mo.OfferError:
@@ -534,7 +534,7 @@ def test_a_failed_archive_never_fails_the_answer(monkeypatch):
 def test_mint_refuses_a_peer_with_no_open_offer_from_us():
     pool = Pool(offer=None)
     try:
-        _run(mo.mint_for_peer(pool, 3, PEER))
+        _run(mo.mint_for_peer(pool, 9003, PEER))
         assert False, "a host with no outstanding ask got an enrolment token"
     except mo.OfferError as e:
         assert e.status == 403
@@ -585,10 +585,10 @@ def test_one_ask_yields_exactly_one_token_and_the_claim_is_atomic(monkeypatch):
     the row out of 'open' and hands back its id, so exactly one caller wins."""
     _with_minter(monkeypatch)
     pool = ClaimPool(offer=_offer_row(direction="out"))
-    assert _run(mo.mint_for_peer(pool, 3, PEER))["token"] == "skb_one"
+    assert _run(mo.mint_for_peer(pool, 9003, PEER))["token"] == "skb_one"
     for _ in range(3):
         try:
-            _run(mo.mint_for_peer(pool, 3, PEER))
+            _run(mo.mint_for_peer(pool, 9003, PEER))
             assert False, "a spent ask minted again"
         except mo.OfferError as e:
             assert e.status == 403
@@ -603,7 +603,7 @@ def test_a_mint_that_fails_puts_the_permit_back(monkeypatch):
     _with_minter(monkeypatch, boom=True)
     pool = ClaimPool(offer=_offer_row(direction="out"))
     try:
-        _run(mo.mint_for_peer(pool, 3, PEER))
+        _run(mo.mint_for_peer(pool, 9003, PEER))
         assert False, "the mint raised and nobody noticed"
     except RuntimeError:
         pass
@@ -614,7 +614,7 @@ def test_a_mint_that_fails_puts_the_permit_back(monkeypatch):
 def test_mint_returns_the_token_and_writes_it_nowhere(monkeypatch):
     _with_minter(monkeypatch, token="skb_secret")
     pool = ClaimPool(offer=_offer_row(direction="out"))
-    assert _run(mo.mint_for_peer(pool, 3, PEER))["token"] == "skb_secret"
+    assert _run(mo.mint_for_peer(pool, 9003, PEER))["token"] == "skb_secret"
     assert any("tokens_issued=tokens_issued+1" in q for q, _ in pool.sql)
     # the secret is in no statement this host ran
     for q, a in pool.sql:
@@ -641,7 +641,7 @@ def test_the_step_up_code_is_spent_exactly_once(monkeypatch):
         spent.append(code)
         return await real(p, code)
     monkeypatch.setattr(pg, "_verify_stepup", counting)
-    res = _run(mo.accept_inbound(pool, 3, 9, server=SERVER, caps=["inference"],
+    res = _run(mo.accept_inbound(pool, 9003, 9, server=SERVER, caps=["inference"],
                                  models=[MODEL], stepup_code="123456"))
     assert res["accepted"], res
     assert spent == ["123456"], f"the code was checked {len(spent)} times; it can only work once"
@@ -655,14 +655,14 @@ def test_accept_does_not_need_a_heartbeat_that_cannot_have_arrived(monkeypatch):
     relay, peer = Relay(), PeerLane()
     pool = Pool(offer=_offer_row(), pairings=[])   # the box has reported nothing
     _wire(monkeypatch, relay, peer=peer)
-    res = _run(mo.accept_inbound(pool, 3, 9, server=SERVER, caps=["inference"],
+    res = _run(mo.accept_inbound(pool, 9003, 9, server=SERVER, caps=["inference"],
                                  models=[MODEL], stepup_code="123456"))
     assert res["accepted"] and res["subject"] == SUBJECT
     terms = json.loads(base64.b64decode(relay.calls[1][2][0]))
     assert terms["subject"] == SUBJECT and terms["subject_handle"] == HANDLE, terms
     # ...and the plain approve path still DOES require it, unchanged.
     try:
-        _run(pg.approve_pairing(Pool(pairings=[]), 3, SERVER, SUBJECT, ["inference"],
+        _run(pg.approve_pairing(Pool(pairings=[]), 9003, SERVER, SUBJECT, ["inference"],
                                 stepup_code="123456"))
         assert False, "approve_pairing admitted a host the box never reported"
     except pg.PairingError as e:
@@ -679,7 +679,7 @@ def test_a_scope_is_refused_for_a_box_that_would_ignore_it(monkeypatch):
         pool = Pool(offer=_offer_row(), gateway_version=version)
         _wire(monkeypatch, relay, peer=peer)
         try:
-            _run(mo.accept_inbound(pool, 3, 9, server=SERVER, caps=["inference"],
+            _run(mo.accept_inbound(pool, 9003, 9, server=SERVER, caps=["inference"],
                                    models=[MODEL], stepup_code="123456"))
             assert False, f"a scoped grant was signed for a {why} box"
         except pg.PairingError as e:
@@ -690,12 +690,12 @@ def test_a_scope_is_refused_for_a_box_that_would_ignore_it(monkeypatch):
     # nothing to enforce there, so nothing to misrepresent.
     relay, peer = Relay(), PeerLane()
     _wire(monkeypatch, relay, peer=peer)
-    assert _run(mo.accept_inbound(Pool(offer=_offer_row(), gateway_version="0.30.1"), 3, 9,
+    assert _run(mo.accept_inbound(Pool(offer=_offer_row(), gateway_version="0.30.1"), 9003, 9,
                                   server=SERVER, caps=["inference"], models=[MODEL],
                                   stepup_code="123456"))["accepted"]
     relay2 = Relay()
     _wire(monkeypatch, relay2)
-    assert _run(pg.approve_pairing(Pool(pairings=_REPORTED, gateway_version="0.28.0"), 3,
+    assert _run(pg.approve_pairing(Pool(pairings=_REPORTED, gateway_version="0.28.0"), 9003,
                                    SERVER, SUBJECT, ["inference"], stepup_code="123456"))["approved"]
 
 

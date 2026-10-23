@@ -205,20 +205,20 @@ ANSWER_CEILING_S = 60
 
 # ── 2. obtain ─────────────────────────────────────────────────────────────────
 print("obtain")
-res = run(nac_approval.obtain(Pool(enforcing={"grants": []}), 3, "box-7", "ctx_extract", ["a"]))
+res = run(nac_approval.obtain(Pool(enforcing={"grants": []}), 9003, "box-7", "ctx_extract", ["a"]))
 check("a box that gates nothing: not_needed", res["state"] == "not_needed")
-res = run(nac_approval.obtain(Pool(enforcing={"write_gate": True}), 3, "box-7", "ctx_extract", ["a"]))
+res = run(nac_approval.obtain(Pool(enforcing={"write_gate": True}), 9003, "box-7", "ctx_extract", ["a"]))
 check("a gating box with no way to approve: no_way, naming the fix",
       res["state"] == "no_way" and "pin-device" in res["detail"])
-res = run(nac_approval.obtain(Pool(enforcing={"write_gate": True, "second_factor": True}), 3, "box-7", "uptime", []))
+res = run(nac_approval.obtain(Pool(enforcing={"write_gate": True, "second_factor": True}), 9003, "box-7", "uptime", []))
 check("a read never asks", res["state"] == "not_needed")
-res = run(nac_approval.obtain(Pool(enforcing={"write_gate": True, "second_factor": True}), 3, "box-7",
+res = run(nac_approval.obtain(Pool(enforcing={"write_gate": True, "second_factor": True}), 9003, "box-7",
                               "dcn_grant_drop", ["1"]))
 check("a tighten never asks", res["state"] == "not_needed")
 check("standing work under a configured store never asks",
-      run(nac_approval.obtain(Pool(enforcing={"write_gate": True, "second_factor": True}), 3, "box-7",
+      run(nac_approval.obtain(Pool(enforcing={"write_gate": True, "second_factor": True}), 9003, "box-7",
                               "ctx_put", ["a", "b"]))["state"] == "not_needed"
-      and run(nac_approval.obtain(Pool(enforcing={"write_gate": True, "second_factor": True}), 3, "box-7",
+      and run(nac_approval.obtain(Pool(enforcing={"write_gate": True, "second_factor": True}), 9003, "box-7",
                                   "backup_fetch", ["{}"]))["state"] == "not_needed")
 
 
@@ -229,17 +229,17 @@ class TokenPool(Pool):
         return await super().fetchval(sql, *a)
 
 check("the model's own ctx_put asks anyway (force), the store's own does not",
-      run(nac_approval.obtain(Pool(enforcing={"write_gate": True, "second_factor": True}), 3, "box-7",
+      run(nac_approval.obtain(Pool(enforcing={"write_gate": True, "second_factor": True}), 9003, "box-7",
                               "ctx_put", ["a"], force=True))["state"] == "no_way"
       and "ctx_put" in nac_approval.TOOL_ASKS_ANYWAY)
 check("the gate is read by token when the caller resolved one",
-      run(nac_approval.obtain(TokenPool(), 3, "box-7", "ctx_extract", ["x"], token_id=77))["state"] == "no_way"
-      and run(nac_approval.obtain(TokenPool(), 3, "box-7", "ctx_extract", ["x"], token_id=78))["state"] == "not_needed")
+      run(nac_approval.obtain(TokenPool(), 9003, "box-7", "ctx_extract", ["x"], token_id=77))["state"] == "no_way"
+      and run(nac_approval.obtain(TokenPool(), 9003, "box-7", "ctx_extract", ["x"], token_id=78))["state"] == "not_needed")
 
 gate = {"write_gate": True, "second_factor": True, "device": True, "device_keys": ["KEY-A"]}
 pool = Pool(enforcing=gate, devices={"KEY-A": (55, "laptop.example")})
 relay.calls.clear()
-res = run(nac_approval.obtain(pool, 3, "box-7", "ctx_extract", ["notes/a.txt", "aGk="], note="save it", wait_s=0))
+res = run(nac_approval.obtain(pool, 9003, "box-7", "ctx_extract", ["notes/a.txt", "aGk="], note="save it", wait_s=0))
 check("device path, wait 0: pending with the device named",
       res["state"] == "pending" and res["request"]["via"] == "device"
       and res["request"]["device"] == "laptop.example" and "device-approvals" in res["next"])
@@ -250,29 +250,29 @@ check("the device receives the plain details and nothing else (the machine is in
       details == nac_approval.mgmt_op_details("ctx_extract", "box-7", ["notes/a.txt", "aGk="], "save it")
       and len(filed[0][2]) == 1)
 relay.device_state = "approved"
-res = run(nac_approval.obtain(pool, 3, "box-7", "ctx_extract", ["notes/a.txt", "aGk="], wait_s=ANSWER_CEILING_S))
+res = run(nac_approval.obtain(pool, 9003, "box-7", "ctx_extract", ["notes/a.txt", "aGk="], wait_s=ANSWER_CEILING_S))
 check("device path: approved once the person tapped, with the signed approval",
       res["state"] == "approved" and res["via"] == "device" and '"sig"' in res["approval"])
 relay.device_state = "denied"
-res = run(nac_approval.obtain(pool, 3, "box-7", "ctx_extract", ["x"], wait_s=ANSWER_CEILING_S))
+res = run(nac_approval.obtain(pool, 9003, "box-7", "ctx_extract", ["x"], wait_s=ANSWER_CEILING_S))
 check("device path: denied stands", res["state"] == "denied" and "refused" in res["detail"])
 relay.device_state = "pending"
 # The console path: a factor, no device.
 pool_c = Pool(enforcing={"write_gate": True, "second_factor": True, "stepup": True})
-res = run(nac_approval.obtain(pool_c, 3, "box-7", "ctx_extract", ["x"], wait_s=ANSWER_CEILING_S))
+res = run(nac_approval.obtain(pool_c, 9003, "box-7", "ctx_extract", ["x"], wait_s=ANSWER_CEILING_S))
 check("console path: stepup_request kind mgmt_op, then approved",
       res["state"] == "approved" and res["via"] == "console" and res["approval"] == "con-appr")
 # Any wait over 0 reads the answer once more, in code, not by the clock: a wait
 # of a nanosecond is over before the first check, and the tap is still read.
-res = run(nac_approval.obtain(pool_c, 3, "box-7", "ctx_extract", ["y"], wait_s=1e-9))
+res = run(nac_approval.obtain(pool_c, 9003, "box-7", "ctx_extract", ["y"], wait_s=1e-9))
 check("a wait over 0 reads the answer again, however long filing the ask took",
       res["state"] == "approved" and res["via"] == "console", res)
 relay.tap_after_ask = True
-res = run(nac_approval.obtain(pool, 3, "box-7", "ctx_extract", ["z1"], wait_s=1e-9))
+res = run(nac_approval.obtain(pool, 9003, "box-7", "ctx_extract", ["z1"], wait_s=1e-9))
 relay.tap_after_ask = False
 check("...on the device path too", res["state"] == "approved" and res["via"] == "device", res)
 relay.device_state = "approved"
-res = run(nac_approval.obtain(pool_c, 3, "box-7", "ctx_extract", ["x"], wait_s=0))
+res = run(nac_approval.obtain(pool_c, 9003, "box-7", "ctx_extract", ["x"], wait_s=0))
 check("console path, wait 0: a missed tap is read on the file itself",
       res["state"] == "approved" and res["approval"] == "con-appr")
 relay.device_state = "pending"
@@ -337,22 +337,22 @@ nac_mgmt.get_mgmt_relay = lambda: mrelay
 
 relay.device_state = "pending"
 audits.clear()
-res = run(nac_mgmt.run_mgmt_op(pool, 3, "box-7", "ctx_extract", ["{}"], note="read", approval_wait_s=0))
+res = run(nac_mgmt.run_mgmt_op(pool, 9003, "box-7", "ctx_extract", ["{}"], note="read", approval_wait_s=0))
 check("pending approval: a pending result, nothing dispatched, audited awaiting-approval",
       res.get("state") == "pending_approval" and res.get("exit") is None and "next" in res
       and not mrelay.calls and audits and audits[-1][3] == "awaiting-approval")
 relay.device_state = "approved"
-res = run(nac_mgmt.run_mgmt_op(pool, 3, "box-7", "ctx_extract", ["{}"], note="read", approval_wait_s=ANSWER_CEILING_S))
+res = run(nac_mgmt.run_mgmt_op(pool, 9003, "box-7", "ctx_extract", ["{}"], note="read", approval_wait_s=ANSWER_CEILING_S))
 check("approved: dispatched WITH the approval, exit from the box",
       res.get("exit") == 0 and mrelay.calls and '"sig"' in mrelay.calls[-1][3])
 relay.device_state = "denied"
 audits.clear()
-res = run(nac_mgmt.run_mgmt_op(pool, 3, "box-7", "ctx_extract", ["z"], approval_wait_s=ANSWER_CEILING_S))
+res = run(nac_mgmt.run_mgmt_op(pool, 9003, "box-7", "ctx_extract", ["z"], approval_wait_s=ANSWER_CEILING_S))
 check("denied on the device: 126 in the lane's own shape, audited denied-person",
       res.get("exit") == 126 and res["stderr"].startswith("refused:") and audits[-1][3] == "denied-person")
-res = run(nac_mgmt.run_mgmt_op(Pool(enforcing={"grants": []}), 3, "box-7", "ctx_extract", ["z"]))
+res = run(nac_mgmt.run_mgmt_op(Pool(enforcing={"grants": []}), 9003, "box-7", "ctx_extract", ["z"]))
 check("a box that gates nothing: dispatched with no approval", res.get("exit") == 0 and mrelay.calls[-1][3] == "")
-res = run(nac_mgmt.run_mgmt_op(pool, 3, "box-7", "ctx_put", ["notes/a.txt", "aGk="]))
+res = run(nac_mgmt.run_mgmt_op(pool, 9003, "box-7", "ctx_put", ["notes/a.txt", "aGk="]))
 check("ctx_put is standing work: dispatched with no approval on a gating box too",
       res.get("exit") == 0 and mrelay.calls[-1][1] == "ctx_put" and mrelay.calls[-1][3] == "")
 relay.device_state = "pending"
@@ -375,11 +375,11 @@ async def _kind(pool, token_id, pid):
     return "agent"
 
 nac_agents.observation_kind = _kind
-res = run(nac_mgmt.run_mgmt_op(pool, 3, "box-7", "contain", ["4242"], approval_wait_s=0))
+res = run(nac_mgmt.run_mgmt_op(pool, 9003, "box-7", "contain", ["4242"], approval_wait_s=0))
 check("contain pending: the order is queued without its approval and the result says pending",
       queued == [(4242, "")] and res.get("state") == "pending_approval" and res.get("queued") is True)
 relay.device_state = "approved"
-res = run(nac_mgmt.run_mgmt_op(pool, 3, "box-7", "contain", ["4242"], approval_wait_s=ANSWER_CEILING_S))
+res = run(nac_mgmt.run_mgmt_op(pool, 9003, "box-7", "contain", ["4242"], approval_wait_s=ANSWER_CEILING_S))
 check("contain approved: the order carries the approval", queued[-1][0] == 4242 and '"sig"' in queued[-1][1])
 relay.device_state = "pending"
 # An open order that already carries its approval is not asked for again.
@@ -397,7 +397,7 @@ res = run(nac_mgmt.run_mgmt_op(HeldPool(enforcing=gate, devices={"KEY-A": (55, "
 check("an open order with its approval: no new ask, the order carries it",
       not [c for c in relay.calls if c[1] == "device_request"] and queued[-1] == (4242, "HELD"))
 try:
-    run(nac_mgmt.run_mgmt_op(pool, 3, "box-7", "contain", ["finding:nothex"], approval_wait_s=0))
+    run(nac_mgmt.run_mgmt_op(pool, 9003, "box-7", "contain", ["finding:nothex"], approval_wait_s=0))
     check("a malformed fingerprint is refused before anyone is asked", False)
 except nac_mgmt.MgmtError as e:
     check("a malformed fingerprint is refused before anyone is asked",
@@ -433,13 +433,13 @@ class DonePool(Pool):
 devs = {"KEY-A": (55, "laptop.example")}
 relay.calls.clear()
 before = len(queued)
-res = run(nac_mgmt.run_mgmt_op(DonePool(enforcing=gate, devices=devs), 3, "box-7", "contain", ["4242"], approval_wait_s=0))
+res = run(nac_mgmt.run_mgmt_op(DonePool(enforcing=gate, devices=devs), 9003, "box-7", "contain", ["4242"], approval_wait_s=0))
 check("a re-called contain after the kill ran is 'already done': no card, no new order",
       res.get("exit") == 0 and "already done" in res.get("stdout", "") and len(queued) == before
       and not [c for c in relay.calls if c[1] == "device_request"])
-res = run(nac_mgmt.run_mgmt_op(DonePool(outcome="expired", enforcing=gate, devices=devs), 3, "box-7", "contain", ["4242"], approval_wait_s=0))
+res = run(nac_mgmt.run_mgmt_op(DonePool(outcome="expired", enforcing=gate, devices=devs), 9003, "box-7", "contain", ["4242"], approval_wait_s=0))
 check("an order that lapsed is placed again", len(queued) == before + 1 and res.get("state") == "pending_approval")
-res = run(nac_mgmt.run_mgmt_op(DonePool(outcome="done", now_sig="sig-b", enforcing=gate, devices=devs), 3, "box-7", "contain", ["4242"], approval_wait_s=0))
+res = run(nac_mgmt.run_mgmt_op(DonePool(outcome="done", now_sig="sig-b", enforcing=gate, devices=devs), 9003, "box-7", "contain", ["4242"], approval_wait_s=0))
 check("a pid that now wears another program's signature is a new act", len(queued) == before + 2)
 check("the SQL asks only for outcomes that ran",
       "AND outcome = 'done'" in src("server/network/nac_mgmt.py") and "AND outcome = 'killed'" in src("server/network/nac_mgmt.py"))
@@ -575,17 +575,17 @@ class ClearPool(Pool):
         return "UPDATE 1"
 
 run(nac_approval.clear_refused_directive_approvals(
-    ClearPool(), 3, 77, {"last_directive_refusal": {"what": "self-update to 0.33.0", "why": "refused: self-update changes this machine and approval expired"}}))
+    ClearPool(), 9003, 77, {"last_directive_refusal": {"what": "self-update to 0.33.0", "why": "refused: self-update changes this machine and approval expired"}}))
 check("a box's refusal of a self-update approval clears it", any("update_approval = NULL" in q for q in cleared))
 cleared.clear()
 run(nac_approval.clear_refused_directive_approvals(
-    ClearPool(), 3, 77, {"last_directive_refusal": {"what": "self-update to 0.33.0", "why": "refused: self-update changes this machine and approval expired"}}))
+    ClearPool(), 9003, 77, {"last_directive_refusal": {"what": "self-update to 0.33.0", "why": "refused: self-update changes this machine and approval expired"}}))
 check("the same refusal on the next beat clears nothing (once per `at`)", cleared == [])
 run(nac_approval.clear_refused_directive_approvals(
-    ClearPool(), 3, 77, {"last_directive_refusal": {"what": "self-update to 0.33.0", "why": "refused: ... approval expired", "at": "later"}}))
+    ClearPool(), 9003, 77, {"last_directive_refusal": {"what": "self-update to 0.33.0", "why": "refused: ... approval expired", "at": "later"}}))
 check("a new refusal clears again", any("update_approval = NULL" in q for q in cleared))
 cleared.clear()
-run(nac_approval.clear_refused_directive_approvals(ClearPool(), 3, 77, {"last_directive_refusal": {"what": "contain", "why": "refused: ... anchor host"}}))
+run(nac_approval.clear_refused_directive_approvals(ClearPool(), 9003, 77, {"last_directive_refusal": {"what": "contain", "why": "refused: ... anchor host"}}))
 check("a refusal that is not about the approval clears nothing", cleared == [])
 nac_approval._last_ask.clear()
 relay.device_state = "pending"
@@ -606,7 +606,7 @@ check("a denial holds its backoff (the device refuses it for 24 h; no knock per 
 relay.device_state = "pending"
 cleared.clear()
 run(nac_approval.clear_refused_directive_approvals(
-    ClearPool(), 3, 78, {"last_directive_refusal": {"what": "self-update to 0.33.0", "why": "refused: ... approval expired", "at": "2000-01-01T00:00:00Z"}}))
+    ClearPool(), 9003, 78, {"last_directive_refusal": {"what": "self-update to 0.33.0", "why": "refused: ... approval expired", "at": "2000-01-01T00:00:00Z"}}))
 check("a refusal recorded before this process started was an earlier process's to act on", cleared == [])
 hargs2 = nac_harness.harness_approval_args({"harness_id": "h", "mode": "lab", "envs": {"PORT": "1", "PORT2": "2", "A": "y", "A-B": "x"}})
 check("envs are sorted as k=v strings, byte order, like Go", hargs2[11] == "A-B=x\nA=y\nPORT2=2\nPORT=1")
@@ -656,12 +656,12 @@ async def _host_gate(pool, eid, server, op):
     return {"terms_bytes": b"{}", "signature": "s"}, None
 
 session_lane.host_gate = _host_gate
-st = run(session_lane.begin(Pool(enforcing={"grants": []}), 3, "box-7", "session:open", "sess-0001"))
+st = run(session_lane.begin(Pool(enforcing={"grants": []}), 9003, "box-7", "session:open", "sess-0001"))
 check("session:open on a box that gates nothing: approved with no approval", st == {"state": "approved", "approval": ""})
-st = run(session_lane.begin(pool, 3, "box-7", "session:open", "sess-0001"))
+st = run(session_lane.begin(pool, 9003, "box-7", "session:open", "sess-0001"))
 check("session:open on a gating box: pending on the device", st["state"] == "pending" and st["request"]["via"] == "device")
 relay.device_state = "approved"
-st = run(session_lane.poll(pool, 3, "box-7", "session:open", "sess-0001", existing=st["request"]))
+st = run(session_lane.poll(pool, 9003, "box-7", "session:open", "sess-0001", existing=st["request"]))
 check("poll reads the tap", st["state"] == "approved" and '"sig"' in st["approval"])
 relay.device_state = "pending"
 r = src("server/routes/network.py")

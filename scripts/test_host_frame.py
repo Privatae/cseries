@@ -184,7 +184,7 @@ class _CommPool:
         return None
 
 
-c1 = asyncio.run(_resolve_communication_context(_CommPool(), 3))
+c1 = asyncio.run(_resolve_communication_context(_CommPool(), 9003))
 check("comm_context names the handler and the timezone rule", "Alex" in c1 and "America/Los_Angeles" in c1)
 check("comm_context carries no clock", "Current time" not in c1 and "UTC now" not in c1 and "Today is" not in c1, c1)
 cc_src = inspect.getsource(ps._b_comm_context)

@@ -350,7 +350,7 @@ async def db() -> None:
         creds.VAULT_DIR, creds.MASTER_KEY_PATH = legacy / "vault", legacy / "integrations-master.key"
         storage.LEGACY_DB_PATH = old
         try:
-            cut = await creds.cutover_legacy_cred_store(pool, 3)
+            cut = await creds.cutover_legacy_cred_store(pool, 9003)
         finally:
             creds.VAULT_DIR, creds.MASTER_KEY_PATH, storage.LEGACY_DB_PATH = saved_paths
         check("K1: while the old integrations file is still here the cutover deletes no legacy secret",

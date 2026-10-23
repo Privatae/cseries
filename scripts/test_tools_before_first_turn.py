@@ -108,7 +108,7 @@ except Exception as _imp_err:  # absent before the fix — reported, not crashed
     print(f"  (identity_hold not importable: {_imp_err})")
 _real_post_line = getattr(H, "post_line", None)
 
-EID = 163
+EID = 9163
 GRANT = {"bot_capabilities": 47}
 
 

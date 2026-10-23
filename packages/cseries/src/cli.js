@@ -24,6 +24,7 @@ const preflight = require('./preflight');
 const bastion = require('./bastion');
 const host = require('./host');
 const setup = require('./setup');
+const machineFirewall = require('./vm/machine-firewall');
 
 const HELP = `npx cseries [command]
 
@@ -76,6 +77,10 @@ function makeContext(overrides = {}) {
     portState: overrides.portState,
     freeBytes: overrides.freeBytes,
     hostname: overrides.hostname || os.hostname(),
+    // This machine's addresses, for the machine wall (vm/machine-firewall.js).
+    netInterfaces: overrides.netInterfaces || (() => os.networkInterfaces()),
+    // Where systemd keeps each user's runtime folder (vm/lima.js autostart).
+    userRunDir: overrides.userRunDir,
     osRelease: overrides.osRelease || os.release(),
     // os.availableParallelism is Node 18.14 and later; the package takes any 18.
     machine: overrides.machine || {
@@ -163,6 +168,9 @@ async function needInstalled(ctx) {
 async function start(ctx) {
   await needInstalled(ctx);
   await ctx.driver.startGuest(ctx);
+  // The machine wall with this machine's addresses as they are now (an
+  // address it gained since the last run, say), before the Host starts.
+  await machineFirewall.apply(ctx);
   await host.start(ctx, false);
   await setup.waitHealthy(ctx);
   await setup.showSetup(ctx, { open: false });

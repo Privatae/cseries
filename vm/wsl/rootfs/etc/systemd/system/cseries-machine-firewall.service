@@ -1,0 +1,22 @@
+# The machine wall (/etc/cseries-machine/machine.nft, loaded by
+# cseries-machine-firewall): no container in this system opens a connection
+# to the machine the VM runs on. Loaded before any container starts, and the
+# Host's unit requires it (cseries-host.container.d/machine-firewall.conf), so
+# the Host does not run without it. There is no ExecStop: stopping this unit
+# leaves the rules in place. The cseries command reloads it on every run,
+# after it writes the machine's current addresses; never restart it while the
+# Host runs, since systemd restarts a unit along with what it requires.
+[Unit]
+Description=C-Series machine wall (no container reaches the machine)
+Wants=network-online.target
+After=network-online.target local-fs.target
+Before=cseries-postgres.service cseries-host.service cseries-runtime.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/cseries-machine-firewall load
+ExecReload=/usr/local/sbin/cseries-machine-firewall load
+
+[Install]
+WantedBy=multi-user.target

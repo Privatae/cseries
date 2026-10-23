@@ -1,0 +1,79 @@
+#!/usr/sbin/nft -f
+# The machine wall: nothing in a container in this Linux system (the Host,
+# its database, and every app, browser and coding engine the local runtime
+# starts) opens a connection to the machine this VM runs on. Loaded by
+# cseries-machine-firewall, which adds this system's default gateways, the
+# resolvers it uses and the machine's own addresses (/etc/cseries-machine/
+# addresses, written by the cseries command on every run), all in one nft
+# transaction. Its own table, replaced whole on every load, so nothing else
+# is touched; the runtime's runtime.nft is separate.
+#
+# Nothing the product needs goes from a container to the machine:
+#   - the bastion dials the Host, on 127.0.0.1:8810 (pairing) and :8811 (its
+#     lanes), and the cseries command and the browser reach the dashboard on
+#     127.0.0.1:8800; the VM forwards those three ports from its loopback to
+#     the machine's (Lima's template; WSL's localhost forwarding), so they
+#     arrive from the machine and their replies are established traffic;
+#   - DNS: a container asks aardvark-dns on its network's gateway, in this
+#     system, which asks the resolvers this system uses; port 53 to those
+#     resolvers stays open for a container that names one itself.
+# The LAN is not the machine: a model server the owner names on another
+# computer on their network stays reachable from the Host, as the bastion's
+# own egress lane keeps the LAN while it refuses the machine.
+
+table inet cseries_machine
+delete table inet cseries_machine
+
+table inet cseries_machine {
+	# The machine, as this system reaches it. Always: the unspecified and
+	# loopback ranges, and link-local (the machine's own link-local
+	# addresses, and a cloud metadata address where the machine has one).
+	# IPv6 site-local fec0::/10 is QEMU's user-mode IPv6 network, where
+	# fec0::2 is the machine's own loopback.
+	set machine_v4 {
+		type ipv4_addr
+		flags interval
+		auto-merge
+		elements = { 0.0.0.0/8, 127.0.0.0/8, 169.254.0.0/16 }
+	}
+	set machine_v6 {
+		type ipv6_addr
+		flags interval
+		auto-merge
+		elements = { ::/127, fe80::/10, fec0::/10 }
+	}
+	# The machine's resolvers this system uses: port 53 only.
+	set dns_v4 {
+		type ipv4_addr
+		flags interval
+		auto-merge
+	}
+	set dns_v6 {
+		type ipv6_addr
+		flags interval
+		auto-merge
+	}
+
+	# A container's connection leaves this system through the forward hook
+	# (podman's bridges masquerade it out of the VM's network card).
+	chain forward {
+		type filter hook forward priority filter; policy accept;
+		ct state established,related accept
+		ip daddr @dns_v4 meta l4proto { tcp, udp } th dport 53 accept
+		ip6 daddr @dns_v6 meta l4proto { tcp, udp } th dport 53 accept
+		ip daddr @machine_v4 counter drop
+		ip6 daddr @machine_v6 counter drop
+	}
+
+	# The coding engines' plain proxy (cseries-squid.service) dials for them
+	# from this system itself, as Debian's proxy user (uid 13, base-passwd).
+	# Its own ACL refuses private and reserved ranges; this adds the machine's
+	# other addresses, a public one included.
+	chain output {
+		type filter hook output priority filter; policy accept;
+		meta skuid 13 ip daddr @dns_v4 meta l4proto { tcp, udp } th dport 53 accept
+		meta skuid 13 ip6 daddr @dns_v6 meta l4proto { tcp, udp } th dport 53 accept
+		meta skuid 13 ip daddr @machine_v4 counter drop
+		meta skuid 13 ip6 daddr @machine_v6 counter drop
+	}
+}

@@ -42,7 +42,10 @@ once to install QEMU from the distribution's packages or to add you to the
 `/dev/kvm` group. Run it as yourself, not as root.
 
 The virtual machine mounts none of your folders. The Host publishes its ports
-(8800 for the dashboard, 8810 and 8811 for the bastion) on 127.0.0.1 only.
+(8800 for the dashboard, 8810 and 8811 for the bastion) on 127.0.0.1 only. A
+firewall inside the virtual machine stops every container in it from opening
+a connection to your machine; other computers on your network and the
+internet stay reachable.
 
 ## Why it's built this way
 

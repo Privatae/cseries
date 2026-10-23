@@ -42,7 +42,7 @@ test('QEMU\'s install: sudo\'s output goes to the install log, the terminal gets
   const { m, p, run } = linux({ qemu: false });
   const r = await run();
   assert.equal(r.code, 0, r.text + r.err);
-  const sudo = m.runner.calls.filter((c) => /sudo$/.test(c.cmd) && c.args.includes('-c'));
+  const sudo = m.runner.calls.filter((c) => /sudo$/.test(c.cmd) && c.args.includes('-c') && /apt-get install/.test(c.args[c.args.indexOf('-c') + 1]));
   assert.equal(sudo.length, 1);
   assert.equal(sudo[0].kind, 'run', 'captured, not handed the terminal\'s output');
   assert.equal(sudo[0].stdin, 'inherit', 'the terminal\'s input stays sudo\'s, for its password');

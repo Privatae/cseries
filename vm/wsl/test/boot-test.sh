@@ -173,6 +173,31 @@ else
     say "the local runtime's containers: SKIPPED (set RT_PY_IMAGE and RT_BROWSER_IMAGE)"
 fi
 
+say "the machine wall: no container in the guest reaches the machine"
+# Here the machine is this test's host, at the guest container's gateway, as
+# WSL's NAT puts the Windows machine at the guest's gateway. A listener of
+# this test's on that address only, on a port the kernel picks; this host's
+# own firewall may keep the guest off it, so the guest's own reach is told,
+# not required, and the containers' side is checked either way.
+gw=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.Gateway}}{{end}}' "$name")
+port_file="$work/wall-port"
+python3 -I -c '
+import socket, sys, time
+s = socket.socket(); s.bind((sys.argv[1], 0)); s.listen(8)
+open(sys.argv[2], "w").write(str(s.getsockname()[1]))
+s.settimeout(1)
+end = time.time() + 300
+while time.time() < end:
+    try:
+        s.accept()[0].close()
+    except OSError:
+        pass
+' "$gw" "$port_file" &
+wall_listener=$!
+for _ in $(seq 1 20); do [ -s "$port_file" ] && break; sleep 0.2; done
+G env MACHINE_PATH_OPTIONAL=1 bash -s -- "${host_ref%@*}" "$gw" "$(cat "$port_file")" < "$here/machine-wall-checks.sh"
+kill "$wall_listener" 2>/dev/null || true
+
 say "the hardening, against compose.yaml"
 G podman inspect cseries-postgres cseries-host > "$work/inspect.json"
 (cd "$repo" && docker compose -f compose.yaml config --format json) > "$work/compose.json"

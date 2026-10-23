@@ -19,7 +19,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { CliError } = require('../src/errors');
-const { fakeRunner } = require('./helpers');
+const { fakeRunner, guestShell } = require('./helpers');
 const { statement, sha256Hex } = require('../src/verify');
 const lima = require('../src/vm/lima');
 
@@ -73,6 +73,8 @@ function fakeLima(paths, opts = {}) {
     calls: [],
     systemd: { enabled: false, active: false, unitWritten: false },
     root,
+    // The guest's root shell: the machine wall's install script runs here.
+    guestShell: guestShell(root, { restartFails: opts.wallFails, noTable: opts.wallMissing }),
   };
 
   // The program the sudo script installs: a wrapper around fake-bastion.js.
@@ -150,6 +152,26 @@ function fakeLima(paths, opts = {}) {
     // What the real service leaves for serviceState() to find.
     if (m.systemd.unitWritten || (m.bastionState() || {}).service) fs.writeFileSync(paths.serviceUnit, 'unit');
     return { code: r.status, stdout: r.stdout, stderr: r.stderr };
+  }
+
+  // The authenticator's own sudo run (bastion.js enrolOnTerminal): RUN by
+  // /bin/sh with the same substitutions, the "terminal" (tty-in, tty-out) as
+  // its three streams. opts.noTerminal: there is no terminal to open.
+  function runEnrol(script, rest, o) {
+    m.sudoRuns.push({ kind: 'enrol', script, args: rest, tty: Boolean(o.tty) });
+    if (opts.noTerminal) return { code: -1, noTerminal: true };
+    const inFd = fs.openSync(ttyIn, 'r');
+    const outFd = fs.openSync(ttyOut, 'a');
+    try {
+      const r = childProcess.spawnSync('/bin/sh', ['-c', testScript(script), ...rest], {
+        stdio: [inFd, outFd, outFd],
+        env: { ...process.env, ...(opts.sudoEnv || {}), FAKE_BASTION_LOG: m.bastionLog, FAKE_BASTION_FAIL: opts.failAt || '', FAKE_HOST_NAME: opts.hostName || 'host-a' },
+      });
+      return { code: r.status };
+    } finally {
+      fs.closeSync(inFd);
+      fs.closeSync(outFd);
+    }
   }
 
   function probe() {
@@ -240,7 +262,16 @@ function fakeLima(paths, opts = {}) {
         return {};
       case 'shell': {
         const at = a.indexOf('sudo');
-        if (a[1] !== '--workdir' || a[2] !== '/' || a[3] !== 'cseries' || a[at + 1] !== lima.GUEST_BIN) return { code: 2, stderr: 'unexpected shell' };
+        if (a[1] !== '--workdir' || a[2] !== '/' || a[3] !== 'cseries') return { code: 2, stderr: 'unexpected shell' };
+        if (a[at + 1] === '/bin/sh' && a[at + 2] === '-s' && a.length === at + 3) {
+          if (!m.instance || m.instance.status !== 'Running') return { code: 1, stderr: 'instance "cseries" is not running' };
+          const r = m.guestShell.run(o.input);
+          // The script's own `systemctl stop cseries-host.service` (a stub
+          // here) stops the fake's Host too.
+          if (/^host=stopped$/m.test(r.stdout)) m.hostStarted = false;
+          return r;
+        }
+        if (a[at + 1] !== lima.GUEST_BIN) return { code: 2, stderr: 'unexpected shell' };
         return guest(a.slice(at + 2), o.input);
       }
       case 'stop': if (m.instance) m.instance.status = 'Stopped'; m.hostStarted = false; return {};
@@ -267,7 +298,17 @@ function fakeLima(paths, opts = {}) {
     }
     if (/sudo$/.test(cmd)) {
       if (opts.sudo === 'no') return { code: 1, stderr: 'sudo: 3 incorrect password attempts' };
+      // `sudo -n true`: whether sudo's credential cache spares a second
+      // password (opts.sudoCache false: it does not).
+      if (args.length === 2 && args[0] === '-n' && args[1] === 'true') {
+        m.sudoCacheChecks = (m.sudoCacheChecks || 0) + 1;
+        return opts.sudoCache === false ? { code: 1, stderr: 'sudo: a password is required' } : {};
+      }
       const sh = args.indexOf('/bin/sh');
+      if (o.inherit) {
+        if (args[sh + 1] !== '-c') return { code: 2 };
+        return runEnrol(args[sh + 2], args.slice(sh + 3), o);
+      }
       if (args[sh + 1] === '-c') {
         const script = args[sh + 2];
         m.sudoRuns.push({ kind: 'qemu', script });
@@ -284,7 +325,11 @@ function fakeLima(paths, opts = {}) {
     }
     if (cmd === 'systemctl' && args[0] === '--user') {
       m.userUnits.push(args.slice(1).join(' '));
-      return opts.userManager === false ? { code: 1, stderr: 'Failed to connect to bus: No medium found' } : {};
+      // userManager: false, none answers; 'bus-only', one runs but only its
+      // bus path finds it (a session with no XDG_RUNTIME_DIR, as su - gives).
+      if (opts.userManager === 'bus-only' && o.env && o.env.XDG_RUNTIME_DIR) return {};
+      return opts.userManager === false || opts.userManager === 'bus-only'
+        ? { code: 1, stderr: 'Failed to connect to user scope bus via local transport: No such file or directory' } : {};
     }
     if (cmd === 'systemctl' && args[0] === 'is-active') return { stdout: m.systemd.active ? 'active\n' : 'inactive\n' };
     if (cmd === '/bin/ps') return { stdout: m.systemd.active ? `root ${paths.serviceExe} run\nsomeone /bin/zsh\n` : 'someone /bin/zsh\n' };

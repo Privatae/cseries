@@ -181,13 +181,23 @@ test('the bastion command sequence is the same on macOS and Linux as in the Wind
       hostCa: { file: '/tmp/ca.pem', sha256: 'f'.repeat(64) }, host: null,
       commands: bastionCommands(plan, posixElevated.CA_VAR),
     });
-    const order = [...script.matchAll(/^bastion(?:_in)? \d+ '([^']+)'|^"\$exe" '(stepup-enroll)'/gm)].map((x) => (x[1] || x[2]).split(' ')[0]);
-    assert.deepEqual(order.filter((c) => c !== 'service'), winCmds, platform);
+    const order = [...script.matchAll(/^bastion(?:_in)? \d+ '([^']+)'/gm)].map((x) => x[1].split(' ')[0]);
+    // The same commands, in the same order, with the authenticator's
+    // enrolment as a sudo run of its own on the terminal, after this script.
+    assert.deepEqual([...order.filter((c) => c !== 'service'), 'stepup-enroll'], winCmds, platform);
     assert.match(script, /^bastion_in 16 'pair' 'tok-9' 'pair' '--redeem-url' 'https:\/\/127\.0\.0\.1:8810\/v1\/local\/redeem' '--host-ca' "\$ca" '-'$/m);
-    assert.ok(script.includes(`"$exe" 'stepup-enroll' '--console-only' '--host' "$hostName" </dev/tty >/dev/tty 2>&1`), platform);
+    assert.ok(!/stepup-enroll|\/dev\/tty/.test(script), `${platform}: nothing in the piped script waits on a terminal`);
+    const enrol = bastionCommands(plan, posixElevated.CA_VAR).find((c) => c.console);
+    assert.deepEqual(posixElevated.enrolArgs(pp.serviceExe, enrol, 'host-a'),
+      ['cseries-enrol', pp.serviceExe, 'stepup-enroll', '--console-only', '--host', 'host-a'], platform);
+    const es = posixElevated.enrolScript({ platform });
+    assert.match(es, /^unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME TMPDIR$/m);
+    assert.match(es, /^exec "\$exe" "\$@"$/m);
+    assert.ok(!es.includes('host-a') && !es.includes(pp.serviceExe), 'the program and the Host come as arguments, never in the script');
     if (platform === 'darwin') {
       assert.equal(pp.serviceExe, '/Library/Application Support/privatae/bin/privatae-bastion');
       assert.match(script, /^HOME=\/var\/root$/m);
+      assert.match(es, /^HOME=\/var\/root$/m);
       assert.match(script, /^exe='\/Library\/Application Support\/privatae\/bin\/privatae-bastion'$/m);
       assert.match(script, /chown root:wheel "\$\(dirname "\$dir"\)" "\$dir"/);
       assert.match(script, /^bastion 12 'service install' service install$/m);
@@ -195,6 +205,7 @@ test('the bastion command sequence is the same on macOS and Linux as in the Wind
     } else {
       assert.equal(pp.serviceExe, '/usr/local/bin/privatae-bastion');
       assert.match(script, /^HOME=\/root$/m);
+      assert.match(es, /^HOME=\/root$/m);
       assert.match(script, /^ExecStart=\/usr\/local\/bin\/privatae-bastion run$/m);
       assert.match(script, /^Environment=HOME=\/root$/m);
       assert.match(script, /systemctl restart privatae-bastion/);

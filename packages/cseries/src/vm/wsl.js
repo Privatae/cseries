@@ -245,6 +245,13 @@ const driver = {
     return wsl(ctx, guestArgs(args), opts);
   },
 
+  // A shell as root in the guest, the script on its standard input, for what
+  // a guest older than this command cannot do with its own cseries-guest
+  // (machine-firewall.js).
+  async guestShell(ctx, script) {
+    return wsl(ctx, ['-d', DISTRO, '-u', 'root', '--exec', '/bin/sh', '-s'], { input: script });
+  },
+
   async stopGuest(ctx) {
     await this.guest(ctx, ['stop']);
     await wsl(ctx, ['--terminate', DISTRO]);

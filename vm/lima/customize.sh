@@ -10,9 +10,13 @@ cp -R /src-wsl/rootfs/. "$root/"
 (cd /src-wsl/rootfs && find . -type d) | while read -r d; do chmod 0755 "$root/$d"; done
 (cd /src-wsl/rootfs && find . -type f) | while read -r f; do chmod 0644 "$root/$f"; done
 rm -f "$root/etc/wsl.conf" "$root/etc/wsl-distribution.conf"
-chmod 0755 "$root/usr/local/bin/cseries-guest"
+chmod 0755 "$root/usr/local/bin/cseries-guest" "$root/usr/local/sbin/cseries-machine-firewall"
+# The machine wall: no container here reaches the machine under the VM
+# (/etc/cseries-machine/machine.nft), loaded before any container starts.
+chroot "$root" systemctl enable cseries-machine-firewall.service
 
-# This guest's own files: cloud-init's settings, the network fallback, fstab.
+# This guest's own files: cloud-init's settings, the network fallback, fstab,
+# and the machine wall's first addresses (Lima's user-mode network).
 cp -R /src/rootfs/. "$root/"
 (cd /src/rootfs && find . -type d) | while read -r d; do chmod 0755 "$root/$d"; done
 (cd /src/rootfs && find . -type f) | while read -r f; do chmod 0644 "$root/$f"; done

@@ -113,6 +113,26 @@ case "$status" in
     *) echo "FAIL: an API call from the machine with no session got: $status"; exit 1 ;;
 esac
 
+say "the machine wall: no container in the guest reaches this machine"
+# What was measured open from the Host's container before the wall (C-Series
+# 0.1.6): 192.168.5.2, the machine's loopback, on 22, 7877, 7878, 7978 and
+# 8800. Something listens on each here: Lima's forward on 8800, and a
+# listener of this test's on every other one that is free (the bastion may
+# hold 7878 already). sshd is not installed in this box, so 22 is ours. On
+# loopback only, as those services are: Lima's 192.168.5.2 is the way to them.
+B sh -c 'nohup node -e "
+const net = require(\"node:net\");
+for (const p of [22, 7877, 7878, 7978]) {
+  const s = net.createServer((c) => c.destroy());
+  s.on(\"error\", () => {});
+  s.listen(p, \"127.0.0.1\");
+}
+setTimeout(() => process.exit(0), 600000);
+" >/dev/null 2>&1 &'
+sleep 1
+Ui env LIMA_HOME=/home/tester/.local/share/cseries/lima "$limactl" --tty=false shell --workdir / cseries \
+    sudo bash -s -- "localhost/${host_img%%:*}:${host_img##*:}" 192.168.5.2 22 7877 7878 7978 8800 < "$repo/vm/wsl/test/machine-wall-checks.sh"
+
 say "the local runtime on the guest's own podman and systemd"
 # The containers' slice and an app's kept data out and back, as root in the
 # guest, with the Host's own client in the Host's container.

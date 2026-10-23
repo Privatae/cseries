@@ -8,6 +8,7 @@ const { CliError } = require('./errors');
 const { formatBytes } = require('./output');
 const { NO_LOG } = require('./log');
 const { pinnedImage, runtimeLines } = require('./release');
+const machineFirewall = require('./vm/machine-firewall');
 
 // The Host's processor ceiling, as systemd's CPUQuota= takes it (100% is one
 // processor): every processor the Linux system has but one, so whatever the
@@ -292,6 +293,10 @@ const step = {
     if (st.guest && st.guest !== 'unknown' && st.guest !== rel.version) {
       ctx.out.detail(`The Linux system is from release ${st.guest}; the Host is updated to ${rel.version} on it.`);
     }
+    // Before the Host (re)starts: a guest from an older release gets the
+    // machine wall here, and every guest this machine's current addresses.
+    await machineFirewall.apply(ctx);
+    ctx.out.detail('Nothing in the Linux system\'s containers can open a connection to this machine.');
     const quota = cpuQuota(st.cpus);
     const runtime = hasRuntime(st);
     const mem = memoryMax(st.mem_total_kb, { runtime });

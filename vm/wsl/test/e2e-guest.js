@@ -12,8 +12,8 @@
 //
 //   node e2e-guest.js <packages/cseries dir> <host image@digest> <postgres image@digest>
 //
-// Only the VM driver is replaced: guest() runs cseries-guest directly, since
-// this already runs inside the guest.
+// Only the VM driver is replaced: guest() runs cseries-guest directly, and
+// guestShell() /bin/sh, since this already runs inside the guest.
 
 const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
@@ -40,6 +40,11 @@ const inside = {
       return { code: r.code, stdout: '', stderr: '' };
     }
     const r = await ctx.runner.run('cseries-guest', args, opts);
+    return { code: r.code, stdout: r.stdout.toString('utf8'), stderr: r.stderr.toString('utf8') };
+  },
+  // The machine wall's install script (machine-firewall.js), as root here.
+  async guestShell(ctx, script) {
+    const r = await ctx.runner.run('/bin/sh', ['-s'], { input: script });
     return { code: r.code, stdout: r.stdout.toString('utf8'), stderr: r.stderr.toString('utf8') };
   },
   unreachableHint: () => 'not applicable inside the guest',

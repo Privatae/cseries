@@ -33,9 +33,9 @@ function fakeRunner(handler = () => ({})) {
       return { code: h.code === undefined ? 0 : h.code, stdout: toBuf(h.stdout), stderr: toBuf(h.stderr), notFound: Boolean(h.notFound) };
     },
     async inherit(cmd, args, opts = {}) {
-      calls.push({ kind: 'inherit', cmd, args, env: opts.env });
+      calls.push({ kind: 'inherit', cmd, args, env: opts.env, tty: Boolean(opts.tty) });
       const h = (await handler(cmd, args, { ...opts, inherit: true })) || {};
-      return { code: h.code === undefined ? 0 : h.code, notFound: Boolean(h.notFound) };
+      return { code: h.code === undefined ? 0 : h.code, notFound: Boolean(h.notFound), noTerminal: Boolean(h.noTerminal) };
     },
     detached(cmd, args, opts = {}) {
       calls.push({ kind: 'detached', cmd, args, opts });
@@ -109,4 +109,39 @@ function validRelease(overrides = {}) {
   };
 }
 
-module.exports = { fakeRunner, captureOutput, psScript, fixture, tmpdir, testPaths, validRelease, toBuf };
+// The guest's root shell (driver.guestShell), for the fake machines: the
+// script is RUN by /bin/sh under a temporary guest root (CSERIES_GUEST_ROOT),
+// with systemctl, journalctl and nft stood in by stubs in front of its PATH,
+// so the files it writes, their modes and the commands it runs are real.
+// opts.restartFails: `systemctl restart` fails, as a wall nft refuses would.
+// opts.noTable: `nft list table` finds no wall loaded (a guest where it never
+// loaded, an older one whose Host started at boot without it).
+function guestShell(dir, opts = {}) {
+  const childProcess = require('node:child_process');
+  const root = path.join(dir, 'guest-root');
+  const stubs = path.join(dir, 'guest-stubs');
+  const log = path.join(dir, 'guest-systemctl.log');
+  fs.mkdirSync(root, { recursive: true });
+  fs.mkdirSync(stubs, { recursive: true });
+  const stub = (name, body) => fs.writeFileSync(path.join(stubs, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
+  stub('systemctl', `echo "systemctl $*" >> ${JSON.stringify(log)}${opts.restartFails ? '\n[ "$1" = reload-or-restart ] && { echo "Job for cseries-machine-firewall.service failed." >&2; exit 1; }' : ''}\nexit 0`);
+  stub('journalctl', 'echo "/dev/stdin:3:1-2: Error: syntax error (invented for the test)"');
+  stub('nft', opts.noTable ? '[ "$1 $2" = "list table" ] && { echo "Error: No such file or directory" >&2; exit 1; }\nexit 0' : 'exit 0');
+  const g = {
+    root,
+    runs: [],
+    systemctl: () => (fs.existsSync(log) ? fs.readFileSync(log, 'utf8') : ''),
+    file: (p) => path.join(root, p),
+    run(script) {
+      g.runs.push(script);
+      const local = script
+        .replace('PATH=/usr/sbin:/usr/bin:/sbin:/bin', `PATH=${stubs}:/usr/sbin:/usr/bin:/sbin:/bin`)
+        .split('/sys/fs/cgroup/init.scope').join(path.join(dir, 'no-init-scope'));
+      const r = childProcess.spawnSync('/bin/sh', ['-s'], { input: local, env: { ...process.env, CSERIES_GUEST_ROOT: root } });
+      return { code: r.status, stdout: r.stdout.toString('utf8'), stderr: r.stderr.toString('utf8') };
+    },
+  };
+  return g;
+}
+
+module.exports = { fakeRunner, captureOutput, psScript, fixture, tmpdir, testPaths, validRelease, toBuf, guestShell };

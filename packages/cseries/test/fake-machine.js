@@ -13,7 +13,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { CliError } = require('../src/errors');
-const { fakeRunner, psScript, fixture } = require('./helpers');
+const { fakeRunner, psScript, fixture, guestShell } = require('./helpers');
 const { statement, sha256Hex } = require('../src/verify');
 
 const u16 = (s) => Buffer.from(s, 'utf16le');
@@ -42,6 +42,8 @@ function signer() {
 //        tokenPrefix (the pairing tokens minted are <it>-1, <it>-2, ...)}
 function fakeMachine(paths, opts = {}) {
   const m = {
+    // The guest's root shell: the machine wall's install script runs here.
+    guestShell: guestShell(paths.base, { restartFails: opts.wallFails }),
     cpus: opts.cpus === undefined ? 8 : opts.cpus,
     memKb: opts.memKb !== undefined ? opts.memKb : (opts.cpus === null ? null : 8 * 1024 * 1024),
     runtime: opts.runtime === true,
@@ -143,6 +145,11 @@ function fakeMachine(paths, opts = {}) {
     if (args[0] === '--unregister') { m.distros = m.distros.filter((d) => d !== args[1]); return {}; }
     if (args[0] === '-d' && args[1] === 'cseries' && args[4] === '--exec' && args[5] === '/usr/local/bin/cseries-guest') {
       return guest(args.slice(6), o.input);
+    }
+    if (a === '-d cseries -u root --exec /bin/sh -s') {
+      if (!m.distros.includes('cseries')) return { code: 1, stderr: u16('There is no distribution with the supplied name.\r\nError code: Wsl/Service/WSL_E_DISTRO_NOT_FOUND\r\n') };
+      m.running = true;
+      return m.guestShell.run(o.input);
     }
     return { code: 1, stderr: u16(`unexpected wsl ${a}`) };
   }

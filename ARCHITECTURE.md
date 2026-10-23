@@ -236,6 +236,7 @@ Host defends against and what you still have to trust. Report a vulnerability as
 - **Localhost-only middleware** (`server/middleware/localhost_only.py`): a request must come from 127.0.0.1 or ::1, or carry the owner's signed-in session; the sign-in and setup pages, and a few paths that check their own credential, are the exceptions
 - **CEIGAS gate** (`server/middleware/ceigas_gate.py`): the kill switch. While it is set, requests under the mapped `/api` prefixes are refused unless they are a stop or a governance call. What a caller may do is checked per route (`requires_permission`) and, for the Host's own tools, by the capability gate
 - **Published on loopback only**: the dashboard (8800) and the bastion's two ports (8810, 8811) are bound to 127.0.0.1 in `compose.yaml` and in the guest's `cseries-host.container`
+- **The machine wall** (`vm/wsl/rootfs/etc/cseries-machine/machine.nft`, in the WSL and Lima guests): no container in the virtual machine opens a connection to the machine under it (its loopback as the VM reaches it, the guest's gateway, the machine's own addresses); `npx cseries` writes it into every guest, an older one included (`packages/cseries/src/vm/machine-firewall.js`)
 - **Read-only filesystem**: both containers run read-only
 - **No root**: UID 1000
 - **Seccomp** (`seccomp-personal.json`): the Host's profile refuses memfd_create, ptrace, unshare, mount and others

@@ -22,10 +22,19 @@
 // the same key=value lines the Windows script writes to its log, which
 // win/elevated.js parseInstallLog reads. A bastion command's own output is
 // passed on with "> " in front, so no line of it can be taken for a result.
-// stepup-enroll is the one exception: it is attached to the terminal
-// (/dev/tty) for input and output, so the TOTP secret it shows reaches that
-// terminal and nothing else, and it runs with --console-only on every OS, so
-// the bastion itself refuses to show the secret anywhere but a terminal.
+//
+// THE AUTHENTICATOR is enrolled by a second sudo run of its own
+// (enrolScript), after this one, with the person's terminal as its standard
+// input, output and errors, never inside this script. With `Defaults use_pty`
+// (the stock sudoers of Debian and Ubuntu, and of sudo-rs, Ubuntu's sudo from
+// 25.10) sudo runs its command on a pseudo-terminal of its own, and sudo-rs
+// passes the person's keystrokes on to it only when sudo's own standard input
+// is their terminal. This script is on sudo's standard input, a pipe, so a
+// stepup-enroll attached to /dev/tty in here waited on a terminal nobody could
+// type into: the install hung at "Enter a code from the app to confirm"
+// (Ubuntu 26.04, sudo-rs 0.2.13, 2026-10-22). stepup-enroll runs with
+// --console-only on every OS, so the bastion itself refuses to show the
+// secret anywhere but a terminal, and its output is never captured.
 //
 // WHERE THINGS GO, as the bastion's own install.sh puts them:
 //   macOS  the program in /Library/Application Support/privatae/bin, that
@@ -166,17 +175,8 @@ function hostCaBlock(p) {
 }
 
 function commandBlock(c) {
-  if (c.console) {
-    return [
-      `emit 'step=${c.what}'`,
-      `[ -n "$hostName" ] || quit ${c.code} 'no pairing to enrol an authenticator for'`,
-      `{ : </dev/tty >/dev/tty; } 2>/dev/null || quit ${c.code} 'no terminal to show the authenticator code on: run npx cseries in a terminal window'`,
-      "printf '\\n%s\\n' 'Approvals: the bastion shows a code for your authenticator app next. It is shown only in this terminal.' >/dev/tty",
-      `"$exe" ${c.args.map(arg).join(' ')} </dev/tty >/dev/tty 2>&1; rc=$?`,
-      `[ "$rc" -eq 0 ] || quit ${c.code} "privatae-bastion ${c.what} exited with $rc"`,
-      "emit 'enrolled=yes'",
-    ];
-  }
+  // The authenticator's enrolment is not in this script: enrolScript.
+  if (c.console) return [];
   const lines = c.stdin === undefined
     ? [`bastion ${c.code} ${shq(c.what)} ${c.args.map(arg).join(' ')}`]
     : [`bastion_in ${c.code} ${shq(c.what)} ${shq(c.stdin)} ${c.args.map(arg).join(' ')}`];
@@ -212,6 +212,10 @@ function restartBlock(p) {
 // p: {platform, nonce, program, unit (Linux), install: {file, sha256}|null,
 //     serviceInstall, hostCa: {file, sha256}|null, host,
 //     commands: bastionCommands(plan, CA_VAR)}
+// The service is restarted at the end, before the authenticator's own run:
+// the bastion reads its second factor from its state file on every check
+// (client-go stepup.go stepupEnrolled, stepupLoad), so the running service
+// sees a factor enrolled after it started.
 function bastionInstallScript(p) {
   const body = [...preamble(p)];
   if (p.install) body.push(...installBlock(p));
@@ -222,4 +226,32 @@ function bastionInstallScript(p) {
   return `${body.join('\n')}\n`;
 }
 
-module.exports = { bastionInstallScript, CA_VAR, LAUNCHD_LABEL, UNIT, shq };
+// The authenticator's enrolment, its own sudo run:
+//   sudo -p <prompt> /bin/sh -c <this> cseries-enrol <program> <host> <args>...
+// with the person's terminal as all three of its streams (bastion.js). The
+// program and the Host's name come as arguments, never inside the script, so
+// nothing in them is read by the shell. The same root environment as the
+// install script: HOME as the service's unit sets it, and no XDG_* variable
+// that would move the bastion's state elsewhere.
+function enrolScript(p) {
+  return [
+    'set -u',
+    'umask 022',
+    'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
+    `HOME=${p.platform === 'darwin' ? '/var/root' : '/root'}`,
+    'export PATH HOME',
+    'unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME TMPDIR',
+    'exe=$1',
+    'shift',
+    'exec "$exe" "$@"',
+    '',
+  ].join('\n');
+}
+
+// enrolScript's argument list after the script: $0, the program, then the
+// command's own arguments with the Host's name in place of HOST.
+function enrolArgs(program, command, host) {
+  return ['cseries-enrol', program, ...command.args.map((a) => (a === HOST ? host : a))];
+}
+
+module.exports = { bastionInstallScript, enrolScript, enrolArgs, CA_VAR, LAUNCHD_LABEL, UNIT, shq };

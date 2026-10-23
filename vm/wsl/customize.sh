@@ -9,7 +9,10 @@ root=$1
 cp -R /src/rootfs/. "$root/"
 (cd /src/rootfs && find . -type d) | while read -r d; do chmod 0755 "$root/$d"; done
 (cd /src/rootfs && find . -type f) | while read -r f; do chmod 0644 "$root/$f"; done
-chmod 0755 "$root/usr/local/bin/cseries-guest"
+chmod 0755 "$root/usr/local/bin/cseries-guest" "$root/usr/local/sbin/cseries-machine-firewall"
+# The machine wall: no container here reaches the Windows machine
+# (/etc/cseries-machine/machine.nft), loaded before any container starts.
+chroot "$root" systemctl enable cseries-machine-firewall.service
 
 # The Host's seccomp profile, the same file compose.yaml names, and the
 # browser's, which the local runtime gives the browser container.

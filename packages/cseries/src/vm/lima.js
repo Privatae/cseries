@@ -267,9 +267,44 @@ function userUnit(ctx) {
   ].join('\n');
 }
 
-async function systemctlUser(ctx, args) {
-  const r = await ctx.runner.run('systemctl', ['--user', ...args], { timeoutMs: 30000 });
+async function systemctlUser(ctx, args, env) {
+  const r = await ctx.runner.run('systemctl', ['--user', ...args], { timeoutMs: 30000, env });
   return { code: r.code, why: `${text(r.stderr)}${text(r.stdout)}`.trim() || `exit ${r.code}` };
+}
+
+// daemon-reload and enable through the person's systemd user manager. A
+// session with no XDG_RUNTIME_DIR (su -, sudo -iu, some ssh setups) cannot
+// find a manager that is running (another login, or linger): its bus is
+// asked for by its path, /run/user/<uid>/bus, once.
+async function enableUserUnit(ctx, uid) {
+  const go = async (env) => {
+    const reload = await systemctlUser(ctx, ['daemon-reload'], env);
+    return reload.code === 0 ? systemctlUser(ctx, ['enable', 'cseries.service'], env) : reload;
+  };
+  const first = await go(undefined);
+  if (first.code === 0) return first;
+  const run = path.posix.join(ctx.userRunDir || '/run/user', String(uid));
+  if (!/^\d+$/.test(String(uid)) || !fs.existsSync(path.posix.join(run, 'bus'))) return first;
+  const again = await go({ XDG_RUNTIME_DIR: run, DBUS_SESSION_BUS_ADDRESS: `unix:path=${run}/bus` });
+  return again.code === 0 ? again : first;
+}
+
+// What `systemctl --user enable` writes for WantedBy=default.target: a link
+// in the unit's own folder, default.target.wants/<unit>, to the unit's path.
+// Written by hand where no user manager answers, so the next one that starts
+// for this person (their next login, or at boot with linger) starts the VM.
+function wantsLink(file) {
+  return path.posix.join(path.posix.dirname(file), 'default.target.wants', path.posix.basename(file));
+}
+
+function linkWants(file) {
+  const link = wantsLink(file);
+  fs.mkdirSync(path.posix.dirname(link), { recursive: true });
+  try {
+    if (fs.readlinkSync(link) === file) return;
+  } catch { /* none yet */ }
+  fs.rmSync(link, { force: true });
+  fs.symlinkSync(file, link);
 }
 
 function versionAtLeast(v, min) {
@@ -407,6 +442,15 @@ function driver(platform) {
       return { code: r.code, stdout: text(r.stdout), stderr: text(r.stderr) };
     },
 
+    // A shell as root in the guest, the script on its standard input, for
+    // what a guest older than this command cannot do with its own
+    // cseries-guest (machine-firewall.js).
+    async guestShell(ctx, script) {
+      const argv = ['--tty=false', 'shell', '--workdir', '/', INSTANCE, 'sudo', '/bin/sh', '-s'];
+      const r = await ctx.runner.run(limactlPath(ctx), argv, { input: script, env: env(ctx) });
+      return { code: r.code, stdout: text(r.stdout), stderr: text(r.stderr) };
+    },
+
     async stopGuest(ctx) {
       if (!(await this.guestRunning(ctx))) return;
       await this.guest(ctx, ['stop']);
@@ -442,16 +486,38 @@ function driver(platform) {
       if (on) {
         fs.mkdirSync(path.posix.dirname(file), { recursive: true });
         fs.writeFileSync(file, userUnit(ctx));
-        const reload = await systemctlUser(ctx, ['daemon-reload']);
-        const en = reload.code === 0 ? await systemctlUser(ctx, ['enable', 'cseries.service']) : reload;
+        const f = await facts(ctx);
+        const en = await enableUserUnit(ctx, f.uid);
         if (en.code !== 0) {
-          ctx.out.warn(`C-Series will not start by itself when you log in: systemd's user manager said: ${en.why}`);
-          ctx.out.warn('Start it with: npx cseries start');
+          // No user manager answers this session. The unit is enabled the way
+          // systemctl would have, so it starts with the next one; without
+          // this, a later enable-linger started nothing.
+          let linked = true;
+          try {
+            linkWants(file);
+          } catch {
+            linked = false;
+          }
+          ctx.out.warn(`systemd's user manager did not answer (${en.why}).`);
+          if (linked) {
+            ctx.out.warn('C-Series is set to start when it next starts for you: at your next login.');
+            ctx.out.warn(`To have it start at boot, with no login: sudo loginctl enable-linger ${f.user || '"$USER"'}`);
+          } else {
+            ctx.out.warn('C-Series will not start by itself. Start it with: npx cseries start');
+          }
         }
         return;
       }
-      if (fs.existsSync(file)) {
-        await systemctlUser(ctx, ['disable', 'cseries.service']);
+      if (fs.existsSync(file) || fs.existsSync(wantsLink(file))) {
+        const f = await facts(ctx);
+        const dis = await systemctlUser(ctx, ['disable', 'cseries.service']);
+        if (dis.code !== 0 && /^\d+$/.test(String(f.uid))) {
+          const run = path.posix.join(ctx.userRunDir || '/run/user', String(f.uid));
+          if (fs.existsSync(path.posix.join(run, 'bus'))) {
+            await systemctlUser(ctx, ['disable', 'cseries.service'], { XDG_RUNTIME_DIR: run, DBUS_SESSION_BUS_ADDRESS: `unix:path=${run}/bus` });
+          }
+        }
+        fs.rmSync(wantsLink(file), { force: true });
         fs.rmSync(file, { force: true });
         await systemctlUser(ctx, ['daemon-reload']);
       }

@@ -16,6 +16,18 @@ cooperates. [claims.md](claims.md) gives the test behind each one.
   shares no folder and forwards only ports 8800, 8810 and 8811, from the
   guest's 127.0.0.1 to the machine's 127.0.0.1. The WSL guest turns off
   drive mounts and Windows programs in `vm/wsl/rootfs/etc/wsl.conf`.
+- **The machine wall.** No container in the virtual machine (the Host, its
+  database, and the apps, browser and coding engines the local runtime
+  starts) can open a connection to the machine it runs on: a firewall in the
+  guest (`vm/wsl/rootfs/etc/cseries-machine/machine.nft`) drops their traffic
+  to the machine's loopback as the virtual machine reaches it (Lima's
+  192.168.5.2), the guest's gateway (the Windows machine under WSL's NAT), the
+  machine's own addresses (LAN, public, VPN, IPv6), loopback and link-local
+  addresses, and lets DNS through to the resolvers the guest uses. It loads
+  before any container starts and the Host's unit requires it. `npx cseries`
+  writes it into the guest on every run, an older guest included, with the
+  machine's current addresses (`packages/cseries/src/vm/machine-firewall.js`).
+  The bastion connects in to the Host; the Host never dials the machine.
 - **The containers.** The Host and its database run as UID 1000 with a
   read-only root filesystem, every Linux capability dropped and no new
   privileges (`compose.yaml`, and the guest's units in
@@ -62,13 +74,25 @@ cooperates. [claims.md](claims.md) gives the test behind each one.
   Windows, keeping the guest away from the Windows drives and programs is a
   setting inside the guest, so it holds only while the guest is not
   compromised as root.
-- **The virtual machine's network.** The guest has outbound network access,
-  and no firewall in it stops the Host's container from connecting to the
-  machine itself, such as to a service listening on the machine, wherever
-  the virtualisation software's network carries that connection. The Host's
-  own fetch tools refuse private and loopback addresses
-  (`brain/mastercode/runtime/url_reader.py`), so that limit is in the Host's
-  code, not in the virtual machine.
+- **The virtual machine's network, around the machine wall.** The wall is in
+  the guest, so it holds while the guest is not compromised as root. It
+  knows the machine's addresses as `npx cseries` last saw them: an address
+  the machine takes later (another network, say) is walled at the next
+  `npx cseries` or `npx cseries start`; until then the guest's gateway and
+  Lima's 192.168.5.0/24 are walled whatever the address. It does not wall the
+  networks of containers and virtual machines that other software runs on
+  the machine (Docker's bridge, say), or an address that reaches the machine
+  only through a NAT in front of it. Other computers on your network stay
+  reachable from the Host, on purpose: a model server you name by address
+  ("Model servers on your network") is reached that way, as the bastion's own egress lane
+  keeps the LAN while it refuses the machine. A model server on the machine
+  itself is not reachable from the Host, and neither is a git server on it
+  (Settings, Git server, `server/git_server.py`, which takes a LAN address):
+  give one on another computer. A guest from a release before the wall
+  starts its Host at boot without one, until `npx cseries` puts the wall in;
+  if the wall then cannot be loaded, that run stops the Host. The Host's own
+  fetch tools refuse private and loopback addresses
+  (`brain/mastercode/runtime/url_reader.py`).
 - **The model provider you choose.** Each model call carries the turn's
   context to that provider: the conversation, matching notes, and what the
   Host read for the turn. Calls go from the Host to the provider on your own

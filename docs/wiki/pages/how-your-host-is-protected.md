@@ -21,6 +21,8 @@ Not by default. The dashboard and the two bastion ports are published on 127.0.0
 
 Both containers run as an ordinary user with every Linux capability dropped and a read-only root filesystem, and they cannot gain privileges. The Host's container also runs under a restricted set of system calls. What the Host keeps goes to named volumes, its /tmp is in memory, and the database's data directory is never mounted into the Host.
 
+A firewall inside the virtual machine stops every container in it, the Host's and those of its apps, browser and coding engines, from opening a connection to your machine: not to the programs listening on your machine's own loopback, and not to its network addresses. The bastion connects in to the Host; the Host never dials your machine. Other computers on your network, such as a model server you name, and the internet stay reachable.
+
 ## Who can sign in?
 
 The owner. The first time, you enter the setup code the Host prints at start and choose an email and a password of at least 12 characters. Until that account exists the code changes every time the Host restarts. Things that matter more than a click, such as revealing a saved key or widening the Host's reach, wait for a code from your authenticator. The code guards against a request from outside the Host, not against code already running inside it.

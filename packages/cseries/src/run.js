@@ -5,7 +5,9 @@
 // from recorded output, and nothing here goes through a shell.
 //
 //   run(cmd, args, opts)     -> {code, stdout: Buffer, stderr: Buffer, notFound}
-//   inherit(cmd, args, opts) -> {code, notFound}; output goes to this terminal
+//   inherit(cmd, args, opts) -> {code, notFound, noTerminal}; output goes to
+//                               this terminal ({tty: true}: all three of the
+//                               program's streams are /dev/tty itself)
 //   detached(cmd, args, {verbatim}) -> starts it in the background, returns at once
 //
 // opts: {input: string|Buffer, env: {...}, timeoutMs, onOutput, stdin}.
@@ -15,6 +17,7 @@
 // terminal itself while its output is captured. verbatim passes the
 // arguments to a Windows program as written, unquoted (for cmd.exe's start).
 
+const fs = require('node:fs');
 const { spawn } = require('node:child_process');
 
 function systemRunner() {
@@ -63,12 +66,34 @@ function systemRunner() {
 
     inherit(cmd, args, opts = {}) {
       return new Promise((resolve) => {
-        const child = spawn(cmd, args, {
-          env: opts.env ? { ...process.env, ...opts.env } : process.env,
-          stdio: ['inherit', 'inherit', 'inherit'],
-        });
-        child.on('error', (err) => resolve({ code: -1, notFound: err.code === 'ENOENT' }));
-        child.on('close', (code) => resolve({ code: code === null ? -1 : code, notFound: false }));
+        // tty: the program's input, output and errors are this session's
+        // terminal itself (/dev/tty), whatever this command's own were
+        // redirected to; noTerminal when there is none to open.
+        let tty = null;
+        if (opts.tty) {
+          try {
+            tty = fs.openSync('/dev/tty', 'r+');
+          } catch {
+            resolve({ code: -1, notFound: false, noTerminal: true });
+            return;
+          }
+        }
+        const done = (r) => {
+          if (tty !== null) fs.closeSync(tty);
+          resolve(r);
+        };
+        let child;
+        try {
+          child = spawn(cmd, args, {
+            env: opts.env ? { ...process.env, ...opts.env } : process.env,
+            stdio: tty !== null ? [tty, tty, tty] : ['inherit', 'inherit', 'inherit'],
+          });
+        } catch (err) {
+          done({ code: -1, notFound: err.code === 'ENOENT' });
+          return;
+        }
+        child.on('error', (err) => done({ code: -1, notFound: err.code === 'ENOENT' }));
+        child.on('close', (code) => done({ code: code === null ? -1 : code, notFound: false }));
       });
     },
 

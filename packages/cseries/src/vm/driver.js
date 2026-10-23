@@ -3,7 +3,8 @@
 // The VM layer. A driver puts the C-Series guest on this machine and runs the
 // guest's own command, cseries-guest, inside it as root. Everything above this
 // layer (the images, the setup code, pairing) talks to the guest only through
-// guest(), so a new OS is a new driver and nothing else.
+// guest() (and the machine wall through guestShell()), so a new OS is a new
+// driver and nothing else.
 //
 // A driver is an object with:
 //
@@ -19,6 +20,11 @@
 //   startGuest(ctx)              boot it, wait for systemd, keep it running
 //   guest(ctx, args, {input, inherit, onOutput}) -> {code, stdout, stderr}
 //                                onOutput(chunk): the output as it arrives
+//   guestShell(ctx, script) -> {code, stdout, stderr}
+//                                /bin/sh as root in the guest, the script on
+//                                its standard input: for what an older
+//                                guest's cseries-guest cannot do (the machine
+//                                wall, machine-firewall.js)
 //   stopGuest(ctx)
 //   removeGuest(ctx, {deleteData})
 //   setAutostart(ctx, on)        start the guest when the person logs in

@@ -272,9 +272,16 @@ test('macOS, first run: no QEMU, vz, the bastion as launchd\'s daemon, and a Lau
   const plist = fs.readFileSync(p.autostart, 'utf8');
   assert.match(plist, /<key>LIMA_HOME<\/key>\s*<string>[^<]*\/lima<\/string>/);
   assert.match(plist, /<string>--foreground<\/string>/);
+  // One password: the install script's sudo asks; `sudo -n true` asks
+  // nothing, and says the credential cache lets the enrolment's own sudo run
+  // through without asking again. A second run calls no sudo at all.
+  const kinds = () => m.calls.filter((c) => /sudo$/.test(c.cmd))
+    .map((c) => (c.args[0] === '-n' ? 'cache-check' : c.args.includes('-s') ? 'script' : 'enrol'));
+  assert.deepEqual(kinds(), ['script', 'cache-check', 'enrol']);
+  assert.doesNotMatch(out.text(), /sudo asks for your password once more/);
   const again = await run([], m, p);
   assert.equal(again.code, 0, again.out.text() + again.out.errText());
-  assert.equal(m.calls.filter((c) => /sudo$/.test(c.cmd)).length, 1, 'one sudo across both runs');
+  assert.deepEqual(kinds(), ['script', 'cache-check', 'enrol'], 'no sudo on the second run');
 });
 
 test('on macOS and Linux the line that makes the VM names no WSL or Windows', async () => {
@@ -338,11 +345,48 @@ test('an old macOS and a Linux without /dev/kvm are told why', async () => {
   assert.match(r.out.errText(), /no \/dev\/kvm/);
 });
 
-test('without a systemd user manager the Host still runs; it just does not start at login', async () => {
+test('without a systemd user manager the Host still runs, and the unit is enabled for the next one', async () => {
   const { m, p } = machineFor('linux', { qemu: true, userManager: false });
-  const { code, out } = await run([], m, p);
+  const { code, out } = await run([], m, p, { userRunDir: tmpdir() });
   assert.equal(code, 0, out.errText());
-  assert.match(out.errText(), /will not start by itself when you log in/);
+  // What `systemctl --user enable` writes for WantedBy=default.target, so the
+  // next user manager starts the VM; enable-linger then makes that boot.
+  const link = path.join(path.dirname(p.autostart), 'default.target.wants', 'cseries.service');
+  assert.equal(fs.readlinkSync(link), p.autostart);
+  assert.match(out.errText(), /systemd's user manager did not answer \(Failed to connect to user scope bus/);
+  assert.match(out.errText(), /set to start when it next starts for you: at your next login/);
+  assert.match(out.errText(), /sudo loginctl enable-linger someone/);
+  // A second run, still with no manager, leaves the one link as it is.
+  assert.equal((await run([], m, p, { userRunDir: tmpdir() })).code, 0);
+  assert.equal(fs.readlinkSync(link), p.autostart);
+  // uninstall takes the link away with the unit.
+  assert.equal((await run(['uninstall'], m, p, { userRunDir: tmpdir() })).code, 0);
+  assert.ok(!fs.existsSync(link) && !fs.existsSync(p.autostart));
+});
+
+test('with no terminal to show the authenticator\'s code on, the bastion is still paired and anchored, and the step says why', async () => {
+  const { m, p } = machineFor('linux', { qemu: true, noTerminal: true });
+  const { code, out } = await run([], m, p);
+  assert.equal(code, 1, 'a soft failure: the Host runs');
+  assert.match(out.errText(), /the authenticator was not enrolled \(no terminal to show the authenticator code on: run npx cseries in a terminal window\)/);
+  const st = JSON.parse(fs.readFileSync(p.state, 'utf8')).bastion;
+  assert.equal(st.anchored, true);
+  assert.ok(!st.enrolled);
+  assert.match(fs.readFileSync(p.installLog, 'utf8'), /^exit=18$/m, 'the install log says where it stopped');
+});
+
+test('a session with no XDG_RUNTIME_DIR finds a running user manager by its bus path, and enables the unit there', async () => {
+  const { m, p } = machineFor('linux', { qemu: true, userManager: 'bus-only' });
+  const runDir = tmpdir();
+  fs.mkdirSync(path.join(runDir, '1000'));
+  fs.writeFileSync(path.join(runDir, '1000', 'bus'), '');
+  const { code, out } = await run([], m, p, { userRunDir: runDir });
+  assert.equal(code, 0, out.errText());
+  assert.doesNotMatch(out.errText(), /did not answer/);
+  const viaBus = m.runner.calls.filter((c) => c.cmd === 'systemctl' && c.env && c.env.XDG_RUNTIME_DIR === path.join(runDir, '1000'));
+  assert.deepEqual(viaBus.map((c) => c.args.slice(1).join(' ')), ['daemon-reload', 'enable cseries.service']);
+  assert.equal(viaBus[0].env.DBUS_SESSION_BUS_ADDRESS, `unix:path=${path.join(runDir, '1000')}/bus`);
+  assert.ok(!fs.existsSync(path.join(path.dirname(p.autostart), 'default.target.wants')), 'systemctl itself enabled it');
 });
 
 test('stop, start, status, and uninstall --delete-data', async () => {

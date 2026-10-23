@@ -1,0 +1,112 @@
+#!/bin/sh
+# Loads the machine wall (/etc/cseries-machine/machine.nft) with what only
+# this boot knows, as one nft transaction:
+#
+#   - this system's default gateways: under WSL's NAT the gateway is the
+#     Windows machine itself; under Lima it is 192.168.5.2, the machine's
+#     loopback;
+#   - the resolvers this system uses (its resolv.conf files), admitted on
+#     port 53 only;
+#   - /etc/cseries-machine/addresses, written by the cseries command on the
+#     machine on every run: `block <address>[/<length>]` for the machine's own
+#     addresses (and, in the Lima guest, Lima's whole user-mode network) and
+#     `dns <address>` for a resolver of the machine's.
+#
+#   cseries-machine-firewall          load it (cseries-machine-firewall.service)
+#   cseries-machine-firewall print    print what would be loaded
+#
+# A line it cannot read as an address is skipped, and said on stderr; nft
+# checks the rest. Every path is under CSERIES_GUEST_ROOT, which only a test
+# sets.
+set -eu
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+R=${CSERIES_GUEST_ROOT:-}
+ETC=$R/etc/cseries-machine
+TABLE="inet cseries_machine"
+
+is_v4() {
+    printf '%s\n' "$1" | grep -Eq '^([0-9]{1,3}\.){3}[0-9]{1,3}(/[0-9]{1,2})?$'
+}
+is_v6() {
+    case "$1" in *:*) ;; *) return 1 ;; esac
+    printf '%s\n' "$1" | grep -Eq '^[0-9A-Fa-f:.]{2,45}(/[0-9]{1,3})?$'
+}
+
+b4="" b6="" d4="" d6=""
+add() {
+    # $1 block|dns, $2 an address
+    if is_v4 "$2"; then
+        if [ "$1" = dns ]; then d4="$d4 $2"; else b4="$b4 $2"; fi
+    elif is_v6 "$2"; then
+        if [ "$1" = dns ]; then d6="$d6 $2"; else b6="$b6 $2"; fi
+    else
+        printf 'cseries-machine-firewall: skipped %s %s: not an address\n' "$1" "$2" >&2
+    fi
+}
+
+gateways() {
+    # "default via <address> dev ..." lines; IPv6 ones may name a link-local
+    # gateway, which machine_v6 holds already.
+    ip "$1" route show default 2>/dev/null | sed -n 's/.* via \([^ ]*\).*/\1/p'
+}
+
+mode=${1:-load}
+case "$mode" in
+    load|print) ;;
+    *) printf 'usage: cseries-machine-firewall [load|print]\n' >&2; exit 2 ;;
+esac
+
+# At boot the unit runs once the network is up (network-online.target), but
+# WSL configures its network card on its own; wait a little for a default
+# route rather than load without the gateway.
+if [ "$mode" = load ] && [ -z "${CSERIES_MACHINE_NO_WAIT:-}" ]; then
+    i=0
+    while [ $i -lt 30 ] && [ -z "$(gateways -4)" ]; do
+        sleep 1
+        i=$((i + 1))
+    done
+fi
+
+for g in $(gateways -4) $(gateways -6); do add block "$g"; done
+for f in "$R/etc/resolv.conf" "$R/run/systemd/resolve/resolv.conf"; do
+    [ -r "$f" ] || continue
+    for a in $(sed -n 's/^[[:space:]]*nameserver[[:space:]]\{1,\}\([^[:space:]%]*\).*/\1/p' "$f"); do
+        add dns "$a"
+    done
+done
+if [ -r "$ETC/addresses" ]; then
+    while read -r kind addr rest || [ -n "$kind" ]; do
+        case "$kind" in
+            ""|\#*) continue ;;
+            block|dns) [ -n "$addr" ] && [ -z "$rest" ] && add "$kind" "$addr" && continue ;;
+        esac
+        printf 'cseries-machine-firewall: skipped a line of %s: %s %s %s\n' "$ETC/addresses" "$kind" "$addr" "$rest" >&2
+    done < "$ETC/addresses"
+fi
+
+elements() {
+    # $1 set name, then the addresses: one `add element` with each once.
+    set_name=$1
+    shift
+    list=$(printf '%s\n' "$@" | sort -u | paste -sd, -)
+    [ -n "$list" ] && printf 'add element %s %s { %s }\n' "$TABLE" "$set_name" "$list"
+    return 0
+}
+
+ruleset() {
+    cat "$ETC/machine.nft"
+    # shellcheck disable=SC2086
+    elements machine_v4 $b4
+    # shellcheck disable=SC2086
+    elements machine_v6 $b6
+    # shellcheck disable=SC2086
+    elements dns_v4 $d4
+    # shellcheck disable=SC2086
+    elements dns_v6 $d6
+}
+
+if [ "$mode" = print ]; then
+    ruleset
+else
+    ruleset | nft -f -
+fi

@@ -29,8 +29,9 @@
 //        `set-mode networked`, release-anchor when the Host's CA changed,
 //        pair (the token on its standard input, `pair -`, never in an
 //        argv), claim-anchor, and the authenticator enrolment on that
-//        elevated console (macOS and Linux: this terminal, --console-only on
-//        every OS);
+//        elevated console (macOS and Linux: a second sudo run of its own on
+//        this terminal, which sudo's credential cache normally lets through
+//        without a second password; --console-only on every OS);
 //     6. its exit code and log, recorded in state.json, so a run that stopped
 //        half way is finished by the next one; then the tray for this person
 //        (Windows; macOS and Linux have no approvals lane for the person yet,
@@ -207,6 +208,31 @@ function findSudo(ctx) {
   }) || null;
 }
 
+// The authenticator's enrolment on macOS and Linux: its own sudo run, after
+// the scripted one, with the person's terminal itself as its standard input,
+// output and errors (posix/elevated.js says why it cannot run inside the
+// script). sudo's credential cache, kept for the same terminal and the same
+// parent process, normally spares a second password; `sudo -n true` asks
+// whether it will, and where it will not (timestamp_timeout=0, say) the
+// person is told before sudo asks. -> {code, entries} as the log reads them.
+async function enrolOnTerminal(ctx, sudo, plan, log) {
+  const paired = log.entries.filter((e) => e.key === 'paired_host').pop();
+  const host = (paired && paired.value) || plan.host;
+  const fail = (why) => ({ code: EXIT.enroll, entries: [{ key: 'step', value: 'stepup-enroll' }, { key: 'error', value: why }, { key: 'exit', value: String(EXIT.enroll) }] });
+  if (!host) return fail('no pairing to enrol an authenticator for');
+  const cmd = bastionCommands({ enroll: true }, posixElevated.CA_VAR).find((c) => c.console);
+  const cached = (await ctx.runner.run(sudo, ['-n', 'true'], { timeoutMs: 15000 })).code === 0;
+  ctx.out.detail('Approvals: the bastion shows a code for your authenticator app next. It is shown only in this terminal.');
+  if (!cached) ctx.out.detail('sudo asks for your password once more, for this step.');
+  const e = await ctx.runner.inherit(sudo,
+    ['-p', SUDO_PROMPT, '/bin/sh', '-c', posixElevated.enrolScript({ platform: ctx.platform }),
+      ...posixElevated.enrolArgs(ctx.paths.serviceExe, cmd, host)],
+    { tty: true });
+  if (e.noTerminal) return fail('no terminal to show the authenticator code on: run npx cseries in a terminal window');
+  if (e.code !== 0) return fail(`privatae-bastion ${cmd.what} exited with ${e.code}`);
+  return { code: 0, entries: [{ key: 'step', value: 'stepup-enroll' }, { key: 'enrolled', value: 'yes' }] };
+}
+
 // macOS and Linux. Approvals have no lane for the signed-in person here yet
 // (the bastion's tray and its approvals pipe are Windows only), so there is
 // no tray to start and no approvals owner to record: approvals-owner takes a
@@ -251,13 +277,20 @@ function posixOps(ctx) {
         commands: bastionCommands({ ...plan, owner: undefined }, posixElevated.CA_VAR),
       });
       const r = await ctx.runner.run(sudo, ['-p', SUDO_PROMPT, '/bin/sh', '-s'], { input: script });
-      const out = r.stdout.toString('utf8');
+      let out = r.stdout.toString('utf8');
+      const log = elevated.parseInstallLog(out, nonce);
+      let code = r.code;
+      if (code === 0 && log.ours && plan.enroll) {
+        const e = await enrolOnTerminal(ctx, sudo, plan, log);
+        code = e.code;
+        log.entries.push(...e.entries);
+        out += e.entries.map((x) => `${x.key}=${x.value}\n`).join('');
+      }
       fs.mkdirSync(path.dirname(ctx.paths.installLog), { recursive: true });
       fs.writeFileSync(ctx.paths.installLog, out);
-      const log = elevated.parseInstallLog(out, nonce);
       // sudo refused before the script ran: no password, a wrong one three
       // times, no terminal to ask on, or this account may not use sudo.
-      return { code: r.code, stderr: r.stderr.toString('utf8').trim(), declined: r.code !== 0 && !log.ours, log };
+      return { code, stderr: r.stderr.toString('utf8').trim(), declined: r.code !== 0 && !log.ours, log };
     },
     startTray() {},
   };

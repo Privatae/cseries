@@ -1,0 +1,6 @@
+# The machine, as this Lima guest reaches it (read by cseries-machine-firewall).
+# The cseries command rewrites this file on every run, adding the machine's
+# own addresses; until then it holds Lima's user-mode network, where
+# 192.168.5.2 is the machine's own loopback and 192.168.5.3 its DNS.
+block 192.168.5.0/24
+dns 192.168.5.3

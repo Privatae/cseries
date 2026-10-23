@@ -526,24 +526,6 @@ async def _github_repo_token(pool, entity_id) -> str | None:
     return None
 
 
-def _gh_rate(headers) -> dict:
-    """Rate-limit truth from GitHub's response headers — returned in every
-    result so exhaustion surfaces honestly instead of silently degrading."""
-    out: dict = {}
-    try:
-        if headers.get("X-RateLimit-Remaining") is not None:
-            out["remaining"] = int(headers["X-RateLimit-Remaining"])
-        if headers.get("X-RateLimit-Limit") is not None:
-            out["limit"] = int(headers["X-RateLimit-Limit"])
-        if headers.get("X-RateLimit-Reset") is not None:
-            from datetime import datetime, timezone
-            out["resets_at"] = datetime.fromtimestamp(
-                int(headers["X-RateLimit-Reset"]), tz=timezone.utc).isoformat()
-    except (TypeError, ValueError):
-        pass
-    return out
-
-
 async def _gh_get(path: str, token: str | None, timeout_s: int = 20) -> tuple[int, object, dict]:
     """GET api.github.com. Delegates to runtime/github_lane.api_get so there is
     exactly ONE GitHub HTTP path in the codebase.

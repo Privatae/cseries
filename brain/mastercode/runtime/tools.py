@@ -157,7 +157,7 @@ from mastercode.runtime.tools_network import (  # noqa: E402,F401
     AGENT_OBSERVATION_CAP, ALERTS_STALE_AFTER_S, ALERTS_STATES, DETECT_COMPARED_STATES,
     MESH_HARNESS_OPEN_WEB, OPERATOR_ENTITY_ID, PAIRING_LIST_CAP, _CONNECTOR_PAIRING_NEXT,
     _DETECT_CLASS_COVERAGE_KEY, _DETECT_CLASS_WORDS, _EXEC_FENCE_MARK, _NETWORK_LISTS, _RFC3339_RE,
-    _ShimRequest, _agent_line, _agent_summary, _alerts_counts, _alerts_read_lag_s, _alerts_reading,
+    _agent_line, _agent_summary, _alerts_counts, _alerts_read_lag_s, _alerts_reading,
     _bastion_alerts_state, _bastion_detect_state, _bastion_embed_readiness,
     _bastion_enforcing_summary, _bastion_list_view, _bastion_pairing_summary, _bastion_summary,
     _bastion_watch_state, _cap_agents, _cap_pairings, _detect_compared, _detect_counts,
@@ -172,7 +172,7 @@ from mastercode.runtime.tools_network import (  # noqa: E402,F401
 from mastercode.runtime.tools_research import (  # noqa: E402,F401
     RESEARCH_FETCH_CONCURRENCY, _GH_READ_CAP, _exec_github, _exec_github_repo, _exec_github_search,
     _exec_read_url, _exec_research, _exec_task_record, _exec_web_search, _fenced_passage, _gh_get,
-    _gh_rate, _github_repo_token, _keep_open, _keep_search, _research_fetch_whole,
+    _github_repo_token, _keep_open, _keep_search, _research_fetch_whole,
     _research_find_coverage, _safe_passage, _safe_reason, _safe_source, _safe_title, _task_project,
 )
 from mastercode.runtime.tools_review import (  # noqa: E402,F401

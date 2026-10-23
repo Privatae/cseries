@@ -1391,26 +1391,10 @@ async def _exec_propose_nac_policy(args: dict) -> dict:
 
 
 # ── Bastion EXECUTION handlers ────────────────────────
-# The host can already get_network + propose_mgmt_grant (read + draft). These two
+# The host can already get_network + propose_mgmt_grant (read + draft). These
 # let it ACTUALLY OPERATE a granted server in its mesh — the gap that left every
-# approved grant inert. Each calls the existing signed-grant, default-deny route
-# in-process; the route IS the security wall.
-
-class _ShimRequest:
-    """Minimal Request stand-in so a network route handler can be called in-process
-    from a meta-tool. The route reads pool/eid from brain_service globals and the body
-    from .json(); its signed-grant default-deny gate still runs. This only bypasses the
-    FastAPI app-token Depends — which the brain's own tool authorization already covers."""
-    def __init__(self, body: dict):
-        self._body = body or {}
-        # Some NAC routes only read the JSON body when content-type is json (e.g.
-        # nac_egress_revoke); others read x-authentik-email for audit (absent here → None,
-        # the host itself is the actor). Advertise JSON so the body is always read.
-        self.headers = {"content-type": "application/json"}
-
-    async def json(self):
-        return self._body
-
+# approved grant inert. They call the server/network services in-process
+# (nac_mgmt.run_mgmt_op, session_lane.run_root_exec), never an HTTP route.
 
 async def _exec_mgmt_run(args: dict) -> dict:
     """Run an APPROVED management op on a server in the host's mesh. Calls the nac_mgmt SERVICE

@@ -26,6 +26,7 @@ import asyncio
 import json
 import os
 import sys
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 APP_ROOT = os.environ.get("APP_ROOT", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, APP_ROOT)
@@ -294,7 +295,7 @@ check("a takeover of a deleted thread's late row drops a decision naming that th
 # (circles_threads.carry_learned), so the takeover writes none either.
 check("a takeover leaves the row's project tag as it is",
       "project_id" not in _take[:_take.index("restore_after_takeover")])
-_ts = open(os.path.join(APP_ROOT, "brain/mastercode/runtime/tools.py"), encoding="utf-8").read()
+_ts = tools_source(APP_ROOT)
 check("memory_scope writes a thread scope only under the thread's share lock",
       "AND deleted_at IS NULL FOR SHARE))" in _ts)
 
@@ -307,7 +308,7 @@ check("schema, public name, caps, direct op and operate lane",
       "memory_scope" in PUBLIC_TOOL_SCHEMAS and "memory_scope" in PUBLIC_META_TOOL_NAMES
       and "memory_scope" in META_TOOL_CAPS and "memory_scope" in DIRECT_OP_TOOLS
       and lane_for("memory_scope") == "operate")
-src = open(os.path.join(APP_ROOT, "brain/mastercode/runtime/tools.py"), encoding="utf-8").read()
+src = tools_source(APP_ROOT)
 check("dispatched by name", 'elif name == "memory_scope":' in src)
 
 print(f"\n{len(fails)} failure(s)" if fails else "\nall checks passed")

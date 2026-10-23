@@ -41,6 +41,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = os.environ.get("APP_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -430,7 +431,7 @@ def main() -> int:
     check("5f. a failed run's partial-file count and its archived copy leave the copies out",
           "and _REF_DIR not in p.parts)" in single
           and 'ignore=shutil.ignore_patterns(".git", _REF_DIR)' in single)
-    tsrc = Path(ROOT, "brain/mastercode/runtime/tools.py").read_text()
+    tsrc = tools_source(ROOT)
     check("5g. the build prompt carries no pasted file content", "_module_reference_block" not in tsrc)
     check("5h. the checks' line in the run terminal says how they went",
           rv._acceptance_detail({"ran": True, "results": [{"cmd": "a", "ok": True}]}) == "1 check(s) passed"

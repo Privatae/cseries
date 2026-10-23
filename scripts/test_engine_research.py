@@ -23,6 +23,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 _ROOT = os.environ.get("APP_ROOT") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path[:0] = [_ROOT, os.path.join(_ROOT, "brain"), os.path.join(_ROOT, "scripts")]
@@ -182,7 +183,7 @@ async def main():
                                       on_engine=True)
         check(STARTED == ["antigravity"] and res.get("status") == "ok",
               "research_links passes on_engine through", (STARTED, res))
-        tsrc = (Path(_ROOT) / "brain/mastercode/runtime/tools.py").read_text()
+        tsrc = tools_source(_ROOT)
         check("keep_pages=keep,\n                                    on_engine=True)" in tsrc
               and "research_links(query, pool=pool, entity_id=entity_id,\n"
                   "                                                on_engine=True)" in tsrc,

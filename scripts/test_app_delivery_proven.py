@@ -37,6 +37,7 @@ import tempfile
 import textwrap
 from pathlib import Path
 from turn_source import turn_source  # session.py and the modules split out of it
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 _ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 sys.path[:0] = [str(_ROOT), str(_ROOT / "brain")]
@@ -553,7 +554,7 @@ def main() -> int:
     check("ship_project_service takes verify= and starts the proof",
           "async def ship_project_service(pool, project_id: int, *, verify: bool = True" in rsrc
           and "start_verify(" in rsrc)
-    tsrc = (_ROOT / "brain/mastercode/runtime/tools.py").read_text()
+    tsrc = tools_source(_ROOT)
     rpb = tsrc.split("async def _run_phase_build(")[1].split("\nasync def _exec_build(")[0]
     check("the plan-end / follow-up hook ships and proves under the one switch",
           "ship_and_verify(" in rpb and "if _plan_complete or phase_id is None:" in rpb

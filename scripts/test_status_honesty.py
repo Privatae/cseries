@@ -25,6 +25,7 @@ import sys
 import time
 from pathlib import Path
 from turn_source import turn_source  # session.py and the modules split out of it
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 REPO = Path(__file__).resolve().parent.parent
 failures: list[str] = []
@@ -94,7 +95,7 @@ if "last_heartbeat_at" not in src.split("task_type='agent' AND status='in_progre
         "last_heartbeat_at — wall-clock kills of live agents are back")
 # (b) The build timeout ceiling must stay 4h — the 30-min guillotine
 #     force-failed real builds and stranded their output.
-tools_src = (REPO / "brain/mastercode/runtime/tools.py").read_text()
+tools_src = tools_source(REPO)
 # `timeout` bounds one hung model call, not
 # the build, and the bound is named once (BUILD_MODEL_WAIT_MAX_S). It is the
 # DEFAULT of the person's limit build.model_wait_max_minutes

@@ -25,6 +25,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 FAILS = []
 
@@ -233,7 +234,7 @@ def main() -> int:
     import inspect
     d = inspect.signature(review.run_single_harness_build).parameters["max_minutes"].default
     check("run_single_harness_build's default is 60, not 15", d == 60, str(d))
-    tsrc = (repo / "brain/mastercode/runtime/tools.py").read_text()
+    tsrc = tools_source(repo)
     check("tools.py names the build's model-wait default (3600 s) and maximum (4 h)",
           "BUILD_MODEL_WAIT_S = 3600" in tsrc and "BUILD_MODEL_WAIT_MAX_S = 14400" in tsrc)
     check("no build default of 900 s / 15 min remains in the build doors",

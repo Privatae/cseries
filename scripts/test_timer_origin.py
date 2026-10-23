@@ -32,6 +32,7 @@ import os
 import sys
 from pathlib import Path
 from turn_source import turn_source  # session.py and the modules split out of it
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 _ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 
@@ -45,7 +46,7 @@ def check(label: str, cond: bool, extra: str = "") -> None:
         _FAILURES.append(label)
 
 
-tools_src = (_ROOT / "brain/mastercode/runtime/tools.py").read_text()
+tools_src = tools_source(_ROOT)
 runner_src = (_ROOT / "brain/mastercode/brain/offline_task_runner.py").read_text()
 route_src = (_ROOT / "server/routes/agents.py").read_text()
 api_src = (_ROOT / "workbench-web/src/lib/api.ts").read_text()

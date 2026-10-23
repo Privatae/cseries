@@ -32,6 +32,7 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from tools_source import tools_paths, tools_source  # tools.py and the modules split out of it
 
 ROOT = pathlib.Path(os.environ.get("APP_ROOT") or pathlib.Path(__file__).resolve().parent.parent)
 sys.path.insert(0, str(ROOT))
@@ -380,7 +381,7 @@ def _one_shot_sites(path):
                         out.append((fn.name, _ast.unparse(kw.value)))
     return out
 
-sites = (_one_shot_sites(ROOT / "brain/mastercode/runtime/tools.py")
+sites = (sum((_one_shot_sites(p) for p in tools_paths(ROOT)), [])
          + _one_shot_sites(ROOT / "brain/mastercode/runtime/app_verify.py"))
 # ast.walk visits nested defs from the outer function too; keep the innermost.
 allowed = {("_exec_build_run", "True"), ("_start_repair", "True"),
@@ -418,7 +419,7 @@ try:
           got == [True], got)
 finally:
     t._run_phase_build, t._factory_build_task_start, _av._in_flight = _saved_av
-tsrc = (ROOT / "brain/mastercode/runtime/tools.py").read_text()
+tsrc = tools_source(ROOT)
 check("no origin carries a one_shot flag (repairs do not depend on who shipped)",
       '"one_shot"' not in tsrc
       and '"one_shot"' not in (ROOT / "brain/mastercode/runtime/app_verify.py").read_text())

@@ -32,6 +32,7 @@ import types
 import zipfile
 from pathlib import Path
 from turn_source import turn_source  # session.py and the modules split out of it
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parent.parent)
 sys.path.insert(0, str(ROOT))
@@ -307,7 +308,7 @@ check("an ordinary lane result stays ok", _refused_or_ok({"exit": 0, "stdout": "
 # lane's exit 126 is the one refusal shape left.
 check("a refusal with no words still says what was refused",
       "refused: uptime on web-1" in _refused_or_ok({"server": "web-1", "op": "uptime", "exit": 126})["result"])
-src_tools = (ROOT / "brain/mastercode/runtime/tools.py").read_text()
+src_tools = tools_source(ROOT)
 check("mgmt_run routes its result through the refusal check (the session tool is gone)",
       src_tools.count("return _refused_or_ok(res)") == 1)
 
@@ -495,7 +496,7 @@ check("a failed machine check is said as that, never as 'no machine'",
 for m in (m0, m1, m2, m3):
     check("every wording says what the file is and that the host has no reader",
           "'scan.png' is a stored" in m and "no reader for that type" in m, m)
-src_tools = (ROOT / "brain/mastercode/runtime/tools.py").read_text()
+src_tools = tools_source(ROOT)
 check("tools.py: the read path asks context_extract for the wording", "no_reader_message as _no_reader" in src_tools)
 check("tools.py: the blanket 'op=extract_machines says which machines can' is gone",
       "op='extract_machines' says which machines can" not in src_tools)

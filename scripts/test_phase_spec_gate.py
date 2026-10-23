@@ -26,6 +26,7 @@ import os
 import sys
 from pathlib import Path
 from turn_source import turn_source  # session.py and the modules split out of it
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 # Repo root — APP_ROOT when smoke drives it, else the tree this file lives in.
 # Same resolution the sibling gates use (test_autoadvance_selection.py). The
@@ -207,7 +208,7 @@ def main() -> int:
     import asyncio
     from mastercode.runtime.tools import _exec_project_phase
 
-    tsrc = (_ROOT / "brain/mastercode/runtime/tools.py").read_text()
+    tsrc = tools_source(_ROOT)
     from mastercode.public_tool_registry import PUBLIC_TOOL_SCHEMAS as _P
     P_BUILD = _P["build"]
 

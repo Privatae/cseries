@@ -26,6 +26,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 sys.path.insert(0, str(ROOT / "brain"))
@@ -648,7 +649,7 @@ def main() -> int:
           _sess._acceptance_facts(delivery_record(_row, {"phase_status": "complete"})) == "")
 
     # ── 7. wiring ───────────────────────────────────────────────────────
-    tools_src = (ROOT / "brain/mastercode/runtime/tools.py").read_text()
+    tools_src = tools_source(ROOT)
     run_build = tools_src[tools_src.index("async def _run_phase_build("):]
     run_build = run_build[:re.search(r"\n(?:async )?def ", run_build[10:]).start() + 10]
     check("the phase build resolves the project's pipeline for its module",

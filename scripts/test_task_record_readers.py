@@ -20,6 +20,7 @@ the wiring in tools.py and the quote matching itself.
 import asyncio
 import os
 import sys
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 APP_ROOT = os.environ.get("APP_ROOT", "/app")
 sys.path.insert(0, APP_ROOT)
@@ -198,7 +199,7 @@ try:
     # A run of work started in a conversation posts its threads'
     # lines back there, so the turn's interaction context rides along too.
     check("...and the turn's interaction context", bool(GOT) and GOT[0][4] == "project:9", GOT)
-    src = open(os.path.join(APP_ROOT, "brain/mastercode/runtime/tools.py")).read()
+    src = tools_source(APP_ROOT)
     check("_execute_meta_tool has the task_record branch",
           'elif name == "task_record":' in src
           and "await _exec_task_record(args, entity_id, pool, interaction_context," in src)

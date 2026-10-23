@@ -23,6 +23,7 @@ import glob
 import os
 import re
 import sys
+from tools_source import tools_paths, tools_source  # tools.py and the modules split out of it
 
 APP_ROOT = os.environ.get("APP_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -53,12 +54,13 @@ _OLD_RULE = re.compile(
 def host_texts() -> dict[str, str]:
     """Every text the Host reads that could say where a person's facts go:
     the default skills, the tool registry (descriptions are in its source),
-    the tool results in runtime/tools.py, the wiki pages a capability
+    the tool results in runtime/tools.py and the modules split out of it, the wiki pages a capability
     search hands it, and the apps' own text, which the person reads."""
     out = {}
     for path in sorted(glob.glob(os.path.join(APP_ROOT, "default-skills", "*.md"))):
         out[os.path.relpath(path, APP_ROOT)] = src(os.path.relpath(path, APP_ROOT))
-    for rel in ("brain/mastercode/public_tool_registry.py", "brain/mastercode/runtime/tools.py"):
+    for rel in ("brain/mastercode/public_tool_registry.py",
+                *(os.path.relpath(p, APP_ROOT) for p in tools_paths(APP_ROOT))):
         out[rel] = src(rel)
     for path in sorted(glob.glob(os.path.join(APP_ROOT, "docs", "wiki", "pages", "*.md"))):
         out[os.path.relpath(path, APP_ROOT)] = src(os.path.relpath(path, APP_ROOT))
@@ -95,7 +97,7 @@ def test_no_text_keeps_the_old_rule():
 
 
 def test_personality_note():
-    s = src("brain/mastercode/runtime/tools.py")
+    s = tools_source()
     i = s.find("These weights are what the user set")
     seg = " ".join(s[i:i + 600].replace('"', " ").split())
     check("personality_state's note says what is learned from the user lands in memory",

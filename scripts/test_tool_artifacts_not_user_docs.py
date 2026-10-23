@@ -29,6 +29,7 @@ Container-free. Run: APP_ROOT=<repo> python3 scripts/test_tool_artifacts_not_use
 """
 import os
 import sys
+from tools_source import tools_function, tools_source  # tools.py and the modules split out of it
 
 FAILED = 0
 
@@ -66,7 +67,9 @@ def main() -> int:
           str(_defs))
 
     # ── 2. What op='files' returns ──────────────────────────────────────
-    src_tools = _read(repo, "brain/mastercode/runtime/tools.py")
+    # Within context_ingest: the first `if op == "files":` in the tool code is
+    # app_probe's, so a slice over all of it began in the wrong tool.
+    src_tools = tools_function("_exec_context_ingest", repo)
     files_op = src_tools[src_tools.find('if op == "files":'):
                          src_tools.find('if op in ("read", "read_file"):')]
     check("op='files' located", bool(files_op))

@@ -18,6 +18,7 @@ Run: APP_ROOT=<repo> python3 scripts/test_context_extract_lane.py
 import os
 import re
 import sys
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = os.environ.get("APP_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -216,7 +217,7 @@ check("promoted chunks are counted and reported, not silently removed",
 # extracted rows carry none, so it resolved to the original file row — and
 # list_context_service selects content raw with no file-kind guard. The host
 # asked to read a document and got the document's encoding.
-tools_py = read("brain/mastercode/runtime/tools.py")
+tools_py = tools_source()
 check("read prefers extracted text over the stored bytes",
       "EXTRACTED TEXT WINS OVER THE STORED BYTES" in tools_py
       and 'source="extracted" if extracted_note else None' in tools_py)

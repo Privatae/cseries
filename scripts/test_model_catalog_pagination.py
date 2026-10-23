@@ -7,7 +7,7 @@ catalog() whole — ~400 rows with 240-char descriptions and modality lists,
 ~184KB as a tool result. The transcript wall (runtime/tool_result_wall.py)
 caps a result at 100KB and tells the model to "use the tool's limit/offset
 params", but neither tool had any: the caller got a cliff and no way around
-it. Both tools now go through runtime/tools.py::_compact_catalog (defined
+it. Both tools now go through runtime/tools_memory.py::_compact_catalog (defined
 beside _CATALOG_DEFAULT_LIMIT / _CATALOG_MAX_LIMIT, runtime/tools.py:4111-
 4115): filters (search / provider / capability), a page (limit default 25,
 max 200; offset), compact rows, and an honest envelope (total_available /
@@ -23,6 +23,7 @@ Container-free. Run: APP_ROOT=<repo> python3 scripts/test_model_catalog_paginati
 import json
 import os
 import sys
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 FAILED = 0
 
@@ -159,7 +160,7 @@ def main() -> int:
           isinstance(out["models"][0]["vision"], bool))
 
     # ── both executors route through the helper ──────────────────────────
-    src = _read(repo, "brain/mastercode/runtime/tools.py")
+    src = tools_source(repo)
     mr = src[src.find("async def _exec_model_route("):src.find("async def _exec_inference_catalog(")]
     ic = src[src.find("async def _exec_inference_catalog("):src.find("async def _exec_context(")]
     check("model_route op=catalog goes through the pager",

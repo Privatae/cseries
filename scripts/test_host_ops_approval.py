@@ -35,6 +35,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parent.parent)
 sys.path.insert(0, str(ROOT))
@@ -402,7 +403,7 @@ except nac_mgmt.MgmtError as e:
     check("a malformed fingerprint is refused before anyone is asked",
           e.status == 400 and not [c for c in relay.calls if c[1] == "device_request"])
 check("run_mgmt_op knows who is asking (origin); the tool and the route say so",
-      'origin: str = "service"' in src("server/network/nac_mgmt.py") and 'origin="tool"' in src("brain/mastercode/runtime/tools.py")
+      'origin: str = "service"' in src("server/network/nac_mgmt.py") and 'origin="tool"' in tools_source()
       and 'origin="route"' in src("server/routes/network.py")
       and 'origin in ("tool", "route")' in src("server/network/nac_mgmt.py"))
 # A contain whose order already RAN is reported, never placed again.
@@ -688,7 +689,7 @@ check("v179 adds the three approval columns",
       "network_bastion_heartbeat ADD COLUMN IF NOT EXISTS update_approval" in mig
       and "nac_agent_contain         ADD COLUMN IF NOT EXISTS approval" in mig
       and "nac_finding_contain       ADD COLUMN IF NOT EXISTS approval" in mig)
-tl = src("brain/mastercode/runtime/tools.py")
+tl = tools_source()
 check("mgmt_run passes the note and reads a pending approval as ok + state",
       'note=str(a.get("note") or "")' in tl and 'res.get("state") in ("pending_approval", "asked")' in tl)
 check("the registry names note and the pending state",

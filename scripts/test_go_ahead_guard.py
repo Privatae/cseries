@@ -79,6 +79,7 @@ import re
 import sys
 import time
 from turn_source import sync_turn_attr, turn_source  # session.py and the modules split out of it
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 APP_ROOT = os.environ.get("APP_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, APP_ROOT)
@@ -446,7 +447,7 @@ _gate_card = G.card_from_tool("build", {}, {"status": "error", "result": "gated"
 check("a card: the approval card a refused build raised for a gated phase",
       _gate_card and _gate_card["ticket_id"] == 88
       and _gate_card["ref"] == "the approval card for phase 2 ('Tin Robot'), ticket #88")
-_tsrc = open(os.path.join(APP_ROOT, "brain/mastercode/runtime/tools.py")).read()
+_tsrc = tools_source(APP_ROOT)
 # The refusal goes through refused(card=...) since the error-lane sort;
 # the dict literal it replaced is accepted too.
 check("...and the gated-phase refusal carries that card",
@@ -555,7 +556,7 @@ asyncio.run(_hold_cases())
 # The answer's way into the turn. The ticket names the turn that asked; the
 # decide speaks into it while it runs; the route never lets a caller set it.
 from server.routes import tickets as TK  # noqa: E402
-_tools_src = open(os.path.join(APP_ROOT, "brain/mastercode/runtime/tools.py")).read()
+_tools_src = tools_source(APP_ROOT)
 _esc = _tools_src[_tools_src.index('elif name == "escalate":'):]
 _esc = _esc[:_esc.index("return {\"status\": \"ok\", \"result\": result}")]
 check("escalate records the turn that asked on the ticket (never an agent's session)",
@@ -5339,7 +5340,7 @@ finally:
 check("7: the Orchestrator's route write takes the flag and stores it; a write without it stores none",
       _stored_on.get("reasoning_inline") is True and _set_on.get("reasoning_inline") is True
       and "reasoning_inline" not in _stored_off, (_stored_on, _stored_off))
-_tsrc = open(os.path.join(APP_ROOT, "brain/mastercode/runtime/tools.py")).read()
+_tsrc = tools_source(APP_ROOT)
 _ssrc = turn_source(APP_ROOT)
 # The wrapper's PARAMETERS, read from its signature: this used to match the
 # text "reasoning_inline: bool = False,\n) -> dict:", which pinned it as the

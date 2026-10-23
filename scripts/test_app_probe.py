@@ -34,6 +34,7 @@ import os
 import sys
 import types
 from pathlib import Path
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 _ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 sys.path.insert(0, str(_ROOT / "brain"))
@@ -291,7 +292,7 @@ check("...while a body over the cap IS flagged truncated",
 # ── 5. wired, gated, and offered to the host ───────────────────────────────
 caps = (_ROOT / "brain/mastercode/runtime/meta_tool_caps.py").read_text()
 reg = (_ROOT / "brain/mastercode/public_tool_registry.py").read_text()
-tools_src = (_ROOT / "brain/mastercode/runtime/tools.py").read_text()
+tools_src = tools_source(_ROOT)
 # Per-op gating (review, 2026-09-04): the tool's union is 1|16 because a GET's
 # side effects are the app author's choice, and files/logs are declared
 # read-safe so reading a log still costs only a read.

@@ -48,6 +48,7 @@ import tempfile
 import time
 import traceback
 from pathlib import Path
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 sys.path.insert(0, str(ROOT))
@@ -254,7 +255,7 @@ def part_c_root_resolution():
     finally:
         T._PROJECTS_ROOT = saved_root
         shutil.rmtree(tmp_root, ignore_errors=True)
-    src = (ROOT / "brain/mastercode/runtime/tools.py").read_text()
+    src = tools_source(ROOT)
     i = src.find("_mod_target = (")
     check("C3 the build lane resolves a root build through it",
           i > 0 and "_root_build_target(pool, project_id)" in src[i:i + 200])

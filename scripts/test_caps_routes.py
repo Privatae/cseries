@@ -43,6 +43,7 @@ import os
 import sys
 import types
 from pathlib import Path
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 sys.path[:0] = [str(ROOT), str(ROOT / "brain")]
@@ -747,7 +748,7 @@ def r4():
           "(sent_at, message_id) < (${cur}::timestamptz, ${cur + 1}::uuid)" in msrc
           and "ORDER BY sent_at DESC, message_id DESC" in msrc
           and "running <= ${budget}::bigint" in msrc)
-    tsrc = src("brain/mastercode/runtime/tools.py")
+    tsrc = tools_source()
     check("the host_message tool passes limit and before through",
           'limit=a.get("limit"), before=a.get("before")' in tsrc)
     from mastercode.public_tool_registry import PUBLIC_TOOL_SCHEMAS as S

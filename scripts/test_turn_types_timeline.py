@@ -30,6 +30,7 @@ import os
 import sys
 from datetime import datetime, timedelta, timezone
 from turn_source import turn_source  # session.py and the modules split out of it
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 FAILS = []
 
@@ -371,7 +372,7 @@ def main() -> int:
     check("an agent's task row records the type of the turn that started it (v186)",
           "turn_type_id" in inserted[0][0] and inserted[0][1][-1] == FIN and inserted[1][1][-1] is None,
           f"{inserted}")
-    tsrc = src("brain", "mastercode", "runtime", "tools.py")
+    tsrc = tools_source()
     avsrc = src("brain", "mastercode", "runtime", "app_verify.py")
     check("every entity_tasks insert stamps it: compare, build and app check too",
           tsrc.count("status, started_at, turn_type_id, result) ") == 2

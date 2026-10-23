@@ -1,0 +1,2 @@
+# runtime/tools.py and the tools_<category> modules split out of it stay one module to every caller: tools.py imports every split module, none imports tools.py back, every name they define is re-exported as the same object, and tools_source() reads them all. Imports the module and reads files only.
+test_tools_split.py

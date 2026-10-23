@@ -34,6 +34,7 @@ import sys
 import tempfile
 from pathlib import Path
 from turn_source import turn_source  # session.py and the modules split out of it
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 _ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 sys.path[:0] = [str(_ROOT), str(_ROOT / "brain")]
@@ -201,7 +202,7 @@ def main() -> int:
         check("registry error → installed False, no raise", st["installed"] is False, str(st))
 
     # ── wiring pins ──────────────────────────────────────────────────────────
-    tsrc = (_ROOT / "brain/mastercode/runtime/tools.py").read_text()
+    tsrc = tools_source(_ROOT)
     # Scope the pins to _pool_build itself: "notes"/"preview_url" are ordinary
     # words elsewhere in tools.py (contacts, artifacts).
     _pb = tsrc.split("async def _pool_build(")[1].split("\nasync def ")[0]

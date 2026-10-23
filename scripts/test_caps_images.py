@@ -30,6 +30,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 REPO = os.environ.get("APP_ROOT") or str(Path(__file__).resolve().parent.parent)
 sys.path.insert(0, REPO)
@@ -190,7 +191,7 @@ def main() -> int:
           r.get("returned") == 20 and r.get("next_offset") == 40, str({k: v for k, v in r.items() if k != "images"}))
 
     # ── 6. the tool and its schema ──────────────────────────────────────
-    src = (Path(REPO) / "brain/mastercode/runtime/tools.py").read_text()
+    src = tools_source(REPO)
     i = src.find("async def _exec_image_generate")
     seg = src[i:i + 6000]
     check("6: the tool passes size/quality/offset/limit to the engine",

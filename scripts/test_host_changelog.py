@@ -40,6 +40,7 @@ import os
 import sys
 import types
 from datetime import datetime, timedelta, timezone
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 FAILED = 0
 
@@ -278,7 +279,7 @@ def main() -> int:
     desc = reg.PUBLIC_TOOL_SCHEMAS["host_changelog"]["function"]["description"]
     check("schema says it never reports personality drift",
           "never reports personality drift" in desc)
-    src_tools = _read(repo, "brain/mastercode/runtime/tools.py")
+    src_tools = tools_source(repo)
     check("tools.py dispatches host_changelog to the module",
           'elif name == "host_changelog":' in src_tools
           and "from mastercode.runtime.host_changelog import _exec_host_changelog" in src_tools)

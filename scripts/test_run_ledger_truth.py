@@ -20,6 +20,7 @@ import os
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parent.parent)
 sys.path.insert(0, str(ROOT))
@@ -107,7 +108,7 @@ check("track record: avg seconds still there", cc["avg_seconds"] == round((62.76
 kimi = next(g for g in tr if g["harness"] == "kimi")
 check("track record: a clean row has no failure fields set", kimi["failed"] == 0 and kimi["last_error"] is None)
 
-src_tools = (ROOT / "brain/mastercode/runtime/tools.py").read_text()
+src_tools = tools_source(ROOT)
 check("coding_bench: track record comes from summarize_runs over harness_run rows",
       "_summarize_runs([dict(r) for r in rows], window=_TRACK_WINDOW)" in src_tools
       and "SELECT id, harness, model, ok, error, exit_code, elapsed_seconds, created_at" in src_tools)

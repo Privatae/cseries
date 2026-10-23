@@ -15,6 +15,7 @@ import asyncio
 import json
 import os
 import sys
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path[:0] = [os.path.join(ROOT, "brain"), ROOT]
@@ -208,7 +209,7 @@ check("a report interrupted after its row was written keeps its claim (no second
 check("thread key reads a JSON-string origin (older rows)",
       ad.delivery_thread_key(json.dumps(WB)) == ad.delivery_thread_key(WB) == ("workbench", 9239, None))
 
-src = open(os.path.join(ROOT, "brain/mastercode/runtime/tools.py")).read()
+src = tools_source(ROOT)
 check("auto-ship's proof origin names the build it follows", '"after_task_id": task_id}' in src)
 
 print("all gates passed" if not failures else f"{len(failures)} failing")

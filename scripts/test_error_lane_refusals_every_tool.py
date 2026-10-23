@@ -42,6 +42,7 @@ import zipfile
 from pathlib import Path
 
 from turn_source import TURN_FILES  # session.py and the modules split out of it
+from tools_source import tools_paths  # tools.py and the modules split out of it
 
 APP_ROOT = os.environ.get("APP_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, APP_ROOT)
@@ -267,8 +268,11 @@ print("3 every unsorted error return is pinned")
 # tools.py 155 -> 156 (keys_manage op='revoke'): "the disconnect could not be
 # recorded" is the Host's own database failing to write the marker, so nothing
 # is revoked and the person is told; a missing name goes through refused().
+# tools.py and every module split out of it (2026-10-23) share tools.py's pin:
+# the count is their sum, so code moved between them neither frees the pin
+# nor leaves a site outside it.
+TOOLS_PIN = 156
 PINNED = {
-    "brain/mastercode/runtime/tools.py": 156,
     # session.py and every module split out of it hold session.py's pin.
     **{"brain/mastercode/runtime/" + f: 0 for f in TURN_FILES},
     "brain/mastercode/runtime/turn_type_approval.py": 0,
@@ -334,6 +338,14 @@ for path, pinned in PINNED.items():
           f"or a precondition it can fix, else a plain dict and raise the pin")
     if len(got) < pinned:
         print(f"  note  {path}: {len(got)} < pinned {pinned} — lower the pin")
+
+got = [f"{os.path.relpath(p, APP_ROOT)}:{ln}" for p in tools_paths(APP_ROOT) for ln in _unsorted(p)]
+check(f"3: tools.py and its split modules: {len(got)} unsorted error return(s), pinned {TOOLS_PIN}",
+      len(got) <= TOOLS_PIN,
+      f"— new unsorted site(s) among {got}: refused() if the model's input "
+      f"or a precondition it can fix, else a plain dict and raise the pin")
+if len(got) < TOOLS_PIN:
+    print(f"  note  tools.py and its split modules: {len(got)} < pinned {TOOLS_PIN} — lower the pin")
 
 if FAILS:
     print(f"\n{len(FAILS)} FAIL")

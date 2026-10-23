@@ -100,7 +100,7 @@ _READ_SAFE_TOOLS = frozenset({
     # an op enum nor a read-prefixed name for the heuristics to latch onto — so
     # the host had to dispatch a governed agent to perform a pure read, which
     # host-full-read-rights says must never happen.
-    #   harness_costs      — SELECT over priced runs (tools.py:_exec_harness_costs)
+    #   harness_costs      — SELECT over priced runs (tools_projects.py:_exec_harness_costs)
     #   harness_transcript — SELECT one completed run's transcript
     #   harness_usage_windows — SELECT over harness_usage_event (v114): token
     #                      consumption per subscription refresh window. Same
@@ -177,7 +177,7 @@ _READ_OPS = frozenset({
     # verb, each verified read-only at its executor:
     #   autofill op='saved' — the saved entry KEYS for a host plus a password
     #     flag and whether a standing grant exists. It cannot return a value
-    #     (tools.py:_exec_autofill states that as the tool's promise), so it is
+    #     (tools_vault.py:_exec_autofill states that as the tool's promise), so it is
     #     the read the host does before it proposes a mapping.
     #   image_generate op='gallery' — the host's own recent images. Its own
     #     schema calls it "free, local read"; generate stays an action, so the

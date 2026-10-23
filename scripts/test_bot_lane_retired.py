@@ -29,6 +29,7 @@ import os
 import sys
 
 from turn_source import TURN_FILES  # session.py and the modules split out of it
+from tools_source import tools_paths, tools_source  # tools.py and the modules split out of it
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
@@ -129,7 +130,7 @@ def _referenced_symbols(rel: str) -> set:
 for rel in (*("brain/mastercode/runtime/" + f for f in TURN_FILES),
             "brain/mastercode/runtime/scoped_agent.py",
             "brain/mastercode/runtime/direct_ops.py",
-            "brain/mastercode/runtime/tools.py"):
+            *(os.path.relpath(p, _ROOT) for p in tools_paths(_ROOT))):
     refs = _referenced_symbols(rel)
     check(f"no bot dispatch in {os.path.basename(rel)}", not refs, ", ".join(sorted(refs)))
 
@@ -182,7 +183,7 @@ check("bot_dispatch has no capability entry", "bot_dispatch" not in META_TOOL_CA
 check("bot_dispatch is not in the active private schemas",
       "_meta_bot_dispatch" not in triage._BOT_TOOL_SCHEMAS)
 check("no handler references manager_dispatch",
-      "manager_dispatch" not in _read("brain/mastercode/runtime/tools.py"))
+      "manager_dispatch" not in tools_source())
 
 print()
 print("== 6. the image engine still loads (it was IN the bot dir) ==")
@@ -195,7 +196,7 @@ check("it carries its own context type", hasattr(image_engine, "EngineContext"))
 check("image_generate still has its mask", META_TOOL_CAPS.get("image_generate", {}).get("required_bits") == (1 | 32))
 # Pin the MECHANISM, not the word: the engine must be imported, not loaded by
 # path out of a directory that no longer exists.
-_tools_src = _read("brain/mastercode/runtime/tools.py")
+_tools_src = tools_source()
 check("the image engine is imported, not path-loaded",
       "from mastercode import image_engine" in _tools_src
       and "spec_from_file_location" not in _tools_src)

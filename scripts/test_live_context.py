@@ -30,6 +30,7 @@ import asyncio
 import datetime as dt
 import os
 import sys
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 FAILS = []
 
@@ -312,7 +313,7 @@ def main() -> int:
     check("a live_context module has no entry or manifest checks and gets the card contract",
           tcon.checks_for("live_context") == {"entry": False, "manifest": False}
           and tcon.contract_prefix("live_context", "D", "S").startswith("PLATFORM CONTRACT — LIVE CONTEXT CARDS"))
-    src_t = open(os.path.join(app_root, "brain/mastercode/runtime/tools.py")).read()
+    src_t = tools_source(app_root)
     check("workspace_file syncs a card write or delete",
           "from mastercode.live_context_host import sync_path as _lc_sync" in src_t
           and 'deleted=(op == "delete")' in src_t)

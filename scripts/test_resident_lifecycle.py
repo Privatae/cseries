@@ -32,6 +32,7 @@ import tempfile
 import textwrap
 import time
 from pathlib import Path
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 _ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 sys.path[:0] = [str(_ROOT), str(_ROOT / "brain")]
@@ -458,7 +459,7 @@ def main() -> int:
     from mastercode.public_tool_registry import PUBLIC_TOOL_SCHEMAS, PUBLIC_META_TOOL_NAMES
     from mastercode.runtime.meta_tool_caps import META_TOOL_CAPS
     from mastercode.runtime.direct_ops import DIRECT_OP_TOOLS, is_unattended_op_tool
-    tools_src = (_ROOT / "brain/mastercode/runtime/tools.py").read_text(encoding="utf-8")
+    tools_src = tools_source(_ROOT)
     for t in ("system.start_app", "system.stop_app"):
         check(f"{t}: schema", t in PUBLIC_TOOL_SCHEMAS)
         check(f"{t}: caps row", t in META_TOOL_CAPS)

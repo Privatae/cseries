@@ -34,6 +34,7 @@ import json
 import os
 import sys
 from turn_source import turn_source  # session.py and the modules split out of it
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 FAILS = []
 
@@ -297,7 +298,7 @@ def main() -> int:
           d6 is None and a6["action"]["type_id"] == FIN, f"{a6}")
     a7, _ = tt.stamp_scheduled_work(fin, "reachout_channel", {"kind": "email", "action": {"type": "email"}})
     check("a non-runbook channel is unchanged", "type_id" not in a7["action"])
-    tsrc_ = src("brain", "mastercode", "runtime", "tools.py")
+    tsrc_ = tools_source()
     i_auth = tsrc_.find("    if not allowed:\n        return denial\n\n    # ── Turn types step 5: scheduled work carries")
     check("the stamp runs at the one gate, right after authorization",
           i_auth > 0 and "args, _stamp_denial = _stamp_work(turn_type, name, args)" in tsrc_[i_auth:i_auth + 800])
@@ -614,7 +615,7 @@ def main() -> int:
     me.write_turn_row = save_w
     pq.enabled, pq.stats = save_pq
     check("no fired turn carries a cross-type header any more", "A note left by" not in rsrc and "from_type" not in rsrc)
-    tsrc0 = src("brain", "mastercode", "runtime", "tools.py")
+    tsrc0 = tools_source()
     check("schedule_task writes no cross-type provenance", "from_type" not in tsrc0)
     from mastercode.circles_threads import NOT_REPLAY_ROW
     check("a thread's transcript hides the fired turn's own rows (the report is the message)",

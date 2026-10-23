@@ -35,6 +35,7 @@ import json
 import os
 import re
 import sys
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = os.environ.get("APP_ROOT", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
@@ -531,7 +532,7 @@ def test_the_host_holds_no_shell_tool():
     assert "session" not in META_TOOL_CAPS
     assert not hasattr(session_lane, "run_command"), "the tool's op='run' left with it"
     assert not hasattr(session_lane, "RUN_TIMEOUT_MAX_S") and not hasattr(session_lane, "RUN_OUTPUT_CAP")
-    tools_src = open(os.path.join(ROOT, "brain", "mastercode", "runtime", "tools.py")).read()
+    tools_src = tools_source(ROOT)
     assert 'elif name == "session":' not in tools_src and "_exec_session" not in tools_src
     tree = ast.parse(tools_src)
     assert not any(isinstance(n, ast.AsyncFunctionDef) and n.name == "_exec_session" for n in ast.walk(tree))

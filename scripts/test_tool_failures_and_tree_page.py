@@ -23,6 +23,7 @@ import os
 import sys
 from pathlib import Path
 from turn_source import turn_source  # session.py and the modules split out of it
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parent.parent)
 sys.path.insert(0, str(ROOT))
@@ -146,7 +147,7 @@ check("path page: directory entries carry file counts", any("files" in e for e i
 check("path page: not truncated", not sub["truncated"] and sub["shown"] == 2)
 check("unknown path → error, not an empty page", "error" in page_tree(tree, path="nope"))
 check("bad depth/max fall back to defaults", page_tree(tree, depth="x", max_entries=None)["depth"] == 2)
-src_tools = (ROOT / "brain/mastercode/runtime/tools.py").read_text()
+src_tools = tools_source(ROOT)
 # `path` and `depth` also go to the operator, so
 # its walk can start at the directory asked for instead of stopping at its
 # 6,000-file cap first; max_entries and the page itself stay on this side, so

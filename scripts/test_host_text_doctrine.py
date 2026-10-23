@@ -32,6 +32,7 @@ import os
 import re
 import sys
 from turn_source import turn_source  # session.py and the modules split out of it
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 APP_ROOT = os.environ.get("APP_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, APP_ROOT)
@@ -309,7 +310,7 @@ def c_picture():
 
 
 def c_skill_memory():
-    s = src("brain/mastercode/runtime/tools.py")
+    s = tools_source()
     i = s.find("is a stored skill (skill_memory)")
     seg = s[i:i + 700]
     check("memory_curate's skill_memory refusal names the next step in this turn",
@@ -330,7 +331,7 @@ def c_person_only_memory():
           and "Retiring it is the user's decision" in skill, skill[-1200:])
     check("the memory skill sends a skill_memory change to the person through escalate",
           "should change or go, raise it with the user through `escalate`" in skill)
-    s = src("brain/mastercode/runtime/tools.py")
+    s = tools_source()
     i = s.find("is a stored skill (skill_memory)")
     seg = s[i:i + 900]
     check("memory_curate's skill_memory refusal says removing the row is the user's, through escalate",

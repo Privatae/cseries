@@ -21,6 +21,7 @@ Run: python3 scripts/test_bastion_service_slot.py
 import asyncio
 import os
 import sys
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = os.environ.get("APP_ROOT", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
@@ -292,7 +293,7 @@ check("a successful up says how to dial the endpoint (the Hub peer forward)",
       (up.get("result") or {}).get("via_peer_forward"), str(up.get("result")))
 
 import ast as _ast  # noqa: E402
-_tools = open(os.path.join(ROOT, "brain/mastercode/runtime/tools.py")).read()
+_tools = tools_source(ROOT)
 check('purge is strictly the boolean true in the tool (never bool("false"))',
       'purge=a.get("purge") is True' in _tools and 'purge=bool(a.get("purge"))' not in _tools)
 _route = open(os.path.join(ROOT, "server/routes/network.py")).read()

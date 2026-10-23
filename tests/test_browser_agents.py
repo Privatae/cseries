@@ -19,6 +19,9 @@ import sys
 
 import pytest
 import yaml
+import sys as _ts_sys, os as _ts_os
+_ts_sys.path.insert(0, _ts_os.path.join(_ts_os.path.dirname(_ts_os.path.dirname(_ts_os.path.abspath(__file__))), 'scripts'))
+from tools_source import tools_source  # noqa: E402
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
@@ -773,7 +776,7 @@ def test_wiring_direct_op_unattended_caps_registry_scopes_routes():
     assert {"read:agents", "write:agents", "execute:agents"} <= scopes.PERMISSIONS
     reg = (root / "brain/mastercode/public_tool_registry.py").read_text()
     assert '"browser_agent": {' in reg and "op_tool='browser_agent'" in reg
-    tools = (root / "brain/mastercode/runtime/tools.py").read_text()
+    tools = tools_source(root)
     assert 'elif name == "browser_agent":' in tools and "async def _exec_browser_agent" in tools
     main = (root / "server/main.py").read_text()
     assert "app.include_router(browser_agents_routes.router)" in main

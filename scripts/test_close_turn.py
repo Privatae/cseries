@@ -34,6 +34,7 @@ import json
 import os
 import re
 import sys
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 APP_ROOT = os.environ.get("APP_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, APP_ROOT)
@@ -122,7 +123,7 @@ check("a write tool (blocked in ephemeral sessions), never read-safe",
 _sa_src = open(os.path.join(APP_ROOT, "brain/mastercode/runtime/scoped_agent.py")).read()
 check("agents: scoped_agent strips VERB_TOOLS from every scope",
       "scope_set & _VERB_TOOLS" in _sa_src and "scope_set -= _verbs_only_host" in _sa_src)
-_tools_src = open(os.path.join(APP_ROOT, "brain/mastercode/runtime/tools.py")).read()
+_tools_src = tools_source(APP_ROOT)
 check("tools.py: dispatch branch runs close_turn.execute",
       'elif name == "close_turn":' in _tools_src and "_close_turn_execute(args" in _tools_src)
 

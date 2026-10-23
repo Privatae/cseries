@@ -153,7 +153,7 @@ circles-app:
   - circles-web/src/cards/deck.tsx
   - circles-web/src/cards/contacts.tsx
   - circles-web/src/lib/cards.ts
-  - brain/mastercode/runtime/tools.py::_exec_create_project
+  - brain/mastercode/runtime/tools_projects.py::_exec_create_project
   - scripts/image_baked_apps.txt
   verified:
     date: '2026-10-20'
@@ -337,7 +337,7 @@ glossary:
   - system-apps/workbench/app.yaml
   - system-apps/sites/app.yaml
   - server/applications/kernel.py
-  - brain/mastercode/runtime/tools.py::_exec_publish_site
+  - brain/mastercode/runtime/tools_apps.py::_exec_publish_site
   verified:
     date: '2026-10-20'
     digest: sha256:b6a58916f8f208d2608b48f574c7ebcf492b549f404afc15167dd37b47cb3332
@@ -447,7 +447,7 @@ models-and-keys:
   - brain/mastercode/runtime/scoped_agent.py::run_scoped_agent
   - dashboard/base/js/model-picker.js
   - server/vault/authz.py::use_credential
-  - brain/mastercode/runtime/tools.py::_exec_keys_manage
+  - brain/mastercode/runtime/tools_vault.py::_exec_keys_manage
   - server/routes/vault.py::_route_chat_if_unrouted
   - brain/mastercode/attachment_parts.py::model_reads_images
   verified:
@@ -520,7 +520,7 @@ publisher-app:
     digest: sha256:860cde6be38020f7a8c59148ca68a9ac1672c0ce16a5199b16984694fd9079b4
 publishing-sites:
   sources:
-  - brain/mastercode/runtime/tools.py::_exec_publish_site
+  - brain/mastercode/runtime/tools_apps.py::_exec_publish_site
   - server/routes/applications.py::publish_site_service
   - server/bridge/member_client.py
   - compose.yaml
@@ -629,7 +629,7 @@ what-a-host-cannot-do:
   - server/routes/mcp.py::_nac_gate
   - server/network/nac_dcn.py
   - brain/mastercode/runtime/kernel_ops.py
-  - brain/mastercode/runtime/tools.py::_exec_keys_manage
+  - brain/mastercode/runtime/tools_vault.py::_exec_keys_manage
   - server/network/nac_propose.py
   - system-apps/agents/app.js
   - server/vault/authz.py::use_credential
@@ -676,16 +676,16 @@ where-your-data-lives:
 workbench:
   sources:
   - system-apps/workbench/app.yaml
-  - brain/mastercode/runtime/tools.py::_exec_build
-  - brain/mastercode/runtime/tools.py::_pool_build
-  - brain/mastercode/runtime/tools.py::_run_phase_build
-  - brain/mastercode/runtime/tools.py::_phase_retry_pick
+  - brain/mastercode/runtime/tools_build.py::_exec_build
+  - brain/mastercode/runtime/tools_build.py::_pool_build
+  - brain/mastercode/runtime/tools_build.py::_run_phase_build
+  - brain/mastercode/runtime/tools_build.py::_phase_retry_pick
   - server/routes/projects.py::approve_phase
   - server/routes/projects.py::set_auto_merge
   - server/routes/project_git.py::_merge_rolling_pr
   - server/routes/gitea.py::_ensure_user_token
-  - brain/mastercode/runtime/tools.py::_failed_build_kind
-  - brain/mastercode/runtime/tools.py::_exec_build_kill
+  - brain/mastercode/runtime/tools_build.py::_failed_build_kind
+  - brain/mastercode/runtime/tools_build.py::_exec_build_kill
   - server/routes/review.py::kill_session_runs
   - workbench-web/src/book/book-app.tsx
   - workbench-web/src/components/workbench/chat-pane.tsx
@@ -693,7 +693,7 @@ workbench:
   - server/git_server.py::pr_page
   verified:
     date: '2026-10-22'
-    digest: sha256:97d9665d2b9294184fede659f5720b75aaad46127b7c7e7c538a870f77345a9b
+    digest: sha256:04df95380f82c348c5834e841486f1c847f199ef4c5688a10ea5914323bc697e
 workbench-app:
   sources:
   - system-apps/workbench/app.yaml

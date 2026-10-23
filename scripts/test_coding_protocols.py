@@ -57,6 +57,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 logging.disable(logging.CRITICAL)
 failures = []
@@ -545,7 +546,7 @@ def main() -> int:
           f"{read_safe_ops('coding_protocol', sc)}")
     check("16: lane = operate (one deterministic op; the doors stay host-only)",
           lane_for("coding_protocol", sc) == "operate", lane_for("coding_protocol", sc))
-    tools_src = open(os.path.join(app_root, "brain/mastercode/runtime/tools.py")).read()
+    tools_src = tools_source(app_root)
     check("16: tools.py dispatches coding_protocol", 'name == "coding_protocol"' in tools_src)
     bench_sc = PUBLIC_TOOL_SCHEMAS["coding_bench"]["function"]["description"]
     # The contract is that the description SAYS which engine is the default;

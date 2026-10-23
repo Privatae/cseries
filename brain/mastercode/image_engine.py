@@ -3,7 +3,7 @@ Image Engine — generating pictures, showing the Host its own, and the gallery.
 
 Was `public_bots/00100001_image.py`. It stopped being a bot before the lane
 died: `image_generate` is a META-tool, and its handler
-(`runtime/tools.py::_exec_image_generate`) load-by-path'd this file and called
+(`runtime/tools_environment.py::_exec_image_generate`) load-by-path'd this file and called
 `run(ctx)` directly — the bot dir was just where the engine happened to live.
 Moved here with the lane's retirement so it imports like any other
 module (the `00100001_` prefix made it un-importable by name, which is why the

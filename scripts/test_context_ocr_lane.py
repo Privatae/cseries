@@ -33,6 +33,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = os.environ.get("APP_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -68,7 +69,7 @@ def flat(s):
 
 extract_py = read("server/routes/context_extract.py")
 topology_py = read("server/network/topology.py")
-tools_py = read("brain/mastercode/runtime/tools.py")
+tools_py = tools_source()
 
 from server.routes import context_extract as ce  # noqa: E402
 

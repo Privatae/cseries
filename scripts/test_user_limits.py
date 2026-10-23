@@ -37,6 +37,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from tools_source import tools_function, tools_source  # tools.py and the modules split out of it
 
 _ROOT = os.environ.get("APP_ROOT") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path[:0] = [_ROOT, os.path.join(_ROOT, "brain"), os.path.join(_ROOT, "scripts")]
@@ -263,9 +264,9 @@ def unit_checks() -> None:
         check(LR._person(_Req(app_id)), f"the person's {app_id} may write a limit")
     for app_id in ("host", "some-community-app", ""):
         check(not LR._person(_Req(app_id)), f"{app_id or 'no app'} may not")
-    src = (ROOT / "brain/mastercode/runtime/tools.py").read_text()
-    fn = src[src.index("async def _exec_limits("):]
-    fn = fn[:fn.index("\nasync def ", 10)]
+    src = tools_source(ROOT)
+    # By AST: the text up to the next def was this one function only while both sat in tools.py.
+    fn = tools_function("_exec_limits", ROOT)
     check(".write(" not in fn, "the Host's limits tool has no path that writes a limit")
 
     # The per-thread allowance overrides the person's turn.allowance_usd, so

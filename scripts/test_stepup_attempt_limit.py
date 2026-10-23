@@ -36,6 +36,7 @@ import contextlib
 import inspect
 import os
 import sys
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = os.environ.get("APP_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
@@ -1035,7 +1036,7 @@ for q, (name, targets, through) in _dynamic.items():
           calls_it and targets and reached and only_through, (calls_it, targets, reached, only_through))
 
 # Why a code tried by way of the Host's tools counts on the Host's record:
-_tools_tree = ast.parse(open(os.path.join(ROOT, "brain", "mastercode", "runtime", "tools.py")).read())
+_tools_tree = ast.parse(tools_source(ROOT))
 _wrapped = [n for n in _tools_tree.body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
             and n.name == _HOST_TOOLS.split(":")[1]
             and any(isinstance(d, ast.Name) and d.id == "_codes_count_as_host" for d in n.decorator_list)]

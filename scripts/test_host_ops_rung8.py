@@ -47,6 +47,7 @@ import shutil
 import subprocess
 import sys
 from pathlib import Path
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parent.parent)
 sys.path.insert(0, str(ROOT))
@@ -543,7 +544,7 @@ xs = src("server/routes/context_extract.py")
 check("ctx_extract goes through the card and says asked as asked",
       'nac_approval.obtain_via_card(pool, entity_id, chosen["server"], EXTRACT_OP' in xs
       and '"asked": True' in xs and '"ask": appr.get("ask") or {}' in xs and "card-filed" in xs)
-ts = src("brain/mastercode/runtime/tools.py")
+ts = tools_source()
 check("the tool wrappers pass an asked result through as ok, with the ask on it",
       'res.get("state") in ("pending_approval", "asked")' in ts and 'if res.get("pending_approval"):' in ts
       and ts.index('if res.get("pending_approval"):') < ts.index('if res.get("error"):\n                return {"status": "error", "error": res["error"], "result": res}'))

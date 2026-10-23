@@ -118,6 +118,7 @@ import sys
 import types
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 sys.path[:0] = [str(ROOT), str(ROOT / "brain")]
@@ -2788,7 +2789,7 @@ check("… and completes with nobody present", "support_collect" in D.UNATTENDED
 check("… an operator-only schema, never public",
       "support_collect" in R.OPERATOR_PLATFORM_TOOL_SCHEMAS and "support_collect" not in R.PUBLIC_TOOL_SCHEMAS)
 check("… dispatched inline", "support_collect" in R.PUBLIC_META_TOOL_NAMES)
-tools_src = (ROOT / "brain/mastercode/runtime/tools.py").read_text()
+tools_src = tools_source(ROOT)
 check("tools.py dispatches the op to the module",
       'elif name == "support_collect":' in tools_src and "_sc.run(args or {}, pool=pool" in tools_src)
 main_src = (ROOT / "server/main.py").read_text()

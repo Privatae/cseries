@@ -35,6 +35,7 @@ import sys
 import tempfile
 import zipfile
 from pathlib import Path
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 REPO = os.environ.get("APP_ROOT") or str(Path(__file__).resolve().parent.parent)
 sys.path.insert(0, REPO)
@@ -220,7 +221,7 @@ else:
     mute = [sys.executable, "-c", "import time; time.sleep(5)"]
     rc, tail, stalled = run(live(mute, idle_s=0.5))
     check("a silent one is stopped as stalled", stalled is True, (rc, tail, stalled))
-src = (Path(REPO) / "brain/mastercode/runtime/tools.py").read_text()
+src = tools_source(REPO)
 i = src.find("async def _exec_import_repo")
 check("import_repo has no 180 s wall clock",
       i > 0 and "timeout=180" not in src[i:i + 6000] and "_run_with_progress_liveness" in src[i:i + 6000])

@@ -54,6 +54,7 @@ import json
 import os
 import re
 import sys
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 _ROOT = os.environ.get("APP_ROOT") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path[:0] = [_ROOT, os.path.join(_ROOT, "brain")]
@@ -824,7 +825,7 @@ def test_oversight_ingest_is_registered_everywhere():
     # tool that writes rows.
     assert caps.META_TOOL_CAPS["oversight_ingest"]["required_bits"] & ~(1 | 2), \
         "a write bit is missing — this tool writes the ledger"
-    src = _read("brain/mastercode/runtime/tools.py")
+    src = tools_source()
     assert 'elif name == "oversight_ingest":' in src
     assert "from mastercode.runtime.oversight import _exec_oversight_ingest" in src
     from mastercode.runtime.tool_lanes import lane_for
@@ -840,7 +841,7 @@ def test_wake_is_an_internal_arg_and_stays_off_the_wire():
     params = reg.PUBLIC_TOOL_SCHEMAS["oversight_ingest"]["function"]["parameters"]
     assert params.get("properties") == {}, \
         "an internal-only flag is being advertised to the host"
-    tools_src = _read("brain/mastercode/runtime/tools.py")
+    tools_src = tools_source()
     gate = tools_src.split("async def _execute_meta_tool", 1)[1].split("_authorize_meta_tool", 1)[0]
     assert "_find_tool_schema" in gate and "_surface_allows" in gate, \
         "the schema's only use before dispatch has changed — re-check whether " \

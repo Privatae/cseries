@@ -30,6 +30,7 @@ import sys
 import tempfile
 import types
 from pathlib import Path
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, os.environ.get("APP_ROOT") or str(ROOT))
@@ -497,7 +498,7 @@ check("…and the tag the Workbench chat reads",
 check("…and a recorded value that is not a work branch is never used",
       pg.work_branch_of({"work_branch": "main"}) == "host/build"
       and pg.work_branch_of({"work_branch": "host/../x"}) == "host/build")
-_src = (ROOT / "brain/mastercode/runtime/tools.py").read_text() + (ROOT / "server/routes/code_approvals.py").read_text() \
+_src = tools_source(ROOT) + (ROOT / "server/routes/code_approvals.py").read_text() \
     + (ROOT / "brain/mastercode/runtime/support_collect.py").read_text()
 check("Every lookup of the project's approval reads the project's own branch",
       _src.count("project_work_branch(pool, project_id)") >= 2 and "work_branch_of(cfg)" in _src
@@ -614,7 +615,7 @@ finally:
     pg._seed_blocking = _real_seed
     pg.find_work_pr = _real_find
 
-tsrc = (ROOT / "brain/mastercode/runtime/tools.py").read_text()
+tsrc = tools_source(ROOT)
 blk = tsrc[tsrc.index("_prep = await prepare_workspace(pool, project_id)"):]
 check("A build whose project's code is not read in yet does not run",
       "seed_pending" in blk[:600] and blk.index("raise _SeedPending") < blk.index("out = await _pool_build("))
@@ -690,7 +691,7 @@ wb = (ROOT / "server/routes/workbench.py").read_text()
 check("The Workbench has no merge route", "/merge" not in wb and "def merge_pr" not in wb)
 api = (ROOT / "workbench-web/src/lib/api.ts").read_text()
 check("…and the app calls none", "/api/workbench/pr/merge" not in api and "mergePr" not in api)
-tools = (ROOT / "brain/mastercode/runtime/tools.py").read_text()
+tools = tools_source(ROOT)
 check("Auto-Approve's merge writes the same chat line", "announce_merge(pool, entity_id, project_id" in tools)
 
 if failures:

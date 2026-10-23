@@ -28,6 +28,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from tools_source import tools_function, tools_source  # tools.py and the modules split out of it
 
 ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 sys.path[:0] = [str(ROOT), str(ROOT / "brain")]
@@ -524,8 +525,9 @@ def main() -> int:
     check("'review' is never written as a phase status in any scenario above",
           ALL_PHASE_WRITES and "review" not in ALL_PHASE_WRITES, str(ALL_PHASE_WRITES))
 
-    tsrc = (ROOT / "brain/mastercode/runtime/tools.py").read_text()
-    ship = tsrc[tsrc.index("async def _exec_ship_project_app"):tsrc.index("async def _exec_artifact")]
+    tsrc = tools_source(ROOT)
+    # By AST: the text up to the next def was this one function only while both sat in tools.py.
+    ship = tools_function("_exec_ship_project_app", ROOT)
     check("the Host's ship tool refuses a tree the CI has not passed, before it installs",
           "_ci_held, _ = await _ci_merge_gate(pool, project_id)" in ship
           and ship.index("_ci_merge_gate(") < ship.index("await ship_project_service("))

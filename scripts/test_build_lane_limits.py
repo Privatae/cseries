@@ -27,6 +27,7 @@ import json
 import os
 import sys
 import time
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = os.environ.get("APP_ROOT") or os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path[:0] = [ROOT, os.path.join(ROOT, "brain"), os.path.join(ROOT, "system-apps")]
@@ -103,7 +104,7 @@ def section1():
         "brain/mastercode/runtime/tools.py": ('f"build crashed: {e}"', 'f"no build ran: {e}"'),
     }
     for rel, words in writers.items():
-        text = src(rel)
+        text = tools_source(ROOT) if rel.endswith("runtime/tools.py") else src(rel)
         for w in words:
             check(f"the writer still says {w!r} ({rel.rsplit('/', 1)[-1]})", w in text)
 
@@ -376,7 +377,7 @@ def section2():
          nac_harness.get_harness_relay, nac_approval.obtain) = saved
 
     # Every caller leaves the default to the lane.
-    tsrc = open(os.path.join(ROOT, "brain/mastercode/runtime/tools.py")).read()
+    tsrc = tools_source(ROOT)
     nsrc = open(os.path.join(ROOT, "server/routes/network.py")).read()
     check("mesh_harness_run, lab_run and POST /harness/run carry no 10-minute default of their own",
           'a.get("max_minutes") or 10' not in tsrc and 'body.get("max_minutes") or 10' not in nsrc)

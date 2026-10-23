@@ -133,7 +133,7 @@ DIRECT_OP_TOOLS: frozenset[str] = frozenset({
     "memory_curate",
     "schedule_task", "task_template", "entity_tasks",
     # ── project row — one INSERT from a name + description the
-    #    host already holds (tools.py:_exec_create_project: no op enum, no
+    #    host already holds (tools_projects.py:_exec_create_project: no op enum, no
     #    content generation; the started-from marker is bookkeeping). It was
     #    dispatch-only, so "make a scratch project, then build" cost an agent
     #    whose grant the host had to get exactly right before it could even
@@ -195,7 +195,7 @@ DIRECT_OP_TOOLS: frozenset[str] = frozenset({
     #    turn and routed to an agent, which the tool's own description and
     #    the Circles manifest promised would not happen. ──
     "explanation_level",
-    # ── harness sign-in — runtime/tools.py:_exec_harness_connections.
+    # ── harness sign-in — runtime/tools_projects.py:_exec_harness_connections.
     #    list/matrix/status are reads (already direct via read_safe_ops);
     #    login / login_code / login_status are each ONE call the host makes
     #    with args it already holds: start the VENDOR'S OWN login in the
@@ -279,7 +279,7 @@ DIRECT_OP_TOOLS: frozenset[str] = frozenset({
     #                           SELECTs and single INSERT/UPDATEs against
     #                           project_phases + phase_steps, with the
     #                           acceptance/gate validators running before the
-    #                           write (tools.py:_exec_project_phase). This is
+    #                           write (tools_projects.py:_exec_project_phase). This is
     #                           the single most-dispatched op measured.
     #      archive_project      one UPDATE to status='archived'; nothing is
     #                           destroyed.

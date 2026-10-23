@@ -19,6 +19,7 @@ Pure source scan — no server import, no network, no Stripe.
 import pathlib
 import re
 import sys
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 
@@ -38,7 +39,7 @@ def src(rel):
 
 
 routes = src("server/routes/applications.py")
-tools = src("brain/mastercode/runtime/tools.py")
+tools = tools_source()
 registry = src("brain/mastercode/public_tool_registry.py")
 store_js = src("system-apps/app-store/app.js")
 pub_js = src("system-apps/publisher/app.js")

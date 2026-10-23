@@ -19,6 +19,7 @@ Run: python3 scripts/test_lab_run.py
 import ast
 import os
 import sys
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = os.environ.get("APP_ROOT", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
@@ -74,7 +75,7 @@ check("description names the rate or says it is not configured",
       (os.environ.get("LAB_HARNESS_RATE_TEXT") or "NOT CONFIGURED") in desc)
 check("tests is required", "tests" in fn_schema.get("parameters", {}).get("required", []))
 
-tools_src = open(os.path.join(ROOT, "brain", "mastercode", "runtime", "tools.py")).read()
+tools_src = tools_source(ROOT)
 tree = ast.parse(tools_src)
 fn = next((n for n in ast.walk(tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_exec_lab_run"), None)
 check("_exec_lab_run exists", fn is not None)

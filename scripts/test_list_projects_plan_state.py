@@ -9,7 +9,7 @@ said so: list_projects returned id/name/status/kind/description only, so the
 host could not tell a stub from a live project and never offered to draft a
 plan. Empty states are where new users bounce.
 
-  1. list_projects (runtime/tools.py::_exec_list_projects, ~11162) aggregates
+  1. list_projects (runtime/tools_projects.py::_exec_list_projects, ~11162) aggregates
      project_phases per row — has_plan, phase_count, phases_ready,
      phases_complete, last_phase_at — in ONE lateral join, and attaches a
      `hint` to every kind='project' row without a plan, plus a result-level

@@ -45,6 +45,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 sys.path[:0] = [str(ROOT), str(ROOT / "brain")]
@@ -464,7 +465,7 @@ check("a phase changed after the send-back earns a fresh card",
 # The guard reads project_phases.updated_at, so the one host-side write the
 # refusal tells the host to make (set_phase_spec) MUST move it — when it did
 # not, the guard was a dead end.
-_tools_src = (ROOT / "brain/mastercode/runtime/tools.py").read_text()
+_tools_src = tools_source(ROOT)
 _sps = _tools_src[_tools_src.index('if op == "set_phase_spec":'):]
 _sps_update = _sps[_sps.index('"""UPDATE project_phases SET spec=$1,'):]
 _sps_update = _sps_update[:_sps_update.index('"""', 3)]
@@ -581,7 +582,7 @@ check("a credential ask of the same class is NOT auto-resolved: the user answers
 epool.pattern = None
 
 # ── 8. the call sites and the tool surface ───────────────────────────────────
-tools_src = (ROOT / "brain/mastercode/runtime/tools.py").read_text()
+tools_src = tools_source(ROOT)
 land = re.search(r"await _set_phase_status\(pool, phase_id, phase_final\)\n"
                  r"(?:\s*#.*\n)*\s*await _ticket_phase_outcome\(pool, entity_id, phase_id, phase_final, out\)",
                  tools_src)

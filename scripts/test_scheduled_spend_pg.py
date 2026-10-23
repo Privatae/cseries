@@ -34,6 +34,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 _ROOT = os.environ.get("APP_ROOT") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path[:0] = [_ROOT, os.path.join(_ROOT, "brain"), os.path.join(_ROOT, "scripts")]
@@ -121,7 +122,7 @@ async def main(dsn: str) -> None:
               "a reached budget stops the task before its turn and between steps, for good")
 
         print("S. schedule_task takes budget_usd on the prompt lane only")
-        tsrc = (ROOT / "brain/mastercode/runtime/tools.py").read_text()
+        tsrc = tools_source(ROOT)
         check("budget_usd does not apply to op_tool" in tsrc
               and "budget_usd must be more than $0" in tsrc
               and '_body["budget_usd"] = _budget' in tsrc,

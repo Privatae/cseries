@@ -40,6 +40,7 @@ import os
 import re
 import sys
 from turn_source import turn_source  # session.py and the modules split out of it
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 FAILS = []
 
@@ -146,7 +147,7 @@ def main() -> int:
         session_id="s-2"))
     check("memory_curate: machinery is refused before any write",
           res.get("status") == "error" and "not stored" in res.get("result", ""), f"{res}")
-    src_t = open(os.path.join(app_root, "brain/mastercode/runtime/tools.py")).read()
+    src_t = tools_source(app_root)
     check("memory_curate: dispatcher passes the session",
           "_exec_memory_curate(args, session_id=session_id)" in src_t)
     check("memory_curate: a new row carries the session and its scope",

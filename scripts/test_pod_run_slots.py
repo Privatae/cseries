@@ -32,6 +32,7 @@ import json
 import pathlib
 import sys
 import tempfile
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
@@ -301,7 +302,7 @@ check("no pool: the in-flight count is 0 and the caller's own count stands",
 
 print("== the phase scheduler hands the count down the whole chain ==")
 import ast as _ast
-_tools = (ROOT / "brain/mastercode/runtime/tools.py").read_text()
+_tools = tools_source(ROOT)
 _review = (ROOT / "server/routes/review.py").read_text()
 check("the build door claims first, then counts per resolved engine, then launches",
       _tools.count("_per_engine, _keys = await _engine_counts(kw[\"harness\"] for _t, kw in _ready)") == 2

@@ -25,6 +25,9 @@ import pathlib
 import sys
 
 import pytest
+import sys as _ts_sys, os as _ts_os
+_ts_sys.path.insert(0, _ts_os.path.join(_ts_os.path.dirname(_ts_os.path.dirname(_ts_os.path.abspath(__file__))), 'scripts'))
+from tools_source import tools_source  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
@@ -71,7 +74,7 @@ def test_the_handler_exists():
 
 def test_the_dispatch_arm_routes_to_the_handler():
     """A handler nothing calls is the other half of the same bug."""
-    src = (REPO / "brain/mastercode/runtime/tools.py").read_text()
+    src = tools_source(REPO)
     assert 'elif name == "autofill":' in src
     assert "_exec_autofill(args, entity_id, pool)" in src
 
@@ -99,7 +102,7 @@ def test_every_schema_op_is_handled():
     be the same set — an advertised op with no arm is a dead end."""
     enum = set(PUBLIC_TOOL_SCHEMAS[TOOL]["function"]["parameters"]
                ["properties"]["op"]["enum"])
-    src = (REPO / "brain/mastercode/runtime/tools.py").read_text()
+    src = tools_source(REPO)
     body = src.split("async def _exec_autofill", 1)[1]
     for op in enum:
         assert f'"{op}"' in body, f"op {op!r} is advertised but not handled"

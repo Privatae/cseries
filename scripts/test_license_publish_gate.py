@@ -21,6 +21,7 @@ import hashlib
 import sys
 import tempfile
 from pathlib import Path
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -167,7 +168,7 @@ check("a licence refusal is 403, before the bridge relay",
       ap.count('"publish refused (licence): "') == 2)
 check("a mirrored repo must declare its upstream url + licence",
       "declare where the code came" in ap and "the declared upstream must be the real one" in ap)
-tl = (ROOT / "brain" / "mastercode" / "runtime" / "tools.py").read_text()
+tl = tools_source(ROOT)
 check("the host's workspace write calls write_gate before writing",
       "_licensing.write_gate(" in tl and tl.index("_licensing.write_gate(") < tl.index(
           "res = file_access.write_file(path, a.get(\"content\")"))

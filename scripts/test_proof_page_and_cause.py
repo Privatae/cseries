@@ -26,6 +26,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from tools_source import tools_function, tools_source  # tools.py and the modules split out of it
 
 _ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 
@@ -39,7 +40,7 @@ def check(label: str, cond: bool, extra: str = "") -> None:
         _FAILURES.append(label)
 
 
-tools_src = (_ROOT / "brain/mastercode/runtime/tools.py").read_text()
+tools_src = tools_source(_ROOT)
 verify_src = (_ROOT / "brain/mastercode/runtime/app_verify.py").read_text()
 
 # ── 0. the simulator is GONE ───────────────────────────────────────────────
@@ -51,7 +52,9 @@ check("no page-load regex simulator lives in app_verify",
 # the calling SURFACE ("workbench") — so it returned no builds at all, and the
 # commit's own motivating row (the repair build that replaced the pod) was the
 # one it could not return. A string-match test is what let that through.
-_sql = re.search(r"SELECT task_id, task_type.*?LIMIT 5", tools_src, re.S)
+# Searched in app_status alone: the first such SELECT in the tool code was this
+# one only while every tool sat in tools.py in its old order.
+_sql = re.search(r"SELECT task_id, task_type.*?LIMIT 5", tools_function("_exec_system_app_status", _ROOT), re.S)
 _pred = _sql.group(0) if _sql else ""
 check("app_status reports the platform actions that touched this app",
       '"platform_actions"' in tools_src)

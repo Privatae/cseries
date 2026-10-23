@@ -35,6 +35,7 @@ import os
 import re
 import sys
 from turn_source import turn_source  # session.py and the modules split out of it
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 FAILS = []
 
@@ -374,7 +375,7 @@ def main() -> int:
     check("the decide route applies a turn type card after the decide, and records it",
           'if md.get("kind") == TURN_TYPE_PROPOSAL_KIND:' in tsrc
           and "jsonb_build_object('turn_type_apply'" in tsrc)
-    tools_src = open(os.path.join(app_root, "brain", "mastercode", "runtime", "tools.py"), encoding="utf-8").read()
+    tools_src = tools_source(app_root)
     check("the executor is dispatched", 'elif name == "turn_type":\n        return await _exec_turn_type(' in tools_src)
     i = tools_src.find("async def _exec_turn_type(")
     body = tools_src[i:tools_src.find("\nasync def ", i + 10)]

@@ -31,6 +31,7 @@ import os
 import sys
 import types
 from pathlib import Path
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parent.parent)
 sys.path.insert(0, str(ROOT))
@@ -421,7 +422,7 @@ check("… and a granted one as the route", "op='extract' (context_id=77)" in m 
 m = asyncio.run(_msg("image/png", [OCR, OCR2], {"desk.example"}))
 check("… naming only the granted machine when both have the engine", "desk.example" in m and "laptop.example" not in m, m)
 
-tools_src = src("brain/mastercode/runtime/tools.py")
+tools_src = tools_source()
 check("tools.py: a refused extraction reaches the loop as status 'denied' with the gate's words",
       'if res.get("refused"):' in tools_src and '"status": "denied", "result": res["error"]' in tools_src)
 check("tools.py: op='extract_machines' says which machines are granted (and why not)",

@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 from turn_source import turn_paths  # session.py and the modules split out of it
+from tools_source import tools_paths  # tools.py and the modules split out of it
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -30,8 +31,8 @@ HOST_VISIBLE = [
     # The meta-tool executor composes the harness build prompt + tool
     # errors — its strings reach both the host and the coding harness (the
     # 2026-07-11 sweep found the build prompt still teaching the retired
-    # factory app).
-    ROOT / "brain/mastercode/runtime/tools.py",
+    # factory app). tools.py and every module split out of it.
+    *(Path(p) for p in tools_paths(ROOT)),
     # 2026-08-19 (nobody could say what 'Lane A' meant any more): the
     # host turn, its prompt builders, the dispatched-agent runtime, the wall
     # modules, the harness pool's build path (its activity strings feed the

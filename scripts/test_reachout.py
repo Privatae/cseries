@@ -70,6 +70,7 @@ import sys
 import types
 import uuid
 from datetime import datetime, time as _t_cls, timedelta, timezone
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 _ROOT = os.environ.get("APP_ROOT") or os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "..")
@@ -2291,7 +2292,7 @@ def test_the_tool_is_wired_in_every_place_the_lane_gate_requires():
     from mastercode.runtime.direct_ops import DIRECT_OP_TOOLS, UNATTENDED_OP_TOOLS
     from mastercode.runtime.tool_lanes import lane_for
 
-    tools_src = _read("brain/mastercode/runtime/tools.py")
+    tools_src = tools_source()
     for n in ("reachout", "reachout_channel"):
         check(f"1/5 registry schema — {n}", n in PUBLIC_TOOL_SCHEMAS)
         check(f"2/5 PUBLIC_META_TOOL_NAMES — {n}", n in PUBLIC_META_TOOL_NAMES)

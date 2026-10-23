@@ -50,6 +50,7 @@ import re
 import sys
 import zipfile
 from pathlib import Path
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 logging.disable(logging.CRITICAL)
 
@@ -296,7 +297,7 @@ check("the role list handed to the UI carries no removed role",
 # The host-facing status (model_routing op='status') derives roles_state and
 # `unrouted` by walking inf.ROLES, so a stale key cannot be reported as
 # unrouted. Pin the loop, since that is the property — not the value.
-_tools = (_ROOT / "brain/mastercode/runtime/tools.py").read_text()
+_tools = tools_source(_ROOT)
 check("the routing status walks inf.ROLES, so `unrouted` can only name live roles",
       "for role in inf.ROLES:" in _tools)
 

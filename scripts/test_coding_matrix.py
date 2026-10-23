@@ -24,6 +24,7 @@ import json
 import logging
 import os
 import sys
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 # smoke reads this gate with `2>&1 | tail -1`. Module logging writes to
 # stderr unbuffered while these prints are block-buffered through a pipe,
@@ -454,7 +455,7 @@ def main() -> int:
           "(validators/preflight build the matrix with kick_catalogs=False)",
           _src_inf2.count("kick_catalogs=True") == 1
           and "async def _build_coding_matrix(*, kick_catalogs: bool = False)" in _src_inf2
-          and "kick_catalogs=True" in open(os.path.join(app_root, "brain/mastercode/runtime/tools.py")).read())
+          and "kick_catalogs=True" in tools_source(app_root))
     brain_service._pool = None
 
     print(f"[coding-matrix] {'PASS (0 failing)' if not failures else f'FAIL ({len(failures)} failing): {failures}'}")

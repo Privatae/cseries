@@ -28,6 +28,7 @@ import os
 import sys
 import tempfile
 from pathlib import Path
+from tools_source import tools_function, tools_source  # tools.py and the modules split out of it
 
 _ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 sys.path.insert(0, str(_ROOT))
@@ -82,9 +83,10 @@ print("\n2. both project-creation doors create the directory")
 create_project = fn_src("server/routes/projects.py", "create_project")
 check("route: create_project calls ensure_project_dir",
       "ensure_project_dir(" in create_project)
-tools_src = src("brain/mastercode/runtime/tools.py")
-exec_create = tools_src[tools_src.index("async def _exec_create_project"):]
-exec_create = exec_create[:exec_create.index("\n# ── list_projects implementation")]
+tools_src = tools_source()
+# By AST, as fn_src does: the text up to the list_projects section header was
+# this function only while both sat in tools.py.
+exec_create = tools_function("_exec_create_project")
 check("host tool: _exec_create_project calls ensure_project_dir",
       "ensure_project_dir(" in exec_create)
 check("the directory is not gated on gitea being connected",
@@ -126,8 +128,8 @@ check("sync_project_repo passes paths through",
       "gate_violations or [], changed_files or [], paths" in sync_repo)
 
 print("\n6. workspace_file no longer refuses a project write")
-wsf = tools_src[tools_src.index("async def _exec_workspace_file"):]
-wsf = wsf[:wsf.index("\n_codesearch_index_tasks: dict = {}")]
+# By AST: the text up to the next def was this one function only while both sat in tools.py.
+wsf = tools_function("_exec_workspace_file")
 check("the read-only refusal is gone",
       "project files are read-only here" not in wsf)
 check("write passes the project base", "base=base)" in wsf)

@@ -21,6 +21,7 @@ import sys
 import tempfile
 from pathlib import Path
 from turn_source import turn_source  # session.py and the modules split out of it
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 sys.path.insert(0, str(ROOT))
@@ -312,7 +313,7 @@ with tempfile.TemporaryDirectory() as td:
         rv.PROJECTS_ROOT = saved
 
 print("== 6. source pins: the door, the chain, the delivery ==")
-tsrc = (ROOT / "brain/mastercode/runtime/tools.py").read_text()
+tsrc = tools_source(ROOT)
 tree = ast.parse(tsrc)
 F = {n.name: n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}
 seg = lambda n: ast.get_source_segment(tsrc, F[n]) or ""  # noqa: E731

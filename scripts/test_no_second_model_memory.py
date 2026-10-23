@@ -23,6 +23,8 @@ import pathlib
 import re
 import sys
 
+from tools_source import tools_paths  # tools.py and the modules split out of it
+
 ROOT = pathlib.Path(os.environ.get("APP_ROOT") or pathlib.Path(__file__).resolve().parents[1])
 FAILED = 0
 
@@ -44,8 +46,9 @@ ALLOWED = {
     "brain/mastercode/runtime/session.py",
     # The Host's tool executors, run in its turn; their model calls are tool
     # work the Host started (web search, a picture), and their memory writes
-    # are the Host's own calls (memory_curate, close_turn).
-    "brain/mastercode/runtime/tools.py",
+    # are the Host's own calls (memory_curate, close_turn). tools.py and every
+    # module split out of it.
+    *(os.path.relpath(p, ROOT) for p in tools_paths(ROOT)),
     # build(action='plan')'s research synthesis, started by the Host in its
     # turn: its rows are recall-only research records, never pre-fired.
     "brain/mastercode/skills/deep_research.py",

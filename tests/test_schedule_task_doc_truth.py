@@ -29,6 +29,9 @@ from __future__ import annotations
 import pathlib
 import re
 import sys
+import sys as _ts_sys, os as _ts_os
+_ts_sys.path.insert(0, _ts_os.path.join(_ts_os.path.dirname(_ts_os.path.dirname(_ts_os.path.abspath(__file__))), 'scripts'))
+from tools_source import tools_source  # noqa: E402
 
 REPO = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO))
@@ -39,7 +42,7 @@ from mastercode import public_tool_registry  # noqa: E402
 DESC = public_tool_registry.PUBLIC_TOOL_SCHEMAS[
     "schedule_task"]["function"]["description"]
 MAIN = (REPO / "server" / "main.py").read_text()
-TOOLS = (REPO / "brain" / "mastercode" / "runtime" / "tools.py").read_text()
+TOOLS = tools_source(REPO)
 
 # THE DOCTRINE MOVED, SO THE ASSERTIONS FOLLOWED IT (2026-09-15).
 # e3233b12 (2026-09-06, host-prompt-map phase 2) made a tool DESCRIPTION one

@@ -27,6 +27,7 @@ Exit 0 = all pass; exit 1 + [screen] FAIL lines otherwise.
 import os
 import re
 import sys
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 FAILS = []
 
@@ -86,7 +87,7 @@ def main() -> int:
     check("fail-open path returns content with a visible flag",
           "screen_error" in open(uc.__file__).read(), "screen_error flag must exist")
 
-    src = open(os.path.join(app_root, "brain/mastercode/runtime/tools.py")).read()
+    src = tools_source(app_root)
 
     # 5/6. Both model-ingress sites are wired.
     # Scope to the function's REAL extent, not a fixed character budget. The

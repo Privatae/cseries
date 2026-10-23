@@ -22,6 +22,7 @@ import ast
 import os
 import re
 import sys
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 failures = []
 
@@ -37,8 +38,7 @@ def main() -> int:
     app_root = os.environ.get("APP_ROOT", "/app")
     reg_src = open(os.path.join(
         app_root, "brain/mastercode/public_tool_registry.py")).read()
-    tools_src = open(os.path.join(
-        app_root, "brain/mastercode/runtime/tools.py")).read()
+    tools_src = tools_source(app_root)
     review_src = open(os.path.join(
         app_root, "server/routes/review.py")).read()
 

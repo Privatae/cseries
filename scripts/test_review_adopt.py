@@ -41,6 +41,7 @@ import pathlib
 import shutil
 import sys
 import tempfile
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, _ROOT)
@@ -451,8 +452,7 @@ ck("gate15 ...and adopted nothing into it",
    sorted(q.name for q in (PROJECTS / "9200").iterdir()))
 
 # and the shim must not inject the ambient project when a run names its own
-_tools_src = (pathlib.Path(__file__).resolve().parents[1]
-              / "brain/mastercode/runtime/tools.py").read_text()
+_tools_src = tools_source(pathlib.Path(__file__).resolve().parents[1])
 _branch = _tools_src[_tools_src.index('name == "review.adopt"'):]
 _branch = _branch[:_branch.index("_exec_review_adopt(a)")]
 ck("gate15 the dispatch skips ambient project_id when run_id is given",
@@ -858,7 +858,7 @@ ck("gate8 ...and adopt_undo's too",
    _describe(META_TOOL_CAPS["review.adopt_undo"]["required_bits"]))
 
 _tools = pathlib.Path(__file__).resolve().parents[1] / "brain/mastercode/runtime/tools.py"
-_src = _tools.read_text()
+_src = tools_source(pathlib.Path(__file__).resolve().parents[1])
 for n in ("review.adopt", "review_adopt", "review.adopt_undo", "review_adopt_undo"):
     ck(f"gate8 dispatch handles {n!r}", f'name == "{n}"' in _src)
 ck("gate8 the implementations exist",

@@ -28,6 +28,9 @@ import pathlib
 import sys
 
 import pytest
+import sys as _ts_sys, os as _ts_os
+_ts_sys.path.insert(0, _ts_os.path.join(_ts_os.path.dirname(_ts_os.path.dirname(_ts_os.path.abspath(__file__))), 'scripts'))
+from tools_source import tools_source  # noqa: E402
 
 _REPO = pathlib.Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(_REPO))
@@ -705,7 +708,7 @@ def test_recommendation_helpers_are_inert_off_and_match_the_writer_on(datafile, 
 
 
 def test_the_recommender_uses_the_helpers():
-    src = (_REPO / "brain/mastercode/runtime/tools.py").read_text(encoding="utf-8")
+    src = tools_source(_REPO)
     rec = src[src.index('if op == "recommend":'):]
     rec = rec[: rec.index('"apply_with"')]
     assert "_ms.approved_candidates(pick, cands)" in rec

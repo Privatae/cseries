@@ -40,6 +40,7 @@ import os
 import re
 import sys
 from turn_source import turn_source  # session.py and the modules split out of it
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = os.environ.get("APP_ROOT", os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 sys.path.insert(0, ROOT)
@@ -584,7 +585,7 @@ def test_fix_a_and_b_wiring():
     assert "cited_hits" not in m and "_doc_fired" not in m
     r = open(os.path.join(ROOT, "brain/mastercode/memory_retrieval.py")).read()
     assert "_turn_taint.mark_recall(fed)" in r, "the five-store search marks what it returns"
-    t = open(os.path.join(ROOT, "brain/mastercode/runtime/tools.py")).read()
+    t = tools_source(ROOT)
     assert "_body = _turn_taint.stamp(_body)" in t, "a task written in a marked turn is stamped"
     o = open(os.path.join(ROOT, "brain/mastercode/brain/offline_task_runner.py")).read()
     assert re.search(r"system_turn=True,.*?\*\*_untrusted_kw\(payload\)", o, re.S)
@@ -608,7 +609,7 @@ def test_session_wiring_marks_where_content_enters():
         "a woken turn must start marked"
     b = open(os.path.join(ROOT, "server/brain_service.py")).read()
     assert '**({"untrusted_input": untrusted_input} if untrusted_input else {})' in b
-    t = open(os.path.join(ROOT, "brain/mastercode/runtime/tools.py")).read()
+    t = tools_source(ROOT)
     assert "await _gitea_mark_if_foreign(repo, owner, host_login, _get)" in t
 
 
@@ -626,7 +627,7 @@ def test_registered_on_the_operate_lane():
     assert "machine_exec" in DIRECT_OP_TOOLS and lane_for("machine_exec") == "operate"
     assert META_TOOL_CAPS["machine_exec"]["required_bits"] == 16 | 4
     assert not is_read_safe_tool("machine_exec")
-    t = open(os.path.join(ROOT, "brain/mastercode/runtime/tools.py")).read()
+    t = tools_source(ROOT)
     assert 'elif name == "machine_exec":\n' in t and "grant_bits=grant_bits)" in t
 
 
@@ -978,7 +979,7 @@ def test_the_host_opens_its_root_thread_visibly():
         from mastercode.public_tool_registry import PUBLIC_TOOL_SCHEMAS
         p = PUBLIC_TOOL_SCHEMAS["turn_type"]["function"]["parameters"]["properties"]
         assert "root" in p["op"]["enum"] and "request" in p
-        t = open(os.path.join(ROOT, "brain/mastercode/runtime/tools.py")).read()
+        t = tools_source(ROOT)
         assert 'if op == "root":' in t and "_root.open_root(pool, entity_id" in t
     finally:
         brain_service.get_runtime = saved

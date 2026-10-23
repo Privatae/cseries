@@ -18,6 +18,7 @@ import importlib.util
 import os
 import re
 import sys
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = os.environ.get("APP_ROOT") or os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))
@@ -161,7 +162,7 @@ check("set_explanation_level_service validates against EXPLANATION_LEVELS",
 check("GET /personality payload carries explanation_level",
       '"explanation_level": explanation_level_of(row["behavioral_params"])' in brain_src)
 reg_src = open(os.path.join(ROOT, "brain/mastercode/public_tool_registry.py")).read()
-tools_src = open(os.path.join(ROOT, "brain/mastercode/runtime/tools.py")).read()
+tools_src = tools_source(ROOT)
 check("explanation_level tool has a registry schema",
       '"name": "explanation_level"' in reg_src)
 check("explanation_level tool has a dispatch branch",

@@ -81,15 +81,15 @@ _CODE_EXEC_TOOLS = frozenset({
 # explicit _CODE_EXEC_TOOLS set above still wins, so a name in both is denied.
 #
 #   harness_connections — SELECTs harness install/credential state
-#     (runtime/tools.py::_exec_harness_connections); declared read-only in both
+#     (runtime/tools_projects.py::_exec_harness_connections); declared read-only in both
 #     the capability table (runtime/meta_tool_caps.py) and the public registry.
 #     The `harness` prefix marked it code-exec anyway, which made it
 #     unreachable by EVERY route (violates host-full-read-rights: a read
 #     must never need a dispatched agent).
 #   harness_costs — one SELECT over the priced-run rows (tokens, billed USD,
-#     compute seconds) at runtime/tools.py::_exec_harness_costs.
+#     compute seconds) at runtime/tools_projects.py::_exec_harness_costs.
 #   harness_transcript — one SELECT of a completed run's stored transcript
-#     (runtime/tools.py::_exec_harness_transcript).
+#     (runtime/tools_projects.py::_exec_harness_transcript).
 # All three READ the record of a pool run; none starts one.
 _CODE_EXEC_NAME_EXCEPTIONS = frozenset({
     "harness_connections",

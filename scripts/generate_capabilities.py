@@ -203,7 +203,7 @@ def _call(name: str, args: dict) -> str:
 
 def _param_index(fn: dict) -> dict:
     """The parameter NAME index the card reader builds `params` from
-    (tools.py::_caps_normalize_card reads `parameters["properties"]` and keeps
+    (tools_environment.py::_caps_normalize_card reads `parameters["properties"]` and keeps
     the sorted key list). Deliberately minimal: the reader keeps only the names,
     so carrying the schema prose here would be bytes no model ever sees. The
     human-readable parameter summary goes into `how`, which the reader DOES
@@ -560,7 +560,7 @@ def _op_card(name: str, fn: dict, meta: dict, caps: dict, lane: str,
 
     # HOW carries the worked call, the full op menu and the parameter summary,
     # because `how` is one of the ten fields the card reader passes through to
-    # the model (tools.py::_caps_normalize_card) — a structured `operations` or
+    # the model (tools_environment.py::_caps_normalize_card) — a structured `operations` or
     # `parameters` blob is dropped there and would be bytes nobody reads.
     how = [_call(name, _example_args(fn))]
     menu = _op_menu(clauses, key)

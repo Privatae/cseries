@@ -21,6 +21,7 @@ import os
 import re
 import sys
 from pathlib import Path
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 EXECUTOR = ROOT / "brain" / "mastercode" / "world_db.py"
@@ -68,7 +69,7 @@ check("2 world_db.py reaches no pool but host_world's", not other_lanes, str(oth
 check("2 and it does use the host_world lane",
       "get_world_pool()" in src and "world_dsn()" in src)
 
-tools = (ROOT / "brain" / "mastercode" / "runtime" / "tools.py").read_text(encoding="utf-8")
+tools = tools_source(ROOT)
 m = re.search(r'elif name == "data":(.*?)\n    elif ', tools, re.S)
 code = "\n".join(ln.split("#", 1)[0] for ln in (m.group(1) if m else "").splitlines())
 check("3 the data branch exists and calls world_db.run_op with no pool",

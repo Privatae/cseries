@@ -25,6 +25,7 @@ import sys
 import tempfile
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
@@ -302,7 +303,7 @@ with tempfile.TemporaryDirectory() as t:
     check("a clean page card passes the card scan", gc._page_card_leaks([card]) == [])
     check("a leak in a page card's title stops the card scan",
           len(gc._page_card_leaks([dict(card, title="secr<b></b>ets.json kernel")])) == 1)
-    tools = (HERE.parent / "brain" / "mastercode" / "runtime" / "tools.py").read_text()
+    tools = tools_source(HERE.parent)
     ns: dict = {}
     exec("_CAPS_PAGE_EXCERPT = 900\n" + wp._python_symbol_source(tools, "_caps_search_view"), ns)
     view = ns["_caps_search_view"](dict(card))

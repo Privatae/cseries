@@ -31,6 +31,8 @@ import sys
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(ROOT / "scripts"))
+from tools_source import tools_source  # noqa: E402  tools.py and the modules split out of it
 
 from server.applications import installer  # noqa: E402
 from server.applications.installer import (  # noqa: E402
@@ -157,7 +159,7 @@ for rel, must in (
         ("server/applications/default_install.py", "over plan"),
         ("brain/mastercode/runtime/tools.py", "over_plan"),
 ):
-    text = (ROOT / rel).read_text()
+    text = tools_source(ROOT) if rel.endswith("runtime/tools.py") else (ROOT / rel).read_text()
     check(f"{rel} names the refusal",
           "AppRuntimeOverPlan" in text and must in text)
 

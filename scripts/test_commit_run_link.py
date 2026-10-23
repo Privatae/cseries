@@ -22,6 +22,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -131,7 +132,7 @@ rv = (ROOT / "server" / "routes" / "review.py").read_text()
 check("the adopt lane passes the adopted run's id to the save point",
       "run_ids=[int(run_id)] if run_id else None" in rv)
 check("the single-harness build returns its run_id", '"run_id": _run_id' in rv)
-tl = (ROOT / "brain" / "mastercode" / "runtime" / "tools.py").read_text()
+tl = tools_source(ROOT)
 check("the phase save point passes the build's run_id",
       'run_ids=[int(_res["run_id"])] if _res.get("run_id") else None' in tl)
 

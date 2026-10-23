@@ -56,11 +56,11 @@ afterwards to decide what to keep.
 | `brain/mastercode/runtime/thread_choice.py::_marker` | the Host picks the thread a message lands in | `turn` (marker row) |
 | `brain/mastercode/circles_threads.py::_split_in_transaction` | the person splits a thread | `turn` (marker row) |
 | `brain/mastercode/runtime/turn_home.py::rehome_turn` | a turn moved to another thread | `turn` |
-| `brain/mastercode/runtime/tools.py::_write_started_from` | a conversation started from another | `turn` (marker row) |
+| `brain/mastercode/runtime/tools_projects.py::_write_started_from` | a conversation started from another | `turn` (marker row) |
 | `server/routes/projects.py::adopt_thread_core` | a thread adopted into a project | `turn` |
 | `brain/mastercode/runtime/close_turn.py::_write_preference` | the closing note of a reply names what the person wants | `preference` |
 | `brain/mastercode/runtime/close_turn.py::_write_goal` | the closing note names the conversation's goal | `goal` |
-| `brain/mastercode/runtime/tools.py::_curate_add`, `_curate_add_slot`, `_curate_replace` | the Host calls `memory_curate` | `preference` or `relationship` |
+| `brain/mastercode/runtime/tools_memory.py::_curate_add`, `_curate_add_slot`, `_curate_replace` | the Host calls `memory_curate` | `preference` or `relationship` |
 | `brain/mastercode/memory_engine.py::_store_teaching_memory` | a message that teaches a rule ("Remember this:" and similar; `_detect_teaching`, called from `runtime/session.py`) | `preference` (a taught rule) |
 | `brain/mastercode/runtime/task_record.py::_promote` | a task's finding promoted to memory | `cited_fact` |
 | `brain/mastercode/skills/deep_research.py::_persist` | a deep-research run finishes | `research` |

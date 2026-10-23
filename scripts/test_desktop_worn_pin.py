@@ -34,6 +34,7 @@ import tempfile
 import types
 from pathlib import Path
 from turn_source import turn_source  # session.py and the modules split out of it
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 _ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 sys.path.insert(0, str(_ROOT / "brain"))
@@ -418,7 +419,7 @@ check("...a browser that could not be asked holds nothing (not a failure)",
 check("...and a render pass alone proves nothing (the acceptance still does)",
       PL.decide(True, pipe, [PL.harness_check_verdict(None, False),
                              {**v, "ok": True}])["status"] == PL.REVIEW)
-src = (_ROOT / "brain/mastercode/runtime/tools.py").read_text()
+src = tools_source(_ROOT)
 body_ = src[src.index("async def _run_phase_build("):]
 body_ = body_[:body_.index("\nasync def ", 10)]
 check("the phase build asks for the verdict after the build and before its checks are read",

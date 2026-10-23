@@ -18,6 +18,7 @@ import importlib.util
 import os
 import sys
 from turn_source import turn_source  # session.py and the modules split out of it
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # bug_review imports tool_call_ledger (stdlib-only) for its refusals.
@@ -215,7 +216,7 @@ except Exception as _e:  # noqa: BLE001
     check(f"dispatch door importable ({_e})", False)
 
 # ── tools.py hands the grant AND the session to the handler ─────────────────
-_tools_src = open(os.path.join(_ROOT, "brain", "mastercode", "runtime", "tools.py")).read()
+_tools_src = tools_source(_ROOT)
 check("tools.py passes grant_bits as agent_grant and the session id into _exec_bug_review",
       "_exec_bug_review(args, agent_grant=grant_bits, session_id=session_id)" in _tools_src)
 _ad_src = open(os.path.join(_ROOT, "brain", "mastercode", "runtime", "agent_dispatch.py")).read()

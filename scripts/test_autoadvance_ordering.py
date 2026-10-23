@@ -15,6 +15,7 @@ import ast
 import os
 import sys
 from pathlib import Path
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 _ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 _TOOLS = _ROOT / "brain" / "mastercode" / "runtime" / "tools.py"
@@ -28,7 +29,7 @@ def check(label: str, cond: bool, extra: str = "") -> None:
         _FAILURES.append(label)
 
 
-src = _TOOLS.read_text()
+src = tools_source(_ROOT)
 tree = ast.parse(src)
 FUNCS = {n.name: n for n in ast.walk(tree)
          if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))}

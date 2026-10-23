@@ -62,7 +62,7 @@ any tool changed anything (`Takeover.settle`: T14, T15). Everything else
 | T16 | taken over (boot id is not this process's, or older than the turn limit) → held_for_person + `crash_unknown` | `brain/mastercode/runtime/identity_hold.py::sweep_taken_over` | the orphan sweep at start and periodically | NO outcome recorded: held, never scheduled |
 | T17 | scheduled / running → cancelled; held_for_person → cancelled | `brain/mastercode/circles_threads.py::delete_thread` | the person deletes the thread | terminal |
 | T18 | scheduled / running → cancelled | `server/bridge/memory_handlers.py::handle_calendar_cancel` | the person, the Host or the calendar pane cancels | terminal |
-| T19 | scheduled → cancelled | `brain/mastercode/runtime/tools.py::_exec_schedule_task` | the Host's `schedule_task` cancel | terminal |
+| T19 | scheduled → cancelled | `brain/mastercode/runtime/tools_comms.py::_exec_schedule_task` | the Host's `schedule_task` cancel | terminal |
 | T20 | scheduled / running → cancelled | `server/routes/agents.py::cancel_scheduled` | the Agents app | terminal |
 | T21 | scheduled → cancelled | `server/browser_agents.py::_cancel_event` | a browser agent run is cancelled | terminal |
 | T22 | any → completed | `server/bridge/memory_handlers.py::handle_calendar_complete` | the person or the calendar pane marks it done | terminal |

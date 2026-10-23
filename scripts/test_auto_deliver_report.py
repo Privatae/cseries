@@ -19,6 +19,7 @@ import ast
 import os
 import sys
 from turn_source import turn_source  # session.py and the modules split out of it
+from tools_source import tools_function, tools_source  # tools.py and the modules split out of it
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 failures = []
@@ -72,7 +73,7 @@ f = facts({"auto_ship": {"app_id": "x", "shipped": True, "reason": "installed id
 check("no proof promised when none was started",
       "proving" not in f and "no proof that it runs was started (installed id unknown" in f, f)
 
-tools = open(os.path.join(ROOT, "brain/mastercode/runtime/tools.py")).read()
+tools = tools_source(ROOT)
 # No code records a new hold: the reviewer and its writer are gone.
 check("no new review hold is ever recorded (the reviewer and its writer are gone)",
       "_set_review_hold" not in tools and "_review_blocks" not in tools
@@ -96,7 +97,8 @@ check("every auto-deliver consults a STORED hold BEFORE the merge, and states it
       and 'out["result"]["auto_merge"] = {"merged": False, "held": _held}' in gate
       and 'out["result"]["auto_ship"] = {"shipped": False, "reason": _held}' in gate
       and tools.rindex("if _auto_deliver:", 0, g) > tools.rindex("_save_point(_checks)", 0, g))
-ship = tools[tools.index("async def _exec_ship_project_app"):tools.index("async def _exec_artifact")]
+# By AST: the text up to the next def was this one function only while both sat in tools.py.
+ship = tools_function("_exec_ship_project_app", ROOT)
 check("the host's ship tool refuses while a hold stands",
       "_hold = await _active_review_hold(pool, project_id)" in ship
       and ship.index("_active_review_hold") < ship.index("await ship_project_service("))

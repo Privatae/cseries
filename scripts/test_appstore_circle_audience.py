@@ -48,6 +48,7 @@ import asyncio
 import datetime as _dt
 import os
 import sys
+from tools_source import tools_source  # tools.py and the modules split out of it
 
 _ROOT = os.environ.get("APP_ROOT") or os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
 sys.path[:0] = [_ROOT, os.path.join(_ROOT, "brain")]
@@ -424,7 +425,7 @@ async def main() -> int:
     check("THIS host owns" in apps_md and "is refused" in apps_md,
           "including the bound that decides which groups are eligible")
 
-    src = open(os.path.join(_ROOT, "brain", "mastercode", "runtime", "tools.py")).read()
+    src = tools_source(_ROOT)
     check('"public", "internal", "circle"' in src,
           "the executor admits the same three values the schema offers")
     check("audience == \"circle\" and not group_ref" in src,

@@ -27,6 +27,7 @@ that asked for it.
 
 Run: APP_ROOT=<repo> python3 scripts/test_timer_origin.py
 """
+import re
 import os
 import sys
 from pathlib import Path
@@ -460,11 +461,17 @@ check("...and the turn ROWS drop the borrowed project",
 # sites), and notes the hold on its live trace (note_turn_held) — each drops a
 # borrowed project the same way.
 import ast as _ast_t
-# The turn's body: send_message and the core it hands the turn to
-# (_send_message_core, since the saved-request work split them).
+# The turn's body: send_message, the core it hands the turn to
+# (_send_message_core, since the saved-request work split them), and the
+# step that writes the turn's opening row (_write_opening_row).
 _sm_src = "".join(_ast_t.get_source_segment(sess_src, n) for n in _ast_t.walk(_ast_t.parse(sess_src))
                   if isinstance(n, _ast_t.AsyncFunctionDef)
-                  and n.name in ("send_message", "_send_message_core"))
+                  and n.name in ("send_message", "_send_message_core", "_write_opening_row"))
+# ... and the turn's reply recorder (TurnReplies), which writes the live trace
+# from the first text; it reads the row's project through the getter the turn
+# hands it, so the borrowed context is dropped there the same way.
+_rec_src = "".join(_ast_t.get_source_segment(sess_src, n) for n in _ast_t.walk(_ast_t.parse(sess_src))
+                   if isinstance(n, _ast_t.ClassDef) and n.name == "TurnReplies")
 check("...at EVERY write site, not just the assistant row",
       # 8 -> 9: the words a person sends into a
       # running turn are written as a user row when the turn reads them.
@@ -479,8 +486,23 @@ check("...at EVERY write site, not just the assistant row",
       # not); the turn's own rows carry what it said.
       # 9 -> 10: the request that opens a root turn
       # (turn_type op='root') is written as a user row of the Root thread.
-      _sm_src.count("project_id=_row_project_id") == 10
-      and "project_id=project_id, tags=" not in _sm_src)
+      # (counted from a word start: the turn hands _row_project_id=_row_project_id
+      # to the opening-row step, which is not a write site)
+      len(re.findall(r"(?<![\w])project_id=_row_project_id", _sm_src))
+      + _rec_src.count("project_id=self.row_project_id()") == 10
+      and _rec_src.count("project_id=self.row_project_id()") == 1
+      and "project_id=project_id, tags=" not in _sm_src + _rec_src)
+# The opening-row step's two write sites read its _row_project_id parameter, so
+# the count above holds only if the turn hands it the turn's own
+# _row_project_id: a call passing project_id would file the person's row under
+# the borrowed project with every write site unchanged.
+_opening_calls = [n for n in _ast_t.walk(_ast_t.parse(sess_src))
+                  if isinstance(n, _ast_t.Call) and isinstance(n.func, _ast_t.Attribute)
+                  and n.func.attr == "_write_opening_row"]
+check("...and the turn hands the opening-row step its own _row_project_id",
+      len(_opening_calls) == 1
+      and [_ast_t.unparse(k.value) for k in _opening_calls[0].keywords
+           if k.arg == "_row_project_id"] == ["_row_project_id"])
 # Recall scope and the dispatch origin must still follow the borrowed thread —
 # the point is to think there, not to be cut off from it.
 _recall_marker = ("_src_ctx = derive_source_context(\n"

@@ -596,7 +596,7 @@ check("the caught draft is captured for the durable turn",
 # the screen and the row are one string.
 check("the stored turn is draft + repair, so history matches what was on screen",
       "content = _reply_all()" in sess_src
-      and 'return join_pieces(_pieces)' in sess_src
+      and 'return join_pieces(self._pieces)' in sess_src
       and 'REPLY_SEP = "\\n\\n"' in sess_src)
 check("the injected correction quotes the draft back "
       "(the model cannot otherwise see what it must correct)",

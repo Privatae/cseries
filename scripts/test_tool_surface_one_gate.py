@@ -171,14 +171,31 @@ _sess_src = inspect.getsource(
 _sess_lines = _sess_src.splitlines()
 _tools_line = [ln for ln in _sess_lines
                if "tools = _build_host_orchestration_tools()" in ln]
-ck("gate4 the tools= build site still exists", len(_tools_line) == 1,
+# The build line is EntityRuntime._build_turn_tools's; the turn's one call of
+# that method is what the predicate guards.
+import ast as _ast  # noqa: E402
+_tree = _ast.parse(_sess_src)
+_bt = [n for n in _ast.walk(_tree) if isinstance(n, _ast.AsyncFunctionDef) and n.name == "_build_turn_tools"]
+ck("gate4 the tools= build site still exists, in _build_turn_tools",
+   len(_tools_line) == 1 and len(_bt) == 1
+   and "tools = _build_host_orchestration_tools()" in (_ast.get_source_segment(_sess_src, _bt[0]) or ""),
    repr(_tools_line))
-_idx = _sess_lines.index(_tools_line[0]) if _tools_line else -1
-_guard = "\n".join(_sess_lines[max(0, _idx - 3):_idx])
+
+
+def _is_build_call(n):
+    return (isinstance(n, _ast.Await) and isinstance(n.value, _ast.Call)
+            and _ast.unparse(n.value.func) == "self._build_turn_tools")
+
+
+_all_calls = [n for n in _ast.walk(_tree) if _is_build_call(n)]
+_guarded = [(i, n) for i in _ast.walk(_tree) if isinstance(i, _ast.If)
+            and "host_orchestration_enabled(" in _ast.unparse(i.test)
+            for s in i.body for n in _ast.walk(s) if _is_build_call(n)]
+_guard = "\n".join(_ast.unparse(i.test) for i, _n in _guarded)
 ck("gate4 it is guarded by the shared predicate",
-   "host_orchestration_enabled(" in _guard, _guard)
+   len(_all_calls) == 1 and len(_guarded) == 1, _guard or repr(len(_all_calls)))
 ck("gate4 it does NOT re-test response_style",
-   "response_style" not in _guard, _guard)
+   _guarded and "response_style" not in _guard, _guard)
 
 # ── gate5: the declared default is live, not dead code ──────────────
 from mastercode.codebook import MastercodeBook  # noqa: E402

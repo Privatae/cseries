@@ -339,10 +339,16 @@ check("honest STOP: after close_turn the forced-text call says the turn is close
 # Every completion's streamed text is kept as part of the reply
 # (the thread IS the chain of thought) — the owed reply's included, tool calls
 # or not.
+# The recorder (_send, _settle) is the turn's TurnReplies, in its own module;
+# it reads close_turn's owed reply through the getter the turn hands it.
+import mastercode.runtime.turn_replies as _TR  # noqa: E402
+_rec_src = inspect.getsource(_TR)
 check("nudge: a nudge that lands during the owed reply keeps its text as the reply",
       "_seen_reply = strip_wm(result.get('content') or '')" in src.replace('"', "'")
-      and "elif more and res.get('tool_calls') and res is not _ct_reply_result:" in src.replace('"', "'"))
-_send_fn = next(n for n in ast.walk(_tree) if isinstance(n, ast.AsyncFunctionDef) and n.name == "_send")
+      and "elif more and res.get('tool_calls') and res is not self.ct_reply_result():"
+      in _rec_src.replace('"', "'"))
+_send_fn = next(n for n in ast.walk(ast.parse(_rec_src))
+                if isinstance(n, ast.AsyncFunctionDef) and n.name == "_send")
 check("once: only text is kept (never None — the save joins strings): the recorder sends and records "
       "nothing for an empty piece",
       ast.unparse(_send_fn.body[1]) == "if not text:\n    return", ast.unparse(_send_fn)[:300])

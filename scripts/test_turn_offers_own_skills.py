@@ -235,8 +235,15 @@ _src = turn_source(ROOT)
 _at = _src.find("turn_own_skills(")
 _seg = _src[max(0, _at - 1500):_at + 2200] if _at >= 0 else ""
 check("G. session.py offers the turn its own skills (turn_own_skills)", _at >= 0)
+# add_discovery runs in EntityRuntime._build_turn_tools, which sits above the
+# turn in the file, so its position says nothing about order: the turn's call
+# of that method is what has to come before the lookup.
+_bt_at = _src.find("    async def _build_turn_tools(")
+_bt_end = _src.find("\n    async def ", _bt_at + 1) if _bt_at >= 0 else -1
 check("G. ...after the turn's catalog holds the skills (add_discovery comes first)",
-      0 <= _src.find("_door_catalog.add_discovery(await discovery_entries(") < _at)
+      0 <= _bt_at < _src.find("_door_catalog.add_discovery(await discovery_entries(", _bt_at) < _bt_end
+      and 0 <= _src.find("= await self._build_turn_tools(") < _at,
+      f"build_turn_tools={_bt_at} call={_src.find('= await self._build_turn_tools(')} lookup={_at}")
 check("G. ...with the turn's own catalog and turn-type filter, as recall is asked",
       "skill_step=_door_catalog.admitted_step" in _seg
       and 'context=_tt_context_filter(getattr(sess, "turn_type", None))' in _seg)

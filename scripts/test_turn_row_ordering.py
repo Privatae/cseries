@@ -114,12 +114,34 @@ check("EVERY session.py write_turn_row call stamps created_at",
       not missing, f"unstamped at lines {missing}")
 
 # The user turn must be stamped ahead of the assistant turn in PROGRAM order —
-# that is the whole mechanism. Both live in send_message; the user write is the
-# first one in the file, the final assistant write the last.
-if len(calls) >= 2:
-    check("the user turn is written before the assistant turn in program order",
-          calls[0].lineno < calls[-1].lineno,
-          f"first={calls[0].lineno} last={calls[-1].lineno}")
+# that is the whole mechanism. The person's row is written by the turn's
+# opening-row step (_write_opening_row), which the turn awaits once, before it
+# writes its own assistant row. Read by role, not by position in a walk of the
+# tree (ast.walk goes level by level, so its first and last calls are not the
+# file's).
+
+
+def _role(c):
+    return c.args[3].value if len(c.args) > 3 and isinstance(c.args[3], ast.Constant) else None
+
+
+def _fn(name):
+    return next((f for f in ast.walk(sess_tree)
+                 if isinstance(f, ast.AsyncFunctionDef) and f.name == name), None)
+
+
+_core, _opening = _fn("_send_message_core"), _fn("_write_opening_row")
+_user_writes = [c for c in ast.walk(_opening) if c in calls and _role(c) == "user"] if _opening else []
+_asst_writes = [c for c in ast.walk(_core) if c in calls and _role(c) == "assistant"] if _core else []
+_opening_calls = [n.lineno for n in ast.walk(_core) if isinstance(n, ast.Await)
+                  and isinstance(n.value, ast.Call)
+                  and ast.unparse(n.value.func) == "self._write_opening_row"] if _core else []
+check("the user turn is written before the assistant turn in program order",
+      # two: the person's row, and the Host's own request on a turn it opened
+      len(_user_writes) == 2 and bool(_asst_writes) and len(_opening_calls) == 1
+      and _opening_calls[0] < min(c.lineno for c in _asst_writes),
+      f"user writes in _write_opening_row={[c.lineno for c in _user_writes]} "
+      f"opening step awaited at={_opening_calls} assistant writes={[c.lineno for c in _asst_writes]}")
 
 
 # ── 5. the reader still sorts on created_at (the other half of the contract) ─

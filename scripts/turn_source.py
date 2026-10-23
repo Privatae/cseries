@@ -15,6 +15,7 @@ TURN_FILES = (
     "turn_input.py",
     "turn_holds.py",
     "turn_trace.py",
+    "turn_replies.py",
     "turn_notices.py",
     "orchestration_tools.py",
     "turn_lanes.py",

@@ -1020,10 +1020,12 @@ def main() -> int:
     check("session: the fixed list's tools are bound to the type",
           "if _cm.get((s.get(\"function\") or {}).get(\"name\"), \"other\") in _type_groups_allowed" in src)
     check("session: the door catalog carries the turn type",
-          "turn_type=sess.turn_type,\n                    withheld=getattr(sess, \"_tools_withheld\", set()))" in src)
+          "turn_type=sess.turn_type,\n                withheld=getattr(sess, \"_tools_withheld\", set()))" in src)
     check("session: the type is resolved from the thread and project before the tool list",
           "resolve_session_type(" in src
-          and src.find("resolve_session_type(") < src.find("tools = _build_host_orchestration_tools()"))
+          # the tool list is built by _build_turn_tools, which the turn calls after
+          and src.find("resolve_session_type(") < src.find("= await self._build_turn_tools(")
+          and "tools = _build_host_orchestration_tools()" in src)
     check("session: the catalog text is narrowed to the type",
           "_orch_block = _build_orchestrator_prompt([" in src
           and "_type_groups_allowed is None or not isinstance(s, dict)" in src)

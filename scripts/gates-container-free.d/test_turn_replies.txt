@@ -1,0 +1,2 @@
+# The turn's reply recorder (runtime/turn_replies.py) driven on its own: streaming, narration and reply labels, the stored reply, a parroted Working Memory block and an opening reasoning block held back, a platform notice. No pod, no model, no database.
+test_turn_replies.py

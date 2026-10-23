@@ -21,6 +21,7 @@ turn. Here:
 
 Pure: fake pools, no database. APP_ROOT=<repo> python3 scripts/<this>.py
 """
+import re
 import asyncio
 import json
 import os
@@ -178,7 +179,9 @@ check("W every turn reads the defaults and a scheduled run takes its own",
       and '_scheduled_run = (app_id or "") == "scheduled_task"' in src
       and 'ceiling=(_turn_defaults or {}).get("history_ceiling_tokens")' in src
       # both spend meters, and the meter's budget (turn_allowance.meter_budget)
-      and src.count("default_rounds=_default_rounds") == 3)
+      # counted from a word start: the turn hands _default_rounds=_default_rounds
+      # to the history step, which is not a meter
+      and len(re.findall(r"(?<![\w])default_rounds=_default_rounds", src)) == 3)
 check("W both spend meters take the meter's budget, which an unknown window still has",
       "_spend_ctx_budget = _ta_m.meter_budget(" in src
       and src.count("ctx_budget=_spend_ctx_budget or _ctx_budget") == 2)

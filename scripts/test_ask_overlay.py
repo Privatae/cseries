@@ -194,7 +194,7 @@ check("runtime: the reply a nudge interrupted (already streamed) goes into the m
       and 'grok_messages.append({"role": "assistant", "content": _seen_reply})' in drain
       and "_record_part" not in drain and "_late_draft" not in sess)
 check("runtime: ONE ordered list of what was sent (claim guard's draft included) is the stored reply",
-      "_pieces: list[dict] = []" in sess and 'return join_pieces(_pieces)' in sess
+      "_pieces: list[dict] = []" in sess and 'return join_pieces(self._pieces)' in sess
       and "content = _reply_all()" in sess and "_claim_draft" not in sess)
 nudge_call = sess.split("call_model as _cm_nudge")[1].split("# METER IT")[0]
 check("runtime: the nudge re-call STREAMS its reply like every other call",

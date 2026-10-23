@@ -1,0 +1,297 @@
+# The checks every pull request into main must pass on the forge, before it
+# merges. GitHub receives a change only after it merged, so the checks that
+# decide a merge run here; .github/workflows/ holds what runs on GitHub.
+# Runs PR code, so it holds no secrets: the only credential is the job's own
+# forge token, used to fetch the PR. It never pushes an image.
+# Each job posts its own commit status ("check / <job> (pull_request)").
+name: check
+
+on:
+  pull_request:
+    branches: [main]
+    # `closed` too: a merge or close starts a run that cancels the one still
+    # going (concurrency below), then skips every check (`current`) and only
+    # cleans up.
+    types: [opened, synchronize, reopened, closed]
+
+# One run per PR at a time: a new push, a merge or a close cancels the PR's run
+# that is still queued or going, so the runner never spends an hour on a commit
+# nobody will merge. A cancelled run's own cleanup never runs, so the next run
+# of the PR removes what it left (build and cleanup below,
+# scripts/smoke_reap_leftovers.sh).
+concurrency:
+  group: check-pr-${{ gitea.event.pull_request.number }}
+  cancel-in-progress: true
+
+env:
+  # One image per commit, so parallel PRs never share a tag.
+  CI_IMAGE: git.privatae.ai/privatae/cseries:ci-${{ gitea.sha }}
+
+jobs:
+  # Is this commit still what the PR asks to merge? The concurrency group cancels
+  # a superseded run; this is the check that does not depend on it, and the one
+  # that makes the run a merge or close starts skip every check. When the PR has
+  # merged, closed or moved on, every other job skips in seconds. Fails OPEN: if
+  # the forge cannot be asked, `skip` stays empty and the checks run, so this can
+  # never turn a PR falsely green.
+  current:
+    runs-on: platform
+    outputs:
+      skip: ${{ steps.pr.outputs.skip }}
+    steps:
+      - id: pr
+        run: |
+          set -uo pipefail
+          url="${{ gitea.server_url }}/api/v1/repos/${{ gitea.repository }}/pulls/${{ gitea.event.pull_request.number }}"
+          body="$(curl -fsS --max-time 20 -H "Authorization: token ${{ gitea.token }}" "$url" 2>/dev/null)" || {
+            echo "could not ask the forge about this PR; running the checks"; exit 0; }
+          verdict="$(printf '%s' "$body" | python3 -c '
+          import json, sys
+          p = json.load(sys.stdin)
+          head = (p.get("head") or {}).get("sha")
+          # Only a positive answer skips: an answer of any other shape (no
+          # state, no head) runs the checks, as a failed call does.
+          if p.get("merged") is True:
+              print("merged")
+          elif p.get("state") == "closed":
+              print("closed")
+          elif p.get("state") == "open" and sys.argv[1] and isinstance(head, str) and head and head != sys.argv[1]:
+              print("moved on to " + head[:12])
+          ' "${{ gitea.event.pull_request.head.sha }}" 2>/dev/null)" || verdict=""
+          if [ -n "$verdict" ]; then
+            # Check results belong to the commit, not the PR. If another open PR
+            # has this same commit as its head, this run's skipped jobs would
+            # stand in for that PR's checks, so they run. The skip stands only on
+            # a complete list of open PRs (read until an empty page) naming no
+            # other PR at this commit; any failure to read it runs the checks.
+            others="" complete=""
+            for page in $(seq 1 40); do
+              list="$(curl -fsS --max-time 20 -H "Authorization: token ${{ gitea.token }}" \
+                "${{ gitea.server_url }}/api/v1/repos/${{ gitea.repository }}/pulls?state=open&limit=50&page=$page" 2>/dev/null)" || break
+              found="$(printf '%s' "$list" | python3 -c '
+          import json, sys
+          prs = json.load(sys.stdin)
+          if not isinstance(prs, list):
+              raise SystemExit(1)
+          same = [str(p.get("number")) for p in prs if isinstance(p, dict) and isinstance(p.get("head"), dict)
+                  and p["head"].get("sha") == sys.argv[1] and str(p.get("number")) != sys.argv[2]]
+          print(str(len(prs)) + "|" + " ".join(same))
+          ' "${{ gitea.event.pull_request.head.sha }}" "${{ gitea.event.pull_request.number }}" 2>/dev/null)" || break
+              others="$others ${found#*|}"
+              if [ "${found%%|*}" = 0 ]; then complete=yes; break; fi
+            done
+            if [ -z "$complete" ]; then
+              echo "this PR is $verdict, but the open PRs could not all be read; running the checks"; verdict=""
+            elif [ -n "${others// /}" ]; then
+              echo "this PR is $verdict, but this commit is also the head of open PR(s)$others; running the checks"; verdict=""
+            fi
+          fi
+          if [ -n "$verdict" ]; then
+            echo "this PR is $verdict: the checks for ${{ gitea.event.pull_request.head.sha }} are skipped"
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "this commit is the PR's open head: running the checks"
+          fi
+
+  gates:
+    needs: current
+    if: needs.current.outputs.skip != 'true'
+    runs-on: platform
+    steps:
+      - name: fetch the PR, with its history
+        # Whole history, not --depth=1: the gates that test a migration on the
+        # schema a Host had before it (scripts/kernel_schema.py, upto=N) read
+        # that tree from git, and refuse in a shallow clone. The job's directory
+        # is removed when the job ends.
+        run: |
+          set -euo pipefail
+          git init -q .
+          git -c http.extraHeader="Authorization: token ${{ gitea.token }}" \
+            fetch -q "${{ gitea.server_url }}/${{ gitea.repository }}.git" \
+            "refs/pull/${{ gitea.event.pull_request.number }}/head"
+          git checkout -q --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "${{ gitea.event.pull_request.head.sha }}"
+          # main as origin/main, so pre_merge_gates.sh can tell which gates
+          # cover this PR (merge-base HEAD origin/main); without it every gate runs.
+          git -c http.extraHeader="Authorization: token ${{ gitea.token }}" \
+            fetch -q "${{ gitea.server_url }}/${{ gitea.repository }}.git" \
+            "refs/heads/main:refs/remotes/origin/main"
+      - name: fetch the bastion source the contract gates read
+        # The released bastion: the one a C-Series install pairs with.
+        run: |
+          set -euo pipefail
+          rm -rf ../bastion-source
+          git -c http.extraHeader="Authorization: token ${{ gitea.token }}" \
+            clone -q --depth=1 "${{ gitea.server_url }}/privatae/privatae-bastion.git" ../bastion-source
+          echo "contract gates read privatae/privatae-bastion @ $(git -C ../bastion-source rev-parse --short HEAD)"
+      - name: pre-merge gates
+        # PRE_MERGE_AFFECTED_ONLY: a PR runs the gates that cover its change,
+        # tests/ and the undefined-names lane, not all of them. A release runs
+        # the full suite (scripts/pre_merge_gates.sh).
+        # Under rootlesskit so the gates that need a private PID namespace get one
+        # (Ubuntu lets rootlesskit, and nothing else unprivileged, make namespaces).
+        # TMPDIR in the job's directory: the gates mount their scratch into
+        # containers, and the runner's Docker has its own /tmp (PrivateTmp), so
+        # a mount from this job's /tmp reaches it as an empty directory.
+        # CSERIES_GATE_DOCKER_NO_CGROUP_LIMITS: this runner's Docker is rootless
+        # without cgroups and applies no memory limit, so the connector pods'
+        # memory verdict is reported NOT RUN here (scripts/connector_gate_kit.py,
+        # limit_held); a pre_merge_gates.sh run without it still requires it.
+        run: |
+          mkdir -p ../tmp
+          TMPDIR="$(cd ../tmp && pwd)" CSERIES_GATEWAY_DIR="$PWD/../bastion-source" \
+            CSERIES_GATE_DOCKER_NO_CGROUP_LIMITS=1 PRE_MERGE_AFFECTED_ONLY=1 \
+            rootlesskit --net=host --disable-host-loopback=false scripts/pre_merge_gates.sh
+
+  store-apps:
+    # The store apps' gates (scripts/gates-store-apps.txt), which the gates job
+    # never runs: a store app's gates run on that app's own lane, never with the
+    # kernel's. Beside the gates job, on the same setup; it runs only the gates
+    # of the store apps this PR changed, and passes at once when it changed none.
+    needs: current
+    if: needs.current.outputs.skip != 'true'
+    runs-on: platform
+    steps:
+      - name: fetch the PR, with its history
+        run: |
+          set -euo pipefail
+          git init -q .
+          git -c http.extraHeader="Authorization: token ${{ gitea.token }}" \
+            fetch -q "${{ gitea.server_url }}/${{ gitea.repository }}.git" \
+            "refs/pull/${{ gitea.event.pull_request.number }}/head"
+          git checkout -q --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "${{ gitea.event.pull_request.head.sha }}"
+          # main as origin/main: store_app_gates.sh diffs against the merge base.
+          git -c http.extraHeader="Authorization: token ${{ gitea.token }}" \
+            fetch -q "${{ gitea.server_url }}/${{ gitea.repository }}.git" \
+            "refs/heads/main:refs/remotes/origin/main"
+      - name: store-app gates of the apps this PR changed
+        # rootlesskit, TMPDIR and CSERIES_GATE_DOCKER_NO_CGROUP_LIMITS as in the
+        # gates job: the connector gates run their pods in containers and need a
+        # private PID namespace.
+        run: |
+          mkdir -p ../tmp
+          TMPDIR="$(cd ../tmp && pwd)" CSERIES_GATE_DOCKER_NO_CGROUP_LIMITS=1 \
+            rootlesskit --net=host --disable-host-loopback=false \
+            scripts/store_app_gates.sh --changed-from origin/main
+
+  build:
+    needs: current
+    if: needs.current.outputs.skip != 'true'
+    runs-on: platform
+    steps:
+      - name: fetch the PR
+        run: |
+          set -euo pipefail
+          git init -q .
+          git -c http.extraHeader="Authorization: token ${{ gitea.token }}" \
+            fetch -q --depth=1 "${{ gitea.server_url }}/${{ gitea.repository }}.git" \
+            "refs/pull/${{ gitea.event.pull_request.number }}/head"
+          git checkout -q --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "${{ gitea.event.pull_request.head.sha }}"
+      - name: drop this PR's earlier images
+        # Their runs were cancelled by this one (concurrency), before their own
+        # cleanup could run. Never -f: an image a container still uses stays.
+        run: |
+          docker image ls -q --filter "label=cseries.ci.pr=${{ gitea.event.pull_request.number }}" \
+            | sort -u | xargs -r docker image rm >/dev/null 2>&1 || true
+      - name: build the image (not pushed)
+        run: |
+          docker build -q -f Dockerfile.linux \
+            --build-arg PC_TAG="ci-${{ gitea.sha }}" \
+            --build-arg PC_IMAGE=git.privatae.ai/privatae/cseries \
+            --label "cseries.ci.pr=${{ gitea.event.pull_request.number }}" \
+            -t "$CI_IMAGE" .
+
+  smoke:
+    # Beside gates, not after them: smoke's own pass over the container-free
+    # gates is skipped (SMOKE_SHARED_GATES_PASSED_TREE below;
+    # scripts/gate_pass_recorded.sh) because the gates job runs them on this
+    # same tree, and this PR's run is red unless the gates job also passes.
+    needs: [current, build]
+    if: needs.current.outputs.skip != 'true'
+    runs-on: platform
+    steps:
+      - name: fetch the PR, with its history
+        # Whole history: smoke re-runs the gates, the kernel_schema upto=N ones
+        # among them (see the gates job).
+        run: |
+          set -euo pipefail
+          git init -q .
+          git -c http.extraHeader="Authorization: token ${{ gitea.token }}" \
+            fetch -q "${{ gitea.server_url }}/${{ gitea.repository }}.git" \
+            "refs/pull/${{ gitea.event.pull_request.number }}/head"
+          git checkout -q --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "${{ gitea.event.pull_request.head.sha }}"
+      - name: fetch the bastion source the contract gates read
+        run: |
+          set -euo pipefail
+          rm -rf ../bastion-source
+          git -c http.extraHeader="Authorization: token ${{ gitea.token }}" \
+            clone -q --depth=1 "${{ gitea.server_url }}/privatae/privatae-bastion.git" ../bastion-source
+          echo "contract gates read privatae/privatae-bastion @ $(git -C ../bastion-source rev-parse --short HEAD)"
+      - name: smoke test
+        # Smoke re-runs the tree's gates, so it needs the bastion source,
+        # rootlesskit and a TMPDIR the runner's Docker sees, as the gates job does.
+        run: |
+          mkdir -p ../tmp
+          IMAGE="$CI_IMAGE" TMPDIR="$(cd ../tmp && pwd)" CSERIES_GATEWAY_DIR="$PWD/../bastion-source" \
+            SMOKE_SHARED_GATES_PASSED_TREE="$(git rev-parse 'HEAD^{tree}')" \
+            CSERIES_GATE_DOCKER_NO_CGROUP_LIMITS=1 rootlesskit --net=host --disable-host-loopback=false scripts/smoke_test.sh
+
+  scan:
+    needs: [current, build]
+    if: needs.current.outputs.skip != 'true'
+    runs-on: platform
+    steps:
+      - name: fetch the PR
+        run: |
+          set -euo pipefail
+          git init -q .
+          git -c http.extraHeader="Authorization: token ${{ gitea.token }}" \
+            fetch -q --depth=1 "${{ gitea.server_url }}/${{ gitea.repository }}.git" \
+            "refs/pull/${{ gitea.event.pull_request.number }}/head"
+          git checkout -q --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "${{ gitea.event.pull_request.head.sha }}"
+      - name: CVE gate (fixable criticals fail)
+        # From the checkout: trivy.yaml there loads the accepted findings in
+        # .trivyignore.yaml.
+        run: trivy image --quiet --exit-code 1 --severity CRITICAL --ignore-unfixed "$CI_IMAGE"
+
+  cleanup:
+    needs: [smoke, scan]
+    if: always()
+    runs-on: platform
+    steps:
+      - name: drop this commit's image, and keep the runner's disk bounded
+        # The runner runs several jobs at once and shares its Docker with other
+        # repositories' runners, so other jobs may be running. The prunes take
+        # stopped containers, volumes no container uses, and dangling images. An
+        # image another job pinned by digest only and is not running at that
+        # moment (between its steps) may count as dangling and go; its next step
+        # pulls it again, which costs time, not a failure. Build cache younger
+        # than three days stays, which keeps the next build fast.
+        #
+        # Then what cancelled runs left (their own cleanup never ran): this PR's
+        # images, and any CI image of this repository older than six hours that
+        # no container uses. Six hours is far past the life of a run's image
+        # (build, then smoke and scan, an hour each at most, by the runner's
+        # timeout); an image removed early fails its run red, never green.
+        run: |
+          docker image rm -f "$CI_IMAGE" >/dev/null 2>&1 || true
+          docker image ls -q --filter "label=cseries.ci.pr=${{ gitea.event.pull_request.number }}" \
+            | sort -u | xargs -r docker image rm >/dev/null 2>&1 || true
+          cutoff=$(( $(date +%s) - 6 * 3600 ))
+          docker image ls --filter "reference=git.privatae.ai/privatae/cseries:ci-*" \
+              --format '{{.Repository}}:{{.Tag}}|{{.CreatedAt}}' \
+            | while IFS='|' read -r ref made; do
+                t=$(date -d "${made% *}" +%s 2>/dev/null) || continue
+                [ "$t" -lt "$cutoff" ] && docker image rm "$ref" >/dev/null 2>&1 || true
+              done || true
+          docker container prune -f >/dev/null 2>&1 || true
+          docker volume prune -af >/dev/null 2>&1 || true
+          docker image prune -f >/dev/null 2>&1 || true
+          docker builder prune -f --filter until=72h >/dev/null 2>&1 || true
+          # A report only: another job's prune can remove a snapshot while this
+          # counts it ("snapshot ... does not exist").
+          docker system df || true

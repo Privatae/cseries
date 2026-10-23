@@ -20,7 +20,7 @@
 #
 # WHY THIS FILE EXISTS.
 # Every script first listed here already existed in scripts/ and was invoked by NOTHING.
-# Not smoke, not any runbook, not CI — there is no CI. They were written as
+# Not smoke, not any runbook, not CI — there was no CI then. They were written as
 # gates, they pass, and they had been silently dead. test_phase_spec_gate.py sat
 # in that same dead set until a release session wired it in by hand, which is
 # what prompted counting the rest. Among these is test_migrations_guarded.py,

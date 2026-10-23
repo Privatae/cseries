@@ -299,7 +299,7 @@ def main() -> int:
     # THE BLIND SPOT THIS RATCHET ITSELF HAD. Everything above
     # polices scripts/. The repo also has tests/ — 26 files, 519 tests — and it
     # was invoked by NOTHING: not smoke, not pre_merge_gates, not either list,
-    # and there is no CI on this repo. Ten of those tests were failing and
+    # and this repo had no CI then. Ten of those tests were failing and
     # nothing could say so.
     #
     # This file is the thing meant to notice a suite running nowhere, and it

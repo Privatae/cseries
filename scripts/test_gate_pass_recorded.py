@@ -15,9 +15,10 @@ on throwaway git repos and pins:
   5. CI's SMOKE_SHARED_GATES_PASSED_TREE for the HEAD tree -> passed; for
      another tree -> not passed
   6. wiring: smoke asks gate_pass_recorded.sh before its serial pass and keeps
-     the pass for every other case; pre_merge_gates.sh writes the record where
-     the reader looks. (The repo has no CI workflow yet; when one is added, it
-     must run the gates whenever it runs smoke before it hands smoke the tree.)
+     the pass for every other case; CI's smoke (.gitea/workflows/check.yml)
+     runs beside a gates job that runs whenever it does and can fail the run,
+     and hands over the tree; pre_merge_gates.sh writes the record where the
+     reader looks.
 """
 import os
 import re
@@ -105,6 +106,26 @@ ask_at = smoke.find('scripts/gate_pass_recorded.sh" "$SMOKE_REPO"')
 loop_at = smoke.find('yellow "Running container-free gates from gates-container-free.d…"')
 check("6: smoke asks before its serial pass, and keeps the pass for every other case",
       0 < ask_at < loop_at and "elif [[ -d \"$GATE_DIR\" ]]; then" in smoke[ask_at:loop_at], f"ask@{ask_at} loop@{loop_at}")
+
+wf = open(os.path.join(ROOT, ".gitea", "workflows", "check.yml"), encoding="utf-8").read()
+smoke_job = wf[wf.find("\n  smoke:"):wf.find("\n  scan:")]
+needs = re.search(r"^    needs: \[([^\]]*)\]$", smoke_job, re.M)
+needs = [n.strip() for n in needs.group(1).split(",")] if needs else []
+# Smoke runs BESIDE gates. Its skip of the container-free pass stays sound only
+# if this run cannot go green unless gates passes this commit: so gates must run
+# whenever smoke does, and must be able to fail the run.
+gates_job = wf[wf.find("\n  gates:"):wf.find("\n  store-apps:")]
+smoke_if = re.search(r"^    if: (.+)$", smoke_job, re.M)
+gates_if = re.search(r"^    if: (.+)$", gates_job, re.M)
+check("6: CI's smoke needs the image it tests", "build" in needs, f"needs={needs}")
+check("6: …and the gates job runs whenever smoke does, and can fail the run",
+      bool(gates_job.strip()) and smoke_if is not None and gates_if is not None
+      and smoke_if.group(1) == gates_if.group(1) and "continue-on-error" not in gates_job,
+      f"smoke if={smoke_if and smoke_if.group(1)} gates if={gates_if and gates_if.group(1)}")
+check("6: and hands smoke the tree the gates job passed",
+      "SMOKE_SHARED_GATES_PASSED_TREE=\"$(git rev-parse 'HEAD^{tree}')\"" in smoke_job)
+check("6: CI still verifies the checkout is the PR head before smoke runs",
+      'test "$(git rev-parse HEAD)" = "${{ gitea.event.pull_request.head.sha }}"' in smoke_job)
 
 pmg = open(os.path.join(ROOT, "scripts", "pre_merge_gates.sh"), encoding="utf-8").read()
 reader = open(SCRIPT, encoding="utf-8").read()

@@ -58,10 +58,20 @@ check(re.search(r"^table inet cseries_door\ndelete table inet cseries_door\n", r
       "door.nft replaces its own table and nothing else")
 check(re.search(r"hook input priority filter; policy drop;", rules) is not None, "input's policy is drop")
 check(not re.search(r"dport\s+22\b", rules), "door.nft has no SSH rule of its own")
-check(re.search(r"tcp dport 8810 ip6 saddr @pairing_v6 accept", rules) is not None and
-      re.search(r"tcp dport 8810 ip saddr @pairing_v4 dnat", rules) is not None and
-      re.search(r"ct status dnat tcp dport 8810 ip saddr @pairing_v4 accept", rules) is not None,
-      "8810 is admitted only from the pairing sets")
+check(re.search(r"tcp dport 8810 tcp dport @lanes_open ip6 saddr @pairing_v6 accept", rules) is not None and
+      re.search(r"tcp dport 8810 tcp dport @lanes_open ip saddr @pairing_v4 dnat", rules) is not None and
+      re.search(r"ct status dnat tcp dport 8810 tcp dport @lanes_open ip saddr @pairing_v4 accept", rules)
+      is not None,
+      "8810 is admitted only from the pairing sets, and only while the Host's ports are open")
+# A machine whose vault is locked runs no Host: every rule that admits or
+# redirects 8810 or 8811 names lanes_open, which is empty until the unlock.
+opens_lanes = [ln.strip() for ln in rules.splitlines()
+               if re.search(r"\b88(10|11)\b", ln) and re.search(r"\b(accept|dnat)\b", ln)]
+check(len(opens_lanes) == 6 and all("tcp dport @lanes_open" in ln for ln in opens_lanes),
+      "every rule that admits or redirects 8810 or 8811 needs the Host's ports open (lanes_open)",
+      opens_lanes)
+check(re.search(r"set lanes_open \{\s*type inet_service\s*\}", rules) is not None,
+      "lanes_open is a set of ports, empty when door.nft loads")
 # Every rule naming 8810 that admits or redirects it names a pairing set in
 # the same rule: the forward chain checks the window again, so a DNAT to the
 # Host's 8810 that door_dnat did not make (netavark's) admits nothing.
@@ -242,6 +252,9 @@ inject 198.51.100.1
 echo "nowindow=$(seen)"
 {nft} add element inet cseries_door pairing_v4 {{ 198.51.100.2 timeout 60s }}
 inject 198.51.100.1
+echo "lockedwindow=$(seen)"
+{nft} add element inet cseries_door lanes_open {{ 8810, 8811 }}
+inject 198.51.100.1
 echo "window=$(seen)"
 # The box's own use of the loopback publish (cseries-guest health curls
 # 127.0.0.1:8800 the same way) still answers.
@@ -253,14 +266,15 @@ kill "$lst" 2>/dev/null || true
 wait 2>/dev/null || true
 """
     r = subprocess.run(["unshare", "-mn", "sh", "-c", script], capture_output=True, text=True, check=False)
-    got = dict(re.findall(r"^(loopback|nowindow|window)=(\d+)$", r.stdout, re.M))
+    got = dict(re.findall(r"^(loopback|nowindow|lockedwindow|window)=(\d+)$", r.stdout, re.M))
     local = re.search(r"^local=(\S+)$", r.stdout, re.M)
-    if r.returncode != 0 or len(got) != 3 or not local:
+    if r.returncode != 0 or len(got) != 4 or not local:
         return False, (r.stdout + r.stderr)[-800:]
     # The counter only grows: each case is what it added.
     total = {k: int(v) for k, v in got.items()}
     return {"loopback": total["loopback"], "nowindow": total["nowindow"] - total["loopback"],
-            "window": total["window"] - total["nowindow"], "local": local.group(1)}, r.stdout
+            "lockedwindow": total["lockedwindow"] - total["nowindow"],
+            "window": total["window"] - total["lockedwindow"], "local": local.group(1)}, r.stdout
 
 
 # The meter with full sets, real packets: this namespace is the box (door.nft
@@ -403,6 +417,9 @@ else:
     if counts:
         check(counts["window"] == 1 and counts["nowindow"] == 0,
               "a SYN to the box's 8810 reaches the Host only from an address in the pairing window",
+              counts)
+        check(counts["lockedwindow"] == 0,
+              "while the vault is locked (lanes_open empty) not even the pairing window reaches 8810",
               counts)
         check(counts["loopback"] == 0,
               "a SYN a neighbour sends to 127.0.0.1:8810 does not reach the Host through a loopback DNAT",

@@ -14,7 +14,7 @@ package lists.
 
 ### 1. Files vendored in the repo (24)
 
-- qrcode-generator (Kazuhiko Arase) 1.4.4: MIT; dashboard/base/js/qrcode.js and system-apps/backups/vendor/qrcode.js; text: qrcode-generator-1.4.4.LICENSE
+- qrcode-generator (Kazuhiko Arase) 1.4.4: MIT; dashboard/base/js/qrcode.js (also installed on a cloud machine as /usr/share/cseries-cloud/unlock/qrcode.js by vm/cloud/build-overlay.sh) and system-apps/backups/vendor/qrcode.js; text: qrcode-generator-1.4.4.LICENSE
 - age-encryption (typage) 0.3.1: BSD-3-Clause; bundled with the five packages below into system-apps/settings/vendor/age-encryption.js and system-apps/backups/vendor/age-encryption.js; text: age-encryption-0.3.1.LICENSE
 - @noble/ciphers 2.4.0: MIT; in that bundle; text: noble-ciphers-2.4.0.LICENSE
 - @noble/curves 2.4.0 and 2.0.1 (nested under @noble/post-quantum): MIT; in that bundle; texts: noble-curves-2.4.0.LICENSE, noble-curves-2.0.1.LICENSE

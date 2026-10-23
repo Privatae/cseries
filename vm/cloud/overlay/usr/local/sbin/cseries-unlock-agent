@@ -1,0 +1,349 @@
+#!/usr/bin/python3 -I
+"""The unlock page's server: the only thing on this machine that opens the
+vault with a customer's key, and the only way to change those keys.
+
+Runs as root under cseries-unlock-agent.socket (/run/cseries-unlock/agent.sock,
+root:caddy 0660). Caddy passes it /api/* of unlock-<name>.<address_id>.<zone>
+and serves the page itself (/usr/share/cseries-cloud/unlock). JSON in, JSON
+out:
+
+  GET  /api/state           what the page shows: the state, the unlock
+                            passkeys (id and PRF salt) and a claim's progress
+  POST /api/unlock          {credential_id, passphrase} | {recovery_key}; also
+                            finishes a claim cut off after the bootstrap key
+                            went, with the key given (cseries_vault's docstring)
+  POST /api/enroll          {setup_code, passkey: {credential_id, passphrase} | null}
+                            -> {recovery_key}, shown once
+  POST /api/enroll/confirm  {setup_code, recovery_key}: starts the claim
+  POST /api/keys/add        {auth, credential_id, passphrase}
+  POST /api/keys/remove     {auth, credential_id}
+  POST /api/keys/recovery   {auth} -> {recovery_key}, shown once
+
+auth is {credential_id, passphrase} or {recovery_key}: holding one of the
+machine's keys is what lets a person change them.
+
+A passphrase is what the page derived from the passkey's PRF output
+(cseries_vault.passkey_passphrase); the agent never sees the passkey itself.
+Every request that checks a key or the setup code counts against its source
+(the address Caddy names in X-Forwarded-For, per /64 for IPv6): five a minute.
+A refused unlock while the vault is locked is recorded on the plain disk with
+the source's /24 or /48 only (cseries_machine.note_attempt).
+Standard library only.
+"""
+
+import hmac
+import ipaddress
+import json
+import os
+import socket
+import socketserver
+import sys
+import time
+from http.server import BaseHTTPRequestHandler
+
+sys.path.insert(0, "/usr/local/lib/cseries-cloud")
+import cseries_cloud as cc  # noqa: E402
+import cseries_machine as cm  # noqa: E402
+import cseries_vault as cv  # noqa: E402
+
+MAX_BODY = 16 * 1024
+TRIES = 5
+PER_S = 60.0
+CLAIM_UNIT = cm.CLAIM_UNIT
+
+
+class Refused(Exception):
+    def __init__(self, msg, status=400):
+        super().__init__(msg)
+        self.status = status
+
+
+def source_key(xff):
+    """Whose tries these are: the address Caddy saw, per /64 for IPv6."""
+    addr = (xff or "").split(",")[-1].strip()
+    try:
+        ip = ipaddress.ip_address(addr)
+    except ValueError:
+        return "unknown"
+    if ip.version == 6 and ip.ipv4_mapped:
+        return str(ip.ipv4_mapped)
+    if ip.version == 6:
+        return str(ipaddress.ip_network(f"{ip}/64", strict=False))
+    return str(ip)
+
+
+class Limiter:
+    def __init__(self, now=time.monotonic):
+        self.now = now
+        self.tries = {}
+
+    def take(self, key):
+        t = self.now()
+        recent = [s for s in self.tries.get(key, []) if t - s < PER_S]
+        if len(recent) >= TRIES:
+            raise Refused(f"Too many tries. Wait {int(PER_S - (t - min(recent))) + 1} seconds.", 429)
+        recent.append(t)
+        self.tries[key] = recent
+        if len(self.tries) > 10_000:
+            for k in [k for k, v in self.tries.items() if all(t - s >= PER_S for s in v)]:
+                del self.tries[k]
+
+
+class Agent:
+    """The requests, without the HTTP: tests drive this directly."""
+
+    def __init__(self, paths, vault=None, runner=None, limiter=None):
+        self.paths = paths
+        self.vault = vault or cv.Vault(paths)
+        self.runner = runner or self.vault.run
+        self.limiter = limiter or Limiter()
+
+    def cfg(self):
+        return cc.load_cloud(self.paths)
+
+    def setup_code_ok(self, code):
+        try:
+            with open(self.paths.setup_code(), encoding="utf-8") as f:
+                want = f.read().strip().lower()
+        except FileNotFoundError:
+            raise Refused("This machine has no setup code.", 409) from None
+        got = (code or "").strip().lower() if isinstance(code, str) else ""
+        return bool(want) and hmac.compare_digest(got.encode(), want.encode())
+
+    def state(self):
+        cfg = self.cfg()
+        v = self.vault
+        st = v.state()
+        out = {"state": st, "name": cfg["name"], "machine_id": cfg["machine_id"],
+               "rp_id": cm.unlock_host(cfg), "host_url": "https://" + cc.host_name(cfg) + "/",
+               "enrolled": v.enrolled() if st != "absent" else None,
+               "claim": cm.claim_status(self.paths), "passkeys": [], "salt": None,
+               "recovery": False, "claiming": False, "resume": False, "dropped": []}
+        if st != "absent":
+            out["claiming"] = self.claim_running()
+        if st != "absent" and not out["claiming"]:
+            # Not while the claim runs: reading the header waits for the
+            # re-encryption's lock, and the page polls this every 2 s.
+            d = v.dump()
+            out["passkeys"] = [{"credential_id": k["credential_id"], "salt": k["salt"],
+                                "added_at": k["added_at"]} for k in v.passkeys(d)]
+            out["salt"] = (v.config() or {}).get("salt")
+            out["recovery"] = v._slotted(cv.TOKEN_RECOVERY, d) is not None
+            # A claim cut off after the bootstrap key went: the page asks
+            # for one of the customer's keys to finish it (unlock).
+            out["resume"] = v.claim_unfinished(d)
+            # Keys a claim cut off before its re-encryption had to drop,
+            # which the page asks the customer to make again.
+            out["dropped"] = list((v.config() or {}).get("claim_dropped") or [])
+        return out
+
+    def unlock(self, body, source):
+        self.limiter.take(source)
+        v = self.vault
+        if v.state() == "absent":
+            raise Refused("This machine has no vault.", 409)
+        how = "the recovery key" if "recovery_key" in body else "a passkey"
+        if v.state() == "open":
+            if self.claim_running() or not v.claim_unfinished():
+                return {"ok": True, "next": self.state()["host_url"], "already": True}
+            # A claim cut off after the bootstrap key went, its unit not
+            # running (it stopped): one of the customer's keys finishes it.
+            try:
+                key, _slot = v.authorise(body)
+            except cv.VaultError as e:
+                cm.note_attempt(self.paths, v, how, source, False, str(e))
+                raise Refused(str(e), 403) from None
+            cm.resume_claim(self.paths, self.runner, key)
+            return {"ok": True, "next": self.state()["host_url"], "claiming": True}
+        try:
+            if "recovery_key" in body:
+                key = cv.recovery_passphrase(body.get("recovery_key"))
+                how = v.unlock_recovery(body.get("recovery_key"))
+            else:
+                key = body.get("passphrase")
+                how = v.unlock_passkey(body.get("credential_id"), key)
+        except cv.VaultError as e:
+            cm.note_attempt(self.paths, v, how, source, False, str(e))
+            raise Refused(str(e), 403) from None
+        out = {"ok": True}
+        if cm.after_open(self.paths, self.cfg(), v, self.runner, how, source, key=key):
+            out["claiming"] = True
+        out["next"] = self.state()["host_url"]
+        return out
+
+    def _pre_claim(self, body, source):
+        self.limiter.take(source)
+        v = self.vault
+        if v.state() != "open":
+            raise Refused("This machine is not open.", 409)
+        if v.enrolled() or v.bootstrap_key() is None:
+            raise Refused("This machine's keys are already set up. Use one of them to change them.", 409)
+        if not self.setup_code_ok(body.get("setup_code")):
+            raise Refused("That setup code is not right.", 403)
+
+    def enroll(self, body, source):
+        self._pre_claim(body, source)
+        if self.claim_running():
+            raise Refused("The disk is being set up already.", 409)
+        pk = body.get("passkey")
+        passkey = None
+        if pk is not None:
+            if not isinstance(pk, dict):
+                raise Refused("passkey must be an object or null")
+            try:
+                passkey = {"credential_id": cv.check_credential_id(pk.get("credential_id")),
+                           "passphrase": cv.check_passphrase(pk.get("passphrase"))}
+            except cv.VaultError as e:
+                raise Refused(str(e)) from None
+        shown, passphrase = cv.new_recovery_key()
+        os.makedirs(self.paths.p(cv.RUN), mode=0o755, exist_ok=True)
+        cc.write_json(self.paths.p(cm.PENDING), {"passkey": passkey, "recovery_pass": passphrase,
+                                                 "confirmed": False}, mode=0o600)
+        return {"ok": True, "recovery_key": shown}
+
+    def confirm(self, body, source):
+        self._pre_claim(body, source)
+        pending = cc.read_json(self.paths.p(cm.PENDING), None)
+        if not isinstance(pending, dict):
+            raise Refused("Start again: no key is waiting to be saved.", 409)
+        try:
+            typed = cv.recovery_passphrase(body.get("recovery_key"))
+        except cv.VaultError as e:
+            raise Refused(str(e)) from None
+        if not hmac.compare_digest(typed.encode(), str(pending.get("recovery_pass")).encode()):
+            raise Refused("That is not the recovery key shown above. Copy it again.", 403)
+        if self.claim_running():
+            return {"ok": True, "started": False}
+        # A failed claim's report from before would read as this one's.
+        cc.write_json(self.paths.p(cm.CLAIM), {"phase": "starting", "error": None,
+                                               "started_at": cm.iso()})
+        cm.start_claim(self.runner)
+        return {"ok": True, "started": True}
+
+    def claim_running(self):
+        r = self.runner(["/usr/bin/systemctl", "is-active", "--quiet", CLAIM_UNIT + ".service"],
+                        check=False)
+        return getattr(r, "returncode", 1) == 0
+
+    def _keys(self, fn, body, source):
+        self.limiter.take(source)
+        if self.vault.state() != "open":
+            raise Refused("Unlock this machine first.", 409)
+        try:
+            return fn()
+        except cv.VaultError as e:
+            raise Refused(str(e), 403) from None
+
+    def keys_add(self, body, source):
+        def run():
+            self.vault.add_passkey(body.get("auth"), body.get("credential_id"), body.get("passphrase"))
+            cm.publish(self.paths, self.cfg(), self.vault)
+            return {"ok": True}
+        return self._keys(run, body, source)
+
+    def keys_remove(self, body, source):
+        def run():
+            self.vault.remove_passkey(body.get("auth"), body.get("credential_id"))
+            cm.publish(self.paths, self.cfg(), self.vault)
+            return {"ok": True}
+        return self._keys(run, body, source)
+
+    def keys_recovery(self, body, source):
+        def run():
+            return {"ok": True, "recovery_key": self.vault.replace_recovery(body.get("auth"))}
+        return self._keys(run, body, source)
+
+    ROUTES = {
+        ("POST", "/api/unlock"): "unlock",
+        ("POST", "/api/enroll"): "enroll",
+        ("POST", "/api/enroll/confirm"): "confirm",
+        ("POST", "/api/keys/add"): "keys_add",
+        ("POST", "/api/keys/remove"): "keys_remove",
+        ("POST", "/api/keys/recovery"): "keys_recovery",
+    }
+
+    def handle(self, method, path, body_bytes, xff):
+        """(status, answer object) for one request."""
+        path = path.split("?", 1)[0]
+        try:
+            if method == "GET" and path == "/api/state":
+                return 200, self.state()
+            name = self.ROUTES.get((method, path))
+            if name is None:
+                return 404, {"error": "not found"}
+            try:
+                body = json.loads(body_bytes or b"{}")
+            except ValueError:
+                raise Refused("The request is not JSON.") from None
+            if not isinstance(body, dict):
+                raise Refused("The request is not a JSON object.")
+            return 200, getattr(self, name)(body, source_key(xff))
+        except Refused as e:
+            return e.status, {"error": str(e)}
+        except (cv.VaultError, cc.CloudError, OSError) as e:
+            print(f"cseries-unlock-agent: {method} {path}: {e}", file=sys.stderr, flush=True)
+            return 500, {"error": "The machine could not do that. Try again in a moment."}
+
+
+class Handler(BaseHTTPRequestHandler):
+    agent = None
+    server_version = "cseries-unlock"
+    sys_version = ""
+
+    def address_string(self):
+        return "caddy"
+
+    def log_message(self, fmt, *args):
+        # Paths and statuses only; never a body.
+        print(f"cseries-unlock-agent: {self.command} {self.path.split('?', 1)[0]} {fmt % args}",
+              file=sys.stderr, flush=True)
+
+    def _answer(self, status, obj):
+        data = json.dumps(obj).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _go(self, method):
+        n = int(self.headers.get("Content-Length") or 0)
+        if n > MAX_BODY:
+            self._answer(413, {"error": "The request is too large."})
+            return
+        body = self.rfile.read(n) if n else b""
+        self._answer(*self.agent.handle(method, self.path, body, self.headers.get("X-Forwarded-For")))
+
+    def do_GET(self):
+        self._go("GET")
+
+    def do_POST(self):
+        self._go("POST")
+
+
+class Server(socketserver.UnixStreamServer):
+    def __init__(self, sock):
+        socketserver.BaseServer.__init__(self, "", Handler)
+        self.socket = sock
+
+    def get_request(self):
+        conn, _ = self.socket.accept()
+        conn.settimeout(30)
+        return conn, ("caddy", 0)
+
+
+def main():
+    if os.geteuid() != 0:
+        print("cseries-unlock-agent runs as root", file=sys.stderr)
+        return 2
+    if os.environ.get("LISTEN_FDS") != "1" or os.environ.get("LISTEN_PID") != str(os.getpid()):
+        print("cseries-unlock-agent runs under cseries-unlock-agent.socket", file=sys.stderr)
+        return 2
+    Handler.agent = Agent(cc.Paths())
+    Server(socket.socket(fileno=3)).serve_forever()
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

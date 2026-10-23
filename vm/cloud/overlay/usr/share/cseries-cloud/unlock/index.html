@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>Unlock this machine · C-Series</title>
+<link rel="stylesheet" href="/unlock.css">
+</head>
+<body>
+<main>
+<h1 id="title">This machine</h1>
+<p id="intro" class="note">Loading…</p>
+
+<section id="locked" hidden>
+  <p>This machine restarted. Its disk stays locked until you unlock it with one of its keys.
+     Nobody else holds a key, so nothing on it can be read until you do.</p>
+  <button id="unlock-passkey" type="button">Unlock with my passkey</button>
+  <details id="recovery-unlock">
+    <summary>Use the recovery key instead</summary>
+    <form id="recovery-form">
+      <label for="recovery-key">Recovery key</label>
+      <input id="recovery-key" name="recovery_key" autocomplete="off" spellcheck="false" required>
+      <button type="submit">Unlock with the recovery key</button>
+    </form>
+  </details>
+</section>
+
+<section id="enroll" hidden>
+  <p>Before anything of yours is kept on this machine, set up the keys that unlock its disk.
+     Only you will hold them: Privatae never receives either, and cannot unlock the disk without you.</p>
+  <ol class="steps">
+    <li>A passkey on this device, which unlocks the disk with your fingerprint, your face or a PIN.</li>
+    <li>A recovery key, shown once, for when you no longer have the passkey.</li>
+  </ol>
+  <form id="enroll-form">
+    <label for="setup-code">Setup code</label>
+    <input id="setup-code" name="setup_code" autocomplete="one-time-code" required>
+    <button type="submit">Create the unlock passkey</button>
+  </form>
+  <p class="note">After every restart this machine waits for you to unlock it, so it comes back
+     only when you do. That is what keeps everyone else out.</p>
+</section>
+
+<section id="recovery-show" hidden>
+  <h2>Your recovery key</h2>
+  <p>Keep it somewhere safe and away from this device: a password manager, or printed. It unlocks
+     the disk if you no longer have your passkey. This page shows it only now, and nobody can
+     show it to you again.</p>
+  <p class="key" id="recovery-text"></p>
+  <div id="recovery-qr" class="qr"></div>
+  <form id="confirm-form">
+    <label for="recovery-confirm">Type or paste the recovery key to show you saved it</label>
+    <input id="recovery-confirm" name="recovery_key" autocomplete="off" spellcheck="false" required>
+    <button type="submit">I saved it: set up the disk</button>
+  </form>
+</section>
+
+<section id="claiming" hidden>
+  <h2>Setting up the disk</h2>
+  <p>The disk gets a new key that only yours open. Every part of it is written again, which
+     takes a few minutes. The machine keeps working meanwhile.</p>
+  <progress id="claim-progress" max="100" value="0"></progress>
+  <p class="note" id="claim-note"></p>
+</section>
+
+<section id="open" hidden>
+  <p>This machine is unlocked.</p>
+  <p><a id="host-link" class="button" href="/">Continue to your Host</a></p>
+  <details>
+    <summary>Keys that unlock this machine</summary>
+    <ul id="key-list" class="keys"></ul>
+    <p class="note">To change the keys, first use one of them.</p>
+    <button id="add-passkey" type="button">Add a passkey on this device</button>
+    <button id="new-recovery" type="button">Make a new recovery key</button>
+    <form id="auth-recovery-form" hidden>
+      <label for="auth-recovery">Recovery key</label>
+      <input id="auth-recovery" autocomplete="off" spellcheck="false">
+      <button type="submit">Use the recovery key</button>
+    </form>
+  </details>
+</section>
+
+<section id="absent" hidden>
+  <p>This machine keeps no locked disk.</p>
+</section>
+
+<p id="done" role="status"></p>
+<p id="err" role="alert"></p>
+</main>
+<script src="/qrcode.js"></script>
+<script src="/derive.js"></script>
+<script src="/unlock.js"></script>
+</body>
+</html>

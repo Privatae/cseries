@@ -444,7 +444,7 @@ with tempfile.TemporaryDirectory() as tmp:
         # ── 3. templates, and 5. applying twice ──
         unpacked = os.path.join(tmp, "unpacked")
         t.extractall(unpacked, filter="data")
-    values = cc.template_values(cfg, {"privatae-host": 990, "cseries": 991})
+    values = cc.template_values(cfg, {"privatae-host": 990, "cseries": 991}, vault=cfg["vault"])
     for rel, _ in cc.overlay_files(os.path.join(unpacked, "root")):
         if rel.endswith(".in"):
             with open(os.path.join(unpacked, "root", rel), encoding="utf-8") as f:
@@ -484,10 +484,11 @@ with tempfile.TemporaryDirectory() as tmp:
           "uri /__host/door" in caddy and "reverse_proxy 10.89.77.2:8800" in caddy and
           "protocols tls1.3" in caddy and "admin unix//run/caddy/admin.sock" in caddy,
           "the Caddyfile: the machine's zone, forward_auth to /__host/door, TLS 1.3, admin on a unix socket")
-    check(re.findall(r"^https://\S+ \{$", caddy, re.M) == ["https://*.k7x2m9.cloud.privatae.ai {"] and
+    check(re.findall(r"^https://\S+ \{$", caddy, re.M) == ["https://unlock-orchard.k7x2m9.cloud.privatae.ai {",
+                                                         "https://*.k7x2m9.cloud.privatae.ai {"] and
           "home." not in caddy + dropin and "orchard.cloud" not in caddy + dropin,
-          "one site, the machine's wildcard; no home. label and no address without the ID",
-          re.findall(r"^https://\S+ \{$", caddy, re.M))
+          "two sites: the unlock page's name, then the machine's wildcard; no home. label and no "
+          "address without the ID", re.findall(r"^https://\S+ \{$", caddy, re.M))
     check(caddy.index("forward_auth") < caddy.index("reverse_proxy"), "forward_auth comes before reverse_proxy")
 
     def block(text, opener):
@@ -502,7 +503,18 @@ with tempfile.TemporaryDirectory() as tmp:
             j += 1
         return text[i:j - 1]
 
-    rules = "\n".join(ln for ln in caddy.splitlines() if not ln.strip().startswith("#"))
+    every = "\n".join(ln for ln in caddy.splitlines() if not ln.strip().startswith("#"))
+    # The unlock page's site (cseries-unlock-agent): its own files and the
+    # agent's socket, nothing of the Host's.
+    unlock = block(every, "https://unlock-orchard.k7x2m9.cloud.privatae.ai")
+    check("10.89.77.2" not in unlock and "forward_auth" not in unlock
+          and "reverse_proxy unix//run/cseries-unlock/agent.sock" in unlock
+          and "root * /usr/share/cseries-cloud/unlock" in unlock
+          and "header_up X-Forwarded-For {remote_host}" in unlock
+          and "script-src 'self'" in unlock and "frame-ancestors 'none'" in unlock
+          and "protocols tls1.3" in unlock,
+          "the unlock site serves the page and the agent only, with a strict CSP, over TLS 1.3", unlock)
+    rules = block(every, "https://*.k7x2m9.cloud.privatae.ai")
     proxy = block(rules, "reverse_proxy 10.89.77.2:8800")
     check("header_up -X-Forwarded-Method" in proxy and "header_up -X-Forwarded-Uri" in proxy,
           "reverse_proxy removes a client's X-Forwarded-Method and X-Forwarded-Uri", proxy)
@@ -568,7 +580,13 @@ with tempfile.TemporaryDirectory() as tmp:
     with open(paths.p("etc/apt/apt.conf.d/52cseries-cloud-upgrades")) as f:
         uu = f.read()
     check('Automatic-Reboot-Time "04:00"' in uu and "${distro_codename}-security" in uu,
-          "unattended-upgrades reboots in the window and takes security updates")
+          "unattended-upgrades takes security updates, with the window set")
+    check('Automatic-Reboot "false";' in uu,
+          "a machine with a vault never reboots by itself (it opens only when its owner unlocks it)")
+    plain = cc.render(open(os.path.join(unpacked, "root/etc/apt/apt.conf.d/52cseries-cloud-upgrades.in"))
+                      .read(), cc.template_values(cfg, {"privatae-host": 990, "cseries": 991}, vault=False))
+    check('Automatic-Reboot "true";' in plain,
+          "a machine without a vault reboots in the window, as it always has")
     # Every unit the overlay enables, bootstrap enables: today its ordered
     # steps name each one, and a unit a later overlay adds is enabled by the
     # updater's rule after them.

@@ -1,0 +1,15 @@
+# Runs as root: it opens the vault (cryptsetup), mounts it and starts the
+# customer's services. No private mount namespace, for the same reason as
+# cseries-vault-boot.service.
+[Unit]
+Description=C-Series Cloud unlock agent
+Requires=cseries-unlock-agent.socket
+After=cseries-unlock-agent.socket cseries-vault-boot.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/cseries-unlock-agent
+NoNewPrivileges=yes
+UMask=0077
+Restart=on-failure
+RestartSec=2

@@ -354,7 +354,9 @@ def ts_roots(root=None):
     installer's packages."""
     root = root or APP_ROOT
     roots = sorted(os.path.relpath(p, root) for p in glob.glob(os.path.join(root, "*-web", "src")))
-    roots += ["app-web-kit", "dashboard", "sidecars", "system-apps", "packages"]
+    roots += ["app-web-kit", "dashboard", "sidecars", "system-apps", "packages",
+              # A cloud machine's unlock page (vm/cloud/README.md, "The vault").
+              "vm/cloud/overlay/usr/share/cseries-cloud/unlock"]
     return [r for r in roots if os.path.isdir(os.path.join(root, r))]
 
 

@@ -172,7 +172,7 @@ def zone_host(cfg):
 BOOTSTRAP_KEYS = frozenset({
     "name", "address_id", "zone", "machine_id", "acme_dns", "acme_email", "acme_server", "heartbeat_url",
     "release_base", "images", "image_archive", "overlay_archive", "bastion_binary",
-    "reboot_window", "setup_code",
+    "reboot_window", "setup_code", "vault",
 })
 
 
@@ -275,6 +275,13 @@ def validate_bootstrap(raw):
     if code is not None and (not isinstance(code, str) or not SETUP_CODE_RE.match(code)):
         raise CloudError("setup_code must be three groups of 6 lowercase hex characters")
     cfg["setup_code"] = code
+    # Whether bootstrap gives the machine a vault (cseries_vault): yes unless
+    # bootstrap.json says false, which only a test of the machine without one
+    # does.
+    v = raw.get("vault", True)
+    if not isinstance(v, bool):
+        raise CloudError("vault must be true or false")
+    cfg["vault"] = v
     return cfg
 
 
@@ -800,16 +807,38 @@ def render(text, values):
     return TOKEN_RE.sub(lambda m: str(values[m.group(1)]), text)
 
 
-def template_values(cfg, gids):
+def unlock_host(cfg):
+    """unlock-<name>.<address_id>.<zone>: where the machine answers its
+    unlock page, inside its own zone (so its wildcard record and certificate
+    cover it), and its unlock passkeys' relying party."""
+    return f"unlock-{cfg['name']}.{zone_host(cfg)}"
+
+
+VAULT_CONFIG = "etc/cseries-cloud/vault.json"
+
+
+def vault_configured(paths):
+    """Whether this machine keeps the customer's data in a vault
+    (cseries_vault). A machine built before the vault has none, and keeps
+    working as it did."""
+    return os.path.exists(paths.p(VAULT_CONFIG))
+
+
+def template_values(cfg, gids, vault=False):
+    # vault: this machine has a vault. Unattended upgrades then never reboot
+    # it, since a vault opens only when its owner unlocks it; the owner
+    # restarts it from the Host when security updates ask for it.
     return {
         "HOST_NAME": host_name(cfg),
         "ZONE_HOST": zone_host(cfg),
+        "UNLOCK_HOST": unlock_host(cfg),
         "HOST_IP": HOST_IP,
         "HOST_UPSTREAM": f"{HOST_IP}:{HOST_PORT}",
         "TRUSTED_PROXIES": TRUSTED_PROXY,
         "PRIVATAE_HOST_GID": gids["privatae-host"],
         "CSERIES_GID": gids["cseries"],
         "REBOOT_TIME": cfg["reboot_window"],
+        "AUTO_REBOOT": "false" if vault else "true",
     }
 
 

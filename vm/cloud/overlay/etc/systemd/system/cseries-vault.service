@@ -1,0 +1,13 @@
+# The gate every one of the customer's services requires (their vault.conf
+# drop-ins): it succeeds only when the vault is open, or when this machine has
+# no vault. While the vault is locked it fails, so they do not start, and they
+# start when cseries-unlock-agent, having opened it, starts
+# cseries-unlocked.target, which pulls this in again.
+[Unit]
+Description=C-Series Cloud vault open
+After=cseries-vault-boot.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/cseries-vault check

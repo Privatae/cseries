@@ -11,7 +11,14 @@ One JSON line in, one JSON line out, then the connection closes:
 
   {"op":"pairing.open","addr":"<ip>"}  ->  {"ok":true,"expires_in":900}
   {"op":"pairing.status"}              ->  {"ok":true,"open":[{"addr":"<ip>","expires_in":<s>}]}
+  {"op":"machine.restart"}             ->  {"ok":true,"in_seconds":5}
   anything else                        ->  {"ok":false,"error":"..."}
+
+machine.restart restarts the machine, at most once every 10 minutes: the
+owner's Restart button, for security updates that need one. A machine with a
+vault comes back locked and waits for its owner to unlock it, so a restart
+is never more than the owner choosing it; the Host asks only for its
+signed-in owner.
 
 pairing.open accepts only a global unicast address (an IPv4-mapped IPv6
 address counts as its IPv4 address), adds it to door.nft's pairing_v4 or
@@ -42,6 +49,9 @@ HOST_UID = 1000
 MAX_LINE = 4096
 READ_TIMEOUT_S = 5
 STATE = "/run/cseries-door-helper/opens.json"
+RESTART_STATE = "/run/cseries-door-helper/restart.json"
+RESTART_EVERY_S = 600
+RESTART_IN_S = 5
 NFT = "/usr/sbin/nft"
 # Extra networks treated as outside addresses, for a test machine whose
 # "outside" is a documentation range. Set only by a test's unit drop-in.
@@ -160,7 +170,31 @@ def list_open(runner=nft):
     return out
 
 
-def handle(line, peer_uid, limiter, runner=nft, extra=None):
+def restart_check(path=None, now=time.time):
+    """Refuses a restart within RESTART_EVERY_S of the last one asked for."""
+    path = path or RESTART_STATE
+    try:
+        with open(path, encoding="utf-8") as f:
+            last = float(json.load(f).get("at", 0))
+    except (OSError, ValueError, AttributeError, TypeError):
+        last = 0.0
+    if now() - last < RESTART_EVERY_S:
+        raise Refused(f"a restart was asked for {int(now() - last)} seconds ago")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path + ".new", "w", encoding="utf-8") as f:
+        json.dump({"at": now()}, f)
+    os.replace(path + ".new", path)
+
+
+def restart_machine():
+    """In a few seconds, from a timer of its own, so this answer reaches the
+    Host first."""
+    subprocess.run(["/usr/bin/systemd-run", "--on-active=%ds" % RESTART_IN_S,
+                    "--unit=cseries-owner-restart", "--collect", "/usr/bin/systemctl", "reboot"],
+                   capture_output=True, timeout=10, check=True)
+
+
+def handle(line, peer_uid, limiter, runner=nft, extra=None, restarter=restart_machine):
     """One request line and the peer's uid -> the answer object."""
     if peer_uid != HOST_UID:
         return {"ok": False, "error": "only the Host may ask for a pairing window"}
@@ -186,6 +220,13 @@ def handle(line, peer_uid, limiter, runner=nft, extra=None):
             if set(req) != {"op"}:
                 raise Refused("pairing.status takes op only")
             return {"ok": True, "open": list_open(runner)}
+        if op == "machine.restart":
+            if set(req) != {"op"}:
+                raise Refused("machine.restart takes op only")
+            restart_check()
+            restarter()
+            print("machine restart asked for by the Host", file=sys.stderr, flush=True)
+            return {"ok": True, "in_seconds": RESTART_IN_S}
         raise Refused("unknown op")
     except Refused as e:
         return {"ok": False, "error": str(e)}

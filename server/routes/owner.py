@@ -15,7 +15,7 @@ from urllib.parse import urlencode, urlsplit
 from fastapi import APIRouter, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from server import owner_login, owner_passkeys, trusted_proxies
+from server import cloud_machine, owner_login, owner_passkeys, trusted_proxies
 from server.home_origin import HOME
 from server.middleware.localhost_only import DOOR_PATH, _unmap_v4
 from server.middleware.owner_session import (_cookie, door_decision, join_url, live_session,
@@ -184,6 +184,12 @@ on('confirm', async () => {
   if (res.ok) { say('done', 'Done. For the next five minutes this Host can open its pairing port for you.'); }
   else { fail(res.j.error); }
 });
+on('restart', async () => {
+  say('err', '');
+  const res = await post('/api/owner/machine/restart', {});
+  if (!res.ok) { fail(res.j.error); return; }
+  say('done', 'The machine restarts in a few seconds. It comes back locked: unlock it, then sign in again.');
+});
 on('new-codes', async () => {
   say('err', '');
   const res = await withCheck(() => post('/api/owner/recovery/new', {}));
@@ -263,6 +269,17 @@ def _text(body: dict, key: str) -> str:
 async def setup_page():
     if not owner_login.needs_setup():
         return RedirectResponse("/login", status_code=303)
+    blocked = cloud_machine.setup_blocked()
+    if blocked:
+        # A cloud machine: its disk's keys first (server/cloud_machine.py).
+        link = (f'<p><a href="{html.escape(blocked, quote=True)}">Set up the disk&#39;s keys</a></p>'
+                if blocked.startswith("https://") else "")
+        return _page(
+            "Set up C-Series",
+            ('<p>Before anything of yours is kept on this machine, set up the keys that unlock '
+             'its disk: a passkey and a recovery key that only you hold. You will need the '
+             'setup code there too. Then come back here to create your owner account.</p>'),
+            link)
     return _page(
         "Set up C-Series",
         # The Host cannot tell how it was installed, so the page names each
@@ -344,8 +361,83 @@ async def passkey_page(request: Request):
                 '<button id="add" type="button">Add another passkey</button>'
                 '<button id="new-codes" type="button">Make new recovery codes</button>' + codes_html
                 + await _passkey_list(passkeys) + end_others)
+    if cloud_machine.state() is not None:
+        body += '<p><a href="/machine">This machine: its disk, its access log, restarts</a></p>'
     body += '<p><a href="/">Continue to C-Series</a></p>'
     return _page("Passkeys", intro, body)
+
+
+_ACTORS = {"provisioner": "Privatae's provisioner", "breakglass": "Privatae, by hand",
+           "server-login": "Someone at Privatae", "ovh-task": "The provider",
+           "machine": "This machine"}
+
+
+@router.get("/machine", include_in_schema=False)
+async def machine_page(request: Request):
+    """The machine this Host runs on (server/cloud_machine.py): its disk's
+    state, every action Privatae or its provider took on it, its unlock
+    record, and Restart when security updates need one. Signed-in owners
+    only, on the desktop's name."""
+    if request_host(request.scope) != HOME.host:
+        return _no_store(JSONResponse({"error": "not the desktop"}, status_code=404))
+    email, _token = await live_session(request.scope)
+    if not email:
+        return _no_store(RedirectResponse("/setup" if owner_login.needs_setup() else "/login",
+                                          status_code=303))
+    st = cloud_machine.state()
+    if st is None:
+        return _page("This machine", '<p class="note">This Host does not run on a machine of '
+                     'C-Series Cloud.</p>', '<p><a href="/">Continue to C-Series</a></p>')
+    vault = st.get("vault") or {}
+    log = st.get("access_log") or {}
+    body = []
+    if vault.get("state") == "absent":
+        body.append('<p class="note">This machine keeps no locked disk: it was built before '
+                    'machines had one.</p>')
+    else:
+        url = cloud_machine.unlock_url(st)
+        body.append('<p>Its disk is locked to keys only you hold. After every restart it waits '
+                    'for you to unlock it' + (f' at <a href="{html.escape(url, quote=True)}">'
+                                              f'{html.escape(url)}</a>' if url else '') + '.</p>')
+    if (st.get("patches") or {}).get("reboot_required"):
+        body.append('<p>Security updates need a restart to finish.</p>'
+                    '<button id="restart" type="button">Restart now</button>'
+                    '<p class="note">The machine comes back locked: unlock it when it does.</p>')
+    if log.get("mismatch"):
+        body.append('<p id="mismatch" role="alert"><strong>The access log Privatae sent '
+                    'no longer matches the copy on this machine.</strong> A row was removed or '
+                    'changed. The copy below is the one this machine kept.</p>')
+    rows = list(reversed(cloud_machine.access_log()))
+    items = []
+    for r in rows:
+        who = _ACTORS.get(str(r.get("actor")), str(r.get("actor")))
+        items.append(f'<li>{html.escape(str(r.get("at", ""))[:19].replace("T", " "))} UTC · '
+                     f'{html.escape(who)}<br>{html.escape(str(r.get("summary", "")))}</li>')
+    body.append('<h2>Access log</h2>' + ('<ul class="keys">' + "".join(items) + '</ul>' if items else
+                '<p class="note">Nothing yet: Privatae has taken no action on this machine.</p>'))
+    rec = list(reversed(cloud_machine.unlock_record()))[:20]
+    if rec:
+        lines = [f'<li>{html.escape(str(r.get("at", "")).replace("T", " "))} · '
+                 f'{"opened" if r.get("opened") else "refused"} · {html.escape(str(r.get("with", "")))}'
+                 f' · from {html.escape(str(r.get("from", "")))}</li>' for r in rec]
+        body.append('<h2>Unlocks</h2><ul class="keys">' + "".join(lines) + '</ul>')
+    body.append('<p><a href="/">Continue to C-Series</a></p>')
+    return _page("This machine", "", "".join(body))
+
+
+@router.post("/api/owner/machine/restart", include_in_schema=False)
+async def machine_restart(request: Request):
+    if request_host(request.scope) != HOME.host:
+        return JSONResponse({"error": "not the desktop"}, status_code=404)
+    email, _token = await live_session(request.scope)
+    if not email:
+        return JSONResponse({"error": "Sign in first."}, status_code=401)
+    try:
+        secs = await cloud_machine.restart()
+    except cloud_machine.RestartError as exc:
+        return JSONResponse({"error": str(exc)}, status_code=409)
+    logger.warning("owner asked the machine to restart")
+    return {"ok": True, "in_seconds": secs}
 
 
 def _day(when) -> str:

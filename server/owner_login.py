@@ -266,6 +266,14 @@ async def create_owner(code: str, email: str, password: str, client: str = "") -
             raise LoginError(f"Too many wrong tries. Wait {int(wait) + 1} seconds.")
         if not needs_setup():
             raise LoginError("This Host already has an owner. Sign in instead.")
+        # On a cloud machine the keys to its disk come first, so nothing of
+        # the owner's is written under a key the machine holds by itself
+        # (server/cloud_machine.py).
+        from server import cloud_machine
+        blocked = cloud_machine.setup_blocked()
+        if blocked:
+            raise LoginError("First set up the keys that unlock this machine's disk, at "
+                             f"{blocked}. Then come back here.")
         if not _setup_code or not _same((code or "").strip().lower(), _setup_code):
             _note_failure(client)
             raise LoginError("That setup code is not right. It is printed in the Host's log, "

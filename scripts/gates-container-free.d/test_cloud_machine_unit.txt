@@ -1,0 +1,2 @@
+# 2026-10-23 (C-Series Cloud, the customer holds the disk key): on a cloud machine /setup and create_owner wait until the vault's keys are set up (a machine without a vault, or no machine, never waits); /machine shows the access log newest first, escaped, warns when it no longer matches, offers Restart only when needed; restart asks the door helper. Stand-in pool and helper.
+test_cloud_machine_unit.py

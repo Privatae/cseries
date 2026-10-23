@@ -19,5 +19,10 @@ Environment=CSERIES_DOOR_SECRET_FILE=/run/cseries-cloud/door-secret
 # in /run/cseries-door. The two groups are the ones those directories belong to.
 Volume=/run/privatae-host:/run/privatae-host
 Volume=/run/cseries-door:/run/cseries-door
+# The machine writes its vault's state, its access log and its unlock record
+# into that same directory (cseries_machine.publish), which the Host can read
+# and cannot write: the owner's Machine page shows them, and /setup waits for
+# the vault's keys.
+Environment=CSERIES_MACHINE_DIR=/run/cseries-door
 GroupAdd=@PRIVATAE_HOST_GID@
 GroupAdd=@CSERIES_GID@

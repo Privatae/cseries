@@ -1,13 +1,16 @@
 // The cloud box's unattended upgrades (bootstrap renders this file): Debian's
 // security and stable updates, and a reboot when one needs it at
-// @REBOOT_TIME@ UTC, the window the owner sees.
+// @REBOOT_TIME@ UTC, the window the owner sees. A machine with a vault never
+// reboots by itself (AUTO_REBOOT false): its disk opens only when its owner
+// unlocks it, so the owner restarts it from the Host when an update asks for
+// a restart.
 Unattended-Upgrade::Origins-Pattern {
 	"origin=Debian,codename=${distro_codename},label=Debian";
 	"origin=Debian,codename=${distro_codename}-updates,label=Debian";
 	"origin=Debian,codename=${distro_codename},label=Debian-Security";
 	"origin=Debian,codename=${distro_codename}-security,label=Debian-Security";
 };
-Unattended-Upgrade::Automatic-Reboot "true";
+Unattended-Upgrade::Automatic-Reboot "@AUTO_REBOOT@";
 Unattended-Upgrade::Automatic-Reboot-WithUsers "true";
 Unattended-Upgrade::Automatic-Reboot-Time "@REBOOT_TIME@";
 Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";

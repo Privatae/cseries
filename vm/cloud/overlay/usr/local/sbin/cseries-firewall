@@ -2,13 +2,17 @@
 # Loads the cloud box's firewall (/etc/cseries-cloud/nftables).
 #
 #   cseries-firewall load      door.nft, then the SSH rule while the box is not
-#                              sealed, then the bastion's rule when it runs
+#                              sealed, then the Host's ports (8810, 8811) unless
+#                              its vault is locked, then the bastion's rule
+#                              when it runs
 #   cseries-firewall bastion   the bastion's rule alone (its ExecStartPre)
 #   cseries-firewall seal      drop the SSH rule
 set -eu
 
 D=/etc/cseries-cloud/nftables
 SEALED=/var/lib/cseries-cloud/sealed
+VAULT_CONFIG=/etc/cseries-cloud/vault.json
+VAULT_MOUNT=/var/lib/cseries-vault
 BASTION_CGROUP=/sys/fs/cgroup/system.slice/privatae-bastion.service
 
 case "${1:-load}" in
@@ -17,6 +21,12 @@ case "${1:-load}" in
         if [ ! -e "$SEALED" ]; then
             # The provisioner's way in until it runs `bootstrap.sh seal`.
             nft add rule inet cseries_door pre_seal tcp dport 22 accept
+        fi
+        # A machine without a vault, or with its vault open: the Host runs and
+        # its ports open. A locked vault keeps them shut until the unlock
+        # (cseries_machine.after_open) opens them.
+        if [ ! -e "$VAULT_CONFIG" ] || mountpoint -q "$VAULT_MOUNT"; then
+            nft add element inet cseries_door lanes_open '{ 8810, 8811 }'
         fi
         if [ -d "$BASTION_CGROUP" ]; then
             nft -f "$D/bastion.nft"

@@ -12,6 +12,8 @@ cseries-cloud-heartbeat) and its signature.
      RFC 3339 UTC to the second, and a value the box cannot read is null
      rather than a guess or an exception.
   4. A post that cannot be delivered changes nothing and exits 0.
+  5. The answer: a JSON object of at most 1 MiB is read, anything else (or
+     one cut off) is no news; a 2xx without access_log changes nothing.
 
 Container-free: python3 scripts/test_cloud_box_heartbeat.py (needs cryptography).
 """
@@ -87,8 +89,31 @@ with tempfile.TemporaryDirectory() as tmp:
     hb.host_health = lambda: "down"
     cfg = {"machine_id": MID, "heartbeat_url": "https://127.0.0.1:9/never"}
     body = hb.collect(paths, cfg, now=1767323045)
-    want = {"machine_id", "ts", "version", "host", "disk", "cert", "backup", "patches", "uptime_s"}
+    want = {"machine_id", "ts", "version", "host", "disk", "cert", "backup", "patches", "uptime_s",
+            "vault", "access_log"}
     check(set(body) == want, "the body has exactly the fields the platform reads", sorted(body))
+    check(body["vault"] == {"state": "absent", "since": None},
+          "a machine without a vault says so: vault.state absent, since null", body["vault"])
+    check(body["access_log"] == {"count": 0, "head": "0" * 64, "mismatch": False},
+          "an empty access log: count 0, the head 64 zeros, no mismatch", body["access_log"])
+
+    # A vault that is locked: nothing of the Host runs, and podman is never
+    # asked (its storage is in the vault; asking would make an empty one on
+    # the plain disk).
+    asked = []
+    real_quiet = hb._quiet
+    hb._quiet = lambda cmd, timeout=20: asked.append(cmd)
+    vroot = os.path.join(tmp, "locked-box")
+    os.makedirs(os.path.join(vroot, "etc/cseries-cloud"))
+    with open(os.path.join(vroot, "etc/cseries-cloud/vault.json"), "w") as f:
+        json.dump({"version": 1, "machine_id": MID, "salt": "x"}, f)
+    lbody = hb.collect(cc.Paths(vroot), cfg, now=1767323045)
+    hb._quiet = real_quiet
+    check(lbody["vault"]["state"] == "locked" and lbody["host"] == {"health": "down", "deep_status": None}
+          and lbody["disk"]["state_free_bytes"] is None and lbody["backup"] == {"last_ok_at": None, "paused": None},
+          "a locked vault: vault.state locked, the Host down, nothing of its read", lbody)
+    check(not any("podman" in " ".join(c) for c in asked if isinstance(c, list)),
+          "and podman is never asked while the vault is locked", asked)
     check(set(body["host"]) == {"health", "deep_status"} and set(body["disk"]) == {"state_free_bytes", "root_free_bytes"}
           and set(body["cert"]) == {"not_after"} and set(body["backup"]) == {"last_ok_at", "paused"}
           and set(body["patches"]) == {"pending_security", "reboot_required", "last_upgrade_at"},
@@ -168,5 +193,37 @@ with tempfile.TemporaryDirectory() as tmp:
     rc = hb.main([])
     check(rc == 0 and sorted(os.listdir(paths.state)) == before,
           "a post that cannot be delivered exits 0 and writes nothing", (rc, before))
+
+# 5. The platform's 2xx answer: only a JSON object of at most
+# 1 MiB is read; anything else, and an answer cut off, is no news, and the
+# box's copy of its access log stays as it was.
+import http.client  # noqa: E402
+import io  # noqa: E402
+
+
+class Answer(io.BytesIO):
+    pass
+
+
+class CutOff:
+    def read(self, n=-1):
+        raise http.client.IncompleteRead(b'{"ok": tr', 100)
+
+
+check(hb.read_answer(Answer(b'{"ok": true}')) == {"ok": True}, "a JSON object is read")
+big = b'{"ok": true, "pad": "' + b"x" * (hb.MAX_ANSWER) + b'"}'
+check(hb.read_answer(Answer(big)) is None, "an answer over 1 MiB is not read")
+check(hb.read_answer(Answer(b"[1]")) is None and hb.read_answer(Answer(b"not json")) is None
+      and hb.read_answer(Answer(b"\xff\xfe")) is None, "nor one that is not a JSON object")
+check(hb.read_answer(CutOff()) is None, "an answer cut off is no news, not an exception")
+with tempfile.TemporaryDirectory() as tmp:
+    paths = cc.Paths(tmp)
+    cfg = {"machine_id": MID, "name": "orchard", "address_id": "k7x2m9", "zone": "cloud.privatae.ai"}
+    for answer in (None, {"ok": True}):
+        hb.take_answer(paths, cfg, answer, False)
+        st = hb.cm.access_log(paths, cfg).status()
+        check(st == {"count": 0, "head": "0" * 64, "mismatch": False} and
+              not os.path.exists(paths.p(hb.cm.ACCESS_STATE)),
+              f"an answer {answer!r} (none, or 2xx without access_log) changes nothing", st)
 
 sys.exit(failed)

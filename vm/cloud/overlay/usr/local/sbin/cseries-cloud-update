@@ -182,7 +182,9 @@ class Updater:
                     cc.run(["groupadd", "--system", g])
             gids = {g: grp.getgrnam(g).gr_gid for g in ("privatae-host", "cseries")}
         changed = cc.apply_overlay(os.path.join(tree, "root"), self.paths,
-                                   cc.template_values(self.cfg, gids), backup)
+                                   cc.template_values(self.cfg, gids,
+                                                      vault=cc.vault_configured(self.paths)),
+                                   backup)
         self.reload_for(changed)
         if units is not None:
             self.switch_units(prev_tree, tree, backup, units)

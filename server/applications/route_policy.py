@@ -256,6 +256,11 @@ _ENTRIES: list[tuple[str, str, str, str]] = [
     *_e("POST", "/api/owner/recovery/new", "own-auth",
         "the owner's live session cookie and a passkey check or recovery-code sign-in in the "
         "last five minutes"),
+    # The machine a cloud Host runs on (server/cloud_machine.py).
+    *_e("POST", "/api/owner/machine/restart", "own-auth",
+        "the owner's live session cookie on this Host's own name; asks the machine's door "
+        "helper to restart it (at most once every 10 minutes), after which its vault waits "
+        "for the owner to unlock it"),
     *_e("GET", "/api/applications/{app_id}/source", "own-auth", _RUNTIME_TOKEN),
     *_e("POST", "/api/applications/{app_id}/runtime-log", "own-auth", _RUNTIME_TOKEN),
     *_e("POST", "/api/network/bastions/redeem", "own-auth",

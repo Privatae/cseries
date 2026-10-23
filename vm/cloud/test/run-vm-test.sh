@@ -41,6 +41,11 @@
 # started from the creative image and their tools listed the way the Host
 # lists them on first use; a stale runtime image removed at the runtime's
 # next start; and each again after a reboot and with the platform off.
+#
+# The box has a vault (vm/cloud/README.md, "The vault"): the claim sets up
+# its keys through the unlock page first, and after every reboot the test
+# unlocks it there the way its owner would, with a passkey's passphrase
+# computed as the page computes it. run-vault-test.sh tests the vault itself.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -57,6 +62,13 @@ NAME=boxtest
 # An invented address ID in the provisioner's shape (machines.address_id).
 ADDRESS_ID=k7x2m9
 HOSTNAME=$NAME.$ADDRESS_ID.cloud.privatae.ai
+UNLOCK=unlock-$NAME.$ADDRESS_ID.cloud.privatae.ai
+MACHINE_ID=6f1d3c2a-9b8e-4a7d-8c5f-0e1d2c3b4a59
+UNLOCK_CRED=Q3JlZGVudGlhbC1pbnZlbnRlZC0wMQ
+UNLOCK_PP=$(cd "$repo" && python3 -I -c '
+import sys; sys.path.insert(0, "vm/cloud/overlay/usr/local/lib/cseries-cloud")
+import cseries_vault as cv
+print(cv.passkey_passphrase(bytes(range(32)), sys.argv[1], sys.argv[2]))' "$MACHINE_ID" "$UNLOCK_CRED")
 VM4=192.0.2.2
 OUT4=192.0.2.1
 VM6=2001:db8:c5::2
@@ -96,6 +108,34 @@ lacks() { ! grep -qi "$1" <<< "$2"; }   # pattern, text
 has_line() { grep -qx "$1" <<< "$2"; }  # whole line, text
 ok_json() { python3 -c 'import json,sys; sys.exit(0 if json.loads(sys.argv[1]).get("ok") else 1)' "$1"; }
 code_is() { [ "${1%% *}" = "$2" ]; }    # "<code> <redirect>", expected code
+# The unlock page's server (cseries-unlock-agent), from outside through Caddy.
+unlock_api() {  # method path [json]: the code; the body in $WORK/ubody
+    local data=()
+    [ $# -ge 3 ] && data=(-H 'Content-Type: application/json' --data "$3")
+    curl -sk -m 60 -o "$WORK/ubody" -w '%{http_code}' --resolve "$UNLOCK:443:$VM4" -X "$1" "${data[@]}" \
+        "https://$UNLOCK/api$2" || echo 000
+}
+set_up_disk_keys() {   # the owner's first step: the vault's keys, through the unlock page
+    local code rk
+    code=$(unlock_api POST /enroll "{\"setup_code\": \"$SETUP_CODE\", \"passkey\": {\"credential_id\": \"$UNLOCK_CRED\", \"passphrase\": \"$UNLOCK_PP\"}}")
+    [ "$code" = 200 ] || return 1
+    rk=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["recovery_key"])' "$WORK/ubody")
+    code=$(unlock_api POST /enroll/confirm "{\"setup_code\": \"$SETUP_CODE\", \"recovery_key\": \"$rk\"}")
+    [ "$code" = 200 ] || return 1
+    for _ in $(seq 1 450); do
+        unlock_api GET /state >/dev/null
+        grep -q '"enrolled": true' "$WORK/ubody" && return 0
+        sleep 2
+    done
+    return 1
+}
+unlock_box() {   # after a reboot: what the owner does at the unlock page
+    for _ in $(seq 1 60); do
+        [ "$(unlock_api GET /state)" = 200 ] && grep -q '"state": "locked"' "$WORK/ubody" && break
+        sleep 3
+    done
+    [ "$(unlock_api POST /unlock "{\"credential_id\": \"$UNLOCK_CRED\", \"passphrase\": \"$UNLOCK_PP\"}")" = 200 ]
+}
 is_hex64() { [[ $1 =~ ^[0-9a-f]{64}$ ]]; }
 ws_opened() { grep -qx "status 101" <<< "$1" && grep -q "^frame .*invalid JSON" <<< "$1"; }
 pair_timed_out() { grep -q 'deadline exceeded\|timed out\|i/o timeout' <<< "$1" && ! grep -qx 'pair-exit 0' <<< "$1"; }
@@ -417,7 +457,7 @@ cat > "$F/bootstrap.json" <<EOF
   "name": "$NAME",
   "address_id": "$ADDRESS_ID",
   "zone": "cloud.privatae.ai",
-  "machine_id": "6f1d3c2a-9b8e-4a7d-8c5f-0e1d2c3b4a59",
+  "machine_id": "$MACHINE_ID",
   "heartbeat_url": "https://127.0.0.1:8443/api/machines/heartbeat",
   "release_base": "https://127.0.0.1:8443/release",
   "image_archive": {"path": "/var/tmp/cloud-test/images.tar.gz", "host": "$HOST_IMAGE", "postgres": "$PG_IMAGE"},
@@ -526,6 +566,13 @@ r=$(web "$jar" "https://$HOSTNAME/" -H 'Accept: text/html')
 check "before the claim a page is sent to /setup" test "$r" = "303 https://$HOSTNAME/setup"
 r=$(web "$jar" "https://$HOSTNAME/setup")
 check "before the claim /setup answers through the door" code_is "$r" 200
+check "and asks for the disk's keys first, at the unlock page" sh -c "grep -q 'Set up the disk' '$WORK/body' && grep -q '$UNLOCK' '$WORK/body'"
+r=$(web "$jar" "https://$HOSTNAME/api/owner/setup" -X POST -H 'Content-Type: application/json' \
+    --data "{\"code\": \"$SETUP_CODE\", \"email\": \"$OWNER_EMAIL\", \"password\": \"$OWNER_PW\"}")
+check "the right setup code claims nothing before the disk's keys are set up" sh -c "test '${r%% *}' = 400 && grep -q '$UNLOCK' '$WORK/body'"
+t0=$(date +%s)
+check "the disk's keys are set up at the unlock page (passkey, recovery key, the claim's re-encryption)" set_up_disk_keys
+measure "setting up the disk's keys took $(( $(date +%s) - t0 ))s"
 r=$(web "$jar" "https://$HOSTNAME/api/owner/setup" -X POST -H 'Content-Type: application/json' \
     --data "{\"code\": \"0a0a0a-0b0b0b-0c0c0c\", \"email\": \"$OWNER_EMAIL\", \"password\": \"$OWNER_PW\"}")
 check "a wrong setup code is refused (400) and claims nothing" sh -c "test '${r%% *}' = 400 && ! grep -qi '^set-cookie: __Host-' '$WORK/hdrs'"
@@ -1073,13 +1120,15 @@ check "a stale runtime image is in the store before the reboot" vm "sudo podman 
 sums2=$(door_sums)
 "$V" reboot
 "$V" wait-ssh 150
+check "after a reboot: the box waits locked for its owner" vm "sudo /usr/local/sbin/cseries-vault state | grep -q '\"state\": \"locked\"'"
+check "after a reboot: the owner unlocks it at the unlock page" unlock_box
 for _ in $(seq 1 100); do vm 'sudo cseries-guest health' >/dev/null 2>&1 && break; sleep 3; done
 check "after a reboot: the Host is healthy" vm 'sudo cseries-guest health'
 check "after a reboot: the firewall is loaded" vm 'sudo nft list table inet cseries_door >/dev/null'
 check "after a reboot: the bastion's rule names its new cgroup and it is paired with families off" \
     vm 'sudo nft list chain inet cseries_door bastion_out | grep -q privatae-bastion.service && sudo -H privatae-bastion switch --list | grep -q "ops off"'
 check "after a reboot: 443 answers outside" sh -c "curl -sk -o /dev/null --resolve $HOSTNAME:443:$VM4 https://$HOSTNAME/login"
-check "after a reboot: the door key is unchanged" test "$(door_sums)" = "$sums2"
+check "after a reboot and the unlock: the door key was replaced" test "$(door_sums)" != "$sums2"
 check "after a reboot: the outside bastion holds its lane again" wait_lanes 1 45
 door_checks "after a reboot" 1
 say "R5: the local runtime after a reboot"
@@ -1170,6 +1219,9 @@ say "a reboot after seal"
 "$V" reboot
 for _ in $(seq 1 100); do curl -sk -o /dev/null -m 3 --resolve "$HOSTNAME:443:$VM4" "https://$HOSTNAME/login" && break; sleep 3; done
 check "after seal and a reboot: 443 answers" sh -c "curl -sk -o /dev/null -m 5 --resolve $HOSTNAME:443:$VM4 https://$HOSTNAME/login"
+s4=$(scan "$VM4")
+check "after seal and a reboot, locked: 443 only (8811 shut until the unlock)" grep -qx 'Ports: 443/open/tcp//https///' <<< "$s4"
+check "after seal and a reboot: the owner unlocks it over 443" unlock_box
 for _ in $(seq 1 40); do login_ok && break; sleep 3; done
 check "after seal and a reboot: the door still has its key (/login 200 through Caddy)" login_ok
 s4=$(scan "$VM4")

@@ -1,0 +1,2 @@
+# 2026-10-23 (C-Series Cloud, the customer holds the disk key): the machine's copy of its access log takes the platform's rows only while each one extends its chain (the contract's row hash and its test vector), keeps a mismatch once found, is appended in place, and its copy inside the vault must stay a prefix of it. Every character but \n and \r stays in one row (the copy and the Host's view split on \n only); a lone surrogate is refused, not raised. In-process; no network.
+test_cloud_box_access_log.py

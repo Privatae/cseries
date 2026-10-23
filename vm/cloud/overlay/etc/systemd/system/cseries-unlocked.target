@@ -1,0 +1,8 @@
+# What runs once the vault is open: the Host, its database, the local runtime,
+# its plain proxy and the bastion. cseries-unlock-agent starts this after an
+# unlock; at a boot before the claim, multi-user.target starts them itself.
+[Unit]
+Description=C-Series Cloud, unlocked
+Requires=cseries-vault.service
+After=cseries-vault.service
+Wants=cseries-postgres.service cseries-host.service cseries-runtime.socket cseries-squid.service privatae-bastion.service

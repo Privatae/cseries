@@ -10,7 +10,14 @@ The body, compact JSON:
   {machine_id, ts, version, host:{health, deep_status},
    disk:{state_free_bytes, root_free_bytes}, cert:{not_after},
    backup:{last_ok_at, paused}, patches:{pending_security, reboot_required,
-   last_upgrade_at}, uptime_s}
+   last_upgrade_at}, uptime_s,
+   vault:{state, since}, access_log:{count, head, mismatch}}
+
+vault.state is "locked", "open" or "absent" (a machine built before the
+vault); since is when it entered that state, or null. access_log is how far
+this machine's copy of its access log goes (cseries_accesslog): the platform
+answers with the rows after `count`, when its own log still extends `head`,
+and the machine keeps them only while every one of them does.
 
 backup.paused is true when the Host's newest finished backup run took no
 backup because it had nobody to encrypt to (no_recipient) or nowhere it may
@@ -26,6 +33,7 @@ heartbeat_url with
 """
 
 import datetime
+import http.client
 import json
 import os
 import re
@@ -36,6 +44,8 @@ import urllib.request
 
 sys.path.insert(0, "/usr/local/lib/cseries-cloud")
 import cseries_cloud as cc  # noqa: E402
+import cseries_machine as cm  # noqa: E402
+import cseries_vault as cv  # noqa: E402
 
 HEALTH_URL = f"http://{cc.HOST_IP}:{cc.HOST_PORT}/api/system/health"
 DEEP_IN_CONTAINER = ("import json,urllib.request\n"
@@ -152,20 +162,28 @@ def uptime_s():
 
 def collect(paths, cfg, now=None):
     st = cc.read_json(paths.update_state(), {}) or {}
+    vault = cm.vault_state(paths, cv.Vault(paths))
+    # While the vault is locked nothing of the Host's runs, and podman is not
+    # asked: its storage is in the vault, and asking would make an empty one
+    # under the mount point on the plain disk.
+    locked = vault["state"] == "locked"
     return {
         "machine_id": cfg["machine_id"],
         "ts": rfc3339(now if now is not None else time.time()),
         "version": st.get("version"),
-        "host": {"health": host_health(), "deep_status": deep_status()},
-        "disk": {"state_free_bytes": state_free(), "root_free_bytes": free_bytes(paths.p("/"))},
+        "host": {"health": "down" if locked else host_health(), "deep_status": None if locked else deep_status()},
+        "disk": {"state_free_bytes": None if locked else state_free(), "root_free_bytes": free_bytes(paths.p("/"))},
         "cert": {"not_after": cert_not_after(os.path.join(paths.tls, "cert.pem"))},
-        "backup": {"last_ok_at": last_backup_ok(), "paused": backup_paused()},
+        "backup": {"last_ok_at": None if locked else last_backup_ok(),
+                   "paused": None if locked else backup_paused()},
         "patches": {
             "pending_security": pending_security(),
             "reboot_required": os.path.exists(paths.p("run/reboot-required")),
             "last_upgrade_at": mtime(paths.p(UU_STAMP)),
         },
         "uptime_s": uptime_s(),
+        "vault": vault,
+        "access_log": cm.access_log(paths, cfg).status(),
     }
 
 
@@ -192,13 +210,47 @@ def main(argv):
         return 0
     key = cc.load_or_create_key(paths.heartbeat_key())
     req = signed_request(cfg["heartbeat_url"], key, body)
+    answer = None
     try:
         with urllib.request.urlopen(req, timeout=15) as r:
             print(f"heartbeat: {r.status}", file=sys.stderr)
+            answer = read_answer(r)
     except OSError as e:
         # Nothing on the box depends on the platform hearing this.
         print(f"heartbeat: not delivered ({e})", file=sys.stderr)
+    take_answer(paths, cfg, answer, body["patches"]["reboot_required"])
     return 0
+
+
+MAX_ANSWER = 1024 * 1024
+
+
+def read_answer(r):
+    """The 2xx answer's JSON object, or None for anything else (one over
+    MAX_ANSWER, cut off, or not a JSON object): no news, the copy as it was."""
+    try:
+        raw = r.read(MAX_ANSWER + 1)
+        if len(raw) > MAX_ANSWER:
+            return None
+        obj = json.loads(raw)
+    except (OSError, ValueError, http.client.HTTPException):
+        return None
+    return obj if isinstance(obj, dict) else None
+
+
+def take_answer(paths, cfg, answer, reboot_required):
+    """Keep the access-log rows the answer carries (cseries_accesslog.
+    AccessLog.apply_answer decides which), mirror them into the vault while
+    it is open, and write what the Host reads (cseries_machine.publish)."""
+    log = cm.access_log(paths, cfg)
+    st = log.apply_answer(answer) if answer is not None else None
+    if st is not None and st["mismatch"]:
+        print("heartbeat: the access log Privatae sent does not extend this machine's copy",
+              file=sys.stderr)
+    vault = cv.Vault(paths)
+    if vault.state() == "open":
+        log.sync_mirror(os.path.join(vault.mount, cv.RECORD, "access-log.jsonl"))
+    cm.publish(paths, cfg, vault, reboot_required)
 
 
 if __name__ == "__main__":

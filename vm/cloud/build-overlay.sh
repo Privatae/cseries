@@ -13,7 +13,8 @@
 #                   quadlets, cseries.network, containers.conf.d/cseries.conf,
 #                   cseries-guest), the local runtime (vm/runtime: its code,
 #                   units, network and plain proxy's config), both seccomp
-#                   profiles and etc/tmpfiles.d/privatae-host.conf
+#                   profiles, etc/tmpfiles.d/privatae-host.conf and the QR
+#                   library the unlock page uses
 #
 # The same tree gives the same bytes: entries in name order, owner root,
 # fixed modes (0755 for directories and programs, 0644 for the rest), every
@@ -96,6 +97,9 @@ for fn in sorted(os.listdir(os.path.join(rt, "systemd"))):
 add("root/etc/containers/systemd/cseries-apps.network", os.path.join(rt, "containers/cseries-apps.network"))
 add("root/etc/cseries-runtime/squid.conf", os.path.join(rt, "squid.conf"))
 add("root/etc/tmpfiles.d/privatae-host.conf", os.path.join(repo, "etc/tmpfiles.d/privatae-host.conf"))
+# The unlock page draws the recovery key's QR code with the QR library the
+# dashboard already vendors (THIRD-PARTY-NOTICES.md).
+add("root/usr/share/cseries-cloud/unlock/qrcode.js", os.path.join(repo, "dashboard/base/js/qrcode.js"))
 files["root/etc/cseries/guest-version"] = f"cloud-{version}\n".encode()
 add("bootstrap.sh", os.path.join(repo, "vm/cloud/bootstrap.sh"))
 files["VERSION"] = f"{version}\n".encode()

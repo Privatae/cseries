@@ -61,6 +61,7 @@ ORDERED_UNITS = frozenset({
     "cseries-lane6.socket", "cseries-enroll6.socket", "privatae-bastion.service",
     "cseries-cert.timer", "cseries-cloud-update.timer", "cseries-cloud-heartbeat.timer",
     "cseries-runtime.socket", "cseries-squid.service",
+    "cseries-vault-boot.service", "cseries-unlock-agent.socket",
 })
 # The groups the box's own services hand to the Host container: the bastion's
 # sockets, the pairing-window helper's, and the local runtime's.
@@ -122,7 +123,7 @@ def write_config(paths, cfg, gids):
 
 
 def install_overlay(paths, overlay, cfg, gids, version):
-    values = cc.template_values(cfg, gids)
+    values = cc.template_values(cfg, gids, vault=cfg["vault"] or cc.vault_configured(paths))
     changed = cc.apply_overlay(os.path.join(overlay, "root"), paths, values)
     keep = paths.overlay_dir(version)
     if os.path.realpath(overlay) != os.path.realpath(keep):
@@ -359,6 +360,38 @@ def other_units(overlay):
     return sorted(u for u, st in rest.items() if st[1]), sorted(u for u, st in rest.items() if not st[1])
 
 
+def make_vault(paths, cfg):
+    """The vault (cseries_vault), made before anything of the customer's
+    exists, so the Host's data, the runtime's, the bastion's and their logs
+    are written into it from the first byte. Until the claim it opens with
+    the bootstrap key on this disk; at the claim the customer's own keys
+    replace that key and the vault gets a new volume key. Returns the
+    vault's state: "absent" when bootstrap.json says vault false, a machine
+    as it was before vaults."""
+    import cseries_machine as cm
+    import cseries_vault as cv
+    vault = cv.Vault(paths)
+    if not cfg["vault"] and not vault.configured():
+        return "absent"
+    if not vault.configured():
+        vault.create(cfg["machine_id"])
+    elif vault.state() != "open" and not vault.auto_open():
+        raise cc.CloudError("this machine's vault is locked and its bootstrap key is gone: "
+                            "it has been claimed, and only its owner can open it")
+    cm.after_open(paths, cfg, vault, vault.run, "the bootstrap key", start=False)
+    return vault.state()
+
+
+def swap_in_use(paths):
+    """The swap areas in use, from /proc/swaps: a page of the Host's memory
+    swapped out would reach the disk outside the vault."""
+    try:
+        with open(paths.p("proc/swaps"), encoding="ascii", errors="replace") as f:
+            return [ln.split()[0] for ln in f.read().splitlines()[1:] if ln.strip()]
+    except OSError:
+        return []
+
+
 def first_cert(paths, cfg):
     if not cfg["acme_dns"]:
         return "self-signed", None
@@ -409,6 +442,14 @@ def run_bootstrap(overlay):
             "/etc/tmpfiles.d/cseries-door.conf"])
         sh(["sysctl", "--system"])
         sh(["systemctl", "restart", "systemd-journald"])
+        step = "vault"
+        vault_state = make_vault(paths, cfg)
+        log(f"vault: {vault_state}")
+        # Enabled, not started: started now it would find the vault open and
+        # start the Host before its images are configured. It runs at every
+        # boot from here on. The unlock page's server listens from now on.
+        sh(["systemctl", "enable", "cseries-vault-boot.service"])
+        sh(["systemctl", "enable", "--now", "cseries-unlock-agent.socket"])
         # Debian's nftables.service starts with `flush ruleset`, which would
         # remove netavark's table and this box's own.
         sh(["systemctl", "mask", "nftables.service"])
@@ -466,6 +507,7 @@ def run_bootstrap(overlay):
             "host_ca_sha256": ca_sha,
             "cert": cert,
             "coders": coders,
+            "vault": vault_state,
             "versions": {"cloud": version, "bastion": bv,
                          "host_image": images.get("host_image"),
                          "postgres_image": images.get("postgres_image")},
@@ -493,6 +535,14 @@ DEBIAN_FRONTEND=noninteractive apt-get purge -y -qq openssh-server >/dev/null 2>
 
 def seal():
     paths = cc.Paths()
+    swaps = swap_in_use(paths)
+    if swaps and cc.vault_configured(paths):
+        # The seal is the provisioner's last step: a machine that would swap
+        # the Host's memory onto a plain disk is not handed over.
+        print(json.dumps({"ok": False, "step": "seal",
+                          "error": f"swap is in use ({', '.join(swaps)}); the Host's memory could "
+                                   "reach the disk outside the vault"}), flush=True)
+        return 1
     os.makedirs(paths.state, exist_ok=True)
     cc.atomic_write(os.path.join(paths.state, "sealed"), time.strftime("%Y-%m-%dT%H:%M:%SZ\n",
                                                                        time.gmtime()))

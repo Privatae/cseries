@@ -1,0 +1,2 @@
+# 2026-10-23 (C-Series Cloud, the customer holds the disk key): the unlock page's derive.js, under node's WebCrypto, gives the passkey passphrase the machine computes; the page needs nothing its CSP refuses; every element and view it uses exists; it calls only the agent's routes and sends the derived passphrase, never the PRF output. Needs node for the first part.
+test_cloud_box_unlock_page.py

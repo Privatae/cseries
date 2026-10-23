@@ -1,0 +1,18 @@
+# At every boot: before the claim, open the vault with the bootstrap key; after
+# it, record that the vault is locked, and leave it for the customer to unlock
+# at unlock-<name>.<address_id>.<zone> (cseries-unlock-agent). No sandboxing:
+# it opens a device-mapper device and mounts, which a private mount
+# namespace would keep from everyone else.
+[Unit]
+Description=C-Series Cloud vault at boot
+After=local-fs.target systemd-tmpfiles-setup.service
+Before=cseries-vault.service multi-user.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/cseries-vault boot
+TimeoutStartSec=10min
+
+[Install]
+WantedBy=multi-user.target

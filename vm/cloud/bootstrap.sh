@@ -21,7 +21,7 @@ BOOT=/etc/cseries-cloud/bootstrap.json
 STAGE=/var/lib/cseries-cloud/bootstrap
 PACKAGES="podman crun conmon netavark aardvark-dns nftables caddy lego python3 squid
 python3-cryptography unattended-upgrades apt-listchanges needrestart ca-certificates curl jq
-age uidmap passt"
+age uidmap passt cryptsetup-bin"
 
 die() {
     printf '{"ok": false, "step": "%s", "error": "%s"}\n' "$1" "$2"
@@ -151,8 +151,9 @@ fi
 
 # The library and the bootstrap itself go in place first, so the bootstrap
 # runs from where every later run of it, and the updater, will find it.
-install -D -m 0644 "$overlay/root/usr/local/lib/cseries-cloud/cseries_cloud.py" \
-    /usr/local/lib/cseries-cloud/cseries_cloud.py
+for lib in "$overlay"/root/usr/local/lib/cseries-cloud/*.py; do
+    install -D -m 0644 "$lib" "/usr/local/lib/cseries-cloud/$(basename "$lib")"
+done
 install -D -m 0755 "$overlay/root/usr/local/sbin/cseries-cloud-bootstrap" \
     /usr/local/sbin/cseries-cloud-bootstrap
 exec python3 -I /usr/local/sbin/cseries-cloud-bootstrap run --overlay "$overlay"

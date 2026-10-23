@@ -9,6 +9,8 @@
 #   vm/cloud/test/vm.sh ssh [command]    a shell or a command as that user
 #   vm/cloud/test/vm.sh scp <file>... <dir in the VM>
 #   vm/cloud/test/vm.sh reboot           an ACPI reboot from outside, then wait
+#   vm/cloud/test/vm.sh reset            a hard reset, the disk kept: what a
+#                                        crash or a power cut is to the box
 #   vm/cloud/test/vm.sh down             power off and remove the tap device
 #
 # Everything lives under $VM_WORK (default /var/tmp/cloud-vm/vm), the Debian
@@ -189,6 +191,12 @@ cmd_reboot() {
     say "rebooted"
 }
 
+cmd_reset() {
+    running || die "no VM is running"
+    qmp system_reset >/dev/null
+    say "reset"
+}
+
 cmd_down() {
     if running; then
         qmp system_powerdown >/dev/null 2>&1 || true
@@ -214,7 +222,8 @@ case "$c" in
         ;;
     wait-ssh) wait_ssh "${1:-120}" ;;
     reboot) cmd_reboot ;;
+    reset) cmd_reset ;;
     down) cmd_down ;;
     running) running ;;
-    *) die "usage: vm.sh image|up|ssh|scp|wait-ssh|reboot|down" ;;
+    *) die "usage: vm.sh image|up|ssh|scp|wait-ssh|reboot|reset|down" ;;
 esac

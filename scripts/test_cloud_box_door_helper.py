@@ -15,6 +15,8 @@ cseries-door-helper), its whole protocol, with nft and the clock stood in.
      open and a failed nft do not count.
   5. pairing.status reads the sets from nft's JSON; any other op, extra
      fields, a non-object or an oversize line are refused.
+  6. machine.restart restarts the machine for the Host, at most once every
+     10 minutes; it takes op alone, and anyone but the Host is refused.
 
 Container-free: python3 scripts/test_cloud_box_door_helper.py
 """
@@ -176,5 +178,28 @@ with tempfile.TemporaryDirectory() as tmp:
     check(long_refused, "a request line longer than 4 KiB is refused")
     a.close()
     b.close()
+
+# 6. the owner's restart
+with tempfile.TemporaryDirectory() as tmp:
+    h.RESTART_STATE = os.path.join(tmp, "restart.json")
+    lim = h.Limiter(os.path.join(tmp, "opens.json"))
+    asked = []
+
+    def restarter():
+        asked.append(1)
+
+    r = h.handle(json.dumps({"op": "machine.restart"}), 1001, lim, runner=None, restarter=restarter)
+    check(r["ok"] is False and not asked, "a restart from anyone but the Host is refused", r)
+    r = h.handle(json.dumps({"op": "machine.restart", "now": True}), 1000, lim, runner=None,
+                 restarter=restarter)
+    check(r["ok"] is False and not asked, "machine.restart takes op alone", r)
+    r = h.handle(json.dumps({"op": "machine.restart"}), 1000, lim, runner=None, restarter=restarter)
+    check(r == {"ok": True, "in_seconds": h.RESTART_IN_S} and asked == [1], "the Host's restart is asked for", r)
+    r = h.handle(json.dumps({"op": "machine.restart"}), 1000, lim, runner=None, restarter=restarter)
+    check(r["ok"] is False and asked == [1], "a second within 10 minutes is refused", r)
+    with open(h.RESTART_STATE, "w") as f:
+        json.dump({"at": 0}, f)
+    r = h.handle(json.dumps({"op": "machine.restart"}), 1000, lim, runner=None, restarter=restarter)
+    check(r["ok"] is True and asked == [1, 1], "after 10 minutes one is taken again", r)
 
 sys.exit(failed)

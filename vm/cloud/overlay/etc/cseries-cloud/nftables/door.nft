@@ -12,7 +12,9 @@
 #   8810  the Host's enroll port, only from an address in a pairing set, which
 #         cseries-door-helper fills for 15 minutes at a time
 # Nothing else, and no SSH: cseries-firewall adds an SSH rule to pre_seal until
-# the box is sealed.
+# the box is sealed. 8810 and 8811 are open only while the Host can answer
+# them: on a machine with a vault (cseries_vault), only once it is unlocked
+# (the lanes_open set, which cseries-firewall and the unlock fill).
 #
 # The Host's 8810 and 8811 reach the container two ways, because the quadlet
 # publishes them on 127.0.0.1 and conmon listens there, so no socket on the box
@@ -46,6 +48,14 @@ table inet cseries_door
 delete table inet cseries_door
 
 table inet cseries_door {
+	# The Host's two ports, 8810 and 8811, while the Host can answer them:
+	# empty while the vault is locked, so nothing from outside reaches either
+	# (cseries-firewall fills it on a machine without a vault, or with its
+	# vault open; the unlock fills it when the vault opens).
+	set lanes_open {
+		type inet_service
+	}
+
 	# Addresses that may reach 8810, each for 15 minutes from the helper's
 	# pairing.open. A reload empties them; the Host opens a window with each
 	# pairing token it hands out.
@@ -137,8 +147,8 @@ table inet cseries_door {
 		type nat hook prerouting priority dstnat; policy accept;
 		iif lo return
 		ip saddr $HOST_NET return
-		fib daddr type local tcp dport 8811 dnat ip to $HOST_IP:8811
-		fib daddr type local tcp dport 8810 ip saddr @pairing_v4 dnat ip to $HOST_IP:8810
+		fib daddr type local tcp dport 8811 tcp dport @lanes_open dnat ip to $HOST_IP:8811
+		fib daddr type local tcp dport 8810 tcp dport @lanes_open ip saddr @pairing_v4 dnat ip to $HOST_IP:8810
 	}
 
 	chain input {
@@ -170,8 +180,8 @@ table inet cseries_door {
 		ip saddr $APPS_NET drop
 
 		tcp dport 443 accept
-		meta nfproto ipv6 tcp dport 8811 accept
-		tcp dport 8810 ip6 saddr @pairing_v6 accept
+		meta nfproto ipv6 tcp dport 8811 tcp dport @lanes_open accept
+		tcp dport 8810 tcp dport @lanes_open ip6 saddr @pairing_v6 accept
 
 		jump pre_seal
 	}
@@ -194,8 +204,8 @@ table inet cseries_door {
 		# Into the Host container: what door_dnat sent there. The pairing set
 		# is checked again for 8810, so no other DNAT to the Host's enroll
 		# port (netavark's for the 127.0.0.1 publish is one) opens it.
-		ip daddr $HOST_IP ct status dnat tcp dport 8811 accept
-		ip daddr $HOST_IP ct status dnat tcp dport 8810 ip saddr @pairing_v4 accept
+		ip daddr $HOST_IP ct status dnat tcp dport 8811 tcp dport @lanes_open accept
+		ip daddr $HOST_IP ct status dnat tcp dport 8810 tcp dport @lanes_open ip saddr @pairing_v4 accept
 		# Out of any container: the internet, never a private range. The
 		# owner's egress rules in the Host decide further.
 		ip daddr @internal_v4 drop

@@ -1,0 +1,137 @@
+#!/usr/bin/python3 -I
+"""The machine's vault (cseries_vault has what it is and how it is keyed).
+
+  cseries-vault boot     at every boot (cseries-vault-boot.service): before the
+                         claim, open the vault with the bootstrap key; after
+                         it, record that the vault is locked and wait for the
+                         customer
+  cseries-vault check    exit 0 when the customer's services may start: the
+                         vault is open, or this machine has none
+                         (cseries-vault.service, which they all require)
+  cseries-vault state    print the state as JSON
+  cseries-vault claim    the claim (run by the unlock agent as a unit of its own,
+                         cseries-vault-claim, from the keys it left in
+                         /run/cseries-vault/pending.json)
+  cseries-vault publish  write what the Host reads (cseries_machine.publish)
+
+Root only.
+"""
+
+import json
+import os
+import signal
+import sys
+import time
+
+sys.path.insert(0, "/usr/local/lib/cseries-cloud")
+import cseries_cloud as cc  # noqa: E402
+import cseries_machine as cm  # noqa: E402
+import cseries_vault as cv  # noqa: E402
+
+
+def out(obj):
+    print(json.dumps(obj, sort_keys=True), flush=True)
+
+
+def boot(paths, cfg, vault):
+    if not vault.configured():
+        cm.publish(paths, cfg, vault)
+        out({"ok": True, "state": "absent"})
+        return 0
+    os.makedirs(paths.p(cv.RUN), mode=0o755, exist_ok=True)
+    if vault.state() == "open":
+        cm.after_open(paths, cfg, vault, vault.run, "already open")
+        out({"ok": True, "state": "open"})
+        return 0
+    try:
+        opened = vault.auto_open()
+    except cv.VaultError as e:
+        opened = False
+        print(f"cseries-vault: the bootstrap key did not open the vault: {e}", file=sys.stderr)
+    if opened:
+        cm.after_open(paths, cfg, vault, vault.run, "the bootstrap key")
+        out({"ok": True, "state": "open", "with": "the bootstrap key"})
+        return 0
+    cm.record_state(paths, "locked")
+    cm.publish(paths, cfg, vault)
+    out({"ok": True, "state": "locked"})
+    return 0
+
+
+def claim(paths, cfg, vault):
+    # Nothing stops this half way: a re-encryption whose process is killed
+    # leaves the device suspended until a reboot (cseries_vault's docstring).
+    for s in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(s, signal.SIG_IGN)
+    pending_p = paths.p(cm.PENDING)
+    pending = cc.read_json(pending_p, None)
+    if not isinstance(pending, dict) or not (pending.get("recovery_pass") or pending.get("resume_pass")):
+        out({"ok": False, "error": "no claim is waiting"})
+        return 1
+    started = time.time()
+
+    def progress(done, size, phase="reencrypt"):
+        cc.write_json(paths.p(cm.CLAIM), {"phase": phase, "done": done, "size": size,
+                                         "started_at": cm.iso(started), "error": None})
+        cm.publish(paths, cfg, vault)
+
+    try:
+        if pending.get("resume_pass"):
+            # A claim cut off after the bootstrap key went, finished with
+            # the key the customer unlocked with (cseries_machine.after_open).
+            progress(0, 0)
+            vault.finish_claim([pending["resume_pass"]], progress)
+        else:
+            # Keys an earlier, unfinished claim added go first, while the
+            # bootstrap key is there to say so: this claim's recovery key is
+            # the one the page showed now.
+            if vault.bootstrap_key() is not None:
+                vault.forget_unfinished_keys()
+            progress(0, 0)
+            vault.claim(pending.get("passkey"), pending["recovery_pass"], progress)
+    except (cv.VaultError, OSError) as e:
+        cc.write_json(paths.p(cm.CLAIM), {"phase": "failed", "error": str(e),
+                                         "started_at": cm.iso(started)})
+        cm.publish(paths, cfg, vault)
+        out({"ok": False, "error": str(e)})
+        return 1
+    try:
+        os.unlink(pending_p)
+    except FileNotFoundError:
+        pass
+    cc.write_json(paths.p(cm.CLAIM), {"phase": "done", "error": None, "started_at": cm.iso(started),
+                                     "done_at": cm.iso()})
+    cm.publish(paths, cfg, vault)
+    out({"ok": True, "enrolled": True})
+    return 0
+
+
+def main(argv):
+    if os.geteuid() != 0:
+        print("cseries-vault runs as root", file=sys.stderr)
+        return 2
+    paths = cc.Paths()
+    vault = cv.Vault(paths)
+    if argv == ["check"]:
+        return 0 if vault.state() in ("absent", "open") else 1
+    if argv == ["state"]:
+        out(dict(cm.vault_state(paths, vault), enrolled=vault.enrolled()))
+        return 0
+    try:
+        cfg = cc.load_cloud(paths)
+    except (OSError, ValueError) as e:
+        print(f"cseries-vault: {e}", file=sys.stderr)
+        return 1
+    if argv == ["boot"]:
+        return boot(paths, cfg, vault)
+    if argv == ["claim"]:
+        return claim(paths, cfg, vault)
+    if argv == ["publish"]:
+        cm.publish(paths, cfg, vault)
+        return 0
+    print("usage: cseries-vault boot|check|state|claim|publish", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

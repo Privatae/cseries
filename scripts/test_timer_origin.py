@@ -463,11 +463,13 @@ check("...and the turn ROWS drop the borrowed project",
 # borrowed project the same way.
 import ast as _ast_t
 # The turn's body: send_message, the core it hands the turn to
-# (_send_message_core, since the saved-request work split them), and the
-# step that writes the turn's opening row (_write_opening_row).
+# (_send_message_core, since the saved-request work split them), the step
+# that writes the turn's opening row (_write_opening_row) and the tool loop
+# (_run_tool_loop).
 _sm_src = "".join(_ast_t.get_source_segment(sess_src, n) for n in _ast_t.walk(_ast_t.parse(sess_src))
                   if isinstance(n, _ast_t.AsyncFunctionDef)
-                  and n.name in ("send_message", "_send_message_core", "_write_opening_row"))
+                  and n.name in ("send_message", "_send_message_core", "_write_opening_row",
+                                 "_run_tool_loop"))
 # ... and the turn's reply recorder (TurnReplies), which writes the live trace
 # from the first text; it reads the row's project through the getter the turn
 # hands it, so the borrowed context is dropped there the same way.

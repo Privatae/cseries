@@ -583,10 +583,13 @@ def main() -> int:
     # The dormant skill-dispatch path left session.py with the simulation;
     # if a dispatcher comes back it must still run after the check.
     sd_idx = sess_src.find("SkillDispatcher")
+    # The turn's first model call ("# Call LLM."): the tool loop's own calls sit
+    # above the core in the file (_run_tool_loop), which calls the loop after it.
     check("the turn-start check sits inside send_message, before any skill dispatch and the model call",
           sess_src.find("async def send_message") < gate_idx
           and 0 < gate_idx < (sd_idx if sd_idx >= 0 else len(sess_src))
-          and gate_idx < sess_src.find("# Call LLM"))
+          and gate_idx < sess_src.find("# Call LLM.")
+          and gate_idx < sess_src.find("await self._run_tool_loop("))
     drain_idx = sess_src.find("consume_nudges_timed(sess.session_id)")
     recall_idx = sess_src.find("_cm_nudge(")
     check("the nudge drain checks the person's words before the model re-call",

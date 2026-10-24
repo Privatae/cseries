@@ -68,7 +68,7 @@ check("orchestrator catalog logged at per_rebuild scope",
 check("host rules logged at per_rebuild scope",
       '"host_rules", _host_rules, scope="per_rebuild"' in src)
 check("ledger carries static_appended_chars", '"static_appended_chars": _static_appended' in src)
-check("ledger carries the late blocks", '_loc.get("_late_blocks")' in src)
+check("ledger carries the late blocks", 'for _ln, _lt in (_late_blocks or []):' in src)
 
 # ── 3. the host can read its own window ──────────────────────────────────────
 reg = (REPO / "brain/mastercode/public_tool_registry.py").read_text()

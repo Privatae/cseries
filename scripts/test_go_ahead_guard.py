@@ -3246,7 +3246,7 @@ check("call site: the repair is held until its round is over, carries the tools 
       "metered",
       '_repair_cb = await _next_stream_cb("repair", hold=True)' in _helper and "stream_cb=_repair_cb" in _helper
       and "tools=box_only or (tools if tools else None)" in _helper
-      and "_acc_usage(result)" in _helper and "_record_part" not in _helper and "_streamed_drafts" not in _helper
+      and "_acc_usage(turn.result)" in _helper and "_record_part" not in _helper and "_streamed_drafts" not in _helper
       and "find_go_ahead_hit(" in _helper)
 # (find, never index: a pin that raises would end the run before the
 #  behavioural checks below — so a missing call site is a
@@ -3784,12 +3784,12 @@ S.HOLD_S = 240.0
 import ast as _ast3  # noqa: E402
 _tree = _ast3.parse(_src)
 _lines = _src.splitlines()
-# The turn loop lives in the turn's core (_send_message_core, split from
-# send_message by the saved-request work); found by its condition.
+# The turn loop is a method of its own (_run_tool_loop, run by the turn's
+# core, _send_message_core); found by its condition.
 _fn = next(n for n in _ast3.walk(_tree) if isinstance(n, _ast3.AsyncFunctionDef)
-           and n.name == "_send_message_core")
+           and n.name == "_run_tool_loop")
 _loop = next(n for n in _ast3.walk(_fn) if isinstance(n, _ast3.While)
-             and "tool_round < MAX_TOOL_ROUNDS" in _ast3.unparse(n.test))
+             and "turn.tool_round < MAX_TOOL_ROUNDS" in _ast3.unparse(n.test))
 _exits: list = []
 
 
@@ -3814,18 +3814,18 @@ EXITS = [
      "for queued words the drain did not inject (a copy of an answer already read): the loop condition's "
      "exit, -> forced text past the loop"),
     ("return", "_ct_closed_asked = True", "the model call errored: what was sent is stored (keep_sent_reply)"),
-    ("break", "_ct_left_closed = True", "-> the forced text after the Host closed the turn: escalate alone, "
+    ("break", "turn._ct_left_closed = True", "-> the forced text after the Host closed the turn: escalate alone, "
      "GUARDED box-only past the loop"),
-    ("break", "_spend_stopped = True", "a cut reply not continued because the allowance is reached: the "
+    ("break", "turn._spend_stopped = True", "a cut reply not continued because the allowance is reached: the "
      "allowance's own stop and continue card, as at every other allowance stop"),
     ("return", "_cut_continues += 1", "the continuation of a reply the output limit cut errored: what was "
      "sent is stored (keep_sent_reply)"),
-    ("return", "_empty_retried = True", "the retry of an empty reply, inside the loop with the turn's "
+    ("return", "turn._empty_retried = True", "the retry of an empty reply, inside the loop with the turn's "
      "tools, errored: what was sent is stored (keep_sent_reply)"),
     ("break", 'if await _go_ahead_round("text"):', "GUARDED (text exit)"),
     ("break", 'if await _go_ahead_round("dispatch"):', "GUARDED (dispatch exit)"),
-    ("return", "_ct_reply_result = result", "the model call errored: what was sent is stored (keep_sent_reply)"),
-    ("break", "if _spend_stopped:", "the allowance's answer, tools=None, after its continue card went in the "
+    ("return", "turn._ct_reply_result = turn.result", "the model call errored: what was sent is stored (keep_sent_reply)"),
+    ("break", "if turn._spend_stopped:", "the allowance's answer, tools=None, after its continue card went in the "
      "question box"),
 ]
 _got = []
@@ -3838,13 +3838,13 @@ check("5v: the loop condition is classified: it ends the loop only on a result s
       "with no guard's repair owed and none of the person's words queued (-> forced text, tools=None; "
       "words queued there are read by one more round)",
       _ast3.unparse(_loop.test)
-      == "tool_round < MAX_TOOL_ROUNDS or not result.get('tool_calls') or _ga_awaiting "
+      == "turn.tool_round < MAX_TOOL_ROUNDS or not turn.result.get('tool_calls') or turn._ga_awaiting "
          "or has_pending_nudge(sess.session_id)",
       _ast3.unparse(_loop.test))
 check("5v: ...and the result that reaches it with prose beside its calls is read by the guard first "
       "(the turn ends on that prose) — input queued there or not (`last`: no drain follows)",
       'if await _go_ahead_round("backstop", last=True):' in _src
-      and _src.index("tool_round += 1\n            if _spend_stopped:")
+      and _src.index("turn.tool_round += 1\n            if turn._spend_stopped:")
       < _src.index('if await _go_ahead_round("backstop", last=True):'))
 check(f"5v: every exit out of the turn loop is classified ({len(_exits)} found)",
       len(_got) == len(EXITS) and all(k == e[0] and e[1] in ctx for (k, _l, ctx), e in zip(_got, EXITS)),

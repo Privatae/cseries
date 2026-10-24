@@ -123,6 +123,9 @@ from mastercode.runtime.turn_trace import (  # noqa: E402,F401
 # The turn's reply recorder and the go-ahead guard's reading of it.
 from mastercode.runtime.turn_replies import TurnReplies  # noqa: E402
 
+# What the turn's tool loop shares with the helpers it calls.
+from mastercode.runtime.turn_state import TurnState  # noqa: E402
+
 
 # Platform notes and the history builder live with the row reader
 # (memory_engine.host_part / history_messages), one place for every reader.
@@ -2886,6 +2889,8 @@ class EntityRuntime:
                     history_chars += len(content)
                 history_msgs = history_messages(_fallback)
         else:
+            # No history, so no record of turns that fell out of it.
+            _record_msg = None
             # Purge old messages from session so they don't come back next message
             current_msg = sess.messages[-1] if sess.messages else None
             sess.messages = [current_msg] if current_msg else []
@@ -2897,7 +2902,7 @@ class EntityRuntime:
             except Exception as _ce:
                 log.warning("Failed to clear session messages: %s", _ce)
             log.info("clear_history=True -- purged conversation history for session %s", session_id)
-        return (_ctx_budget, _hist_fit, _hist_rows, locals().get("_record_msg"), _round_budget,
+        return (_ctx_budget, _hist_fit, _hist_rows, _record_msg, _round_budget,
                 _spend_ctx_budget, _src_ctx, _thread_state_block, history_chars, history_msgs)
 
     async def _add_current_message(self, *, _protect_msgs, attachments, grok_messages, images,
@@ -3174,2636 +3179,35 @@ class EntityRuntime:
                 log.warning("taught-rule store failed (non-fatal): %s", _tt_err)
         return (_taught_task, _user_row_task)
 
-    # ---------------------------------------------------------------
-    # send_message — THE core inference method (~1280 lines)
-    # ---------------------------------------------------------------
-
-    async def _send_message_core(
-        self,
-        session_id: str | None = None,
-        user_message: str = "",
-        # No-sessions chat entry point. When `entity_id` is supplied
-        # (and session_id is None), the runtime builds a transient
-        # per-request context with no entity_sessions read/write.
-        # Existing voice/demo/benchmark callers keep passing session_id.
-        entity_id: int | None = None,
-        # Optional callback
-        # the inference loop awaits on every tool dispatch and result,
-        # so the SSE layer can emit real-time tool-call frames in the
-        # AI SDK Data Stream Protocol. Shape:
-        #   await progress_cb({"event": "tool_call_start",
-        #                      "tool_call_id": str, "tool": str,
-        #                      "args": dict})
-        #   await progress_cb({"event": "tool_call_result",
-        #                      "tool_call_id": str, "tool": str,
-        #                      "result": Any, "status": str})
-        # When None, no events fire — current behavior unchanged.
-        progress_cb=None,
-        temperature: float = 0.3,
-        # None = the routed model's own published output limit (resolved
-        # with the route below). A fixed 16,384 here once cut off a desktop
-        # design.
-        max_tokens: int | None = None,
-        fast_mode: bool = False,
-        clear_history: bool = False,
-        force_sonnet: bool = False,
-        images: list[str] | None = None,
-        attachments: list[dict] | None = None,
-        # Per-app chat surfacing: the calling app's
-        # context is forwarded so write_turn_row can tag the resulting
-        # rows in entity_memory.project_id + entity_memory.metadata JSONB.
-        # The route handler reads these from request.state.app_token
-        # and from the session's interaction_context.
-        app_id: str | None = None,
-        project_id: int | None = None,
-        # Circles threads: the circles_threads row this turn was
-        # sent into. Parked on the session below; from there it reaches every
-        # derive_source_context call on the self-chat path, so the turn rows,
-        # recall, the summary, the tool trail, artifact capture, the FRAME
-        # count and any dispatch this turn makes all name the same thread.
-        thread_id: str | None = None,
-        artifact_id: str | None = None,
-        # The calling app's declared permissions. Used
-        # by the meta-tool gate to narrow effective_bits to
-        # entity_bits ∩ app_bits. None = no narrowing (internal flows
-        # without an app_token, brain background loops, benchmarks).
-        app_permissions: list[str] | None = None,
-        # Per-thread model override for
-        # THIS turn. Shape {provider, model_id[, base_url, connection_id]}.
-        # Applied to the `chat` role through the F3 leak-guard
-        # (provider_allowed_for_role): a BYO/self pick on chat (which carries
-        # the system prompt) is REFUSED and resolution falls back to the
-        # persisted/default model. None = no override (current behavior).
-        thread_override: dict | None = None,
-        # Replay/A-B: read-scope + point-in-time overrides (see the transient
-        # builder). history_before limits recalled turns to created_at < it.
-        history_context: str | None = None,
-        history_before=None,
-        # A turn the PLATFORM starts (continue_after_round): `user_message`
-        # is the wake-up brief, not the user typing. No user turn row is
-        # written; the assistant row is tagged origin='continuation'.
-        system_turn: bool = False,
-        # A request the person saved while the Host was starting (the offline
-        # runner sends it as a system turn for its own lane): their own words,
-        # so the turn is never counted as woken.
-        saved_request: bool = False,
-        # With system_turn: the user's ORIGINAL request, carried as the
-        # origin_request of any dispatch this turn makes (never the brief).
-        origin_request: str | None = None,
-        # The FRAME (host prompt map phase 4): what the front end sent about
-        # this turn — validated by runtime.frame.validate_frame at the route
-        # (view, pills). Rendered per turn by prompt_schema `_b_frame`.
-        frame: dict | None = None,
-        # The type a SCHEDULED task was set under. The
-        # fired turn runs under it, not under the thread's binding; anything
-        # but an active type runs closed. None = the thread decides (today).
-        turn_type_id: str | None = None,
-        # The sender's id for these words (nudge_id_ok: 1-64 of [A-Za-z0-9_-]),
-        # kept on the person's user row under metadata.client_id as a nudge's
-        # row keeps its sender's id (push_nudge): the Workbench Index sends its
-        # request id, and a retry finds the words delivered by that row. Also
-        # on the row an identity hold saves for a request it refuses. A list
-        # when the turn is several messages' words a turn ended without
-        # reading, joined (turn_registry._requeue_undelivered): the row keeps
-        # them all (row_client_id).
-        client_id: str | list | None = None,
-        # A turn the platform woke with a result (an agent's report, a watched
-        # call's answer — _wake_host_turn): what the brief carries came from
-        # outside this turn, so the turn starts marked (runtime/turn_taint).
-        untrusted_input: str | None = None,
-        # A platform-started turn whose brief is the Host's own request
-        # (runtime/root_turn.open_root): written as a user row of the thread,
-        # marked requested_by='host', so the thread keeps the whole chain.
-        host_request: bool = False,
-        # A woken turn past the thread's chain of woken turns
-        # (WOKEN_TURNS_MAX): it reports and may ask in the question
-        # box, and starts no work — until the person's words are read into it.
-        may_start_work: bool = True,
-    ) -> dict:
+    async def _run_tool_loop(self, sess, *, MAX_TOOL_ROUNDS, _acc_usage, _answers_read, _asks_open,
+                             _call_with_overflow_retry, _cards_open, _cb, _chat_call_kw,
+                             _chat_role, _choice, _claim_repairs, _close_turn_arrivals,
+                             _consecutive_all_fail, _continue_card, _ct, _ct_closed_asked,
+                             _ct_reply_owed, _ct_took_handoff, _ctx_window, _cur_piece,
+                             _cut_continues, _dead_tools, _dedup_cache, _door_catalog, _drop_held,
+                             _drop_used_results, _droppable, _dropped_by_fp, _dropped_by_handle,
+                             _empty_shapes, _end_on_error, _escalate, _fail_ledger, _ga_firings,
+                             _go_ahead_round, _hold_at_exit, _inference_model, _inference_provider,
+                             _input_at, _msgs_mark, _next_stream_cb, _nudge_resets,
+                             _nudge_row_tasks, _person_in_turn, _person_spoke, _pieces,
+                             _protect_msgs, _reply_all, _reply_reserve, _reply_written, _root_mod,
+                             _root_turn, _row_project_id, _search_mode, _search_seen,
+                             _send_narration, _served, _settle, _spend, _spend_max, _src_ctx, _ta,
+                             _tchoice, _thread_key, _tt_context_filter, _turn_artifacts,
+                             _turn_pictures, _turn_tags, _turn_taint, _turn_token, app_id,
+                             attachments, effective_max, grok_messages, may_start_work,
+                             origin_request, progress_cb, project_id, session_id, temperature,
+                             tool_actions, tools, turn, user_message):
+        """The turn's tool loop. Each round reads the words the person sent
+        during the turn, acts on the model's latest answer (its tool calls
+        run) and calls the model again, until an exit ends the loop (each one
+        is classified in scripts/test_go_ahead_guard.py, 5v). Run by
+        _send_message_core, which hands it the turn's values the loop reads;
+        what the loop shares with the helpers it calls, and what it sets that
+        the turn reads after it, is on `turn` (runtime/turn_state.py). Returns
+        the turn's reply when a model error ends the turn here (_end_on_error),
+        else None.
         """
-        Send a message within an entity session.
-
-        Routes through personality -> LLM -> logging -> drift check.
-        Default temperature is 0.3 -- grounded, tool-using entities
-        must never hallucinate. Personality comes from weights and
-        system prompt, not from LLM randomness.
-
-        Args:
-            fast_mode: If True, uses grok-3-mini for quick, cheap responses.
-                Messages still persist in session context. Good for rapid
-                back-and-forth that feeds into deeper conversations later.
-            app_permissions: If the chat came via an app_token, the
-                token's permissions list. The meta-tool gate intersects
-                this with the entity's effective scopes so the calling
-                app can't escape its declared surface. Internal callers
-                pass None → no narrowing.
-        """
-        # Wall-clock anchor for the whole turn — stamped into the assistant
-        # turn row's metadata as gen_ms so every chat surface can render
-        # "took Ns" from the durable log, not from client-side guessing.
-        _turn_t0 = time.monotonic()
-        # A durable session (voice / demo: the same session_id every turn):
-        # this turn reads input from its entry on, so the "stopped reading"
-        # mark the turn before it left at its exit goes now — not at this
-        # turn's first loop round, after its first model call, which is where
-        # mark_turn_live would clear it. A chat session's id
-        # is minted below and has no mark.
-        if session_id:
-            turn_started(session_id)
-
-        # Did the platform start this turn (a wake-up, a fired timer or task)?
-        # A saved request is sent as a system turn but is the person's own
-        # words. Asked once, here.
-        _platform_started = bool(system_turn) and not saved_request
-        # What the turn starts with: a forwarded or relayed message, a People
-        # chat's message carried in, uploaded files, or a woken turn's result.
-        from mastercode.runtime import turn_taint as _turn_taint
-        _turn_taint.mark_turn_input(frame=frame, attachments=(attachments or images),
-                                    untrusted_input=untrusted_input,
-                                    platform_started=_platform_started)
-        # The tool loop below hands each round's pictures to the model.
-        from mastercode.runtime import turn_pictures as _turn_pictures
-
-        # Build per-request runtime context.
-        #
-        # No-sessions path (chat): entity_id supplied → build transient
-        # context in memory, never touch entity_sessions. The chat log is
-        # entity_memory turn rows tagged by project_id + app_id.
-        #
-        # Legacy path (demo / benchmark): session_id supplied →
-        # load durable session row. This path is being phased out for
-        # chat but remains for surfaces that legitimately need a long-
-        # lived runtime object.
-        if session_id is None and entity_id is not None:
-            # A turn never runs toolless while this Host's tools grant is
-            # still arriving with its boot identity seed
-            # (runtime/identity_hold.py). Held BEFORE the session is built so
-            # the prompt and tools= come from the row the turn runs on.
-            _held, _identity_refusal = await self._hold_turn_for_identity(
-                entity_id, progress_cb, system=system_turn)
-            _person_turn = (not system_turn and (user_message or "").strip()
-                            and (app_id or "") not in _CLOSE_TURN_NO_WRITES)
-            _held_requests: list = []
-            if _identity_refusal is None and _person_turn:
-                # A person's turn that passes the hold takes over any request
-                # of theirs still held in this thread (saved by an earlier
-                # refusal): the held wake is cancelled — or, if it is already
-                # running, waited for, so its result is in this turn's
-                # history — and the earlier words go in front of the model as
-                # data (see _b_frame). Nothing is dropped, nothing runs twice.
-                _held_requests = await self._take_over_held(
-                    entity_id, project_id=project_id, app_id=app_id,
-                    thread_id=thread_id, history_context=history_context,
-                    progress_cb=progress_cb)
-            if _identity_refusal is not None:
-                if (not system_turn and (user_message or "").strip()
-                        and (app_id or "") not in _CLOSE_TURN_NO_WRITES):
-                    # A person's own request: keep it (user row + a note) and
-                    # run it by itself when the tools arrive. A platform
-                    # wake-up, replay or A-B side is not a request to keep;
-                    # its caller sees identity_pending and treats it as not-run.
-                    from mastercode.runtime.identity_hold import save_refused_request
-                    # This is the turn's user row: an id that attaches to the
-                    # turn once it has taken its ids is marked only after the
-                    # row is written (_turn_row_task), so it is written
-                    # in a task the registry can wait on.
-                    _refused_row = asyncio.ensure_future(save_refused_request(
-                        getattr(self, "pool", None), entity_id, _identity_refusal,
-                        user_message=user_message, app_id=app_id,
-                        project_id=project_id, thread_id=thread_id,
-                        history_context=history_context,
-                        had_attachments=bool(attachments or images),
-                        app_permissions=app_permissions,
-                        thread_override=thread_override,
-                        client_id=row_client_id(_turn_row_ids(client_id))))
-                    _turn_row_task(_refused_row)
-                    await _refused_row
-                return _identity_refusal
-            sess = await self._build_chat_context_transient(
-                entity_id, project_id=project_id, app_id=app_id, mode="chat",
-                history_context=history_context, frame=frame,
-                thread_id=thread_id, platform_started=_platform_started,
-            )
-            if sess is not None:
-                sess.history_before = history_before
-                if _held_requests:
-                    sess.held_requests = _held_requests
-        else:
-            sess = await self._load_session_from_db(session_id)
-            # Same hold as the chat path; the entity is only known once the
-            # row is loaded, so the session is re-loaded after a hold to pick
-            # up what the seed wrote.
-            if sess is not None:
-                _held, _identity_refusal = await self._hold_turn_for_identity(
-                    sess.entity_id, progress_cb, system=system_turn)
-                if _identity_refusal is not None:
-                    return _identity_refusal
-                if _held:
-                    sess = await self._load_session_from_db(session_id)
-            # The durable path (voice / demo / benchmark) has no thread_id of
-            # its own — _load_session_from_db builds the dataclass without the
-            # field, so it defaults None. Honour an explicit one if a caller
-            # ever sends it; a None caller leaves the row's scope untouched.
-            if sess is not None and thread_id:
-                sess.thread_id = thread_id
-
-        # Stash on the session so the inference loop's
-        # tool_use dispatch can forward into _execute_meta_tool. The
-        # EntitySession dataclass allows attribute assignment.
-        if sess is not None:
-            try:
-                sess.app_permissions = app_permissions
-            except Exception:
-                pass
-            # Progress callback for
-            # tool-call streaming. Read by the tool-loop below.
-            try:
-                sess._progress_cb = progress_cb
-            except Exception:
-                pass
-            try:
-                sess.pinned_turn_type_id = turn_type_id
-            except Exception:
-                pass
-        if not sess:
-            return {"error": f"Could not build chat context (session_id={session_id} entity_id={entity_id})"}
-        # From here every exit ends this session's input through the turn's
-        # TurnEnd (send_message's `finally`). A core called without
-        # send_message has its own, run at the exit past the loop only.
-        _turn_end = _TURN_END.get() or TurnEnd()
-        _turn_end.session_id = sess.session_id
-
-        # THIS TURN's identity, distinct from the session's. A
-        # session_id spans every turn in a thread, so keying the live turn
-        # trace by it means a turn that died without clearing — the registry's
-        # crash branch — leaves a trace the NEXT
-        # turn in the same session is then attributed. A per-turn token makes
-        # that impossible by construction: turn_registry pops the trace by the
-        # token it saw on THIS turn's session frame, so a leftover from another
-        # turn is never returned, only evicted.
-        _turn_token = uuid.uuid4().hex
-
-        # The thread this turn runs in, keyed as the turn registry keys it.
-        # A person's message restarts the count of turns woken in it; a
-        # woken turn has no person in it until their words are read into it,
-        # and until then the build door spends the phase's AUTOMATIC repairs
-        # (memory_engine.CURRENT_TURN_WOKEN, tools.PHASE_AUTO_REPAIRS).
-        try:
-            from server.turn_registry import compose_thread_key as _compose_tk
-            _thread_key = _compose_tk(sess.entity_id, app_id, project_id, thread_id=thread_id,
-                                      history_context=history_context)
-        except Exception:  # noqa: BLE001
-            _thread_key = None
-        _person_in_turn = not system_turn
-        if _person_in_turn and not unseen_lane(app_id, getattr(sess, "interaction_context", None)):
-            person_wrote(_thread_key)
-        try:
-            from mastercode.memory_engine import CURRENT_TURN_WOKEN
-            CURRENT_TURN_WOKEN.set({"session_id": sess.session_id,
-                                    "woken": bool(system_turn) and not saved_request})
-        except Exception:  # noqa: BLE001
-            pass
-
-        # Circles upgrade: tell the SSE layer which session
-        # this turn runs under. The transient chat context mints a fresh
-        # uuid4 session_id that previously never left the runtime, which
-        # made POST /api/circles/nudge unreachable end-to-end (the nudge
-        # queue is keyed by session_id). brain_service maps this event to
-        # a 2: data frame.
-        if progress_cb is not None:
-            try:
-                await progress_cb({
-                    "event": "session_started",
-                    "session_id": sess.session_id,
-                    "turn_token": _turn_token,
-                })
-            except Exception as _cb_err:
-                log.debug("progress_cb session_started raised (non-fatal): %s", _cb_err)
-        # The question box: whether the Host
-        # asked anything in it this turn (_escalate). A reply after one is
-        # never caught by the go-ahead guard at the core/explicit levels only:
-        # the box IS the right way to ask.
-        _asked_in_box = False
-        _replies = TurnReplies(
-            progress_cb=progress_cb, sess=sess, turn_token=_turn_token,
-            result=lambda: result, ct_reply_result=lambda: _ct_reply_result,
-            row_project_id=lambda: _row_project_id, turn_tags=lambda: _turn_tags,
-            asked_in_box=lambda: _asked_in_box, tools=lambda: tools)
-        _pieces = _replies._pieces
-        _cur_piece = _replies._cur_piece
-        _reply_at = _replies._reply_at
-        _input_at = _replies._input_at
-        _ga_firings = _replies._ga_firings
-        _settle = _replies._settle
-        _next_stream_cb = _replies._next_stream_cb
-        _send_narration = _replies._send_narration
-        _send_piece = _replies._send_piece
-        _reply_all = _replies._reply_all
-        _reply_written = _replies._reply_written
-        _person_spoke = _replies._person_spoke
-        _unjudged = _replies._unjudged
-        _go_ahead_record = _replies._go_ahead_record
-        _go_ahead_recorded = _replies._go_ahead_recorded
-
-        async def _end_on_error(res: dict) -> dict:
-            """A model call failed and the turn ends on its error: what the
-            person already read is stored first (keep_sent_reply),
-            and the trace goes with the turn."""
-            try:
-                await _settle(res)
-                keep_sent_reply(self.pool, sess.entity_id, sess.session_id, _turn_token,
-                                _live_turn_traces.get(_turn_token), ended="error")
-            except Exception as _ke:  # noqa: BLE001 — the error still reaches the person
-                log.warning("the reply sent before a model error was not stored "
-                            "(session %s): %s", sess.session_id, _ke)
-            clear_turn_trace(_turn_token)
-            return res
-
-        # Attachment-only send: an empty user_message would (a) produce an
-        # empty text content block in the multimodal build below, which the
-        # model API rejects, and (b) be skipped by write_turn_row (empty
-        # content), silently dropping the turn + its attachment metadata.
-        # The Circles route stubs this itself; /api/brain/messages permits
-        # empty text with attachments, so guard here for every caller.
-        if not (user_message or "").strip() and (attachments or images):
-            n = len(attachments or []) + len(images or [])
-            user_message = "(sent an attachment)" if n == 1 else f"(sent {n} attachments)"
-
-        # -- Structural injection screen on the raw chat input --
-        # User chat text is an untrusted instruction surface. Strip-and-flag
-        # role-break delimiters / instruction-override / governance-evasion
-        # BEFORE the text flows into the message history + the memory write,
-        # so a turn that fakes a role boundary or asserts "ignore your rules"
-        # can't structurally escape its slot. STRIP-AND-FLAG (never hard-block)
-        # — legit technical chat is preserved; the flag raises the threat
-        # signal in triage + the constitutional layer downstream.
-        _injection_flags: list[str] = []
-
-        # -- Secret shapes: pasted keys/credentials never reach inference --
-        # The composers warn at paste time from the SAME rules file
-        # (brain/mastercode/secret_shapes.json); this is the enforcing copy,
-        # because text reaches here from more doors than the two composers.
-        # Sits ABOVE the raw-message capture on purpose: a hard hit must not
-        # survive into the crisis gate's raw copy, the message array, the turn
-        # row or the memory write. Hard shapes only (vendor key prefixes, PEM,
-        # JWT, bearer, URL credential) — soft heuristics are logged, not cut.
-        try:
-            from mastercode import secret_shapes as _secret_shapes
-            user_message, _secret_findings = _secret_shapes.redact(user_message)
-            if _secret_findings:
-                log.warning(
-                    "Secret shapes on entity %s turn: redacted=%s soft=%s",
-                    sess.entity_id,
-                    [f.id for f in _secret_shapes.hard(_secret_findings)],
-                    [f.id for f in _secret_shapes.soft(_secret_findings)],
-                )
-        except Exception as _ss_err:
-            # Fail loud in the log, keep the turn: the gate test proves the
-            # module loads, so this branch is a deploy-time bug, not a policy.
-            log.warning("Secret-shape screen failed (non-fatal): %s", _ss_err)
-
-        # Governance floor: the crisis gate's lexical path checks the RAW
-        # message (pre-sanitize) — capture it before input_guard rewrites.
-        _raw_user_message = user_message
-        try:
-            from mastercode.runtime.input_guard import sanitize as _ig_sanitize
-            user_message, _injection_flags = _ig_sanitize(user_message)
-            if _injection_flags:
-                log.warning(
-                    "Input guard neutralized injection on entity %s turn: %s",
-                    sess.entity_id, _injection_flags,
-                )
-        except Exception as _ig_err:
-            # Fail-closed-conservative: the structural screen is cheap and
-            # pure; if it ever raises, keep the original text but flag the
-            # turn so the governance layers still treat it as suspect.
-            log.warning("Input guard failed (non-fatal, flagging turn): %s", _ig_err)
-            _injection_flags = ["input_guard_error"]
-
-        # No balance gate: there is no prepaid wallet.
-        # The platform bills harness compute on the monthly invoice, not
-        # inference turns.
-
-        # Touch session -- update last_activity_at, reactivate if idle.
-        # No-op for transient chat contexts (no DB row to touch).
-        await self._touch_if_durable(sess)
-
-        # Record user message
-        sess.messages.append({
-            "role": "user",
-            "content": user_message,
-            "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
-        sess.message_count += 1
-
-        # Write turn row in background. Embed + insert into
-        # entity_memory as memory_type='turn'. Cron worker derives typed
-        # rows from these later. Fire-and-forget — chat hot path never
-        # blocks on the embed; failure is logged in the helper.
-        # Build the tag dict from the request context for both user +
-        # assistant turn rows. project_id is derived from the session
-        # interaction_context (`project:<id>`) when the caller didn't
-        # supply one — preserves the Workbench's per-project flow.
-        if project_id is None and sess.interaction_context:
-            _ic = sess.interaction_context
-            if _ic.startswith("project:"):
-                try:
-                    project_id = int(_ic.split(":", 1)[1])
-                except (ValueError, IndexError):
-                    project_id = None
-        # Source-driven threading: stamp the unified {kind,ref}
-        # descriptor on every turn row so recall can scope on it directly
-        # (the app the chat happens in decides what's first-class). Derived
-        # from the same interaction_context the recall ladder reads back.
-        # A BORROWED context means "think in that thread, do not write into
-        # it". The derivation above stays right for recall scope and for the
-        # origin of any dispatch this turn makes — it must not reach the turn
-        # ROWS. With history_context="project:N" the fired timer's own reply
-        # would be stamped project_id=N, and the project reader
-        # (routes/brain.py, em.project_id with no app_id exclusion) would
-        # render it beside the report the runner writes — the duplicate this
-        # hidden lane exists to prevent, arriving through a new door.
-        _row_project_id = None if sess.context_borrowed else project_id
-        from mastercode.memory_engine import derive_source_context
-        _src_ctx = derive_source_context(
-            sess.interaction_context,
-            project_id=project_id,
-            session_id=sess.session_id,
-            # Circles threads: a thread wins over the app mapping, so the turn
-            # rows land in {kind: thread} instead of the shared app:circles
-            # scope. None (every non-threaded caller) changes nothing.
-            thread_id=getattr(sess, "thread_id", None),
-        )
-        # Park it on the session for the prompt builders below. The per-turn
-        # prompt_log row needs the same descriptor (prompt_schema
-        # _write_prompt_log → migrations/v149_prompt_log_source_context.sql):
-        # without it the thread-context panel read the newest per-turn row for
-        # the ENTITY and showed whichever thread sent last. Set here, before
-        # every build_per_turn_prompt / log_injected_block call in this method,
-        # and deliberately the RECALL scope — the borrowed-context exception
-        # above is about turn ROWS (a message in a conversation nobody had);
-        # the prompt genuinely was built against the borrowed thread, and that
-        # is what a "what fires next" panel is reporting.
-        #
-        # One correction on top of the recall scope: an `app` turn is stamped
-        # with the app_id the CALLER declared, not the one the session's
-        # interaction_context implies, so replay and the A/B fan-out stop
-        # describing themselves as the self thread. The rule lives in
-        # memory_engine.derive_prompt_log_context beside derive_source_context
-        # — written out by hand here it collapsed only a falsy app_id, while
-        # the reader collapses "" | "chat" | "circles" alike, so app_id="chat"
-        # would have stamped a thread nothing ever reads. Nothing else reads
-        # sess.source_context — prompt_schema is its only consumer — so this
-        # cannot reach recall, the consolidator, or the turn rows.
-        from mastercode.memory_engine import derive_prompt_log_context
-        sess.source_context = derive_prompt_log_context(_src_ctx, app_id)
-        # The RECALL scope itself, for the memory block: it scopes
-        # the standing list to this thread's set and picks the thread audit's
-        # findings. Kept apart from
-        # sess.source_context above, which is the prompt_log label and differs
-        # for replay / A-B on purpose.
-        sess.recall_scope = _src_ctx
-        # ...and for anything this turn writes outside the turn writer
-        # (memory_engine.session_source_context): the turn's own conversation.
-        from mastercode.memory_engine import CURRENT_TURN_ROW, CURRENT_TURN_SCOPE
-        CURRENT_TURN_SCOPE.set({"session_id": sess.session_id, "scope": _src_ctx})
-        # ...and the turn itself: its token, the id it has from now on (on
-        # every row it writes, its message row too, and what it learns names
-        # it: memory_engine.turn_tokens_now), and its message row once that
-        # write starts below (none yet: a woken turn writes none, and an
-        # earlier turn's must never be named).
-        CURRENT_TURN_ROW.set({"session_id": sess.session_id, "task": None, "token": _turn_token})
-        # ...and its room, in the shape escalate records on its ticket below
-        # (asked_in): what the platform files during this turn — a ticket, a
-        # connector pairing — is linked to this conversation, so its card
-        # comes up here and the answer starts a turn here.
-        from mastercode.memory_engine import CURRENT_TURN_ROOM
-        _room_ic = getattr(sess, "interaction_context", None)
-        _room_thread = thread_id
-        _room_app, _room_proj = wakeup_delivery_room(app_id, project_id, _room_ic, _room_thread)
-        CURRENT_TURN_ROOM.set({"app_id": _room_app,
-                               "project_id": None if _room_thread else _room_proj,
-                               "thread_id": _room_thread,
-                               "interaction_context": _room_ic} if _room_app else None)
-        # The write-tag this turn runs under ('circles-replay' / 'circles-ab'
-        # for a variant, 'scheduled_task' for a fired wake-up): close_turn
-        # reads it to keep a variant's or a scheduled run's signal out of the
-        # conversation it borrowed (_run_close_turn).
-        sess.write_app_id = app_id
-        # A turn nobody reads but an evaluation: reads only, no hold, no
-        # wake, no go-ahead guard (its reply is the artifact being compared).
-        sess.unseen_lane = unseen_lane(app_id, getattr(sess, "interaction_context", None))
-        from mastercode.memory_engine import CURRENT_TURN_WRITE_TAG, CURRENT_TURN_TAUGHT
-        CURRENT_TURN_WRITE_TAG.set({"session_id": sess.session_id, "tag": app_id})
-        CURRENT_TURN_TAUGHT.set({"session_id": sess.session_id, "texts": []})
-        _turn_tags = {
-            "app_id": app_id,
-            "artifact_id": artifact_id,
-            "source_context": _src_ctx,
-            # The same token the client got on this turn's session frame. The
-            # chat windows swap their live copy of the turn for these rows by
-            # it; matching on text left a second copy on screen whenever the
-            # saved reply differed from what streamed.
-            "turn_token": _turn_token,
-        }
-        # An internal thread of a run of work: its
-        # rows carry its lane, and its history is only that lane's rows
-        # (below, recall_recent_turns lane=). The run's project holds every
-        # thread's replies; a thread reads its siblings' work items, never
-        # their turns (task_serial.CURRENT_WORK_LANE).
-        from mastercode.runtime.task_serial import CURRENT_WORK_LANE as _CWL
-        _work_lane = _CWL.get()
-        if _work_lane:
-            _turn_tags["task_lane"] = _work_lane
-
-        # Circles upgrade: persist attachment descriptors on
-        # the USER turn row only (names/types/sizes, never the base64 data
-        # — payloads would bloat entity_memory). The UI re-renders chips
-        # from this on reload.
-        _user_tags = _turn_tags
-        # A messaging connector's message someone else wrote (forwarded, or
-        # sent through a bot): who wrote it, as the kernel validated it
-        # (server/connectors/turns.py parse_origin), kept on the person's row.
-        # A list when several nudges nobody read went on as this one turn
-        # (turn_registry._requeue_undelivered), in the order of their texts.
-        _conn_origin = (getattr(sess, "frame", None) or {}).get("connector_origin")
-        if isinstance(_conn_origin, (dict, list)) and _conn_origin:
-            _user_tags = {**_user_tags, "connector_origin": _conn_origin}
-        # A message of a person's chat given to this turn (Ask Ivy):
-        # {kind, ref, message_id}, as the Circles route read it
-        # (routes/circles.py _carry_for_turn), kept on the person's row. A list
-        # when several nudges nobody read went on as this one turn.
-        _carry = (getattr(sess, "frame", None) or {}).get("carry")
-        if isinstance(_carry, (dict, list)) and _carry:
-            _user_tags = {**_user_tags, "carry": _carry}
-        # The sender's id for these words, as a nudge's user row keeps it
-        # (the drain, below): the row is how a retry of the send learns the
-        # words were delivered, once, whatever became of the process. The
-        # ids of several messages joined into this turn, as a list.
-        # Words of other sends that attached to this turn on the same words
-        # (turn_registry._attach_ids) are on it too: their ids ride this row
-        # with it, never a flag written before it.
-        _row_cid = row_client_id(_turn_row_ids(client_id))
-        if _row_cid is not None:
-            _user_tags = {**_user_tags, "client_id": _row_cid, **_sender_tags(_row_cid)}
-        if attachments or images:
-            try:
-                _att_meta = []
-                for _att in (attachments or []):
-                    _blk = _att.get("content_block") or {}
-                    _src = _blk.get("source") or {}
-                    _att_meta.append({
-                        "name": str(_att.get("name") or "")[:200],
-                        "kind": _blk.get("type") or "file",
-                        "media_type": _src.get("media_type") or "",
-                        # base64 inflates ~4/3; report the decoded size.
-                        "size": int(len(_src.get("data") or "") * 3 / 4),
-                    })
-                for _ in (images or []):
-                    _att_meta.append({"name": "", "kind": "image",
-                                      "media_type": "image/*", "size": 0})
-                if _att_meta:
-                    _user_tags = {**_user_tags, "attachments": _att_meta}
-            except Exception as _att_err:
-                log.debug("attachment meta build failed (non-fatal): %s", _att_err)
-
-        # The user row's write task — kept so a re-homed turn
-        # (runtime/turn_home.py, below the tool loop) can await the row and
-        # retag it instead of racing the embed. _write_opening_row starts it
-        # and stamps the row; the stamp stays in that step (it is handed in
-        # as None, and nothing here reads it).
-        _user_row_task = None
-        _user_row_stamp = None
-        # The writes of the rows of what the person sends into this turn (the
-        # drain, in the tool loop): awaited before a move at the turn's end,
-        # which takes them with the message (thread_choice.turn_rows).
-        _nudge_row_tasks: list = []
-        # The write of a rule taught in this message (_keep_taught, started by
-        # _write_opening_row below):
-        # awaited before the Host's thread pick or a re-home moves the
-        # exchange, so the rule exists to move with its message
-        # (thread_choice.move_exchange, turn_home.rehome_turn).
-        _taught_task = None
-        # The turn's opening row (_write_opening_row): the person's message or the
-        # Host's own request, and a rule the message teaches.
-        (_taught_task, _user_row_task) = await self._write_opening_row(
-            sess, CURRENT_TURN_ROW=CURRENT_TURN_ROW, CURRENT_TURN_TAUGHT=CURRENT_TURN_TAUGHT,
-            _row_project_id=_row_project_id, _taught_task=_taught_task, _turn_tags=_turn_tags,
-            _turn_token=_turn_token, _user_row_stamp=_user_row_stamp,
-            _user_row_task=_user_row_task, _user_tags=_user_tags, app_id=app_id,
-            host_request=host_request, project_id=project_id, system_turn=system_turn,
-            user_message=user_message)
-
-        # Orchestrator turn: no Grok triage. The host's own reasoning is the
-        # classifier — it answers directly or calls `dispatch`/`recall`/
-        # `escalate`. Context is deterministic (fixed recent-history window
-        # below); the input-guard flags still flow into the structural screen
-        # above and the CEIGAS gate.
-
-        # Token ceiling = the caller's max_tokens, else (None, the default)
-        # the routed model's OWN output limit, resolved with the route below
-        # (context_budget.output_limit_for).
-        # Length is otherwise shaped by the behavioral codebooks via the
-        # prompt, not by a kernel-side heuristic.
-        effective_max = max_tokens
-
-        # Conversation-depth P1:
-        # resolve the chat route UP FRONT so the history window below sizes
-        # in TOKENS against the model's context window, not just the legacy
-        # 12-message / 8000-char caps. The tool-loop section below reuses
-        # this route — it was previously (re)resolved there, AFTER history
-        # assembly, which was too late to size the window. Resolution is a
-        # pure config read; the CHAT_UNCONFIGURED check stays at its
-        # original site.
-        # ── Turn type ──
-        # Resolved from the thread's or the project's binding here, ahead of
-        # the chat route, because a typed turn's MODEL rides the route (step
-        # 2) and its tools ride the pick further down. None = an
-        # untyped turn, and everything after this block is exactly what it
-        # was. A binding the store could not read runs CLOSED
-        # (turn_types.closed_type): running it untyped would hand the turn
-        # more than the user approved.
-        sess.turn_type = None
-        _type_groups_allowed = None
-        # The type's skill, rendered once per turn and appended to the STATIC
-        # system message: bound here so the static append below the
-        # pick can read it on every path, including a pick that raised. When
-        # the skill does not ride, the block is ONE line saying which skill and
-        # why (host_skills.type_skill_line).
-        _type_skill_block = ""
-        _tt_project_id = None
-        _tt_ic = str(getattr(sess, "interaction_context", None) or "")
-        if _tt_ic.startswith("project:"):
-            try:
-                _tt_project_id = int(_tt_ic.split(":", 1)[1])
-            except (ValueError, IndexError):
-                _tt_project_id = None
-        _tt_thread_id = getattr(sess, "thread_id", None)
-        try:
-            from mastercode.runtime.turn_types import (
-                bound_groups as _bound_groups, category_map as _tt_category_map,
-                closed_type as _tt_closed, context_filter as _tt_context_filter,
-                resolve_session_type, route_for_type as _tt_route_for_type,
-                thread_model_pick as _tt_thread_model_pick,
-                type_skill as _tt_type_skill)
-            _pinned = getattr(sess, "pinned_turn_type_id", None)
-            # A scheduled task's own type wins over the thread's.
-            sess.turn_type = await resolve_session_type(
-                self.pool, sess.entity["id"], pinned_type_id=_pinned,
-                thread_id=_tt_thread_id, project_id=_tt_project_id)
-            # Once: a grant the person gave the NEXT
-            # turn of this type is taken here and cleared in one statement,
-            # and widens THIS turn only — the stored type is unchanged.
-            # Not for a PINNED turn: Once was given for the person's next turn
-            # of the type, and a background wake-up must not use it up.
-            if (sess.turn_type is not None and sess.turn_type.get("status") == "active"
-                    and not _pinned):
-                from mastercode.runtime.turn_type_approval import consume_once, with_once
-                _once = await consume_once(self.pool, sess.entity["id"], sess.turn_type["id"])
-                if _once:
-                    sess.turn_type = with_once(sess.turn_type, _once)
-                    log.info("turn type %r: a Once grant widens this turn: %s",
-                             sess.turn_type.get("name"), _once)
-        except Exception as _tt_err:  # noqa: BLE001
-            if _tt_thread_id or _tt_project_id is not None or getattr(sess, "pinned_turn_type_id", None):
-                log.warning("turn type resolution failed — this turn runs CLOSED: %s", _tt_err)
-                try:
-                    sess.turn_type = _tt_closed(f"turn type resolution failed: {_tt_err}")
-                except Exception:  # noqa: BLE001
-                    sess.turn_type = {"name": "(unresolved)", "status": "closed",
-                                      "tool_groups": [], "grant_names": [],
-                                      "keys": [], "bastions": [],
-                                      "context": {"memory": "none", "documents": False},
-                                      "closed_reason": str(_tt_err)}
-            else:
-                log.warning("turn type module unavailable; untyped turn unchanged: %s", _tt_err)
-            _bound_groups = lambda _t, _g: dict(_g)  # noqa: E731
-            _tt_category_map = lambda: {}  # noqa: E731
-            # A closed turn reads nothing, even when the module that says so
-            # could not be imported.
-            _tt_context_filter = (lambda _t: {"projects": None, "documents": False, "memory": "none"}  # noqa: E731
-                                  if (_t or {}).get("status") == "closed" else None)
-            _tt_type_skill = lambda _t: None  # noqa: E731
-            _tt_thread_model_pick = lambda _o: bool(_o)  # noqa: E731
-
-            async def _tt_route_for_type(_pool, _eid, _t, _route):  # noqa: E306
-                return _route
-        # The ROOT turn (runtime/root_turn): a turn in the Host's root thread.
-        # Its prompt and tools are built from root_turn's allowlist below (the
-        # rules, the platform's facts, the root thread's own history, this
-        # turn's words; machine_exec, gitea reads, escalate, close_turn), not
-        # from the normal prompt with things taken out. Every other turn has
-        # machine_exec taken out of its catalog.
-        _root_turn = False
-        try:
-            from mastercode.runtime import root_turn as _root_mod
-            _root_turn = _root_mod.is_root(getattr(sess, "turn_type", None))
-        except Exception as _rt_err:  # noqa: BLE001 - no module, no root turn
-            log.warning("root turn module unavailable; this turn is not a root turn: %s", _rt_err)
-            _root_mod = None
-        # Which thread this message belongs to, when the send route found no
-        # clear match: the Host picks in this turn (runtime/thread_choice),
-        # with one more tool. Never for a root turn or a platform-started one.
-        _choice = None
-        if not _root_turn and not system_turn:
-            try:
-                from mastercode.runtime import thread_choice as _tchoice
-                _choice = _tchoice.from_frame(getattr(sess, "frame", None))
-            except Exception as _tc_err:  # noqa: BLE001 — the message stays where it landed
-                log.debug("thread choice not read (non-fatal): %s", _tc_err)
-                _choice = None
-        if _choice is not None:
-            # The pick can still file this turn elsewhere when it ends, after
-            # close_turn named the thread's topic and title: they are written
-            # then, to the thread the turn ends in (close_turn.finish_topic,
-            # below the pick). A turn with no pick writes them at once.
-            from mastercode.runtime.close_turn import TURN_TOPIC
-            TURN_TOPIC.set({"session_id": sess.session_id, "entity_id": sess.entity_id,
-                            "landed": dict(_src_ctx) if isinstance(_src_ctx, dict) else None})
-        # The type this turn runs under, recorded for this
-        # turn's context (an agent or build it starts stamps it on its
-        # entity_tasks row, v186) and reported to the turn registry (the
-        # timeline names the type of every running turn). This runs inside
-        # the turn's own task, so a turn beside it never sees this value.
-        try:
-            from mastercode.runtime.turn_types import set_current_turn_type
-            set_current_turn_type(getattr(sess, "turn_type", None))
-        except Exception as _ct_err:  # noqa: BLE001 - a record never fails a turn
-            log.debug("current turn type not recorded (non-fatal): %s", _ct_err)
-        # ...and the name every memory row this turn writes is stamped with
-        # (entity_memory.turn_type): the platform's record, never the model's.
-        try:
-            from mastercode.memory_engine import CURRENT_TURN_TYPE as _CTT
-            from mastercode.memory_slots import turn_type_label as _tt_label
-            _turn_type_name = _tt_label(getattr(sess, "turn_type", None))
-            _CTT.set({"session_id": sess.session_id, "name": _turn_type_name})
-            _turn_type_known = getattr(sess, "_turn_type_known", None)
-            if _turn_type_known is not None:
-                _turn_type_known["name"] = _turn_type_name
-                _turn_type_known["event"].set()
-        except Exception as _ctt_err:  # noqa: BLE001 - a stamp never fails a turn
-            log.debug("turn type stamp not set (non-fatal): %s", _ctt_err)
-        if progress_cb is not None:
-            _tt_now = getattr(sess, "turn_type", None) or {}
-            try:
-                await progress_cb({
-                    "event": "turn_type",
-                    "turn_type_id": (str(_tt_now.get("id")) if _tt_now.get("status") == "active"
-                                     and _tt_now.get("id") else None),
-                    # "untyped" said outright: the registry must tell an
-                    # untyped turn from one whose type has not arrived yet.
-                    "turn_type_status": (_tt_now.get("status") or "untyped") if _tt_now else "untyped",
-                })
-            except Exception as _cb_err:  # noqa: BLE001
-                log.debug("progress_cb turn_type raised (non-fatal): %s", _cb_err)
-        _type_skill_name = _tt_type_skill(getattr(sess, "turn_type", None))
-        if sess.turn_type is not None:
-            _type_groups_allowed = set(sess.turn_type.get("tool_groups") or [])
-        if _type_skill_name:
-            # The type's skill is loaded HERE, beside the type, and rendered
-            # with its own header.
-            try:
-                # The Host's own skill of that name first, then the platform's
-                # disk default (runtime/host_skills.py). A Host
-                # skill rides its core — the standard keeps it under the cut,
-                # and it is checked against the standard as it is now first —
-                # with a pointer to its reference section.
-                from mastercode.runtime.host_skills import load_type_skill as _tt_load_skill
-                from mastercode.runtime.host_skills import type_skill_line as _tt_skill_line
-                _tsk = await _tt_load_skill(self.pool, sess.entity_id, _type_skill_name)
-                if _tsk is not None and _tsk["body"]:
-                    _type_skill_block = (
-                        f"## Turn type {sess.turn_type.get('name')} — skill `{_type_skill_name}`\n"
-                        "Every turn of this thread reads this skill.\n\n" + _tsk["body"])
-                else:
-                    # Missing, retired, failing the standard or unreadable:
-                    # the turn says so in one line rather than running as if
-                    # the type had no skill.
-                    _type_skill_block = _tt_skill_line(sess.turn_type.get("name"), _type_skill_name, _tsk)
-                    log.warning("turn type %r skill %r does not ride: %s", sess.turn_type.get("name"),
-                                _type_skill_name, (_tsk or {}).get("problem"))
-            except Exception as _tsk_err:  # noqa: BLE001
-                log.warning("turn type %r skill %r could not be loaded: %s",
-                            sess.turn_type.get("name"), _type_skill_name, _tsk_err)
-                try:
-                    from mastercode.runtime.host_skills import type_skill_line as _tt_skill_line
-                    _type_skill_block = _tt_skill_line(sess.turn_type.get("name"), _type_skill_name,
-                                                       error=_tsk_err)
-                except Exception:  # noqa: BLE001 - the log line above still says it
-                    _type_skill_block = ""
-
-        from mastercode.inference_config import resolve_role_route as _rrr
-        from mastercode import context_budget as _cb
-        _chat_route = await _rrr(
-            self.pool, sess.entity_id, "chat", thread_override=thread_override,
-        )
-        # A typed turn with a model of its own runs on it. The
-        # same route dict shape rides everything below — the window sizing,
-        # the catalog, every call of the tool loop — so the type's model is
-        # THE model of the turn, not a late substitution.
-        # A per-thread MODEL pick is the person's more specific choice and
-        # wins over the type's model. The override dict
-        # also carries the context budget and the spend allowance, so its
-        # truthiness is not a pick — only a normalized provider + model is.
-        if (sess.turn_type is not None and sess.turn_type.get("model")
-                and not _tt_thread_model_pick(thread_override)):
-            _chat_route = await _tt_route_for_type(
-                self.pool, sess.entity_id, sess.turn_type, _chat_route)
-        # Which ROLE this turn runs on — stamped on every tool_call_log row
-        # (runtime/tool_call_ledger) so a model's tool-call record is per
-        # role, the same axis the routing table is keyed on.
-        #
-        # Every surface runs on `chat`. The `tutor` role was removed after 14
-        # days with no attributable calls: its
-        # own design already said an unrouted tutor falls back to this route
-        # and the Orchestrator row said "no model of its own", so the seat
-        # existed to let a user split the editor onto a second model and
-        # nobody did.
-        # A per-thread override still wins — it is passed to the resolver.
-        _chat_role = "chat"
-        _ctx_window = None        # model context_length, tokens (None = legacy caps)
-        _ctx_budget = None        # effective per-turn input budget (None = unbudgeted)
-        # What each round's pre-send trim holds the request to: the window's
-        # budget with the per-thread dial, but not the Host's default history
-        # ceiling. The ceiling bounds the HISTORY a turn starts with (and the
-        # spend meter's round); a result the turn reads itself is bounded by
-        # the window, so a reader's window-sized page is not swapped for a
-        # truncation note the moment it lands.
-        _round_budget = None
-        # What the spend meter counts a round in (turn_allowance.meter_budget):
-        # _ctx_budget, or with an unknown window the legacy caps' round.
-        _spend_ctx_budget = None
-        _hist_budget_tokens = None
-        _budget_override = None
-        # The per-turn SPEND ALLOWANCE in dollars (runtime/turn_allowance.py).
-        # Read here, beside the context dial, because they are one setting in
-        # the person's head and they live in the same two stores.
-        _turn_allowance_usd = None
-        _turn_defaults: dict = {}
-        _default_rounds = None
-        # The model's window, the thread's budget and allowance, and the Host's
-        # bounded defaults (_read_turn_window).
-        (_budget_override, _ctx_window, _default_rounds, _turn_allowance_usd, _turn_defaults,
-         effective_max) = await self._read_turn_window(
-            sess, _budget_override=_budget_override, _cb=_cb, _chat_route=_chat_route,
-            _ctx_window=_ctx_window, _default_rounds=_default_rounds, _src_ctx=_src_ctx,
-            _turn_allowance_usd=_turn_allowance_usd, _turn_defaults=_turn_defaults, app_id=app_id,
-            effective_max=effective_max, thread_override=thread_override)
-        if not effective_max:
-            effective_max = _cb.DEFAULT_OUTPUT_RESERVE
-        # What history, the mid-turn trim and the spend projection keep free
-        # for the reply: a realistic reply, not the output limit. The limit
-        # governs each REQUEST — provider_gateway clamps it
-        # to the room the window leaves after that call's input.
-        _reply_reserve = _cb.reply_reserve(_ctx_window)
-        # The tool-result wall and every reader's page size follow the routed
-        # model's window for this whole turn (tool_result_wall.TOOL_WALL_WINDOW).
-        _cb.set_tool_wall_window(_ctx_window)
-        log.debug("Token ceiling: %d (caller_max=%s, reply reserve %d)",
-                  effective_max, max_tokens, _reply_reserve)
-
-        # Resolve the active-model visibility consumer ONCE for this turn
-        # (C7/C10/C21). Threaded into every live memory retrieval that feeds the
-        # system prompt so visibility.filter_rows runs on the live path — a
-        # memory scoped "deny: model:<this>" is dropped before it reaches the
-        # prompt. None → visibility no-ops (same as before this wire).
-        _consumer_model_id = self._resolve_consumer_model_id(sess.entity)
-        if _consumer_model_id:
-            log.debug("Memory visibility consumer for turn: %s", _consumer_model_id)
-
-        # Build message array
-        # --- Inject unread inbox messages into system prompt ---
-        _inbox_block = ""
-        try:
-            _ctx = ContextStore(self.pool, sess.entity_id)
-            # A root turn reads no inbox; the messages stay unread for the
-            # Host's other threads.
-            _inbox_raw = None if _root_turn else await _ctx.get("inbox/messages.json")
-            if _inbox_raw:
-                _inbox = json.loads(_inbox_raw) if isinstance(_inbox_raw, str) else _inbox_raw
-                _unread = [m for m in _inbox if not m.get("read")]
-                # A notice naming another host is another party's words.
-                _turn_taint.mark_inbox(_unread)
-                if _unread:
-                    _inbox_lines = ["## Messages For You"]
-                    for _m in _unread:
-                        _src = _m.get("source", "system")
-                        _ts = _m.get("timestamp", "")[:19]
-                        _inbox_lines.append(f"### From {_src} ({_ts})")
-                        _inbox_lines.append(_m.get("content") or "")
-                        _inbox_lines.append("")
-                        _m["read"] = True
-                    _inbox_block = "\n".join(_inbox_lines)
-                    await _ctx.put("inbox/messages.json", json.dumps(_inbox))
-        except Exception as e:
-            log.warning("Inbox message load failed: %s", e)
-
-        # Split system prompt into static (cacheable) and dynamic (per-message) parts.
-        # The marker lets provider_gateway create two system blocks:
-        # block 1 (static) gets cache_control, block 2 (dynamic) does not.
-        _sys_content = sess.system_prompt + "\n\n<!-- CACHE_BREAK -->"
-        if _root_turn:
-            # The root turn's static half is root_turn's rules and nothing of
-            # the Host's standing prompt (memory, people, skills, map).
-            _sys_content = _root_mod.ROOT_RULES.strip() + "\n\n<!-- CACHE_BREAK -->"
-
-        # The FRAME's send-time facts (host prompt map phase 4): what this
-        # call knows that the transient builder did not — the attachment
-        # kinds, the referenced artifact, a platform-started turn. Stored on
-        # the session so `_b_frame` (a per-turn schema block) reads one dict.
-        try:
-            # Built FRESH every turn from the platform keys the transient
-            # builder set plus THIS request's validated field — never from
-            # last turn's dict, so a durable session (voice/demo) cannot
-            # carry "Attached this turn" into a turn with no attachment.
-            # On the durable path the request field
-            # arrives here as `frame`, on the transient path it was spread
-            # into sess.frame by the builder; both are the validated shape.
-            _base = getattr(sess, "frame", None) or {}
-            _req = frame if isinstance(frame, dict) else _base
-            _fr: dict = {k: _base[k] for k in ("app_id", "project_id") if _base.get(k) is not None}
-            for _k in ("view", "pills"):
-                if _req.get(_k):
-                    _fr[_k] = _req[_k]
-            # What the platform's own send routes say about the turn (never
-            # the page: a client's frame is validated to view/pills at the
-            # route): the topic Circles placed the message in, and the
-            # threads the Host may move it to (runtime/thread_choice).
-            for _k in ("topic", "thread_choice"):
-                if isinstance(_req.get(_k), dict):
-                    _fr[_k] = _req[_k]
-            # Client-sent text that reaches the prompt is shape-checked and
-            # capped, like view/pills: an attachment kind is image, document
-            # or file; an artifact id is a short token.
-            _kinds: list[str] = []
-            for _att in attachments or []:
-                _blk = (_att or {}).get("content_block") or {} if isinstance(_att, dict) else {}
-                _t = str(_blk.get("type") or "")
-                _kinds.append(_t if _t in ("image", "document") else "file")
-            _kinds.extend("image" for _ in (images or []))
-            if _kinds:
-                _fr["attachments"] = _kinds
-            # Names of the attachments that were also KEPT on this Host (the
-            # Circles route stores each one), so the host knows it can read
-            # them again in a later turn. Client text: one line each, capped.
-            _kept, _not_kept = [], []
-            for _att in attachments or []:
-                if not isinstance(_att, dict):
-                    continue
-                _n = re.sub(r"[\r\n\t'\"]", " ", str(_att.get("name") or "")).strip()[:120]
-                if _n and _att.get("kept_on_host"):
-                    _kept.append(_n)
-                elif _n and _att.get("keep_note"):
-                    _why = re.sub(r"[\r\n\t]", " ", str(_att["keep_note"]))[:120]
-                    _not_kept.append(f"{_n} ({_why})")
-            # Every attached name, kept or not: a workspace_file read of one
-            # answers where its content is (tools._attachment_miss).
-            try:
-                from mastercode.runtime.tools import TURN_ATTACHMENTS as _TA
-                _TA.set(tuple(
-                    str(_att.get("name") or "").strip()
-                    for _att in attachments or []
-                    if isinstance(_att, dict) and str(_att.get("name") or "").strip()))
-            except Exception as _ta_err:  # noqa: BLE001
-                log.debug("turn attachment names not set (non-fatal): %s", _ta_err)
-            if _kept:
-                _fr["attachments_kept"] = _kept[:20]
-            if _not_kept:
-                _fr["attachments_not_kept"] = _not_kept[:20]
-            if artifact_id:
-                _aid = re.sub(r"[^\w.:-]", "", str(artifact_id))[:80]
-                if _aid:
-                    _fr["artifact_id"] = _aid
-            if system_turn:
-                _fr["system_turn"] = True
-            sess.frame = _fr
-        except Exception as _fr_err:  # noqa: BLE001
-            log.debug("frame send-time facts failed (non-fatal): %s", _fr_err)
-
-        # Schema PER_TURN blocks — the frame, memory, app state. Refresh every
-        # turn so retrieval follows the conversation.
-        _root_facts: dict = {}
-        try:
-            if _root_turn:
-                # The root turn's per-turn half: the frame, the timeline and
-                # diagnostics, each from its own builder, nothing else.
-                _root_facts = await _root_mod.platform_facts(self, sess, user_message)
-                _pt_block = "\n\n".join(_root_facts[_b] for _b in _root_mod.ROOT_PROMPT_BLOCKS[1:]
-                                          if _root_facts.get(_b))
-            else:
-                from mastercode.runtime.prompt_schema import build_per_turn_prompt
-                _pt_block = await build_per_turn_prompt(self, sess, user_message)
-            if _pt_block:
-                _sys_content += "\n\n" + _pt_block
-        except Exception as e:
-            # Loud, counted degradation: as a swallowed warning the prompt
-            # silently lost memory/tasks and nobody noticed for months.
-            self._prompt_degrade = getattr(self, "_prompt_degrade", {})
-            self._prompt_degrade["per_turn_schema"] = self._prompt_degrade.get("per_turn_schema", 0) + 1
-            log.error(
-                "PROMPT DEGRADED for entity %d: per-turn schema block failed "
-                "(occurrence #%d this process) — memory/tasks missing this turn: %s",
-                sess.entity_id, self._prompt_degrade["per_turn_schema"], e,
-            )
-
-        # Two-system per-turn context: spike
-        # classification is the shared trigger; PERSONALITY expression and
-        # CONSTITUTION context render as separate blocks. The two systems
-        # meet only here, in the prompt — neither writes the other.
-        from mastercode.runtime.prompt_schema import log_injected_block
-
-        # One turn embedding, shared by classification and both retrievals.
-        # Canonical config-driven path (bridge or pod-local per entity config)
-        # — without it the classifier is starved.
-        _turn_embedding = None
-        try:
-            from mastercode.memory_engine import _get_memory_embedding
-            _turn_embedding = await _get_memory_embedding(user_message)
-        except Exception as e:
-            log.warning(
-                "Turn embedding unavailable for entity %d — similarity "
-                "retrieval degraded this turn: %s", sess.entity_id, e,
-            )
-
-        # The crisis floor's contrast groups are built once per process from
-        # the turn's embedder, in the background (runtime/crisis.py). A turn
-        # classifies against them so the floor adds no embed of its own.
-        _crisis_class = None
-        try:
-            from mastercode.runtime import crisis as _crisis_mod
-            _crisis_mod.ensure_centroids_background(_get_memory_embedding)
-            _crisis_class = _crisis_mod.classify_spike(user_message, embedding=_turn_embedding)
-        except Exception as e:
-            log.warning("Crisis contrast classification failed (lexical floor still runs): %s", e)
-
-        # -- Governance floor: crisis check (SB 243 §22602(b)(1)) --
-        # ENTRY-side so every caller is covered from one point — main lane,
-        # skill dispatch, CHAT_UNCONFIGURED. A hit never gates the model and
-        # never writes or streams text as the Host: the
-        # audit row, the person's notice frame and the model's fact block
-        # (_crisis_flagged), then the turn runs as any other.
-        # Detection = the always-on lexical floor plus the crisis_self_harm
-        # centroid when the embed lane is up (detect_crisis never raises).
-        # It reads the PERSON's words. A turn the platform started
-        # (_platform_started: a wake-up after a dispatch round, a fired timer
-        # or task) has the platform's brief for its message — an agent's
-        # report, a task's prompt — so a phrase quoted there is not checked
-        # here: a notice raised on it would be raised on words the person
-        # never wrote. A request the person saved while the Host was starting
-        # runs as a system turn but is their own words, so it is checked.
-        # Words the person sends INTO a platform-started turn are checked at
-        # the nudge drain like any nudge.
-        _crisis = None
-        if not _platform_started:
-            try:
-                from mastercode.runtime.crisis import detect_crisis
-                _crisis = detect_crisis(
-                    _raw_user_message, embedding=_turn_embedding, spike=_crisis_class,
-                )
-            except Exception as _crisis_err:
-                # A statutory floor never inherits a silent-total-failure mode:
-                # if detection itself breaks, the lexical floor
-                # still runs.
-                log.error(
-                    "Crisis detection raised for entity %s — lexical floor still runs: %s",
-                    sess.entity_id, _crisis_err,
-                )
-                try:
-                    from mastercode.runtime.crisis import crisis_lexical_hit
-                    if crisis_lexical_hit(_raw_user_message):
-                        _crisis = {"category": "crisis_self_harm", "path": "lexical"}
-                except Exception as _lex_err:
-                    log.error("Crisis lexical floor ALSO raised (entity %s): %s",
-                              sess.entity_id, _lex_err)
-        if _crisis:
-            log.warning(
-                "CRISIS CHECK flagged entity %d's message (path=%s) — the model runs and is told; "
-                "the person's app gets the platform's notice",
-                sess.entity_id, _crisis.get("path"),
-            )
-            # The fact rides the per-turn half of the system prompt (split off
-            # below at CACHE_BREAK, after history), beside the frame.
-            _sys_content += "\n\n" + await _crisis_flagged(
-                self, sess, progress_cb, _crisis.get("path"), [_raw_user_message], nudge=False)
-
-        # MODEL CALIBRATION: per-model style counterweight.
-        # The codebook says who she is; this counters what the serving
-        # MODEL was trained to do (Opus 5 trailing caveats / verbosity /
-        # scope creep — see runtime/model_style.py). Keyed on the chat
-        # route resolved above; models with no registered block (Sonnet,
-        # OSS) get nothing, which is the deliberate default.
-        try:
-            from mastercode.runtime.model_style import build_model_style_block
-            _style_block = "" if _root_turn else build_model_style_block(_chat_route.get("model"))
-            if _style_block:
-                _sys_content += "\n\n" + _style_block
-                await log_injected_block(
-                    self, sess, "model_style", _style_block,
-                )
-        except Exception as e:
-            self._prompt_degrade = getattr(self, "_prompt_degrade", {})
-            self._prompt_degrade["model_style"] = self._prompt_degrade.get("model_style", 0) + 1
-            log.error(
-                "PROMPT DEGRADED for entity %d: model calibration failed "
-                "(occurrence #%d this process) — block missing this turn: %s",
-                sess.entity_id, self._prompt_degrade["model_style"], e,
-            )
-
-        # CONSTITUTION: rules + knowledge that apply this turn.
-        try:
-            from mastercode.constitution.context import build_context_block
-            # Rules and knowledge come from memory: not in a root turn.
-            # A rule the memory block already lists ("Things You Were
-            # Taught", built above into _sys_content) is left out, so a rule
-            # never renders twice; this block adds what the message calls up
-            # by meaning.
-            _const_block = "" if _root_turn else await build_context_block(
-                self.pool, sess.entity_id, user_message, _turn_embedding,
-                session=sess,
-                memory_engine=self.memory,
-                consumer=_consumer_model_id,
-                already_shown=_sys_content,
-            )
-            if _const_block:
-                _sys_content += "\n\n" + _const_block
-                await log_injected_block(
-                    self, sess, "constitution_context", _const_block,
-                )
-        except Exception as e:
-            self._prompt_degrade = getattr(self, "_prompt_degrade", {})
-            self._prompt_degrade["constitution_context"] = self._prompt_degrade.get("constitution_context", 0) + 1
-            log.error(
-                "PROMPT DEGRADED for entity %d: constitution context failed "
-                "(occurrence #%d this process) — rules missing this turn: %s",
-                sess.entity_id, self._prompt_degrade["constitution_context"], e,
-            )
-
-        if _inbox_block:
-            _sys_content += "\n\n" + _inbox_block
-            try:
-                from mastercode.runtime.prompt_schema import log_injected_block as _lib_inbox
-                await _lib_inbox(self, sess, "inbox", _inbox_block)
-            except Exception as _ib_err:  # noqa: BLE001
-                log.debug("inbox provenance log failed (non-fatal): %s", _ib_err)
-
-        # Cache-stable wire shape. The per-turn blocks assembled above change every turn,
-        # and sitting in front of history they made every token after them
-        # uncacheable: the cached read stayed pinned at the static block
-        # (1526, 1526, 1526, 1526) while the prompt grew past 20k. Splitting
-        # here and re-attaching the dynamic half AFTER history makes
-        # static+history a byte-stable prefix — the same measurement then
-        # showed the cached read GROWING with the thread (1526 -> 16537).
-        #
-        # _sys_content is still assembled whole above so the budget math below
-        # measures it exactly once, unchanged. Only PLACEMENT changes here.
-        # The dynamic half keeps role="system" (it IS operator content); each
-        # wire adapter decides how to carry a non-leading system message —
-        # provider_gateway._anthropic_messages_payload turns it into a user
-        # turn, which is the shape the A/B actually measured.
-        _static_sys, _dyn_sys = _split_cache_break(_sys_content)
-        _thread_state_block = ""   # consolidator off: the thread's goal + last handoff
-        grok_messages = [{"role": "system", "content": _static_sys}]
-        # The PERSON's words in this request, by reference — the turn's user
-        # message and every mid-turn nudge, as the exact dicts appended below.
-        # The pre-send trim is handed this list and matches on object identity
-        # (context_budget._protect_indices), so a question is never identified
-        # by position or by guessing at its content: a question that opens with
-        # a markdown heading used to be mistaken for an injected block and
-        # evicted. Nothing is written INTO the messages, so nothing can reach
-        # the wire or the turn row. The runtime's own steering (dead-tool
-        # notices, STOP directives) is deliberately absent — that stays
-        # evictable under pressure.
-        _protect_msgs: list = []
-
-        # Add conversation history (trimmed to budget) -- skip if clear_history
-        history_chars = 0
-        history_msgs = []
-        # The recalled rows the window was cut from, with what it was cut to
-        # (max_hist / max_msgs): a search-mode turn re-fits them with notes.
-        _hist_rows = None
-        _hist_fit: dict = {}
-        _tool_trail_block = ""   # built after history (tool_trail)
-        _trail_turns: list = []
-        # A turn ABOUT the host (prefire_tools.is_self_turn),
-        # decided ONCE here on the user's own words: it reads a wider trail.
-        _self_turn = False
-        _self_trail_turns = None
-        _self_trail_calls = None
-        try:
-            from mastercode.runtime.prefire_tools import (
-                is_self_turn as _is_self_turn,
-                SELF_TRAIL_TURNS as _STT, SELF_TRAIL_CALLS as _STC)
-            # Only the person's own words decide it. A turn the platform
-            # started (a wake-up, a continuation after a result, a fired task)
-            # runs on the platform's brief, whose wording ("your build", "what
-            # you started") reads as a question about the Host: a continuation
-            # after a compare carried the
-            # 25,409-char inventory for a brief nobody asked about the Host.
-            # A saved request is the person's words (_platform_started).
-            _self_turn = (not _platform_started) and bool(_is_self_turn(user_message))
-            if _self_turn:
-                _self_trail_turns, _self_trail_calls = _STT, _STC
-        except Exception as _st_err:  # noqa: BLE001
-            log.debug("self-turn detection skipped (non-fatal): %s", _st_err)
-        # The conversation history this turn reads (_load_turn_history): the window
-        # budget, the recent turns, the Host's own notes on the turns that fell
-        # out of the window (evicted_record) and the thread's state block.
-        (_ctx_budget, _hist_fit, _hist_rows, _record_msg, _round_budget, _spend_ctx_budget,
-         _src_ctx, _thread_state_block, history_chars, history_msgs) = await self._load_turn_history(
-            sess, _budget_override=_budget_override, _cb=_cb, _chat_route=_chat_route,
-            _ctx_budget=_ctx_budget, _ctx_window=_ctx_window, _default_rounds=_default_rounds,
-            _hist_budget_tokens=_hist_budget_tokens, _hist_fit=_hist_fit, _hist_rows=_hist_rows,
-            _reply_reserve=_reply_reserve, _root_mod=_root_mod, _root_turn=_root_turn,
-            _round_budget=_round_budget, _spend_ctx_budget=_spend_ctx_budget, _src_ctx=_src_ctx,
-            _sys_content=_sys_content, _thread_state_block=_thread_state_block,
-            _turn_allowance_usd=_turn_allowance_usd, _turn_defaults=_turn_defaults,
-            _work_lane=_work_lane, clear_history=clear_history,
-            derive_source_context=derive_source_context, history_chars=history_chars,
-            history_msgs=history_msgs, session_id=session_id, user_message=user_message)
-
-        # Where the history sits in the message list, and the rows it was cut
-        # from: a search-mode turn re-fits the same rows with each turn's
-        # tool note once its tool catalog exists (below). Nothing
-        # reads these in groups mode.
-        _hist_at = len(grok_messages)
-        grok_messages.extend(history_msgs)
-
-        # TOOL TRAIL: the host's own recent tool calls in this
-        # thread + every next_step still pending, as a per-turn block. Tool
-        # results do not survive a turn boundary (history is prose), so the
-        # model used to re-derive "did the login land / which task was that"
-        # from the user's words — and fabricated both. This is the record that makes inferring unnecessary
-        # (runtime/tool_trail.py). Same scope as history; skipped on replay
-        # (history_before) so a variant sees exactly what the original saw.
-        if (not clear_history and _src_ctx
-                and not getattr(sess, "history_before", None)):
-            try:
-                from mastercode.memory_engine import recall_tool_trail
-                from mastercode.runtime.tool_trail import (
-                    render_tool_trail, TOOL_TRAIL_MAX_TURNS as _TT_MAX)
-                # A turn ABOUT the host (_self_turn, decided above) reads the
-                # thread's record, not three turns of it — a self-review then
-                # quotes refusals instead of recalling them.
-                _trail_turns = await recall_tool_trail(
-                    self.pool, sess.entity_id, sess.session_id,
-                    source_context=_src_ctx,
-                    limit=_self_trail_turns or _TT_MAX)
-                if _root_turn:
-                    # A marked turn's calls are left out of a root turn's
-                    # trail, as its words are withheld from its history.
-                    _trail_turns = _root_mod.withhold_untrusted(_trail_turns)
-                from mastercode.runtime import turn_taint as _tt_trail
-                _tt_trail.mark_rows(_trail_turns, "the tool trail of earlier turns")
-                _tool_trail_block = render_tool_trail(
-                    _trail_turns, max_turns=_self_trail_turns, max_calls=_self_trail_calls)
-            except Exception as _tt_err:  # noqa: BLE001
-                log.debug("tool trail build failed (non-fatal): %s", _tt_err)
-                _tool_trail_block = ""
-            if _tool_trail_block:
-                _dyn_sys = (_dyn_sys + "\n\n" + _tool_trail_block) if _dyn_sys \
-                    else _tool_trail_block
-                try:
-                    from mastercode.runtime.prompt_schema import log_injected_block
-                    await log_injected_block(self, sess, "tool_trail", _tool_trail_block)
-                except Exception as _tl_err:  # noqa: BLE001
-                    log.debug("tool trail provenance log failed (non-fatal): %s", _tl_err)
-
-        if _thread_state_block:
-            _dyn_sys = (_thread_state_block + "\n\n" + _dyn_sys) if _dyn_sys \
-                else _thread_state_block
-            try:
-                from mastercode.runtime.prompt_schema import log_injected_block
-                await log_injected_block(self, sess, "thread_state", _thread_state_block)
-            except Exception as _tsl_err:  # noqa: BLE001
-                log.debug("thread state provenance log failed (non-fatal): %s", _tsl_err)
-
-        # The per-turn half of the system prompt rides HERE — after history,
-        # immediately before the current user message — so everything above it
-        # is byte-stable across turns and can be cached. Empty when no PER_TURN
-        # block fired, in which case the wire is byte-identical to before.
-        _dyn_idx = None
-        if _dyn_sys:
-            grok_messages.append({"role": "system", "content": _dyn_sys})
-            _dyn_idx = len(grok_messages) - 1
-        # Per-turn blocks computed BELOW this point (a referenced artifact, an
-        # attached-image hint, the felt state, the codebook's internal state,
-        # conversation awareness) used to be appended to grok_messages[0] —
-        # the STATIC, cached system message — after the split above, so on
-        # every turn one of them fired the whole cached prefix was
-        # invalidated. They are
-        # collected here and flushed into the dynamic half instead, and each
-        # one is logged to prompt_log like the schema blocks, so the mirror
-        # sees them.
-        _late_blocks: list = []
-
-        # Add current message (multimodal if images or attachments provided)
-        # This turn's message, with the pictures and files sent with it
-        # (_add_current_message).
-        await self._add_current_message(_protect_msgs=_protect_msgs, attachments=attachments,
-            grok_messages=grok_messages, images=images, user_message=user_message)
-
-        # Orchestrator turn: no triage-gated drill / RAG pre-loading. Per-turn
-        # memory is injected via prompt_schema._b_memory -> build_memory_context;
-        # the host gathers extra memory on demand via the `recall` tool.
-
-        # Flush the per-turn blocks into the DYNAMIC half — the system
-        # message that rides after history — never into the cached static one.
-        # When no per-turn schema block fired this turn there is no dynamic
-        # message yet; one is inserted right before the current user message.
-        if _late_blocks:
-            _late_text = "\n\n".join(t for _, t in _late_blocks if t)
-            if _dyn_idx is not None and 0 < _dyn_idx < len(grok_messages):
-                grok_messages[_dyn_idx]["content"] += "\n\n" + _late_text
-            else:
-                _ins = len(grok_messages) - 1 if grok_messages and grok_messages[-1].get("role") == "user" \
-                    else len(grok_messages)
-                grok_messages.insert(_ins, {"role": "system", "content": _late_text})
-                _dyn_idx = _ins
-            try:
-                from mastercode.runtime.prompt_schema import log_injected_block as _lib_late
-                for _ln, _lt in _late_blocks:
-                    if _lt:
-                        await _lib_late(self, sess, _ln, _lt)
-            except Exception as _lb_err:  # noqa: BLE001
-                log.debug("late-block provenance log failed (non-fatal): %s", _lb_err)
-
-        behavioral = sess.entity.get("behavioral_params") or {}
-        # Same question as the tool gate below, asked once. This used to be a
-        # second local derivation of the enrollment tier; a second derivation is
-        # how the two ends drift apart.
-        _enrollment_chat_only = not host_orchestration_enabled(sess.entity)
-
-        # -- Host orchestration tools (the host holds ONLY these three) --
-        # The host is an orchestrator: it never calls domain tools itself. It
-        # dispatches a scoped agent (its hands) with the domain tools
-        # that agent needs (`dispatch`), recalls memory on demand (`recall`),
-        # or hands a decision to the user (`escalate`). Conversational +
-        # non-enrollment entities get the orchestration surface; enrollment
-        # (bot_capabilities <= 3) and non-conversational entities stay pure
-        # chat (tools=None), exactly as before. The agent-era V3 temp
-        # regulation + unified-brain LLM veto are gone — governance is now
-        # purely structural (input_guard + CEIGAS gate + slips on dispatch).
-        # Chat provider+model via the SINGLE resolver (per-role {provider,
-        # model, fallback?} routing — the 3-lane router and
-        # its host_sdk_engine coupling are gone; the host runs on the
-        # routed provider only).
-        # `_chat_route` is resolved ONCE up front (conversation-depth P1:
-        # the history window sizes against the model's context window, which
-        # must be known before history assembly). Same resolver, same
-        # thread_override precedence — this site just consumes it.
-        # Unconfigured chat (no servable pick) is SURFACED, never guessed
-        # onto a model the turn can't run.
-        if not _chat_route.get("model"):
-            log.warning("CHAT_UNCONFIGURED eid=%s: %s", sess.entity_id,
-                        _chat_route.get("unconfigured") or "no chat route")
-            return {
-                "response": (
-                    "I don't have a chat model configured yet. Open the "
-                    "Orchestrator and assign chat a provider and model — "
-                    "your own provider key (OpenRouter, Anthropic, …) or a "
-                    "local model."
-                ),
-                "model_unconfigured": True,
-            }
-
-        tools = None
-        # The Host's tool surface (runtime/tool_doors.py). A Host that
-        # orchestrates holds the doors: _build_turn_tools sets these two (find_tools
-        # and read, door calls checked against the target's full schema). A turn
-        # whose Host does not orchestrate keeps these values.
-        _search_mode = False
-        _door_catalog = None
-        # The fixed list's added tools (runtime/tool_core), and the tools the
-        # history notes rendered and their weight.
-        _core_extras: list = []
-        _note_renderer = None
-        _notes_noted: list = []
-        _notes_chars = 0
-        tool_actions = []
-        _tools_first_call_count = None
-        _tools_first_call_sha = None
-        _static_sys_sha = None
-        # The turn's tool results as the turn collects them (nothing stashes
-        # them after the turn any more: the artifact capture and its janitor
-        # are retired).
-        _turn_artifacts: list[dict] = []
-        # Override temperature from behavioral_params if set
-        if "temperature" in behavioral:
-            temperature = float(behavioral["temperature"])
-        # ONE gate, shared with the prompt-side tool inventory
-        # (prompt_schema.orchestration_tools). It used to ALSO require
-        # behavioral_params.response_style == "conversational", which is a
-        # prose-style field, not a capability: an unseeded host (no
-        # response_style at all) and a host whose style is "concise" both
-        # scored False and were handed tools=None while the prompt still
-        # advertised the full inventory — the host then narrated tool calls it
-        # could not make. The enrollment tier is the real question and
-        # host_orchestration_enabled is the only place it is asked.
-        if host_orchestration_enabled(sess.entity):
-            # The tool surface (_build_turn_tools): the Host's verbs and doors, the
-            # catalog it is authorized for, what it may read, and the door catalog.
-            (_cap_schemas, _core_extras, _core_names, _door_catalog, _doors_listed, _search_mode,
-             tools) = await self._build_turn_tools(
-                sess, _chat_route=_chat_route, _core_extras=_core_extras,
-                _door_catalog=_door_catalog, _root_turn=_root_turn,
-                _tt_category_map=_tt_category_map, _type_groups_allowed=_type_groups_allowed,
-                tools=tools)
-            from mastercode.runtime import tool_core as _tcore
-            if _door_catalog is not None and _hist_rows:
-                try:
-                    _note_renderer = _tcore.NoteRenderer(_door_catalog, _core_names)
-                    _n_kept, _n_weight = _tcore.fit_history(
-                        _hist_rows, max_hist=_hist_fit["max_hist"],
-                        max_msgs=_hist_fit["max_msgs"], block=_hist_fit["block"],
-                        note_fn=_note_renderer)
-                    _n_plan = _tcore.note_plan(_n_kept, _note_renderer)
-                    _n_hist = history_messages(_n_kept, tool_note=_note_renderer)
-                    _n_record = _hist_fit.get("record")
-                    if _n_record is not None and _n_kept and _hist_rows \
-                            and _n_kept[0].get("row_id") != (_hist_fit.get("record_from")):
-                        # The notes-weighted fit cut elsewhere: the record
-                        # covers exactly the rows before the new cut.
-                        try:
-                            from mastercode import evicted_record as _er2
-                            _n_text = await _er2.evicted_record(
-                                self.pool, sess.entity_id, _src_ctx, sess.session_id,
-                                oldest_kept_id=_n_kept[0].get("row_id"), lane=_work_lane)
-                            _n_record = {"role": "system", "content": _n_text} if _n_text else None
-                        except Exception as _er2_err:  # noqa: BLE001
-                            log.debug("evicted record refit skipped (non-fatal): %s", _er2_err)
-                    if _n_record is not None:
-                        _n_hist.insert(0, _n_record)
-                        _n_weight += len(_n_record["content"])
-                    _old_n = len(history_msgs)
-                    # The slice is still the history the walk placed (only
-                    # per-turn blocks after it were added since); checked
-                    # by identity before it is replaced.
-                    if all(_a is _b for _a, _b in zip(
-                            grok_messages[_hist_at:_hist_at + _old_n], history_msgs)) \
-                            and len(grok_messages) >= _hist_at + _old_n:
-                        grok_messages[_hist_at:_hist_at + _old_n] = _n_hist
-                        # The re-fitted history can keep rows the first fit
-                        # left out: a row written in a marked turn marks this
-                        # one when it rides here too (runtime/turn_taint). A
-                        # root turn's rows were withheld before _hist_rows.
-                        from mastercode.runtime import turn_taint as _tt_nhist
-                        _tt_nhist.mark_rows(_n_kept, "the conversation's earlier turns")
-                        if _dyn_idx is not None and _dyn_idx >= _hist_at + _old_n:
-                            _dyn_idx += len(_n_hist) - _old_n
-                        history_msgs = _n_hist
-                        history_chars = _n_weight
-                        for _np in _n_plan:
-                            if _np is not None:
-                                _notes_noted.extend(_np[1])
-                                _notes_chars += len(_np[0])
-                    else:
-                        log.warning("tool core: history moved before its notes — none this turn")
-                except Exception as _hn_err:  # noqa: BLE001
-                    log.warning("tool core: history notes failed — history without them: %s", _hn_err)
-            # The Host's OWN skills that match this message (memory_retrieval
-            # .turn_own_skills): at most two lines, each its name, its one line
-            # and the call that opens it, beside what the memory pre-fire
-            # pushes. Built here because the turn's catalog decides what the
-            # turn may open, as it does for find_tools and recall. Rides the
-            # dynamic half and is logged, like the late blocks; a failure
-            # costs only these lines.
-            if _door_catalog is not None and not _root_turn:
-                _own_skills_block = ""
-                try:
-                    from mastercode.memory_retrieval import format_turn_skills, turn_own_skills
-                    _own_skills_block = format_turn_skills(await asyncio.wait_for(
-                        turn_own_skills(
-                            self.pool, sess.entity_id, user_message,
-                            context=_tt_context_filter(getattr(sess, "turn_type", None)),
-                            skill_step=_door_catalog.admitted_step),
-                        timeout=2.0))
-                except Exception as _os_err:  # noqa: BLE001 — never a failed turn
-                    log.info("own skills not offered this turn (non-fatal): %s", _os_err)
-                if _own_skills_block:
-                    if _dyn_idx is not None and 0 < _dyn_idx < len(grok_messages):
-                        grok_messages[_dyn_idx]["content"] += "\n\n" + _own_skills_block
-                    else:
-                        _ins = len(grok_messages) - 1 if grok_messages and grok_messages[-1].get("role") == "user" \
-                            else len(grok_messages)
-                        grok_messages.insert(_ins, {"role": "system", "content": _own_skills_block})
-                        _dyn_idx = _ins
-                    # The ledger counts it with the late blocks.
-                    _late_blocks.append(("own_skills", _own_skills_block))
-                    try:
-                        await log_injected_block(self, sess, "own_skills", _own_skills_block)
-                    except Exception as _osl_err:  # noqa: BLE001
-                        log.debug("own skills provenance log failed (non-fatal): %s", _osl_err)
-            if _choice is not None and _choice.candidates:
-                # The thread choice's one tool, on this turn only.
-                tools = list(tools) + [_tchoice.TOOL_SCHEMA]
-            _tools_first_call_count = len(tools)
-            _tools_first_call_sha = _bytes_sha(tools)
-            # The tool-surface facts (lane counts, the build doors by name).
-            # It drops the host doors this surface does not hold, for the same
-            # reason tools= does — a door the prompt names must be one the
-            # host can actually call here. A typed turn's counts cover only
-            # the type's groups, for the same reason again.
-            _orch_block = _build_orchestrator_prompt([
-                s for s in _cap_schemas
-                if not (isinstance(s, dict)
-                        and _lane_for((s.get("function") or {}).get("name"), s) == "host"
-                        and (s.get("function") or {}).get("name") not in sess._host_own_tools)
-                and (_type_groups_allowed is None or not isinstance(s, dict)
-                     or _tt_category_map().get((s.get("function") or {}).get("name"), "other")
-                     in _type_groups_allowed)
-            ], withheld=getattr(sess, "_tools_withheld", None),
-               unvalidated_route=getattr(sess, "_unvalidated_route", None),
-               build_doors_listed=_doors_listed)
-            # The person's own rules for this Host (behavioral_params
-            # .host_rules), when they wrote any. The platform's rulebook that
-            # used to ride here restated the verb schemas and is gone.
-            try:
-                from mastercode.runtime.agent_rules import build_host_rules
-                _host_rules = await build_host_rules(self.pool, sess.entity["id"])
-            except Exception as e:
-                log.warning("Host rulebook build failed (non-fatal): %s", e)
-                _host_rules = ""
-            # The turn type's skill: the same body on every turn of
-            # the thread, so it belongs with the other stable blocks on the
-            # cached static message, after the catalog it governs — in the
-            # ONE static append (scripts/test_host_mirror.py pins one).
-            _type_skill_tail = ("\n\n" + _type_skill_block) if _type_skill_block else ""
-            if (_orch_block or _type_skill_tail) and grok_messages and grok_messages[0].get("role") == "system":
-                grok_messages[0]["content"] += "\n\n" + _orch_block + _type_skill_tail
-            if _host_rules and grok_messages and grok_messages[0].get("role") == "system":
-                grok_messages[0]["content"] = _host_rules + "\n\n" + grok_messages[0]["content"]
-            # Both are stable across turns (they ride the cached static
-            # message on purpose) but were invisible to prompt_log — ~12 KB a
-            # turn the mirror could not see. Logged at per_rebuild scope.
-            try:
-                from mastercode.runtime.prompt_schema import log_injected_block as _lib_static
-                if _orch_block:
-                    await _lib_static(self, sess, "orchestrator_catalog", _orch_block, scope="per_rebuild")
-                if _type_skill_block:
-                    await _lib_static(self, sess, "turn_type_skill", _type_skill_block, scope="per_rebuild")
-                if _host_rules:
-                    await _lib_static(self, sess, "host_rules", _host_rules, scope="per_rebuild")
-            except Exception as _sb_err:  # noqa: BLE001
-                log.debug("static-append provenance log failed (non-fatal): %s", _sb_err)
-
-        # ── The ROOT turn's message list and tools (runtime/root_turn) ──
-        # Built HERE from the allowlist, after everything else, so nothing the
-        # normal path added (the catalog, the rulebook, skills, the prefetch,
-        # the self inventory, the late per-turn blocks) is in it: root_turn's
-        # rules (the static half above), the platform's facts and the root
-        # thread's own trail and handoff (the dynamic half, as it was before
-        # anything was added to it), the root thread's own history (no
-        # rolling summary: a background writer's words), and this turn's
-        # words. The tools are root_turn's, from what this Host is
-        # authorized for.
-        if _root_turn:
-            try:
-                _root_auth = {(_s.get("function") or {}).get("name")
-                              for _s in _cap_schemas if isinstance(_s, dict)}
-            except UnboundLocalError:   # this Host does not orchestrate: verbs only
-                _root_auth = set()
-            _root_hist = [
-                _m for _m in history_msgs
-                if isinstance(_m, dict) and not (
-                    _m.get("role") == "system"
-                    and str(_m.get("content") or "").startswith(_cb.RECORD_PREFIX))]
-            grok_messages = _root_mod.build_messages(
-                _static_sys, _dyn_sys, _root_hist, list(_protect_msgs))
-            tools = _root_mod.tool_schemas(_root_auth)
-            _search_mode = False
-            _door_catalog = None
-            sess._read_safe_tools = set()
-            sess._read_safe_ops = {}
-            sess._host_own_tools = set()
-            _tools_first_call_count = len(tools)
-            _tools_first_call_sha = _bytes_sha(tools)
-            log.info("root turn on session %s: %d messages, tools=%s", sess.session_id,
-                     len(grok_messages), [(_t.get("function") or {}).get("name") for _t in tools])
-
-        # The cached system message is final here (static schema build, plus
-        # catalog + turn-type skill + host rules when this Host orchestrates);
-        # hash exactly what rides call 1, on every Host.
-        if grok_messages and grok_messages[0].get("role") == "system":
-            _static_sys_sha = _bytes_sha(str(grok_messages[0].get("content") or ""))
-
-        # -- The operator kill switch on the inference crossing --
-        # While the switch is set the turn returns the same refusal the domain
-        # controller gave: the user sees it, and no model is called. An
-        # unreadable switch module fails closed the same way.
-        try:
-            from ceigas_kill_switch import KILL_SWITCH_REASON, kill_switch_refuses
-            _inf_refused = kill_switch_refuses("core.entity", "core.cognitive", "execute")
-        except Exception as e:
-            log.error("kill-switch check raised on inference — failing closed: %s", e, exc_info=True)
-            return {
-                "response": "I'm unable to respond right now.",
-                "blocked": True,
-                "block_reason": "governance_error",
-                "ceigas_result": "error",
-            }
-        if _inf_refused:
-            log.warning("CEIGAS DENIED inference for entity %d: %s", sess.entity_id, KILL_SWITCH_REASON)
-            return {
-                "response": "I'm unable to respond right now.",
-                "blocked": True,
-                "block_reason": KILL_SWITCH_REASON,
-                "ceigas_result": "denied",
-            }
-
-        # Call LLM. The host always routes to a provider now — the dead local /
-        # fast / voice model branches are gone. fast_mode remains in the
-        # signature for callers but no longer selects a model path.
-
-        # Chat provider+model come from the SINGLE resolver, hoisted above the
-        # prompt render — `_chat_route` is resolved before the tool/
-        # catalog build so the rendered prompt matches the running route.
-        # `_inference_provider` is the route's provider (registry id or
-        # 'local') that provider_gateway.call_model dispatches on;
-        # `_route_base_url` carries a local/BYO route's endpoint.
-        _inference_provider = _chat_route["provider"]
-        _inference_model = _chat_route["model"]
-        _route_base_url = _chat_route.get("base_url")
-        # The orchestrator turn always routes to a provider. `_use_provider`
-        # was kept as a constant True so the tool-loop branches keying on it
-        # still read correctly; both of those branches and the flag went on
-        # A live `if` on a constant is a claim that a second wire
-        # format is still in play, and it was not. (The dead _use_fast /
-        # _use_entity_model local branches went earlier.)
-        # Every chat-turn call on this route carries the same dispatch kwargs —
-        # endpoint + the route's failover pair — so a mid-loop retry fails over
-        # exactly like the first call (the per-role route contract).
-        def _turn_alive(_sid=sess.session_id) -> None:
-            try:
-                from server.turn_registry import note_alive as _tr_alive
-                _tr_alive(_sid)
-            except Exception:  # noqa: BLE001 — no registry in this process
-                pass
-
-        # One cache key for the conversation, on every call of every turn in
-        # it (the turn's own session_id is None on chat entries and new each
-        # turn, so it never pinned a thread to a provider replica).
-        _cache_key = conversation_cache_key(sess.entity_id, _src_ctx)
-        # The person's own effort pick for this route (the Orchestrator's, or
-        # this thread's from the chat box), None when they made none: the only
-        # effort the Anthropic wire sends. It rides EVERY call of the turn, not
-        # just the first: a top-level effort that changes between requests
-        # restarts Anthropic's prompt cache.
-        from mastercode.inference_config import chosen_effort as _chosen_of
-        _chosen_effort = _chosen_of(_chat_route)
-        _chat_call_kw = {
-            "provider": _inference_provider,
-            "provider_model": _inference_model,
-            "base_url": _route_base_url,
-            "cache_key": _cache_key,
-            "chosen_effort": _chosen_effort,
-            "fallback_provider": _chat_route.get("fallback_provider"),
-            "fallback_model": _chat_route.get("fallback_model"),
-            # The route's model writes its reasoning inline, closed by
-            # </think> (inference_config._route): the OpenAI-wire adapter
-            # holds the stream back until the close.
-            "reasoning_inline": bool(_chat_route.get("reasoning_inline")),
-            # Every streamed event of the Host's own model call — text,
-            # reasoning, tool-call arguments — is a sign of life for the turn
-            # registry: a long tool-call write produces no
-            # frame, and must not read as a silent turn.
-            "on_alive": _turn_alive,
-            # The cost log's source_module for every call of this turn. The
-            # go-ahead repair, the nudge re-call and the claim repair call
-            # provider_gateway.call_model directly with these kwargs, and
-            # without it they were logged 'unknown' (the Host's own calls,
-            # shown as "Background · unknown").
-            "_source": "entity_runtime",
-        }
-        log.warning(
-            "MODEL_INTENT eid=%s provider=%s model=%s fast_req=%s (orchestrator → provider)",
-            sess.entity_id, _inference_provider, _inference_model, fast_mode,
-        )
-
-        # Reasoning effort: the USER's setting for this role, from the same
-        # resolver the provider/model came from (Orchestrator → Routing, stored
-        # on behavioral_params.model_routing[role].effort). Low and max
-        # reasoning on the same model behave like two different models, and
-        # the user needs to find the sweet spot for host reasoning. It was a hardcoded "low" here, so there was no sweet spot
-        # to find.
-        #
-        # The fallback is still an EXPLICIT "low", not None, and that matters:
-        # without an effort a reasoning-capable model decides for itself whether
-        # to emit reasoning prose into `content`, which can leak planning text
-        # as the visible reply (an incident once). So an unset
-        # role keeps exactly today's behaviour, and only a deliberate choice
-        # changes it.
-        _reasoning_effort = (_chat_route.get("effort") or "").strip() or "low"
-        # The line states what goes on the WIRE (inference_config.
-        # describe_effort): on the OpenAI wire the effort above; on the
-        # Anthropic wire the person's pick where the model accepts it, else
-        # "default (<the model's level>)"; on the local wire nothing. It used
-        # to print the "low" above for every Host, which the Anthropic and
-        # local wires never sent.
-        from mastercode.inference_config import (
-            anthropic_model_efforts_warm as _eff_warm, describe_effort as _eff_desc,
-            effort_label as _eff_label)
-        if _inference_provider == "anthropic" and _chosen_effort:
-            await _eff_warm(_inference_model)
-        _turn_effort = _eff_desc(_inference_provider, _inference_model,
-                                 _chosen_effort, _reasoning_effort)
-        # ONE decision for the whole turn on the Anthropic wire: a pick this
-        # line says is not sent goes out on no call of the turn, even if the
-        # model list loads (or recovers) while the turn runs. Otherwise a
-        # level would appear between two requests of one turn, restarting the
-        # prompt cache and leaving this line wrong about what went out.
-        # The turn's record still names the pick and why (_note_served).
-        _effort_unsent = None
-        if (_inference_provider == "anthropic" and _chosen_effort
-                and not _turn_effort.get("sent")):
-            _chat_call_kw["chosen_effort"] = None
-            _effort_unsent = _turn_effort
-        log.warning(
-            "MODEL_ACTUAL eid=%s provider=%s model=%s reasoning=%s",
-            sess.entity_id, _inference_provider, _inference_model,
-            _eff_label(_turn_effort),
-        )
-        # The host_sdk_engine dispatch was removed (hard cut):
-        # the SDK is not a production option and no shipped route resolves to
-        # it, so the chat turn ALWAYS runs the generic provider call below.
-        # host_sdk_engine.py stays in the image, dormant and uncalled.
-        # Conversation-depth: overflow recovery. Pre-send, the
-        # assembled request is trimmed to the window with the ONE trim order
-        # (pre-fire hits → oldest verbatim turns → tool-result verbosity;
-        # identity/constitutional never touched). If the provider STILL 4xxs
-        # with a context-overflow error (estimates are chars//4), trim once
-        # and retry instead of surfacing the error string. Any failure here
-        # degrades to the untrimmed request / the original error.
-        # The pre-send trim runs inside the call wrapper so EVERY
-        # round of the tool loop gets it, not just round 1 — tool results
-        # (up to 100 KB each, host_sdk_engine._bound_tool_result) accumulate
-        # across rounds and used to reach the provider unchecked. The
-        # overflow retry trims to a TIGHTER target than the estimate said
-        # was needed (chars//4 undercounts JSON and code) so "still over
-        # after our own trim" actually frees something on the retry.
-        _ctx_target = (_ctx_window - _reply_reserve) if _ctx_window else None
-        # The per-thread BUDGET (the dial) governs every round, not
-        # just the first call. _ctx_budget (derive_turn_budget, context_budget.py:177)
-        # is the ceiling (window − output reserve − measured system) × 0.95 with
-        # the per-thread override applied — and it EXCLUDES the system blocks,
-        # while the trim measures the whole assembled list including messages[0].
-        # So the system tokens go back on, using the SAME measurement the
-        # derivation subtracted (est_tokens(_sys_content), above), and the raw
-        # window − output reserve stays as the hard cap. The dial can therefore
-        # only ever trim harder, never hand the provider more than it accepts.
-        # (The turn-stable blocks appended to grok_messages outside _sys_content
-        # are not in that figure, which makes the target slightly tight — the
-        # safe direction.) _ctx_budget is None when the window is unknown or
-        # history was cleared → the legacy window-based target, unchanged.
-        # The figure is _round_budget: _ctx_budget without the Host's default
-        # history ceiling, which bounds the history the walk above fetched and
-        # not what this turn's own tool calls bring back.
-        if _ctx_target is not None and _ctx_budget is not None and _round_budget is not None:
-            _ctx_target = min(_ctx_target, _round_budget + _cb.est_tokens(_sys_content))
-
-        # A used result leaves the turn (context_budget.
-        # drop_used_tool_results): before each model call, a big read the
-        # model has already answered after becomes a stub naming how to read
-        # it again. _droppable maps tool_call_id -> {tool, fp, msg, trail} and
-        # is filled only for READS (a re-call runs again, so the stub's "call
-        # it again" holds); _dropped_log is the turn's context_ledger.dropped.
-        # The hook is set once the loop's state exists (_drop_used_results,
-        # below); the first call has nothing to drop.
-        _droppable: dict = {}
-        _dropped_log: list = []
-        _dropped_by_fp: dict = {}
-        # A stored result's stub carries its handle (runtime/result_store):
-        # a read(handle) of a dropped one is its re-call.
-        _dropped_by_handle: dict = {}
-        _drop_hook: list = [None]
-
-        # Set just before the continuation of a cut reply, which is still
-        # writing from the results above it: the next call drops none, and
-        # clears it.
-        _drop_held: list = [False]
-
-        async def _call_with_overflow_retry(msgs, **kw):
-            if _drop_held[0]:
-                _drop_held[0] = False
-            elif _drop_hook[0] is not None:
-                _drop_hook[0](msgs)
-            if _ctx_target is not None:
-                try:
-                    # Hysteresis (context_budget.trim_with_hysteresis): trim only
-                    # when over target, and then to one TRIM_BLOCK_DIVISOR block
-                    # BELOW it. Trimming exactly to target every round thrashed
-                    # the cache — the next tool result pushed the list back over,
-                    # another old turn went, the cached prefix moved, and the
-                    # provider re-wrote the cache. Same reasoning as the history
-                    # walk's chunked eviction above.
-                    _pre = _cb.trim_with_hysteresis(msgs, _ctx_target, _protect_msgs)
-                    if _pre is not msgs:
-                        log.info("pre-send context trim: %d→%d messages (target %d tokens)",
-                                 len(msgs), len(_pre), _ctx_target)
-                        msgs[:] = _pre  # keep the loop's list in sync
-                except Exception as _tr_err:
-                    log.debug("pre-send context trim failed (non-fatal): %s", _tr_err)
-            res = await _call_entity_model(msgs, **kw)
-            try:
-                if _cb.is_context_overflow(res):
-                    # One chunk below where the pre-send trim already landed.
-                    # A flat 0.75x was EXACTLY the hysteresis floor (target −
-                    # target//TRIM_BLOCK_DIVISOR, divisor 4), so the retry
-                    # asked for a list it was already at, got the SAME object
-                    # back, and the `is not msgs` guard below skipped the
-                    # retry — the recovery path was dead on arrival. Stacking
-                    # the floor twice gives 0.5625x of target (0.75 × 0.75),
-                    # so "the provider still says we are over" actually frees
-                    # something.
-                    _retry_target = (
-                        _cb.hysteresis_floor(_cb.hysteresis_floor(_ctx_target))
-                        if _ctx_target else None)
-                    _trimmed = _cb.trim_messages_to_window(msgs, _retry_target, _protect_msgs)
-                    if _trimmed is not msgs and len(_trimmed) <= len(msgs):
-                        log.warning(
-                            "provider context-overflow — trimmed %d→%d messages, retrying once",
-                            len(msgs), len(_trimmed))
-                        msgs[:] = _trimmed  # keep the loop's list in sync
-                        res = await _call_entity_model(msgs, **kw)
-            except Exception as _ov_err:
-                log.debug("overflow retry failed (original result stands): %s", _ov_err)
-            return res
-
-        # The FIRST call is held to the allowance too (the rule: the worst
-        # overspend is one output reserve): what
-        # the allowance can pay for after this call's input, at the route's
-        # output rate, never below one realistic reply. The turn's meter is
-        # built after this call, so a meter for this one call stands in.
-        _first_max = effective_max
-        try:
-            from mastercode.runtime import turn_allowance as _ta0
-            _first_aff = _ta0.TurnSpend.for_route(
-                _inference_model, _inference_provider,
-                allowance_usd=_turn_allowance_usd, ctx_budget=_spend_ctx_budget or _ctx_budget,
-                default_rounds=_default_rounds,
-            ).affordable_output(_ta0.new_input_tokens(grok_messages, 0))
-            if _first_aff is not None:
-                _first_max = max(1, min(effective_max, max(_first_aff, _reply_reserve)))
-        except Exception as _fa_err:  # noqa: BLE001
-            log.debug("first-call allowance clamp unavailable (non-fatal): %s", _fa_err)
-        # The first model call of this turn carries the per-turn blocks, the
-        # earlier held request among them. A model call that ran and answered is
-        # what lets the takeover be reported as carried (Takeover.model_saw); a
-        # call alone does not mean the turn ACTED (that is a tool call, below).
-        _tk = _TAKEOVER.get()
-        if _tk is not None:
-            _tk.model_saw = True
-        result = await _call_with_overflow_retry(
-            grok_messages,
-            temperature=temperature,
-            max_tokens=_first_max,
-            session_id=session_id,
-            tools=tools,
-            **_chat_call_kw,
-            reasoning_effort=_reasoning_effort,
-            stream_cb=await _next_stream_cb(),
-        )
-
-        if "error" in result and not result.get("content"):
-            return await _end_on_error(result)
-
-        # -- Tool-use loop: if Grok wants to call a bot, execute and feed back --
-        total_tokens = result.get("tokens_used", 0)
-        # Accumulate the prompt/completion split alongside total_tokens so
-        # the data-stream usage frame reports real counts (was always 0; billing
-        # was already correct). Summed across tool-loop rounds, like total_tokens.
-        _prompt_acc = int(result.get("prompt_tokens") or 0)
-        _completion_acc = int(result.get("completion_tokens") or 0)
-        # Cache telemetry: input_total is the lane-normalized true
-        # context size per call (both wires disagree on whether prompt_tokens
-        # contains the cached prefix — the gateways normalize; see
-        # provider_gateway/_call_remote and host_sdk_engine._usage_breakdown).
-        # Falls back to prompt_tokens for lanes that don't report cache fields.
-        _input_total_acc = int(result.get("input_total_tokens")
-                               or result.get("prompt_tokens") or 0)
-        _cache_read_acc = int(result.get("cache_read_tokens") or 0)
-        _cache_write_acc = int(result.get("cache_write_tokens") or 0)
-
-        # Provenance: the Workbench must show which model ran, without
-        # anyone having to ask.
-        # WHO ANSWERED, per the gateway's own result — the served model, the
-        # served provider, and any failover — not the route we asked for.
-        # The route's provider/model are the default; every round may move
-        # it (call_model retries an errored primary on the route's fallback
-        # provider and annotates the result). Stamped on the turn row and on
-        # the context frame so the UI can print it under the turn.
-        _served = {"provider": _inference_provider, "model": _inference_model,
-                   "failed_over": None}
-        # Context ledger (there was no way to see what context a turn used:
-        # prompt_log keeps system-block
-        # sizes, nothing recorded history/tools/results per turn). One entry
-        # per model call, summed on the turn row as context_ledger.per_call.
-        _per_call: list = []
-
-        # ── PER-TURN SPEND ALLOWANCE (runtime/turn_allowance.py) ──
-        # The meter that replaced the per-model round cap. It prices every
-        # call this turn at the SERVED model's published rates and answers one
-        # question before each additional round: can this turn afford the next
-        # one? Built here, after the route is known, and fed by _note_served
-        # below so there is exactly one place a call is counted.
-        from mastercode.runtime import turn_allowance as _ta
-        _msgs_mark = [0]          # len(grok_messages) as of the last call
-        _spend_stopped = False    # the allowance ended this turn's tool loop
-        _spend_cut_reply: bool | str = False  # ...while a cut reply waited: "text" / "empty"
-        _spend = _ta.TurnSpend.for_route(
-            _inference_model, _inference_provider,
-            allowance_usd=_turn_allowance_usd, ctx_budget=_spend_ctx_budget or _ctx_budget,
-            default_rounds=_default_rounds)
-        if _spend.basis != "none":
-            log.info("turn allowance: basis=%s allowance=%s model=%s session=%s",
-                     _spend.basis, _spend.allowance, _inference_model,
-                     sess.session_id)
-        elif _turn_allowance_usd:
-            # The person set a dollar figure on a route that cannot be
-            # denominated in dollars AND has no context budget to fall back
-            # on. Saying so is the whole contract — silently ignoring it is
-            # the "zero that looks like data" this lane refuses.
-            log.warning(
-                "turn allowance: $%.4f set but model %s is not per-token "
-                "priced and no context budget exists — no allowance in force "
-                "this turn (the backstop is the only stop)",
-                float(_turn_allowance_usd), _inference_model)
-
-        def _spend_max() -> int:
-            """The max_tokens for the next call: the output limit, held to
-            what the remaining allowance can pay for — at the route's output
-            price, or in tokens on an unpriced route that meters the allowance
-            in tokens — never below one realistic reply. With
-            no allowance in force it is the output limit unchanged. So the
-            worst overspend is one realistic reply, which is what the round
-            check projects."""
-            try:
-                _aff = _spend.affordable_output(
-                    _ta.new_input_tokens(grok_messages, _msgs_mark[0]))
-            except Exception as _af_err:  # noqa: BLE001
-                log.debug("affordable output unavailable (non-fatal): %s", _af_err)
-                _aff = None
-            if _aff is None:
-                return effective_max
-            return max(1, min(effective_max, max(_aff, _reply_reserve)))
-
-        def _note_served(res: dict) -> None:
-            if not isinstance(res, dict):
-                return
-            try:
-                # The meter builds the per-call entry (it has to read the same
-                # four counts to price the call), so the ledger and the running
-                # total can never disagree about what a round used. `cache_write`
-                # is new here: the ledger carried in/cached/out only, which is
-                # exactly the field a cache-aware projection needs.
-                _entry = _spend.note_call(res, model=res.get("model")
-                                          or _served.get("model"))
-                if _entry:
-                    # The tool list THIS call sent (provider_gateway stamps
-                    # every dialled result): an orient open or an exit's
-                    # reduced list shows here, call by call, where the turn's
-                    # `tools.chars` shows only the final list.
-                    _tw = res.get("tools_wire")
-                    if isinstance(_tw, dict):
-                        _entry["tools_chars"] = _tw.get("chars")
-                        _entry["tools_sha"] = _tw.get("sha")
-                    # The provider's id for this response and a short hash of
-                    # the cache pin it carried (provider_gateway._call_remote):
-                    # a cold miss on an unchanged prefix (prefix_sha == the
-                    # last call's sha, cached far below it) goes to the
-                    # provider with these. Ledger-only, like the hashes.
-                    for _k in ("request_id", "cache_key_sha"):
-                        if res.get(_k):
-                            _entry[_k] = res[_k]
-                    # The effort this call ran at, where the wire reports
-                    # it (the Anthropic one: the level sent, or None at the
-                    # model's default).
-                    if isinstance(res.get("effort"), dict):
-                        _entry["effort"] = res["effort"].get("sent")
-                    # The message list this call sent, hashed (sys_sha,
-                    # prefix_sha over what the previous call sent, sha over
-                    # all): call k's prefix_sha == call k-1's sha unless OUR
-                    # prefix moved — a drop's cut call moves it by design.
-                    # Measurement only (context_budget.messages_hashes).
-                    try:
-                        _entry.update(_cb.messages_hashes(grok_messages, _msgs_mark[0]))
-                    except Exception as _hs_err:  # noqa: BLE001
-                        log.debug("message hashes unavailable (non-fatal): %s", _hs_err)
-                    _per_call.append(_entry)
-                # Where the message list stood when this call went out — the
-                # overflow wrapper may have trimmed it in place first, so this
-                # is what the provider actually saw. Everything appended past
-                # this index before the next call (the assistant's tool_calls
-                # message and every tool result) is the NEW input the next
-                # round pays full input rate for.
-                _msgs_mark[0] = len(grok_messages)
-            except Exception as _sp_err:
-                log.debug("spend meter note_call failed (non-fatal): %s", _sp_err)
-            m = res.get("model")
-            if isinstance(m, str) and m:
-                _served["model"] = m
-            # What the answering call put on the wire as its effort
-            # (provider_gateway stamps it on the Anthropic wire): the turn
-            # records the level SENT, or the model's default, never a pick
-            # that was dropped. A call on a wire that does not stamp it (a
-            # failover onto another provider) leaves no stale level behind.
-            _served["effort"] = (dict(res["effort"])
-                                 if isinstance(res.get("effort"), dict) else None)
-            # A pick the turn decided at its start not to send reached no
-            # call, so no call's result names it: the record takes the pick
-            # and why from that decision (the MODEL_ACTUAL line's).
-            if (_effort_unsent and _served["effort"] is not None
-                    and not isinstance(res.get("failed_over"), dict)):
-                for _k in ("chosen", "why"):
-                    if _effort_unsent.get(_k) and not _served["effort"].get(_k):
-                        _served["effort"][_k] = _effort_unsent[_k]
-            fo = res.get("failed_over")
-            if isinstance(fo, dict):
-                _served["failed_over"] = fo
-                if fo.get("to_provider"):
-                    _served["provider"] = fo["to_provider"]
-                if fo.get("to_model"):
-                    _served["model"] = fo["to_model"]
-
-        _note_served(result)
-
-        def _acc_usage(res: dict) -> None:
-            nonlocal _input_total_acc, _cache_read_acc, _cache_write_acc
-            _input_total_acc += int(res.get("input_total_tokens")
-                                    or res.get("prompt_tokens") or 0)
-            _cache_read_acc += int(res.get("cache_read_tokens") or 0)
-            _cache_write_acc += int(res.get("cache_write_tokens") or 0)
-            _note_served(res)
-
-        # (The inner _build_error_recovery_hints moved to
-        # runtime/tool_failures.py — it rebuilt hints from the
-        # WHOLE turn every round, so one dead tool nudged "try again" on every
-        # later round too; note_round() reads one round and declares a tool
-        # dead on its second identical failure.)
-
-        # ── RUNAWAY BACKSTOP ──
-        # What was here until today: `_cap_for_model`, a per-model round cap
-        # that matched substrings against the model name — "opus"→20,
-        # "sonnet"→15, "haiku"/"flash"/"mini"/"kimi"→10, else 50. It was a
-        # capability-tier GUESS with no registry behind it, and the number it
-        # produced meant nothing to the person paying for the turn: it was not
-        # time, not quality and not money, and it counted a 200k-prompt round
-        # and a 4k-prompt round the same. The budget the person actually set
-        # is now what governs the loop (_spend above); this constant is only
-        # the runaway catch, sized above every real workflow and disable-able.
-        # See runtime/turn_allowance.py:BACKSTOP_TOOL_ROUNDS for the number
-        # and the survey it came from.
-        MAX_TOOL_ROUNDS = _ta.backstop_rounds(
-            (sess.entity or {}).get("behavioral_params") if sess.entity else None)
-        log.info("tool-loop backstop: rounds=%d allowance_basis=%s model=%s session=%s",
-                 MAX_TOOL_ROUNDS, _spend.basis, _inference_model, sess.session_id)
-        _consecutive_all_fail = 0  # Track consecutive rounds where ALL tools fail
-        _fail_ledger: dict = {}    # (tool, error) -> count this turn (runtime/tool_failures.py)
-        _dead_tools: list = []     # tools declared dead this turn, for the ledger
-        _nudge_resets = 0  # how many times the round counter was reset by user nudges
-        # Dedup tracker — fingerprint → {count, last_result}. 2nd
-        # identical call returns the cached result without counting
-        # toward the cap. 3rd is refused outright with a structured
-        # error. Nudges clear the tracker.
-        _dedup_cache: dict[str, dict] = {}
-        # Search hits already in front of the Host this turn are not sent
-        # again (runtime/search_dedup.py) — the repeats the fingerprint above
-        # misses because each search's arguments differ. Not cleared on a
-        # nudge: the hits are still in context.
-        _search_seen = TurnSearchSeen()
-
-        def _drop_used_results(msgs: list) -> None:
-            """Before a model call: every registered read the model has
-            answered after, over the floor, becomes a stub, all at once and
-            only when it pays (context_budget.drop_used_tool_results). Its
-            dedup entry goes with it, so a re-call runs and returns the result
-            whole, never "unchanged since round N" against a result no longer
-            above; the ledger records the drop and any re-call."""
-            if not _droppable:
-                return
-            new, gone = _cb.drop_used_tool_results(msgs, _msgs_mark[0], _droppable, _protect_msgs)
-            if not gone:
-                return
-            msgs[:] = new
-            at_call = len(_per_call) + 1
-            for g in gone:
-                meta = _droppable.pop(g["tool_call_id"], None) or {}
-                fp = meta.get("fp")
-                if fp:
-                    _dedup_cache.pop(fp, None)
-                # prefix_moved: this call's prefix_sha differs from the last
-                # call's sha because of the cut, by design.
-                entry = {"tool": g["tool"], "chars": g["chars"], "at_call": at_call,
-                         "prefix_moved": True}
-                if meta.get("handle"):
-                    entry["handle"] = meta["handle"]
-                    _dropped_by_handle[meta["handle"]] = entry
-                _dropped_log.append(entry)
-                if fp:
-                    _dropped_by_fp[fp] = entry
-            log.info("dropped %d used tool result(s), %d chars, before call %d (session %s)",
-                     len(gone), sum(g["chars"] for g in gone), at_call, sess.session_id)
-
-        _drop_hook[0] = _drop_used_results
-
-        tool_round = 0
-        # Claim-vs-row repairs spent this turn. The guard gets exactly one: it
-        # must be able to fix a false start-claim, and it must never be able to
-        # argue with the model about it.
-        _claim_repairs = 0
-        # The retry after an empty reply: one per turn. It runs INSIDE the
-        # loop with the turn's own tools (run
-        # past the loop with `escalate` alone, the model wrote "I am checking
-        # whether the site is actually serving", could not check, and the
-        # changed tool list cost the cache: 1,536 cached of 28,770).
-        _empty_retried = False
-        # What each empty completion returned, for the notice's wording.
-        _empty_shapes: list = []
-        # Replies the output limit cut, continued in parts: each continuation
-        # is one more model call, bounded
-        # by the same round backstop as tool rounds.
-        _cut_continues = 0
-        # (A draft the guard caught, a reply a nudge interrupted, prose beside
-        # tool calls: every one of them is a piece the single recorder already
-        # holds — _pieces, above — in the order it was sent.)
-        # close_turn (runtime/close_turn.py): the
-        # signal the Host sent (the first one is the turn's; stored on the turn row as
-        # metadata.close_turn) and how each call arrived — with the reply
-        # text or without, alone or beside other calls, on which served model
-        # (context_ledger.close_turn, the per-model metric).
-        _close_turn_signal: dict | None = None
-        _close_turn_arrivals: list[dict] = []
-        # close_turn's writes run once per turn (_ct_written). After a
-        # close_turn that did not end the turn, the next round's call is the
-        # reply (_ct_reply_owed -> _ct_reply_result): tool calls it still
-        # makes are not run — with text, the text is the reply; without, the
-        # loop leaves for the forced-text STOP call. The tools array stays on
-        # that call, so the cached prefix (tools -> system -> messages) holds.
-        _ct_written = False
-        _ct_reply_owed = False
-        _ct_reply_result = None
-        _ct_closed_asked = False   # the reply was asked for once more, in words
-        _ct_left_closed = False    # the loop left because the turn was closed
-        from mastercode.runtime import close_turn as _ct
-        # The go-ahead guard (runtime/go_ahead_guard.py): repairs spent this
-        # turn. One, like the claim guard's — it must be able to turn "say go"
-        # into the work, and it must never be able to argue about it.
-        _go_ahead_repairs = 0
-        # ...and never re-armed:
-        # ONE repair per turn. It used to re-arm when a hold resumed and at
-        # the exits past the loop, so one turn could be
-        # repaired again and again, each repair adding its own closing lines.
-        # An ask written after the repair is not repaired; the record counts
-        # it (_go_ahead_record). (Every firing is kept in _ga_firings, beside
-        # the recorder above.)
-        # _ga_awaiting: the next result is the repair's own answer (a
-        # close_turn with no text there ends the turn adding nothing).
-        _ga_awaiting = False
-        # After a go-ahead repair, the handoff the turn's close_turn recorded
-        # no longer says where the work stands (it may even say "awaiting the
-        # user's go"), and it is what the next turn starts from
-        # (close_turn.thread_state). The next close_turn's handoff replaces
-        # it; its writes do not run again. _ct_took_handoff: the call being
-        # handled now was the one taken (its tool result says so).
-        _ct_handoff_stale = False
-        _ct_took_handoff = False
-        # The handoff went stale because the turn RESUMED after a hold: the
-        # turn went on past what it recorded. A close_turn after the
-        # resume replaces it (its writes still run once); none -> it is dropped
-        # at the end rather than handed on stale.
-        _ct_stale_from_resume = False
-        # The question box: tickets `escalate`
-        # opened this turn that no words from the person have answered yet
-        # (whether any was opened at all is _asked_in_box, beside the
-        # recorder), and what is left of the turn's wait for answers.
-        _asks_open: list[int] = []
-        # The question box's own tool (`escalate`), on its own: what the calls
-        # past the loop carry, and the allowance stop's continue card
-        # (_continue_card, raised once).
-        _box_tools = [_t for _t in (tools or [])
-                      if ((_t or {}).get("function") or {}).get("name") == "escalate"]
-        _cont_card: dict | None = None
-        # Cards this turn put in front of the person that they have not
-        # answered (go_ahead_guard.card_from_tool: an escalate ticket, a
-        # platform card, a phase's approval card). While one is open, the
-        # guard's correction names it instead of sending the Host to escalate
-        # again. Cleared only by an answer that NAMES its ticket
-        # ("Ticket #41 — I chose …"): other words in the hold leave it open.
-        # The hold's own list above is emptied when its wait
-        # runs out; this one is not.
-        _cards_open: list[dict] = []
-        _hold_left = HOLD_S
-        # Tickets whose answer this turn has read: the answer can arrive
-        # twice (the decide pushes it, and the Circles card nudges the same
-        # words), and it is read once.
-        _answers_read: set[int] = set()
-
-        # The turn's one row while it holds: written before the hold with
-        # the reply as it stands, rewritten in place when the turn ends.
-        _held_row: dict = {"written": False, "id": None}
-
-        async def _go_ahead_round(exit_name: str, box_only: list | None = None, *,
-                                  last: bool = False) -> bool:
-            """The go-ahead guard, at every exit that ends
-            the turn on the Host's own prose and can still run a repair: the
-            text exit, the narrate-first dispatch exit, the
-            round backstop and the exits past the loop. It reads every piece
-            since the person last spoke that it has not judged yet
-            (_unjudged), and judges them all.
-            If they ask the user for a go-ahead or a pick ("Say go", "want me
-            to…?", "which one do you want?"), it does not end the turn: the
-            user already asked, and their one-word answer would start a new
-            turn from cold. Same shape as the claim guard — inject, re-call,
-            and the caller goes round again — because the repair is normally
-            a tool call (the work, or `escalate` with the options) that the
-            loop has to execute. True: it fired, and `result` holds the
-            repair's answer. Bounded by _go_ahead_repairs: once a turn — never
-            re-armed, not when a hold resumes and not at an exit past the loop.
-            An ending written
-            after the repair is not repaired again; the record counts any ask
-            in it (_go_ahead_record). The repair's text is held until its
-            round's calls have run (_repair_checked).
-            Not when input is queued at an exit a drain follows (the drain
-            reads it first: the person's words answer what they read, and a
-            result leaves the pieces unjudged for the next exit — see `last`
-            for the exits no drain follows), and not for a Host with no tools to
-            act with. Where it cannot read, it judges nothing. After an ask in
-            the box (`escalate`), only a JUDGED reading is let through — the
-            reply may well be pointing at the card; a core or explicit ask in
-            words still asks.
-            The close_turn HANDOFF is read too: a turn whose handoff says
-            "Awaiting user go" ended on a go-ahead even when
-            its reply asked nothing out loud, and that handoff is what the
-            next turn starts from (after an ask in the box, a handoff waiting
-            on its answer is the box working, and is not read as a wait).
-            `box_only`: an exit past the loop — the repair call
-            carries these tools (`escalate` alone) and the correction offers
-            only the question box or a rewrite.
-            `last`: an exit no drain follows — the round backstop, the exits
-            past the loop. Input queued there is never read
-            by this turn, so the guard does not wait for it: it reads what it
-            has not judged, and the person's words in the queue answer what
-            was sent before them (_person_spoke; the caller has settled)."""
-            nonlocal result, _go_ahead_repairs, _ga_awaiting, _ct_handoff_stale
-            nonlocal total_tokens, _prompt_acc, _completion_acc
-            _open_card = _cards_open[-1] if _cards_open else None
-            if (_go_ahead_repairs or not tools
-                    or getattr(sess, "unseen_lane", False)):
-                return False
-            if has_pending_input(sess.session_id):
-                if not last:
-                    return False
-                _words_order = last_nudge_order(sess.session_id)
-                if _words_order is not None:
-                    _person_spoke(_words_order)
-            from mastercode.runtime import go_ahead_guard as _gag
-            _ga_read = _unjudged()
-            _ga_draft = join_pieces(_ga_read)
-            _ga_hit = _gag.find_go_ahead_hit(_ga_draft)
-            _ga_phrase, _ga_sentence, _ga_level = _ga_hit if _ga_hit else (None, None, "explicit")
-            _ga_in_handoff = False
-            if not _ga_phrase and _close_turn_signal:
-                _ga_phrase = _gag.find_go_ahead_wait(
-                    _close_turn_signal.get("handoff"),
-                    asked_in_box=_asked_in_box or _open_card is not None)
-                _ga_in_handoff = bool(_ga_phrase)
-                _ga_sentence = _ga_phrase
-                _ga_level = None        # no rule level: a recorded wait, an ask by its shape
-            if not _ga_phrase:
-                for _p in _ga_read:
-                    _p["judged"] = "clean"
-                return False
-            _go_ahead_repairs += 1
-            log.warning(
-                "go-ahead guard: entity %d ended a turn %s %r at the %s exit — one "
-                "repair round (session %s, close_turn recorded=%s)",
-                sess.entity_id,
-                "with a handoff waiting on" if _ga_in_handoff else "asking",
-                _ga_phrase, exit_name, sess.session_id, _ct_written)
-            _ga_fire = {"rule": str(_ga_phrase)[:200] if not _ga_in_handoff
-                        else "handoff waits on the user",
-                        "sentence": str(_ga_sentence or "")[:300],
-                        "where": "handoff" if _ga_in_handoff else "reply",
-                        # which exit the reply was leaving by: "text",
-                        # "dispatch" (the narration of a dispatch round), or
-                        # "backstop" (prose beside calls at the round backstop)
-                        "exit": exit_name,
-                        # the rule's level (core / explicit / judged; None for
-                        # a recorded wait) — the measure is split by it.
-                        # Anything but "judged" is done or asked in the box,
-                        # never waved off.
-                        "level": _ga_level,
-                        # the card that already held the question, if any
-                        "open_card": (_open_card or {}).get("ref")}
-            _ga_firings.append(_ga_fire)
-            for _p in _ga_read:
-                # a handoff wait: the reply itself asked nothing
-                _p["judged"] = "clean" if _ga_in_handoff else "fired"
-                _p["firing"] = None if _ga_in_handoff else _ga_fire
-            if _close_turn_signal is not None:
-                # The recorded handoff is stale from here: the next
-                # close_turn's replaces it. One that records a wait is
-                # dropped now, so a turn that sends no second close_turn does
-                # not hand the wait to the next.
-                _ct_handoff_stale = True
-                if _gag.find_go_ahead_wait(_close_turn_signal.get("handoff")):
-                    # Set aside for good: a recorded wait is never put back,
-                    # whatever the repair answers.
-                    _close_turn_signal.pop("handoff", None)
-            # The draft already went out (the recorder holds it); the repair
-            # is sent after it as a repair piece, so the screen and the record
-            # agree and "say go" is not the last word the user reads.
-            grok_messages.append({"role": "user", "content": _gag.correction(
-                _ga_draft, _ga_phrase, sentence=_ga_sentence,
-                close_turn_recorded=_ct_written, in_handoff=_ga_in_handoff,
-                level=_ga_level or "explicit",
-                open_card=None if _ga_in_handoff else _open_card,
-                box_only=bool(box_only))})
-            _ga_awaiting = True
-            from mastercode.provider_gateway import call_model as _cm_goahead
-            # Held until it settles, after the round's calls have run: its
-            # text may say only what the turn holds (_repair_checked).
-            _repair_cb = await _next_stream_cb("repair", hold=True)
-            # The repair's own answer: the firing decides it; the guard never
-            # reads it again.
-            _cur_piece[0]["judged"], _cur_piece[0]["firing"] = "repair", _ga_fire
-            _cur_piece[0]["cards"], _cur_piece[0]["cards_before"] = _cards_open, list(_cards_open)
-            result = await _cm_goahead(
-                messages=grok_messages,
-                temperature=0.3,
-                max_tokens=_spend_max(),
-                session_id=sess.session_id,
-                tools=box_only or (tools if tools else None),
-                **_chat_call_kw,
-                stream_cb=_repair_cb,
-            )
-            total_tokens += result.get("tokens_used", 0)
-            _prompt_acc += int(result.get("prompt_tokens") or 0)
-            _completion_acc += int(result.get("completion_tokens") or 0)
-            _acc_usage(result)
-            if ("error" in result and not result.get("content")
-                    and not result.get("tool_calls")):
-                # The repair call itself failed: its own outcome, and the turn
-                # ends on the reply as it stood.
-                log.warning("go-ahead guard: the repair call failed (session %s): %s",
-                            sess.session_id, str(result.get("error"))[:200])
-                _ga_fire["_answer"] = {"error": str(result.get("error"))[:200]}
-                _ga_awaiting = False
-                result = {"content": "", "tool_calls": None}
-            return True
-
-        async def _escalate(args: dict, *, by_host: bool = True) -> dict:
-            """A question-box ticket (the escalate meta-tool files one, or a
-            learned decision pattern auto-resolves it). An OPEN ticket is the
-            ask card on the person's screen (app-web-kit/ask.ts askFromTool
-            reads this same result); an auto-resolved one already has its
-            answer. `by_host` False: the platform's own card (the allowance
-            stop's continue card) — not a question the Host asked, so it is
-            not the guard's firing's escalation, not the Host's ask in the box,
-            and the turn does not wait on it: its answer starts a turn of its
-            own."""
-            nonlocal _asked_in_box
-            tool_result = await _execute_meta_tool(
-                "escalate", args,
-                entity_id=sess.entity["id"],
-                pool=self.pool,
-                prompt_console=_prompt_console,
-                session_id=sess.session_id,
-                app_permissions=getattr(sess, "app_permissions", None),
-                interaction_context=sess.interaction_context,
-                thread_id=getattr(sess, "thread_id", None),
-                turn_type=getattr(sess, "turn_type", None),
-            )
-            _esc = (tool_result.get("result")
-                    if isinstance(tool_result, dict)
-                    and tool_result.get("status") == "ok" else None)
-            if (isinstance(_esc, dict) and _esc.get("status") == "open"
-                    and not _esc.get("auto_resolved")):
-                if by_host:
-                    _asked_in_box = True
-                try:
-                    _tk_id = int(_esc.get("ticket_id"))
-                    if by_host:
-                        # the turn waits for its answer before it ends
-                        _asks_open.append(_tk_id)
-                        if _ga_firings:
-                            _ga_firings[-1]["ticket_id"] = _tk_id
-                    # Where the asking turn's conversation is, so an
-                    # answer that comes after it ended starts a turn
-                    # THERE, the same way from every surface
-                    # (tickets.decide_ticket_service). Mapped as a
-                    # delivery is (wakeup_delivery_room): a question a
-                    # fired wake-up asked is answered in the room that
-                    # wake-up reports into, never on its hidden lane.
-                    _ic_q = getattr(sess, "interaction_context", None)
-                    _room_app, _room_proj = wakeup_delivery_room(
-                        app_id, project_id, _ic_q, thread_id)
-                    await self.pool.execute(
-                        "UPDATE entity_tickets SET metadata = COALESCE(metadata, "
-                        "'{}'::jsonb) || jsonb_build_object('asked_in', $1::jsonb) "
-                        "WHERE id = $2",
-                        json.dumps({"app_id": _room_app,
-                                    "project_id": None if thread_id else _room_proj,
-                                    "thread_id": thread_id,
-                                    "interaction_context": _ic_q}), _tk_id)
-                except Exception as _ai_err:  # noqa: BLE001 — the ask stands
-                    log.debug("escalate: asking turn's room not recorded: %s", _ai_err)
-            return tool_result
-
-        async def _box_call(args: dict, call_id: str | None = None, *,
-                            by_host: bool = True) -> dict | None:
-            """An escalate made outside the per-call loop: the
-            allowance stop's continue card, or the one call an exit past the
-            loop may make. It goes out as a round's does — the tool-call frames
-            the client raises the card from, a tool action on the row and on
-            the trace — and its card is noted (_cards_open). The card, or
-            None."""
-            _xpcb = getattr(sess, "_progress_cb", None)
-            _xid = call_id or f"call_escalate_{int(time.time() * 1000)}"
-            if _xpcb is not None:
-                try:
-                    await _xpcb({"event": "tool_call_start", "tool_call_id": _xid,
-                                 "tool": "escalate", "args": args})
-                except Exception as _xe:  # noqa: BLE001
-                    log.debug("progress_cb tool_call_start raised (non-fatal): %s", _xe)
-            try:
-                _xr = await _escalate(args, by_host=by_host)
-            except Exception as _xe:  # noqa: BLE001
-                log.warning("escalate outside the loop failed (session %s): %s",
-                            sess.session_id, _xe)
-                _xr = _refused_if_caller(_xe, str(_xe))
-            from mastercode.runtime.tools import _json_safe as _js_x
-            _xr = _js_x(_xr)
-            _xst = _xr.get("status", "unknown") if isinstance(_xr, dict) else "ok"
-            if _xpcb is not None:
-                try:
-                    await _xpcb({"event": "tool_call_result", "tool_call_id": _xid,
-                                 "tool": "escalate", "result": _xr, "status": _xst})
-                except Exception as _xe:  # noqa: BLE001
-                    log.debug("progress_cb tool_call_result raised (non-fatal): %s", _xe)
-            tool_actions.append({
-                "tool": "escalate", "args": args, "result_status": _xst,
-                "error_detail": (_xr.get("result", "") if isinstance(_xr, dict)
-                                 and _xst in ("error", "blocked", "denied") else "")})
-            publish_turn_trace(_turn_token, tool_actions=tool_actions,
-                               project_id=_row_project_id, tags=_turn_tags)
-            try:
-                from mastercode.runtime.go_ahead_guard import card_from_tool as _cft_x
-                _xcard = _cft_x("escalate", args, _xr)
-            except Exception:  # noqa: BLE001
-                _xcard = None
-            if _xcard and _xcard not in _cards_open:
-                _cards_open.append(_xcard)
-            return _xcard
-
-        async def _continue_card() -> dict | None:
-            """The allowance stopped the turn: the platform raises
-            its own continue card in the question box — whether to spend more
-            is the person's call — so the answer written with no tools reports
-            what is done and what is left and never has to ask, where no
-            repair could run. Once a turn, and only where the turn has the box
-            (`escalate` on its list) on a lane someone reads — and not while a
-            card of this turn's is still open in front of the person: their
-            answer to it already starts the follow-up turn, with a
-            budget of its own (answer_after_turn), and a second card would ask
-            them twice. The card, or None."""
-            nonlocal _cont_card
-            if _cont_card is None:
-                _cont_card = {}
-                if _box_tools and not getattr(sess, "unseen_lane", False) and not _cards_open:
-                    try:
-                        _cont_card = (await _box_call(
-                            _spend.continue_card(cut_reply=_spend_cut_reply),
-                            by_host=False)) or {}
-                    except Exception as _cc_err:  # noqa: BLE001 — the stop still stops
-                        log.warning("allowance stop: the continue card was not raised "
-                                    "(session %s): %s", sess.session_id, _cc_err)
-            return _cont_card or None
-
-        async def _keep_reply(waiting: str) -> None:
-            """Persist the reply as it stands and the close_turn handoff
-            BEFORE the turn waits: a Stop, the
-            turn ceiling or a restart during the hold cannot lose what the
-            person already read; the row is rewritten in place at the end."""
-            text = _reply_all()
-            if not text.strip():
-                return
-            tags = dict(_turn_tags or {})
-            if _close_turn_signal is not None:
-                tags["close_turn"] = _close_turn_signal
-            if system_turn:
-                tags["origin"] = "continuation"
-            if tool_actions:
-                tags["tool_calls"] = [tool_call_chip(_ta) for _ta in tool_actions
-                                      if isinstance(_ta, dict)]
-            if _go_ahead_recorded():
-                tags["go_ahead"] = _go_ahead_record(text)
-            try:
-                # In the background, never awaited here: the write embeds the
-                # text first, and a slow embedder must not delay the hold or
-                # its waiting card. Each write is chained after the one before
-                # (held_turn_write), so the final rewrite lands after the insert.
-                _held_row["task"] = held_turn_write(
-                    self.pool, sess.entity_id, sess.session_id, text, token=_turn_token,
-                    held=True, after=_held_row.get("task"), project_id=_row_project_id,
-                    tags=tags, created_at=_reply_at[0] or datetime.now(timezone.utc))
-                _held_row["written"] = True
-            except Exception as _kr_err:  # noqa: BLE001 — the hold goes on
-                log.warning("hold: the reply could not be written before the hold "
-                            "(session %s): %s", sess.session_id, _kr_err)
-            note_turn_held(_turn_token, waiting, len(tool_actions),
-                           project_id=_row_project_id, tags=_turn_tags,
-                           held_task=_held_row.get("task"),
-                           held_text=text if _held_row["written"] else None)
-
-        async def _waiting_card(waiting: str, done: str | None = None, cid: str = "") -> str:
-            """Tell the person the turn is holding, in a form every client
-            already renders: a tool card ('Waiting' + what for) that runs
-            while the turn holds and completes when it stops."""
-            if progress_cb is None:
-                return cid
-            try:
-                if done is None:
-                    cid = f"call_waiting_{int(time.time() * 1000)}"
-                    await progress_cb({"event": "tool_call_start", "tool_call_id": cid,
-                                       "tool": "waiting", "args": {"task": waiting}})
-                else:
-                    await progress_cb({"event": "tool_call_result", "tool_call_id": cid,
-                                       "result": done})
-            except Exception as _wc_err:  # noqa: BLE001
-                log.debug("progress_cb waiting card raised (non-fatal): %s", _wc_err)
-            return cid
-
-        def _on_resume() -> None:
-            """The turn goes on past its exit on outside input (an answer, a
-            result, the person's words)."""
-            nonlocal _ct_handoff_stale, _ct_stale_from_resume
-            # The guard does NOT re-arm here (one repair per turn): with its repair unspent it judges, at the next
-            # exit, what it has not judged yet — the new ending, and whatever
-            # it could not read before the hold — never a piece
-            # it already judged.
-            if _close_turn_signal is not None and _ct_written:
-                _ct_handoff_stale = True        # the next close_turn's handoff replaces it
-                _ct_stale_from_resume = True
-            # Waiting no more: a Stop from here is a Stop of a running turn,
-            # and its note must not say it waited.
-            clear_turn_held(_turn_token)
-
-        async def _hold_at_exit() -> bool:
-            """The turn is about to end. If it is waiting on something it
-            started — an open ask, a build or agent whose result has not come
-            back — hold here (hold_for) within what is left of HOLD_S and the
-            process's background budget (may_hold). True: input is queued (the
-            caller goes round again and the drain takes it). False: end.
-
-            Before it waits, the reply as it stands is written (_keep_reply)
-            and a waiting card goes to the client. Before ending, the turn's
-            holds are released and the queue looked at once more with nothing
-            awaited in between, so a result either landed before the release
-            (queued: go round again) or finds no hold after it and wakes a
-            turn of its own (continue_after_result). A turn nobody reads but
-            an evaluation (unseen_lane) never holds: nothing it may run
-            starts work or asks (unseen_lane_may_run)."""
-            nonlocal _hold_left
-            if has_pending_input(sess.session_id):
-                _on_resume()
-                return True
-            _waiting = held_tasks(sess.session_id)
-            # (A turn on a lane nobody reads never gets here holding: every
-            # call that could start work or ask is refused in it.)
-            if (_asks_open or _waiting) and _hold_left > 0:
-                if not may_hold(woken=bool(system_turn)):
-                    log.info("hold: the Host's memory holds no more turns now (%d in the "
-                             "background) — this one ends; its results wake a turn when they "
-                             "land (session %s)", background_turns(), sess.session_id)
-                else:
-                    _what = waiting_on(_asks_open, _waiting)
-                    await _keep_reply(_what)
-                    _cid = await _waiting_card(_what)
-                    _w0 = time.monotonic()
-                    log.info("hold: waiting up to %.0fs for ticket(s) %s / task(s) %s "
-                             "(session %s)", _hold_left, _asks_open, _waiting,
-                             sess.session_id)
-                    _got = await hold_for(sess.session_id, bool(_asks_open), _hold_left,
-                                          count=not system_turn)
-                    _hold_left -= time.monotonic() - _w0
-                    await _waiting_card(_what, (
-                        "it came back — carrying on" if _got else
-                        "nothing came back while the turn waited; it wakes a turn of "
-                        "its own when it lands"), _cid)
-                    if _got:
-                        _on_resume()
-                        return True
-                    log.info("hold: nothing came back (%.0fs left) — the turn ends; "
-                             "ticket(s) %s and task(s) %s carry it (session %s)",
-                             max(0.0, _hold_left), _asks_open,
-                             held_tasks(sess.session_id), sess.session_id)
-                    _asks_open.clear()
-            release_holds(sess.session_id)
-            if has_pending_input(sess.session_id):
-                _on_resume()
-                return True
-            return False
-
         # The round backstop ends the loop only on a result that still asks for
         # tools with no guard's repair waiting to be read: a reply that arrives
         # as the cap is reached leaves through the text exit like any other (the
@@ -5815,7 +3219,7 @@ class EntityRuntime:
         # with no await before the release past the loop, so words are either
         # read here or refused after it (turn_stopped_reading), never left on
         # the queue.
-        while (tool_round < MAX_TOOL_ROUNDS or not result.get("tool_calls") or _ga_awaiting
+        while (turn.tool_round < MAX_TOOL_ROUNDS or not turn.result.get("tool_calls") or turn._ga_awaiting
                or has_pending_nudge(sess.session_id)):
             # ── Mid-stream nudge check ──
             # User can POST /api/chat/nudge mid-tool-loop. Drain the
@@ -5879,8 +3283,8 @@ class EntityRuntime:
             # what streamed, inject, re-call. The crisis gate below reads the
             # person's words only; a result brief is the platform's.
             _events = consume_turn_events(sess.session_id)
-            if (_events and not _nudges and result.get("tool_calls")
-                    and result is not _ct_reply_result):
+            if (_events and not _nudges and turn.result.get("tool_calls")
+                    and turn.result is not turn._ct_reply_result):
                 # A result is not a change of direction the way the person's
                 # words are: the round the model just asked for runs first,
                 # and the result is read at the next reply (the exit hold
@@ -5954,7 +3358,7 @@ class EntityRuntime:
                     await _settle(more=True)
                     _seen_reply = strip_wm(_hp.get("text") or "")
                 else:
-                    _seen_reply = strip_wm(result.get("content") or "")
+                    _seen_reply = strip_wm(turn.result.get("content") or "")
                 if _seen_reply:
                     grok_messages.append({"role": "assistant", "content": _seen_reply})
                 for _ni, nt in enumerate(_nudges):
@@ -6018,9 +3422,9 @@ class EntityRuntime:
                         except Exception:  # noqa: BLE001
                             pass
                 # Whatever came in replaces the repair's own answer.
-                if _ga_awaiting and _ga_firings:
+                if turn._ga_awaiting and _ga_firings:
                     _ga_firings[-1]["_answer"] = {"superseded": True}
-                _ga_awaiting = False
+                turn._ga_awaiting = False
                 for ev in _events:
                     # Not a USER NUDGE: the brief opens by saying it is the
                     # platform, and what finished. It carries an agent's
@@ -6041,9 +3445,9 @@ class EntityRuntime:
                 _nudge_resets += 1
                 log.info(
                     "nudge consumed: session=%s count=%d results=%d resetting tool_round %d → 0",
-                    sess.session_id, len(_nudges), len(_events), tool_round,
+                    sess.session_id, len(_nudges), len(_events), turn.tool_round,
                 )
-                tool_round = 0
+                turn.tool_round = 0
                 # Nudge changes direction — clear the dedup tracker so
                 # the entity isn't blocked from re-calling a tool it
                 # may now genuinely need with the same args.
@@ -6075,7 +3479,7 @@ class EntityRuntime:
                 # brain_service suppresses the buffered emit once anything has
                 # streamed, so this reply was dropped from the wire while the
                 # turn row kept only it.
-                result = await _cm_nudge(
+                turn.result = await _cm_nudge(
                     messages=grok_messages,
                     temperature=0.3,
                     max_tokens=_spend_max(),
@@ -6094,22 +3498,22 @@ class EntityRuntime:
                 # `new_input_tokens` measures from, and leaving it stale made
                 # the next round count the nudge text (and everything before
                 # it) a second time as new input.
-                total_tokens += result.get("tokens_used", 0)
-                _prompt_acc += int(result.get("prompt_tokens") or 0)
-                _completion_acc += int(result.get("completion_tokens") or 0)
-                _acc_usage(result)
+                turn.total_tokens += turn.result.get("tokens_used", 0)
+                turn._prompt_acc += int(turn.result.get("prompt_tokens") or 0)
+                turn._completion_acc += int(turn.result.get("completion_tokens") or 0)
+                _acc_usage(turn.result)
                 continue
 
-            if tool_round >= MAX_TOOL_ROUNDS and result.get("tool_calls") and not _ga_awaiting:
+            if turn.tool_round >= MAX_TOOL_ROUNDS and turn.result.get("tool_calls") and not turn._ga_awaiting:
                 # Entered past the backstop only for queued words, and the
                 # drain injected none (a copy of an answer already read): the
                 # backstop stands, and those calls are not run.
                 break
 
-            tool_calls = result.get("tool_calls")
-            if _ct_reply_result is not None and result is _ct_reply_result:
+            tool_calls = turn.result.get("tool_calls")
+            if turn._ct_reply_result is not None and turn.result is turn._ct_reply_result:
                 # The call that owed the reply after a non-terminal close_turn.
-                _ct_reply_result = None
+                turn._ct_reply_result = None
                 if tool_calls:
                     log.info("close_turn: %d call(s) after the turn closed were not run (session %s)",
                              len(tool_calls), sess.session_id)
@@ -6118,9 +3522,9 @@ class EntityRuntime:
                         _dc_args, _dc_ok = _ct.parse_args(_dc)
                         if _dc_name == _ct.TOOL_NAME:
                             _close_turn_arrivals.append({
-                                **(_ct.arrival(result.get("content"), tool_calls) or {}),
+                                **(_ct.arrival(turn.result.get("content"), tool_calls) or {}),
                                 "model": _served.get("model") or _inference_model,
-                                "round": tool_round + 1, "not_run": True,
+                                "round": turn.tool_round + 1, "not_run": True,
                                 # it never ended anything: the turn was closed
                                 "terminal": False})
                         try:
@@ -6141,7 +3545,7 @@ class EntityRuntime:
                     # writes no text ends the turn on it — asking again (here,
                     # or in the forced text past the loop) only added a
                     # second closing.
-                    _ct_owed = not _ct.has_prose(result.get("content")) and not _reply_written()
+                    _ct_owed = not _ct.has_prose(turn.result.get("content")) and not _reply_written()
                     if _ct_owed and not _ct_closed_asked:
                         # The allowance is asked before this call as before any
                         # round's (would_stop: check()'s test with nothing
@@ -6152,7 +3556,7 @@ class EntityRuntime:
                                     _ta.new_input_tokens(grok_messages, _msgs_mark[0]),
                                     _reply_reserve):
                                 _ct_room = False
-                                _spend_stopped = True
+                                turn._spend_stopped = True
                                 log.warning(
                                     "turn allowance reached: basis=%s spent=%s of %s after %d "
                                     "calls — the reply owed after close_turn goes out as forced "
@@ -6167,7 +3571,7 @@ class EntityRuntime:
                             # would rebuild the whole cached prefix).
                             _ct_closed_asked = True
                             grok_messages.append({"role": "user", "content": _ct.TURN_CLOSED})
-                            result = await _call_with_overflow_retry(
+                            turn.result = await _call_with_overflow_retry(
                                 grok_messages,
                                 temperature=temperature,
                                 max_tokens=_spend_max(),
@@ -6175,17 +3579,17 @@ class EntityRuntime:
                                 **_chat_call_kw,
                                 stream_cb=await _next_stream_cb(),
                             )
-                            total_tokens += result.get("tokens_used", 0)
-                            _prompt_acc += int(result.get("prompt_tokens") or 0)
-                            _completion_acc += int(result.get("completion_tokens") or 0)
-                            _acc_usage(result)
-                            if "error" in result and not result.get("content"):
-                                return await _end_on_error(result)
-                            _ct_reply_result = result
+                            turn.total_tokens += turn.result.get("tokens_used", 0)
+                            turn._prompt_acc += int(turn.result.get("prompt_tokens") or 0)
+                            turn._completion_acc += int(turn.result.get("completion_tokens") or 0)
+                            _acc_usage(turn.result)
+                            if "error" in turn.result and not turn.result.get("content"):
+                                return await _end_on_error(turn.result)
+                            turn._ct_reply_result = turn.result
                             continue
-                        _ct_left_closed = True
+                        turn._ct_left_closed = True
                         break  # -> the forced-text call after the loop
-                    result = {**result, "tool_calls": None}
+                    turn.result = {**turn.result, "tool_calls": None}
                     tool_calls = None
             # ── close_turn ENDS the turn ──
             # Only when this completion carries the reply text AND close_turn
@@ -6201,7 +3605,7 @@ class EntityRuntime:
             # The go-ahead repair's own answer: close_turn alone with no text is
             # option 3 of the correction ("end the turn now, adding nothing") —
             # it ends the turn like a terminal close_turn, the reply intact.
-            _ga_direct, _ga_awaiting = _ga_awaiting, False
+            _ga_direct, turn._ga_awaiting = turn._ga_awaiting, False
             # ...and at every level. For a JUDGED reading it is the "not an
             # ask" the correction offered; for a core or explicit form, or a
             # recorded wait (level None), the turn's one repair is spent and
@@ -6211,31 +3615,31 @@ class EntityRuntime:
             _ga_may_end = bool(_ga_direct and _ga_firings)
             if _ga_direct and _ga_firings:
                 _ga_firings[-1]["_answer"] = {
-                    "text": _ct.has_prose(result.get("content")),
+                    "text": _ct.has_prose(turn.result.get("content")),
                     "calls": [((c or {}).get("function") or {}).get("name") or "?"
                               for c in (tool_calls or [])]}
             if tool_calls and (
-                    _ct.is_terminal(result.get("content"), tool_calls)
-                    or (_ga_may_end and not _ct.has_prose(result.get("content"))
+                    _ct.is_terminal(turn.result.get("content"), tool_calls)
+                    or (_ga_may_end and not _ct.has_prose(turn.result.get("content"))
                         and all(((c or {}).get("function") or {}).get("name") == _ct.TOOL_NAME
                                 for c in tool_calls))):
                 _ct_args, _ct_parsed = _ct.parse_args(tool_calls[0])
                 _close_turn_arrivals.append({
-                    **(_ct.arrival(result.get("content"), tool_calls) or {}),
+                    **(_ct.arrival(turn.result.get("content"), tool_calls) or {}),
                     "model": _served.get("model") or _inference_model,
-                    "round": tool_round + 1})
+                    "round": turn.tool_round + 1})
                 _ct_sig, _ct_dropped = _ct.normalize(_ct_args)
                 _t_ct0 = time.time()
-                if _ct_written:
+                if turn._ct_written:
                     _ct_res = {"status": "ok", "result": _ct.ALREADY_RECORDED}
-                    if (_ct_handoff_stale and _close_turn_signal is not None
+                    if (turn._ct_handoff_stale and turn._close_turn_signal is not None
                             and _ct_sig.get("handoff")):
-                        _close_turn_signal["handoff"] = _ct_sig["handoff"]
-                        _ct_handoff_stale = False
+                        turn._close_turn_signal["handoff"] = _ct_sig["handoff"]
+                        turn._ct_handoff_stale = False
                         _ct_res = {"status": "ok", "result": _ct.HANDOFF_TAKEN}
                 else:
-                    _close_turn_signal = _ct_sig
-                    _ct_written = True
+                    turn._close_turn_signal = _ct_sig
+                    turn._ct_written = True
                     try:
                         _ct_res = await _run_close_turn(
                             self.pool, sess, _ct_args, prompt_console=_prompt_console)
@@ -6259,7 +3663,7 @@ class EntityRuntime:
                         args=_ct_args, schema_missing=[])
                 except Exception as _le:  # noqa: BLE001
                     log.debug("tool_call_ledger note (close_turn) failed (non-fatal): %s", _le)
-                result = {**result, "tool_calls": None}
+                turn.result = {**turn.result, "tool_calls": None}
                 tool_calls = None
             if not tool_calls:
                 # This completion ends the reply (or a guard repairs it): it
@@ -6270,36 +3674,36 @@ class EntityRuntime:
                 # is not the end of the turn: the model is told it was cut, at
                 # what limit, and continues where it stopped. Bounded by the
                 # round backstop, and says so when that is reached.
-                if result.get("truncated") and _spend.would_overrun(
+                if turn.result.get("truncated") and _spend.would_overrun(
                         _ta.new_input_tokens(grok_messages, _msgs_mark[0])
-                        + _cb.est_tokens(result.get("content") or "") + 64,
+                        + _cb.est_tokens(turn.result.get("content") or "") + 64,
                         _reply_reserve):
                     # A continuation is a round like any other: it passes the
                     # same spend check. Out of
                     # room, the cut reply stands and the allowance's own stop
                     # (its continue card) ends the turn.
-                    _spend_stopped = True
+                    turn._spend_stopped = True
                     # Which cut it was: a reply with visible text
                     # stops mid-way; a cut that went entirely on reasoning
                     # left no reply at all — the card says which.
-                    _spend_cut_reply = ("text" if ((_cur_piece[0] or {}).get("text") or "").strip()
+                    turn._spend_cut_reply = ("text" if ((_cur_piece[0] or {}).get("text") or "").strip()
                                         else "empty")
                     log.warning("turn allowance reached: the cut reply is not continued "
                                 "(basis=%s spent=%s of %s, session %s)", _spend.basis,
                                 _spend.spent, _spend.allowance, sess.session_id)
                     break
-                if result.get("truncated"):
+                if turn.result.get("truncated"):
                     if _cut_continues < MAX_TOOL_ROUNDS:
                         _cut_continues += 1
                         log.info("reply cut at the output limit (%s tokens) — "
                                  "continuation %d (session %s)",
-                                 result.get("output_limit") or effective_max,
+                                 turn.result.get("output_limit") or effective_max,
                                  _cut_continues, sess.session_id)
                         grok_messages.append({"role": "assistant",
-                                              "content": result.get("content") or ""})
+                                              "content": turn.result.get("content") or ""})
                         grok_messages.append({"role": "user", "content": (
                             f"[platform] Your reply above was cut off: it reached this "
-                            f"model's output limit ({result.get('output_limit') or effective_max} "
+                            f"model's output limit ({turn.result.get('output_limit') or effective_max} "
                             f"tokens). The person has everything up to the cut. Continue "
                             f"exactly where it stopped, without repeating it.")})
                         # Glue only onto a cut piece that HAS text: a cut that
@@ -6314,7 +3718,7 @@ class EntityRuntime:
                         if _cut_had_text:
                             _cur_piece[0]["glue"] = True
                         _drop_held[0] = True
-                        result = await _call_with_overflow_retry(
+                        turn.result = await _call_with_overflow_retry(
                             grok_messages,
                             temperature=temperature,
                             max_tokens=_spend_max(),
@@ -6323,13 +3727,13 @@ class EntityRuntime:
                             **_chat_call_kw,
                             stream_cb=_cont_cb,
                         )
-                        total_tokens += result.get("tokens_used", 0)
-                        _prompt_acc += int(result.get("prompt_tokens") or 0)
-                        _completion_acc += int(result.get("completion_tokens") or 0)
-                        _acc_usage(result)
-                        if "error" in result and not result.get("content") \
-                                and not result.get("tool_calls"):
-                            return await _end_on_error(result)
+                        turn.total_tokens += turn.result.get("tokens_used", 0)
+                        turn._prompt_acc += int(turn.result.get("prompt_tokens") or 0)
+                        turn._completion_acc += int(turn.result.get("completion_tokens") or 0)
+                        _acc_usage(turn.result)
+                        if "error" in turn.result and not turn.result.get("content") \
+                                and not turn.result.get("tool_calls"):
+                            return await _end_on_error(turn.result)
                         continue
                     log.warning("reply cut at the output limit and the round backstop "
                                 "(%d) is reached — the turn ends on the cut reply "
@@ -6342,13 +3746,13 @@ class EntityRuntime:
                 # loop as before. The tool list is the one the turn has been
                 # sending, so the cached prefix holds and a check the model
                 # says it is making can run.
-                _er_empty = (not result.get("truncated")
-                             and not _ct.has_prose(result.get("content"))
+                _er_empty = (not turn.result.get("truncated")
+                             and not _ct.has_prose(turn.result.get("content"))
                              and not _reply_all().strip())
-                if _er_empty and _empty_retried:
+                if _er_empty and turn._empty_retried:
                     # The retry's own answer is empty too: the stall notice
                     # past the loop says what came back.
-                    _empty_shapes.append(_empty_shape(result))
+                    _empty_shapes.append(_empty_shape(turn.result))
                 elif _er_empty:
                     try:
                         _er_room = not _spend.would_stop(
@@ -6358,12 +3762,12 @@ class EntityRuntime:
                         log.debug("spend check before the empty-reply retry failed: %s", _er_err)
                         _er_room = True
                     if _er_room:
-                        _empty_shapes.append(_empty_shape(result))
-                        _empty_retried = True
+                        _empty_shapes.append(_empty_shape(turn.result))
+                        turn._empty_retried = True
                         log.warning("empty reply -- retrying inside the loop with the turn's "
                                     "tools (session %s)", sess.session_id)
                         grok_messages.append({"role": "user", "content": _EMPTY_RETRY_LINE})
-                        result = await _call_with_overflow_retry(
+                        turn.result = await _call_with_overflow_retry(
                             grok_messages,
                             temperature=temperature,
                             max_tokens=_spend_max(),
@@ -6371,13 +3775,13 @@ class EntityRuntime:
                             **_chat_call_kw,
                             stream_cb=await _next_stream_cb(),
                         )
-                        total_tokens += result.get("tokens_used", 0) or 0
-                        _prompt_acc += int(result.get("prompt_tokens") or 0)
-                        _completion_acc += int(result.get("completion_tokens") or 0)
-                        _acc_usage(result)
-                        if "error" in result and not result.get("content") \
-                                and not result.get("tool_calls"):
-                            return await _end_on_error(result)
+                        turn.total_tokens += turn.result.get("tokens_used", 0) or 0
+                        turn._prompt_acc += int(turn.result.get("prompt_tokens") or 0)
+                        turn._completion_acc += int(turn.result.get("completion_tokens") or 0)
+                        _acc_usage(turn.result)
+                        if "error" in turn.result and not turn.result.get("content") \
+                                and not turn.result.get("tool_calls"):
+                            return await _end_on_error(turn.result)
                         continue
                 # ── Claim-vs-row guard ──
                 # The turn is about to end with prose. If that prose tells the
@@ -6393,7 +3797,7 @@ class EntityRuntime:
                     # A held go-ahead repair is read as it went out — text
                     # _repair_checked kept back never reached the person.
                     _draft = ((_cur_piece[0] or {}).get("text") if (_cur_piece[0] or {}).get("hold")
-                              else result.get("content")) or ""
+                              else turn.result.get("content")) or ""
                     _fix = await find_unbacked_start(
                         self.pool, _draft, sess.entity_id)
                     if _fix:
@@ -6408,7 +3812,7 @@ class EntityRuntime:
                         # (The draft is a piece the recorder already holds.)
                         grok_messages.append({"role": "user", "content": _fix})
                         from mastercode.provider_gateway import call_model as _cm_claim
-                        result = await _cm_claim(
+                        turn.result = await _cm_claim(
                             messages=grok_messages,
                             temperature=0.3,
                             max_tokens=_spend_max(),
@@ -6422,10 +3826,10 @@ class EntityRuntime:
                         # the turn's tokens_in/out and the context ledger, and
                         # a failover inside the repair would leave the turn
                         # attributed to the wrong served model.
-                        total_tokens += result.get("tokens_used", 0)
-                        _prompt_acc += int(result.get("prompt_tokens") or 0)
-                        _completion_acc += int(result.get("completion_tokens") or 0)
-                        _acc_usage(result)
+                        turn.total_tokens += turn.result.get("tokens_used", 0)
+                        turn._prompt_acc += int(turn.result.get("prompt_tokens") or 0)
+                        turn._completion_acc += int(turn.result.get("completion_tokens") or 0)
+                        _acc_usage(turn.result)
                         continue
                 # ── The go-ahead guard: _go_ahead_round ──
                 if await _go_ahead_round("text"):
@@ -6462,7 +3866,7 @@ class EntityRuntime:
                 break  # Normal text response, exit loop
 
             _tc_names = [tc.get("function", {}).get("name", "?") for tc in tool_calls]
-            log.info("Tool call round %d: %d calls -> %s", tool_round + 1, len(tool_calls), _tc_names)
+            log.info("Tool call round %d: %d calls -> %s", turn.tool_round + 1, len(tool_calls), _tc_names)
 
             # (The context-pressure sensor that used to run here went with the
             # brain synthesis it fed — it measured against a
@@ -6476,12 +3880,12 @@ class EntityRuntime:
             # orchestrator turn always routes to a provider, so that branch had
             # been unreachable, and it was the shape the context trim's
             # invariants could not express.)
-            raw_msg = result.get("raw_message", {})
+            raw_msg = turn.result.get("raw_message", {})
             # A call that is not whole (cut by the output limit, or arguments
             # that are not JSON) goes into the history with `{}` arguments:
             # it is answered below as NOT RUN, and a half-written arguments
             # string sent back is a request some providers refuse.
-            _not_whole = set(result.get("truncated_tool_call_ids") or [])
+            _not_whole = set(turn.result.get("truncated_tool_call_ids") or [])
             for _tc in tool_calls:
                 try:
                     json.loads(((_tc or {}).get("function") or {}).get("arguments") or "")
@@ -6706,13 +4110,13 @@ class EntityRuntime:
                 # Cut: named by the gateway, OR any call whose arguments do not
                 # parse in a completion the limit stopped — so
                 # it is right whichever way a provider closes a cut block.
-                _cut_call = (tc_id in set(result.get("truncated_tool_call_ids") or [])
-                             or (bool(result.get("truncated")) and not _args_parsed))
+                _cut_call = (tc_id in set(turn.result.get("truncated_tool_call_ids") or [])
+                             or (bool(turn.result.get("truncated")) and not _args_parsed))
                 if _cut_call or not _args_parsed:
                     if _cut_call:
                         _nr_text = (
                             f"NOT RUN: this call was cut off. Your output reached this "
-                            f"model's output limit ({result.get('output_limit') or effective_max} "
+                            f"model's output limit ({turn.result.get('output_limit') or effective_max} "
                             f"tokens) while you were writing its arguments, so they arrived "
                             f"incomplete and nothing ran. That is the length of the output, not "
                             f"a mistake in the call. Write it in parts: smaller calls, e.g. "
@@ -6772,9 +4176,9 @@ class EntityRuntime:
                 # signal the Host sent even when a gate refused its writes.
                 if func_name == _ct.TOOL_NAME:
                     _close_turn_arrivals.append({
-                        **(_ct.arrival(result.get("content"), tool_calls) or {}),
+                        **(_ct.arrival(turn.result.get("content"), tool_calls) or {}),
                         "model": _served.get("model") or _inference_model,
-                        "round": tool_round + 1})
+                        "round": turn.tool_round + 1})
                     _ct_took_handoff = False
                     # The prose sent with close_turn IS the Host's reply (the
                     # next call only adds to it — close_turn.FINISH_YOUR_REPLY),
@@ -6782,14 +4186,14 @@ class EntityRuntime:
                     # narration, read by the guard with what follows.
                     if _cur_piece[0] is not None:
                         _cur_piece[0]["force"] = "reply"
-                    if _close_turn_signal is None:  # the first one is the turn's signal
-                        _close_turn_signal, _ = _ct.normalize(func_args)
-                    elif _ct_handoff_stale:
+                    if turn._close_turn_signal is None:  # the first one is the turn's signal
+                        turn._close_turn_signal, _ = _ct.normalize(func_args)
+                    elif turn._ct_handoff_stale:
                         # After a go-ahead repair: only the handoff is taken.
                         _ho_new = _ct.normalize(func_args)[0].get("handoff")
                         if _ho_new:
-                            _close_turn_signal["handoff"] = _ho_new
-                            _ct_handoff_stale = False
+                            turn._close_turn_signal["handoff"] = _ho_new
+                            turn._ct_handoff_stale = False
                             _ct_took_handoff = True
                     # Set here, before any gate or the dedup cache can answer
                     # the call: the next call owes the reply either way.
@@ -7344,12 +4748,12 @@ class EntityRuntime:
                         # Not terminal (the terminal shape never reaches this
                         # loop): run its writes, then tell the model the reply
                         # is still owed — one more call, never a silent turn.
-                        if _ct_written:
+                        if turn._ct_written:
                             tool_result = {"status": "ok", "result": (
                                 _ct.HANDOFF_TAKEN if _ct_took_handoff
                                 else _ct.ALREADY_RECORDED)}
                         else:
-                            _ct_written = True
+                            turn._ct_written = True
                             tool_result = await _run_close_turn(
                                 self.pool, sess, func_args, prompt_console=_prompt_console)
                         if isinstance(tool_result, dict):
@@ -7357,7 +4761,7 @@ class EntityRuntime:
                             # text, or an earlier piece answering the same
                             # input) is added to, never written again.
                             tool_result = {**tool_result, "next": _ct.next_step(
-                                result.get("content"), reply_written=_reply_written())}
+                                turn.result.get("content"), reply_written=_reply_written())}
                     elif func_name == "escalate":
                         # Reuse the existing escalate meta-tool (files a ticket /
                         # auto-resolves via a learned decision pattern): _escalate.
@@ -7860,7 +5264,7 @@ class EntityRuntime:
                     "content": _bounded_result,
                 })
                 _search_seen.record(_eff_name, _eff_args, _sent_result, _bounded_sent,
-                                    grok_messages[-1], tool_round + 1)
+                                    grok_messages[-1], turn.tool_round + 1)
                 # A result may leave the turn once used (_drop_used_results):
                 # its stub carries the history digest
                 # this call's chip carries (ta_entry, tool_trail), and the
@@ -7892,13 +5296,13 @@ class EntityRuntime:
                     _dedup_cache[_dedup_fp] = {
                         "count": (_dd_prev or {}).get("count", 1),
                         "result": _dd_res,
-                        "round": tool_round + 1,
+                        "round": turn.tool_round + 1,
                     }
                 elif _dedup_fp not in _dedup_cache and not _dd_failed:
                     _dedup_cache[_dedup_fp] = {
                         "count": 1,
                         "result": _dd_res,
-                        "round": tool_round + 1,
+                        "round": turn.tool_round + 1,
                     }
 
             # Pictures this round's tools returned (an app's render, one of the
@@ -7980,7 +5384,7 @@ class EntityRuntime:
                 # What the drain reads back into the model's context if a hold
                 # resumes: this round's prose and its narration (the recorder
                 # already holds the text itself).
-                result = {"content": join_pieces(_pieces[_round_at:])}
+                turn.result = {"content": join_pieces(_pieces[_round_at:])}
                 # The round's prose and narration end the turn like any reply:
                 # the go-ahead guard reads them first ("Say go and I'll also
                 # fix the clock." beside a dispatch must not go out unread),
@@ -8018,7 +5422,7 @@ class EntityRuntime:
                 # actionable. tool_actions already holds the name, the status
                 # and the error text; none of it was being printed.
                 log.warning("Tool round %d: ALL %d tools failed (consecutive=%d) — %s",
-                            tool_round + 1, len(tool_calls), _consecutive_all_fail,
+                            turn.tool_round + 1, len(tool_calls), _consecutive_all_fail,
                             _describe_failed_tools(tool_actions[_round_start:]))
             else:
                 _consecutive_all_fail = 0
@@ -8044,7 +5448,7 @@ class EntityRuntime:
                     ),
                 })
                 _drop_used_results(grok_messages)
-                result = await _call_entity_model(
+                turn.result = await _call_entity_model(
                     grok_messages,
                     temperature=temperature,
                     max_tokens=_spend_max(),
@@ -8052,10 +5456,10 @@ class EntityRuntime:
                     **_chat_call_kw,
                     stream_cb=await _next_stream_cb(),
                 )
-                total_tokens += result.get("tokens_used", 0)
-                _prompt_acc += int(result.get("prompt_tokens") or 0)
-                _completion_acc += int(result.get("completion_tokens") or 0)
-                _acc_usage(result)
+                turn.total_tokens += turn.result.get("tokens_used", 0)
+                turn._prompt_acc += int(turn.result.get("prompt_tokens") or 0)
+                turn._completion_acc += int(turn.result.get("completion_tokens") or 0)
+                _acc_usage(turn.result)
                 # That answer (no tools were offered) ends the turn like any
                 # reply: it leaves through the text exit, so the claim guard,
                 # the go-ahead guard, a late nudge and the hold read it
@@ -8159,7 +5563,7 @@ class EntityRuntime:
                         _round_kw["tool_choice"] = "none"
                     else:
                         _tools_for_round = None
-                    _spend_stopped = True
+                    turn._spend_stopped = True
                 elif _verdict == "near":
                     # Feedback, not a cap
                     # (feedback, never a round cap): the model
@@ -8170,7 +5574,7 @@ class EntityRuntime:
                 log.debug("spend allowance check failed (non-fatal, "
                           "loop continues): %s", _sp_err)
 
-            result = await _call_with_overflow_retry(
+            turn.result = await _call_with_overflow_retry(
                 grok_messages,
                 temperature=temperature,
                 max_tokens=_spend_max(),
@@ -8181,17 +5585,17 @@ class EntityRuntime:
             )
             if _ct_reply_owed:
                 _ct_reply_owed = False
-                _ct_reply_result = result
+                turn._ct_reply_result = turn.result
 
-            if "error" in result and not result.get("content"):
-                return await _end_on_error(result)
+            if "error" in turn.result and not turn.result.get("content"):
+                return await _end_on_error(turn.result)
 
-            total_tokens += result.get("tokens_used", 0)
-            _prompt_acc += int(result.get("prompt_tokens") or 0)
-            _completion_acc += int(result.get("completion_tokens") or 0)
-            _acc_usage(result)
-            tool_round += 1
-            if _spend_stopped:
+            turn.total_tokens += turn.result.get("tokens_used", 0)
+            turn._prompt_acc += int(turn.result.get("prompt_tokens") or 0)
+            turn._completion_acc += int(turn.result.get("completion_tokens") or 0)
+            _acc_usage(turn.result)
+            turn.tool_round += 1
+            if turn._spend_stopped:
                 # That call allowed no tool call, so it is the turn's answer.
                 # A call the model made anyway (a provider that ignored
                 # tool_choice "none") is not run: staying in the loop would
@@ -8205,17 +5609,2695 @@ class EntityRuntime:
             # backstop: the loop condition holds while _ga_awaiting. Input
             # queued here is not read unless that repair runs (the loop ends),
             # so the guard does not wait for it (`last`).
-            if (tool_round >= MAX_TOOL_ROUNDS and result.get("tool_calls")
-                    and _ct.has_prose(result.get("content"))):
+            if (turn.tool_round >= MAX_TOOL_ROUNDS and turn.result.get("tool_calls")
+                    and _ct.has_prose(turn.result.get("content"))):
                 await _settle()
                 if await _go_ahead_round("backstop", last=True):
                     continue
+
+    # ---------------------------------------------------------------
+    # send_message — THE core inference method (~1280 lines)
+    # ---------------------------------------------------------------
+
+    async def _send_message_core(
+        self,
+        session_id: str | None = None,
+        user_message: str = "",
+        # No-sessions chat entry point. When `entity_id` is supplied
+        # (and session_id is None), the runtime builds a transient
+        # per-request context with no entity_sessions read/write.
+        # Existing voice/demo/benchmark callers keep passing session_id.
+        entity_id: int | None = None,
+        # Optional callback
+        # the inference loop awaits on every tool dispatch and result,
+        # so the SSE layer can emit real-time tool-call frames in the
+        # AI SDK Data Stream Protocol. Shape:
+        #   await progress_cb({"event": "tool_call_start",
+        #                      "tool_call_id": str, "tool": str,
+        #                      "args": dict})
+        #   await progress_cb({"event": "tool_call_result",
+        #                      "tool_call_id": str, "tool": str,
+        #                      "result": Any, "status": str})
+        # When None, no events fire — current behavior unchanged.
+        progress_cb=None,
+        temperature: float = 0.3,
+        # None = the routed model's own published output limit (resolved
+        # with the route below). A fixed 16,384 here once cut off a desktop
+        # design.
+        max_tokens: int | None = None,
+        fast_mode: bool = False,
+        clear_history: bool = False,
+        force_sonnet: bool = False,
+        images: list[str] | None = None,
+        attachments: list[dict] | None = None,
+        # Per-app chat surfacing: the calling app's
+        # context is forwarded so write_turn_row can tag the resulting
+        # rows in entity_memory.project_id + entity_memory.metadata JSONB.
+        # The route handler reads these from request.state.app_token
+        # and from the session's interaction_context.
+        app_id: str | None = None,
+        project_id: int | None = None,
+        # Circles threads: the circles_threads row this turn was
+        # sent into. Parked on the session below; from there it reaches every
+        # derive_source_context call on the self-chat path, so the turn rows,
+        # recall, the summary, the tool trail, artifact capture, the FRAME
+        # count and any dispatch this turn makes all name the same thread.
+        thread_id: str | None = None,
+        artifact_id: str | None = None,
+        # The calling app's declared permissions. Used
+        # by the meta-tool gate to narrow effective_bits to
+        # entity_bits ∩ app_bits. None = no narrowing (internal flows
+        # without an app_token, brain background loops, benchmarks).
+        app_permissions: list[str] | None = None,
+        # Per-thread model override for
+        # THIS turn. Shape {provider, model_id[, base_url, connection_id]}.
+        # Applied to the `chat` role through the F3 leak-guard
+        # (provider_allowed_for_role): a BYO/self pick on chat (which carries
+        # the system prompt) is REFUSED and resolution falls back to the
+        # persisted/default model. None = no override (current behavior).
+        thread_override: dict | None = None,
+        # Replay/A-B: read-scope + point-in-time overrides (see the transient
+        # builder). history_before limits recalled turns to created_at < it.
+        history_context: str | None = None,
+        history_before=None,
+        # A turn the PLATFORM starts (continue_after_round): `user_message`
+        # is the wake-up brief, not the user typing. No user turn row is
+        # written; the assistant row is tagged origin='continuation'.
+        system_turn: bool = False,
+        # A request the person saved while the Host was starting (the offline
+        # runner sends it as a system turn for its own lane): their own words,
+        # so the turn is never counted as woken.
+        saved_request: bool = False,
+        # With system_turn: the user's ORIGINAL request, carried as the
+        # origin_request of any dispatch this turn makes (never the brief).
+        origin_request: str | None = None,
+        # The FRAME (host prompt map phase 4): what the front end sent about
+        # this turn — validated by runtime.frame.validate_frame at the route
+        # (view, pills). Rendered per turn by prompt_schema `_b_frame`.
+        frame: dict | None = None,
+        # The type a SCHEDULED task was set under. The
+        # fired turn runs under it, not under the thread's binding; anything
+        # but an active type runs closed. None = the thread decides (today).
+        turn_type_id: str | None = None,
+        # The sender's id for these words (nudge_id_ok: 1-64 of [A-Za-z0-9_-]),
+        # kept on the person's user row under metadata.client_id as a nudge's
+        # row keeps its sender's id (push_nudge): the Workbench Index sends its
+        # request id, and a retry finds the words delivered by that row. Also
+        # on the row an identity hold saves for a request it refuses. A list
+        # when the turn is several messages' words a turn ended without
+        # reading, joined (turn_registry._requeue_undelivered): the row keeps
+        # them all (row_client_id).
+        client_id: str | list | None = None,
+        # A turn the platform woke with a result (an agent's report, a watched
+        # call's answer — _wake_host_turn): what the brief carries came from
+        # outside this turn, so the turn starts marked (runtime/turn_taint).
+        untrusted_input: str | None = None,
+        # A platform-started turn whose brief is the Host's own request
+        # (runtime/root_turn.open_root): written as a user row of the thread,
+        # marked requested_by='host', so the thread keeps the whole chain.
+        host_request: bool = False,
+        # A woken turn past the thread's chain of woken turns
+        # (WOKEN_TURNS_MAX): it reports and may ask in the question
+        # box, and starts no work — until the person's words are read into it.
+        may_start_work: bool = True,
+    ) -> dict:
+        """
+        Send a message within an entity session.
+
+        Routes through personality -> LLM -> logging -> drift check.
+        Default temperature is 0.3 -- grounded, tool-using entities
+        must never hallucinate. Personality comes from weights and
+        system prompt, not from LLM randomness.
+
+        Args:
+            fast_mode: If True, uses grok-3-mini for quick, cheap responses.
+                Messages still persist in session context. Good for rapid
+                back-and-forth that feeds into deeper conversations later.
+            app_permissions: If the chat came via an app_token, the
+                token's permissions list. The meta-tool gate intersects
+                this with the entity's effective scopes so the calling
+                app can't escape its declared surface. Internal callers
+                pass None → no narrowing.
+        """
+        # Wall-clock anchor for the whole turn — stamped into the assistant
+        # turn row's metadata as gen_ms so every chat surface can render
+        # "took Ns" from the durable log, not from client-side guessing.
+        _turn_t0 = time.monotonic()
+        # A durable session (voice / demo: the same session_id every turn):
+        # this turn reads input from its entry on, so the "stopped reading"
+        # mark the turn before it left at its exit goes now — not at this
+        # turn's first loop round, after its first model call, which is where
+        # mark_turn_live would clear it. A chat session's id
+        # is minted below and has no mark.
+        if session_id:
+            turn_started(session_id)
+
+        # Did the platform start this turn (a wake-up, a fired timer or task)?
+        # A saved request is sent as a system turn but is the person's own
+        # words. Asked once, here.
+        _platform_started = bool(system_turn) and not saved_request
+        # What the turn starts with: a forwarded or relayed message, a People
+        # chat's message carried in, uploaded files, or a woken turn's result.
+        from mastercode.runtime import turn_taint as _turn_taint
+        _turn_taint.mark_turn_input(frame=frame, attachments=(attachments or images),
+                                    untrusted_input=untrusted_input,
+                                    platform_started=_platform_started)
+        # The tool loop below hands each round's pictures to the model.
+        from mastercode.runtime import turn_pictures as _turn_pictures
+
+        # Build per-request runtime context.
+        #
+        # No-sessions path (chat): entity_id supplied → build transient
+        # context in memory, never touch entity_sessions. The chat log is
+        # entity_memory turn rows tagged by project_id + app_id.
+        #
+        # Legacy path (demo / benchmark): session_id supplied →
+        # load durable session row. This path is being phased out for
+        # chat but remains for surfaces that legitimately need a long-
+        # lived runtime object.
+        if session_id is None and entity_id is not None:
+            # A turn never runs toolless while this Host's tools grant is
+            # still arriving with its boot identity seed
+            # (runtime/identity_hold.py). Held BEFORE the session is built so
+            # the prompt and tools= come from the row the turn runs on.
+            _held, _identity_refusal = await self._hold_turn_for_identity(
+                entity_id, progress_cb, system=system_turn)
+            _person_turn = (not system_turn and (user_message or "").strip()
+                            and (app_id or "") not in _CLOSE_TURN_NO_WRITES)
+            _held_requests: list = []
+            if _identity_refusal is None and _person_turn:
+                # A person's turn that passes the hold takes over any request
+                # of theirs still held in this thread (saved by an earlier
+                # refusal): the held wake is cancelled — or, if it is already
+                # running, waited for, so its result is in this turn's
+                # history — and the earlier words go in front of the model as
+                # data (see _b_frame). Nothing is dropped, nothing runs twice.
+                _held_requests = await self._take_over_held(
+                    entity_id, project_id=project_id, app_id=app_id,
+                    thread_id=thread_id, history_context=history_context,
+                    progress_cb=progress_cb)
+            if _identity_refusal is not None:
+                if (not system_turn and (user_message or "").strip()
+                        and (app_id or "") not in _CLOSE_TURN_NO_WRITES):
+                    # A person's own request: keep it (user row + a note) and
+                    # run it by itself when the tools arrive. A platform
+                    # wake-up, replay or A-B side is not a request to keep;
+                    # its caller sees identity_pending and treats it as not-run.
+                    from mastercode.runtime.identity_hold import save_refused_request
+                    # This is the turn's user row: an id that attaches to the
+                    # turn once it has taken its ids is marked only after the
+                    # row is written (_turn_row_task), so it is written
+                    # in a task the registry can wait on.
+                    _refused_row = asyncio.ensure_future(save_refused_request(
+                        getattr(self, "pool", None), entity_id, _identity_refusal,
+                        user_message=user_message, app_id=app_id,
+                        project_id=project_id, thread_id=thread_id,
+                        history_context=history_context,
+                        had_attachments=bool(attachments or images),
+                        app_permissions=app_permissions,
+                        thread_override=thread_override,
+                        client_id=row_client_id(_turn_row_ids(client_id))))
+                    _turn_row_task(_refused_row)
+                    await _refused_row
+                return _identity_refusal
+            sess = await self._build_chat_context_transient(
+                entity_id, project_id=project_id, app_id=app_id, mode="chat",
+                history_context=history_context, frame=frame,
+                thread_id=thread_id, platform_started=_platform_started,
+            )
+            if sess is not None:
+                sess.history_before = history_before
+                if _held_requests:
+                    sess.held_requests = _held_requests
+        else:
+            sess = await self._load_session_from_db(session_id)
+            # Same hold as the chat path; the entity is only known once the
+            # row is loaded, so the session is re-loaded after a hold to pick
+            # up what the seed wrote.
+            if sess is not None:
+                _held, _identity_refusal = await self._hold_turn_for_identity(
+                    sess.entity_id, progress_cb, system=system_turn)
+                if _identity_refusal is not None:
+                    return _identity_refusal
+                if _held:
+                    sess = await self._load_session_from_db(session_id)
+            # The durable path (voice / demo / benchmark) has no thread_id of
+            # its own — _load_session_from_db builds the dataclass without the
+            # field, so it defaults None. Honour an explicit one if a caller
+            # ever sends it; a None caller leaves the row's scope untouched.
+            if sess is not None and thread_id:
+                sess.thread_id = thread_id
+
+        # Stash on the session so the inference loop's
+        # tool_use dispatch can forward into _execute_meta_tool. The
+        # EntitySession dataclass allows attribute assignment.
+        if sess is not None:
+            try:
+                sess.app_permissions = app_permissions
+            except Exception:
+                pass
+            # Progress callback for
+            # tool-call streaming. Read by the tool-loop below.
+            try:
+                sess._progress_cb = progress_cb
+            except Exception:
+                pass
+            try:
+                sess.pinned_turn_type_id = turn_type_id
+            except Exception:
+                pass
+        if not sess:
+            return {"error": f"Could not build chat context (session_id={session_id} entity_id={entity_id})"}
+        # From here every exit ends this session's input through the turn's
+        # TurnEnd (send_message's `finally`). A core called without
+        # send_message has its own, run at the exit past the loop only.
+        _turn_end = _TURN_END.get() or TurnEnd()
+        _turn_end.session_id = sess.session_id
+
+        # THIS TURN's identity, distinct from the session's. A
+        # session_id spans every turn in a thread, so keying the live turn
+        # trace by it means a turn that died without clearing — the registry's
+        # crash branch — leaves a trace the NEXT
+        # turn in the same session is then attributed. A per-turn token makes
+        # that impossible by construction: turn_registry pops the trace by the
+        # token it saw on THIS turn's session frame, so a leftover from another
+        # turn is never returned, only evicted.
+        _turn_token = uuid.uuid4().hex
+
+        # The thread this turn runs in, keyed as the turn registry keys it.
+        # A person's message restarts the count of turns woken in it; a
+        # woken turn has no person in it until their words are read into it,
+        # and until then the build door spends the phase's AUTOMATIC repairs
+        # (memory_engine.CURRENT_TURN_WOKEN, tools.PHASE_AUTO_REPAIRS).
+        try:
+            from server.turn_registry import compose_thread_key as _compose_tk
+            _thread_key = _compose_tk(sess.entity_id, app_id, project_id, thread_id=thread_id,
+                                      history_context=history_context)
+        except Exception:  # noqa: BLE001
+            _thread_key = None
+        _person_in_turn = not system_turn
+        if _person_in_turn and not unseen_lane(app_id, getattr(sess, "interaction_context", None)):
+            person_wrote(_thread_key)
+        try:
+            from mastercode.memory_engine import CURRENT_TURN_WOKEN
+            CURRENT_TURN_WOKEN.set({"session_id": sess.session_id,
+                                    "woken": bool(system_turn) and not saved_request})
+        except Exception:  # noqa: BLE001
+            pass
+
+        # Circles upgrade: tell the SSE layer which session
+        # this turn runs under. The transient chat context mints a fresh
+        # uuid4 session_id that previously never left the runtime, which
+        # made POST /api/circles/nudge unreachable end-to-end (the nudge
+        # queue is keyed by session_id). brain_service maps this event to
+        # a 2: data frame.
+        if progress_cb is not None:
+            try:
+                await progress_cb({
+                    "event": "session_started",
+                    "session_id": sess.session_id,
+                    "turn_token": _turn_token,
+                })
+            except Exception as _cb_err:
+                log.debug("progress_cb session_started raised (non-fatal): %s", _cb_err)
+        # The question box: whether the Host
+        # asked anything in it this turn (_escalate). A reply after one is
+        # never caught by the go-ahead guard at the core/explicit levels only:
+        # the box IS the right way to ask.
+        _asked_in_box = False
+        # The values the tool loop shares with the helpers defined before it
+        # (runtime/turn_state.py): one object, so neither side reads a stale copy.
+        turn = TurnState()
+        _replies = TurnReplies(
+            progress_cb=progress_cb, sess=sess, turn_token=_turn_token,
+            result=lambda: turn.result, ct_reply_result=lambda: turn._ct_reply_result,
+            row_project_id=lambda: _row_project_id, turn_tags=lambda: _turn_tags,
+            asked_in_box=lambda: _asked_in_box, tools=lambda: tools)
+        _pieces = _replies._pieces
+        _cur_piece = _replies._cur_piece
+        _reply_at = _replies._reply_at
+        _input_at = _replies._input_at
+        _ga_firings = _replies._ga_firings
+        _settle = _replies._settle
+        _next_stream_cb = _replies._next_stream_cb
+        _send_narration = _replies._send_narration
+        _send_piece = _replies._send_piece
+        _reply_all = _replies._reply_all
+        _reply_written = _replies._reply_written
+        _person_spoke = _replies._person_spoke
+        _unjudged = _replies._unjudged
+        _go_ahead_record = _replies._go_ahead_record
+        _go_ahead_recorded = _replies._go_ahead_recorded
+
+        async def _end_on_error(res: dict) -> dict:
+            """A model call failed and the turn ends on its error: what the
+            person already read is stored first (keep_sent_reply),
+            and the trace goes with the turn."""
+            try:
+                await _settle(res)
+                keep_sent_reply(self.pool, sess.entity_id, sess.session_id, _turn_token,
+                                _live_turn_traces.get(_turn_token), ended="error")
+            except Exception as _ke:  # noqa: BLE001 — the error still reaches the person
+                log.warning("the reply sent before a model error was not stored "
+                            "(session %s): %s", sess.session_id, _ke)
+            clear_turn_trace(_turn_token)
+            return res
+
+        # Attachment-only send: an empty user_message would (a) produce an
+        # empty text content block in the multimodal build below, which the
+        # model API rejects, and (b) be skipped by write_turn_row (empty
+        # content), silently dropping the turn + its attachment metadata.
+        # The Circles route stubs this itself; /api/brain/messages permits
+        # empty text with attachments, so guard here for every caller.
+        if not (user_message or "").strip() and (attachments or images):
+            n = len(attachments or []) + len(images or [])
+            user_message = "(sent an attachment)" if n == 1 else f"(sent {n} attachments)"
+
+        # -- Structural injection screen on the raw chat input --
+        # User chat text is an untrusted instruction surface. Strip-and-flag
+        # role-break delimiters / instruction-override / governance-evasion
+        # BEFORE the text flows into the message history + the memory write,
+        # so a turn that fakes a role boundary or asserts "ignore your rules"
+        # can't structurally escape its slot. STRIP-AND-FLAG (never hard-block)
+        # — legit technical chat is preserved; the flag raises the threat
+        # signal in triage + the constitutional layer downstream.
+        _injection_flags: list[str] = []
+
+        # -- Secret shapes: pasted keys/credentials never reach inference --
+        # The composers warn at paste time from the SAME rules file
+        # (brain/mastercode/secret_shapes.json); this is the enforcing copy,
+        # because text reaches here from more doors than the two composers.
+        # Sits ABOVE the raw-message capture on purpose: a hard hit must not
+        # survive into the crisis gate's raw copy, the message array, the turn
+        # row or the memory write. Hard shapes only (vendor key prefixes, PEM,
+        # JWT, bearer, URL credential) — soft heuristics are logged, not cut.
+        try:
+            from mastercode import secret_shapes as _secret_shapes
+            user_message, _secret_findings = _secret_shapes.redact(user_message)
+            if _secret_findings:
+                log.warning(
+                    "Secret shapes on entity %s turn: redacted=%s soft=%s",
+                    sess.entity_id,
+                    [f.id for f in _secret_shapes.hard(_secret_findings)],
+                    [f.id for f in _secret_shapes.soft(_secret_findings)],
+                )
+        except Exception as _ss_err:
+            # Fail loud in the log, keep the turn: the gate test proves the
+            # module loads, so this branch is a deploy-time bug, not a policy.
+            log.warning("Secret-shape screen failed (non-fatal): %s", _ss_err)
+
+        # Governance floor: the crisis gate's lexical path checks the RAW
+        # message (pre-sanitize) — capture it before input_guard rewrites.
+        _raw_user_message = user_message
+        try:
+            from mastercode.runtime.input_guard import sanitize as _ig_sanitize
+            user_message, _injection_flags = _ig_sanitize(user_message)
+            if _injection_flags:
+                log.warning(
+                    "Input guard neutralized injection on entity %s turn: %s",
+                    sess.entity_id, _injection_flags,
+                )
+        except Exception as _ig_err:
+            # Fail-closed-conservative: the structural screen is cheap and
+            # pure; if it ever raises, keep the original text but flag the
+            # turn so the governance layers still treat it as suspect.
+            log.warning("Input guard failed (non-fatal, flagging turn): %s", _ig_err)
+            _injection_flags = ["input_guard_error"]
+
+        # No balance gate: there is no prepaid wallet.
+        # The platform bills harness compute on the monthly invoice, not
+        # inference turns.
+
+        # Touch session -- update last_activity_at, reactivate if idle.
+        # No-op for transient chat contexts (no DB row to touch).
+        await self._touch_if_durable(sess)
+
+        # Record user message
+        sess.messages.append({
+            "role": "user",
+            "content": user_message,
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        })
+        sess.message_count += 1
+
+        # Write turn row in background. Embed + insert into
+        # entity_memory as memory_type='turn'. Cron worker derives typed
+        # rows from these later. Fire-and-forget — chat hot path never
+        # blocks on the embed; failure is logged in the helper.
+        # Build the tag dict from the request context for both user +
+        # assistant turn rows. project_id is derived from the session
+        # interaction_context (`project:<id>`) when the caller didn't
+        # supply one — preserves the Workbench's per-project flow.
+        if project_id is None and sess.interaction_context:
+            _ic = sess.interaction_context
+            if _ic.startswith("project:"):
+                try:
+                    project_id = int(_ic.split(":", 1)[1])
+                except (ValueError, IndexError):
+                    project_id = None
+        # Source-driven threading: stamp the unified {kind,ref}
+        # descriptor on every turn row so recall can scope on it directly
+        # (the app the chat happens in decides what's first-class). Derived
+        # from the same interaction_context the recall ladder reads back.
+        # A BORROWED context means "think in that thread, do not write into
+        # it". The derivation above stays right for recall scope and for the
+        # origin of any dispatch this turn makes — it must not reach the turn
+        # ROWS. With history_context="project:N" the fired timer's own reply
+        # would be stamped project_id=N, and the project reader
+        # (routes/brain.py, em.project_id with no app_id exclusion) would
+        # render it beside the report the runner writes — the duplicate this
+        # hidden lane exists to prevent, arriving through a new door.
+        _row_project_id = None if sess.context_borrowed else project_id
+        from mastercode.memory_engine import derive_source_context
+        _src_ctx = derive_source_context(
+            sess.interaction_context,
+            project_id=project_id,
+            session_id=sess.session_id,
+            # Circles threads: a thread wins over the app mapping, so the turn
+            # rows land in {kind: thread} instead of the shared app:circles
+            # scope. None (every non-threaded caller) changes nothing.
+            thread_id=getattr(sess, "thread_id", None),
+        )
+        # Park it on the session for the prompt builders below. The per-turn
+        # prompt_log row needs the same descriptor (prompt_schema
+        # _write_prompt_log → migrations/v149_prompt_log_source_context.sql):
+        # without it the thread-context panel read the newest per-turn row for
+        # the ENTITY and showed whichever thread sent last. Set here, before
+        # every build_per_turn_prompt / log_injected_block call in this method,
+        # and deliberately the RECALL scope — the borrowed-context exception
+        # above is about turn ROWS (a message in a conversation nobody had);
+        # the prompt genuinely was built against the borrowed thread, and that
+        # is what a "what fires next" panel is reporting.
+        #
+        # One correction on top of the recall scope: an `app` turn is stamped
+        # with the app_id the CALLER declared, not the one the session's
+        # interaction_context implies, so replay and the A/B fan-out stop
+        # describing themselves as the self thread. The rule lives in
+        # memory_engine.derive_prompt_log_context beside derive_source_context
+        # — written out by hand here it collapsed only a falsy app_id, while
+        # the reader collapses "" | "chat" | "circles" alike, so app_id="chat"
+        # would have stamped a thread nothing ever reads. Nothing else reads
+        # sess.source_context — prompt_schema is its only consumer — so this
+        # cannot reach recall, the consolidator, or the turn rows.
+        from mastercode.memory_engine import derive_prompt_log_context
+        sess.source_context = derive_prompt_log_context(_src_ctx, app_id)
+        # The RECALL scope itself, for the memory block: it scopes
+        # the standing list to this thread's set and picks the thread audit's
+        # findings. Kept apart from
+        # sess.source_context above, which is the prompt_log label and differs
+        # for replay / A-B on purpose.
+        sess.recall_scope = _src_ctx
+        # ...and for anything this turn writes outside the turn writer
+        # (memory_engine.session_source_context): the turn's own conversation.
+        from mastercode.memory_engine import CURRENT_TURN_ROW, CURRENT_TURN_SCOPE
+        CURRENT_TURN_SCOPE.set({"session_id": sess.session_id, "scope": _src_ctx})
+        # ...and the turn itself: its token, the id it has from now on (on
+        # every row it writes, its message row too, and what it learns names
+        # it: memory_engine.turn_tokens_now), and its message row once that
+        # write starts below (none yet: a woken turn writes none, and an
+        # earlier turn's must never be named).
+        CURRENT_TURN_ROW.set({"session_id": sess.session_id, "task": None, "token": _turn_token})
+        # ...and its room, in the shape escalate records on its ticket below
+        # (asked_in): what the platform files during this turn — a ticket, a
+        # connector pairing — is linked to this conversation, so its card
+        # comes up here and the answer starts a turn here.
+        from mastercode.memory_engine import CURRENT_TURN_ROOM
+        _room_ic = getattr(sess, "interaction_context", None)
+        _room_thread = thread_id
+        _room_app, _room_proj = wakeup_delivery_room(app_id, project_id, _room_ic, _room_thread)
+        CURRENT_TURN_ROOM.set({"app_id": _room_app,
+                               "project_id": None if _room_thread else _room_proj,
+                               "thread_id": _room_thread,
+                               "interaction_context": _room_ic} if _room_app else None)
+        # The write-tag this turn runs under ('circles-replay' / 'circles-ab'
+        # for a variant, 'scheduled_task' for a fired wake-up): close_turn
+        # reads it to keep a variant's or a scheduled run's signal out of the
+        # conversation it borrowed (_run_close_turn).
+        sess.write_app_id = app_id
+        # A turn nobody reads but an evaluation: reads only, no hold, no
+        # wake, no go-ahead guard (its reply is the artifact being compared).
+        sess.unseen_lane = unseen_lane(app_id, getattr(sess, "interaction_context", None))
+        from mastercode.memory_engine import CURRENT_TURN_WRITE_TAG, CURRENT_TURN_TAUGHT
+        CURRENT_TURN_WRITE_TAG.set({"session_id": sess.session_id, "tag": app_id})
+        CURRENT_TURN_TAUGHT.set({"session_id": sess.session_id, "texts": []})
+        _turn_tags = {
+            "app_id": app_id,
+            "artifact_id": artifact_id,
+            "source_context": _src_ctx,
+            # The same token the client got on this turn's session frame. The
+            # chat windows swap their live copy of the turn for these rows by
+            # it; matching on text left a second copy on screen whenever the
+            # saved reply differed from what streamed.
+            "turn_token": _turn_token,
+        }
+        # An internal thread of a run of work: its
+        # rows carry its lane, and its history is only that lane's rows
+        # (below, recall_recent_turns lane=). The run's project holds every
+        # thread's replies; a thread reads its siblings' work items, never
+        # their turns (task_serial.CURRENT_WORK_LANE).
+        from mastercode.runtime.task_serial import CURRENT_WORK_LANE as _CWL
+        _work_lane = _CWL.get()
+        if _work_lane:
+            _turn_tags["task_lane"] = _work_lane
+
+        # Circles upgrade: persist attachment descriptors on
+        # the USER turn row only (names/types/sizes, never the base64 data
+        # — payloads would bloat entity_memory). The UI re-renders chips
+        # from this on reload.
+        _user_tags = _turn_tags
+        # A messaging connector's message someone else wrote (forwarded, or
+        # sent through a bot): who wrote it, as the kernel validated it
+        # (server/connectors/turns.py parse_origin), kept on the person's row.
+        # A list when several nudges nobody read went on as this one turn
+        # (turn_registry._requeue_undelivered), in the order of their texts.
+        _conn_origin = (getattr(sess, "frame", None) or {}).get("connector_origin")
+        if isinstance(_conn_origin, (dict, list)) and _conn_origin:
+            _user_tags = {**_user_tags, "connector_origin": _conn_origin}
+        # A message of a person's chat given to this turn (Ask Ivy):
+        # {kind, ref, message_id}, as the Circles route read it
+        # (routes/circles.py _carry_for_turn), kept on the person's row. A list
+        # when several nudges nobody read went on as this one turn.
+        _carry = (getattr(sess, "frame", None) or {}).get("carry")
+        if isinstance(_carry, (dict, list)) and _carry:
+            _user_tags = {**_user_tags, "carry": _carry}
+        # The sender's id for these words, as a nudge's user row keeps it
+        # (the drain, below): the row is how a retry of the send learns the
+        # words were delivered, once, whatever became of the process. The
+        # ids of several messages joined into this turn, as a list.
+        # Words of other sends that attached to this turn on the same words
+        # (turn_registry._attach_ids) are on it too: their ids ride this row
+        # with it, never a flag written before it.
+        _row_cid = row_client_id(_turn_row_ids(client_id))
+        if _row_cid is not None:
+            _user_tags = {**_user_tags, "client_id": _row_cid, **_sender_tags(_row_cid)}
+        if attachments or images:
+            try:
+                _att_meta = []
+                for _att in (attachments or []):
+                    _blk = _att.get("content_block") or {}
+                    _src = _blk.get("source") or {}
+                    _att_meta.append({
+                        "name": str(_att.get("name") or "")[:200],
+                        "kind": _blk.get("type") or "file",
+                        "media_type": _src.get("media_type") or "",
+                        # base64 inflates ~4/3; report the decoded size.
+                        "size": int(len(_src.get("data") or "") * 3 / 4),
+                    })
+                for _ in (images or []):
+                    _att_meta.append({"name": "", "kind": "image",
+                                      "media_type": "image/*", "size": 0})
+                if _att_meta:
+                    _user_tags = {**_user_tags, "attachments": _att_meta}
+            except Exception as _att_err:
+                log.debug("attachment meta build failed (non-fatal): %s", _att_err)
+
+        # The user row's write task — kept so a re-homed turn
+        # (runtime/turn_home.py, below the tool loop) can await the row and
+        # retag it instead of racing the embed. _write_opening_row starts it
+        # and stamps the row; the stamp stays in that step (it is handed in
+        # as None, and nothing here reads it).
+        _user_row_task = None
+        _user_row_stamp = None
+        # The writes of the rows of what the person sends into this turn (the
+        # drain, in the tool loop): awaited before a move at the turn's end,
+        # which takes them with the message (thread_choice.turn_rows).
+        _nudge_row_tasks: list = []
+        # The write of a rule taught in this message (_keep_taught, started by
+        # _write_opening_row below):
+        # awaited before the Host's thread pick or a re-home moves the
+        # exchange, so the rule exists to move with its message
+        # (thread_choice.move_exchange, turn_home.rehome_turn).
+        _taught_task = None
+        # The turn's opening row (_write_opening_row): the person's message or the
+        # Host's own request, and a rule the message teaches.
+        (_taught_task, _user_row_task) = await self._write_opening_row(
+            sess, CURRENT_TURN_ROW=CURRENT_TURN_ROW, CURRENT_TURN_TAUGHT=CURRENT_TURN_TAUGHT,
+            _row_project_id=_row_project_id, _taught_task=_taught_task, _turn_tags=_turn_tags,
+            _turn_token=_turn_token, _user_row_stamp=_user_row_stamp,
+            _user_row_task=_user_row_task, _user_tags=_user_tags, app_id=app_id,
+            host_request=host_request, project_id=project_id, system_turn=system_turn,
+            user_message=user_message)
+
+        # Orchestrator turn: no Grok triage. The host's own reasoning is the
+        # classifier — it answers directly or calls `dispatch`/`recall`/
+        # `escalate`. Context is deterministic (fixed recent-history window
+        # below); the input-guard flags still flow into the structural screen
+        # above and the CEIGAS gate.
+
+        # Token ceiling = the caller's max_tokens, else (None, the default)
+        # the routed model's OWN output limit, resolved with the route below
+        # (context_budget.output_limit_for).
+        # Length is otherwise shaped by the behavioral codebooks via the
+        # prompt, not by a kernel-side heuristic.
+        effective_max = max_tokens
+
+        # Conversation-depth P1:
+        # resolve the chat route UP FRONT so the history window below sizes
+        # in TOKENS against the model's context window, not just the legacy
+        # 12-message / 8000-char caps. The tool-loop section below reuses
+        # this route — it was previously (re)resolved there, AFTER history
+        # assembly, which was too late to size the window. Resolution is a
+        # pure config read; the CHAT_UNCONFIGURED check stays at its
+        # original site.
+        # ── Turn type ──
+        # Resolved from the thread's or the project's binding here, ahead of
+        # the chat route, because a typed turn's MODEL rides the route (step
+        # 2) and its tools ride the pick further down. None = an
+        # untyped turn, and everything after this block is exactly what it
+        # was. A binding the store could not read runs CLOSED
+        # (turn_types.closed_type): running it untyped would hand the turn
+        # more than the user approved.
+        sess.turn_type = None
+        _type_groups_allowed = None
+        # The type's skill, rendered once per turn and appended to the STATIC
+        # system message: bound here so the static append below the
+        # pick can read it on every path, including a pick that raised. When
+        # the skill does not ride, the block is ONE line saying which skill and
+        # why (host_skills.type_skill_line).
+        _type_skill_block = ""
+        _tt_project_id = None
+        _tt_ic = str(getattr(sess, "interaction_context", None) or "")
+        if _tt_ic.startswith("project:"):
+            try:
+                _tt_project_id = int(_tt_ic.split(":", 1)[1])
+            except (ValueError, IndexError):
+                _tt_project_id = None
+        _tt_thread_id = getattr(sess, "thread_id", None)
+        try:
+            from mastercode.runtime.turn_types import (
+                bound_groups as _bound_groups, category_map as _tt_category_map,
+                closed_type as _tt_closed, context_filter as _tt_context_filter,
+                resolve_session_type, route_for_type as _tt_route_for_type,
+                thread_model_pick as _tt_thread_model_pick,
+                type_skill as _tt_type_skill)
+            _pinned = getattr(sess, "pinned_turn_type_id", None)
+            # A scheduled task's own type wins over the thread's.
+            sess.turn_type = await resolve_session_type(
+                self.pool, sess.entity["id"], pinned_type_id=_pinned,
+                thread_id=_tt_thread_id, project_id=_tt_project_id)
+            # Once: a grant the person gave the NEXT
+            # turn of this type is taken here and cleared in one statement,
+            # and widens THIS turn only — the stored type is unchanged.
+            # Not for a PINNED turn: Once was given for the person's next turn
+            # of the type, and a background wake-up must not use it up.
+            if (sess.turn_type is not None and sess.turn_type.get("status") == "active"
+                    and not _pinned):
+                from mastercode.runtime.turn_type_approval import consume_once, with_once
+                _once = await consume_once(self.pool, sess.entity["id"], sess.turn_type["id"])
+                if _once:
+                    sess.turn_type = with_once(sess.turn_type, _once)
+                    log.info("turn type %r: a Once grant widens this turn: %s",
+                             sess.turn_type.get("name"), _once)
+        except Exception as _tt_err:  # noqa: BLE001
+            if _tt_thread_id or _tt_project_id is not None or getattr(sess, "pinned_turn_type_id", None):
+                log.warning("turn type resolution failed — this turn runs CLOSED: %s", _tt_err)
+                try:
+                    sess.turn_type = _tt_closed(f"turn type resolution failed: {_tt_err}")
+                except Exception:  # noqa: BLE001
+                    sess.turn_type = {"name": "(unresolved)", "status": "closed",
+                                      "tool_groups": [], "grant_names": [],
+                                      "keys": [], "bastions": [],
+                                      "context": {"memory": "none", "documents": False},
+                                      "closed_reason": str(_tt_err)}
+            else:
+                log.warning("turn type module unavailable; untyped turn unchanged: %s", _tt_err)
+            _bound_groups = lambda _t, _g: dict(_g)  # noqa: E731
+            _tt_category_map = lambda: {}  # noqa: E731
+            # A closed turn reads nothing, even when the module that says so
+            # could not be imported.
+            _tt_context_filter = (lambda _t: {"projects": None, "documents": False, "memory": "none"}  # noqa: E731
+                                  if (_t or {}).get("status") == "closed" else None)
+            _tt_type_skill = lambda _t: None  # noqa: E731
+            _tt_thread_model_pick = lambda _o: bool(_o)  # noqa: E731
+
+            async def _tt_route_for_type(_pool, _eid, _t, _route):  # noqa: E306
+                return _route
+        # The ROOT turn (runtime/root_turn): a turn in the Host's root thread.
+        # Its prompt and tools are built from root_turn's allowlist below (the
+        # rules, the platform's facts, the root thread's own history, this
+        # turn's words; machine_exec, gitea reads, escalate, close_turn), not
+        # from the normal prompt with things taken out. Every other turn has
+        # machine_exec taken out of its catalog.
+        _root_turn = False
+        try:
+            from mastercode.runtime import root_turn as _root_mod
+            _root_turn = _root_mod.is_root(getattr(sess, "turn_type", None))
+        except Exception as _rt_err:  # noqa: BLE001 - no module, no root turn
+            log.warning("root turn module unavailable; this turn is not a root turn: %s", _rt_err)
+            _root_mod = None
+        # Which thread this message belongs to, when the send route found no
+        # clear match: the Host picks in this turn (runtime/thread_choice),
+        # with one more tool. Never for a root turn or a platform-started one.
+        _choice = None
+        _tchoice = None
+        if not _root_turn and not system_turn:
+            try:
+                from mastercode.runtime import thread_choice as _tchoice
+                _choice = _tchoice.from_frame(getattr(sess, "frame", None))
+            except Exception as _tc_err:  # noqa: BLE001 — the message stays where it landed
+                log.debug("thread choice not read (non-fatal): %s", _tc_err)
+                _choice = None
+        if _choice is not None:
+            # The pick can still file this turn elsewhere when it ends, after
+            # close_turn named the thread's topic and title: they are written
+            # then, to the thread the turn ends in (close_turn.finish_topic,
+            # below the pick). A turn with no pick writes them at once.
+            from mastercode.runtime.close_turn import TURN_TOPIC
+            TURN_TOPIC.set({"session_id": sess.session_id, "entity_id": sess.entity_id,
+                            "landed": dict(_src_ctx) if isinstance(_src_ctx, dict) else None})
+        # The type this turn runs under, recorded for this
+        # turn's context (an agent or build it starts stamps it on its
+        # entity_tasks row, v186) and reported to the turn registry (the
+        # timeline names the type of every running turn). This runs inside
+        # the turn's own task, so a turn beside it never sees this value.
+        try:
+            from mastercode.runtime.turn_types import set_current_turn_type
+            set_current_turn_type(getattr(sess, "turn_type", None))
+        except Exception as _ct_err:  # noqa: BLE001 - a record never fails a turn
+            log.debug("current turn type not recorded (non-fatal): %s", _ct_err)
+        # ...and the name every memory row this turn writes is stamped with
+        # (entity_memory.turn_type): the platform's record, never the model's.
+        try:
+            from mastercode.memory_engine import CURRENT_TURN_TYPE as _CTT
+            from mastercode.memory_slots import turn_type_label as _tt_label
+            _turn_type_name = _tt_label(getattr(sess, "turn_type", None))
+            _CTT.set({"session_id": sess.session_id, "name": _turn_type_name})
+            _turn_type_known = getattr(sess, "_turn_type_known", None)
+            if _turn_type_known is not None:
+                _turn_type_known["name"] = _turn_type_name
+                _turn_type_known["event"].set()
+        except Exception as _ctt_err:  # noqa: BLE001 - a stamp never fails a turn
+            log.debug("turn type stamp not set (non-fatal): %s", _ctt_err)
+        if progress_cb is not None:
+            _tt_now = getattr(sess, "turn_type", None) or {}
+            try:
+                await progress_cb({
+                    "event": "turn_type",
+                    "turn_type_id": (str(_tt_now.get("id")) if _tt_now.get("status") == "active"
+                                     and _tt_now.get("id") else None),
+                    # "untyped" said outright: the registry must tell an
+                    # untyped turn from one whose type has not arrived yet.
+                    "turn_type_status": (_tt_now.get("status") or "untyped") if _tt_now else "untyped",
+                })
+            except Exception as _cb_err:  # noqa: BLE001
+                log.debug("progress_cb turn_type raised (non-fatal): %s", _cb_err)
+        _type_skill_name = _tt_type_skill(getattr(sess, "turn_type", None))
+        if sess.turn_type is not None:
+            _type_groups_allowed = set(sess.turn_type.get("tool_groups") or [])
+        if _type_skill_name:
+            # The type's skill is loaded HERE, beside the type, and rendered
+            # with its own header.
+            try:
+                # The Host's own skill of that name first, then the platform's
+                # disk default (runtime/host_skills.py). A Host
+                # skill rides its core — the standard keeps it under the cut,
+                # and it is checked against the standard as it is now first —
+                # with a pointer to its reference section.
+                from mastercode.runtime.host_skills import load_type_skill as _tt_load_skill
+                from mastercode.runtime.host_skills import type_skill_line as _tt_skill_line
+                _tsk = await _tt_load_skill(self.pool, sess.entity_id, _type_skill_name)
+                if _tsk is not None and _tsk["body"]:
+                    _type_skill_block = (
+                        f"## Turn type {sess.turn_type.get('name')} — skill `{_type_skill_name}`\n"
+                        "Every turn of this thread reads this skill.\n\n" + _tsk["body"])
+                else:
+                    # Missing, retired, failing the standard or unreadable:
+                    # the turn says so in one line rather than running as if
+                    # the type had no skill.
+                    _type_skill_block = _tt_skill_line(sess.turn_type.get("name"), _type_skill_name, _tsk)
+                    log.warning("turn type %r skill %r does not ride: %s", sess.turn_type.get("name"),
+                                _type_skill_name, (_tsk or {}).get("problem"))
+            except Exception as _tsk_err:  # noqa: BLE001
+                log.warning("turn type %r skill %r could not be loaded: %s",
+                            sess.turn_type.get("name"), _type_skill_name, _tsk_err)
+                try:
+                    from mastercode.runtime.host_skills import type_skill_line as _tt_skill_line
+                    _type_skill_block = _tt_skill_line(sess.turn_type.get("name"), _type_skill_name,
+                                                       error=_tsk_err)
+                except Exception:  # noqa: BLE001 - the log line above still says it
+                    _type_skill_block = ""
+
+        from mastercode.inference_config import resolve_role_route as _rrr
+        from mastercode import context_budget as _cb
+        _chat_route = await _rrr(
+            self.pool, sess.entity_id, "chat", thread_override=thread_override,
+        )
+        # A typed turn with a model of its own runs on it. The
+        # same route dict shape rides everything below — the window sizing,
+        # the catalog, every call of the tool loop — so the type's model is
+        # THE model of the turn, not a late substitution.
+        # A per-thread MODEL pick is the person's more specific choice and
+        # wins over the type's model. The override dict
+        # also carries the context budget and the spend allowance, so its
+        # truthiness is not a pick — only a normalized provider + model is.
+        if (sess.turn_type is not None and sess.turn_type.get("model")
+                and not _tt_thread_model_pick(thread_override)):
+            _chat_route = await _tt_route_for_type(
+                self.pool, sess.entity_id, sess.turn_type, _chat_route)
+        # Which ROLE this turn runs on — stamped on every tool_call_log row
+        # (runtime/tool_call_ledger) so a model's tool-call record is per
+        # role, the same axis the routing table is keyed on.
+        #
+        # Every surface runs on `chat`. The `tutor` role was removed after 14
+        # days with no attributable calls: its
+        # own design already said an unrouted tutor falls back to this route
+        # and the Orchestrator row said "no model of its own", so the seat
+        # existed to let a user split the editor onto a second model and
+        # nobody did.
+        # A per-thread override still wins — it is passed to the resolver.
+        _chat_role = "chat"
+        _ctx_window = None        # model context_length, tokens (None = legacy caps)
+        _ctx_budget = None        # effective per-turn input budget (None = unbudgeted)
+        # What each round's pre-send trim holds the request to: the window's
+        # budget with the per-thread dial, but not the Host's default history
+        # ceiling. The ceiling bounds the HISTORY a turn starts with (and the
+        # spend meter's round); a result the turn reads itself is bounded by
+        # the window, so a reader's window-sized page is not swapped for a
+        # truncation note the moment it lands.
+        _round_budget = None
+        # What the spend meter counts a round in (turn_allowance.meter_budget):
+        # _ctx_budget, or with an unknown window the legacy caps' round.
+        _spend_ctx_budget = None
+        _hist_budget_tokens = None
+        _budget_override = None
+        # The per-turn SPEND ALLOWANCE in dollars (runtime/turn_allowance.py).
+        # Read here, beside the context dial, because they are one setting in
+        # the person's head and they live in the same two stores.
+        _turn_allowance_usd = None
+        _turn_defaults: dict = {}
+        _default_rounds = None
+        # The model's window, the thread's budget and allowance, and the Host's
+        # bounded defaults (_read_turn_window).
+        (_budget_override, _ctx_window, _default_rounds, _turn_allowance_usd, _turn_defaults,
+         effective_max) = await self._read_turn_window(
+            sess, _budget_override=_budget_override, _cb=_cb, _chat_route=_chat_route,
+            _ctx_window=_ctx_window, _default_rounds=_default_rounds, _src_ctx=_src_ctx,
+            _turn_allowance_usd=_turn_allowance_usd, _turn_defaults=_turn_defaults, app_id=app_id,
+            effective_max=effective_max, thread_override=thread_override)
+        if not effective_max:
+            effective_max = _cb.DEFAULT_OUTPUT_RESERVE
+        # What history, the mid-turn trim and the spend projection keep free
+        # for the reply: a realistic reply, not the output limit. The limit
+        # governs each REQUEST — provider_gateway clamps it
+        # to the room the window leaves after that call's input.
+        _reply_reserve = _cb.reply_reserve(_ctx_window)
+        # The tool-result wall and every reader's page size follow the routed
+        # model's window for this whole turn (tool_result_wall.TOOL_WALL_WINDOW).
+        _cb.set_tool_wall_window(_ctx_window)
+        log.debug("Token ceiling: %d (caller_max=%s, reply reserve %d)",
+                  effective_max, max_tokens, _reply_reserve)
+
+        # Resolve the active-model visibility consumer ONCE for this turn
+        # (C7/C10/C21). Threaded into every live memory retrieval that feeds the
+        # system prompt so visibility.filter_rows runs on the live path — a
+        # memory scoped "deny: model:<this>" is dropped before it reaches the
+        # prompt. None → visibility no-ops (same as before this wire).
+        _consumer_model_id = self._resolve_consumer_model_id(sess.entity)
+        if _consumer_model_id:
+            log.debug("Memory visibility consumer for turn: %s", _consumer_model_id)
+
+        # Build message array
+        # --- Inject unread inbox messages into system prompt ---
+        _inbox_block = ""
+        try:
+            _ctx = ContextStore(self.pool, sess.entity_id)
+            # A root turn reads no inbox; the messages stay unread for the
+            # Host's other threads.
+            _inbox_raw = None if _root_turn else await _ctx.get("inbox/messages.json")
+            if _inbox_raw:
+                _inbox = json.loads(_inbox_raw) if isinstance(_inbox_raw, str) else _inbox_raw
+                _unread = [m for m in _inbox if not m.get("read")]
+                # A notice naming another host is another party's words.
+                _turn_taint.mark_inbox(_unread)
+                if _unread:
+                    _inbox_lines = ["## Messages For You"]
+                    for _m in _unread:
+                        _src = _m.get("source", "system")
+                        _ts = _m.get("timestamp", "")[:19]
+                        _inbox_lines.append(f"### From {_src} ({_ts})")
+                        _inbox_lines.append(_m.get("content") or "")
+                        _inbox_lines.append("")
+                        _m["read"] = True
+                    _inbox_block = "\n".join(_inbox_lines)
+                    await _ctx.put("inbox/messages.json", json.dumps(_inbox))
+        except Exception as e:
+            log.warning("Inbox message load failed: %s", e)
+
+        # Split system prompt into static (cacheable) and dynamic (per-message) parts.
+        # The marker lets provider_gateway create two system blocks:
+        # block 1 (static) gets cache_control, block 2 (dynamic) does not.
+        _sys_content = sess.system_prompt + "\n\n<!-- CACHE_BREAK -->"
+        if _root_turn:
+            # The root turn's static half is root_turn's rules and nothing of
+            # the Host's standing prompt (memory, people, skills, map).
+            _sys_content = _root_mod.ROOT_RULES.strip() + "\n\n<!-- CACHE_BREAK -->"
+
+        # The FRAME's send-time facts (host prompt map phase 4): what this
+        # call knows that the transient builder did not — the attachment
+        # kinds, the referenced artifact, a platform-started turn. Stored on
+        # the session so `_b_frame` (a per-turn schema block) reads one dict.
+        try:
+            # Built FRESH every turn from the platform keys the transient
+            # builder set plus THIS request's validated field — never from
+            # last turn's dict, so a durable session (voice/demo) cannot
+            # carry "Attached this turn" into a turn with no attachment.
+            # On the durable path the request field
+            # arrives here as `frame`, on the transient path it was spread
+            # into sess.frame by the builder; both are the validated shape.
+            _base = getattr(sess, "frame", None) or {}
+            _req = frame if isinstance(frame, dict) else _base
+            _fr: dict = {k: _base[k] for k in ("app_id", "project_id") if _base.get(k) is not None}
+            for _k in ("view", "pills"):
+                if _req.get(_k):
+                    _fr[_k] = _req[_k]
+            # What the platform's own send routes say about the turn (never
+            # the page: a client's frame is validated to view/pills at the
+            # route): the topic Circles placed the message in, and the
+            # threads the Host may move it to (runtime/thread_choice).
+            for _k in ("topic", "thread_choice"):
+                if isinstance(_req.get(_k), dict):
+                    _fr[_k] = _req[_k]
+            # Client-sent text that reaches the prompt is shape-checked and
+            # capped, like view/pills: an attachment kind is image, document
+            # or file; an artifact id is a short token.
+            _kinds: list[str] = []
+            for _att in attachments or []:
+                _blk = (_att or {}).get("content_block") or {} if isinstance(_att, dict) else {}
+                _t = str(_blk.get("type") or "")
+                _kinds.append(_t if _t in ("image", "document") else "file")
+            _kinds.extend("image" for _ in (images or []))
+            if _kinds:
+                _fr["attachments"] = _kinds
+            # Names of the attachments that were also KEPT on this Host (the
+            # Circles route stores each one), so the host knows it can read
+            # them again in a later turn. Client text: one line each, capped.
+            _kept, _not_kept = [], []
+            for _att in attachments or []:
+                if not isinstance(_att, dict):
+                    continue
+                _n = re.sub(r"[\r\n\t'\"]", " ", str(_att.get("name") or "")).strip()[:120]
+                if _n and _att.get("kept_on_host"):
+                    _kept.append(_n)
+                elif _n and _att.get("keep_note"):
+                    _why = re.sub(r"[\r\n\t]", " ", str(_att["keep_note"]))[:120]
+                    _not_kept.append(f"{_n} ({_why})")
+            # Every attached name, kept or not: a workspace_file read of one
+            # answers where its content is (tools._attachment_miss).
+            try:
+                from mastercode.runtime.tools import TURN_ATTACHMENTS as _TA
+                _TA.set(tuple(
+                    str(_att.get("name") or "").strip()
+                    for _att in attachments or []
+                    if isinstance(_att, dict) and str(_att.get("name") or "").strip()))
+            except Exception as _ta_err:  # noqa: BLE001
+                log.debug("turn attachment names not set (non-fatal): %s", _ta_err)
+            if _kept:
+                _fr["attachments_kept"] = _kept[:20]
+            if _not_kept:
+                _fr["attachments_not_kept"] = _not_kept[:20]
+            if artifact_id:
+                _aid = re.sub(r"[^\w.:-]", "", str(artifact_id))[:80]
+                if _aid:
+                    _fr["artifact_id"] = _aid
+            if system_turn:
+                _fr["system_turn"] = True
+            sess.frame = _fr
+        except Exception as _fr_err:  # noqa: BLE001
+            log.debug("frame send-time facts failed (non-fatal): %s", _fr_err)
+
+        # Schema PER_TURN blocks — the frame, memory, app state. Refresh every
+        # turn so retrieval follows the conversation.
+        _root_facts: dict = {}
+        # None when its builder fails; the context ledger reads it.
+        _pt_block = None
+        try:
+            if _root_turn:
+                # The root turn's per-turn half: the frame, the timeline and
+                # diagnostics, each from its own builder, nothing else.
+                _root_facts = await _root_mod.platform_facts(self, sess, user_message)
+                _pt_block = "\n\n".join(_root_facts[_b] for _b in _root_mod.ROOT_PROMPT_BLOCKS[1:]
+                                          if _root_facts.get(_b))
+            else:
+                from mastercode.runtime.prompt_schema import build_per_turn_prompt
+                _pt_block = await build_per_turn_prompt(self, sess, user_message)
+            if _pt_block:
+                _sys_content += "\n\n" + _pt_block
+        except Exception as e:
+            # Loud, counted degradation: as a swallowed warning the prompt
+            # silently lost memory/tasks and nobody noticed for months.
+            self._prompt_degrade = getattr(self, "_prompt_degrade", {})
+            self._prompt_degrade["per_turn_schema"] = self._prompt_degrade.get("per_turn_schema", 0) + 1
+            log.error(
+                "PROMPT DEGRADED for entity %d: per-turn schema block failed "
+                "(occurrence #%d this process) — memory/tasks missing this turn: %s",
+                sess.entity_id, self._prompt_degrade["per_turn_schema"], e,
+            )
+
+        # Two-system per-turn context: spike
+        # classification is the shared trigger; PERSONALITY expression and
+        # CONSTITUTION context render as separate blocks. The two systems
+        # meet only here, in the prompt — neither writes the other.
+        from mastercode.runtime.prompt_schema import log_injected_block
+
+        # One turn embedding, shared by classification and both retrievals.
+        # Canonical config-driven path (bridge or pod-local per entity config)
+        # — without it the classifier is starved.
+        _turn_embedding = None
+        try:
+            from mastercode.memory_engine import _get_memory_embedding
+            _turn_embedding = await _get_memory_embedding(user_message)
+        except Exception as e:
+            log.warning(
+                "Turn embedding unavailable for entity %d — similarity "
+                "retrieval degraded this turn: %s", sess.entity_id, e,
+            )
+
+        # The crisis floor's contrast groups are built once per process from
+        # the turn's embedder, in the background (runtime/crisis.py). A turn
+        # classifies against them so the floor adds no embed of its own.
+        _crisis_class = None
+        try:
+            from mastercode.runtime import crisis as _crisis_mod
+            _crisis_mod.ensure_centroids_background(_get_memory_embedding)
+            _crisis_class = _crisis_mod.classify_spike(user_message, embedding=_turn_embedding)
+        except Exception as e:
+            log.warning("Crisis contrast classification failed (lexical floor still runs): %s", e)
+
+        # -- Governance floor: crisis check (SB 243 §22602(b)(1)) --
+        # ENTRY-side so every caller is covered from one point — main lane,
+        # skill dispatch, CHAT_UNCONFIGURED. A hit never gates the model and
+        # never writes or streams text as the Host: the
+        # audit row, the person's notice frame and the model's fact block
+        # (_crisis_flagged), then the turn runs as any other.
+        # Detection = the always-on lexical floor plus the crisis_self_harm
+        # centroid when the embed lane is up (detect_crisis never raises).
+        # It reads the PERSON's words. A turn the platform started
+        # (_platform_started: a wake-up after a dispatch round, a fired timer
+        # or task) has the platform's brief for its message — an agent's
+        # report, a task's prompt — so a phrase quoted there is not checked
+        # here: a notice raised on it would be raised on words the person
+        # never wrote. A request the person saved while the Host was starting
+        # runs as a system turn but is their own words, so it is checked.
+        # Words the person sends INTO a platform-started turn are checked at
+        # the nudge drain like any nudge.
+        _crisis = None
+        if not _platform_started:
+            try:
+                from mastercode.runtime.crisis import detect_crisis
+                _crisis = detect_crisis(
+                    _raw_user_message, embedding=_turn_embedding, spike=_crisis_class,
+                )
+            except Exception as _crisis_err:
+                # A statutory floor never inherits a silent-total-failure mode:
+                # if detection itself breaks, the lexical floor
+                # still runs.
+                log.error(
+                    "Crisis detection raised for entity %s — lexical floor still runs: %s",
+                    sess.entity_id, _crisis_err,
+                )
+                try:
+                    from mastercode.runtime.crisis import crisis_lexical_hit
+                    if crisis_lexical_hit(_raw_user_message):
+                        _crisis = {"category": "crisis_self_harm", "path": "lexical"}
+                except Exception as _lex_err:
+                    log.error("Crisis lexical floor ALSO raised (entity %s): %s",
+                              sess.entity_id, _lex_err)
+        if _crisis:
+            log.warning(
+                "CRISIS CHECK flagged entity %d's message (path=%s) — the model runs and is told; "
+                "the person's app gets the platform's notice",
+                sess.entity_id, _crisis.get("path"),
+            )
+            # The fact rides the per-turn half of the system prompt (split off
+            # below at CACHE_BREAK, after history), beside the frame.
+            _sys_content += "\n\n" + await _crisis_flagged(
+                self, sess, progress_cb, _crisis.get("path"), [_raw_user_message], nudge=False)
+
+        # MODEL CALIBRATION: per-model style counterweight.
+        # The codebook says who she is; this counters what the serving
+        # MODEL was trained to do (Opus 5 trailing caveats / verbosity /
+        # scope creep — see runtime/model_style.py). Keyed on the chat
+        # route resolved above; models with no registered block (Sonnet,
+        # OSS) get nothing, which is the deliberate default.
+        _style_block = None
+        try:
+            from mastercode.runtime.model_style import build_model_style_block
+            _style_block = "" if _root_turn else build_model_style_block(_chat_route.get("model"))
+            if _style_block:
+                _sys_content += "\n\n" + _style_block
+                await log_injected_block(
+                    self, sess, "model_style", _style_block,
+                )
+        except Exception as e:
+            self._prompt_degrade = getattr(self, "_prompt_degrade", {})
+            self._prompt_degrade["model_style"] = self._prompt_degrade.get("model_style", 0) + 1
+            log.error(
+                "PROMPT DEGRADED for entity %d: model calibration failed "
+                "(occurrence #%d this process) — block missing this turn: %s",
+                sess.entity_id, self._prompt_degrade["model_style"], e,
+            )
+
+        # CONSTITUTION: rules + knowledge that apply this turn.
+        _const_block = None
+        try:
+            from mastercode.constitution.context import build_context_block
+            # Rules and knowledge come from memory: not in a root turn.
+            # A rule the memory block already lists ("Things You Were
+            # Taught", built above into _sys_content) is left out, so a rule
+            # never renders twice; this block adds what the message calls up
+            # by meaning.
+            _const_block = "" if _root_turn else await build_context_block(
+                self.pool, sess.entity_id, user_message, _turn_embedding,
+                session=sess,
+                memory_engine=self.memory,
+                consumer=_consumer_model_id,
+                already_shown=_sys_content,
+            )
+            if _const_block:
+                _sys_content += "\n\n" + _const_block
+                await log_injected_block(
+                    self, sess, "constitution_context", _const_block,
+                )
+        except Exception as e:
+            self._prompt_degrade = getattr(self, "_prompt_degrade", {})
+            self._prompt_degrade["constitution_context"] = self._prompt_degrade.get("constitution_context", 0) + 1
+            log.error(
+                "PROMPT DEGRADED for entity %d: constitution context failed "
+                "(occurrence #%d this process) — rules missing this turn: %s",
+                sess.entity_id, self._prompt_degrade["constitution_context"], e,
+            )
+
+        if _inbox_block:
+            _sys_content += "\n\n" + _inbox_block
+            try:
+                from mastercode.runtime.prompt_schema import log_injected_block as _lib_inbox
+                await _lib_inbox(self, sess, "inbox", _inbox_block)
+            except Exception as _ib_err:  # noqa: BLE001
+                log.debug("inbox provenance log failed (non-fatal): %s", _ib_err)
+
+        # Cache-stable wire shape. The per-turn blocks assembled above change every turn,
+        # and sitting in front of history they made every token after them
+        # uncacheable: the cached read stayed pinned at the static block
+        # (1526, 1526, 1526, 1526) while the prompt grew past 20k. Splitting
+        # here and re-attaching the dynamic half AFTER history makes
+        # static+history a byte-stable prefix — the same measurement then
+        # showed the cached read GROWING with the thread (1526 -> 16537).
+        #
+        # _sys_content is still assembled whole above so the budget math below
+        # measures it exactly once, unchanged. Only PLACEMENT changes here.
+        # The dynamic half keeps role="system" (it IS operator content); each
+        # wire adapter decides how to carry a non-leading system message —
+        # provider_gateway._anthropic_messages_payload turns it into a user
+        # turn, which is the shape the A/B actually measured.
+        _static_sys, _dyn_sys = _split_cache_break(_sys_content)
+        _thread_state_block = ""   # consolidator off: the thread's goal + last handoff
+        grok_messages = [{"role": "system", "content": _static_sys}]
+        # The PERSON's words in this request, by reference — the turn's user
+        # message and every mid-turn nudge, as the exact dicts appended below.
+        # The pre-send trim is handed this list and matches on object identity
+        # (context_budget._protect_indices), so a question is never identified
+        # by position or by guessing at its content: a question that opens with
+        # a markdown heading used to be mistaken for an injected block and
+        # evicted. Nothing is written INTO the messages, so nothing can reach
+        # the wire or the turn row. The runtime's own steering (dead-tool
+        # notices, STOP directives) is deliberately absent — that stays
+        # evictable under pressure.
+        _protect_msgs: list = []
+
+        # Add conversation history (trimmed to budget) -- skip if clear_history
+        history_chars = 0
+        history_msgs = []
+        # The recalled rows the window was cut from, with what it was cut to
+        # (max_hist / max_msgs): a search-mode turn re-fits them with notes.
+        _hist_rows = None
+        _hist_fit: dict = {}
+        _tool_trail_block = ""   # built after history (tool_trail)
+        _trail_turns: list = []
+        # A turn ABOUT the host (prefire_tools.is_self_turn),
+        # decided ONCE here on the user's own words: it reads a wider trail.
+        _self_turn = False
+        _self_trail_turns = None
+        _self_trail_calls = None
+        try:
+            from mastercode.runtime.prefire_tools import (
+                is_self_turn as _is_self_turn,
+                SELF_TRAIL_TURNS as _STT, SELF_TRAIL_CALLS as _STC)
+            # Only the person's own words decide it. A turn the platform
+            # started (a wake-up, a continuation after a result, a fired task)
+            # runs on the platform's brief, whose wording ("your build", "what
+            # you started") reads as a question about the Host: a continuation
+            # after a compare carried the
+            # 25,409-char inventory for a brief nobody asked about the Host.
+            # A saved request is the person's words (_platform_started).
+            _self_turn = (not _platform_started) and bool(_is_self_turn(user_message))
+            if _self_turn:
+                _self_trail_turns, _self_trail_calls = _STT, _STC
+        except Exception as _st_err:  # noqa: BLE001
+            log.debug("self-turn detection skipped (non-fatal): %s", _st_err)
+        # The conversation history this turn reads (_load_turn_history): the window
+        # budget, the recent turns, the Host's own notes on the turns that fell
+        # out of the window (evicted_record) and the thread's state block.
+        (_ctx_budget, _hist_fit, _hist_rows, _record_msg, _round_budget, _spend_ctx_budget,
+         _src_ctx, _thread_state_block, history_chars, history_msgs) = await self._load_turn_history(
+            sess, _budget_override=_budget_override, _cb=_cb, _chat_route=_chat_route,
+            _ctx_budget=_ctx_budget, _ctx_window=_ctx_window, _default_rounds=_default_rounds,
+            _hist_budget_tokens=_hist_budget_tokens, _hist_fit=_hist_fit, _hist_rows=_hist_rows,
+            _reply_reserve=_reply_reserve, _root_mod=_root_mod, _root_turn=_root_turn,
+            _round_budget=_round_budget, _spend_ctx_budget=_spend_ctx_budget, _src_ctx=_src_ctx,
+            _sys_content=_sys_content, _thread_state_block=_thread_state_block,
+            _turn_allowance_usd=_turn_allowance_usd, _turn_defaults=_turn_defaults,
+            _work_lane=_work_lane, clear_history=clear_history,
+            derive_source_context=derive_source_context, history_chars=history_chars,
+            history_msgs=history_msgs, session_id=session_id, user_message=user_message)
+
+        # Where the history sits in the message list, and the rows it was cut
+        # from: a search-mode turn re-fits the same rows with each turn's
+        # tool note once its tool catalog exists (below). Nothing
+        # reads these in groups mode.
+        _hist_at = len(grok_messages)
+        grok_messages.extend(history_msgs)
+
+        # TOOL TRAIL: the host's own recent tool calls in this
+        # thread + every next_step still pending, as a per-turn block. Tool
+        # results do not survive a turn boundary (history is prose), so the
+        # model used to re-derive "did the login land / which task was that"
+        # from the user's words — and fabricated both. This is the record that makes inferring unnecessary
+        # (runtime/tool_trail.py). Same scope as history; skipped on replay
+        # (history_before) so a variant sees exactly what the original saw.
+        if (not clear_history and _src_ctx
+                and not getattr(sess, "history_before", None)):
+            try:
+                from mastercode.memory_engine import recall_tool_trail
+                from mastercode.runtime.tool_trail import (
+                    render_tool_trail, TOOL_TRAIL_MAX_TURNS as _TT_MAX)
+                # A turn ABOUT the host (_self_turn, decided above) reads the
+                # thread's record, not three turns of it — a self-review then
+                # quotes refusals instead of recalling them.
+                _trail_turns = await recall_tool_trail(
+                    self.pool, sess.entity_id, sess.session_id,
+                    source_context=_src_ctx,
+                    limit=_self_trail_turns or _TT_MAX)
+                if _root_turn:
+                    # A marked turn's calls are left out of a root turn's
+                    # trail, as its words are withheld from its history.
+                    _trail_turns = _root_mod.withhold_untrusted(_trail_turns)
+                from mastercode.runtime import turn_taint as _tt_trail
+                _tt_trail.mark_rows(_trail_turns, "the tool trail of earlier turns")
+                _tool_trail_block = render_tool_trail(
+                    _trail_turns, max_turns=_self_trail_turns, max_calls=_self_trail_calls)
+            except Exception as _tt_err:  # noqa: BLE001
+                log.debug("tool trail build failed (non-fatal): %s", _tt_err)
+                _tool_trail_block = ""
+            if _tool_trail_block:
+                _dyn_sys = (_dyn_sys + "\n\n" + _tool_trail_block) if _dyn_sys \
+                    else _tool_trail_block
+                try:
+                    from mastercode.runtime.prompt_schema import log_injected_block
+                    await log_injected_block(self, sess, "tool_trail", _tool_trail_block)
+                except Exception as _tl_err:  # noqa: BLE001
+                    log.debug("tool trail provenance log failed (non-fatal): %s", _tl_err)
+
+        if _thread_state_block:
+            _dyn_sys = (_thread_state_block + "\n\n" + _dyn_sys) if _dyn_sys \
+                else _thread_state_block
+            try:
+                from mastercode.runtime.prompt_schema import log_injected_block
+                await log_injected_block(self, sess, "thread_state", _thread_state_block)
+            except Exception as _tsl_err:  # noqa: BLE001
+                log.debug("thread state provenance log failed (non-fatal): %s", _tsl_err)
+
+        # The per-turn half of the system prompt rides HERE — after history,
+        # immediately before the current user message — so everything above it
+        # is byte-stable across turns and can be cached. Empty when no PER_TURN
+        # block fired, in which case the wire is byte-identical to before.
+        _dyn_idx = None
+        if _dyn_sys:
+            grok_messages.append({"role": "system", "content": _dyn_sys})
+            _dyn_idx = len(grok_messages) - 1
+        # Per-turn blocks computed BELOW this point (a referenced artifact, an
+        # attached-image hint, the felt state, the codebook's internal state,
+        # conversation awareness) used to be appended to grok_messages[0] —
+        # the STATIC, cached system message — after the split above, so on
+        # every turn one of them fired the whole cached prefix was
+        # invalidated. They are
+        # collected here and flushed into the dynamic half instead, and each
+        # one is logged to prompt_log like the schema blocks, so the mirror
+        # sees them.
+        _late_blocks: list = []
+
+        # Add current message (multimodal if images or attachments provided)
+        # This turn's message, with the pictures and files sent with it
+        # (_add_current_message).
+        await self._add_current_message(_protect_msgs=_protect_msgs, attachments=attachments,
+            grok_messages=grok_messages, images=images, user_message=user_message)
+
+        # Orchestrator turn: no triage-gated drill / RAG pre-loading. Per-turn
+        # memory is injected via prompt_schema._b_memory -> build_memory_context;
+        # the host gathers extra memory on demand via the `recall` tool.
+
+        # Flush the per-turn blocks into the DYNAMIC half — the system
+        # message that rides after history — never into the cached static one.
+        # When no per-turn schema block fired this turn there is no dynamic
+        # message yet; one is inserted right before the current user message.
+        if _late_blocks:
+            _late_text = "\n\n".join(t for _, t in _late_blocks if t)
+            if _dyn_idx is not None and 0 < _dyn_idx < len(grok_messages):
+                grok_messages[_dyn_idx]["content"] += "\n\n" + _late_text
+            else:
+                _ins = len(grok_messages) - 1 if grok_messages and grok_messages[-1].get("role") == "user" \
+                    else len(grok_messages)
+                grok_messages.insert(_ins, {"role": "system", "content": _late_text})
+                _dyn_idx = _ins
+            try:
+                from mastercode.runtime.prompt_schema import log_injected_block as _lib_late
+                for _ln, _lt in _late_blocks:
+                    if _lt:
+                        await _lib_late(self, sess, _ln, _lt)
+            except Exception as _lb_err:  # noqa: BLE001
+                log.debug("late-block provenance log failed (non-fatal): %s", _lb_err)
+
+        behavioral = sess.entity.get("behavioral_params") or {}
+        # Same question as the tool gate below, asked once. This used to be a
+        # second local derivation of the enrollment tier; a second derivation is
+        # how the two ends drift apart.
+        _enrollment_chat_only = not host_orchestration_enabled(sess.entity)
+
+        # -- Host orchestration tools (the host holds ONLY these three) --
+        # The host is an orchestrator: it never calls domain tools itself. It
+        # dispatches a scoped agent (its hands) with the domain tools
+        # that agent needs (`dispatch`), recalls memory on demand (`recall`),
+        # or hands a decision to the user (`escalate`). Conversational +
+        # non-enrollment entities get the orchestration surface; enrollment
+        # (bot_capabilities <= 3) and non-conversational entities stay pure
+        # chat (tools=None), exactly as before. The agent-era V3 temp
+        # regulation + unified-brain LLM veto are gone — governance is now
+        # purely structural (input_guard + CEIGAS gate + slips on dispatch).
+        # Chat provider+model via the SINGLE resolver (per-role {provider,
+        # model, fallback?} routing — the 3-lane router and
+        # its host_sdk_engine coupling are gone; the host runs on the
+        # routed provider only).
+        # `_chat_route` is resolved ONCE up front (conversation-depth P1:
+        # the history window sizes against the model's context window, which
+        # must be known before history assembly). Same resolver, same
+        # thread_override precedence — this site just consumes it.
+        # Unconfigured chat (no servable pick) is SURFACED, never guessed
+        # onto a model the turn can't run.
+        if not _chat_route.get("model"):
+            log.warning("CHAT_UNCONFIGURED eid=%s: %s", sess.entity_id,
+                        _chat_route.get("unconfigured") or "no chat route")
+            return {
+                "response": (
+                    "I don't have a chat model configured yet. Open the "
+                    "Orchestrator and assign chat a provider and model — "
+                    "your own provider key (OpenRouter, Anthropic, …) or a "
+                    "local model."
+                ),
+                "model_unconfigured": True,
+            }
+
+        tools = None
+        # The Host's tool surface (runtime/tool_doors.py). A Host that
+        # orchestrates holds the doors: _build_turn_tools sets these two (find_tools
+        # and read, door calls checked against the target's full schema). A turn
+        # whose Host does not orchestrate keeps these values.
+        _search_mode = False
+        _door_catalog = None
+        # The fixed list's added tools (runtime/tool_core), and the tools the
+        # history notes rendered and their weight.
+        _core_extras: list = []
+        _note_renderer = None
+        _notes_noted: list = []
+        _notes_chars = 0
+        tool_actions = []
+        _tools_first_call_count = None
+        _tools_first_call_sha = None
+        _static_sys_sha = None
+        # What a Host that orchestrates adds to the static message: the
+        # catalog and the person's rules for it.
+        _orch_block = None
+        _host_rules = None
+        # The turn's tool results as the turn collects them (nothing stashes
+        # them after the turn any more: the artifact capture and its janitor
+        # are retired).
+        _turn_artifacts: list[dict] = []
+        # Override temperature from behavioral_params if set
+        if "temperature" in behavioral:
+            temperature = float(behavioral["temperature"])
+        # ONE gate, shared with the prompt-side tool inventory
+        # (prompt_schema.orchestration_tools). It used to ALSO require
+        # behavioral_params.response_style == "conversational", which is a
+        # prose-style field, not a capability: an unseeded host (no
+        # response_style at all) and a host whose style is "concise" both
+        # scored False and were handed tools=None while the prompt still
+        # advertised the full inventory — the host then narrated tool calls it
+        # could not make. The enrollment tier is the real question and
+        # host_orchestration_enabled is the only place it is asked.
+        if host_orchestration_enabled(sess.entity):
+            # The tool surface (_build_turn_tools): the Host's verbs and doors, the
+            # catalog it is authorized for, what it may read, and the door catalog.
+            (_cap_schemas, _core_extras, _core_names, _door_catalog, _doors_listed, _search_mode,
+             tools) = await self._build_turn_tools(
+                sess, _chat_route=_chat_route, _core_extras=_core_extras,
+                _door_catalog=_door_catalog, _root_turn=_root_turn,
+                _tt_category_map=_tt_category_map, _type_groups_allowed=_type_groups_allowed,
+                tools=tools)
+            from mastercode.runtime import tool_core as _tcore
+            if _door_catalog is not None and _hist_rows:
+                try:
+                    _note_renderer = _tcore.NoteRenderer(_door_catalog, _core_names)
+                    _n_kept, _n_weight = _tcore.fit_history(
+                        _hist_rows, max_hist=_hist_fit["max_hist"],
+                        max_msgs=_hist_fit["max_msgs"], block=_hist_fit["block"],
+                        note_fn=_note_renderer)
+                    _n_plan = _tcore.note_plan(_n_kept, _note_renderer)
+                    _n_hist = history_messages(_n_kept, tool_note=_note_renderer)
+                    _n_record = _hist_fit.get("record")
+                    if _n_record is not None and _n_kept and _hist_rows \
+                            and _n_kept[0].get("row_id") != (_hist_fit.get("record_from")):
+                        # The notes-weighted fit cut elsewhere: the record
+                        # covers exactly the rows before the new cut.
+                        try:
+                            from mastercode import evicted_record as _er2
+                            _n_text = await _er2.evicted_record(
+                                self.pool, sess.entity_id, _src_ctx, sess.session_id,
+                                oldest_kept_id=_n_kept[0].get("row_id"), lane=_work_lane)
+                            _n_record = {"role": "system", "content": _n_text} if _n_text else None
+                        except Exception as _er2_err:  # noqa: BLE001
+                            log.debug("evicted record refit skipped (non-fatal): %s", _er2_err)
+                    if _n_record is not None:
+                        _n_hist.insert(0, _n_record)
+                        _n_weight += len(_n_record["content"])
+                    _old_n = len(history_msgs)
+                    # The slice is still the history the walk placed (only
+                    # per-turn blocks after it were added since); checked
+                    # by identity before it is replaced.
+                    if all(_a is _b for _a, _b in zip(
+                            grok_messages[_hist_at:_hist_at + _old_n], history_msgs)) \
+                            and len(grok_messages) >= _hist_at + _old_n:
+                        grok_messages[_hist_at:_hist_at + _old_n] = _n_hist
+                        # The re-fitted history can keep rows the first fit
+                        # left out: a row written in a marked turn marks this
+                        # one when it rides here too (runtime/turn_taint). A
+                        # root turn's rows were withheld before _hist_rows.
+                        from mastercode.runtime import turn_taint as _tt_nhist
+                        _tt_nhist.mark_rows(_n_kept, "the conversation's earlier turns")
+                        if _dyn_idx is not None and _dyn_idx >= _hist_at + _old_n:
+                            _dyn_idx += len(_n_hist) - _old_n
+                        history_msgs = _n_hist
+                        history_chars = _n_weight
+                        for _np in _n_plan:
+                            if _np is not None:
+                                _notes_noted.extend(_np[1])
+                                _notes_chars += len(_np[0])
+                    else:
+                        log.warning("tool core: history moved before its notes — none this turn")
+                except Exception as _hn_err:  # noqa: BLE001
+                    log.warning("tool core: history notes failed — history without them: %s", _hn_err)
+            # The Host's OWN skills that match this message (memory_retrieval
+            # .turn_own_skills): at most two lines, each its name, its one line
+            # and the call that opens it, beside what the memory pre-fire
+            # pushes. Built here because the turn's catalog decides what the
+            # turn may open, as it does for find_tools and recall. Rides the
+            # dynamic half and is logged, like the late blocks; a failure
+            # costs only these lines.
+            if _door_catalog is not None and not _root_turn:
+                _own_skills_block = ""
+                try:
+                    from mastercode.memory_retrieval import format_turn_skills, turn_own_skills
+                    _own_skills_block = format_turn_skills(await asyncio.wait_for(
+                        turn_own_skills(
+                            self.pool, sess.entity_id, user_message,
+                            context=_tt_context_filter(getattr(sess, "turn_type", None)),
+                            skill_step=_door_catalog.admitted_step),
+                        timeout=2.0))
+                except Exception as _os_err:  # noqa: BLE001 — never a failed turn
+                    log.info("own skills not offered this turn (non-fatal): %s", _os_err)
+                if _own_skills_block:
+                    if _dyn_idx is not None and 0 < _dyn_idx < len(grok_messages):
+                        grok_messages[_dyn_idx]["content"] += "\n\n" + _own_skills_block
+                    else:
+                        _ins = len(grok_messages) - 1 if grok_messages and grok_messages[-1].get("role") == "user" \
+                            else len(grok_messages)
+                        grok_messages.insert(_ins, {"role": "system", "content": _own_skills_block})
+                        _dyn_idx = _ins
+                    # The ledger counts it with the late blocks.
+                    _late_blocks.append(("own_skills", _own_skills_block))
+                    try:
+                        await log_injected_block(self, sess, "own_skills", _own_skills_block)
+                    except Exception as _osl_err:  # noqa: BLE001
+                        log.debug("own skills provenance log failed (non-fatal): %s", _osl_err)
+            if _choice is not None and _choice.candidates:
+                # The thread choice's one tool, on this turn only.
+                tools = list(tools) + [_tchoice.TOOL_SCHEMA]
+            _tools_first_call_count = len(tools)
+            _tools_first_call_sha = _bytes_sha(tools)
+            # The tool-surface facts (lane counts, the build doors by name).
+            # It drops the host doors this surface does not hold, for the same
+            # reason tools= does — a door the prompt names must be one the
+            # host can actually call here. A typed turn's counts cover only
+            # the type's groups, for the same reason again.
+            _orch_block = _build_orchestrator_prompt([
+                s for s in _cap_schemas
+                if not (isinstance(s, dict)
+                        and _lane_for((s.get("function") or {}).get("name"), s) == "host"
+                        and (s.get("function") or {}).get("name") not in sess._host_own_tools)
+                and (_type_groups_allowed is None or not isinstance(s, dict)
+                     or _tt_category_map().get((s.get("function") or {}).get("name"), "other")
+                     in _type_groups_allowed)
+            ], withheld=getattr(sess, "_tools_withheld", None),
+               unvalidated_route=getattr(sess, "_unvalidated_route", None),
+               build_doors_listed=_doors_listed)
+            # The person's own rules for this Host (behavioral_params
+            # .host_rules), when they wrote any. The platform's rulebook that
+            # used to ride here restated the verb schemas and is gone.
+            try:
+                from mastercode.runtime.agent_rules import build_host_rules
+                _host_rules = await build_host_rules(self.pool, sess.entity["id"])
+            except Exception as e:
+                log.warning("Host rulebook build failed (non-fatal): %s", e)
+                _host_rules = ""
+            # The turn type's skill: the same body on every turn of
+            # the thread, so it belongs with the other stable blocks on the
+            # cached static message, after the catalog it governs — in the
+            # ONE static append (scripts/test_host_mirror.py pins one).
+            _type_skill_tail = ("\n\n" + _type_skill_block) if _type_skill_block else ""
+            if (_orch_block or _type_skill_tail) and grok_messages and grok_messages[0].get("role") == "system":
+                grok_messages[0]["content"] += "\n\n" + _orch_block + _type_skill_tail
+            if _host_rules and grok_messages and grok_messages[0].get("role") == "system":
+                grok_messages[0]["content"] = _host_rules + "\n\n" + grok_messages[0]["content"]
+            # Both are stable across turns (they ride the cached static
+            # message on purpose) but were invisible to prompt_log — ~12 KB a
+            # turn the mirror could not see. Logged at per_rebuild scope.
+            try:
+                from mastercode.runtime.prompt_schema import log_injected_block as _lib_static
+                if _orch_block:
+                    await _lib_static(self, sess, "orchestrator_catalog", _orch_block, scope="per_rebuild")
+                if _type_skill_block:
+                    await _lib_static(self, sess, "turn_type_skill", _type_skill_block, scope="per_rebuild")
+                if _host_rules:
+                    await _lib_static(self, sess, "host_rules", _host_rules, scope="per_rebuild")
+            except Exception as _sb_err:  # noqa: BLE001
+                log.debug("static-append provenance log failed (non-fatal): %s", _sb_err)
+
+        # ── The ROOT turn's message list and tools (runtime/root_turn) ──
+        # Built HERE from the allowlist, after everything else, so nothing the
+        # normal path added (the catalog, the rulebook, skills, the prefetch,
+        # the self inventory, the late per-turn blocks) is in it: root_turn's
+        # rules (the static half above), the platform's facts and the root
+        # thread's own trail and handoff (the dynamic half, as it was before
+        # anything was added to it), the root thread's own history (no
+        # rolling summary: a background writer's words), and this turn's
+        # words. The tools are root_turn's, from what this Host is
+        # authorized for.
+        if _root_turn:
+            try:
+                _root_auth = {(_s.get("function") or {}).get("name")
+                              for _s in _cap_schemas if isinstance(_s, dict)}
+            except UnboundLocalError:   # this Host does not orchestrate: verbs only
+                _root_auth = set()
+            _root_hist = [
+                _m for _m in history_msgs
+                if isinstance(_m, dict) and not (
+                    _m.get("role") == "system"
+                    and str(_m.get("content") or "").startswith(_cb.RECORD_PREFIX))]
+            grok_messages = _root_mod.build_messages(
+                _static_sys, _dyn_sys, _root_hist, list(_protect_msgs))
+            tools = _root_mod.tool_schemas(_root_auth)
+            _search_mode = False
+            _door_catalog = None
+            sess._read_safe_tools = set()
+            sess._read_safe_ops = {}
+            sess._host_own_tools = set()
+            _tools_first_call_count = len(tools)
+            _tools_first_call_sha = _bytes_sha(tools)
+            log.info("root turn on session %s: %d messages, tools=%s", sess.session_id,
+                     len(grok_messages), [(_t.get("function") or {}).get("name") for _t in tools])
+
+        # The cached system message is final here (static schema build, plus
+        # catalog + turn-type skill + host rules when this Host orchestrates);
+        # hash exactly what rides call 1, on every Host.
+        if grok_messages and grok_messages[0].get("role") == "system":
+            _static_sys_sha = _bytes_sha(str(grok_messages[0].get("content") or ""))
+
+        # -- The operator kill switch on the inference crossing --
+        # While the switch is set the turn returns the same refusal the domain
+        # controller gave: the user sees it, and no model is called. An
+        # unreadable switch module fails closed the same way.
+        try:
+            from ceigas_kill_switch import KILL_SWITCH_REASON, kill_switch_refuses
+            _inf_refused = kill_switch_refuses("core.entity", "core.cognitive", "execute")
+        except Exception as e:
+            log.error("kill-switch check raised on inference — failing closed: %s", e, exc_info=True)
+            return {
+                "response": "I'm unable to respond right now.",
+                "blocked": True,
+                "block_reason": "governance_error",
+                "ceigas_result": "error",
+            }
+        if _inf_refused:
+            log.warning("CEIGAS DENIED inference for entity %d: %s", sess.entity_id, KILL_SWITCH_REASON)
+            return {
+                "response": "I'm unable to respond right now.",
+                "blocked": True,
+                "block_reason": KILL_SWITCH_REASON,
+                "ceigas_result": "denied",
+            }
+
+        # Call LLM. The host always routes to a provider now — the dead local /
+        # fast / voice model branches are gone. fast_mode remains in the
+        # signature for callers but no longer selects a model path.
+
+        # Chat provider+model come from the SINGLE resolver, hoisted above the
+        # prompt render — `_chat_route` is resolved before the tool/
+        # catalog build so the rendered prompt matches the running route.
+        # `_inference_provider` is the route's provider (registry id or
+        # 'local') that provider_gateway.call_model dispatches on;
+        # `_route_base_url` carries a local/BYO route's endpoint.
+        _inference_provider = _chat_route["provider"]
+        _inference_model = _chat_route["model"]
+        _route_base_url = _chat_route.get("base_url")
+        # The orchestrator turn always routes to a provider. `_use_provider`
+        # was kept as a constant True so the tool-loop branches keying on it
+        # still read correctly; both of those branches and the flag went on
+        # A live `if` on a constant is a claim that a second wire
+        # format is still in play, and it was not. (The dead _use_fast /
+        # _use_entity_model local branches went earlier.)
+        # Every chat-turn call on this route carries the same dispatch kwargs —
+        # endpoint + the route's failover pair — so a mid-loop retry fails over
+        # exactly like the first call (the per-role route contract).
+        def _turn_alive(_sid=sess.session_id) -> None:
+            try:
+                from server.turn_registry import note_alive as _tr_alive
+                _tr_alive(_sid)
+            except Exception:  # noqa: BLE001 — no registry in this process
+                pass
+
+        # One cache key for the conversation, on every call of every turn in
+        # it (the turn's own session_id is None on chat entries and new each
+        # turn, so it never pinned a thread to a provider replica).
+        _cache_key = conversation_cache_key(sess.entity_id, _src_ctx)
+        # The person's own effort pick for this route (the Orchestrator's, or
+        # this thread's from the chat box), None when they made none: the only
+        # effort the Anthropic wire sends. It rides EVERY call of the turn, not
+        # just the first: a top-level effort that changes between requests
+        # restarts Anthropic's prompt cache.
+        from mastercode.inference_config import chosen_effort as _chosen_of
+        _chosen_effort = _chosen_of(_chat_route)
+        _chat_call_kw = {
+            "provider": _inference_provider,
+            "provider_model": _inference_model,
+            "base_url": _route_base_url,
+            "cache_key": _cache_key,
+            "chosen_effort": _chosen_effort,
+            "fallback_provider": _chat_route.get("fallback_provider"),
+            "fallback_model": _chat_route.get("fallback_model"),
+            # The route's model writes its reasoning inline, closed by
+            # </think> (inference_config._route): the OpenAI-wire adapter
+            # holds the stream back until the close.
+            "reasoning_inline": bool(_chat_route.get("reasoning_inline")),
+            # Every streamed event of the Host's own model call — text,
+            # reasoning, tool-call arguments — is a sign of life for the turn
+            # registry: a long tool-call write produces no
+            # frame, and must not read as a silent turn.
+            "on_alive": _turn_alive,
+            # The cost log's source_module for every call of this turn. The
+            # go-ahead repair, the nudge re-call and the claim repair call
+            # provider_gateway.call_model directly with these kwargs, and
+            # without it they were logged 'unknown' (the Host's own calls,
+            # shown as "Background · unknown").
+            "_source": "entity_runtime",
+        }
+        log.warning(
+            "MODEL_INTENT eid=%s provider=%s model=%s fast_req=%s (orchestrator → provider)",
+            sess.entity_id, _inference_provider, _inference_model, fast_mode,
+        )
+
+        # Reasoning effort: the USER's setting for this role, from the same
+        # resolver the provider/model came from (Orchestrator → Routing, stored
+        # on behavioral_params.model_routing[role].effort). Low and max
+        # reasoning on the same model behave like two different models, and
+        # the user needs to find the sweet spot for host reasoning. It was a hardcoded "low" here, so there was no sweet spot
+        # to find.
+        #
+        # The fallback is still an EXPLICIT "low", not None, and that matters:
+        # without an effort a reasoning-capable model decides for itself whether
+        # to emit reasoning prose into `content`, which can leak planning text
+        # as the visible reply (an incident once). So an unset
+        # role keeps exactly today's behaviour, and only a deliberate choice
+        # changes it.
+        _reasoning_effort = (_chat_route.get("effort") or "").strip() or "low"
+        # The line states what goes on the WIRE (inference_config.
+        # describe_effort): on the OpenAI wire the effort above; on the
+        # Anthropic wire the person's pick where the model accepts it, else
+        # "default (<the model's level>)"; on the local wire nothing. It used
+        # to print the "low" above for every Host, which the Anthropic and
+        # local wires never sent.
+        from mastercode.inference_config import (
+            anthropic_model_efforts_warm as _eff_warm, describe_effort as _eff_desc,
+            effort_label as _eff_label)
+        if _inference_provider == "anthropic" and _chosen_effort:
+            await _eff_warm(_inference_model)
+        _turn_effort = _eff_desc(_inference_provider, _inference_model,
+                                 _chosen_effort, _reasoning_effort)
+        # ONE decision for the whole turn on the Anthropic wire: a pick this
+        # line says is not sent goes out on no call of the turn, even if the
+        # model list loads (or recovers) while the turn runs. Otherwise a
+        # level would appear between two requests of one turn, restarting the
+        # prompt cache and leaving this line wrong about what went out.
+        # The turn's record still names the pick and why (_note_served).
+        _effort_unsent = None
+        if (_inference_provider == "anthropic" and _chosen_effort
+                and not _turn_effort.get("sent")):
+            _chat_call_kw["chosen_effort"] = None
+            _effort_unsent = _turn_effort
+        log.warning(
+            "MODEL_ACTUAL eid=%s provider=%s model=%s reasoning=%s",
+            sess.entity_id, _inference_provider, _inference_model,
+            _eff_label(_turn_effort),
+        )
+        # The host_sdk_engine dispatch was removed (hard cut):
+        # the SDK is not a production option and no shipped route resolves to
+        # it, so the chat turn ALWAYS runs the generic provider call below.
+        # host_sdk_engine.py stays in the image, dormant and uncalled.
+        # Conversation-depth: overflow recovery. Pre-send, the
+        # assembled request is trimmed to the window with the ONE trim order
+        # (pre-fire hits → oldest verbatim turns → tool-result verbosity;
+        # identity/constitutional never touched). If the provider STILL 4xxs
+        # with a context-overflow error (estimates are chars//4), trim once
+        # and retry instead of surfacing the error string. Any failure here
+        # degrades to the untrimmed request / the original error.
+        # The pre-send trim runs inside the call wrapper so EVERY
+        # round of the tool loop gets it, not just round 1 — tool results
+        # (up to 100 KB each, host_sdk_engine._bound_tool_result) accumulate
+        # across rounds and used to reach the provider unchecked. The
+        # overflow retry trims to a TIGHTER target than the estimate said
+        # was needed (chars//4 undercounts JSON and code) so "still over
+        # after our own trim" actually frees something on the retry.
+        _ctx_target = (_ctx_window - _reply_reserve) if _ctx_window else None
+        # The per-thread BUDGET (the dial) governs every round, not
+        # just the first call. _ctx_budget (derive_turn_budget, context_budget.py:177)
+        # is the ceiling (window − output reserve − measured system) × 0.95 with
+        # the per-thread override applied — and it EXCLUDES the system blocks,
+        # while the trim measures the whole assembled list including messages[0].
+        # So the system tokens go back on, using the SAME measurement the
+        # derivation subtracted (est_tokens(_sys_content), above), and the raw
+        # window − output reserve stays as the hard cap. The dial can therefore
+        # only ever trim harder, never hand the provider more than it accepts.
+        # (The turn-stable blocks appended to grok_messages outside _sys_content
+        # are not in that figure, which makes the target slightly tight — the
+        # safe direction.) _ctx_budget is None when the window is unknown or
+        # history was cleared → the legacy window-based target, unchanged.
+        # The figure is _round_budget: _ctx_budget without the Host's default
+        # history ceiling, which bounds the history the walk above fetched and
+        # not what this turn's own tool calls bring back.
+        if _ctx_target is not None and _ctx_budget is not None and _round_budget is not None:
+            _ctx_target = min(_ctx_target, _round_budget + _cb.est_tokens(_sys_content))
+
+        # A used result leaves the turn (context_budget.
+        # drop_used_tool_results): before each model call, a big read the
+        # model has already answered after becomes a stub naming how to read
+        # it again. _droppable maps tool_call_id -> {tool, fp, msg, trail} and
+        # is filled only for READS (a re-call runs again, so the stub's "call
+        # it again" holds); _dropped_log is the turn's context_ledger.dropped.
+        # The hook is set once the loop's state exists (_drop_used_results,
+        # below); the first call has nothing to drop.
+        _droppable: dict = {}
+        _dropped_log: list = []
+        _dropped_by_fp: dict = {}
+        # A stored result's stub carries its handle (runtime/result_store):
+        # a read(handle) of a dropped one is its re-call.
+        _dropped_by_handle: dict = {}
+        _drop_hook: list = [None]
+
+        # Set just before the continuation of a cut reply, which is still
+        # writing from the results above it: the next call drops none, and
+        # clears it.
+        _drop_held: list = [False]
+
+        async def _call_with_overflow_retry(msgs, **kw):
+            if _drop_held[0]:
+                _drop_held[0] = False
+            elif _drop_hook[0] is not None:
+                _drop_hook[0](msgs)
+            if _ctx_target is not None:
+                try:
+                    # Hysteresis (context_budget.trim_with_hysteresis): trim only
+                    # when over target, and then to one TRIM_BLOCK_DIVISOR block
+                    # BELOW it. Trimming exactly to target every round thrashed
+                    # the cache — the next tool result pushed the list back over,
+                    # another old turn went, the cached prefix moved, and the
+                    # provider re-wrote the cache. Same reasoning as the history
+                    # walk's chunked eviction above.
+                    _pre = _cb.trim_with_hysteresis(msgs, _ctx_target, _protect_msgs)
+                    if _pre is not msgs:
+                        log.info("pre-send context trim: %d→%d messages (target %d tokens)",
+                                 len(msgs), len(_pre), _ctx_target)
+                        msgs[:] = _pre  # keep the loop's list in sync
+                except Exception as _tr_err:
+                    log.debug("pre-send context trim failed (non-fatal): %s", _tr_err)
+            res = await _call_entity_model(msgs, **kw)
+            try:
+                if _cb.is_context_overflow(res):
+                    # One chunk below where the pre-send trim already landed.
+                    # A flat 0.75x was EXACTLY the hysteresis floor (target −
+                    # target//TRIM_BLOCK_DIVISOR, divisor 4), so the retry
+                    # asked for a list it was already at, got the SAME object
+                    # back, and the `is not msgs` guard below skipped the
+                    # retry — the recovery path was dead on arrival. Stacking
+                    # the floor twice gives 0.5625x of target (0.75 × 0.75),
+                    # so "the provider still says we are over" actually frees
+                    # something.
+                    _retry_target = (
+                        _cb.hysteresis_floor(_cb.hysteresis_floor(_ctx_target))
+                        if _ctx_target else None)
+                    _trimmed = _cb.trim_messages_to_window(msgs, _retry_target, _protect_msgs)
+                    if _trimmed is not msgs and len(_trimmed) <= len(msgs):
+                        log.warning(
+                            "provider context-overflow — trimmed %d→%d messages, retrying once",
+                            len(msgs), len(_trimmed))
+                        msgs[:] = _trimmed  # keep the loop's list in sync
+                        res = await _call_entity_model(msgs, **kw)
+            except Exception as _ov_err:
+                log.debug("overflow retry failed (original result stands): %s", _ov_err)
+            return res
+
+        # The FIRST call is held to the allowance too (the rule: the worst
+        # overspend is one output reserve): what
+        # the allowance can pay for after this call's input, at the route's
+        # output rate, never below one realistic reply. The turn's meter is
+        # built after this call, so a meter for this one call stands in.
+        _first_max = effective_max
+        try:
+            from mastercode.runtime import turn_allowance as _ta0
+            _first_aff = _ta0.TurnSpend.for_route(
+                _inference_model, _inference_provider,
+                allowance_usd=_turn_allowance_usd, ctx_budget=_spend_ctx_budget or _ctx_budget,
+                default_rounds=_default_rounds,
+            ).affordable_output(_ta0.new_input_tokens(grok_messages, 0))
+            if _first_aff is not None:
+                _first_max = max(1, min(effective_max, max(_first_aff, _reply_reserve)))
+        except Exception as _fa_err:  # noqa: BLE001
+            log.debug("first-call allowance clamp unavailable (non-fatal): %s", _fa_err)
+        # The first model call of this turn carries the per-turn blocks, the
+        # earlier held request among them. A model call that ran and answered is
+        # what lets the takeover be reported as carried (Takeover.model_saw); a
+        # call alone does not mean the turn ACTED (that is a tool call, below).
+        _tk = _TAKEOVER.get()
+        if _tk is not None:
+            _tk.model_saw = True
+        turn.result = await _call_with_overflow_retry(
+            grok_messages,
+            temperature=temperature,
+            max_tokens=_first_max,
+            session_id=session_id,
+            tools=tools,
+            **_chat_call_kw,
+            reasoning_effort=_reasoning_effort,
+            stream_cb=await _next_stream_cb(),
+        )
+
+        if "error" in turn.result and not turn.result.get("content"):
+            return await _end_on_error(turn.result)
+
+        # -- Tool-use loop: if Grok wants to call a bot, execute and feed back --
+        turn.total_tokens = turn.result.get("tokens_used", 0)
+        # Accumulate the prompt/completion split alongside total_tokens so
+        # the data-stream usage frame reports real counts (was always 0; billing
+        # was already correct). Summed across tool-loop rounds, like total_tokens.
+        turn._prompt_acc = int(turn.result.get("prompt_tokens") or 0)
+        turn._completion_acc = int(turn.result.get("completion_tokens") or 0)
+        # Cache telemetry: input_total is the lane-normalized true
+        # context size per call (both wires disagree on whether prompt_tokens
+        # contains the cached prefix — the gateways normalize; see
+        # provider_gateway/_call_remote and host_sdk_engine._usage_breakdown).
+        # Falls back to prompt_tokens for lanes that don't report cache fields.
+        _input_total_acc = int(turn.result.get("input_total_tokens")
+                               or turn.result.get("prompt_tokens") or 0)
+        _cache_read_acc = int(turn.result.get("cache_read_tokens") or 0)
+        _cache_write_acc = int(turn.result.get("cache_write_tokens") or 0)
+
+        # Provenance: the Workbench must show which model ran, without
+        # anyone having to ask.
+        # WHO ANSWERED, per the gateway's own result — the served model, the
+        # served provider, and any failover — not the route we asked for.
+        # The route's provider/model are the default; every round may move
+        # it (call_model retries an errored primary on the route's fallback
+        # provider and annotates the result). Stamped on the turn row and on
+        # the context frame so the UI can print it under the turn.
+        _served = {"provider": _inference_provider, "model": _inference_model,
+                   "failed_over": None}
+        # Context ledger (there was no way to see what context a turn used:
+        # prompt_log keeps system-block
+        # sizes, nothing recorded history/tools/results per turn). One entry
+        # per model call, summed on the turn row as context_ledger.per_call.
+        _per_call: list = []
+
+        # ── PER-TURN SPEND ALLOWANCE (runtime/turn_allowance.py) ──
+        # The meter that replaced the per-model round cap. It prices every
+        # call this turn at the SERVED model's published rates and answers one
+        # question before each additional round: can this turn afford the next
+        # one? Built here, after the route is known, and fed by _note_served
+        # below so there is exactly one place a call is counted.
+        from mastercode.runtime import turn_allowance as _ta
+        _msgs_mark = [0]          # len(grok_messages) as of the last call
+        turn._spend_stopped = False    # the allowance ended this turn's tool loop
+        turn._spend_cut_reply = False  # ...while a cut reply waited: "text" / "empty"
+        _spend = _ta.TurnSpend.for_route(
+            _inference_model, _inference_provider,
+            allowance_usd=_turn_allowance_usd, ctx_budget=_spend_ctx_budget or _ctx_budget,
+            default_rounds=_default_rounds)
+        if _spend.basis != "none":
+            log.info("turn allowance: basis=%s allowance=%s model=%s session=%s",
+                     _spend.basis, _spend.allowance, _inference_model,
+                     sess.session_id)
+        elif _turn_allowance_usd:
+            # The person set a dollar figure on a route that cannot be
+            # denominated in dollars AND has no context budget to fall back
+            # on. Saying so is the whole contract — silently ignoring it is
+            # the "zero that looks like data" this lane refuses.
+            log.warning(
+                "turn allowance: $%.4f set but model %s is not per-token "
+                "priced and no context budget exists — no allowance in force "
+                "this turn (the backstop is the only stop)",
+                float(_turn_allowance_usd), _inference_model)
+
+        def _spend_max() -> int:
+            """The max_tokens for the next call: the output limit, held to
+            what the remaining allowance can pay for — at the route's output
+            price, or in tokens on an unpriced route that meters the allowance
+            in tokens — never below one realistic reply. With
+            no allowance in force it is the output limit unchanged. So the
+            worst overspend is one realistic reply, which is what the round
+            check projects."""
+            try:
+                _aff = _spend.affordable_output(
+                    _ta.new_input_tokens(grok_messages, _msgs_mark[0]))
+            except Exception as _af_err:  # noqa: BLE001
+                log.debug("affordable output unavailable (non-fatal): %s", _af_err)
+                _aff = None
+            if _aff is None:
+                return effective_max
+            return max(1, min(effective_max, max(_aff, _reply_reserve)))
+
+        def _note_served(res: dict) -> None:
+            if not isinstance(res, dict):
+                return
+            try:
+                # The meter builds the per-call entry (it has to read the same
+                # four counts to price the call), so the ledger and the running
+                # total can never disagree about what a round used. `cache_write`
+                # is new here: the ledger carried in/cached/out only, which is
+                # exactly the field a cache-aware projection needs.
+                _entry = _spend.note_call(res, model=res.get("model")
+                                          or _served.get("model"))
+                if _entry:
+                    # The tool list THIS call sent (provider_gateway stamps
+                    # every dialled result): an orient open or an exit's
+                    # reduced list shows here, call by call, where the turn's
+                    # `tools.chars` shows only the final list.
+                    _tw = res.get("tools_wire")
+                    if isinstance(_tw, dict):
+                        _entry["tools_chars"] = _tw.get("chars")
+                        _entry["tools_sha"] = _tw.get("sha")
+                    # The provider's id for this response and a short hash of
+                    # the cache pin it carried (provider_gateway._call_remote):
+                    # a cold miss on an unchanged prefix (prefix_sha == the
+                    # last call's sha, cached far below it) goes to the
+                    # provider with these. Ledger-only, like the hashes.
+                    for _k in ("request_id", "cache_key_sha"):
+                        if res.get(_k):
+                            _entry[_k] = res[_k]
+                    # The effort this call ran at, where the wire reports
+                    # it (the Anthropic one: the level sent, or None at the
+                    # model's default).
+                    if isinstance(res.get("effort"), dict):
+                        _entry["effort"] = res["effort"].get("sent")
+                    # The message list this call sent, hashed (sys_sha,
+                    # prefix_sha over what the previous call sent, sha over
+                    # all): call k's prefix_sha == call k-1's sha unless OUR
+                    # prefix moved — a drop's cut call moves it by design.
+                    # Measurement only (context_budget.messages_hashes).
+                    try:
+                        _entry.update(_cb.messages_hashes(grok_messages, _msgs_mark[0]))
+                    except Exception as _hs_err:  # noqa: BLE001
+                        log.debug("message hashes unavailable (non-fatal): %s", _hs_err)
+                    _per_call.append(_entry)
+                # Where the message list stood when this call went out — the
+                # overflow wrapper may have trimmed it in place first, so this
+                # is what the provider actually saw. Everything appended past
+                # this index before the next call (the assistant's tool_calls
+                # message and every tool result) is the NEW input the next
+                # round pays full input rate for.
+                _msgs_mark[0] = len(grok_messages)
+            except Exception as _sp_err:
+                log.debug("spend meter note_call failed (non-fatal): %s", _sp_err)
+            m = res.get("model")
+            if isinstance(m, str) and m:
+                _served["model"] = m
+            # What the answering call put on the wire as its effort
+            # (provider_gateway stamps it on the Anthropic wire): the turn
+            # records the level SENT, or the model's default, never a pick
+            # that was dropped. A call on a wire that does not stamp it (a
+            # failover onto another provider) leaves no stale level behind.
+            _served["effort"] = (dict(res["effort"])
+                                 if isinstance(res.get("effort"), dict) else None)
+            # A pick the turn decided at its start not to send reached no
+            # call, so no call's result names it: the record takes the pick
+            # and why from that decision (the MODEL_ACTUAL line's).
+            if (_effort_unsent and _served["effort"] is not None
+                    and not isinstance(res.get("failed_over"), dict)):
+                for _k in ("chosen", "why"):
+                    if _effort_unsent.get(_k) and not _served["effort"].get(_k):
+                        _served["effort"][_k] = _effort_unsent[_k]
+            fo = res.get("failed_over")
+            if isinstance(fo, dict):
+                _served["failed_over"] = fo
+                if fo.get("to_provider"):
+                    _served["provider"] = fo["to_provider"]
+                if fo.get("to_model"):
+                    _served["model"] = fo["to_model"]
+
+        _note_served(turn.result)
+
+        def _acc_usage(res: dict) -> None:
+            nonlocal _input_total_acc, _cache_read_acc, _cache_write_acc
+            _input_total_acc += int(res.get("input_total_tokens")
+                                    or res.get("prompt_tokens") or 0)
+            _cache_read_acc += int(res.get("cache_read_tokens") or 0)
+            _cache_write_acc += int(res.get("cache_write_tokens") or 0)
+            _note_served(res)
+
+        # (The inner _build_error_recovery_hints moved to
+        # runtime/tool_failures.py — it rebuilt hints from the
+        # WHOLE turn every round, so one dead tool nudged "try again" on every
+        # later round too; note_round() reads one round and declares a tool
+        # dead on its second identical failure.)
+
+        # ── RUNAWAY BACKSTOP ──
+        # What was here until today: `_cap_for_model`, a per-model round cap
+        # that matched substrings against the model name — "opus"→20,
+        # "sonnet"→15, "haiku"/"flash"/"mini"/"kimi"→10, else 50. It was a
+        # capability-tier GUESS with no registry behind it, and the number it
+        # produced meant nothing to the person paying for the turn: it was not
+        # time, not quality and not money, and it counted a 200k-prompt round
+        # and a 4k-prompt round the same. The budget the person actually set
+        # is now what governs the loop (_spend above); this constant is only
+        # the runaway catch, sized above every real workflow and disable-able.
+        # See runtime/turn_allowance.py:BACKSTOP_TOOL_ROUNDS for the number
+        # and the survey it came from.
+        MAX_TOOL_ROUNDS = _ta.backstop_rounds(
+            (sess.entity or {}).get("behavioral_params") if sess.entity else None)
+        log.info("tool-loop backstop: rounds=%d allowance_basis=%s model=%s session=%s",
+                 MAX_TOOL_ROUNDS, _spend.basis, _inference_model, sess.session_id)
+        _consecutive_all_fail = 0  # Track consecutive rounds where ALL tools fail
+        _fail_ledger: dict = {}    # (tool, error) -> count this turn (runtime/tool_failures.py)
+        _dead_tools: list = []     # tools declared dead this turn, for the ledger
+        _nudge_resets = 0  # how many times the round counter was reset by user nudges
+        # Dedup tracker — fingerprint → {count, last_result}. 2nd
+        # identical call returns the cached result without counting
+        # toward the cap. 3rd is refused outright with a structured
+        # error. Nudges clear the tracker.
+        _dedup_cache: dict[str, dict] = {}
+        # Search hits already in front of the Host this turn are not sent
+        # again (runtime/search_dedup.py) — the repeats the fingerprint above
+        # misses because each search's arguments differ. Not cleared on a
+        # nudge: the hits are still in context.
+        _search_seen = TurnSearchSeen()
+
+        def _drop_used_results(msgs: list) -> None:
+            """Before a model call: every registered read the model has
+            answered after, over the floor, becomes a stub, all at once and
+            only when it pays (context_budget.drop_used_tool_results). Its
+            dedup entry goes with it, so a re-call runs and returns the result
+            whole, never "unchanged since round N" against a result no longer
+            above; the ledger records the drop and any re-call."""
+            if not _droppable:
+                return
+            new, gone = _cb.drop_used_tool_results(msgs, _msgs_mark[0], _droppable, _protect_msgs)
+            if not gone:
+                return
+            msgs[:] = new
+            at_call = len(_per_call) + 1
+            for g in gone:
+                meta = _droppable.pop(g["tool_call_id"], None) or {}
+                fp = meta.get("fp")
+                if fp:
+                    _dedup_cache.pop(fp, None)
+                # prefix_moved: this call's prefix_sha differs from the last
+                # call's sha because of the cut, by design.
+                entry = {"tool": g["tool"], "chars": g["chars"], "at_call": at_call,
+                         "prefix_moved": True}
+                if meta.get("handle"):
+                    entry["handle"] = meta["handle"]
+                    _dropped_by_handle[meta["handle"]] = entry
+                _dropped_log.append(entry)
+                if fp:
+                    _dropped_by_fp[fp] = entry
+            log.info("dropped %d used tool result(s), %d chars, before call %d (session %s)",
+                     len(gone), sum(g["chars"] for g in gone), at_call, sess.session_id)
+
+        _drop_hook[0] = _drop_used_results
+
+        turn.tool_round = 0
+        # Claim-vs-row repairs spent this turn. The guard gets exactly one: it
+        # must be able to fix a false start-claim, and it must never be able to
+        # argue with the model about it.
+        _claim_repairs = 0
+        # The retry after an empty reply: one per turn. It runs INSIDE the
+        # loop with the turn's own tools (run
+        # past the loop with `escalate` alone, the model wrote "I am checking
+        # whether the site is actually serving", could not check, and the
+        # changed tool list cost the cache: 1,536 cached of 28,770).
+        turn._empty_retried = False
+        # What each empty completion returned, for the notice's wording.
+        _empty_shapes: list = []
+        # Replies the output limit cut, continued in parts: each continuation
+        # is one more model call, bounded
+        # by the same round backstop as tool rounds.
+        _cut_continues = 0
+        # (A draft the guard caught, a reply a nudge interrupted, prose beside
+        # tool calls: every one of them is a piece the single recorder already
+        # holds — _pieces, above — in the order it was sent.)
+        # close_turn (runtime/close_turn.py): the
+        # signal the Host sent (the first one is the turn's; stored on the turn row as
+        # metadata.close_turn) and how each call arrived — with the reply
+        # text or without, alone or beside other calls, on which served model
+        # (context_ledger.close_turn, the per-model metric).
+        turn._close_turn_signal = None
+        _close_turn_arrivals: list[dict] = []
+        # close_turn's writes run once per turn (_ct_written). After a
+        # close_turn that did not end the turn, the next round's call is the
+        # reply (_ct_reply_owed -> _ct_reply_result): tool calls it still
+        # makes are not run — with text, the text is the reply; without, the
+        # loop leaves for the forced-text STOP call. The tools array stays on
+        # that call, so the cached prefix (tools -> system -> messages) holds.
+        turn._ct_written = False
+        _ct_reply_owed = False
+        turn._ct_reply_result = None
+        _ct_closed_asked = False   # the reply was asked for once more, in words
+        turn._ct_left_closed = False    # the loop left because the turn was closed
+        from mastercode.runtime import close_turn as _ct
+        # The go-ahead guard (runtime/go_ahead_guard.py): repairs spent this
+        # turn. One, like the claim guard's — it must be able to turn "say go"
+        # into the work, and it must never be able to argue about it.
+        _go_ahead_repairs = 0
+        # ...and never re-armed:
+        # ONE repair per turn. It used to re-arm when a hold resumed and at
+        # the exits past the loop, so one turn could be
+        # repaired again and again, each repair adding its own closing lines.
+        # An ask written after the repair is not repaired; the record counts
+        # it (_go_ahead_record). (Every firing is kept in _ga_firings, beside
+        # the recorder above.)
+        # _ga_awaiting: the next result is the repair's own answer (a
+        # close_turn with no text there ends the turn adding nothing).
+        turn._ga_awaiting = False
+        # After a go-ahead repair, the handoff the turn's close_turn recorded
+        # no longer says where the work stands (it may even say "awaiting the
+        # user's go"), and it is what the next turn starts from
+        # (close_turn.thread_state). The next close_turn's handoff replaces
+        # it; its writes do not run again. _ct_took_handoff: the call being
+        # handled now was the one taken (its tool result says so).
+        turn._ct_handoff_stale = False
+        _ct_took_handoff = False
+        # The handoff went stale because the turn RESUMED after a hold: the
+        # turn went on past what it recorded. A close_turn after the
+        # resume replaces it (its writes still run once); none -> it is dropped
+        # at the end rather than handed on stale.
+        _ct_stale_from_resume = False
+        # The question box: tickets `escalate`
+        # opened this turn that no words from the person have answered yet
+        # (whether any was opened at all is _asked_in_box, beside the
+        # recorder), and what is left of the turn's wait for answers.
+        _asks_open: list[int] = []
+        # The question box's own tool (`escalate`), on its own: what the calls
+        # past the loop carry, and the allowance stop's continue card
+        # (_continue_card, raised once).
+        _box_tools = [_t for _t in (tools or [])
+                      if ((_t or {}).get("function") or {}).get("name") == "escalate"]
+        _cont_card: dict | None = None
+        # Cards this turn put in front of the person that they have not
+        # answered (go_ahead_guard.card_from_tool: an escalate ticket, a
+        # platform card, a phase's approval card). While one is open, the
+        # guard's correction names it instead of sending the Host to escalate
+        # again. Cleared only by an answer that NAMES its ticket
+        # ("Ticket #41 — I chose …"): other words in the hold leave it open.
+        # The hold's own list above is emptied when its wait
+        # runs out; this one is not.
+        _cards_open: list[dict] = []
+        _hold_left = HOLD_S
+        # Tickets whose answer this turn has read: the answer can arrive
+        # twice (the decide pushes it, and the Circles card nudges the same
+        # words), and it is read once.
+        _answers_read: set[int] = set()
+
+        # The turn's one row while it holds: written before the hold with
+        # the reply as it stands, rewritten in place when the turn ends.
+        _held_row: dict = {"written": False, "id": None}
+
+        async def _go_ahead_round(exit_name: str, box_only: list | None = None, *,
+                                  last: bool = False) -> bool:
+            """The go-ahead guard, at every exit that ends
+            the turn on the Host's own prose and can still run a repair: the
+            text exit, the narrate-first dispatch exit, the
+            round backstop and the exits past the loop. It reads every piece
+            since the person last spoke that it has not judged yet
+            (_unjudged), and judges them all.
+            If they ask the user for a go-ahead or a pick ("Say go", "want me
+            to…?", "which one do you want?"), it does not end the turn: the
+            user already asked, and their one-word answer would start a new
+            turn from cold. Same shape as the claim guard — inject, re-call,
+            and the caller goes round again — because the repair is normally
+            a tool call (the work, or `escalate` with the options) that the
+            loop has to execute. True: it fired, and `result` holds the
+            repair's answer. Bounded by _go_ahead_repairs: once a turn — never
+            re-armed, not when a hold resumes and not at an exit past the loop.
+            An ending written
+            after the repair is not repaired again; the record counts any ask
+            in it (_go_ahead_record). The repair's text is held until its
+            round's calls have run (_repair_checked).
+            Not when input is queued at an exit a drain follows (the drain
+            reads it first: the person's words answer what they read, and a
+            result leaves the pieces unjudged for the next exit — see `last`
+            for the exits no drain follows), and not for a Host with no tools to
+            act with. Where it cannot read, it judges nothing. After an ask in
+            the box (`escalate`), only a JUDGED reading is let through — the
+            reply may well be pointing at the card; a core or explicit ask in
+            words still asks.
+            The close_turn HANDOFF is read too: a turn whose handoff says
+            "Awaiting user go" ended on a go-ahead even when
+            its reply asked nothing out loud, and that handoff is what the
+            next turn starts from (after an ask in the box, a handoff waiting
+            on its answer is the box working, and is not read as a wait).
+            `box_only`: an exit past the loop — the repair call
+            carries these tools (`escalate` alone) and the correction offers
+            only the question box or a rewrite.
+            `last`: an exit no drain follows — the round backstop, the exits
+            past the loop. Input queued there is never read
+            by this turn, so the guard does not wait for it: it reads what it
+            has not judged, and the person's words in the queue answer what
+            was sent before them (_person_spoke; the caller has settled)."""
+            nonlocal _go_ahead_repairs
+            _open_card = _cards_open[-1] if _cards_open else None
+            if (_go_ahead_repairs or not tools
+                    or getattr(sess, "unseen_lane", False)):
+                return False
+            if has_pending_input(sess.session_id):
+                if not last:
+                    return False
+                _words_order = last_nudge_order(sess.session_id)
+                if _words_order is not None:
+                    _person_spoke(_words_order)
+            from mastercode.runtime import go_ahead_guard as _gag
+            _ga_read = _unjudged()
+            _ga_draft = join_pieces(_ga_read)
+            _ga_hit = _gag.find_go_ahead_hit(_ga_draft)
+            _ga_phrase, _ga_sentence, _ga_level = _ga_hit if _ga_hit else (None, None, "explicit")
+            _ga_in_handoff = False
+            if not _ga_phrase and turn._close_turn_signal:
+                _ga_phrase = _gag.find_go_ahead_wait(
+                    turn._close_turn_signal.get("handoff"),
+                    asked_in_box=_asked_in_box or _open_card is not None)
+                _ga_in_handoff = bool(_ga_phrase)
+                _ga_sentence = _ga_phrase
+                _ga_level = None        # no rule level: a recorded wait, an ask by its shape
+            if not _ga_phrase:
+                for _p in _ga_read:
+                    _p["judged"] = "clean"
+                return False
+            _go_ahead_repairs += 1
+            log.warning(
+                "go-ahead guard: entity %d ended a turn %s %r at the %s exit — one "
+                "repair round (session %s, close_turn recorded=%s)",
+                sess.entity_id,
+                "with a handoff waiting on" if _ga_in_handoff else "asking",
+                _ga_phrase, exit_name, sess.session_id, turn._ct_written)
+            _ga_fire = {"rule": str(_ga_phrase)[:200] if not _ga_in_handoff
+                        else "handoff waits on the user",
+                        "sentence": str(_ga_sentence or "")[:300],
+                        "where": "handoff" if _ga_in_handoff else "reply",
+                        # which exit the reply was leaving by: "text",
+                        # "dispatch" (the narration of a dispatch round), or
+                        # "backstop" (prose beside calls at the round backstop)
+                        "exit": exit_name,
+                        # the rule's level (core / explicit / judged; None for
+                        # a recorded wait) — the measure is split by it.
+                        # Anything but "judged" is done or asked in the box,
+                        # never waved off.
+                        "level": _ga_level,
+                        # the card that already held the question, if any
+                        "open_card": (_open_card or {}).get("ref")}
+            _ga_firings.append(_ga_fire)
+            for _p in _ga_read:
+                # a handoff wait: the reply itself asked nothing
+                _p["judged"] = "clean" if _ga_in_handoff else "fired"
+                _p["firing"] = None if _ga_in_handoff else _ga_fire
+            if turn._close_turn_signal is not None:
+                # The recorded handoff is stale from here: the next
+                # close_turn's replaces it. One that records a wait is
+                # dropped now, so a turn that sends no second close_turn does
+                # not hand the wait to the next.
+                turn._ct_handoff_stale = True
+                if _gag.find_go_ahead_wait(turn._close_turn_signal.get("handoff")):
+                    # Set aside for good: a recorded wait is never put back,
+                    # whatever the repair answers.
+                    turn._close_turn_signal.pop("handoff", None)
+            # The draft already went out (the recorder holds it); the repair
+            # is sent after it as a repair piece, so the screen and the record
+            # agree and "say go" is not the last word the user reads.
+            grok_messages.append({"role": "user", "content": _gag.correction(
+                _ga_draft, _ga_phrase, sentence=_ga_sentence,
+                close_turn_recorded=turn._ct_written, in_handoff=_ga_in_handoff,
+                level=_ga_level or "explicit",
+                open_card=None if _ga_in_handoff else _open_card,
+                box_only=bool(box_only))})
+            turn._ga_awaiting = True
+            from mastercode.provider_gateway import call_model as _cm_goahead
+            # Held until it settles, after the round's calls have run: its
+            # text may say only what the turn holds (_repair_checked).
+            _repair_cb = await _next_stream_cb("repair", hold=True)
+            # The repair's own answer: the firing decides it; the guard never
+            # reads it again.
+            _cur_piece[0]["judged"], _cur_piece[0]["firing"] = "repair", _ga_fire
+            _cur_piece[0]["cards"], _cur_piece[0]["cards_before"] = _cards_open, list(_cards_open)
+            turn.result = await _cm_goahead(
+                messages=grok_messages,
+                temperature=0.3,
+                max_tokens=_spend_max(),
+                session_id=sess.session_id,
+                tools=box_only or (tools if tools else None),
+                **_chat_call_kw,
+                stream_cb=_repair_cb,
+            )
+            turn.total_tokens += turn.result.get("tokens_used", 0)
+            turn._prompt_acc += int(turn.result.get("prompt_tokens") or 0)
+            turn._completion_acc += int(turn.result.get("completion_tokens") or 0)
+            _acc_usage(turn.result)
+            if ("error" in turn.result and not turn.result.get("content")
+                    and not turn.result.get("tool_calls")):
+                # The repair call itself failed: its own outcome, and the turn
+                # ends on the reply as it stood.
+                log.warning("go-ahead guard: the repair call failed (session %s): %s",
+                            sess.session_id, str(turn.result.get("error"))[:200])
+                _ga_fire["_answer"] = {"error": str(turn.result.get("error"))[:200]}
+                turn._ga_awaiting = False
+                turn.result = {"content": "", "tool_calls": None}
+            return True
+
+        async def _escalate(args: dict, *, by_host: bool = True) -> dict:
+            """A question-box ticket (the escalate meta-tool files one, or a
+            learned decision pattern auto-resolves it). An OPEN ticket is the
+            ask card on the person's screen (app-web-kit/ask.ts askFromTool
+            reads this same result); an auto-resolved one already has its
+            answer. `by_host` False: the platform's own card (the allowance
+            stop's continue card) — not a question the Host asked, so it is
+            not the guard's firing's escalation, not the Host's ask in the box,
+            and the turn does not wait on it: its answer starts a turn of its
+            own."""
+            nonlocal _asked_in_box
+            tool_result = await _execute_meta_tool(
+                "escalate", args,
+                entity_id=sess.entity["id"],
+                pool=self.pool,
+                prompt_console=_prompt_console,
+                session_id=sess.session_id,
+                app_permissions=getattr(sess, "app_permissions", None),
+                interaction_context=sess.interaction_context,
+                thread_id=getattr(sess, "thread_id", None),
+                turn_type=getattr(sess, "turn_type", None),
+            )
+            _esc = (tool_result.get("result")
+                    if isinstance(tool_result, dict)
+                    and tool_result.get("status") == "ok" else None)
+            if (isinstance(_esc, dict) and _esc.get("status") == "open"
+                    and not _esc.get("auto_resolved")):
+                if by_host:
+                    _asked_in_box = True
+                try:
+                    _tk_id = int(_esc.get("ticket_id"))
+                    if by_host:
+                        # the turn waits for its answer before it ends
+                        _asks_open.append(_tk_id)
+                        if _ga_firings:
+                            _ga_firings[-1]["ticket_id"] = _tk_id
+                    # Where the asking turn's conversation is, so an
+                    # answer that comes after it ended starts a turn
+                    # THERE, the same way from every surface
+                    # (tickets.decide_ticket_service). Mapped as a
+                    # delivery is (wakeup_delivery_room): a question a
+                    # fired wake-up asked is answered in the room that
+                    # wake-up reports into, never on its hidden lane.
+                    _ic_q = getattr(sess, "interaction_context", None)
+                    _room_app, _room_proj = wakeup_delivery_room(
+                        app_id, project_id, _ic_q, thread_id)
+                    await self.pool.execute(
+                        "UPDATE entity_tickets SET metadata = COALESCE(metadata, "
+                        "'{}'::jsonb) || jsonb_build_object('asked_in', $1::jsonb) "
+                        "WHERE id = $2",
+                        json.dumps({"app_id": _room_app,
+                                    "project_id": None if thread_id else _room_proj,
+                                    "thread_id": thread_id,
+                                    "interaction_context": _ic_q}), _tk_id)
+                except Exception as _ai_err:  # noqa: BLE001 — the ask stands
+                    log.debug("escalate: asking turn's room not recorded: %s", _ai_err)
+            return tool_result
+
+        async def _box_call(args: dict, call_id: str | None = None, *,
+                            by_host: bool = True) -> dict | None:
+            """An escalate made outside the per-call loop: the
+            allowance stop's continue card, or the one call an exit past the
+            loop may make. It goes out as a round's does — the tool-call frames
+            the client raises the card from, a tool action on the row and on
+            the trace — and its card is noted (_cards_open). The card, or
+            None."""
+            _xpcb = getattr(sess, "_progress_cb", None)
+            _xid = call_id or f"call_escalate_{int(time.time() * 1000)}"
+            if _xpcb is not None:
+                try:
+                    await _xpcb({"event": "tool_call_start", "tool_call_id": _xid,
+                                 "tool": "escalate", "args": args})
+                except Exception as _xe:  # noqa: BLE001
+                    log.debug("progress_cb tool_call_start raised (non-fatal): %s", _xe)
+            try:
+                _xr = await _escalate(args, by_host=by_host)
+            except Exception as _xe:  # noqa: BLE001
+                log.warning("escalate outside the loop failed (session %s): %s",
+                            sess.session_id, _xe)
+                _xr = _refused_if_caller(_xe, str(_xe))
+            from mastercode.runtime.tools import _json_safe as _js_x
+            _xr = _js_x(_xr)
+            _xst = _xr.get("status", "unknown") if isinstance(_xr, dict) else "ok"
+            if _xpcb is not None:
+                try:
+                    await _xpcb({"event": "tool_call_result", "tool_call_id": _xid,
+                                 "tool": "escalate", "result": _xr, "status": _xst})
+                except Exception as _xe:  # noqa: BLE001
+                    log.debug("progress_cb tool_call_result raised (non-fatal): %s", _xe)
+            tool_actions.append({
+                "tool": "escalate", "args": args, "result_status": _xst,
+                "error_detail": (_xr.get("result", "") if isinstance(_xr, dict)
+                                 and _xst in ("error", "blocked", "denied") else "")})
+            publish_turn_trace(_turn_token, tool_actions=tool_actions,
+                               project_id=_row_project_id, tags=_turn_tags)
+            try:
+                from mastercode.runtime.go_ahead_guard import card_from_tool as _cft_x
+                _xcard = _cft_x("escalate", args, _xr)
+            except Exception:  # noqa: BLE001
+                _xcard = None
+            if _xcard and _xcard not in _cards_open:
+                _cards_open.append(_xcard)
+            return _xcard
+
+        async def _continue_card() -> dict | None:
+            """The allowance stopped the turn: the platform raises
+            its own continue card in the question box — whether to spend more
+            is the person's call — so the answer written with no tools reports
+            what is done and what is left and never has to ask, where no
+            repair could run. Once a turn, and only where the turn has the box
+            (`escalate` on its list) on a lane someone reads — and not while a
+            card of this turn's is still open in front of the person: their
+            answer to it already starts the follow-up turn, with a
+            budget of its own (answer_after_turn), and a second card would ask
+            them twice. The card, or None."""
+            nonlocal _cont_card
+            if _cont_card is None:
+                _cont_card = {}
+                if _box_tools and not getattr(sess, "unseen_lane", False) and not _cards_open:
+                    try:
+                        _cont_card = (await _box_call(
+                            _spend.continue_card(cut_reply=turn._spend_cut_reply),
+                            by_host=False)) or {}
+                    except Exception as _cc_err:  # noqa: BLE001 — the stop still stops
+                        log.warning("allowance stop: the continue card was not raised "
+                                    "(session %s): %s", sess.session_id, _cc_err)
+            return _cont_card or None
+
+        async def _keep_reply(waiting: str) -> None:
+            """Persist the reply as it stands and the close_turn handoff
+            BEFORE the turn waits: a Stop, the
+            turn ceiling or a restart during the hold cannot lose what the
+            person already read; the row is rewritten in place at the end."""
+            text = _reply_all()
+            if not text.strip():
+                return
+            tags = dict(_turn_tags or {})
+            if turn._close_turn_signal is not None:
+                tags["close_turn"] = turn._close_turn_signal
+            if system_turn:
+                tags["origin"] = "continuation"
+            if tool_actions:
+                tags["tool_calls"] = [tool_call_chip(_ta) for _ta in tool_actions
+                                      if isinstance(_ta, dict)]
+            if _go_ahead_recorded():
+                tags["go_ahead"] = _go_ahead_record(text)
+            try:
+                # In the background, never awaited here: the write embeds the
+                # text first, and a slow embedder must not delay the hold or
+                # its waiting card. Each write is chained after the one before
+                # (held_turn_write), so the final rewrite lands after the insert.
+                _held_row["task"] = held_turn_write(
+                    self.pool, sess.entity_id, sess.session_id, text, token=_turn_token,
+                    held=True, after=_held_row.get("task"), project_id=_row_project_id,
+                    tags=tags, created_at=_reply_at[0] or datetime.now(timezone.utc))
+                _held_row["written"] = True
+            except Exception as _kr_err:  # noqa: BLE001 — the hold goes on
+                log.warning("hold: the reply could not be written before the hold "
+                            "(session %s): %s", sess.session_id, _kr_err)
+            note_turn_held(_turn_token, waiting, len(tool_actions),
+                           project_id=_row_project_id, tags=_turn_tags,
+                           held_task=_held_row.get("task"),
+                           held_text=text if _held_row["written"] else None)
+
+        async def _waiting_card(waiting: str, done: str | None = None, cid: str = "") -> str:
+            """Tell the person the turn is holding, in a form every client
+            already renders: a tool card ('Waiting' + what for) that runs
+            while the turn holds and completes when it stops."""
+            if progress_cb is None:
+                return cid
+            try:
+                if done is None:
+                    cid = f"call_waiting_{int(time.time() * 1000)}"
+                    await progress_cb({"event": "tool_call_start", "tool_call_id": cid,
+                                       "tool": "waiting", "args": {"task": waiting}})
+                else:
+                    await progress_cb({"event": "tool_call_result", "tool_call_id": cid,
+                                       "result": done})
+            except Exception as _wc_err:  # noqa: BLE001
+                log.debug("progress_cb waiting card raised (non-fatal): %s", _wc_err)
+            return cid
+
+        def _on_resume() -> None:
+            """The turn goes on past its exit on outside input (an answer, a
+            result, the person's words)."""
+            nonlocal _ct_stale_from_resume
+            # The guard does NOT re-arm here (one repair per turn): with its repair unspent it judges, at the next
+            # exit, what it has not judged yet — the new ending, and whatever
+            # it could not read before the hold — never a piece
+            # it already judged.
+            if turn._close_turn_signal is not None and turn._ct_written:
+                turn._ct_handoff_stale = True        # the next close_turn's handoff replaces it
+                _ct_stale_from_resume = True
+            # Waiting no more: a Stop from here is a Stop of a running turn,
+            # and its note must not say it waited.
+            clear_turn_held(_turn_token)
+
+        async def _hold_at_exit() -> bool:
+            """The turn is about to end. If it is waiting on something it
+            started — an open ask, a build or agent whose result has not come
+            back — hold here (hold_for) within what is left of HOLD_S and the
+            process's background budget (may_hold). True: input is queued (the
+            caller goes round again and the drain takes it). False: end.
+
+            Before it waits, the reply as it stands is written (_keep_reply)
+            and a waiting card goes to the client. Before ending, the turn's
+            holds are released and the queue looked at once more with nothing
+            awaited in between, so a result either landed before the release
+            (queued: go round again) or finds no hold after it and wakes a
+            turn of its own (continue_after_result). A turn nobody reads but
+            an evaluation (unseen_lane) never holds: nothing it may run
+            starts work or asks (unseen_lane_may_run)."""
+            nonlocal _hold_left
+            if has_pending_input(sess.session_id):
+                _on_resume()
+                return True
+            _waiting = held_tasks(sess.session_id)
+            # (A turn on a lane nobody reads never gets here holding: every
+            # call that could start work or ask is refused in it.)
+            if (_asks_open or _waiting) and _hold_left > 0:
+                if not may_hold(woken=bool(system_turn)):
+                    log.info("hold: the Host's memory holds no more turns now (%d in the "
+                             "background) — this one ends; its results wake a turn when they "
+                             "land (session %s)", background_turns(), sess.session_id)
+                else:
+                    _what = waiting_on(_asks_open, _waiting)
+                    await _keep_reply(_what)
+                    _cid = await _waiting_card(_what)
+                    _w0 = time.monotonic()
+                    log.info("hold: waiting up to %.0fs for ticket(s) %s / task(s) %s "
+                             "(session %s)", _hold_left, _asks_open, _waiting,
+                             sess.session_id)
+                    _got = await hold_for(sess.session_id, bool(_asks_open), _hold_left,
+                                          count=not system_turn)
+                    _hold_left -= time.monotonic() - _w0
+                    await _waiting_card(_what, (
+                        "it came back — carrying on" if _got else
+                        "nothing came back while the turn waited; it wakes a turn of "
+                        "its own when it lands"), _cid)
+                    if _got:
+                        _on_resume()
+                        return True
+                    log.info("hold: nothing came back (%.0fs left) — the turn ends; "
+                             "ticket(s) %s and task(s) %s carry it (session %s)",
+                             max(0.0, _hold_left), _asks_open,
+                             held_tasks(sess.session_id), sess.session_id)
+                    _asks_open.clear()
+            release_holds(sess.session_id)
+            if has_pending_input(sess.session_id):
+                _on_resume()
+                return True
+            return False
+
+        # The tool loop (_run_tool_loop). A model error that ends the turn there
+        # hands back the turn's reply; otherwise the turn goes on past it.
+        _ended = await self._run_tool_loop(
+            sess, MAX_TOOL_ROUNDS=MAX_TOOL_ROUNDS, _acc_usage=_acc_usage,
+            _answers_read=_answers_read, _asks_open=_asks_open,
+            _call_with_overflow_retry=_call_with_overflow_retry, _cards_open=_cards_open, _cb=_cb,
+            _chat_call_kw=_chat_call_kw, _chat_role=_chat_role, _choice=_choice,
+            _claim_repairs=_claim_repairs, _close_turn_arrivals=_close_turn_arrivals,
+            _consecutive_all_fail=_consecutive_all_fail, _continue_card=_continue_card, _ct=_ct,
+            _ct_closed_asked=_ct_closed_asked, _ct_reply_owed=_ct_reply_owed,
+            _ct_took_handoff=_ct_took_handoff, _ctx_window=_ctx_window, _cur_piece=_cur_piece,
+            _cut_continues=_cut_continues, _dead_tools=_dead_tools, _dedup_cache=_dedup_cache,
+            _door_catalog=_door_catalog, _drop_held=_drop_held,
+            _drop_used_results=_drop_used_results, _droppable=_droppable,
+            _dropped_by_fp=_dropped_by_fp, _dropped_by_handle=_dropped_by_handle,
+            _empty_shapes=_empty_shapes, _end_on_error=_end_on_error, _escalate=_escalate,
+            _fail_ledger=_fail_ledger, _ga_firings=_ga_firings, _go_ahead_round=_go_ahead_round,
+            _hold_at_exit=_hold_at_exit, _inference_model=_inference_model,
+            _inference_provider=_inference_provider, _input_at=_input_at, _msgs_mark=_msgs_mark,
+            _next_stream_cb=_next_stream_cb, _nudge_resets=_nudge_resets,
+            _nudge_row_tasks=_nudge_row_tasks, _person_in_turn=_person_in_turn,
+            _person_spoke=_person_spoke, _pieces=_pieces, _protect_msgs=_protect_msgs,
+            _reply_all=_reply_all, _reply_reserve=_reply_reserve, _reply_written=_reply_written,
+            _root_mod=_root_mod, _root_turn=_root_turn, _row_project_id=_row_project_id,
+            _search_mode=_search_mode, _search_seen=_search_seen, _send_narration=_send_narration,
+            _served=_served, _settle=_settle, _spend=_spend, _spend_max=_spend_max,
+            _src_ctx=_src_ctx, _ta=_ta, _tchoice=_tchoice, _thread_key=_thread_key,
+            _tt_context_filter=_tt_context_filter, _turn_artifacts=_turn_artifacts,
+            _turn_pictures=_turn_pictures, _turn_tags=_turn_tags, _turn_taint=_turn_taint,
+            _turn_token=_turn_token, app_id=app_id, attachments=attachments,
+            effective_max=effective_max, grok_messages=grok_messages,
+            may_start_work=may_start_work, origin_request=origin_request, progress_cb=progress_cb,
+            project_id=project_id, session_id=session_id, temperature=temperature,
+            tool_actions=tool_actions, tools=tools, turn=turn, user_message=user_message)
+        if _ended is not None:
+            return _ended
 
         # The runaway backstop actually bound. Logged distinctly because it is
         # now supposed to be unreachable in normal work — the spend allowance
         # is what ends a healthy expensive turn, so a line here means either a
         # non-terminating loop or a backstop set too low.
-        if tool_round >= MAX_TOOL_ROUNDS and not _spend_stopped:
+        if turn.tool_round >= MAX_TOOL_ROUNDS and not turn._spend_stopped:
             log.warning(
                 "tool-loop BACKSTOP hit at %d rounds (allowance_basis=%s, "
                 "spent=%s) — session %s. The allowance, not this constant, is "
@@ -8232,7 +8314,7 @@ class EntityRuntime:
         # the allowance has room for that one repair. An allowance stop gets
         # none of it: its own continue card is already in the box
         # (_continue_card) and nothing more is spent on it.
-        if _spend_stopped:
+        if turn._spend_stopped:
             await _continue_card()
         # Past the loop the turn reads nothing more: an answer to a card from
         # here on starts a turn of its own once this one ends
@@ -8244,7 +8326,7 @@ class EntityRuntime:
         # again, a connector's go on as the thread's next turn. The same
         # TurnEnd send_message's `finally` runs for every other exit.
         _turn_end.run()
-        _exit_tools =(None if _spend_stopped or getattr(sess, "unseen_lane", False)
+        _exit_tools =(None if turn._spend_stopped or getattr(sess, "unseen_lane", False)
                        else (_box_tools or None))
         # What those calls put on the wire. Search mode (exits):
         # a call that sends no tools in groups mode keeps the core with
@@ -8271,8 +8353,8 @@ class EntityRuntime:
                              _xn or "?", sess.session_id)
 
         # If loop exhausted and model still wants tool calls, force a final text-only response
-        if result.get("tool_calls") and not _ct.has_prose(result.get("content")):
-            if _ct_left_closed:
+        if turn.result.get("tool_calls") and not _ct.has_prose(turn.result.get("content")):
+            if turn._ct_left_closed:
                 # close_turn closed the turn and the reply still came back as
                 # tool calls only: not an exhausted loop, and not told so.
                 log.warning("close_turn: no reply text after the turn closed -- forcing final text response")
@@ -8287,13 +8369,13 @@ class EntityRuntime:
                     + _limit_line("turn.tool_rounds", None, "a turn that reached its tool rounds")
                 )
                 _exit_name = "backstop"
-            if _spend_stopped:
+            if turn._spend_stopped:
                 _stop_text += "\n\n" + _ta.continue_card_line((_cont_card or {}).get("where"))
             elif _exit_tools:
                 _stop_text += "\n\n" + _EXIT_BOX_LINE
             grok_messages.append({"role": "user", "content": _stop_text})
             _drop_used_results(grok_messages)
-            result = await _call_entity_model(
+            turn.result = await _call_entity_model(
                 grok_messages,
                 temperature=temperature,
                 max_tokens=_spend_max(),
@@ -8301,11 +8383,11 @@ class EntityRuntime:
                 **_chat_call_kw,
                 stream_cb=await _next_stream_cb(),
             )
-            total_tokens += result.get("tokens_used", 0)
-            _prompt_acc += int(result.get("prompt_tokens") or 0)
-            _completion_acc += int(result.get("completion_tokens") or 0)
-            _acc_usage(result)
-            await _exit_calls(result)
+            turn.total_tokens += turn.result.get("tokens_used", 0)
+            turn._prompt_acc += int(turn.result.get("prompt_tokens") or 0)
+            turn._completion_acc += int(turn.result.get("completion_tokens") or 0)
+            _acc_usage(turn.result)
+            await _exit_calls(turn.result)
 
         # The reply as stored is what the recorder sent: every piece, in order.
         # The last completion settles first.
@@ -8319,8 +8401,8 @@ class EntityRuntime:
         # empty tools-off answer has not written it yet.
         # The loop's own retry (above, with the turn's tools) is the one a
         # turn gets: when it ran, an empty answer after it is the stall below.
-        if not content.strip() and not _spend_cut_reply and not _empty_retried:
-            _empty_shapes.append(_empty_shape(result))
+        if not content.strip() and not turn._spend_cut_reply and not turn._empty_retried:
+            _empty_shapes.append(_empty_shape(turn.result))
             log.warning("Empty response after WM strip -- retrying without tools")
             # Remove any WM blocks from grok_messages before retry.
             #
@@ -8357,9 +8439,9 @@ class EntityRuntime:
             content = _reply_all()
             if not content.strip():
                 _empty_shapes.append(_empty_shape(_retry))
-            total_tokens += _retry.get("tokens_used", 0)
-            _prompt_acc += int(_retry.get("prompt_tokens") or 0)
-            _completion_acc += int(_retry.get("completion_tokens") or 0)
+            turn.total_tokens += _retry.get("tokens_used", 0)
+            turn._prompt_acc += int(_retry.get("prompt_tokens") or 0)
+            turn._completion_acc += int(_retry.get("completion_tokens") or 0)
             _acc_usage(_retry)
         # The guard at an exit past the loop: a new ending, read once, and
         # repaired only into the box or a rewrite — and only while the
@@ -8377,18 +8459,18 @@ class EntityRuntime:
                 _exit_room = False
             # Past the loop nothing drains the input (`last`).
             if _exit_room and await _go_ahead_round(_exit_name, box_only=_exit_tools, last=True):
-                _ga_awaiting = False
+                turn._ga_awaiting = False
                 # The repair's `escalate` runs BEFORE its held text settles:
                 # a claim of the box stands only on a card that exists
                 # (_repair_checked).
-                await _exit_calls(result)
+                await _exit_calls(turn.result)
                 await _settle()
                 if _ga_firings and "_answer" not in _ga_firings[-1]:
                     _ga_firings[-1]["_answer"] = {
                         "text": _ga_firings[-1].get(
-                            "_kept_prose", _ct.has_prose(result.get("content"))),
+                            "_kept_prose", _ct.has_prose(turn.result.get("content"))),
                         "calls": [((c or {}).get("function") or {}).get("name") or "?"
-                                  for c in (result.get("tool_calls") or [])]}
+                                  for c in (turn.result.get("tool_calls") or [])]}
                 content = _reply_all()
         # Last resort: the retry ALSO came back empty (reasoning-only models
         # do this — provider_gateway drops reasoning with no content, see its
@@ -8408,9 +8490,9 @@ class EntityRuntime:
             # After an allowance stop the stop line below says what happened;
             # "twice in a row" would describe a retry that,
             # after a cut-reply stop, never ran.
-            if _exit_card and not _spend_stopped:
+            if _exit_card and not turn._spend_stopped:
                 _stall = "The open choice is in the question box above."
-            elif _spend_stopped:
+            elif turn._spend_stopped:
                 _stall = ""
             else:
                 # Worded by what came back (reasoning, nothing, no usage).
@@ -8424,7 +8506,7 @@ class EntityRuntime:
         # the hidden replay lane included — and pointing at the continue card
         # when one was raised. The row alone records the stop, so the thread
         # and the next turn's model see it after the card is answered.
-        if _spend_stopped:
+        if turn._spend_stopped:
             # "Written" is the FINAL ANSWER's text, never narration before a
             # tool call: a turn that only narrated stopped
             # "before a reply was written".
@@ -8434,7 +8516,7 @@ class EntityRuntime:
             await _send_piece(_ta.stop_line(written=_answered, card=bool(_cont_card)),
                               "reply", notice="budget")
             content = _reply_all()
-        tokens = total_tokens
+        tokens = turn.total_tokens
 
         # -- Activity: permission_note (Layer 1 -- entity self-filtered) --
         if _prompt_console and tools and not tool_actions and content:
@@ -8541,10 +8623,10 @@ class EntityRuntime:
         # deleted host_sdk_engine excluded the cached prefix and rendered a
         # 140K-context turn as "4 in" in Circles. The cached split rides
         # alongside so the readout can show what caching saved.
-        _assistant_tags["tokens_in"] = _input_total_acc or _prompt_acc
-        _assistant_tags["tokens_out"] = _completion_acc
+        _assistant_tags["tokens_in"] = _input_total_acc or turn._prompt_acc
+        _assistant_tags["tokens_out"] = turn._completion_acc
         _assistant_tags["tokens_total"] = (
-            (_input_total_acc or _prompt_acc) + _completion_acc
+            (_input_total_acc or turn._prompt_acc) + turn._completion_acc
         ) or int(tokens or 0)
         if _cache_read_acc or _cache_write_acc:
             _assistant_tags["tokens_cached"] = _cache_read_acc
@@ -8576,7 +8658,7 @@ class EntityRuntime:
             # the 24 entries the turn row keeps.
             _usd, _basis = _etc(
                 _served.get("model") or _inference_model, _served.get("provider"),
-                _input_total_acc or _prompt_acc, _completion_acc,
+                _input_total_acc or turn._prompt_acc, turn._completion_acc,
                 cache_read_tokens=_cache_read_acc, cache_write_tokens=_cache_write_acc,
                 routed_model_id=_inference_model,
                 failed_over=_served.get("failed_over"),
@@ -8606,33 +8688,35 @@ class EntityRuntime:
         # over 3 calls of ~55k each: tool schemas ~28k, the whole 87-turn
         # thread verbatim ~20k, system ~12k). Sizes only — never content —
         # so it can ride the turn row's metadata like every other stamp.
+        # It reads the turn's variables by their names, each one set on every
+        # path to here (a block this turn did not build is None;
+        # scripts/test_context_ledger_binds.py).
         _context_ledger = None
         try:
-            _loc = locals()
-            _hist_msgs = _loc.get("history_msgs") or []
+            _hist_msgs = history_msgs or []
             _hist_turns = [m for m in _hist_msgs
                            if isinstance(m, dict) and m.get("role") in ("user", "assistant")]
-            _sys_chars = len(_loc.get("_sys_content") or "")
+            _sys_chars = len(_sys_content or "")
             _per_turn = {}
-            for _bn, _bv in (("memory_tasks", _loc.get("_pt_block")),
-                             ("model_style", _loc.get("_style_block")),
-                             ("constitution_context", _loc.get("_const_block")),
-                             ("inbox", _loc.get("_inbox_block")),
-                             ("tool_trail", _loc.get("_tool_trail_block"))):
+            for _bn, _bv in (("memory_tasks", _pt_block),
+                             ("model_style", _style_block),
+                             ("constitution_context", _const_block),
+                             ("inbox", _inbox_block),
+                             ("tool_trail", _tool_trail_block)):
                 if isinstance(_bv, str) and _bv:
                     _per_turn[_bn] = len(_bv)
             # The late per-turn blocks (attached_image, felt_state,
             # internal_state, conversation_awareness) — every one of them.
-            for _ln, _lt in (_loc.get("_late_blocks") or []):
+            for _ln, _lt in (_late_blocks or []):
                 if isinstance(_lt, str) and _lt:
                     _per_turn[_ln] = len(_lt)
             # What rode the cached static message beyond the schema build:
             # the orchestrator catalog + host rules. system_chars above is the
             # schema build only; this is the rest of what the model saw.
             _static_appended = sum(
-                len(v) for v in (_loc.get("_orch_block"), _loc.get("_host_rules"))
+                len(v) for v in (_orch_block, _host_rules)
                 if isinstance(v, str) and v)
-            _tools_list = _loc.get("tools") or []
+            _tools_list = tools or []
             try:
                 _tools_chars = len(json.dumps(_tools_list, default=str)) if _tools_list else 0
             except Exception:
@@ -8642,7 +8726,7 @@ class EntityRuntime:
             # rode call 1. Two turns whose hashes match could have shared the
             # cache; a mismatch names which part moved. Sizes alone missed
             # same-length changes.
-            _static_sha = _loc.get("_static_sys_sha")
+            _static_sha = _static_sys_sha
             _context_ledger = {
                 "calls": len(_per_call),
                 # per_call entries carry {in, cached, cache_write, out, usd}
@@ -8657,7 +8741,7 @@ class EntityRuntime:
                 # What the allowance did this turn: which basis was in force,
                 # what was spent, and whether IT (not the backstop) ended the
                 # tool loop.
-                "spend": {**_spend.summary(), "stopped_on_allowance": _spend_stopped},
+                "spend": {**_spend.summary(), "stopped_on_allowance": turn._spend_stopped},
                 "system_chars": _sys_chars,
                 "static_appended_chars": _static_appended,
                 "static_sha": _static_sha,
@@ -8675,18 +8759,18 @@ class EntityRuntime:
                                                   if _p["label"] == "narration")},
                 "history": {
                     "turns": len(_hist_turns),
-                    "chars": int(_loc.get("history_chars") or 0),
+                    "chars": int(history_chars or 0),
                     # the Host's own notes on the turns that fell out
                     # (evicted_record), when any did
-                    "evicted_record": bool(_loc.get("_record_msg")),
+                    "evicted_record": bool(_record_msg),
                     # the goal + last handoff (consolidator off), per turn
-                    "thread_state": bool(_loc.get("_thread_state_block")),
+                    "thread_state": bool(_thread_state_block),
                 },
                 "tools": {"count": len(_tools_list), "chars": _tools_chars,
-                          "first_call_sha": _loc.get("_tools_first_call_sha"),
-                          "first_call_count": _loc.get("_tools_first_call_count"),
+                          "first_call_sha": _tools_first_call_sha,
+                          "first_call_count": _tools_first_call_count,
                           # Tools declared dead this turn (same error twice).
-                          "dead": list(_loc.get("_dead_tools") or [])},
+                          "dead": list(_dead_tools or [])},
                 # chars: what the result took in the window; stored: its whole
                 # size, when only a preview rode (runtime/result_store).
                 "tool_results": [
@@ -8705,15 +8789,15 @@ class EntityRuntime:
                 # "close_turn arrived without prose").
                 "close_turn": _ct.ledger_entry(_close_turn_arrivals),
             }
-            if _loc.get("_search_mode"):
+            if _search_mode:
                 # A turn that held the doors (ledger fields): the
                 # surface, the fixed list's added tools and the history
                 # notes' weight.
                 _context_ledger["tools"]["surface"] = "search"
-                _context_ledger["tools"]["core_extras"] = list(_loc.get("_core_extras") or [])
+                _context_ledger["tools"]["core_extras"] = list(_core_extras or [])
                 _context_ledger["history"]["notes"] = {
-                    "tools": len(_loc.get("_notes_noted") or []),
-                    "chars": int(_loc.get("_notes_chars") or 0)}
+                    "tools": len(_notes_noted or []),
+                    "chars": int(_notes_chars or 0)}
             _assistant_tags["context_ledger"] = _context_ledger
         except Exception as _cl_err:
             log.debug("context ledger build failed (non-fatal): %s", _cl_err)
@@ -8735,13 +8819,13 @@ class EntityRuntime:
         # The handoff the turn recorded before it held and then went on past:
         # no close_turn after the resume replaced it, so it is not
         # handed to the next turn stale.
-        if _ct_handoff_stale and _ct_stale_from_resume and _close_turn_signal is not None:
-            _close_turn_signal.pop("handoff", None)
+        if turn._ct_handoff_stale and _ct_stale_from_resume and turn._close_turn_signal is not None:
+            turn._close_turn_signal.pop("handoff", None)
         # The Host's close_turn signal, as sent (runtime/close_turn.normalize
         # drops only what the schema does not allow). The user sees it — the
         # Review button beside Context — so it is stored whole, not sized.
-        if _close_turn_signal is not None:
-            _assistant_tags["close_turn"] = _close_turn_signal
+        if turn._close_turn_signal is not None:
+            _assistant_tags["close_turn"] = turn._close_turn_signal
         # Which memory rows rode this turn's prompt, by id, type and section
         # (memory_engine.build_memory_context): the owner can see what the
         # Host was told it remembered (the Memory app reads it per turn).
@@ -8924,9 +9008,9 @@ class EntityRuntime:
             "role": "assistant",
             "content": content,
             "tokens_used": tokens,
-            "prompt_tokens": _prompt_acc,
-            "completion_tokens": _completion_acc,
-            "input_total_tokens": _input_total_acc or _prompt_acc,
+            "prompt_tokens": turn._prompt_acc,
+            "completion_tokens": turn._completion_acc,
+            "input_total_tokens": _input_total_acc or turn._prompt_acc,
             "cache_read_tokens": _cache_read_acc,
             "cache_write_tokens": _cache_write_acc,
             "token_budget": effective_max,
@@ -8969,7 +9053,7 @@ class EntityRuntime:
             # And the ledger, so the live turn can show it before reload.
             "ledger": _context_ledger,
             # And the Host's close_turn signal, for the Review button.
-            "close_turn": _close_turn_signal,
+            "close_turn": turn._close_turn_signal,
         }
         resp["provider"] = _served.get("provider")
         if _served.get("failed_over"):
@@ -8977,7 +9061,7 @@ class EntityRuntime:
         if tool_actions:
             resp["tool_actions"] = tool_actions
         # Include thinking content if available from provider response
-        _thinking_content = result.get("_thinking", "")
+        _thinking_content = turn.result.get("_thinking", "")
         if _thinking_content:
             resp["_thinking"] = _thinking_content
         return resp

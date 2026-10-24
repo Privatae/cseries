@@ -124,8 +124,8 @@ check("history: the evicted-turn notes ride only when turns fell out, after a fi
       and "max_hist = max(max_hist - _er.RECORD_MAX_CHARS, 0)" in _rec
       and _rec.index("if _probe:") < _rec.index("_record_msg = {"))
 check("ledger: history says which of the two rode",
-      '"thread_state": bool(_loc.get("_thread_state_block"))' in sess_src
-      and '"evicted_record": bool(_loc.get("_record_msg"))' in sess_src)
+      '"thread_state": bool(_thread_state_block)' in sess_src
+      and '"evicted_record": bool(_record_msg)' in sess_src)
 # The thread state changes with every handoff: it rides in the per-turn block
 # after history, never as a message ahead of the cached prefix.
 _ts_if = [n for n in ast.walk(stree) if isinstance(n, ast.If) and ast.unparse(n.test) == "_thread_state_block"]

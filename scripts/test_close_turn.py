@@ -193,7 +193,7 @@ check("parse_args: broken JSON runs as {}", ct.parse_args(_tc("close_turn", "{no
 src = inspect.getsource(S)
 # The terminal `if` (it also ends the turn on the go-ahead repair's
 # own answer when that is close_turn alone, with no text — "adding nothing").
-i_term = src.find("            if tool_calls and (\n                    _ct.is_terminal(result.get(\"content\"), tool_calls)")
+i_term = src.find("            if tool_calls and (\n                    _ct.is_terminal(turn.result.get(\"content\"), tool_calls)")
 i_exit = src.find("            if not tool_calls:\n                # This completion ends the reply", i_term)
 i_claim = src.find("find_unbacked_start(", i_exit)
 i_late = src.find("if has_pending_nudge(sess.session_id):", i_exit)
@@ -202,7 +202,7 @@ check("exit path: the terminal block sits directly in front of the text exit",
       0 < i_term < i_exit and src[i_term:i_exit].count("\n            if ") == 0, (i_term, i_exit))
 term_block = src[i_term:i_exit]
 check("exit path: it turns the completion into a reply (tool_calls cleared on result)",
-      'result = {**result, "tool_calls": None}' in term_block and "tool_calls = None" in term_block)
+      'turn.result = {**turn.result, "tool_calls": None}' in term_block and "tool_calls = None" in term_block)
 check("exit path: it runs the writes and records arrival + signal",
       "_run_close_turn(" in term_block and "_close_turn_arrivals.append(" in term_block
       and "_ct.normalize(_ct_args)" in term_block)
@@ -212,7 +212,7 @@ check("exit path: it makes no model call and appends nothing to the transcript",
 check("exit path: the claim guard and the late-nudge drain follow, before the break",
       i_exit < i_claim < i_late < i_break, (i_claim, i_late, i_break))
 check("round path: close_turn's arrival is recorded before any gate can answer it",
-      src.find("if func_name == _ct.TOOL_NAME:\n                    _close_turn_arrivals.append(")
+      -1 < src.find("if func_name == _ct.TOOL_NAME:\n                    _close_turn_arrivals.append(")
       < src.find("# ── Dedup gate"))
 check("round path: the result tells the model its reply is owed, in words that fit what went out",
       '"next": _ct.next_step(' in src
@@ -258,25 +258,25 @@ def _assigns(nodes, name, value):
             and any(ast.unparse(t) == name for t in n.targets) and ast.unparse(n.value) == value]
 
 
-_tw = _ifs(_term_if, "_ct_written")
+_tw = _ifs(_term_if, "turn._ct_written")
 check("once: the terminal path runs the writes only when none ran, and marks them run",
-      len(_tw) == 1 and _assigns(_tw[0].orelse, "_ct_written", "True")
-      and not _assigns(_tw[0].body, "_ct_written", "True"), ast.unparse(_term_if)[:300])
+      len(_tw) == 1 and _assigns(_tw[0].orelse, "turn._ct_written", "True")
+      and not _assigns(_tw[0].body, "turn._ct_written", "True"), ast.unparse(_term_if)[:300])
 _round_if = next(n for n in ast.walk(_tree) if isinstance(n, ast.If)
                  and ast.unparse(n.test) == "func_name == _ct.TOOL_NAME"
                  and "_run_close_turn" in ast.unparse(n))
-_rw = _ifs(_round_if, "_ct_written")
+_rw = _ifs(_round_if, "turn._ct_written")
 check("once: the round path runs the writes only when none ran, and marks them run",
-      len(_rw) == 1 and _assigns(_rw[0].orelse, "_ct_written", "True"), ast.unparse(_round_if)[:300])
+      len(_rw) == 1 and _assigns(_rw[0].orelse, "turn._ct_written", "True"), ast.unparse(_round_if)[:300])
 _arr_if = next(n for n in ast.walk(_tree) if isinstance(n, ast.If)
                and ast.unparse(n.test) == "func_name == _ct.TOOL_NAME"
                and "_close_turn_arrivals.append" in ast.unparse(n))
 check("once: the reply is owed from the moment close_turn arrives (before any gate or cache)",
       [ast.unparse(x) for x in _arr_if.body][-1] == "_ct_reply_owed = True"
-      and src.find("_ct_reply_owed = True") < src.find("# ── Dedup gate"))
-_first = _ifs(_arr_if, "_close_turn_signal is None")
+      and -1 < src.find("_ct_reply_owed = True") < src.find("# ── Dedup gate"))
+_first = _ifs(_arr_if, "turn._close_turn_signal is None")
 check("once: the first close_turn's signal is the turn's (a later one never replaces it)",
-      len(_first) == 1 and "_close_turn_signal, _ = _ct.normalize(func_args)" in ast.unparse(_first[0]))
+      len(_first) == 1 and "turn._close_turn_signal, _ = _ct.normalize(func_args)" in ast.unparse(_first[0]))
 # Review r11 of no-go-ahead: the text was recorded where it was sent (the
 # single recorder); close_turn's arrival marks that piece as the closing reply,
 # whatever rode beside it, so the guard reads it with what follows.
@@ -285,38 +285,38 @@ check("once: text that came with a non-terminal close_turn is kept in the saved 
       and "_record_part" not in ast.unparse(_arr_if))
 _owed_if = _ifs(_tree, "_ct_reply_owed")
 check("once: the round's own model call is marked as the one that owes the reply",
-      len(_owed_if) == 1 and _assigns([_owed_if[0]], "_ct_reply_result", "result")
+      len(_owed_if) == 1 and _assigns([_owed_if[0]], "turn._ct_reply_result", "turn.result")
       and _assigns([_owed_if[0]], "_ct_reply_owed", "False")
       and 0 < src.find("tools=_tools_for_round,") < src.find("            if _ct_reply_owed:\n"))
 check("cache: close_turn never takes the tools off a call",
       "_tools_for_round = None" not in ast.unparse(_owed_if[0])
       and src.count("_tools_for_round = None") == 1)
-_due = _ifs(_tree, "_ct_reply_result is not None and result is _ct_reply_result")
+_due = _ifs(_tree, "turn._ct_reply_result is not None and turn.result is turn._ct_reply_result")
 _due_src = ast.unparse(_due[0]) if _due else ""
 _ask = _ifs(_due[0], "not _ct_closed_asked and _ct_room") if _due else []
 _ask_src = ast.unparse(_ask[0]) if _ask else ""
 check("once: a tool call in the reply is not run — with text the text is the reply",
-      len(_due) == 1 and "tool_calls = None" in _due_src and "_ct_reply_result = None" in _due_src
+      len(_due) == 1 and "tool_calls = None" in _due_src and "turn._ct_reply_result = None" in _due_src
       and "'tool_calls': None" in _due_src, _due_src[:400])
 check("once: without text the reply is asked for once more in words, tools kept (cache), then the "
       "forced-text call",
       len(_ask) == 1 and "_ct.TURN_CLOSED" in _ask_src and "tools=tools" in _ask_src
-      and "_ct_reply_result = result" in _ask_src and "continue" in _ask_src
+      and "turn._ct_reply_result = turn.result" in _ask_src and "continue" in _ask_src
       and "break" in _due_src.split("if not _ct_closed_asked and _ct_room")[1], _due_src[:600])
 check("once: the second ask happens once — the latch is set in it, and the allowance is checked first",
       _assigns([_ask[0]], "_ct_closed_asked", "True") if _ask else False)
 _room = [n for n in ast.walk(_due[0]) if isinstance(n, ast.If)
          and ast.unparse(n.test) == "_spend.would_stop(_ta.new_input_tokens(grok_messages, _msgs_mark[0]), _reply_reserve)"
-         and _assigns([n], "_ct_room", "False") and _assigns([n], "_spend_stopped", "True")] if _due else []
+         and _assigns([n], "_ct_room", "False") and _assigns([n], "turn._spend_stopped", "True")] if _due else []
 check("once: out of allowance, no second ask (the spend check decides _ct_room first)",
       len(_room) == 1 and len(_ask) == 1
-      and _due_src.find("_spend.would_stop(") < _due_src.find("if not _ct_closed_asked and _ct_room")
+      and -1 < _due_src.find("_spend.would_stop(") < _due_src.find("if not _ct_closed_asked and _ct_room")
       and "_spend.check(" not in _due_src,
       _due_src[:300])
-_err = _ifs(_ask[0], "'error' in result and (not result.get('content'))") if _ask else []
+_err = _ifs(_ask[0], "'error' in turn.result and (not turn.result.get('content'))") if _ask else []
 check("once: the second ask is metered like any call, and a provider error on it is returned",
-      "_acc_usage(result)" in _ask_src and len(_err) == 1
-      and [ast.unparse(x) for x in _err[0].body] == ["return await _end_on_error(result)"], _ask_src[-400:])
+      "_acc_usage(turn.result)" in _ask_src and len(_err) == 1
+      and [ast.unparse(x) for x in _err[0].body] == ["return await _end_on_error(turn.result)"], _ask_src[-400:])
 # would_stop itself is driven against check() in test_turn_allowance.py §0.
 _ws_if = [n for n in ast.walk(_due[0]) if isinstance(n, ast.If)
           and ast.unparse(n.test).startswith("_spend.would_stop(")] if _due else []
@@ -331,8 +331,8 @@ _nr = _ifs(_due[0], "_dc_name == _ct.TOOL_NAME") if _due else []
 check("once: a close_turn among them is an arrival marked not_run and never terminal",
       len(_nr) == 1 and "'not_run': True" in ast.unparse(_nr[0]) and "'terminal': False" in ast.unparse(_nr[0]))
 check("honest STOP: leaving the loop because the turn closed is marked, so the wording follows",
-      _assigns(_due, "_ct_left_closed", "True") if _due else False)
-_stop = _ifs(_tree, "_ct_left_closed")
+      _assigns(_due, "turn._ct_left_closed", "True") if _due else False)
+_stop = _ifs(_tree, "turn._ct_left_closed")
 check("honest STOP: after close_turn the forced-text call says the turn is closed, not that rounds ran out",
       len(_stop) == 1 and "_stop_text = _ct.TURN_CLOSED" in ast.unparse(_stop[0].body)
       and "all available tool rounds" in ast.unparse(_stop[0].orelse),
@@ -345,7 +345,7 @@ check("honest STOP: after close_turn the forced-text call says the turn is close
 import mastercode.runtime.turn_replies as _TR  # noqa: E402
 _rec_src = inspect.getsource(_TR)
 check("nudge: a nudge that lands during the owed reply keeps its text as the reply",
-      "_seen_reply = strip_wm(result.get('content') or '')" in src.replace('"', "'")
+      "_seen_reply = strip_wm(turn.result.get('content') or '')" in src.replace('"', "'")
       and "elif more and res.get('tool_calls') and res is not self.ct_reply_result():"
       in _rec_src.replace('"', "'"))
 _send_fn = next(n for n in ast.walk(ast.parse(_rec_src))
@@ -356,7 +356,8 @@ check("once: only text is kept (never None — the save joins strings): the reco
 check("live = reload: close_turn sends no tool-call frames (no chip that vanishes on reload)",
       src.count("if _pcb is not None and func_name != _ct.TOOL_NAME:") == 2)
 check("once: that check runs before the terminal check reads the same completion",
-      src.find("result is _ct_reply_result") < src.find("_ct.is_terminal(result.get(\"content\"), tool_calls)"))
+      0 < src.find("turn.result is turn._ct_reply_result")
+      < src.find("_ct.is_terminal(turn.result.get(\"content\"), tool_calls)"))
 check("wall: the write-tag is set once per turn and never reset",
       src.count("sess.write_app_id =") == 1)
 check("once: a repeated close_turn is answered, never re-run",
@@ -365,7 +366,7 @@ check("round path: no chip, no artifact",
       "if func_name != _ct.TOOL_NAME:\n                    tool_actions.append(ta_entry)" in src
       and "if func_name != _ct.TOOL_NAME:\n                        _turn_artifacts.append(" in src)
 check("no silent turn: the STOP round on tool_calls without content is still there",
-      'if result.get("tool_calls") and not _ct.has_prose(result.get("content")):' in src
+      'if turn.result.get("tool_calls") and not _ct.has_prose(turn.result.get("content")):' in src
       # (tool search step C: the call's tools ride in _exit_wire, which is
       # {"tools": _exit_tools} outside search mode)
       and "**_exit_wire,  # escalate alone, or none -- force a text response" in src
@@ -383,7 +384,7 @@ check("metric: rides context_ledger", '"close_turn": _ct.ledger_entry(_close_tur
 check("metric: each arrival names the served model",
       src.count('"model": _served.get("model") or _inference_model,\n') >= 2)
 check("signal: stored on the assistant row as metadata.close_turn",
-      '_assistant_tags["close_turn"] = _close_turn_signal' in src)
+      '_assistant_tags["close_turn"] = turn._close_turn_signal' in src)
 
 
 # ── 7. the writes, against a fake pool ────────────────────────────────────
@@ -679,7 +680,7 @@ check("wall: the turn's write-tag is set on the session each turn",
 
 # ── 9. the Review button reads what is stored ─────────────────────────────
 check("review: the turn's response carries the signal",
-      '"close_turn": _close_turn_signal,' in src)
+      '"close_turn": turn._close_turn_signal,' in src)
 _bs = open(os.path.join(APP_ROOT, "server/brain_service.py")).read()
 _frame = _bs[_bs.index('"t": "context",'):_bs.index('}]) + "\\n"', _bs.index('"t": "context",'))]
 check("review: the live context frame the clients parse carries it",

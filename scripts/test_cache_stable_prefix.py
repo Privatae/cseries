@@ -124,7 +124,7 @@ sess_src = turn_source(REPO)
 # is driven in test_host_context_trims.py (part_loop, "one list per turn").
 check("ledger records the first call's tool-list hash: the one list build and a root turn's allowlist",
       sess_src.count("_tools_first_call_sha = _bytes_sha(tools)") == 2
-      and '"first_call_sha": _loc.get("_tools_first_call_sha")' in sess_src,
+      and '"first_call_sha": _tools_first_call_sha,' in sess_src,
       f"{sess_src.count('_tools_first_call_sha = _bytes_sha(tools)')} hash sites")
 check("ledger records the static-text hash", '"static_sha": _static_sha' in sess_src)
 ns: dict = {}

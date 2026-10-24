@@ -186,7 +186,7 @@ check("session: a cached (dedup-served) error feeds the ledger as the same failu
 check("session: blocked/denied carry their reason into error_detail",
       'tool_result.get("status") in ("error", "blocked", "denied") else ""' in src_sess)
 check("session: the old whole-turn hint builder is gone", "_build_error_recovery_hints(tool_actions)" not in src_sess)
-check("session: ledger records dead tools", '"dead": list(_loc.get("_dead_tools")' in src_sess)
+check("session: ledger records dead tools", '"dead": list(_dead_tools or [])' in src_sess)
 check("tools meta carries the skill", '"skill": m.get("skill") or None' in src_tools)
 
 import yaml  # noqa: E402

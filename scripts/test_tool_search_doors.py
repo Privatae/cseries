@@ -795,7 +795,9 @@ check("trail: the pick reads a read chip as the tool it read, and an operate chi
 # `_ga_op` (operate's target, which is what the resolver returns for it, or
 # for a watch the server's tool it called), and the read door's branch never
 # touches _ga_firings.
-_src = inspect.getsource(S.EntityRuntime._send_message_core)
+# The turn's code: its core, then the tool loop (a method of its own).
+_src = (inspect.getsource(S.EntityRuntime._send_message_core)
+        + inspect.getsource(S.EntityRuntime._run_tool_loop))
 _ops_at = _src.find('_ga_firings[-1].setdefault("ops", []).append(_ga_op[:80])')
 _op_branch = _src.find('elif func_name == "operate":')
 _next_branch = _src.find('elif func_name in getattr(sess, "_host_own_tools", set()):')

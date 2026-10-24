@@ -2242,7 +2242,9 @@ def case_model_call_marks_the_takeover():
     """The first model call of a turn is what makes a later failure "after the
     model saw it". The flag must be set where that call is made, before it."""
     from mastercode.runtime.session import EntityRuntime
-    src = inspect.getsource(EntityRuntime._send_message_core)
+    # The turn's core, then its tool loop (a method of its own).
+    src = (inspect.getsource(EntityRuntime._send_message_core)
+           + inspect.getsource(EntityRuntime._run_tool_loop))
     call = src.index("result = await _call_with_overflow_retry(\n            grok_messages,")
     mark = src.find("_tk.model_saw = True")
     first_call = src.index("await _call_with_overflow_retry(")
@@ -2457,7 +2459,8 @@ async def case_recurring_outage_and_read_only_tools():
           and tool_acts("workspace_file") is True and tool_acts("build") is True
           and tool_acts("some_tool_nobody_classified") is True, "")
     from mastercode.runtime.session import EntityRuntime
-    src = inspect.getsource(EntityRuntime._send_message_core)
+    src = (inspect.getsource(EntityRuntime._send_message_core)
+           + inspect.getsource(EntityRuntime._run_tool_loop))
     # Judged on the call's target since the search-mode doors: in groups
     # mode `_eff_name` IS func_name
     # (tool_doors.effective_call), so this is the same test it always was.

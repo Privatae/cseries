@@ -581,7 +581,7 @@ _repair = sess_src[i_guard:i_break]
 check("the repair call STREAMS, or its correction never reaches the user",
       'stream_cb=await _next_stream_cb("repair")' in _repair)
 check("the repair's tokens are accounted like every other call site",
-      "_acc_usage(result)" in _repair and "total_tokens += result" in _repair)
+      "_acc_usage(turn.result)" in _repair and "turn.total_tokens += turn.result" in _repair)
 # The caught draft is part of the durable turn, in the
 # order the person saw it. Every piece of
 # visible text is recorded where it is sent (the single recorder, _send): the

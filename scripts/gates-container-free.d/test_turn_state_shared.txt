@@ -1,0 +1,2 @@
+# The tool loop shares values with the helpers the core defines before it only through turn (runtime/turn_state.TurnState): made once and never rebound, every turn.X a slot, no helper the loop calls reads or sets a variable the loop sets. Source + AST only.
+test_turn_state_shared.py

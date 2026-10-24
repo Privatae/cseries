@@ -1,0 +1,2 @@
+# Every variable of the turn the context ledger reads is set on every path to it (the per-turn, model-style and constitution blocks and the orchestrator catalog and host rules start as None), and every name a step of the turn returns is set on every path to its return; CPython's compiler proves it (LOAD_FAST, never LOAD_FAST_CHECK). Source + compile only.
+test_context_ledger_binds.py

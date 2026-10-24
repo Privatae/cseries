@@ -20,6 +20,9 @@ and both were invisible here. Now:
     overflow-retry wrapper) counts as a call site, and its callers are checked;
   - a `**name` spread is resolved to the keys the enclosing function writes
     into `name` (dict literal, dict(...), name["k"] = ..., name.update(...));
+    when `name` is a parameter of that function (a step of the turn, such as
+    the tool loop, handed the turn's value by name), it is resolved where the
+    one call that hands it in builds it;
   - a spread this check cannot resolve FAILS, so the blind spot cannot reopen.
 """
 
@@ -117,9 +120,11 @@ def _dict_keys(value: ast.AST) -> tuple[set[str], str | None]:
     return set(), f"not a dict literal: {ast.unparse(value)[:60]}"
 
 
-def resolve_spread(name: str, call: ast.Call, par: dict) -> tuple[set[str], str | None]:
+def resolve_spread(name: str, call: ast.Call, par: dict, tree: ast.AST) -> tuple[set[str], str | None]:
     """Every key the nearest enclosing function that builds `name` writes
-    into it."""
+    into it. A parameter of that function is followed to the one call that
+    hands it in under its own name (self.<function>(..., name=name)) and
+    resolved there."""
     for fn in _enclosing_funcs(call, par):
         keys: set[str] = set()
         found, why = False, None
@@ -156,6 +161,15 @@ def resolve_spread(name: str, call: ast.Call, par: dict) -> tuple[set[str], str 
                         why = why or w
         if found:
             return keys, why
+        a = fn.args
+        if name in {x.arg for x in a.posonlyargs + a.args + a.kwonlyargs}:
+            calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
+                     and isinstance(n.func, ast.Attribute) and n.func.attr == fn.name]
+            hands = [(c, k) for c in calls for k in c.keywords if k.arg == name
+                     and isinstance(k.value, ast.Name) and k.value.id == name]
+            if len(calls) == 1 and len(hands) == 1:
+                return resolve_spread(name, hands[0][0], par, tree)
+            return set(), f"a parameter of {fn.name}, not handed in by name from one call"
     return set(), "no assignment found in the enclosing functions"
 
 
@@ -182,7 +196,7 @@ def call_keywords(path: Path) -> tuple[list[tuple[int, str]], list[str]]:
             if isinstance(v, ast.Name) and v.id == own_kwarg and own[0].name in fwd:
                 continue  # the forwarder's own **kwarg — its callers are checked
             if isinstance(v, ast.Name):
-                keys, why = resolve_spread(v.id, node, par)
+                keys, why = resolve_spread(v.id, node, par, tree)
             else:
                 keys, why = _dict_keys(v)
             out.extend((node.lineno, k) for k in sorted(keys))

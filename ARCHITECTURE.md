@@ -34,10 +34,12 @@ skills it writes and in what it builds in `world`. `docs/HOST-MEMORY-AND-PROMPT.
 /app/
 ├── brain/mastercode/           # The Host's runtime
 │   ├── runtime/
-│   │   ├── session.py          # Core EntityRuntime: the turn (_send_message_core)
+│   │   ├── session.py          # Core EntityRuntime: the turn (_send_message_core) and its tool loop (_run_tool_loop)
 │   │   ├── turn_input.py       # Words sent into a running turn, in order
 │   │   ├── turn_holds.py       # What keeps a turn open and wakes one; backstops
 │   │   ├── turn_trace.py       # Reply pieces and the live turn trace
+│   │   ├── turn_replies.py     # The turn's reply recorder (TurnReplies), read by the go-ahead guard
+│   │   ├── turn_state.py       # What the tool loop shares with the rest of the turn (TurnState)
 │   │   ├── turn_lanes.py       # A turn's lane and what it may do
 │   │   ├── orchestration_tools.py # The Host's verbs and the orchestrator prompt
 │   │   ├── prompt_schema.py    # The system prompt's blocks, in order
@@ -210,9 +212,12 @@ backup storage requests.
 
 ## Known Issues / Technical Debt
 
-- `runtime/session.py` is about 9,750 lines, most of it `EntityRuntime._send_message_core`. Its
+- `runtime/session.py` is about 9,450 lines, most of it two methods of `EntityRuntime`: the turn,
+  `_send_message_core` (about 3,450 lines), and its tool loop, `_run_tool_loop` (about 2,450). Its
   module-level helpers live in turn_input, turn_holds, turn_trace, turn_notices,
-  orchestration_tools, turn_lanes and delivery_checks, and session.py re-exports every name.
+  orchestration_tools, turn_lanes and delivery_checks, and session.py re-exports every name. What
+  the loop shares with the rest of the turn is on one `TurnState` (turn_state.py), which the core
+  makes and hands to the loop.
 - The desktop and the system apps under `/system-apps/` are served with no Content-Security-Policy
   header: `security_headers` in `server/main.py` sets one only on an app's own origin, and
   `server/applications/proxy.py` adds one only to what a community app serves.

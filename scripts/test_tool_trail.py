@@ -274,7 +274,7 @@ def main() -> int:
           and sess.index("grok_messages.extend(history_msgs)") < sess.index("_tool_trail_block = render_tool_trail(")
           < sess.index('grok_messages.append({"role": "system", "content": _dyn_sys})'))
     check("session.py counts the block in the context ledger",
-          '("tool_trail", _loc.get("_tool_trail_block"))' in sess)
+          '("tool_trail", _tool_trail_block)' in sess)
     check("memory_engine.recall_tool_trail exists, uses the shared scope clause, assistant rows with calls only",
           "async def recall_tool_trail(" in me
           and me.index("async def recall_tool_trail(") < me.index("metadata->>'role' = 'assistant'")

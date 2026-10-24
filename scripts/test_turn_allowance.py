@@ -972,7 +972,7 @@ def nudge_metering_check(check) -> None:
     branch = src[i:j] if j > i else ""
     check("the nudge call is metered in the same branch (its dollars reach "
           "the allowance, not just the token counters)",
-          "_acc_usage(result)" in branch, branch[-200:])
+          "_acc_usage(turn.result)" in branch, branch[-200:])
     check("...and its tokens reach the usage frame too",
           "_prompt_acc" in branch and "_completion_acc" in branch)
     check("_acc_usage is what advances the mark, so metering the nudge also "

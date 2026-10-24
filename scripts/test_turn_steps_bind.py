@@ -11,17 +11,32 @@ the two places, the name means the same value only while this holds: a call
 that passes project_id as _row_project_id, or binds the step's returns in
 another order, leaves every one of those gates green.
 
+One step can end the turn itself: the tool loop (_run_tool_loop), whose
+model error ends the turn where it happens. Every return in it hands back the
+turn's reply, a value, and the core returns that reply when it is not None, in
+the statement right after the call. None is what the loop's end returns, so a
+bare return (or `return None`) there would let the turn go on past the loop as
+if it had run to its end.
+
 The other direction holds too: a variable of the turn that a step sets, and
-that the turn reads after the step (in its own code, in a closure, or by name
-through the context ledger's locals()), is one the step returns. A step's
-variables are its own, so one it sets and does not return leaves the turn
-reading the value from before the step, with nothing raised.
+that the turn reads after the step (in its own code or in a closure), is one
+the step returns. A step's variables are its own, so one it sets and does not
+return leaves the turn reading the value from before the step, with nothing
+raised. And a variable of the turn that a step reads is one it is handed,
+or one the step binds before every read of it: a step that sets the name
+somewhere and reads it on a path before that reads its own unbound variable
+(UnboundLocalError), where the turn read its value. CPython's own flow
+analysis decides "before every read" (below). Every such read is one this gate sees: neither the turn nor a step
+reads a variable through locals(), vars(), eval or exec, which no name check
+can follow.
 
 Pure source + AST checks, so this runs outside the image.
 
   APP_ROOT=<repo> python3 scripts/test_turn_steps_bind.py
 """
 import ast
+import copy
+import dis
 import os
 import sys
 from turn_source import turn_paths
@@ -64,11 +79,84 @@ def returned(fn):
     for e in (v.elts if isinstance(v, ast.Tuple) else [v]):
         if isinstance(e, ast.Name):
             out.append(e.id)
-        elif (isinstance(e, ast.Call) and ast.unparse(e.func) == "locals().get" and len(e.args) == 1
-              and isinstance(e.args[0], ast.Constant)):
-            out.append(e.args[0].value)
         else:
             return None
+    return out
+
+
+def ends_turn(fn, s, core):
+    """fn can end the turn: every return in its own code carries a value that
+    is not the None constant, it does not end on one, and the core binds the
+    call (statement s) to one name and returns it when it is not None, in the
+    next statement."""
+    own = [n for n in ast.walk(fn) if isinstance(n, ast.Return)
+           and not any(n in ast.walk(d) for d in ast.walk(fn)
+                       if d is not fn and isinstance(d, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)))]
+    if not own or isinstance(fn.body[-1], ast.Return) or any(
+            r.value is None or (isinstance(r.value, ast.Constant) and r.value.value is None) for r in own):
+        return False
+    if not (isinstance(s, ast.Assign) and len(s.targets) == 1 and isinstance(s.targets[0], ast.Name)):
+        return False
+    v = s.targets[0].id
+    for node in ast.walk(core):
+        for field in ("body", "orelse", "finalbody"):
+            lst = getattr(node, field, None)
+            if isinstance(lst, list) and s in lst:
+                i = lst.index(s)
+                return i + 1 < len(lst) and ast.unparse(lst[i + 1]) == f"if {v} is not None:\n    return {v}"
+    return False
+
+
+class _GenAsList(ast.NodeTransformer):
+    """For the probe only: a generator expression becomes a list
+    comprehension. A list comprehension runs in the function's own frame
+    (inlined since 3.12), so a variable of fn that it reads is a local the
+    flow analysis follows; a generator expression is a scope of its own,
+    which makes that variable a cell the analysis does not follow. It is read
+    where it is made: a generator that reads a name before the step binds it
+    reads the step's unbound variable when it runs (NameError), where the
+    turn read its value."""
+
+    def visit_GeneratorExp(self, n):
+        self.generic_visit(n)
+        return ast.copy_location(ast.ListComp(elt=n.elt, generators=n.generators), n)
+
+
+def maybe_unbound(fn, names):
+    """Of `names` (variables of fn's own scope), those fn may read before
+    binding them on some path, by CPython's own flow analysis. The compiler
+    loads a local it cannot prove bound with LOAD_FAST_CHECK, but it tracks
+    only the first 64 locals precisely (past those, parameters included, every
+    load after a block boundary is checked). So a probe copy of fn: no
+    parameters (they read as globals there, which changes nothing for the
+    others), and the names named first, in a batch, in dead code (`if 0:`
+    binds nothing but takes the first slots). Generator expressions are read
+    as list comprehensions (_GenAsList). A name still a cell after that (a def
+    or lambda in fn reads it) is loaded with LOAD_DEREF, which the analysis
+    does not follow: it is reported, never passed unread."""
+    out = {}
+    names = sorted(names)
+    body = [_GenAsList().visit(copy.deepcopy(s)) for s in fn.body]
+    for i in range(0, len(names), 60):
+        batch = names[i:i + 60]
+        probe = ast.AsyncFunctionDef(
+            name="_probe", args=ast.arguments(posonlyargs=[], args=[], vararg=None, kwonlyargs=[],
+                                              kw_defaults=[], kwarg=None, defaults=[]),
+            body=[ast.If(test=ast.Constant(0), body=[ast.Assign(
+                targets=[ast.Name(x, ast.Store()) for x in batch], value=ast.Constant(None))], orelse=[])]
+            + body, decorator_list=[], returns=None, type_params=[])
+        co = next(c for c in compile(ast.fix_missing_locations(ast.Module(body=[probe], type_ignores=[])),
+                                     "probe", "exec").co_consts if getattr(c, "co_name", None) == "_probe")
+        cells = [x for x in batch if x in co.co_cellvars]
+        if cells:
+            out.update({x: ["read by a def or lambda in the step: the probe cannot follow it"] for x in cells})
+        probed = [x for x in batch if x not in co.co_cellvars]
+        untracked = [x for x in probed if x not in co.co_varnames[:64]]
+        if untracked:
+            out.update({x: ["not in the slots the compiler tracks"] for x in untracked})
+        for ins in dis.get_instructions(co):
+            if ins.opname == "LOAD_FAST_CHECK" and ins.argval in probed:
+                out.setdefault(ins.argval, []).append(ins.positions.lineno)
     return out
 
 
@@ -107,15 +195,15 @@ def own_names(fn):
 
 
 core_sets, core_reads = own_names(core)
-# The context ledger reads the turn's variables by name: _loc = locals(), then
-# _loc.get("history_msgs") and the like.
-_loc_vars = {t.id for s in ast.walk(core) if isinstance(s, ast.Assign) and isinstance(s.value, ast.Call)
-             and ast.unparse(s.value) == "locals()" for t in s.targets if isinstance(t, ast.Name)}
-core_reads += [(x.args[0].value, x) for x in ast.walk(core)
-               if isinstance(x, ast.Call) and isinstance(x.func, ast.Attribute) and x.func.attr == "get"
-               and isinstance(x.func.value, ast.Name) and x.func.value.id in _loc_vars
-               and x.args and isinstance(x.args[0], ast.Constant) and isinstance(x.args[0].value, str)]
-check("the context ledger's locals() read is found", bool(_loc_vars))
+# A read by name through locals() (the context ledger's, until 2026-10-23)
+# is no Name node, so the checks below would pass over it.
+# builtins.locals() and a frame's f_locals count too.
+_BY_NAME = ("locals", "vars", "eval", "exec", "_getframe", "currentframe", "f_locals")
+_by_name = sorted(f"{fn.name}:{x.lineno} {ast.unparse(x)[:40]}" for fn in [core, *steps.values()] for x in ast.walk(fn)
+                  if (isinstance(x, ast.Name) and isinstance(x.ctx, ast.Load) and x.id in _BY_NAME)
+                  or (isinstance(x, ast.Attribute) and x.attr in _BY_NAME))
+check("the turn and its steps read no variable by name (locals, vars, eval, exec, a frame's locals)",
+      not _by_name, _by_name)
 _closures = [n for n in ast.walk(core) if n is not core and isinstance(n, _SCOPES[:3])]
 
 stmts = {}
@@ -147,18 +235,35 @@ for name, fn in sorted(steps.items()):
     want = returned(fn)
     s = at[0]
     if want is None:
-        check(f"{name}: returns its values once, at its end, by name", False)
-        continue
-    if not want:
-        got = None if isinstance(s, ast.Expr) else "an assignment"
-    elif isinstance(s, ast.Assign) and len(s.targets) == 1:
-        t = s.targets[0]
-        got = [e.id if isinstance(e, ast.Name) else ast.unparse(e)
-               for e in (t.elts if isinstance(t, ast.Tuple) else [t])]
+        # Or it can end the turn: then it hands back only the turn's reply, and
+        # what it sets that the turn reads after it goes through `turn` (the
+        # check below holds it to that).
+        _ends = ends_turn(fn, s, core)
+        check(f"{name}: returns its values once, at its end, by name; or every return hands back the "
+              f"turn's reply and the core returns it when it is not None, right after the call", _ends)
+        if not _ends:
+            continue
+        want = []
     else:
-        got = "not one assignment"
-    check(f"{name}: the core binds what it returns, by the same names, in order",
-          (got is None) if not want else got == want, f"returns {want}, bound to {got}")
+        if not want:
+            got = None if isinstance(s, ast.Expr) else "an assignment"
+        elif isinstance(s, ast.Assign) and len(s.targets) == 1:
+            t = s.targets[0]
+            got = [e.id if isinstance(e, ast.Name) else ast.unparse(e)
+                   for e in (t.elts if isinstance(t, ast.Tuple) else [t])]
+        else:
+            got = "not one assignment"
+        check(f"{name}: the core binds what it returns, by the same names, in order",
+              (got is None) if not want else got == want, f"returns {want}, bound to {got}")
+    # A turn variable the step reads: handed in, or bound by the step first on
+    # every path.
+    _params = {a.arg for a in fn.args.posonlyargs + fn.args.args + fn.args.kwonlyargs}
+    _step_sets = {n for n, _x in own_names(fn)[0]}
+    _turn_names = {n for n, _x in core_sets} | {a.arg for a in core.args.posonlyargs + core.args.args
+                                                + core.args.kwonlyargs}
+    _unbound = maybe_unbound(fn, (_step_sets & _turn_names) - _params)
+    check(f"{name}: every variable of the turn it reads is handed in, or bound by it first on every path",
+          not _unbound, {k: sorted(set(v))[:4] for k, v in sorted(_unbound.items())})
     # A turn variable the step sets: one the turn sets before the call. Read
     # after the call, or by a closure made before it, it must come back.
     in_call = {id(x) for x in ast.walk(s)}

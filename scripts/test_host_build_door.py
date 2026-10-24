@@ -122,8 +122,10 @@ def main() -> int:
     #    before that it was `elif func_name in getattr(sess, "_read_safe_tools"`.
     #    Whitespace inside each anchor is free: a rewrap of either line read as
     #    "no branch at all", the same false red that once stopped a ship.
-    # The turn's own code and the step that builds its tool surface.
+    # The turn's own code, its tool loop and the step that builds its tool
+    # surface.
     src = (inspect.getsource(s.EntityRuntime._send_message_core)
+           + inspect.getsource(s.EntityRuntime._run_tool_loop)
            + inspect.getsource(s.EntityRuntime._build_turn_tools))
     m = re.search(
         r"elif\s+func_name\s+in\s+getattr\(\s*sess\s*,\s*\"_host_own_tools\"\s*,\s*set\(\)\s*\)\s*:"

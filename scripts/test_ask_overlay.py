@@ -190,7 +190,7 @@ check("runtime: the reply a nudge interrupted (already streamed) goes into the m
       # nudge drops keeps its prose too. The
       # durable turn gets it from the single recorder, where it was sent; the
       # drain gives the model what was sent (the WM strip's remainder).
-      '_seen_reply = strip_wm(result.get("content") or "")' in drain
+      '_seen_reply = strip_wm(turn.result.get("content") or "")' in drain
       and 'grok_messages.append({"role": "assistant", "content": _seen_reply})' in drain
       and "_record_part" not in drain and "_late_draft" not in sess)
 check("runtime: ONE ordered list of what was sent (claim guard's draft included) is the stored reply",

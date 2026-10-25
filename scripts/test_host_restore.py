@@ -1484,6 +1484,52 @@ check("no owner when the restore ran: the backup's is not brought back, and the 
       "/setup" in (_owner_note(None, "someone@backup.example") or ""))
 check("nothing on either side: nothing to say", _owner_note(None, None) is None)
 
+print("== the owner note says how this Host's owner signs in, local or on a Cloud machine")
+# A local owner signs in with a password, or a passkey once one is added. An
+# owner made from a Cloud machine's unlock page has no password
+# (server/owner_login.py claim_owner): they sign in from that page with a key
+# that unlocks the disk, or with a passkey they added to the Host. With no
+# owner yet, a machine with a vault makes one from its unlock page, never
+# /setup (owner_login.create_owner refuses there).
+_door = Path(tempfile.mkdtemp(prefix="hr-door-"))
+(_door / "machine-state.json").write_text(json.dumps(
+    {"vault": {"state": "open", "since": None, "enrolled": True}}))
+
+
+def _note_for(live_owner, backup_owner, door=None):
+    was = os.environ.pop("CSERIES_MACHINE_DIR", None)
+    if door:
+        os.environ["CSERIES_MACHINE_DIR"] = str(door)
+    try:
+        src = FakeDB({"owner_account": dict(OWN, rows=live_owner), "owner_sessions": dict(SESS, rows=[]),
+                      "host_backup_state": dict(STATE, rows=[])})
+        dst = FakeDB({"owner_account": dict(OWN, rows=backup_owner), "owner_sessions": dict(SESS, rows=[]),
+                      "host_backup_state": dict(STATE, rows=[])})
+        return asyncio.run(hr.carry_rows(src, dst, stamp="20261019T021000Z")).get("owner_note") or ""
+    finally:
+        os.environ.pop("CSERIES_MACHINE_DIR", None)
+        if was is not None:
+            os.environ["CSERIES_MACHINE_DIR"] = was
+
+
+_BACKUP_OWNER = [{"id": 1, "email": "someone@backup.example", "password_hash": "scrypt$old",
+                  "cookie_suffix": "back0003"}]
+_BOX_OWNER = [dict(LIVE_OWNER, password_hash=None, cookie_suffix="box00001")]
+n = _note_for([LIVE_OWNER], _BACKUP_OWNER)
+check("a local owner with a password: the note says the password or passkey, not an unlock page",
+      "password" in n and "unlock page" not in n and "owner@live.example" in n, n)
+for label, door in (("a Cloud owner with no password", _door),
+                    ("a Cloud owner with no password, the machine's state not read", None)):
+    n = _note_for(_BOX_OWNER, _BACKUP_OWNER, door)
+    check(f"{label}: the note says the unlock page's keys or a Host passkey, and no password",
+          "unlock page" in n and "passkey" in n and "password" not in n and "owner@live.example" in n, n)
+n = _note_for([], _BACKUP_OWNER, _door)
+check("no owner on a Cloud machine with a vault: the note says the unlock page, not /setup",
+      "unlock page" in n and "/setup" not in n, n)
+n = _note_for([], _BACKUP_OWNER)
+check("no owner on a local install: the note still says /setup", "/setup" in n and "unlock page" not in n, n)
+_sh.rmtree(_door, ignore_errors=True)
+
 print("== a backup from another Host number: renumbered, and only live access kept")
 # Host 17 was lost; this Host is 42. The restored database is Host 17's.
 REG = {"cols": ["id", "privatae_entity_id", "display_name", "behavioral_params"], "serial": "id"}

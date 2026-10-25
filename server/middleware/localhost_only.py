@@ -32,6 +32,7 @@ Defense-in-depth — port :8800 is also bound only to 127.0.0.1 on the host.
 import ipaddress
 import os
 import re
+from urllib.parse import unquote
 
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -225,14 +226,39 @@ _PROBE_EXEMPT_PATHS = {
 # trusted proxy, and only with a status.
 # The passkey and recovery-code sign-ins are sign-ins like the password's:
 # each checks its own credential (server/owner_passkeys.py).
+# A cloud machine's unlock page posts its one-time ticket to the last two
+# (server/owner_login.py claim_owner, box_sign_in): a form from the unlock
+# page's origin, which is not the Host's, so the Origin check below would
+# refuse it. Each checks the Origin itself, against that page's origin only.
+# The front door's question about such a post carries the same Origin (Caddy's
+# forward_auth sends a copy of the browser's headers), so the check is left
+# to the route there too: the door answers only a status, only to the trusted
+# proxy holding the door key, and the post itself then meets the route.
 DOOR_PATH = "/__host/door"
 PASSKEY_PUBLIC_PATHS = frozenset({"/api/owner/passkey/login/options",
                                   "/api/owner/passkey/login/verify",
                                   "/api/owner/recovery/login"})
+OWNER_BOX_PATHS = frozenset({"/api/owner/claim", "/api/owner/box-sign-in"})
 OWNER_PUBLIC_PATHS = frozenset({"/login", "/setup", "/api/owner/login", "/api/owner/setup",
                                 "/api/owner/status", "/api/owner/logout",
                                 "/__host/session", "/__host/renew", DOOR_PATH}
-                               | PASSKEY_PUBLIC_PATHS)
+                               | PASSKEY_PUBLIC_PATHS | OWNER_BOX_PATHS)
+
+
+def door_question_path(uri: str | None) -> str:
+    """The path the front door's question (X-Forwarded-Uri) is about, read as
+    the server reads the path it routes (uvicorn: the request target up to
+    "?", unquoted), so the door and the Host agree on it; "" for none."""
+    uri = (uri or "").strip()
+    return unquote(uri.partition("?")[0]) if uri.startswith("/") else ""
+
+
+def checks_own_origin(path: str, headers) -> bool:
+    """Whether the route behind `path` checks the request's Origin itself
+    (OWNER_BOX_PATHS), directly or as the door's question about it."""
+    if path in OWNER_BOX_PATHS:
+        return True
+    return path == DOOR_PATH and door_question_path(headers.get("x-forwarded-uri")) in OWNER_BOX_PATHS
 
 # The OAuth returns: a provider sends the browser back here with a code and
 # the state this Host sent with it. Each is reachable without a session,
@@ -432,9 +458,11 @@ class LocalhostOnlyMiddleware(BaseHTTPMiddleware):
                 content={"error": "access denied: sign in first"},
             )
 
-        # Validate Origin header (CSRF protection)
+        # Validate Origin header (CSRF protection). The unlock page's two
+        # routes check theirs themselves (OWNER_BOX_PATHS), and so does the
+        # door's question about them (checks_own_origin).
         origin = request.headers.get("origin")
-        if origin and not origin_allowed(
+        if origin and not checks_own_origin(path, request.headers) and not origin_allowed(
                 origin, request.headers.get("host"), own_origin=owner):
             return JSONResponse(
                 status_code=403,

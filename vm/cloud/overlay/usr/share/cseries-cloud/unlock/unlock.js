@@ -1,8 +1,16 @@
 /* The unlock page: unlocks this machine's disk with a key only its owner
- * holds, sets those keys up when the machine is claimed, and changes them.
- * The passkey never leaves the browser: the page asks it for its PRF output
- * over the machine's salt and sends the machine only the passphrase derived
- * from that (derive.js). The machine's server is cseries-unlock-agent. */
+ * holds, sets those keys up when the machine is claimed, changes them, and
+ * signs the owner in to the Host. The passkey never leaves the browser: the
+ * page asks it for its PRF output over the machine's salt and sends the
+ * machine only the passphrase derived from that (derive.js). The machine's
+ * server is cseries-unlock-agent.
+ *
+ * The claim needs no code typed: the account site's "Set up your machine"
+ * posts the setup code here as a form, and the agent answers with a cookie
+ * that stands for it (its /api/setup), which every call here sends along
+ * (same-origin). Then one passkey, the recovery key downloaded, the disk set
+ * up, and the Host's owner made: the agent's one-time ticket, posted to the
+ * Host as a form, which signs the owner in there. */
 (function () {
   'use strict';
   const D = window.cseriesDerive;
@@ -10,21 +18,27 @@
   const say = (id, msg) => { const el = $(id); if (el) el.textContent = msg || ''; };
   const fail = (msg) => { say('done', ''); say('err', msg || 'Something went wrong.'); };
   const ok = (msg) => { say('err', ''); say('done', msg); };
-  const VIEWS = ['locked', 'enroll', 'recovery-show', 'claiming', 'open', 'absent'];
+  const VIEWS = ['locked', 'handoff', 'enroll', 'recovery-show', 'claiming', 'signing-in', 'open', 'absent'];
   const show = (id) => VIEWS.forEach((v) => { $(v).hidden = v !== id; });
   const rnd = (n) => crypto.getRandomValues(new Uint8Array(n));
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   let S = null;
-  let setupCode = '';
   let polling = null;
+  let shownKey = '';
+  let signingIn = false;
+  let autoSignIn = true;
+  // How long the page waits for the Host to answer before it says so.
+  const HOST_WAIT_TRIES = 90;
 
   class NoPrf extends Error {}
 
+  // Same-origin credentials: the handoff's cookie goes with every call.
   async function api(path, body) {
     const opts = body === undefined ? {} : {method: 'POST', headers: {'Content-Type': 'application/json'},
                                              body: JSON.stringify(body)};
-    const r = await fetch('/api' + path, Object.assign({credentials: 'omit', cache: 'no-store'}, opts));
+    const r = await fetch('/api' + path, Object.assign({credentials: 'same-origin', cache: 'no-store'}, opts));
     const j = await r.json().catch(() => ({}));
-    if (!r.ok) throw new Error(j.error || 'The machine did not answer.');
+    if (!r.ok) throw Object.assign(new Error(j.error || 'The machine did not answer.'), {status: r.status, extra: j});
     return j;
   }
 
@@ -100,10 +114,92 @@
   }
 
   function showRecovery(key, withConfirm) {
+    shownKey = key;
     say('recovery-text', key);
     drawQr($('recovery-qr'), key);
     $('confirm-form').hidden = !withConfirm;
     show('recovery-show');
+  }
+
+  // The recovery key as a file the browser saves, made here: it never
+  // leaves this page any other way.
+  $('download-recovery').addEventListener('click', () => {
+    if (!shownKey) return;
+    const text = `C-Series recovery key for the machine ${S.name}\n\n${shownKey}\n\n`
+               + 'It unlocks the disk of this machine if you no longer have your passkey. '
+               + 'Keep it somewhere safe, away from the device you use to unlock it.\n';
+    const url = URL.createObjectURL(new Blob([text], {type: 'text/plain'}));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `c-series-recovery-key-${S.name}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    ok('Downloaded. Keep the file somewhere safe, then press I saved it.');
+  });
+
+  // The ticket goes to the Host as a form, in this tab: the Host checks it,
+  // makes its session and answers with its desktop. Only to the Host's two
+  // routes for it.
+  function postTicket(r) {
+    const allowed = [S.host_url + 'api/owner/claim', S.host_url + 'api/owner/box-sign-in'];
+    if (!allowed.includes(r.action) || typeof r.ticket !== 'string') {
+      fail('The machine answered with an address that is not your Host.');
+      return false;
+    }
+    const form = document.createElement('form');
+    form.method = 'post';
+    form.action = r.action;
+    form.hidden = true;
+    const input = document.createElement('input');
+    input.type = 'hidden';
+    input.name = 'ticket';
+    input.value = r.ticket;
+    form.appendChild(input);
+    document.body.appendChild(form);
+    form.submit();
+    form.remove();
+    return true;
+  }
+
+  // Into the Host, signed in: once it answers, a ticket for it (with `a`,
+  // one of the disk's keys, or with none for the browser that just set the
+  // keys up), posted there. Every wait says what it waits for.
+  async function signIn(a) {
+    if (signingIn) return;
+    signingIn = true;
+    if (polling) { clearInterval(polling); polling = null; }
+    say('intro', '');
+    show('signing-in');
+    try {
+      for (let i = 0; ; i++) {
+        let st = null;
+        try { st = await api('/state'); } catch (e) { st = null; }
+        if (st && st.host && st.host.up) break;
+        if (i >= HOST_WAIT_TRIES) throw new Error('Your Host did not start. Try again in a minute.');
+        say('sign-in-note', i ? `Starting your Host… (${2 * i} s)` : 'Starting your Host…');
+        await sleep(2000);
+      }
+      say('sign-in-note', 'Signing you in…');
+      let r = null;
+      for (let i = 0; !r; i++) {
+        try {
+          r = await api('/owner-ticket', a ? {auth: a} : {});
+        } catch (e) {
+          if (!(e.extra || {}).starting || i >= HOST_WAIT_TRIES) throw e;
+          say('sign-in-note', 'Starting your Host…');
+          await sleep(2000);
+        }
+      }
+      say('sign-in-note', r.kind === 'claim' ? 'Making your owner account on your Host…' : 'Signing you in…');
+      if (!postTicket(r)) { signingIn = false; await refresh(); }
+    } catch (e) {
+      signingIn = false;
+      await refresh().catch(() => {});
+      if ((e.extra || {}).handoff === false) show('handoff');
+      fail(e.message);
+    }
   }
 
   // A key of this machine, to authorise a change: a passkey when one works
@@ -112,6 +208,7 @@
     return new Promise((resolve, reject) => {
       const viaRecovery = () => {
         const form = $('auth-recovery-form');
+        form.closest('details').open = true;
         form.hidden = false;
         $('auth-recovery').focus();
         form.onsubmit = (e) => {
@@ -165,6 +262,7 @@
 
   async function refresh() {
     S = await api('/state');
+    if (signingIn) return;
     say('title', S.name ? `Machine ${S.name}` : 'This machine');
     $('host-link').href = S.host_url;
     if (S.state === 'absent') { say('intro', ''); show('absent'); return; }
@@ -186,8 +284,16 @@
         return;
       }
       if (c.phase === 'failed') fail('Setting up the disk stopped: ' + (c.error || '') + ' Start again below.');
+      if (!$('recovery-show').hidden) return;
+      if (!S.handoff) {
+        // No handoff in this browser: the account site's button is the way
+        // in, or the code that came with the machine, typed once below.
+        say('intro', 'Set up this machine.');
+        show('handoff');
+        return;
+      }
       say('intro', 'One step before you start.');
-      if ($('recovery-show').hidden) show('enroll');
+      show('enroll');
       return;
     }
     if (polling) { clearInterval(polling); polling = null; }
@@ -202,18 +308,28 @@
       fail('A restart cut off setting up the disk, so your passkey does not unlock this machine. '
            + 'Add it again below.');
     }
-    if ((S.claim || {}).phase === 'done' && setupCode) {
-      $('host-link').href = S.host_url + 'setup';
-      $('host-link').textContent = 'Continue: create your owner account';
+    if (S.handoff_claim && S.host && S.host.owner === false && autoSignIn) {
+      // This browser just set up the disk's keys: on into the Host, whose
+      // owner it becomes, with nothing more to do. Once per page load, so a
+      // ticket the Host refused is not asked for again by itself.
+      autoSignIn = false;
       ok('The disk is set up. Only your keys unlock it.');
+      signIn(null);
     }
   }
+
+  $('host-sign-in').addEventListener('click', async () => {
+    say('err', '');
+    try {
+      signIn(await auth());
+    } catch (e) { fail(e.message); }
+  });
 
   $('unlock-passkey').addEventListener('click', async () => {
     say('err', '');
     try {
       const k = await fromPasskey(S.passkeys.map((p) => p.credential_id));
-      unlocked(await api('/unlock', k));
+      unlocked(await api('/unlock', k), k);
     } catch (e) {
       if (e instanceof NoPrf) {
         fail('This browser or passkey cannot unlock a disk. Use the recovery key.');
@@ -226,26 +342,28 @@
     e.preventDefault();
     say('err', '');
     try {
-      unlocked(await api('/unlock', {recovery_key: $('recovery-key').value}));
+      const k = {recovery_key: $('recovery-key').value};
+      unlocked(await api('/unlock', k), k);
     } catch (err) { fail(err.message); }
   });
 
-  // After /api/unlock: on to the Host, or, when the unlock finishes setting
-  // up the disk (a claim a restart cut off), its progress here.
-  function unlocked(r) {
+  // After /api/unlock: into the Host, signed in, with the key just used (it
+  // stays in this page only until the ticket is made), or, when the unlock
+  // finishes setting up the disk (a claim a restart cut off), its progress
+  // here.
+  function unlocked(r, k) {
     if (r.claiming) {
       ok('Unlocked. Finishing setting up the disk…');
       refresh().catch(() => {});
       return;
     }
-    ok('Unlocked. Starting your Host…');
-    setTimeout(() => { location.href = r.next; }, 1500);
+    ok('Unlocked.');
+    signIn(k);
   }
 
   $('enroll-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     say('err', '');
-    setupCode = $('setup-code').value;
     let passkey = null;
     try {
       passkey = await newPasskey();
@@ -255,22 +373,41 @@
                  + 'You will type it after every restart.');
     }
     try {
-      const r = await api('/enroll', {setup_code: setupCode, passkey: passkey});
+      const r = await api('/enroll', {passkey: passkey});
       showRecovery(r.recovery_key, true);
-    } catch (err) { fail(err.message); }
+    } catch (err) {
+      if ((err.extra || {}).handoff === false) show('handoff');
+      fail(err.message);
+    }
   });
 
+  function clearShown() {
+    shownKey = '';
+    say('recovery-text', '');
+    $('recovery-qr').textContent = '';
+  }
+
+  // I saved it sends back the key this page showed: the machine starts the
+  // claim only while that is still the key waiting, so a key that a second
+  // tab or browser replaced since is never the one the disk is sealed with.
   $('confirm-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     say('err', '');
     try {
-      await api('/enroll/confirm', {setup_code: setupCode, recovery_key: $('recovery-confirm').value});
-      say('recovery-text', '');
-      $('recovery-qr').textContent = '';
+      await api('/enroll/confirm', {recovery_key: shownKey});
+      clearShown();
       show('claiming');
       renderClaim();
       if (!polling) polling = setInterval(() => refresh().catch(() => {}), 2000);
-    } catch (err) { fail(err.message); }
+    } catch (err) {
+      if ((err.extra || {}).replaced) {
+        // That key unlocks nothing: off the page, and the setup can start
+        // again here.
+        clearShown();
+        show('enroll');
+      }
+      fail(err.message);
+    }
   });
 
   $('add-passkey').addEventListener('click', async () => {

@@ -9,8 +9,16 @@
    release).
 2. Verifies the signature for kind cseries-cloud against the pinned release
    keys, and refuses a version that is not newer than the one installed.
-3. Downloads the overlay the manifest names, checks its sha256, unpacks it
-   beside the previous one and installs it. A unit the previous overlay
+3. Downloads the overlay the manifest names, checks its sha256 and unpacks
+   it beside the previous one. Then the release's own updater, in that
+   unpacked tree, takes over (hand_over: the same process, the same
+   arguments and --handed-over): it verifies the signed manifest again, finds
+   the tree unpacked, and installs and rolls back by the release's rules, so
+   what a release changes in how a release is installed (what it restarts,
+   say) holds for that release itself. A box updating in place from an
+   updater without this step installs that release with its old updater's
+   rules, and has the hand-over from the release after.
+   The release installs its overlay. A unit the previous overlay
    shipped and this one does not is stopped, disabled and its file removed;
    a unit this one adds is enabled, and started when the next boot would
    start it (cseries_cloud.overlay_units has the rule).
@@ -44,7 +52,10 @@ import sys
 import tarfile
 import time
 
-sys.path.insert(0, "/usr/local/lib/cseries-cloud")
+# The library of this script's own tree: /usr/local/lib/cseries-cloud for
+# the installed updater, the unpacked release's for the one it hands over to.
+LIB = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "lib", "cseries-cloud")
+sys.path.insert(0, LIB)
 import cseries_cloud as cc  # noqa: E402
 
 GUEST = "/usr/local/bin/cseries-guest"
@@ -65,7 +76,7 @@ class Updater:
     def __init__(self, paths, cfg, keys=cc.RELEASE_KEYS, fetch=cc.fetch,
                  fetch_to_file=cc.fetch_to_file, guest=GUEST, systemctl=_systemctl,
                  health_timeout=300, health_every=3.0, bastion_wait=10.0, now=time.time,
-                 gids=None):
+                 gids=None, hand_over=None):
         self.paths = paths
         self.cfg = cfg
         self.keys = tuple(keys)
@@ -78,6 +89,9 @@ class Updater:
         self.bastion_wait = bastion_wait
         self.now = now
         self.gids = gids
+        # Called with the unpacked tree before anything is installed; it
+        # does not come back when it hands over (main's hand_over).
+        self.hand_over = hand_over
 
     # ── the pieces ──────────────────────────────────────────────────────────
 
@@ -240,6 +254,14 @@ class Updater:
             self.systemctl("reload", "caddy.service")
         if any("cseries-door-helper" in c for c in changed):
             self.systemctl("try-restart", "cseries-door-helper.service")
+        if any(c.endswith("sbin/cseries-unlock-agent") or c.startswith("usr/local/lib/cseries-cloud/")
+               for c in changed):
+            # Once started by its socket the agent keeps serving with the
+            # code it started with; its socket stays while it restarts, and
+            # it answers the request in hand before it stops (KillMode=mixed,
+            # its Server). The release's own updater runs this (hand_over),
+            # so the release that brings the rule restarts the agent too.
+            self.systemctl("try-restart", "cseries-unlock-agent.service")
         if "etc/cseries-runtime/squid.conf" in changed:
             self.systemctl("try-restart", "cseries-squid.service")
         if any(c.startswith("usr/local/lib/cseries-runtime/") or c.endswith("sbin/cseries-runtime")
@@ -311,6 +333,9 @@ class Updater:
         except (cc.CloudError, OSError, tarfile.TarError) as e:
             log(f"refused: {e}")
             return self.record(result="refused", error=str(e), offered=new)
+        if self.hand_over is not None:
+            # The release's own updater installs it (module docstring, 3).
+            self.hand_over(tree)
         # What every file the new overlay writes held before it, so a rollback
         # puts back exactly that: a file the release added goes away, and one
         # it replaced that the previous overlay never named comes back.
@@ -422,11 +447,33 @@ def _bastion_version(path):
     return out[1].lstrip("v") if len(out) >= 2 and out[0] == "privatae-bastion" else None
 
 
+UPDATER_IN_TREE = "root/usr/local/sbin/cseries-cloud-update"
+
+
+def hand_over(tree, argv, execv=os.execv):
+    """Run the unpacked release's own updater in this process's place, with
+    this run's arguments and --handed-over, which it does not hand over
+    again. It reads the manifest and checks its signature itself, and finds
+    the tree it was handed unpacked (unpack_overlay). Comes back only when
+    that tree has no updater or it cannot be started: this one goes on."""
+    new = os.path.join(tree, UPDATER_IN_TREE)
+    if not os.path.isfile(new):
+        log(f"the release in {tree} has no updater of its own; this one installs it")
+        return
+    log(f"the release's own updater ({new}) installs it")
+    try:
+        execv(sys.executable, [sys.executable, "-I", new, *argv, "--handed-over"])
+    except OSError as e:
+        log(f"its updater did not start ({e}); this one installs it")
+
+
 def main(argv):
     ap = argparse.ArgumentParser(prog="cseries-cloud-update")
     ap.add_argument("--release-base")
     ap.add_argument("--trust-key-file")
     ap.add_argument("--health-timeout", type=int, default=300)
+    # Set by hand_over only: this is the release's own updater.
+    ap.add_argument("--handed-over", action="store_true", help=argparse.SUPPRESS)
     a = ap.parse_args(argv)
     paths = cc.Paths()
     cfg = cc.load_cloud(paths)
@@ -434,7 +481,8 @@ def main(argv):
     if a.trust_key_file:
         with open(a.trust_key_file, encoding="utf-8") as f:
             keys = tuple(line.strip() for line in f if line.strip())
-    u = Updater(paths, cfg, keys=keys, health_timeout=a.health_timeout)
+    u = Updater(paths, cfg, keys=keys, health_timeout=a.health_timeout,
+                hand_over=None if a.handed_over else (lambda tree: hand_over(tree, argv)))
     st = u.run(a.release_base)
     print(json.dumps(st, sort_keys=True))
     return 0 if st.get("result") in ("updated", "current") else 1

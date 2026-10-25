@@ -1212,26 +1212,55 @@ def _qi(name: str) -> str:
 
 async def _owner_email(conn) -> Optional[str]:
     """The email of the owner account in `conn` (v228; one row), or None."""
-    if "email" not in await _columns(conn, "owner_account"):
-        return None
-    rows = await conn.fetch('SELECT "email" FROM "owner_account"')
-    return str(rows[0]["email"]) if rows else None
+    return (await _owner_sign_in(conn))[0]
 
 
-def owner_note(live: Optional[str], backup: Optional[str]) -> Optional[str]:
+async def _owner_sign_in(conn) -> tuple[Optional[str], bool]:
+    """(the email of the owner account in `conn`, or None; whether it signs
+    in with a password). An owner made from a cloud machine's unlock page has
+    none (owner_login.claim_owner). A schema without the column is from before
+    that, when every owner had one."""
+    cols = await _columns(conn, "owner_account")
+    if "email" not in cols:
+        return None, True
+    pw = "password_hash" in cols
+    rows = await conn.fetch('SELECT "email"' + (', "password_hash"' if pw else "") + ' FROM "owner_account"')
+    if not rows:
+        return None, True
+    return str(rows[0]["email"]), (bool(rows[0]["password_hash"]) if pw else True)
+
+
+def owner_note(live: Optional[str], backup: Optional[str], unlock_page: bool = False) -> Optional[str]:
     """What the restore says about the owner's sign-in, given the owner's
     email live until the swap and the one the backup held; None when the
     owner signs in as before and nothing needs saying. The live account is
-    the one kept either way (CARRIED_TABLES)."""
+    the one kept either way (CARRIED_TABLES). `unlock_page`: this Host's
+    owner is made and signed in from its cloud machine's unlock page
+    (_signs_in_at_unlock_page), not with a password or /setup."""
     if live and backup and live.strip().lower() != backup.strip().lower():
+        how = ("from this machine's unlock page, with your passkey or recovery key, or with a "
+               "passkey you added to this Host" if unlock_page else
+               "with the password or passkey you used before the restore")
         return (f"This backup came from a Host whose owner signed in with another email. A restore "
-                f"keeps this Host's own sign-in, so you still sign in as {live}, with the password "
-                f"or passkey you used before the restore.")
+                f"keeps this Host's own sign-in, so you still sign in as {live}, {how}.")
     if not live and backup:
+        where = "from this machine's unlock page" if unlock_page else "at /setup"
         return ("This Host had no owner account when it was restored, so it has none now: a restore "
                 "keeps this Host's own sign-in and does not bring back the backup's. Create the owner "
-                "account at /setup.")
+                f"account {where}.")
     return None
+
+
+def _signs_in_at_unlock_page(live: Optional[str], has_password: bool) -> bool:
+    """Whether this Host's owner signs in from its machine's unlock page: an
+    owner with no password was made there, and with no owner yet a cloud
+    machine with a vault makes one there (owner_login.create_owner refuses
+    the setup code on it). An owner with a password signs in with it, or
+    with a passkey once one is added, on any machine."""
+    if live:
+        return not has_password
+    from server import cloud_machine
+    return cloud_machine.keeps_vault()
 
 
 async def _columns(conn, table: str) -> list[str]:
@@ -1455,7 +1484,9 @@ async def carry_rows(src, dst, renumber_from: Optional[int] = None,
             # them) would be signed with a key the trust store does not hold.
             secrets = CARRIED_SECRETS + RENUMBER_CARRIED_SECRETS
         # Read before the owner's account is replaced with the live one.
-        owner = owner_note(await _owner_email(src), await _owner_email(dst))
+        live_owner, live_password = await _owner_sign_in(src)
+        owner = owner_note(live_owner, await _owner_email(dst),
+                           _signs_in_at_unlock_page(live_owner, live_password))
         if owner:
             done["owner_note"] = owner
         for table in CARRIED_TABLES:

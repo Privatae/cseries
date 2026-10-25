@@ -23,6 +23,11 @@
 # reaches the agent, which opens the disk with a key the customer holds.
 # Nothing of the Host is served here, so no page of the Host's (nor of any
 # of its apps) shares this origin, the unlock passkeys' relying party.
+# Forms go to this page's own agent (the setup code typed here) and to the
+# Host (the sign-in ticket), nowhere else. The referrer policy sends this
+# origin and nothing more: its form posts then carry an Origin the agent and
+# the Host check (no-referrer would make it "null"), and no address here
+# holds anything but the page.
 https://@UNLOCK_HOST@ {
 	tls /etc/caddy/tls/cert.pem /etc/caddy/tls/key.pem {
 		protocols tls1.3
@@ -30,8 +35,8 @@ https://@UNLOCK_HOST@ {
 	header {
 		Strict-Transport-Security "max-age=63072000; includeSubDomains"
 		X-Content-Type-Options nosniff
-		Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; form-action 'none'; frame-ancestors 'none'; base-uri 'none'"
-		Referrer-Policy no-referrer
+		Content-Security-Policy "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; form-action 'self' https://@HOST_NAME@; frame-ancestors 'none'; base-uri 'none'"
+		Referrer-Policy strict-origin
 		X-Frame-Options DENY
 		Cache-Control no-store
 		-Server

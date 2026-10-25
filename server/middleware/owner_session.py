@@ -27,14 +27,14 @@ import hmac
 import logging
 import os
 import re
-from urllib.parse import unquote, urlencode
+from urllib.parse import urlencode
 
 from server import owner_login, trusted_proxies
 from server.applications import app_origin
 from server.home_origin import HOME
 from server.middleware.localhost_only import (
-    DOOR_PATH, LOOPBACK_HOSTS, OWNER_PUBLIC_PATHS, _PROBE_EXEMPT_PATHS, _unmap_v4, is_oauth_callback,
-    runtime_peer,
+    DOOR_PATH, LOOPBACK_HOSTS, OWNER_PUBLIC_PATHS, _PROBE_EXEMPT_PATHS, _unmap_v4, door_question_path,
+    is_oauth_callback, runtime_peer,
 )
 
 log = logging.getLogger("cseries.owner_session")
@@ -220,11 +220,12 @@ async def door_decision(scope) -> tuple[int, str | None]:
     uri = _header(scope, b"x-forwarded-uri").strip()
     if not method or not uri.startswith("/"):
         return 401, None
-    raw_path, _sep, query = uri.partition("?")
+    _raw_path, _sep, query = uri.partition("?")
     # Split and decoded as the server reads the path it routes (uvicorn: the
     # request target up to "?", unquoted), so the door and the Host agree on
-    # which path a request is for; "//x" stays a path, not a host.
-    path = unquote(raw_path)
+    # which path a request is for; "//x" stays a path, not a host. The
+    # localhost gate reads it the same way (checks_own_origin).
+    path = door_question_path(uri)
     if path == DOOR_PATH:
         return 401, None        # only the proxy's own question reaches the door
     if path in OWNER_PUBLIC_PATHS or path in _PROBE_EXEMPT_PATHS:

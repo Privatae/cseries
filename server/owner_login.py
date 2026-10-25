@@ -7,7 +7,13 @@ too early from being claimed by the first visitor.
 
 After that the owner signs in with email and password and gets a session
 cookie; once the owner adds a passkey, with the passkey or a recovery code
-instead, and the password no longer signs in (server/owner_passkeys.py). A
+instead, and the password no longer signs in (server/owner_passkeys.py).
+
+On a C-Series Cloud machine with a vault (server/cloud_machine.py) the setup
+code makes no owner: the owner is made from the machine's unlock page, with
+the one-time ticket the machine makes once the disk's keys are set up
+(claim_owner), and signs in later the same way with one of those keys
+(box_sign_in). That owner has no password. A
 session ends after SESSION_IDLE of no use or SESSION_MAX in total, whichever
 comes first. On an https address the cookie is a __Host- cookie.
 
@@ -133,7 +139,9 @@ async def hash_password(password: str) -> str:
     return f"scrypt${_SCRYPT_N}${_SCRYPT_R}${_SCRYPT_P}${_b64(salt)}${_b64(digest)}"
 
 
-async def check_password(password: str, stored: str) -> bool:
+async def check_password(password: str, stored: Optional[str]) -> bool:
+    if not stored:
+        return False        # an owner made from a cloud machine's unlock page has none
     try:
         scheme, n, r, p, salt, digest = stored.split("$")
         if scheme != "scrypt":
@@ -274,6 +282,12 @@ async def create_owner(code: str, email: str, password: str, client: str = "") -
         if blocked:
             raise LoginError("First set up the keys that unlock this machine's disk, at "
                              f"{blocked}. Then come back here.")
+        if cloud_machine.keeps_vault():
+            # Its owner is made from the unlock page (claim_owner): the
+            # setup code, which Privatae's platform holds too, makes none.
+            unlock = cloud_machine.unlock_url() or "this machine's unlock page"
+            raise LoginError("This machine's owner account is made from its unlock page, at "
+                             f"{unlock}: confirm with your passkey there.")
         if not _setup_code or not _same((code or "").strip().lower(), _setup_code):
             _note_failure(client)
             raise LoginError("That setup code is not right. It is printed in the Host's log, "
@@ -377,6 +391,9 @@ async def sign_in(email: str, password: str, client: str, origin: str) -> str:
             raise LoginError("This Host signs in with a passkey now. Use the passkey "
                              "button, or one of your recovery codes.")
         row = await pool.fetchrow("SELECT email, password_hash FROM owner_account WHERE id = 1")
+        if row and not row["password_hash"]:
+            # Made from a cloud machine's unlock page: no password to guess.
+            raise LoginError("This Host has no password. Sign in from its machine's unlock page.")
         # Every visitor's wrong passwords together (_password_failures). Only
         # once there is an owner: before that no password can be right, and
         # setup signs the new owner in through here.
@@ -395,6 +412,106 @@ async def sign_in(email: str, password: str, client: str, origin: str) -> str:
             raise LoginError("Wrong email or password.")
         _forget_failures(client)
     return await _new_session(pool, origin)
+
+
+# ── the owner from a cloud machine's unlock page ────────────────────────────
+#
+# The machine writes the one ticket it has made (cloud_machine.owner_claim):
+# its SHA-256, its kind and when it expires, and for a claim the owner's
+# email, which came from the account site with the setup code. The page
+# posts the ticket here as a form; the routes check its Origin. A ticket
+# signs in once: a claim makes the one owner row (with the ticket's hash),
+# and a sign-in replaces the hash of the newest one taken, and only when it
+# differs. A wrong ticket counts like a wrong password.
+
+_ISO = "%Y-%m-%dT%H:%M:%SZ"
+
+
+def _box_ticket(ticket: str, kind: str) -> tuple[dict, str]:
+    """(the machine's record, the ticket's hash) for a live ticket of
+    `kind`; raises LoginError."""
+    from server import cloud_machine
+    doc = cloud_machine.owner_claim()
+    if not isinstance(ticket, str) or not ticket or len(ticket) > 200 or not doc:
+        raise LoginError("That sign-in is not this machine's. Start again from its unlock page.")
+    h = _token_hash(ticket)
+    want = doc.get("ticket_sha256")
+    if not isinstance(want, str) or not hmac.compare_digest(h, want) or doc.get("kind") != kind:
+        raise LoginError("That sign-in is not this machine's. Start again from its unlock page.")
+    try:
+        ends = datetime.strptime(str(doc.get("expires_at")), _ISO).replace(tzinfo=timezone.utc)
+    except ValueError:
+        ends = None
+    if ends is None or ends <= datetime.now(timezone.utc):
+        raise LoginError("That sign-in took too long. Start again from this machine's unlock page.")
+    return doc, h
+
+
+async def claim_owner(ticket: str, client: str, origin: str) -> str:
+    """Make the owner from the unlock page's claim ticket and return a new
+    session token for host `origin`. Only while there is no owner, and only
+    once the disk's keys are set up."""
+    global _owner_email, _setup_code, _cookie_suffix
+    from server import cloud_machine
+    pool = _pool()
+    async with _sign_in_lock:
+        wait = _locked_for(client)
+        if wait > 0:
+            raise LoginError(f"Too many wrong tries. Wait {int(wait) + 1} seconds.")
+        if not needs_setup():
+            raise LoginError("This Host already has its owner. Sign in from this machine's unlock page.")
+        if cloud_machine.setup_blocked():
+            raise LoginError("First set up the keys that unlock this machine's disk, on its unlock page.")
+        try:
+            doc, h = _box_ticket(ticket, "claim")
+            email = _normal_email(doc.get("email") or "")
+        except LoginError:
+            _note_failure(client)
+            raise
+        suffix = secrets.token_hex(4)
+        inserted = await pool.fetchval(
+            "INSERT INTO owner_account (id, email, password_hash, cookie_suffix, box_ticket_hash) "
+            "VALUES (1, $1, NULL, $2, $3) ON CONFLICT (id) DO NOTHING RETURNING email",
+            email, suffix, h)
+        if not inserted:
+            raise LoginError("This Host already has its owner. Sign in from this machine's unlock page.")
+        _owner_email, _setup_code, _cookie_suffix = email, None, suffix
+        _forget_failures(client)
+    logger.warning("owner login: owner account created from the machine's unlock page")
+    return await _new_session(pool, origin)
+
+
+async def box_sign_in(ticket: str, client: str, origin: str) -> str:
+    """Sign the owner in with the unlock page's sign-in ticket; a new
+    session token for host `origin`."""
+    pool = _pool()
+    async with _sign_in_lock:
+        wait = _locked_for(client)
+        if wait > 0:
+            raise LoginError(f"Too many wrong tries. Wait {int(wait) + 1} seconds.")
+        if needs_setup():
+            raise LoginError("This Host has no owner yet. Set it up from this machine's unlock page.")
+        try:
+            _doc, h = _box_ticket(ticket, "sign-in")
+        except LoginError:
+            _note_failure(client)
+            raise
+        taken = await pool.fetchval(
+            "UPDATE owner_account SET box_ticket_hash = $1, updated_at = now() "
+            "WHERE id = 1 AND box_ticket_hash IS DISTINCT FROM $1 RETURNING id", h)
+        if not taken:
+            _note_failure(client)
+            raise LoginError("That sign-in was used already. Start again from this machine's unlock page.")
+        _forget_failures(client)
+    logger.warning("owner login: signed in from the machine's unlock page")
+    return await _new_session(pool, origin)
+
+
+async def has_password() -> bool:
+    pool = _pool()
+    if pool is None:
+        return False
+    return bool(await pool.fetchval("SELECT password_hash IS NOT NULL FROM owner_account WHERE id = 1"))
 
 
 async def sign_out(token: Optional[str]) -> None:

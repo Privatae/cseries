@@ -30,6 +30,11 @@ X-Forwarded-Uri. Pinned here:
      A question about /__host/door itself is never let through.
   8. The OAuth returns (integrations, gitea, MCP) are let through for GET
      without a session, and only for GET.
+  9. The unlock page's ticket form (POST /api/owner/claim, box-sign-in)
+     comes from the unlock page's origin, and the proxy's question carries
+     that Origin: the door lets it through (the route checks the Origin
+     itself), only with the key and from the trusted proxy. Every other
+     path keeps the Origin rule at the door.
 
 No database, no network: the session store is a stand-in.
 
@@ -357,6 +362,23 @@ async def main():
                 "/api/integrations/callback/_google_base", "/api/integrations/callback/Gmail"):
         st, _h = await ask(app, uri)
         check(st == 401, f"no session, GET {uri}: not an OAuth return, 401", st)
+
+    # 9. the unlock page's ticket form (routes/owner.py _from_unlock_page):
+    # the proxy asks about it with the browser's headers, Origin among them,
+    # and that Origin is the unlock page's, not the Host's
+    unlock = "https://unlock-" + DESKTOP
+    for uri in ("/api/owner/claim", "/api/owner/box-sign-in", "/api/owner/cl%61im"):
+        st, _h = await ask(app, uri, method="POST", accept="text/html", extra=[("origin", unlock)])
+        check(st == 200, f"the unlock page's form to {uri}, its Origin forwarded: 200 (the route checks it)", st)
+    st, _h = await ask(app, "/api/owner/claim", method="POST", extra=[("origin", unlock)], key=None)
+    check(st == 401, "the same question without the door key: 401", st)
+    st, _h = await ask(app, "/api/owner/claim", method="POST", extra=[("origin", unlock)], peer=STRANGER)
+    check(st == 401, "and from a stranger: 401", st)
+    for uri in ("/api/owner/login", "/api/owner/setup", "/login"):
+        st, _h = await ask(app, uri, method="POST", extra=[("origin", unlock)])
+        check(st == 403, f"another path with that Origin keeps the Origin rule at the door: {uri} 403", st)
+    st, _h = await ask(app, "/api/owner/login", method="POST", extra=[("origin", "https://" + DESKTOP)])
+    check(st == 200, "and the Host's own Origin passes there as before", st)
 
 
 asyncio.run(main())

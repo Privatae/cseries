@@ -42,10 +42,13 @@
 # lists them on first use; a stale runtime image removed at the runtime's
 # next start; and each again after a reboot and with the platform off.
 #
-# The box has a vault (vm/cloud/README.md, "The vault"): the claim sets up
-# its keys through the unlock page first, and after every reboot the test
-# unlocks it there the way its owner would, with a passkey's passphrase
-# computed as the page computes it. run-vault-test.sh tests the vault itself.
+# The box has a vault (vm/cloud/README.md, "The vault"): the claim takes the
+# account site's handoff (its form POST of the setup code), sets up the
+# disk's keys through the unlock page, and makes the Host's owner with the
+# box's one-time ticket; the owner has no password and signs in the same way,
+# with the disk's passkey (box_sign_in). After every reboot the test unlocks
+# the box there the way its owner would, with a passkey's passphrase computed
+# as the page computes it. run-vault-test.sh tests the vault itself.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -115,12 +118,29 @@ unlock_api() {  # method path [json]: the code; the body in $WORK/ubody
     curl -sk -m 60 -o "$WORK/ubody" -w '%{http_code}' --resolve "$UNLOCK:443:$VM4" -X "$1" "${data[@]}" \
         "https://$UNLOCK/api$2" || echo 000
 }
-set_up_disk_keys() {   # the owner's first step: the vault's keys, through the unlock page
+# The account site's Set up your machine: the setup code and the owner's
+# email posted to the unlock page as a form from https://privatae.ai. Prints
+# the code; the handoff's cookie lands in $UJAR.
+UJAR=$WORK/unlock-jar
+handoff() {
+    curl -sk -m 60 -b "$UJAR" -c "$UJAR" -o "$WORK/ubody" -D "$WORK/uhdrs" -w '%{http_code}' \
+        --resolve "$UNLOCK:443:$VM4" -H 'Origin: https://privatae.ai' \
+        --data-urlencode "setup_code=$SETUP_CODE" --data-urlencode "email=$OWNER_EMAIL" \
+        "https://$UNLOCK/api/setup" || echo 000
+}
+page_api() {  # unlock_api as the page's own calls make it: its Origin and the handoff's cookie
+    local data=()
+    [ $# -ge 3 ] && data=(-H 'Content-Type: application/json' --data "$3")
+    curl -sk -m 60 -b "$UJAR" -c "$UJAR" -H "Origin: https://$UNLOCK" -o "$WORK/ubody" -w '%{http_code}' \
+        --resolve "$UNLOCK:443:$VM4" -X "$1" "${data[@]}" "https://$UNLOCK/api$2" || echo 000
+}
+ujget() { python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])' "$WORK/ubody" "$1" 2>/dev/null || true; }
+set_up_disk_keys() {   # the owner's first step: the vault's keys, through the unlock page, with the handoff
     local code rk
-    code=$(unlock_api POST /enroll "{\"setup_code\": \"$SETUP_CODE\", \"passkey\": {\"credential_id\": \"$UNLOCK_CRED\", \"passphrase\": \"$UNLOCK_PP\"}}")
+    code=$(page_api POST /enroll "{\"passkey\": {\"credential_id\": \"$UNLOCK_CRED\", \"passphrase\": \"$UNLOCK_PP\"}}")
     [ "$code" = 200 ] || return 1
-    rk=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["recovery_key"])' "$WORK/ubody")
-    code=$(unlock_api POST /enroll/confirm "{\"setup_code\": \"$SETUP_CODE\", \"recovery_key\": \"$rk\"}")
+    rk=$(ujget recovery_key)
+    code=$(page_api POST /enroll/confirm "{\"recovery_key\": \"$rk\"}")
     [ "$code" = 200 ] || return 1
     for _ in $(seq 1 450); do
         unlock_api GET /state >/dev/null
@@ -162,6 +182,21 @@ web() {
 }
 sign_in_json() { printf '{"email": "%s", "password": "%s"}' "$OWNER_EMAIL" "$OWNER_PW"; }
 body_has() { grep -q "$1" "$WORK/body"; }
+# box_sign_in <jar>: the owner signs in as the unlock page does it, with the
+# disk's passkey (the box's owner has no password): the agent's sign-in
+# ticket, posted to the Host as a form from the unlock page's origin. Prints
+# "<code> <redirect url>" like web.
+box_sign_in() {
+    local code
+    for _ in 1 2; do
+        code=$(unlock_api POST /owner-ticket "{\"auth\": {\"credential_id\": \"$UNLOCK_CRED\", \"passphrase\": \"$UNLOCK_PP\"}}")
+        [ "$code" = 429 ] || break
+        sleep 61   # the agent's five tries a minute
+    done
+    [ "$code" = 200 ] || { echo "$code agent-refused"; return 0; }
+    web "$1" "$(ujget action)" -X POST -H "Origin: https://$UNLOCK" -H 'Accept: text/html' \
+        --data-urlencode "ticket=$(ujget ticket)"
+}
 # The session cookie for a host from a curl jar, as name=value.
 cookie_of() {
     python3 - "$1" "$2" <<'EOF'
@@ -202,8 +237,9 @@ door_checks() {
     check "$L: a page without a session is sent to /login (303)" test "$r" = "303 https://$HOSTNAME/login"
     r=$(web "$jar" "https://$HOSTNAME/api/applications")
     check "$L: an API call without a session gets the door's 401" code_is "$r" 401
-    r=$(web "$jar" "https://$HOSTNAME/api/owner/login" -X POST -H 'Content-Type: application/json' --data "$(sign_in_json)")
-    check "$L: the password signs in through Caddy" code_is "$r" 200
+    r=$(box_sign_in "$jar")
+    check "$L: the disk's passkey signs in through Caddy (the unlock page's ticket, 303 to the desktop)" \
+        test "$r" = "303 https://$HOSTNAME/"
     check "$L: the session cookie is __Host-, Secure, HttpOnly, SameSite=Strict, Path=/, host-only" session_cookie_ok
     web "$jar" "https://$HOSTNAME/api/owner/status" >/dev/null
     check "$L: the session is live through the door" body_has '"signed_in": *true'
@@ -559,7 +595,7 @@ check "443: TLS 1.2 refused" sh -c "! curl -sk -o /dev/null --tls-max 1.2 --reso
 check "443: a name outside the box's zone gets no certificate" sh -c "echo | openssl s_client -connect $VM4:443 -servername example.org 2>&1 | grep -q 'Cipher is (NONE)'"
 check "443 over IPv6" sh -c "curl -sk -g -o /dev/null --resolve '$HOSTNAME:443:[$VM6]' https://$HOSTNAME/login"
 
-say "claiming the Host with the setup code from the file, through the door"
+say "claiming the Host: the card's handoff, the disk's keys, the box's ticket, through the door"
 jar=$WORK/jar-claim
 : > "$jar"
 r=$(web "$jar" "https://$HOSTNAME/" -H 'Accept: text/html')
@@ -570,22 +606,30 @@ check "and asks for the disk's keys first, at the unlock page" sh -c "grep -q 'S
 r=$(web "$jar" "https://$HOSTNAME/api/owner/setup" -X POST -H 'Content-Type: application/json' \
     --data "{\"code\": \"$SETUP_CODE\", \"email\": \"$OWNER_EMAIL\", \"password\": \"$OWNER_PW\"}")
 check "the right setup code claims nothing before the disk's keys are set up" sh -c "test '${r%% *}' = 400 && grep -q '$UNLOCK' '$WORK/body'"
+: > "$UJAR"
+code=$(handoff)
+check "the card's Set up your machine hands the code over: 303 and the handoff's __Host- cookie" \
+    sh -c "test $code = 303 && grep -qi '^set-cookie: __Host-cseries-setup=' '$WORK/uhdrs'"
 t0=$(date +%s)
 check "the disk's keys are set up at the unlock page (passkey, recovery key, the claim's re-encryption)" set_up_disk_keys
 measure "setting up the disk's keys took $(( $(date +%s) - t0 ))s"
 r=$(web "$jar" "https://$HOSTNAME/api/owner/setup" -X POST -H 'Content-Type: application/json' \
-    --data "{\"code\": \"0a0a0a-0b0b0b-0c0c0c\", \"email\": \"$OWNER_EMAIL\", \"password\": \"$OWNER_PW\"}")
-check "a wrong setup code is refused (400) and claims nothing" sh -c "test '${r%% *}' = 400 && ! grep -qi '^set-cookie: __Host-' '$WORK/hdrs'"
-r=$(web "$jar" "https://$HOSTNAME/api/owner/setup" -X POST -H 'Content-Type: application/json' \
     --data "{\"code\": \"$SETUP_CODE\", \"email\": \"$OWNER_EMAIL\", \"password\": \"$OWNER_PW\"}")
-check "the setup code from CSERIES_SETUP_CODE_FILE claims the Host through the door" code_is "$r" 200
+check "the setup code from CSERIES_SETUP_CODE_FILE, right as it is, makes no owner on a box with a vault" \
+    sh -c "test '${r%% *}' = 400 && grep -q '$UNLOCK' '$WORK/body' && ! grep -qi '^set-cookie: __Host-' '$WORK/hdrs'"
+code=$(page_api POST /owner-ticket '{}')
+check "the browser that set up the keys gets the claim ticket, with no key" \
+    sh -c "test $code = 200 && test '$(ujget kind)' = claim && test '$(ujget action)' = 'https://$HOSTNAME/api/owner/claim'"
+r=$(web "$jar" "$(ujget action)" -X POST -H "Origin: https://$UNLOCK" -H 'Accept: text/html' \
+    --data-urlencode "ticket=$(ujget ticket)")
+check "the claim ticket, posted from the unlock page's origin through the door, makes the owner (303 to the desktop)" \
+    test "$r" = "303 https://$HOSTNAME/"
 check "the claim leaves a __Host- session cookie with its attributes" session_cookie_ok
 web "$jar" "https://$HOSTNAME/api/owner/status" >/dev/null
 check "after the claim the owner is signed in and setup is no longer needed" \
     sh -c "grep -q '\"signed_in\": *true' '$WORK/body' && grep -q '\"setup_needed\": *false' '$WORK/body'"
-r=$(web "$jar" "https://$HOSTNAME/api/owner/setup" -X POST -H 'Content-Type: application/json' \
-    --data "{\"code\": \"$SETUP_CODE\", \"email\": \"other@boxtest.example\", \"password\": \"another password here\"}")
-check "the setup code claims only once" code_is "$r" 400
+code=$(page_api POST /owner-ticket '{}')
+check "once the Host has its owner, the handoff alone signs nobody in" test "$code" = 403
 web "$jar" "https://$HOSTNAME/api/owner/logout" -X POST >/dev/null
 
 say "the door, signed in and not"
@@ -668,7 +712,7 @@ r=$(rth install app-store)
 check "the App Store app installs from the signed catalog (the Host's own install code)" jtrue "$r" 'd["installed"] == "app-store"'
 jar=$WORK/jar-store
 : > "$jar"
-web "$jar" "https://$HOSTNAME/api/owner/login" -X POST -H 'Content-Type: application/json' --data "$(sign_in_json)" >/dev/null
+box_sign_in "$jar" >/dev/null
 web "$jar" "https://$HOSTNAME/api/applications/app-store/launch" -X POST -H 'Content-Type: application/json' --data '{}' >/dev/null
 stok=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("token") or d.get("app_token") or "")' "$WORK/body" 2>/dev/null || true)
 check "the App Store app launches for the owner" test -n "$stok"
@@ -816,7 +860,7 @@ rth op workspace.set_harness '{"harness_id": "claude-code", "enabled": false}' >
 say "R7: Discord and Slack, from the App Store"
 jar=$WORK/jar-store2
 : > "$jar"
-web "$jar" "https://$HOSTNAME/api/owner/login" -X POST -H 'Content-Type: application/json' --data "$(sign_in_json)" >/dev/null
+box_sign_in "$jar" >/dev/null
 web "$jar" "https://$HOSTNAME/api/applications/app-store/launch" -X POST -H 'Content-Type: application/json' --data '{}' >/dev/null
 stok=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("token") or d.get("app_token") or "")' "$WORK/body" 2>/dev/null || true)
 store_install() {  # <app id>: the owner's click in the App Store
@@ -870,7 +914,7 @@ nb=$(fake_lines "getUpdates offset=4243")
 say "pairing from the Network app needs a passkey check on this box"
 jar=$WORK/jar-stepup
 : > "$jar"
-web "$jar" "https://$HOSTNAME/api/owner/login" -X POST -H 'Content-Type: application/json' --data "$(sign_in_json)" >/dev/null
+box_sign_in "$jar" >/dev/null
 web "$jar" "https://$HOSTNAME/api/applications/network/launch" -X POST -H 'Content-Type: application/json' --data '{}' >/dev/null
 apptok=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("token") or d.get("app_token") or "")' "$WORK/body" 2>/dev/null || true)
 check "the Network app launches for the signed-in owner" test -n "$apptok"

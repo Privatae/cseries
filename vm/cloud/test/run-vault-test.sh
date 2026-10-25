@@ -18,7 +18,9 @@
 # here: the test computes a passkey's passphrase as the page does
 # (cseries_vault.passkey_passphrase, which scripts/test_cloud_box_unlock_page.py
 # holds derive.js to) from an invented PRF output, and sends what the page
-# sends.
+# sends. The account site's handoff is its form POST (setup code and email,
+# Origin https://privatae.ai); the Host's owner is made and signed in with
+# the agent's one-time tickets, posted to the Host as the page posts them.
 set -euo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
@@ -80,6 +82,36 @@ api() {   # method path [json]: prints the code; the body is in $WORK/abody
         "https://$UNLOCK/api$2" || echo 000
 }
 abody() { cat "$WORK/abody"; }
+# The account site's Set up your machine: the setup code and the owner's
+# email posted to the unlock page as a form, from https://privatae.ai (or
+# $2). Prints the code; the handoff's cookie lands in $UJAR.
+UJAR=$WORK/unlock-jar
+handoff() {   # [code] [origin]
+    curl -sk -m 60 -b "$UJAR" -c "$UJAR" -o "$WORK/abody" -D "$WORK/ahdrs" -w '%{http_code}' \
+        --resolve "$UNLOCK:443:$VM4" -H "Origin: ${2:-https://privatae.ai}" \
+        --data-urlencode "setup_code=${1:-$SETUP_CODE}" --data-urlencode "email=$OWNER_EMAIL" \
+        "https://$UNLOCK/api/setup" || echo 000
+}
+# api as the unlock page's own calls make it: its Origin (or $4) and the
+# handoff's cookie.
+uapi() {  # method path [json] [origin]
+    local data=()
+    [ $# -ge 3 ] && [ -n "$3" ] && data=(-H 'Content-Type: application/json' --data "$3")
+    curl -sk -m 60 -b "$UJAR" -c "$UJAR" -H "Origin: ${4:-https://$UNLOCK}" -o "$WORK/abody" -w '%{http_code}' \
+        --resolve "$UNLOCK:443:$VM4" -X "$1" "${data[@]}" "https://$UNLOCK/api$2" || echo 000
+}
+# The unlock page's ticket form to the Host: prints the code; the Host's
+# session cookie lands in the jar, the headers in $WORK/hhdrs.
+ticket_post() {  # jar action ticket [origin]
+    curl -sk -m 60 -b "$1" -c "$1" -o "$WORK/hbody" -D "$WORK/hhdrs" -w '%{http_code}' -H 'Accept: text/html' \
+        -H "Origin: ${4:-https://$UNLOCK}" --resolve "$HOSTNAME:443:$VM4" --data-urlencode "ticket=$3" "$2" ||
+        echo 000
+}
+# A ticket from the agent's answer in $WORK/abody, posted to the Host.
+post_ticket() { ticket_post "$1" "$(jget "$(abody)" 'd["action"]')" "$(jget "$(abody)" 'd["ticket"]')"; }
+signed_in_303() {   # the Host's answer to a ticket in $WORK/hhdrs: 303 to its desktop with its session cookie
+    grep -qi '^location: /\s*$' "$WORK/hhdrs" && grep -qi '^set-cookie: __Host-cseries_session_' "$WORK/hhdrs"
+}
 host() {  # jar method path [json] [accept]: prints the code; body in $WORK/hbody
     local data=() accept=${5:-application/json}
     [ -n "${4:-}" ] && data=(-H 'Content-Type: application/json' --data "$4")
@@ -239,6 +271,7 @@ code=$(api GET /state); s=$(abody)
 check "the unlock agent: open, not enrolled, the unlock name as relying party" bash -c "test $code = 200 && test '$(jget "$s" 'd["state"]+"/"+str(d["enrolled"])+"/"+d["rp_id"]')' = 'open/False/$UNLOCK'"
 hb=$(vm 'sudo /usr/local/sbin/cseries-cloud-heartbeat --print')
 check "the heartbeat body: vault open, the access log empty" bash -c "test '$(jget "$hb" 'd["vault"]["state"]+"/"+str(d["access_log"]["count"])')' = open/0"
+check "the heartbeat says the setup is not done" test "$(jget "$hb" 'd["setup"]["done"]')" = False
 check "the Host reads the machine's state" vm "sudo podman exec cseries-host cat /run/cseries-door/machine-state.json | grep -q '\"enrolled\": false'"
 
 say "/setup waits for the disk's keys"
@@ -252,9 +285,9 @@ say "a copy of the disk before the claim (as a provider's backup would take)"
 vm 'sudo cryptsetup luksHeaderBackup /var/lib/cseries-vault.img --header-backup-file /root/pre-claim.hdr && sudo cp /etc/cseries-cloud/vault-bootstrap.key /root/pre-claim.key'
 check "the pre-claim header and bootstrap key are kept" vm 'sudo test -s /root/pre-claim.hdr -a -s /root/pre-claim.key'
 
-enroll() {   # -> the recovery key on stdout
+enroll() {   # -> the recovery key on stdout; with the handoff's cookie, as the page does it
     local code
-    code=$(api POST /enroll "{\"setup_code\": \"$SETUP_CODE\", \"passkey\": {\"credential_id\": \"$CRED\", \"passphrase\": \"$PP\"}}")
+    code=$(uapi POST /enroll "{\"passkey\": {\"credential_id\": \"$CRED\", \"passphrase\": \"$PP\"}}")
     [ "$code" = 200 ] || { echo "enroll $code $(abody)" >&2; return 1; }
     jget "$(abody)" 'd["recovery_key"]'
 }
@@ -267,16 +300,33 @@ wait_enrolled() {
     return 1
 }
 
+say "the account site's handoff"
+: > "$UJAR"
+code=$(handoff "$SETUP_CODE" "https://$HOSTNAME")
+check "a handoff from the Host's own name (a sibling of the unlock page) is refused, no cookie" \
+    bash -c "test $code = 403 && ! grep -q __Host-cseries-setup '$UJAR'"
+code=$(handoff ffffff-ffffff-ffffff)
+check "a handoff with a wrong setup code is refused, no cookie" \
+    bash -c "test $code = 403 && ! grep -q __Host-cseries-setup '$UJAR'"
+code=$(handoff)
+check "the card's form: a 303 to the unlock page" bash -c "test $code = 303 && grep -qi '^location: /\s*$' '$WORK/ahdrs'"
+check "and a __Host- cookie, Secure, HttpOnly, SameSite=Strict" \
+    bash -c "grep -i '^set-cookie: __Host-cseries-setup=' '$WORK/ahdrs' | grep -i 'secure' | grep -i 'httponly' | grep -qi 'samesite=strict'"
+check "the box keeps the cookie's hash, never the code" \
+    vm "sudo test -s /run/cseries-vault/handoff.json && ! sudo grep -q '$SETUP_CODE' /run/cseries-vault/handoff.json"
+
 say "the claim, cut off half way by a crash"
 code=$(api POST /enroll "{\"setup_code\": \"ffffff-ffffff-ffffff\", \"passkey\": null}")
-check "enrolling with a wrong setup code is refused" test "$code" = 403
+check "enrolling without the handoff, with a wrong setup code, is refused" test "$code" = 403
 rk=$(enroll)
-check "enrolling answers a recovery key" test "$(tr '-' '\n' <<< "$rk" | wc -l)" = 13
+check "enrolling with the handoff's cookie answers a recovery key" test "$(tr '-' '\n' <<< "$rk" | wc -l)" = 13
 sleep 61   # the agent's five tries a minute
-code=$(api POST /enroll/confirm "{\"setup_code\": \"$SETUP_CODE\", \"recovery_key\": \"AAAA\"}")
+code=$(uapi POST /enroll '{"passkey": null}' "https://$HOSTNAME")
+check "the handoff's cookie sent from the Host's own name is not taken" test "$code" = 403
+code=$(uapi POST /enroll/confirm '{"recovery_key": "AAAA"}')
 check "confirming with another key is refused" bash -c "test $code = 400 || test $code = 403"
-code=$(api POST /enroll/confirm "{\"setup_code\": \"$SETUP_CODE\", \"recovery_key\": \"$rk\"}")
-check "the recovery key typed back starts the claim" test "$code" = 200
+code=$(uapi POST /enroll/confirm "{\"recovery_key\": \"$rk\"}")
+check "I saved it, with the key the page showed, starts the claim" test "$code" = 200
 cut=""
 for _ in $(seq 1 120); do
     api GET /state >/dev/null
@@ -315,10 +365,42 @@ types=$(python3 -c 'import json,sys; d=json.loads(sys.argv[1]); print(" ".join(s
 check "after the claim: a passkey and a recovery key, two keyslots, no re-encryption pending" test "$types" = "cseries-passkey cseries-recovery 2 False"
 check "the bootstrap key is gone" vm '! sudo test -e /etc/cseries-cloud/vault-bootstrap.key'
 
-say "the owner, and something of theirs"
+say "the owner, made by the box's ticket, and something of theirs"
 code=$(host "$jar" POST /api/owner/setup "{\"code\": \"$SETUP_CODE\", \"email\": \"$OWNER_EMAIL\", \"password\": \"$OWNER_PW\"}")
-[ "$code" = 200 ] || { echo "setup answered $code: $(head -c 400 "$WORK/hbody")"; diag; }
-check "now /api/owner/setup makes the owner" test "$code" = 200
+check "the setup code, right as it is, makes no owner on a box with a vault (the unlock page does)" \
+    bash -c "test $code = 400 && grep -q '$UNLOCK' '$WORK/hbody'"
+sleep 61   # the agent's five tries a minute
+if [ -n "$cut" ]; then
+    # The reset emptied /run, and the handoff with it: the card's button
+    # again, and one of the disk's keys, as the page asks.
+    code=$(uapi POST /owner-ticket '{}')
+    check "after the reset the old handoff is gone: no ticket without a key" test "$code" = 403
+    code=$(handoff)
+    check "the card's button again: a new handoff" test "$code" = 303
+    code=$(uapi POST /owner-ticket "{\"auth\": {\"credential_id\": \"$CRED\", \"passphrase\": \"$PP\"}}")
+else
+    code=$(uapi POST /owner-ticket '{}')
+fi
+check "the agent makes the claim ticket for the Host's /api/owner/claim" \
+    bash -c "test $code = 200 && test '$(jget "$(abody)" 'd["kind"]+" "+d["action"]')' = 'claim https://$HOSTNAME/api/owner/claim'"
+claim_answer=$(abody)
+code=$(ticket_post "$WORK/jar-other" "https://$HOSTNAME/api/owner/claim" "$(jget "$claim_answer" 'd["ticket"]')" "https://$HOSTNAME")
+check "the ticket posted from another origin than the unlock page's is refused, through the door" \
+    bash -c "test $code = 403 && grep -q 'unlock page' '$WORK/hbody'"
+: > "$jar"
+code=$(ticket_post "$jar" "https://$HOSTNAME/api/owner/claim" "$(jget "$claim_answer" 'd["ticket"]')")
+[ "$code" = 303 ] || { echo "the claim answered $code: $(head -c 400 "$WORK/hbody")"; diag; }
+check "posted from the unlock page's origin, through Caddy and the door, the claim ticket answers 303" test "$code" = 303
+check "to the Host's desktop, with its __Host- session cookie" signed_in_303
+code=$(ticket_post "$WORK/jar-again" "https://$HOSTNAME/api/owner/claim" "$(jget "$claim_answer" 'd["ticket"]')")
+check "the same ticket again is refused" bash -c "test $code = 403 && ! grep -qi '^set-cookie: __Host-' '$WORK/hhdrs'"
+code=$(host "$jar" GET /api/owner/status)
+check "the owner is signed in, and setup is no longer needed" \
+    bash -c "grep -q '\"signed_in\": *true' '$WORK/hbody' && grep -q '\"setup_needed\": *false' '$WORK/hbody'"
+hb=$(vm 'sudo /usr/local/sbin/cseries-cloud-heartbeat --print')
+check "the heartbeat says the setup is done (the platform drops its code)" test "$(jget "$hb" 'd["setup"]["done"]')" = True
+code=$(handoff)
+check "once it is, the setup code hands nothing over" bash -c "test $code = 409 && ! grep -qi '^set-cookie:' '$WORK/ahdrs'"
 vmsh <<EOF
 set -e
 podman exec cseries-postgres psql -h /var/run/postgresql -U entity -d hostmem -qc "CREATE TABLE IF NOT EXISTS vault_test (m text); INSERT INTO vault_test VALUES ('$MARK'); CHECKPOINT;" >/dev/null
@@ -405,7 +487,13 @@ check "the unlock is recorded in the vault, after the refused try" test "$(last_
 say "Restart from the Host, then the recovery key"
 jar2=$WORK/jar2; : > "$jar2"
 code=$(host "$jar2" POST /api/owner/login "{\"email\": \"$OWNER_EMAIL\", \"password\": \"$OWNER_PW\"}")
-check "the owner signs in" test "$code" = 200
+check "a password signs nobody in: the owner has none" bash -c "test $code = 401 && grep -q 'unlock page' '$WORK/hbody'"
+code=$(api POST /owner-ticket "{\"auth\": {\"credential_id\": \"$CRED\", \"passphrase\": \"$PP\"}}")
+check "the disk's passkey gets a sign-in ticket (no handoff needed)" \
+    bash -c "test $code = 200 && test '$(jget "$(abody)" 'd["kind"]')' = sign-in"
+code=$(post_ticket "$jar2")
+check "posted to the Host, it signs the owner in" test "$code" = 303
+check "to the desktop, with the session cookie" signed_in_303
 code=$(host "$jar2" POST /api/owner/machine/restart '{}')
 check "Restart is accepted" test "$code" = 200
 wait_down_up

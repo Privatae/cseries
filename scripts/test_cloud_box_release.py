@@ -19,6 +19,18 @@ and the release signature it checks.
      bastion.min_version, the box's own minimum; the workflow's cloud job runs
      after the images are merged and the release exists, with only
      contents: write.
+  6. A release that changes the unlock agent's program or the box's library
+     restarts the running agent; one that changes neither leaves it.
+  7. Self-update first: after the unpack and before anything is installed,
+     the release's own updater is handed the tree (the same interpreter,
+     -I, the same arguments and --handed-over, which it does not hand over
+     again); it verifies the manifest again and reuses the unpacked tree;
+     a tree without an updater, or one the exec cannot start, leaves this
+     one to install; the updater loads the library beside its own script.
+     Run as processes, with a real exec: a broken release updater leaves
+     the old release in place with nothing installed, and the release's
+     updater, started with --handed-over, installs it without handing over
+     again.
 
 Container-free: python3 scripts/test_cloud_box_release.py (needs cryptography).
 """
@@ -217,6 +229,12 @@ def overlay_tgz(version, text, extra=None):
         if extra:
             extra(t)
     return buf.getvalue()
+
+
+def add_file(t, name, data):
+    ti = tarfile.TarInfo(name)
+    ti.size = len(data)
+    t.addfile(ti, io.BytesIO(data))
 
 
 class Box:
@@ -753,6 +771,253 @@ with tempfile.TemporaryDirectory() as tmp:
     r = subprocess.run(args[:args.index("--version") + 1] + ["4.5"] + args[args.index("--version") + 2:],
                        capture_output=True, text=True, check=False)
     check(r.returncode != 0, "a version that is not X.Y.Z is refused")
+
+# What reads the changed files is reloaded: the unlock agent, which keeps
+# serving with the code it started with, restarts when its program or the
+# box's library changes, and only then.
+with tempfile.TemporaryDirectory() as tmp:
+    box = Box(tmp)
+    for changed, want in ((["usr/local/sbin/cseries-unlock-agent"], True),
+                          (["usr/local/lib/cseries-cloud/cseries_vault.py"], True),
+                          (["usr/share/cseries-cloud/unlock/unlock.js", "etc/demo.conf"], False)):
+        box.calls.clear()
+        box.u.reload_for(changed)
+        got = ("try-restart", "cseries-unlock-agent.service") in box.calls
+        check(got is want, f"the unlock agent {'restarts' if want else 'stays'} for {changed[0]}", box.calls)
+
+# 7. Self-update first: after the unpack and before anything is installed,
+# the release's own updater takes over; it finds the tree unpacked, and
+# loads the library of its own tree.
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+
+
+class HandedOver(Exception):
+    pass
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    box = Box(tmp)
+    seen = []
+
+    def stop_here(tree):
+        seen.append((tree, open(os.path.join(tree, "VERSION")).read().strip(), box.demo(), box.image()))
+        raise HandedOver()
+
+    box.u.hand_over = stop_here
+    m = box.offer("0.2.0")
+    box.publish(m)
+    try:
+        box.u.run()
+        handed = False
+    except HandedOver:
+        handed = True
+    check(handed and seen and seen[0][0] == box.paths.overlay_dir("0.2.0") and seen[0][1] == "0.2.0",
+          "after the unpack the release's own updater is handed the unpacked tree", seen)
+    check(seen and seen[0][2] == "old\n" and "0.2.0" not in seen[0][3] and box.state()["version"] == "0.1.0",
+          "before anything of the release is installed", seen)
+    # The handed-over updater (no hand-over of its own) finds the tree
+    # unpacked: the overlay is not fetched again.
+    box.u.hand_over = None
+    fetched = []
+    real_ftf = box.u.fetch_to_file
+    box.u.fetch_to_file = lambda url, path, mx: fetched.append(url) or real_ftf(url, path, mx)
+    st = box.u.run()
+    check(st["result"] == "updated" and st["version"] == "0.2.0" and box.demo() == "new\n" and
+          not [u for u in fetched if "overlay" in u],
+          "the release's updater verifies the manifest again, reuses the unpacked tree and installs it",
+          (st, fetched))
+
+with tempfile.TemporaryDirectory() as tmp:
+    box = Box(tmp)
+    box.u.hand_over = lambda tree: None          # a tree with no updater: this one goes on
+    box.publish(box.offer("0.2.0"))
+    st = box.u.run()
+    check(st["result"] == "updated" and box.demo() == "new\n",
+          "when the hand-over does not happen, this updater installs the release itself", st)
+
+# hand_over itself: the same interpreter, isolated, the tree's own script,
+# this run's arguments and the loop guard; nothing when the tree has none.
+with tempfile.TemporaryDirectory() as tmp:
+    tree = os.path.join(tmp, "0.2.0")
+    os.makedirs(os.path.join(tree, "root/usr/local/sbin"))
+    calls = []
+    up.hand_over(tree, ["--release-base", "https://example.test/rel"], execv=lambda p, a: calls.append((p, a)))
+    check(calls == [], "a tree without an updater: no hand-over", calls)
+    new = os.path.join(tree, up.UPDATER_IN_TREE)
+    open(new, "w").write("#!/usr/bin/python3 -I\n")
+    up.hand_over(tree, ["--release-base", "https://example.test/rel"], execv=lambda p, a: calls.append((p, a)))
+    check(calls == [(sys.executable, [sys.executable, "-I", new, "--release-base", "https://example.test/rel",
+                                      "--handed-over"])],
+          "the release's updater runs in this process's place with the same arguments and --handed-over", calls)
+
+
+def no_exec(p, a):
+    raise OSError("invented: exec refused")
+
+
+# An updater the exec cannot start: hand_over comes back, and this one
+# installs the release itself.
+with tempfile.TemporaryDirectory() as tmp:
+    box = Box(tmp)
+    tried = []
+
+    def refused_exec(tree):
+        tried.append(tree)
+        up.hand_over(tree, ["--release-base", "https://example.test/rel"], execv=no_exec)
+
+    box.u.hand_over = refused_exec
+    box.publish(box.offer("0.2.0", tgz=overlay_tgz("0.2.0", "new\n", lambda t: add_file(
+        t, up.UPDATER_IN_TREE, b"#!/usr/bin/python3 -I\n"))))
+    try:
+        st = box.u.run()
+    except Exception as e:      # noqa: BLE001 - reported as the check's failure
+        st = {"raised": repr(e)}
+    check(tried and st.get("result") == "updated" and st.get("version") == "0.2.0" and box.demo() == "new\n",
+          "an updater that cannot be started: hand_over comes back, and this one installs the release", st)
+
+# The hand-over for real: the installed updater runs as its own process, its
+# main() and hand_over() as they are, and os.execv puts the release's updater
+# in its place. Each updater here is a launcher that records its start, then
+# runs that updater's own main() against the fake box (its Paths and its
+# Updater's fetch, guest and systemctl are the box's). A launcher started a
+# fifth time stops the run, so a hand-over loop ends as a failure.
+LAUNCHER = r'''
+import base64, hashlib, json, os, sys
+from importlib.machinery import SourceFileLoader
+import importlib.util
+cfg = json.load(open(%(cfg)r))
+with open(cfg["starts"], "a") as f:
+    f.write(json.dumps({"as": %(name)r, "argv": sys.argv[1:]}) + "\n")
+with open(cfg["starts"]) as f:
+    if sum(1 for _ in f) > 4:
+        sys.exit(97)
+src = %(src)r
+if src is None:
+    raise RuntimeError("invented: this release's updater is broken")
+loader = SourceFileLoader("updater", src)
+spec = importlib.util.spec_from_loader("updater", loader)
+up = importlib.util.module_from_spec(spec)
+loader.exec_module(up)
+paths = up.cc.Paths(cfg["root"])
+up.cc.Paths = lambda: paths
+files = {k: base64.b64decode(v) for k, v in cfg["files"].items()}
+
+
+def fetch(url, max_bytes):
+    if url not in files:
+        raise up.cc.CloudError(f"could not fetch {url}: 404")
+    return files[url]
+
+
+def fetch_to_file(url, path, max_bytes):
+    data = fetch(url, max_bytes)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as f:
+        f.write(data)
+    return hashlib.sha256(data).hexdigest()
+
+
+Real = up.Updater
+
+
+def boxed(_paths, box_cfg, keys=(), health_timeout=0, hand_over=None):
+    return Real(paths, box_cfg, keys=[cfg["key"]], fetch=fetch, fetch_to_file=fetch_to_file,
+                guest=cfg["guest"], systemctl=lambda *a: None, health_timeout=0, health_every=0,
+                bastion_wait=0, gids=cfg["gids"], hand_over=hand_over)
+
+
+up.Updater = boxed
+sys.exit(up.main(sys.argv[1:]))
+'''
+INSTALLED_UPDATER = os.path.join(OVERLAY, "usr/local/sbin/cseries-cloud-update")
+REAL_IN_TREE = "root/usr/local/sbin/cseries-cloud-update-real"
+
+
+def launcher(cfg_path, name, src):
+    return (LAUNCHER % {"cfg": cfg_path, "name": name, "src": src}).encode()
+
+
+def real_hand_over(tmp, release_updater):
+    """Offer 0.2.0, whose tree's updater is release_updater(cfg_path, tree)'s
+    bytes, and run the installed updater as a process. (exit code, the
+    starts in order, the box)."""
+    box = Box(tmp)
+    os.makedirs(box.paths.etc, exist_ok=True)
+    cc.write_json(box.paths.cloud_json(), box.cfg)
+    cfg_path = os.path.join(tmp, "launch.json")
+    tree = box.paths.overlay_dir("0.2.0")
+
+    def extra(t):
+        for name, data in release_updater(cfg_path, tree).items():
+            add_file(t, name, data)
+    box.publish(box.offer("0.2.0", tgz=overlay_tgz("0.2.0", "new\n", extra)))
+    starts = os.path.join(tmp, "starts.jsonl")
+    with open(cfg_path, "w") as f:
+        json.dump({"starts": starts, "root": tmp, "key": key_b64(box.key), "guest": os.path.join(tmp, "fake-guest"),
+                   "gids": {"privatae-host": 990, "cseries": 991},
+                   "files": {k: base64.b64encode(v).decode() for k, v in box.files.items()}}, f)
+    first = os.path.join(tmp, "installed-updater")
+    with open(first, "wb") as f:
+        f.write(launcher(cfg_path, "installed", INSTALLED_UPDATER))
+    r = subprocess.run([sys.executable, "-I", first, "--release-base", "https://example.test/rel"],
+                       capture_output=True, text=True, timeout=120, check=False)
+    seen = []
+    if os.path.exists(starts):
+        with open(starts) as f:
+            seen = [json.loads(ln) for ln in f]
+    return r, seen, box
+
+
+ARGV = ["--release-base", "https://example.test/rel"]
+# (a) A release whose updater is broken: the installed updater handed the
+# process over before installing anything, so nothing of the release is
+# installed and the old release stays as it was.
+with tempfile.TemporaryDirectory() as tmp:
+    r, seen, box = real_hand_over(tmp, lambda cfg_path, tree: {
+        up.UPDATER_IN_TREE: launcher(cfg_path, "release", None)})
+    check([s["as"] for s in seen] == ["installed", "release"] and seen[1]["argv"] == ARGV + ["--handed-over"],
+          "the installed updater's process becomes the release's updater, with its arguments and --handed-over",
+          (seen, r.stderr[-400:]))
+    st = box.state() or {}
+    check(r.returncode != 0 and box.demo() == "old\n" and "0.2.0" not in box.image() and
+          st.get("version") == "0.1.0" and st.get("overlay_version") == "0.1.0",
+          "a broken release updater: the old release stays in place and nothing of the new one is installed",
+          (r.returncode, box.demo(), st, r.stderr[-400:]))
+
+# (b) The release's own updater, handed over with --handed-over, installs the
+# release and does not hand over again.
+with tempfile.TemporaryDirectory() as tmp:
+    def real_release(cfg_path, tree):
+        with open(INSTALLED_UPDATER, "rb") as f:
+            updater = f.read()
+        with open(os.path.join(OVERLAY, "usr/local/lib/cseries-cloud/cseries_cloud.py"), "rb") as f:
+            lib = f.read()
+        return {up.UPDATER_IN_TREE: launcher(cfg_path, "release", os.path.join(tree, REAL_IN_TREE)),
+                REAL_IN_TREE: updater, "root/usr/local/lib/cseries-cloud/cseries_cloud.py": lib}
+    r, seen, box = real_hand_over(tmp, real_release)
+    st = box.state() or {}
+    check(r.returncode == 0 and [s["as"] for s in seen] == ["installed", "release"] and
+          seen[1]["argv"] == ARGV + ["--handed-over"],
+          "the release's updater, handed over with --handed-over, does not hand over again",
+          (r.returncode, seen, r.stderr[-400:]))
+    check(st.get("result") == "updated" and st.get("version") == "0.2.0" and box.demo() == "new\n",
+          "  and installs the release itself", (st, r.stderr[-400:]))
+
+# The updater loads the library beside its own script, so the one in an
+# unpacked tree runs with that tree's library, not the installed one.
+with tempfile.TemporaryDirectory() as tmp:
+    sbin = os.path.join(tmp, "root/usr/local/sbin")
+    lib = os.path.join(tmp, "root/usr/local/lib/cseries-cloud")
+    os.makedirs(sbin)
+    os.makedirs(lib)
+    shutil.copy(os.path.join(OVERLAY, "usr/local/sbin/cseries-cloud-update"), sbin)
+    with open(os.path.join(lib, "cseries_cloud.py"), "w") as f:
+        f.write("import sys\nprint('library of the tree:', __file__)\nsys.exit(7)\n")
+    r = subprocess.run([sys.executable, "-I", os.path.join(sbin, "cseries-cloud-update")],
+                       capture_output=True, text=True, timeout=60, check=False)
+    check(r.returncode == 7 and os.path.join(lib, "cseries_cloud.py") in r.stdout,
+          "the updater in an unpacked tree loads that tree's library", (r.returncode, r.stdout, r.stderr[-300:]))
 
 import yaml  # noqa: E402
 

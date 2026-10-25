@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="referrer" content="no-referrer">
+<meta name="referrer" content="strict-origin">
 <title>Unlock this machine · C-Series</title>
 <link rel="stylesheet" href="/unlock.css">
 </head>
@@ -34,12 +34,25 @@
     <li>A recovery key, shown once, for when you no longer have the passkey.</li>
   </ol>
   <form id="enroll-form">
-    <label for="setup-code">Setup code</label>
-    <input id="setup-code" name="setup_code" autocomplete="one-time-code" required>
     <button type="submit">Create the unlock passkey</button>
   </form>
   <p class="note">After every restart this machine waits for you to unlock it, so it comes back
      only when you do. That is what keeps everyone else out.</p>
+</section>
+
+<section id="handoff" hidden>
+  <p>This machine&#39;s setup opens from your account: on privatae.ai, press <strong>Set up your
+     machine</strong> on its card, and you come back here with nothing to type.</p>
+  <details id="handoff-code">
+    <summary>I have this machine&#39;s setup code</summary>
+    <form id="handoff-form" method="post" action="/api/setup">
+      <label for="setup-code">Setup code</label>
+      <input id="setup-code" name="setup_code" autocomplete="one-time-code" spellcheck="false" required>
+      <label for="setup-email">Your email</label>
+      <input id="setup-email" name="email" type="email" autocomplete="email" required>
+      <button type="submit">Continue</button>
+    </form>
+  </details>
 </section>
 
 <section id="recovery-show" hidden>
@@ -49,9 +62,8 @@
      show it to you again.</p>
   <p class="key" id="recovery-text"></p>
   <div id="recovery-qr" class="qr"></div>
+  <button id="download-recovery" type="button">Download the recovery key</button>
   <form id="confirm-form">
-    <label for="recovery-confirm">Type or paste the recovery key to show you saved it</label>
-    <input id="recovery-confirm" name="recovery_key" autocomplete="off" spellcheck="false" required>
     <button type="submit">I saved it: set up the disk</button>
   </form>
 </section>
@@ -64,9 +76,17 @@
   <p class="note" id="claim-note"></p>
 </section>
 
+<section id="signing-in" hidden>
+  <h2>Opening your Host</h2>
+  <progress id="sign-in-progress" max="100"></progress>
+  <p class="note" id="sign-in-note"></p>
+</section>
+
 <section id="open" hidden>
   <p>This machine is unlocked.</p>
-  <p><a id="host-link" class="button" href="/">Continue to your Host</a></p>
+  <button id="host-sign-in" type="button">Sign in to your Host</button>
+  <p class="note">With your passkey, or your recovery key. <a id="host-link" href="/">Go to your Host</a>
+     if you are signed in already.</p>
   <details>
     <summary>Keys that unlock this machine</summary>
     <ul id="key-list" class="keys"></ul>

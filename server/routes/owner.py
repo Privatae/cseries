@@ -10,7 +10,7 @@ from __future__ import annotations
 import html
 import logging
 
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 
 from fastapi import APIRouter, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -265,35 +265,51 @@ def _text(body: dict, key: str) -> str:
     return v if isinstance(v, str) else ""
 
 
+def _unlock_link(st: dict | None, text: str) -> str:
+    url = cloud_machine.unlock_url(st)
+    return f'<p><a href="{html.escape(url, quote=True)}">{text}</a></p>' if url else ""
+
+
 @router.get("/setup", include_in_schema=False)
 async def setup_page():
     if not owner_login.needs_setup():
         return RedirectResponse("/login", status_code=303)
-    blocked = cloud_machine.setup_blocked()
-    if blocked:
-        # A cloud machine: its disk's keys first (server/cloud_machine.py).
-        link = (f'<p><a href="{html.escape(blocked, quote=True)}">Set up the disk&#39;s keys</a></p>'
-                if blocked.startswith("https://") else "")
-        return _page(
-            "Set up C-Series",
-            ('<p>Before anything of yours is kept on this machine, set up the keys that unlock '
-             'its disk: a passkey and a recovery key that only you hold. You will need the '
-             'setup code there too. Then come back here to create your owner account.</p>'),
-            link)
-    return _page(
-        "Set up C-Series",
+    st = cloud_machine.state()
+    if cloud_machine.setup_blocked():
+        # A cloud machine: its disk's keys first (server/cloud_machine.py),
+        # on its unlock page, which then makes the owner and signs them in.
+        intro = ('<p>Before anything of yours is kept on this machine, set up the keys that '
+                 'unlock its disk: a passkey and a recovery key that only you hold. On '
+                 'privatae.ai, press Set up your machine on this machine&#39;s card: it opens '
+                 'this machine&#39;s unlock page, and you come back here signed in.</p>')
+        return _page("Set up C-Series", intro, _unlock_link(st, "Set up the disk&#39;s keys"))
+    if cloud_machine.keeps_vault(st):
+        # The owner is made from the unlock page (owner_login.claim_owner).
+        intro = ('<p>Your owner account is made on this machine&#39;s unlock page: confirm with '
+                 'your passkey there, and you come back here signed in.</p>')
+        return _page("Set up C-Series", intro, _unlock_link(st, "Go to this machine&#39;s unlock page"))
+    code_field = ('<label for="code">Setup code</label><input id="code" name="code" '
+                  'autocomplete="one-time-code" required>')
+    if st is not None:
+        # A cloud machine built before machines had a locked disk, and so an
+        # unlock page: its code came with it.
+        intro = ('<p class="note">Create the owner account with the setup code that came with '
+                 "this machine.</p>")
+    else:
         # The Host cannot tell how it was installed, so the page names each
         # way: npx first (the cseries command reads the code from the Host's
         # log and prints it: packages/cseries/src/setup.js showSetup), then
         # Docker Compose, then a Host handed over with its code.
-        ('<p class="note">Create the owner account. To get the setup code, run '
-         "<code>npx cseries open</code> on the machine this Host runs on if C-Series "
-         "was installed with npx cseries; with Docker Compose it is in this Host's "
-         "log (<code>docker compose logs host</code>). A Host someone set up for you "
-         "came with its code.</p>"),
+        intro = ('<p class="note">Create the owner account. To get the setup code, run '
+                 "<code>npx cseries open</code> on the machine this Host runs on if C-Series "
+                 "was installed with npx cseries; with Docker Compose it is in this Host's "
+                 "log (<code>docker compose logs host</code>). A Host someone set up for you "
+                 "came with its code.</p>")
+    return _page(
+        "Set up C-Series",
+        intro,
         _form_html("/api/owner/setup",
-                   '<label for="code">Setup code</label><input id="code" name="code" '
-                   'autocomplete="one-time-code" required>' + _EMAIL +
+                   code_field + _EMAIL +
                    f'<label for="password">Password (at least {owner_login.MIN_PASSWORD_LEN} '
                    'characters)</label><input id="password" name="password" type="password" '
                    'autocomplete="new-password" required>',
@@ -312,6 +328,27 @@ async def login_page():
     if owner_login.needs_setup():
         return RedirectResponse("/setup", status_code=303)
     passkeys, _codes = await _passkeys_and_codes()
+    st = cloud_machine.state()
+    if cloud_machine.keeps_vault(st):
+        # A cloud machine: its unlock page signs the owner in with one of the
+        # disk's keys (owner_login.box_sign_in); the Host's own passkey, or a
+        # password from before, as well when there is one.
+        body = _unlock_link(st, "Sign in with this machine&#39;s passkey")
+        if passkeys:
+            body += ('<details><summary>Sign in with this Host&#39;s own passkey</summary>'
+                     '<button id="passkey" type="button">Sign in with a passkey</button>'
+                     + _form_html("/api/owner/recovery/login",
+                                  '<label for="code">Recovery code</label><input id="code" name="code" '
+                                  'autocomplete="one-time-code" required>',
+                                  "Sign in with the code") + '</details>')
+        elif await owner_login.has_password():
+            body += ('<details><summary>Sign in with your password</summary>'
+                     + _form_html("/api/owner/login",
+                                  _EMAIL + '<label for="password">Password</label><input id="password" '
+                                  'name="password" type="password" autocomplete="current-password" required>',
+                                  "Sign in") + '</details>')
+        return _page("Sign in to C-Series", '<p class="note">On this machine&#39;s unlock page, confirm '
+                     'with your passkey or your recovery key, and you come back here signed in.</p>', body)
     if passkeys:
         body = ('<button id="passkey" type="button">Sign in with a passkey</button>'
                 '<details><summary>Sign in with a recovery code instead</summary>'
@@ -492,6 +529,51 @@ async def owner_sign_in(request: Request):
     # Opens adding the first passkey for a few minutes (owner_passkeys._may_add).
     owner_passkeys.note_password_sign_in(token)
     return _with_cookie(JSONResponse({"ok": True, "next": _after_password()}), token, request)
+
+
+# ── the owner from the machine's unlock page (owner_login.claim_owner) ────
+
+_TICKET_FORM_MAX = 4096
+
+
+def _box_refusal(msg: str, status: int):
+    st = cloud_machine.state()
+    resp = _page("Sign in to C-Series", f"<p>{html.escape(msg)}</p>",
+                 _unlock_link(st, "Back to this machine&#39;s unlock page"))
+    resp.status_code = status
+    return _no_store(resp)
+
+
+async def _from_unlock_page(request: Request, take):
+    """A ticket the unlock page posted, as a form, from its own origin, and
+    only to the Host's own name: `take` checks it and makes the session,
+    which goes back with the desktop. A refusal is a page (this is a
+    navigation) with the way back to the unlock page."""
+    st = cloud_machine.state()
+    unlock = cloud_machine.unlock_url(st)
+    if not cloud_machine.keeps_vault(st) or not unlock or request_host(request.scope) != HOME.host:
+        return _box_refusal("This Host is signed in to here only from its machine's unlock page.", 404)
+    if request.headers.get("origin") != unlock.rstrip("/"):
+        return _box_refusal("That sign-in did not come from this machine's unlock page.", 403)
+    raw = await request.body()
+    form = parse_qs(raw.decode("utf-8", "replace"), max_num_fields=4) if len(raw) <= _TICKET_FORM_MAX else {}
+    ticket = (form.get("ticket") or [""])[0]
+    try:
+        token = await take(ticket, _client(request), request_host(request.scope))
+    except owner_login.LoginError as exc:
+        return _box_refusal(str(exc), 403)
+    owner_passkeys.note_box_sign_in(token)
+    return _no_store(_with_cookie(RedirectResponse("/", status_code=303), token, request))
+
+
+@router.post("/api/owner/claim", include_in_schema=False)
+async def owner_claim(request: Request):
+    return await _from_unlock_page(request, owner_login.claim_owner)
+
+
+@router.post("/api/owner/box-sign-in", include_in_schema=False)
+async def owner_box_sign_in(request: Request):
+    return await _from_unlock_page(request, owner_login.box_sign_in)
 
 
 # ── passkeys and recovery codes (server/owner_passkeys.py) ─────────────────

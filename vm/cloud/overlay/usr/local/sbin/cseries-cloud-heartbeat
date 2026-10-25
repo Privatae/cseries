@@ -11,13 +11,20 @@ The body, compact JSON:
    disk:{state_free_bytes, root_free_bytes}, cert:{not_after},
    backup:{last_ok_at, paused}, patches:{pending_security, reboot_required,
    last_upgrade_at}, uptime_s,
-   vault:{state, since}, access_log:{count, head, mismatch}}
+   vault:{state, since}, access_log:{count, head, mismatch}, setup:{done}}
 
 vault.state is "locked", "open" or "absent" (a machine built before the
 vault); since is when it entered that state, or null. access_log is how far
 this machine's copy of its access log goes (cseries_accesslog): the platform
 answers with the rows after `count`, when its own log still extends `head`,
 and the machine keeps them only while every one of them does.
+
+setup.done is false until the vault's keys are set up and the Host has its
+owner, then true, and stays true while the vault is locked
+(cseries_machine.setup_report). The account site posts the setup code to
+the unlock page for as long as it is false, and the platform drops its copy
+of the code at the first heartbeat that says true. A machine without a vault
+sends no `setup`: it takes no handoff.
 
 backup.paused is true when the Host's newest finished backup run took no
 backup because it had nobody to encrypt to (no_recipient) or nowhere it may
@@ -167,7 +174,7 @@ def collect(paths, cfg, now=None):
     # asked: its storage is in the vault, and asking would make an empty one
     # under the mount point on the plain disk.
     locked = vault["state"] == "locked"
-    return {
+    body = {
         "machine_id": cfg["machine_id"],
         "ts": rfc3339(now if now is not None else time.time()),
         "version": st.get("version"),
@@ -185,6 +192,14 @@ def collect(paths, cfg, now=None):
         "vault": vault,
         "access_log": cm.access_log(paths, cfg).status(),
     }
+    setup = cm.setup_report(paths, cv.Vault(paths), ask=host_owner)
+    if setup is not None:
+        body["setup"] = setup
+    return body
+
+
+def host_owner():
+    return cm.host_has_owner()
 
 
 def encode(body):

@@ -13,3 +13,7 @@ NoNewPrivileges=yes
 UMask=0077
 Restart=on-failure
 RestartSec=2
+# A stop's SIGTERM goes to the agent alone, which answers the request in
+# hand first: a cryptsetup it runs for a key change or an unlock finishes
+# rather than dying with it (cseries-unlock-agent's Server).
+KillMode=mixed

@@ -14,6 +14,12 @@ cseries-cloud-heartbeat) and its signature.
   4. A post that cannot be delivered changes nothing and exits 0.
   5. The answer: a JSON object of at most 1 MiB is read, anything else (or
      one cut off) is no news; a 2xx without access_log changes nothing.
+  6. setup: {done} as the platform and the account site read it (an object
+     whose done is a boolean): none from a machine without a vault; false
+     until the keys are set up and the Host answers that it has its owner,
+     then true, kept on the plain disk so a locked vault still says true;
+     the Host is asked only while the vault is open and set up, and an
+     answer other than its own two (or none) is not done.
 
 Container-free: python3 scripts/test_cloud_box_heartbeat.py (needs cryptography).
 """
@@ -92,6 +98,7 @@ with tempfile.TemporaryDirectory() as tmp:
     want = {"machine_id", "ts", "version", "host", "disk", "cert", "backup", "patches", "uptime_s",
             "vault", "access_log"}
     check(set(body) == want, "the body has exactly the fields the platform reads", sorted(body))
+    check("setup" not in body, "a machine without a vault sends no setup report", body.get("setup"))
     check(body["vault"] == {"state": "absent", "since": None},
           "a machine without a vault says so: vault.state absent, since null", body["vault"])
     check(body["access_log"] == {"count": 0, "head": "0" * 64, "mismatch": False},
@@ -114,6 +121,7 @@ with tempfile.TemporaryDirectory() as tmp:
           "a locked vault: vault.state locked, the Host down, nothing of its read", lbody)
     check(not any("podman" in " ".join(c) for c in asked if isinstance(c, list)),
           "and podman is never asked while the vault is locked", asked)
+    check(lbody.get("setup") == {"done": False}, "a locked vault never set up: setup.done false", lbody.get("setup"))
     check(set(body["host"]) == {"health", "deep_status"} and set(body["disk"]) == {"state_free_bytes", "root_free_bytes"}
           and set(body["cert"]) == {"not_after"} and set(body["backup"]) == {"last_ok_at", "paused"}
           and set(body["patches"]) == {"pending_security", "reboot_required", "last_upgrade_at"},
@@ -189,8 +197,13 @@ with tempfile.TemporaryDirectory() as tmp:
     # Undeliverable: the post fails, nothing on the box changes, exit 0.
     cc.write_json(paths.cloud_json(), cfg)
     before = sorted(os.listdir(paths.state))
+    real_paths = cc.Paths
     hb.cc.Paths = lambda root="/": paths
-    rc = hb.main([])
+    try:
+        rc = hb.main([])
+    finally:
+        # hb.cc is this file's cc: every later root is a Paths of its own.
+        hb.cc.Paths = real_paths
     check(rc == 0 and sorted(os.listdir(paths.state)) == before,
           "a post that cannot be delivered exits 0 and writes nothing", (rc, before))
 
@@ -225,5 +238,80 @@ with tempfile.TemporaryDirectory() as tmp:
         check(st == {"count": 0, "head": "0" * 64, "mismatch": False} and
               not os.path.exists(paths.p(hb.cm.ACCESS_STATE)),
               f"an answer {answer!r} (none, or 2xx without access_log) changes nothing", st)
+
+# 6. setup.done
+class StubVault:
+    def __init__(self, state, enrolled):
+        self.s, self.e = state, enrolled
+
+    def state(self):
+        return self.s
+
+    def enrolled(self):
+        return self.e
+
+
+with tempfile.TemporaryDirectory() as tmp:
+    paths = cc.Paths(tmp)
+    cm = hb.cm
+    asked = []
+
+    def ask(answer):
+        def f():
+            asked.append(answer)
+            return answer
+        return f
+
+    check(cm.setup_report(paths, StubVault("absent", None), ask(True)) is None and not asked,
+          "no vault: no report, the Host not asked")
+    check(cm.setup_report(paths, StubVault("open", False), ask(True)) == {"done": False} and not asked,
+          "keys not set up: not done, the Host not asked")
+    for answer in (False, None):
+        check(cm.setup_report(paths, StubVault("open", True), ask(answer)) == {"done": False},
+              f"keys set up, the Host answering {answer!r}: not done")
+    check(not cm.setup_done(paths), "and nothing is kept for it")
+    check(cm.setup_report(paths, StubVault("open", True), ask(True)) == {"done": True} and cm.setup_done(paths),
+          "keys set up and the Host has its owner: done, kept on the plain disk")
+    asked.clear()
+    check(cm.setup_report(paths, StubVault("locked", None), ask(False)) == {"done": True} and not asked,
+          "then a locked vault still says done, without asking the Host")
+    check(paths.p(cm.SETUP_DONE).startswith(os.path.join(tmp, "var/lib/cseries-cloud")),
+          "the mark is on the plain disk (/var/lib/cseries-cloud), not in /run or the vault")
+
+
+class Status:
+    def __init__(self, status, body):
+        self.status, self.body = status, body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def read(self, n=-1):
+        return self.body
+
+
+def opener_of(resp=None, exc=None):
+    def opener(url, timeout):
+        assert url == hb.cm.OWNER_STATUS_URL, url
+        if exc:
+            raise exc
+        return resp
+    return opener
+
+
+ho = hb.cm.host_has_owner
+check(hb.cm.OWNER_STATUS_URL == f"http://{cc.HOST_IP}:{cc.HOST_PORT}/api/owner/status",
+      "the box asks the Host's own /api/owner/status, at the address it asks /api/system/health")
+check(ho(opener=opener_of(Status(200, b'{"setup_needed": false, "signed_in": false}'))) is True and
+      ho(opener=opener_of(Status(200, b'{"setup_needed": true, "signed_in": false}'))) is False,
+      "the Host's answer: has its owner, or not yet")
+check(ho(opener=opener_of(Status(200, b'{"setup_needed": "no"}'))) is None and
+      ho(opener=opener_of(Status(200, b'[]'))) is None and
+      ho(opener=opener_of(Status(200, b'not json'))) is None and
+      ho(opener=opener_of(exc=OSError("refused"))) is None,
+      "anything else, or no answer, is no answer")
 
 sys.exit(failed)

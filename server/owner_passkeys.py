@@ -21,7 +21,8 @@ Signing in with a passkey counts as one. Adding another passkey, or making
 new recovery codes, once a passkey exists, asks for a passkey check or a
 sign-in with a recovery code in that time: those are what a person who lost
 every passkey has to do, and a stolen session cookie alone does neither.
-Adding the first passkey asks for a sign-in with the password in that time,
+Adding the first passkey asks for a sign-in with the password in that time
+(or, on a cloud machine, from its unlock page, with one of the disk's keys),
 when its ceremony starts: the first passkey refuses the password from then
 on and comes with the recovery codes, so a session cookie taken from the
 owner's browser must not be able to add it. Once it is added, every other
@@ -68,6 +69,11 @@ RECOVERY = "recovery"
 # A session made with the password (setup or sign-in): counts only for
 # starting the first passkey's ceremony, never as a passkey check.
 PASSWORD = "password"
+# A session made from a cloud machine's unlock page, with one of the disk's
+# keys (owner_login.claim_owner, box_sign_in): counts where the password's
+# does. That owner has no password.
+BOX = "box"
+SIGNED_IN = (PASSWORD, BOX)
 
 REGISTER, LOGIN, STEP_UP = "register", "login", "step-up"
 
@@ -207,6 +213,12 @@ def note_password_sign_in(token: str) -> None:
     _note_step_up(token, PASSWORD)
 
 
+def note_box_sign_in(token: str) -> None:
+    """`token` is a session just made from the machine's unlock page: for
+    STEP_UP_S it may start adding the first passkey, as after a password."""
+    _note_step_up(token, BOX)
+
+
 def fresh_step_up(token: Optional[str], kinds=(PASSKEY,)) -> bool:
     """Whether the session `token` (or, for an app origin's session, the
     desktop session it joined from) made a check of one of `kinds` in the
@@ -280,8 +292,8 @@ async def _fresh_check(pool, token: str, what: str) -> None:
         if not fresh_step_up(token, (PASSKEY, RECOVERY)):
             raise StepUpNeeded(f"{what} needs a check with your passkey, or a recovery code, "
                                "in the last five minutes.")
-    elif not fresh_step_up(token, (PASSWORD,)):
-        raise PasswordAgain(f"{what} needs your password from the last five minutes. "
+    elif not fresh_step_up(token, SIGNED_IN):
+        raise PasswordAgain(f"{what} needs a sign-in from the last five minutes. "
                             "Sign in again at /login, then come back here.")
 
 
@@ -331,8 +343,8 @@ async def _may_add(pool, token: str, starting: bool = False) -> None:
         if not fresh_step_up(token, (PASSKEY, RECOVERY)):
             raise StepUpNeeded("Adding another passkey needs a check with one you have, or a "
                                "recovery code, in the last five minutes.")
-    elif starting and not fresh_step_up(token, (PASSWORD,)):
-        raise PasswordAgain("Adding your first passkey needs your password from the last five "
+    elif starting and not fresh_step_up(token, SIGNED_IN):
+        raise PasswordAgain("Adding your first passkey needs a sign-in from the last five "
                             "minutes. Sign in again at /login, then add it here.")
 
 

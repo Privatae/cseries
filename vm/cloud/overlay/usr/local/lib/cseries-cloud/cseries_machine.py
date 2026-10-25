@@ -12,14 +12,21 @@ and cannot write):
   access-log.jsonl     the access log as this machine holds it
   unlock-record.jsonl  the newest unlock attempts (when, from where, with
                        what, whether it opened), from inside the vault
+  owner-claim.json     {kind, email, ticket_sha256, expires_at}: the one
+                       sign-in ticket the unlock page holds now, by its hash
+                       (write_owner_claim); the Host's /api/owner/claim and
+                       /api/owner/box-sign-in take the ticket once
 
 Standard library only, besides the box's own modules.
 """
 
+import hashlib
 import ipaddress
 import json
 import os
 import time
+import urllib.error
+import urllib.request
 
 import cseries_accesslog as al
 import cseries_cloud as cc
@@ -43,6 +50,16 @@ ATTEMPTS_KEEP = 1000
 ATTEMPTS_MAX_BYTES = 512 * 1024
 CLAIM_UNIT = "cseries-vault-claim"
 LANES = "8810, 8811"
+# The account site's handoffs this unlock page holds (cseries-unlock-agent
+# setup_handoff): in memory (/run), root 0600, each by the SHA-256 of its
+# cookie.
+HANDOFF = cv.RUN + "/handoff.json"
+OWNER_CLAIM_NAME = "owner-claim.json"
+# On the plain disk, so a heartbeat while the vault is locked still says the
+# setup is done (setup_report). Written once both halves are seen, never
+# removed: a machine is claimed once.
+SETUP_DONE = "var/lib/cseries-cloud/setup-done"
+OWNER_STATUS_URL = f"http://{cc.HOST_IP}:{cc.HOST_PORT}/api/owner/status"
 
 
 def iso(t=None):
@@ -257,3 +274,66 @@ def after_open(paths, cfg, vault, runner, how, source=None, start=True, key=None
     if start:
         runner(["/usr/bin/systemctl", "start", "--no-block", "cseries-unlocked.target"], check=False)
     return resumed
+
+
+# ── the owner of the Host, and the setup's end ──────────────────────────────
+
+def host_has_owner(timeout=3.0, opener=urllib.request.urlopen):
+    """True when the Host answers that it has its owner, False when it
+    answers that it has none yet, None when it does not answer (stopped,
+    starting, locked). /api/owner/status needs no session and answers any
+    peer, so the box asks it straight, the way the heartbeat asks
+    /api/system/health. Only these three answers come back: the Host's word
+    decides which ticket the unlock page asks for and when the platform may
+    drop its copy of the setup code, and the Host's own routes check again."""
+    try:
+        with opener(OWNER_STATUS_URL, timeout=timeout) as r:
+            if r.status != 200:
+                return None
+            body = json.loads(r.read(4096))
+    except (OSError, ValueError, urllib.error.URLError):
+        return None
+    need = body.get("setup_needed") if isinstance(body, dict) else None
+    return None if not isinstance(need, bool) else not need
+
+
+def setup_done(paths):
+    return os.path.exists(paths.p(SETUP_DONE))
+
+
+def note_setup_done(paths):
+    if not setup_done(paths):
+        cc.atomic_write(paths.p(SETUP_DONE), iso() + "\n", 0o644)
+
+
+def setup_report(paths, vault, ask=host_has_owner):
+    """The heartbeat's `setup`: {"done": true} once the vault's keys are set
+    up and the Host has its owner, else {"done": false}; None on a machine
+    without a vault, which never took the account site's handoff. Seen once,
+    done is kept on the plain disk (SETUP_DONE), so it stays true while the
+    vault is locked; the Host is asked only while the vault is open."""
+    if setup_done(paths):
+        return {"done": True}
+    state = vault.state()
+    if state == "absent":
+        return None
+    if state != "open" or not vault.enrolled():
+        return {"done": False}
+    if ask() is True:
+        note_setup_done(paths)
+        return {"done": True}
+    return {"done": False}
+
+
+def ticket_hash(ticket):
+    return hashlib.sha256(str(ticket).encode("ascii", "replace")).hexdigest()
+
+
+def write_owner_claim(paths, kind, email, ticket, ttl_s, now=None):
+    """The one ticket the Host takes now (module docstring), in place of any
+    earlier one: its hash only, so the file signs nobody in by itself."""
+    t = time.time() if now is None else now
+    doc = {"kind": kind, "email": email, "ticket_sha256": ticket_hash(ticket),
+           "made_at": iso(t), "expires_at": iso(t + ttl_s)}
+    cc.write_json(os.path.join(paths.p(DOOR_DIR), OWNER_CLAIM_NAME), doc)
+    return doc

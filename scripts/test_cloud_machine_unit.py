@@ -8,7 +8,9 @@ owner_login and routes/owner.py do with it).
      file is missing blocks too (a box mid-restart), and an enrolled vault
      does not.
   2. While it blocks, create_owner refuses with that address and makes no
-     owner; once the vault is enrolled the same request makes the owner.
+     owner; once the vault is enrolled it still refuses, naming the unlock
+     page, which makes the owner (scripts/test_owner_box_claim_unit.py); on
+     a machine without a vault the setup code makes the owner.
   3. /setup shows the disk step and its link instead of the owner form while
      it blocks.
   4. The access log and the unlock record are read from the machine's files,
@@ -17,6 +19,11 @@ owner_login and routes/owner.py do with it).
      only when a restart is needed, and asks a signed-out visitor to sign in.
   5. restart asks the door helper for machine.restart over its socket and
      reports a refusal; a Host with no machine cannot ask.
+  6. The owner account on a cloud machine needs no command on it and no
+     code: /setup links to the unlock page, never npx cseries open, and has
+     no form; a machine without a vault says its code came with it; a Host
+     with no machine keeps its npx page and its wrong-code answer names the
+     Host's log. No page reads a code from an address.
 
 No database or container: the pool and the helper are stand-ins.
 
@@ -104,8 +111,16 @@ async def main():
 
         write_state(d, {"state": "open", "since": "2026-10-23T10:00:00Z", "enrolled": True})
         check(M.setup_blocked() is None, "an enrolled vault does not block")
+        try:
+            await L.create_owner("abc123-def456-789abc", "owner@example.com", "x" * 20, client="198.51.100.9")
+            check(False, "once enrolled the setup code still makes no owner")
+        except L.LoginError as e:
+            check(not pool.inserted and "unlock page" in str(e),
+                  "once enrolled the setup code still makes no owner: the unlock page makes it", str(e))
+        write_state(d, {"state": "absent", "since": None, "enrolled": None})
         await L.create_owner("abc123-def456-789abc", "owner@example.com", "x" * 20, client="198.51.100.9")
-        check(pool.inserted == ["owner@example.com"], "once enrolled the same request makes the owner")
+        check(pool.inserted == ["owner@example.com"], "on a machine without a vault the setup code makes the owner")
+        write_state(d, {"state": "open", "since": "2026-10-23T10:00:00Z", "enrolled": True})
 
         # 4. the log, the record and /machine
         rows = [{"seq": 1, "at": "2026-10-23T10:12:01.123456Z", "actor": "provisioner", "action": "stop",
@@ -195,5 +210,46 @@ async def main():
         check(True, "a Host with no machine cannot ask for a restart")
 
 
-asyncio.run(main())
+async def setup_on_cloud():
+    from server.routes import owner as R
+    L._owner_email, L._setup_code = None, "abc123-def456-789abc"
+    L._failures.clear()
+    L._pool = lambda: Pool()
+    with tempfile.TemporaryDirectory() as d:
+        os.environ[M.DIR_ENV] = d
+        write_state(d, {"state": "open", "since": "2026-10-23T10:00:00Z", "enrolled": True})
+        cloud = (await R.setup_page()).body.decode()
+        check("npx cseries open" not in cloud and "docker compose" not in cloud,
+              "/setup on a cloud machine sends nobody to a command or a log")
+        check('href="https://unlock-orchard.k7x2m9.cloud.privatae.ai/"' in cloud and
+              "/api/owner/setup" not in cloud and 'id="code"' not in cloud,
+              "it links to the unlock page, and has no form and no code field")
+        write_state(d, {"state": "absent", "since": None, "enrolled": None})
+        absent = (await R.setup_page()).body.decode()
+        check("came with this machine" in absent and "npx cseries open" not in absent and
+              'data-action="/api/owner/setup"' in absent, "a machine without a vault says its code came with it")
+    os.environ.pop(M.DIR_ENV, None)
+    local = (await R.setup_page()).body.decode()
+    check("<code>npx cseries open</code>" in local and 'data-action="/api/owner/setup"' in local,
+          "a Host with no machine keeps its npx cseries open page")
+    L._failures.clear()
+    try:
+        await L.create_owner("ffffff-ffffff-ffffff", "owner@example.com", "x" * 20, client="198.51.100.11")
+    except L.LoginError as e:
+        check("Host's log" in str(e), "and its wrong-code answer still names the Host's log", str(e))
+    L._owner_email, L._setup_code = "owner@example.com", None
+    redirect = await R.setup_page()
+    check(redirect.status_code == 303 and redirect.headers.get("location") == "/login",
+          "a Host with its owner answers /setup with /login", redirect.status_code)
+    L._owner_email = None
+    check("#code=" not in R._SCRIPT and "location.hash" not in R._SCRIPT and "replaceState" not in R._SCRIPT,
+          "no page reads a code from an address")
+
+
+async def run_all():
+    await main()
+    await setup_on_cloud()
+
+
+asyncio.run(run_all())
 sys.exit(failed)

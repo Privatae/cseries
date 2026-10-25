@@ -149,10 +149,20 @@ vault's copy, replaces the door key, opens 8810 and 8811 and starts
 `cseries-unlocked.target`. Five tries a minute per source. Nothing else opens
 the vault: no key is cached, sealed to a TPM or held by Privatae.
 
-**Claim.** `/setup` refuses to create the owner until the vault's keys are set
-up. On the unlock page the owner types the setup code, makes the unlock
-passkey, and saves and types back the recovery key. Then `cseries-vault claim`
-runs in a unit of its own, in this order:
+**Claim.** The owner presses Set up your machine on the machine's card at
+privatae.ai, which posts the setup code and the owner's email to the unlock
+page's `POST /api/setup` as a form (never in an address, so in no history
+entry and no Referer). The agent answers with a `__Host-` cookie (Secure,
+HttpOnly, SameSite=Strict) that stands for the code in that browser for two
+hours, and a redirect to the page; it keeps only the cookie's hash, in `/run`.
+SameSite does not keep the Host's own app origins out (they are the same
+site), so the cookie counts only on requests whose Origin is the unlock
+page's. The owner makes the unlock passkey, downloads the recovery key and
+presses I saved it, which sends back the key the page showed: the claim
+starts only while that is still the key waiting, so a second tab or browser
+that started the setup again cannot leave the disk sealed with a recovery key
+the person never saw. Then `cseries-vault claim` runs in a unit of its own, in
+this order:
 1. it adds the recovery key and the passkey under the volume key the vault
    has, authorised by the bootstrap key;
 2. it kills the bootstrap slot and overwrites and deletes its file;
@@ -179,6 +189,37 @@ again. A reboot before step 2 leaves the bootstrap key in place, and the
 owner sets up the keys again. The re-encryption's process killed without a
 reboot leaves the device suspended until one, which is why nothing stops
 that unit.
+
+**Owner account.** The box signs the owner in to the Host; no code or
+password is typed there. Once the disk is set up, the browser whose handoff
+did it asks the agent for a one-time ticket (`POST /api/owner-ticket`), and
+later sign-ins ask with one of the disk's keys instead (the key just used to
+unlock, or the passkey on the Sign in to your Host button). The agent writes
+the ticket's SHA-256, its kind (`claim` with the owner's email, or
+`sign-in`) and a two-minute expiry into `/run/cseries-door/owner-claim.json`,
+which the Host reads and cannot write, and the page posts the ticket to the
+Host's `/api/owner/claim` or `/api/owner/box-sign-in` as a form. The front
+door's question about that form carries the unlock page's Origin (Caddy's
+forward_auth sends the browser's headers), so the door leaves the Origin to
+the route. The Host checks the Origin is the unlock page's, the hash, the
+kind and the expiry, takes each ticket once, makes its session cookie and
+answers its desktop. So the owner has no password (a passkey of the Host's
+own is optional). The setup code, which the platform holds until the
+heartbeat reports `setup.done`, does one thing: while the disk has none of
+the owner's keys it lets a browser set them up, and only the browser whose
+claim set them up may then make the owner without a key. Once the keys are
+set up it makes and signs in nobody, and once the setup is done the agent
+takes no handoff at all. `/setup` and `/login` on such a box point to the
+unlock page. Pressing the card's button again picks up where the owner left
+off.
+
+The updater installs a release with that release's own updater: after the
+unpack it runs the unpacked tree's `cseries-cloud-update` with
+`--handed-over`, which verifies the manifest again, finds the tree unpacked
+and installs it by its own rules (what it restarts, for one: a release that
+changes the unlock agent restarts it). A box updating in place from an
+earlier updater installs the release that brings this with the old rules,
+and hands over from the release after it.
 
 **What it does not stop**, stated plainly:
 - Root on the server below can read the memory of a running, unlocked

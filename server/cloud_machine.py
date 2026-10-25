@@ -13,6 +13,18 @@ write (vm/cloud cseries_machine.publish):
                        provider operation it did not start, as the machine
                        holds them
   unlock-record.jsonl  the newest unlock attempts
+  owner-claim.json     the one sign-in ticket the unlock page holds now, by
+                       its SHA-256, with its kind ("claim": make the owner,
+                       with this email; "sign-in"), and when it expires
+                       (owner_login.claim_owner, box_sign_in)
+
+On such a machine the owner account is made from the unlock page, never
+with the setup code: the machine makes a ticket once the person has set up
+the disk's keys, or later uses one of them, and the page posts it to
+/api/owner/claim or /api/owner/box-sign-in. So the owner has no password
+(they may add a passkey of the Host's own), and Privatae, which holds the
+setup code until the machine reports its setup done, can never make or
+sign in as the owner with it.
 
 Without CSERIES_MACHINE_DIR (a Host on a person's own computer) there is no
 such machine and every answer here is empty. Until the vault's keys are set
@@ -33,6 +45,7 @@ DIR_ENV = "CSERIES_MACHINE_DIR"
 STATE = "machine-state.json"
 LOG = "access-log.jsonl"
 RECORD = "unlock-record.jsonl"
+OWNER_CLAIM = "owner-claim.json"
 TIMEOUT_S = 5.0
 _MAX_LINE = 4096
 _MAX_ROWS = 500
@@ -72,6 +85,19 @@ def state() -> Optional[dict]:
     the machine has written it)."""
     d = machine_dir()
     return _read_json(os.path.join(d, STATE)) if d else None
+
+
+def keeps_vault(st: Optional[dict] = None) -> bool:
+    """Whether this Host runs on a cloud machine whose data is in a vault:
+    its owner is made and signed in from the unlock page."""
+    st = st if st is not None else state()
+    return st is not None and (st.get("vault") or {}).get("state") not in (None, "absent")
+
+
+def owner_claim() -> Optional[dict]:
+    """owner-claim.json (module docstring), or None."""
+    d = machine_dir()
+    return _read_json(os.path.join(d, OWNER_CLAIM)) if d else None
 
 
 def unlock_url(st: Optional[dict] = None) -> Optional[str]:

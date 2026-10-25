@@ -36,7 +36,7 @@ In the [Network app](wiki:network-app), which has a setting for who may message 
 
 ## What happens when I report a problem?
 
-Your Host drafts a support ticket on the Support card that shows exactly what would be shared. Nothing is shared until you untick anything you do not want shared and press **Send**. [Getting help](wiki:getting-help) says what Send needs.
+Where your Host can send a support ticket, it drafts one on the Support card that shows exactly what would be shared, and nothing is shared until you untick anything you do not want shared and press **Send**. A C-Series Host cannot send one to Privatae; the Support card then says so and shows where a request can go instead. [Getting help](wiki:getting-help) says more.
 
 ## When should I use the Workbench instead?
 

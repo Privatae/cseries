@@ -377,7 +377,7 @@ system: true
 #   and the bench's listing notice the merge there as they do on the platform
 #   forge. With no git server, Code Approvals says to connect one in Settings,
 #   Git server. Bundle rebuilt.
-version: "0.32.0"
+version: "0.32.1"
 # 0.31.8 (2026-10-18): when a turn ends without reading words you
 #   typed into it and your Host starts its next turn with them, the page now
 #   always follows that turn. It used to miss it now and then on a busy

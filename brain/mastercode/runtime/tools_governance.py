@@ -48,8 +48,13 @@ async def _exec_propose_capability(args: dict) -> dict:
     community/proposals feature-request PR with this host as its author — the
     exact ladder the board's 'propose this' uses (server/routes/community.py
     propose → capability_propose.propose_feature_request). The PR is filed on a
-    branch of the proposals repo itself; there is no fork. Call only after the
-    user consents; the tool performs both steps and returns the refs."""
+    branch of the proposals repo itself; there is no fork.
+
+    The thread is a post on the members' board under this Host's name, so the
+    call posts nothing itself: it files the board post card
+    (runtime/board_post_approval) with the thread's exact text, and only the
+    person's Post it there, with the code from their authenticator, sends it
+    and then runs the ladder on the new thread."""
     a = args or {}
     title = str(a.get("title") or "").strip()
     body = str(a.get("body") or "").strip()
@@ -57,8 +62,6 @@ async def _exec_propose_capability(args: dict) -> dict:
     if not title or not body:
         return _refused("title and body (the gap analysis) are required")
     try:
-        import uuid as _uuid
-
         from server.routes import community as _comm
 
         # Resolve the Ideas category from the live board (slugs are communityd's).
@@ -77,25 +80,11 @@ async def _exec_propose_capability(args: dict) -> dict:
         if not slug:
             return {"status": "error", "result": "community board has no categories — board unreachable?"}
 
-        created = await _comm._op("community.post", {
-            "op_id": f"cap-{_uuid.uuid4()}",
-            "category": str(slug),
-            "title": title,
-            "body": body,
-        })
-        thread_id = None
-        if isinstance(created, dict):
-            thread_id = (created.get("id") or created.get("thread_id")
-                         or (created.get("thread") or {}).get("id"))
-        if not thread_id:
-            return {"status": "error",
-                    "result": f"thread create returned no id (got keys: {sorted(created) if isinstance(created, dict) else type(created).__name__})"}
-
-        laddered = await _comm.propose(int(thread_id), done_looks_like=done_looks_like)
-        return {"status": "ok", "result": {
-            "thread_id": int(thread_id),
-            "proposal_ref": (laddered or {}).get("proposal_ref"),
-            "url": (laddered or {}).get("url"),
-        }}
+        from mastercode.runtime import board_post_approval as _bpa
+        from server import brain_service
+        return await _bpa.propose(
+            brain_service.get_pool(), brain_service._entity_id,
+            {"category": str(slug), "title": title, "body": body},
+            then={"propose": {"done_looks_like": done_looks_like}})
     except Exception as e:
         return _refused_if_caller(e, f"propose_capability failed: {getattr(e, 'detail', None) or e}")

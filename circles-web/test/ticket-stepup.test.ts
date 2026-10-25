@@ -17,6 +17,12 @@ test("a messaging connector's pairing card asks for the code on the option the p
   assert.deepEqual(a, { option: "let_in", why: "This lets a messaging account start turns in your chat." });
 });
 
+test("a board post card asks for the code on 'Post it'", () => {
+  // The kind runtime/board_post_approval files; decide_ticket_service checks the code.
+  const a = stepupAsk({ kind: "board_post_proposal", board_post: { op_id: "host-1", body: "Hello" } });
+  assert.deepEqual(a, { option: "post", why: "This puts text on the members' board, under your Host's name." });
+});
+
 test("no code box without the platform's own payload", () => {
   for (const md of [
     null, undefined, "x", [], {},

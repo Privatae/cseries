@@ -1,0 +1,6 @@
+# 2026-10-25: a post on the members' board goes out only on the owner's click on
+# the card that shows its exact text (runtime/board_post_approval.py): the call
+# files a user_only card and sends nothing, the Host can't decide it, the click
+# sends the stored request exactly, and POST /api/tickets can't forge one. Fake
+# pool and bridge; no DB, no pod.
+test_board_post_approval.py

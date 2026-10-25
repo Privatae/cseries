@@ -139,18 +139,25 @@ class MemberClient(BridgeClient):
 
     # ── only the network's ops leave ────────────────────────────────────────
 
+    # The ops this client carries, for callers that must know before they ask
+    # (server/support_reach.py decides where a support request can go from it).
+    offered_ops: frozenset = NETWORK_OPS
+
+    def offers(self, op: str) -> bool:
+        return op in self.offered_ops
+
     @staticmethod
     def _not_offered(op: str) -> dict:
         return {"ok": False, "error": f"not offered by the network: {op}",
                 "error_kind": "infra"}
 
     async def request_full(self, op: str, params: dict = None) -> dict:
-        if op not in NETWORK_OPS:
+        if not self.offers(op):
             return self._not_offered(op)
         return await super().request_full(op, params)
 
     async def request_stream(self, op: str, params: dict, on_delta) -> dict:
-        if op not in NETWORK_OPS:
+        if not self.offers(op):
             return self._not_offered(op)
         return await super().request_stream(op, params, on_delta)
 

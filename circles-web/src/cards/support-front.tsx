@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
-import { discardSupport, getSupport, listSupport, sendSupport, setSupportShared } from "@/lib/api";
+import { discardSupport, getSupport, getSupportRoute, listSupport, sendSupport, setSupportShared } from "@/lib/api";
 import { clockOf, dayWord } from "@/lib/cards";
-import type { InboxMessage, SharedItem, SupportTicket } from "@/lib/types";
+import type { InboxMessage, SharedItem, SupportRoute, SupportTicket } from "@/lib/types";
 import { TeamFace } from "./bits";
 
 /** The card's views of your tickets: by default the open ones (drafts and
@@ -36,11 +36,15 @@ function stateOf(t: SupportTicket): { label: string; done: boolean } {
  */
 function Draft({
   t,
+  route,
   onSent,
   onToast,
   onOpen,
 }: {
   t: SupportTicket;
+  /** Where requests can go now; a draft this Host can no longer send says so
+   * in place of Send (it may predate leaving the network). */
+  route: SupportRoute | null;
   onSent: () => void;
   onToast: (s: string) => void;
   /** The ticket in full (the Tickets pane's SupportDetail). */
@@ -67,6 +71,7 @@ function Draft({
     };
   }, [t.id, readTick]);
   const items: SharedItem[] = full?.shared_context ?? [];
+  const cannotSend = route != null && !route.can_send;
   const send = async () => {
     if (!full || busy) return;
     setBusy(true);
@@ -111,10 +116,18 @@ function Draft({
       <span className="st">Draft · not sent</span>
       <h4>{t.title}</h4>
       <div className="body">
-        {(full?.problem || t.problem || "").trim() || "Your Host wrote this up."} Untick anything you don't want to
-        share, then send.
+        {(full?.problem || t.problem || "").trim() || "Your Host wrote this up."}
+        {cannotSend ? "" : " Untick anything you don't want to share, then send."}
       </div>
-      {full == null ? (
+      {cannotSend && (
+        <div className="err" data-support-cannot-send role="note">
+          {route.lane === "standalone"
+            ? "This Host isn't on the Privatae network, so this draft can't be sent."
+            : "The Privatae network doesn't take private support requests yet, so this draft can't be sent."}{" "}
+          Nothing in this draft was sent; you can discard it. Where a request can go instead is above.
+        </div>
+      )}
+      {cannotSend ? null : full == null ? (
         <div className="body">Reading what it would share…</div>
       ) : (
         items.map((s) => (
@@ -147,15 +160,17 @@ function Draft({
         </div>
       )}
       <div className="acts">
-        <button
-          className="btn primary"
-          data-support-send
-          disabled={busy || full == null}
-          onClick={() => void send()}
-          type="button"
-        >
-          {busy ? "Sending…" : "Send"}
-        </button>
+        {!cannotSend && (
+          <button
+            className="btn primary"
+            data-support-send
+            disabled={busy || full == null}
+            onClick={() => void send()}
+            type="button"
+          >
+            {busy ? "Sending…" : "Send"}
+          </button>
+        )}
         <button className="btn quiet" onClick={() => setAside(true)} type="button">
           Not now
         </button>
@@ -199,6 +214,38 @@ function Draft({
 }
 
 /**
+ * What the card says when this Host can't send a private ticket: where a
+ * request can go instead (server/support_reach.py route_view). The words are
+ * the server's own `head` and `offer`, shown as they are, so the card never
+ * promises more than the public text does. Never a raw transport error.
+ */
+function Elsewhere({ route }: { route: SupportRoute }) {
+  const sec = route.security;
+  const security = (
+    <a className="btn quiet" data-support-security href={`mailto:${sec.email}`}>
+      Report a security problem: {sec.email}
+    </a>
+  );
+  return (
+    <div className="slip" data-support-elsewhere={route.lane}>
+      <span className="st">{route.lane === "standalone" ? "Not on the Privatae network" : "No private support yet"}</span>
+      <h4>{route.head}</h4>
+      <div className="body" data-support-offer>
+        {route.offer} {sec.say}
+      </div>
+      <div className="acts">
+        {route.issue_url ? (
+          <a className="btn quiet" data-support-issue href={route.issue_url} rel="noopener noreferrer" target="_blank">
+            Open an issue on GitHub
+          </a>
+        ) : null}
+        {security}
+      </div>
+    </div>
+  );
+}
+
+/**
  * Support's card, a front only (mockup:703-709, 729-732): your Host writes
  * the ticket; you choose what is shared and send it. The answered tickets,
  * the ones sent and waiting, and the drafts, a day at a time.
@@ -230,6 +277,19 @@ export function SupportFront({
 }) {
   const [rows, setRows] = useState<SupportTicket[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  // Where requests can go, read before anything is written; null until read
+  // (or if the read fails: then the card is as it was, and Send says why).
+  const [route, setRoute] = useState<SupportRoute | null>(null);
+  useEffect(() => {
+    let off = false;
+    void getSupportRoute().then((r) => {
+      if (!off && r.ok) setRoute(r.data);
+    });
+    return () => {
+      off = true;
+    };
+  }, [refreshKey]);
+  const cannotSend = route != null && !route.can_send;
   // The Tickets pane's support filter: active (draft and sent, filtered on
   // the server so an old draft never falls off a newest-50 page), waiting
   // for you, with the platform, closed, discarded. The list read also pulls
@@ -288,11 +348,15 @@ export function SupportFront({
   return (
     <>
       <div className="chead">
-        <span className="kind">● The platform's support team · people</span>
+        <span className="kind">{cannotSend ? "● Help with C-Series" : "● The platform's support team · people"}</span>
         <TeamFace size={52} />
         <div className="who">
           <h2>Support</h2>
-          <div className="sub">{hostName} writes the ticket; you choose what's shared and send it</div>
+          <div className="sub">
+            {cannotSend
+              ? `${hostName} tells you where a request from this Host can go`
+              : `${hostName} writes the ticket; you choose what's shared and send it`}
+          </div>
           <div className="row" style={{ marginTop: 8 }}>
             <select
               aria-label="Which support tickets"
@@ -307,13 +371,16 @@ export function SupportFront({
                 </option>
               ))}
             </select>
-            <button className="btn" data-support-new onClick={() => onOpenTicket(null)} type="button">
-              New ticket
-            </button>
+            {!cannotSend && (
+              <button className="btn" data-support-new onClick={() => onOpenTicket(null)} type="button">
+                New ticket
+              </button>
+            )}
           </div>
         </div>
       </div>
       <div className="cbody" data-support ref={bodyRef}>
+        {cannotSend && <Elsewhere route={route} />}
         {notices.length > 0 && (
           <div data-notices>
             <div className="day">Notices</div>
@@ -343,7 +410,9 @@ export function SupportFront({
           <div className="blank">Reading…</div>
         ) : rows.length === 0 ? (
           <div className="blank">
-            No tickets. When something goes wrong, ask {hostName}; it writes one here for you to send.
+            {cannotSend
+              ? "No tickets."
+              : `No tickets. When something goes wrong, ask ${hostName}; it writes one here for you to send.`}
           </div>
         ) : (
           ordered.map((t) => {
@@ -356,6 +425,7 @@ export function SupportFront({
                 {sep && <div className="day">{sep}</div>}
                 {t.status === "draft" ? (
                   <Draft
+                    route={route}
                     onOpen={() => onOpenTicket(t.id)}
                     onSent={() => {
                       void load();

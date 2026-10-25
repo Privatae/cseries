@@ -24,6 +24,12 @@ _NOT_CONNECTED = {"ok": False, "error": "no platform: this Host runs standalone"
 
 class NoPlatform:
     connected = False
+    # The ops this client carries: none. Callers that must know before they
+    # ask (server/support_reach.py) read this instead of trying and failing.
+    offered_ops: frozenset = frozenset()
+
+    def offers(self, op: str) -> bool:
+        return False
 
     @property
     def status(self) -> dict:

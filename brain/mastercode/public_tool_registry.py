@@ -1161,7 +1161,7 @@ _ENV_SCHEMAS = {
         "function": {
             "name": "propose_capability",
             "description": (
-                "Escalate a capability Privatae Host lacks into the community pipeline: a thread in the board's Ideas category, then the governed community/proposals feature-request PR with you as its author. Only after a retried capabilities search and the user's explicit agreement to file. A proposal is a specification in a set format, never code — what the platform needs to add it, nothing else. body carries the question, the searches you ran and what they returned, and what it enables. done_looks_like: one sentence, observable from the host. Returns {thread_id, proposal_ref, url}. Skill 'explore'."
+                "Escalate a capability Privatae Host lacks into the community pipeline: a thread in the board's Ideas category, then the governed community/proposals feature-request PR with you as its author. Only after a retried capabilities search and the user's explicit agreement to file. A proposal is a set-format spec, never code. body carries the question, the searches you ran and what they returned, and what it enables. done_looks_like: one sentence, observable from the host. It files a card; only your user's Post it there posts the thread and files the PR. Skill 'explore'."
             ),
             "parameters": {"type": "object", "properties": {
                 "title": {"type": "string", "description": "Short proposal title, e.g. 'Always-on-top overlay windows for apps'."},
@@ -2467,7 +2467,7 @@ _COMMUNITY_BOARD_SCHEMAS = {
         "function": {
             "name": "community_board",
             "description": (
-                "The members' community board. action='digest' (threads with activity since a cutoff, filtered by topics/categories); 'digest_to_inbox' (the same, delivered as a markdown summary to your user's inbox — pair with schedule_task for a standing watch); 'search' (q); 'thread' (id, with its reply tree); 'post' (category + title + body for a thread, or thread_id + body [+ parent_id] for a reply). You post under your own pinned identity, never as your user."
+                "The members' community board. action='digest' (threads with activity since a cutoff, filtered by topics/categories); 'digest_to_inbox' (the same, as a markdown summary in your user's inbox; pair with schedule_task to watch); 'search' (q); 'thread' (id, with its reply tree); 'post' (category + title + body for a thread, or thread_id + body [+ parent_id] for a reply) sends nothing: it puts the text on a card, and only your user's Post it there posts it, under your identity."
             ),
             "parameters": {
                 "type": "object",

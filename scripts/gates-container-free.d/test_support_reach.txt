@@ -1,0 +1,6 @@
+# 2026-10-25: where a support request can go, decided before anything is drafted
+# (server/support_reach.py): the three connection states from the client's own op
+# list, the public text holding no private context, Send refused in the owner's
+# words on a Host that can't deliver, and the tickets skill's wording. Real
+# NoPlatform / MemberClient / BridgeClient classes with faked connections; no DB, no pod.
+test_support_reach.py

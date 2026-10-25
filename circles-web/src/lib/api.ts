@@ -21,6 +21,7 @@ import type {
   SharedItem,
   SupportBadges,
   SupportCategory,
+  SupportRoute,
   SupportTicket,
   Thread,
   Ticket,
@@ -893,6 +894,10 @@ export function listSupport(params: {
 
 export function supportBadgeCounts(): Promise<ApiResult<SupportBadges>> {
   return getJSON<SupportBadges>("/api/support/badge-counts");
+}
+
+export function getSupportRoute(): Promise<ApiResult<SupportRoute>> {
+  return getJSON<SupportRoute>("/api/support/route");
 }
 
 export function getSupport(id: number): Promise<ApiResult<SupportTicket>> {

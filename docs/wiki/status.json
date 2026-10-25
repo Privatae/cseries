@@ -158,7 +158,7 @@
   },
   "the-privatae-network": {
    "checked": "2026-10-25",
-   "status": "current"
+   "status": "changed"
   },
   "updates-and-versions": {
    "checked": "2026-10-25",
@@ -174,7 +174,7 @@
   },
   "what-is-privatae": {
    "checked": "2026-10-25",
-   "status": "current"
+   "status": "changed"
   },
   "where-your-data-lives": {
    "checked": "2026-10-20",
@@ -182,11 +182,11 @@
   },
   "workbench": {
    "checked": "2026-10-22",
-   "status": "current"
+   "status": "changed"
   },
   "workbench-app": {
    "checked": "2026-10-22",
-   "status": "current"
+   "status": "changed"
   },
   "your-machines": {
    "checked": "2026-10-20",

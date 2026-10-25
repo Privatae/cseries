@@ -1168,6 +1168,79 @@ async def _exec_phone_alias(args: dict) -> dict:
         return _refused_if_caller(e, f"phone_alias failed: {getattr(e, 'detail', None) or e}")
 
 
+async def _support_elsewhere(a: dict, bc, lane: str, *, pool=None, eid=None) -> dict:
+    """support_open on a Host that cannot send a private ticket
+    (server/support_reach.py): nothing is drafted. The answer says so, gives
+    the sentence the owner reads first, and, where there is one, the PUBLIC
+    text for the place the request can go instead: an issue on the repository
+    the owner opens and posts in their own browser, or a post for the members'
+    board the Host makes only on the owner's yes. That text is built from the
+    fault's own fields only, with private shapes taken out; no shared context
+    (memory, conversations, files, errors, runs, project) is ever read for it."""
+    from server import support_reach as sr
+    category = str(a.get("category") or "")
+    version = ""
+    try:
+        from server.routes.update import _read_local_tag
+        version = _read_local_tag() or ""
+    except Exception:
+        pass
+    # The Host's own name is the person's choice of word for it: never public.
+    names = [str(n) for n in (a.get("names") or [])]
+    if pool is not None and eid is not None:
+        try:
+            hn = await pool.fetchval("SELECT display_name FROM entity_registry WHERE id = $1", eid)
+            if hn:
+                names.append(str(hn))
+        except Exception:
+            pass
+    fields = dict(category=category, title=str(a.get("title") or ""),
+                  problem=str(a.get("problem") or ""),
+                  repro_steps=str(a.get("repro_steps") or ""),
+                  expected=str(a.get("expected") or ""), actual=str(a.get("actual") or ""),
+                  version=version, names=names)
+    out = {"drafted": False, "lane": lane, "say": sr.cannot_send(lane, category),
+           "security": sr.SECURITY_SAY}
+    head = ("NOT DRAFTED: there is no support ticket, and nothing was sent. Never tell the "
+            "person you drafted, filed or sent a ticket. Tell them `say` first, in your own "
+            "words. If the problem is a security problem, give them `security` and offer "
+            "nothing public. ")
+    if lane in (sr.LANE_STANDALONE, sr.LANE_MEMBER_NONE):
+        if category in sr.PUBLIC_ISSUE_CATEGORIES:
+            out["public_issue"] = sr.public_draft(**fields, issue=True)
+            out["note"] = head + (
+                "If they want the issue: show them public_issue.title and public_issue.body "
+                "exactly as they are (that is everything the issue will say; it is PUBLIC) and "
+                "ask them to read it: the cut takes out the shapes it knows and can miss a name "
+                "or an address written in plain words. "
+                "then give them public_issue.url to open in their own browser, where they can "
+                "change it and post it themselves. You never post it.")
+        else:
+            out["note"] = head + "There is nowhere else to send a payment or account question from this Host."
+        return out
+    # The members' board.
+    draft = sr.public_draft(**fields, issue=False)
+    slug = ""
+    if sr.connected(bc) and sr.offers(bc, "community.categories"):
+        try:
+            env = await bc.request_full("community.categories", {})
+            if env.get("ok"):
+                slug = sr.board_category(env.get("data") or {})
+        except Exception:
+            slug = ""
+    out["board_post"] = {"tool": "community_board", "action": "post", "category": slug,
+                         "title": draft["title"], "body": draft["body"],
+                         "removed": draft["removed"], "left_out": draft["left_out"]}
+    out["note"] = head + (
+        "If they want a board post: say every member of the network can read the board, and "
+        "ask them to read the text: the cut can miss a name or an address written in plain "
+        "words. Then call community_board action='post' with the category, title and body "
+        "given. That posts nothing: it puts the exact text on a card over the chat, and it "
+        "goes out only when they press Post it there. Never say it was posted until the "
+        "card's answer says so.")
+    return out
+
+
 async def _exec_tickets(args: dict, *, agent_grant: int | None = None) -> dict:
     """Triage / escalation-queue op-dispatch for the host — its OWN ticket queue.
 
@@ -1275,6 +1348,14 @@ async def _exec_tickets(args: dict, *, agent_grant: int | None = None) -> dict:
                     for req in ("category", "title", "problem"):
                         if not a.get(req):
                             return _refused(f"{req} is required for op='support_open'")
+                    # Where it can go, before anything is drafted: a Host that
+                    # cannot send a private ticket never drafts one.
+                    from server import support_reach as _sr
+                    _bc = _sr.client()
+                    _lane = _sr.lane_of(_bc)
+                    if _lane not in _sr.PRIVATE_LANES:
+                        return {"status": "ok", "result": await _support_elsewhere(
+                            a, _bc, _lane, pool=pool, eid=eid)}
                     res = await sp.open_service(
                         pool, eid,
                         category=str(a.get("category")), title=str(a.get("title")),

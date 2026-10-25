@@ -380,6 +380,26 @@ export interface SupportTicket {
   closed_at?: string | null;
 }
 
+/** Where this Host's support requests can go (GET /api/support/route,
+ * server/support_reach.py): a private ticket (platform, or a network that
+ * offers one), the members' board, or nowhere at Privatae (standalone). */
+export interface SupportRoute {
+  lane: "platform" | "network" | "board" | "standalone" | "member_none";
+  can_send: boolean;
+  /** The owner's sentence when a ticket can't be sent; empty when it can. */
+  say: string;
+  /** Why a private ticket can't go, one sentence (server/support_reach.py
+   * head_of); empty when it can. */
+  head: string;
+  /** Where a request can go instead, in the server's own words
+   * (support_reach.offer_of); the card shows it as it is. */
+  offer: string;
+  security: { email: string; policy: string; say: string };
+  /** A new issue on the public repository (standalone). */
+  issue_url?: string;
+  board?: boolean;
+}
+
 export interface SupportBadges {
   drafts: number;
   needs_info: number;

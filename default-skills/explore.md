@@ -123,8 +123,10 @@ op='api_routes' with the likely path prefix. A search that found nothing
 means those WORDS missed — it is not proof the capability is absent, and
 filing a proposal for something that already ships wastes the user's
 standing on the board. Call ONLY after that retry AND after the user
-explicitly agrees to file. It creates a thread in the board's Ideas category
-with your gap analysis, then opens the governed community/proposals
+explicitly agrees to file. It posts nothing itself: it puts the Ideas thread,
+with your gap analysis, on a card over the chat, and only the user's Post it
+there, with the code from their authenticator (never ask them for it; you
+never see it), posts the thread and then opens the governed community/proposals
 feature-request PR — filed by the platform with this host as the commit
 author, never from a fork of your own (the same ladder as the board's
 "propose this"). The body should carry the capability question,

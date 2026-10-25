@@ -133,6 +133,7 @@ _stub_main.broadcast = _no_broadcast
 sys.modules.setdefault("server.main", _stub_main)
 
 from server import circles_deck, circles_reading  # noqa: E402
+from server import support_reach as real_support_reach  # noqa: E402
 from server.peer import topics as real_topics  # noqa: E402
 from server.routes import circles as real_circles  # noqa: E402
 from server.routes import contacts as real_contacts  # noqa: E402
@@ -1201,6 +1202,17 @@ def support_list(status: str = ""):
 def support_badges():
     drafts = sum(1 for s in STATE["support"].values() if s["status"] == "draft")
     return {"drafts": drafts, "needs_info": STATE["support_asks"], "total": drafts + STATE["support_asks"]}
+
+
+# Where support requests go, set by a scenario. Kept apart from STATE, which
+# open_cards resets before the page loads (and reads the route).
+SUPPORT_LANE = {"lane": "platform"}
+
+
+@app.get("/api/support/route")
+def support_route():
+    # The real answer for the lane the scenario sets (server/support_reach.py).
+    return real_support_reach.route_view(SUPPORT_LANE["lane"])
 
 
 @app.post("/api/support")
@@ -2566,6 +2578,66 @@ def scenario_support(page, base, size):
           and calls[1:2] == [{"call": "send", "id": 62, "revision": 2}], repr(calls))
 
 
+def scenario_support_elsewhere(page, base, size):
+    """S3: a Host that can't send a private ticket says so on the Support
+    card before anything is sent, names where a request can go instead, and
+    never offers Send or shows a raw transport error."""
+    for lane in ("standalone", "board", "member_none"):
+        SUPPORT_LANE["lane"] = lane
+        open_cards(page, base)
+        page.locator("[data-wait='draft:62']").first.click()
+        draft = page.locator("[data-support-draft='62']")
+        expect(draft).to_be_visible(timeout=5_000)
+        where = page.locator(f"[data-support-elsewhere='{lane}']")
+        expect(where).to_be_visible(timeout=5_000)
+        card = page.locator("[data-support]")
+        text = card.inner_text()
+        if lane == "standalone":
+            check(f"S3 ({size}): standalone: the card says the Host can't send a report to Privatae",
+                  "This Host isn't on the Privatae network, so it can't send a report to Privatae" in text, text[:400])
+            href = where.locator("[data-support-issue]").get_attribute("href") or ""
+            check(f"S3 ({size}): standalone: it links a new issue on the public repository",
+                  href.startswith("https://github.com/Privatae/cseries/issues/new"), href)
+            check(f"S3 ({size}): standalone: it says the issue is public and the owner posts it",
+                  "That issue is public" in text and "post it yourself" in text, text[:600])
+        else:
+            check(f"S3 ({size}): {lane}: the card says the network takes no private requests yet",
+                  "The Privatae network doesn't take private support requests yet" in text, text[:400])
+            check(f"S3 ({size}): {lane}: a member is never told this Host isn't on the network",
+                  "isn't on the Privatae network" not in text, text[:600])
+        if lane == "board":
+            check(f"S3 ({size}): board: it says every member can read the board",
+                  "Every member can read the board" in text, text[:600])
+            check(f"S3 ({size}): board: the post goes out only on the owner's press on the card",
+                  "it goes out only when you press Post it there" in text, text[:800])
+        if lane == "member_none":
+            href = where.locator("[data-support-issue]").get_attribute("href") or ""
+            check(f"S3 ({size}): member_none: it links a new issue on the public repository",
+                  href.startswith("https://github.com/Privatae/cseries/issues/new"), href)
+        # The card says what the server's public text does, never more: the
+        # cut takes out the shapes it finds and can miss a name or an address.
+        offer_el = where.locator("[data-support-offer]")
+        offer = offer_el.inner_text() if offer_el.count() else ""
+        check(f"S3 ({size}): {lane}: the card shows the server's own sentence",
+              offer.startswith(real_support_reach.offer_of(lane)), offer[:600])
+        check(f"S3 ({size}): {lane}: the card never promises names and addresses are left out",
+              "names and addresses" not in text and "can miss a name or an address written in plain words" in text
+              and "read the text before it goes" in text, text[:800])
+        check(f"S3 ({size}): {lane}: a security problem goes to the security address",
+              (where.locator("[data-support-security]").get_attribute("href") or "") == "mailto:security@privatae.ai")
+        check(f"S3 ({size}): {lane}: the draft has no Send", draft.locator("[data-support-send]").count() == 0)
+        expect(draft.locator("[data-support-cannot-send]")).to_contain_text("Nothing in this draft was sent")
+        check(f"S3 ({size}): {lane}: no New ticket for a ticket that can't go",
+              page.locator("[data-support-new]").count() == 0)
+        check(f"S3 ({size}): {lane}: no raw transport error is shown",
+              not any(w in text for w in ("bridge not connected", "not offered by the network")), text[:400])
+        check(f"S3 ({size}): {lane}: nothing was sent", not any(c.get("call") == "send" for c in STATE["support_calls"]),
+              repr(STATE["support_calls"]))
+        if lane == "standalone":
+            shot(page, "support-standalone", size)
+    SUPPORT_LANE["lane"] = "platform"
+
+
 def scenario_reduced(page, base, size):
     phone = size == "phone"
     open_cards(page, base)
@@ -3724,7 +3796,7 @@ SCENARIOS = (scenario_deck, scenario_turn, scenario_blank, scenario_back_only, s
              scenario_ask, scenario_reading, scenario_block, scenario_unblock_through, scenario_door, scenario_coming, scenario_nudge,
              scenario_crisis,
              scenario_kept_words,
-             scenario_count, scenario_support, scenario_reduced, scenario_search, scenario_links,
+             scenario_count, scenario_support, scenario_support_elsewhere, scenario_reduced, scenario_search, scenario_links,
              scenario_page_actions, scenario_earlier, scenario_contacts, scenario_clear_leave, scenario_decisions,
              scenario_support_full, scenario_older_asks, scenario_composer, scenario_compose_held, scenario_rail_audit, scenario_host_chrome,
              scenario_interests, scenario_activity, scenario_activity_reload, scenario_activity_agents, scenario_no_gone,

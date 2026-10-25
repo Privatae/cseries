@@ -27,6 +27,13 @@ Where `send` puts it depends on the category (2026-09-23):
             or closes it; the operator Host reads validated reports from main.
   * every other category -> platform.ticket op='open' (the operator's queue).
 
+Whether a ticket can be drafted at all is decided first, from the client this
+Host holds (server/support_reach.py, 2026-10-25): a standalone Host and a
+network member whose door offers no private support op get no draft; the Host
+tells the owner where the request can go instead (a public issue they post
+themselves, the members' board, or the security address). A member door that
+offers `support.ticket` is used for every category, feature-detected.
+
 After sending, `refresh` mirrors the far side (status / resolution / PR link /
 replies) into the local row on every list or get, so the pane and the host's
 `tickets` tool both show `received -> reproducing -> pr_open -> approved ->
@@ -57,7 +64,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
-from server import brain_service
+from server import brain_service, support_reach
 from server.applications.middleware import requires_permission
 
 log = logging.getLogger("privatae.pc.support")
@@ -883,14 +890,31 @@ async def set_shared_service(pool, eid: int, ticket_id: int, included: dict[str,
     return {"ticket_id": ticket_id, "shared_context": items}
 
 
+def _ticket_op(md) -> str:
+    """The op a sent ticket lives on: the member door's private support op
+    for one sent through it (metadata.lane = network_ticket), else the
+    platform's."""
+    if isinstance(md, str):
+        try:
+            md = json.loads(md)
+        except Exception:
+            md = {}
+    if isinstance(md, dict) and md.get("lane") == "network_ticket":
+        return support_reach.SUPPORT_OP
+    return "platform.ticket"
+
+
 async def _bridge(op: str, params: dict) -> dict:
-    try:
-        from server.main import get_bridge_client
-    except Exception as exc:
-        raise SupportError(503, f"bridge unavailable: {exc}")
-    bc = get_bridge_client()
-    if bc is None or not getattr(bc, "_connected", False):
-        raise SupportError(503, "bridge not connected")
+    """One call to wherever this Host's support requests go. A client that
+    does not carry `op`, or one whose connection is down, is refused in the
+    owner's words (server/support_reach.py), never as a transport error."""
+    bc = support_reach.client()
+    lane = support_reach.lane_of(bc)
+    if not support_reach.offers(bc, op):
+        raise SupportError(422, f"{support_reach.cannot_send(lane) or support_reach.NO_PRIVATE_SUPPORT} "
+                                f"{support_reach.NOTHING_SENT}")
+    if not support_reach.connected(bc):
+        raise SupportError(503, support_reach.unreachable(lane))
     try:
         envelope = await bc.request_full(op, params)
     except Exception as exc:
@@ -929,10 +953,26 @@ async def send_service(pool, eid: int, ticket_id: int, *, revision: int | None =
         raise SupportError(400, f"{len(approved)} items are ticked to share; a support ticket "
                                 f"carries at most {SHARED_MAX} — untick {len(approved) - SHARED_MAX}")
 
-    if row["category"] == "bug":
+    # Where it can go, from the client this Host holds now (a draft made
+    # before the Host left the network, or before this check existed, may be
+    # one it can no longer send).
+    bc = support_reach.client()
+    lane = support_reach.lane_of(bc)
+    if lane not in support_reach.PRIVATE_LANES:
+        # 422, not 409: the Support card reads a 409 on Send as "the Host
+        # changed this draft" and reads it again.
+        raise SupportError(422, f"{support_reach.cannot_send(lane, row['category'])} "
+                                f"{support_reach.NOTHING_SENT} You can discard this draft.")
+    if not support_reach.connected(bc):
+        raise SupportError(503, support_reach.unreachable(lane))
+
+    if row["category"] == "bug" and support_reach.offers(bc, "proposal.file"):
         return await _send_bug_as_pr(pool, row, approved)
 
-    data = await _bridge("platform.ticket", {
+    # A network member's private support op, the day its door offers one
+    # (feature-detected: lane_of names it only when the client lists it).
+    op = support_reach.SUPPORT_OP if lane == support_reach.LANE_NETWORK else "platform.ticket"
+    data = await _bridge(op, {
         "op": "open",
         "category": row["category"],
         "project": row["project_name"] or "",
@@ -951,12 +991,22 @@ async def send_service(pool, eid: int, ticket_id: int, *, revision: int | None =
         # An ok envelope with no id would strand the row as 'sent' with nothing
         # to refresh or reply to. Treat it as a failed send; the draft survives.
         raise SupportError(502, "platform accepted the ticket but returned no id — not sent, try again")
-    await pool.execute(
-        """UPDATE support_tickets
-              SET status = 'sent', platform_id = $1, platform_status = $2,
-                  sent_at = NOW(), updated_at = NOW()
-            WHERE id = $3""",
-        pid or None, str(data.get("status") or "received"), ticket_id)
+    if op == support_reach.SUPPORT_OP:
+        # Kept, so refresh, reply and close ask the same op (_ticket_op).
+        await pool.execute(
+            """UPDATE support_tickets
+                  SET status = 'sent', platform_id = $1, platform_status = $2,
+                      metadata = metadata || '{"lane": "network_ticket"}'::jsonb,
+                      sent_at = NOW(), updated_at = NOW()
+                WHERE id = $3""",
+            pid or None, str(data.get("status") or "received"), ticket_id)
+    else:
+        await pool.execute(
+            """UPDATE support_tickets
+                  SET status = 'sent', platform_id = $1, platform_status = $2,
+                      sent_at = NOW(), updated_at = NOW()
+                WHERE id = $3""",
+            pid or None, str(data.get("status") or "received"), ticket_id)
     log.info("support ticket %d sent → platform %s", ticket_id, pid)
     return {"ticket_id": ticket_id, "platform_id": pid, "status": "sent",
             "platform_status": data.get("status") or "received", "shared_items": len(approved)}
@@ -1127,13 +1177,14 @@ async def close_service(pool, eid: int, ticket_id: int) -> dict:
     if pool is None:
         raise SupportError(503, "brain pool down")
     row = await pool.fetchrow(
-        "SELECT platform_id, status FROM support_tickets WHERE id = $1 AND entity_id = $2",
+        "SELECT platform_id, status, metadata FROM support_tickets WHERE id = $1 AND entity_id = $2",
         ticket_id, eid)
     if not row:
         raise SupportError(404, "ticket not found")
     if row["status"] == "sent" and row["platform_id"]:
         try:
-            await _bridge("platform.ticket", {"op": "close", "ticket_id": int(row["platform_id"])})
+            await _bridge(_ticket_op(row["metadata"]),
+                          {"op": "close", "ticket_id": int(row["platform_id"])})
         except SupportError as e:
             log.info("platform close for %s failed (%s) — closing locally anyway", ticket_id, e.detail)
     await pool.execute(
@@ -1171,8 +1222,8 @@ async def reply_service(pool, eid: int, ticket_id: int, *, body: str,
         # The bridge takes at most TEXT_CAP characters a reply: a longer one
         # goes as numbered parts, whole and in order (RT-B22), never cut.
         for part in _reply_parts(body, TEXT_CAP):
-            await _bridge("platform.ticket", {"op": "reply", "ticket_id": int(row["platform_id"]),
-                                              "body": part, "author": author})
+            await _bridge(_ticket_op(md), {"op": "reply", "ticket_id": int(row["platform_id"]),
+                                           "body": part, "author": author})
     elif md.get("lane") == "bug_pr" and md.get("bug_pr"):
         # A bug lives on its report PR: the answer to a needs_info note lands
         # there as a comment the validator reads (proposal.reply, review NB1).
@@ -1223,11 +1274,18 @@ async def refresh_service(pool, eid: int, ticket_id: int | None = None) -> dict:
             log.info("bug-PR refresh skipped (%s); platform tickets still refresh", e.detail)
     if not rows:
         return {"refreshed": n_bugs}
-    data = await _bridge("platform.ticket", {"op": "list", "ids": [int(r["platform_id"]) for r in rows]})
-    remote = {int(t["id"]): t for t in (data.get("tickets") or [])}
-    n = 0
+    # One list call per op the rows live on (the platform's, or a member
+    # door's private support op); ids are only unique within one.
+    by_op: dict[str, list] = {}
     for r in rows:
-        t = remote.get(int(r["platform_id"]))
+        by_op.setdefault(_ticket_op(r["metadata"]), []).append(r)
+    pairs = []
+    for op_name, group in by_op.items():
+        data = await _bridge(op_name, {"op": "list", "ids": [int(r["platform_id"]) for r in group]})
+        remote = {int(t["id"]): t for t in (data.get("tickets") or [])}
+        pairs.extend((r, remote.get(int(r["platform_id"]))) for r in group)
+    n = 0
+    for r, t in pairs:
         if not t:
             continue
         thread = r["thread"]
@@ -1288,6 +1346,13 @@ async def badge_counts() -> dict:
     return await badge_service(pool, eid)
 
 
+@router.get("/route", dependencies=[Depends(requires_permission("read:tickets"))])
+async def support_route() -> dict:
+    """Where this Host's support requests can go (server/support_reach.py):
+    the Support card shows it before anything is written."""
+    return support_reach.route_view()
+
+
 @router.get("/{ticket_id}", dependencies=[Depends(requires_permission("read:tickets"))])
 async def get_ticket(ticket_id: int, refresh: bool = True) -> dict:
     pool, eid = _pool_eid()
@@ -1306,6 +1371,11 @@ async def open_ticket(request: Request) -> dict:
         body = await request.json()
     except Exception:
         raise HTTPException(400, "body must be JSON") from None
+    lane = support_reach.current_lane()
+    if lane not in support_reach.PRIVATE_LANES:
+        # Never a draft this Host cannot send.
+        raise HTTPException(422, f"{support_reach.cannot_send(lane, str(body.get('category') or ''))} "
+                                 "Nothing was written.")
     try:
         return await open_service(
             pool, eid,

@@ -195,6 +195,11 @@ export function stepupAsk(metadata: unknown): StepupAsk | null {
   if (md.kind === "pipeline_proposal" && asRecord(md.pipeline_proposal)?.requires_stepup === true) {
     return { option: "apply", why: "This adds a check that runs outside the platform." };
   }
+  // A post on the members' board the Host wrote (runtime/board_post_approval):
+  // its 'Post it' takes the code (server/routes/tickets.decide_ticket_service).
+  if (md.kind === "board_post_proposal") {
+    return { option: "post", why: "This puts text on the members' board, under your Host's name." };
+  }
   if (md.kind === "connector_pairing") {
     const option = asRecord(md.connector_pairing)?.stepup_option;
     if (typeof option === "string" && option) {

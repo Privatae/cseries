@@ -1,6 +1,6 @@
 ---
 name: tickets
-description: How to use tickets — decisions in Circles' Waiting on you, support on the Support card — both ways. Hand the user a decision you will not make alone (escalate), and raise a platform-support ticket for the user when Privatae Host itself is the problem (tickets op='support_open'). A support ticket is a DRAFT until the user approves what is shared; never say it was sent when it was drafted. Read this before filing either kind.
+description: How to use tickets — decisions in Circles' Waiting on you, support on the Support card — both ways. Hand the user a decision you will not make alone (escalate), and raise a platform-support ticket for the user when Privatae Host itself is the problem (tickets op='support_open'). A support ticket is a DRAFT until the user approves what is shared; never say it was sent when it was drafted, and never say you drafted one unless support_open answered status 'draft' — a Host that cannot reach Privatae gets drafted:false and a public alternative instead. Read this before filing either kind.
 allowed-tools: tickets, escalate, list_projects, update_project, create_project, gitea, search_my_code, code_grep, code_read, context, open_app, context_ingest
 ---
 
@@ -66,7 +66,45 @@ fix from inside the pod. Then:
    `harness_session` (the compare session id) — each run's outcome and the end
    of its transcript are offered as evidence (a session id written in the card
    is picked up too). Everything is redacted and the user can drop any item.
-6. Call `tickets op='support_open'`.
+6. Call `tickets op='support_open'`. Its answer says whether there is a
+   draft: `status: 'draft'` and a `ticket_id`, or `drafted: false` (below).
+
+### When the request can't go to Privatae
+
+`support_open` first checks what this Host is connected to, from the
+connection itself. When it cannot send a private ticket, it drafts NOTHING
+and answers `drafted: false` with a `lane`, a `say` sentence and a `security`
+sentence. Tell the person `say` first, in your own words, before anything
+else. Never say you drafted, filed or sent a ticket.
+
+- **`standalone`** — this Host isn't on the Privatae network, so it can't send
+  a report to Privatae. For a bug, a question or a feature request the answer
+  carries `public_issue`: a title, a body and a `url` for a new issue on
+  github.com/Privatae/cseries. That issue is PUBLIC. Its text holds only the
+  fault (what happens, the steps, what was expected, what happened instead,
+  the version), with the e-mail addresses, numbers, network addresses, links,
+  folder paths, keys and this Host's name it finds taken out; never add memory,
+  conversations, file contents, names or addresses back, and take out any
+  name or address of a person or place the cut missed before you show it. Show the person the
+  title and body exactly as they are, then give them the `url`: they open it
+  in their own browser, can change it there, and post it themselves. You
+  never post it.
+- **`board`** — this Host is on the network, but the network doesn't take
+  private support requests yet. The answer carries `board_post`. Tell the
+  person every member can read the members' community board. If they want
+  it, call `community_board` `action='post'` with the category, title and
+  body given: that posts nothing, it puts the exact text on a card over the
+  chat, and the post goes out only when they press Post it there, with the
+  code from their authenticator typed on that card (never ask them for it;
+  you never see it). Never say it was posted until the card's answer says so.
+- A **security problem** never goes anywhere public, on any Host: give the
+  person the `security` sentence (email security@privatae.ai, as the C-Series
+  security policy asks).
+- A payment or account question has no public form: say so, and nothing else.
+
+When this Host's network client carries a private support op (a C-Series
+update adds it once the network offers one), `support_open` drafts again;
+you do nothing different.
 
 ### Changing a draft
 
@@ -97,9 +135,10 @@ user opens the Support card, sees precisely that list, unticks anything they
 do not want to share, and presses **Send**. Only then does it cross to the
 platform.
 
-So after `support_open` you tell the user: *"I drafted a support ticket —
-it's waiting on the Support card in Circles for you to approve what gets
-shared."* You never say
+So after a `support_open` that answered `status: 'draft'` you tell the user:
+*"I drafted a support ticket — it's waiting on the Support card in Circles for
+you to approve what gets shared."* After one that answered `drafted: false`
+there is no ticket: say its `say` sentence instead. You never say
 "I reported it" or "it's sent". Do not send it for them; there is no tool
 that can.
 
@@ -225,7 +264,12 @@ paths, max 8, whose REDACTED excerpts should ride along; the user can drop
 any). NOTHING LEAVES THE POD ON OPEN: the pod assembles the shared context
 (Privatae Host version, installed apps, recent errors, recent model-call failures,
 your named files — secrets cut) and the USER approves, trims, or discards it
-on the Support card in Circles; only then is it sent. A BUG is sent as a pull request on
+on the Support card in Circles; only then is it sent. A Host that cannot send a
+private ticket (not on the Privatae network, or the network takes none yet)
+drafts nothing: support_open answers drafted:false with `say` (tell the user
+first), `security`, and a PUBLIC text for elsewhere (public_issue: a GitHub
+issue the user posts from their own browser; board_post: the members' board,
+posted only when they press Post it on its card) — never claim a ticket then. A BUG is sent as a pull request on
 the platform's bug repo (this Host is the author; a read-only validator passes
 it to main or declines it; the operator Host reads validated reports from
 main) — never as a row in anyone's database; every other category goes to the

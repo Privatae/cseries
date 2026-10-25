@@ -102,6 +102,17 @@ async def _fake_bridge(op, params):
 
 sp._bridge = _fake_bridge
 
+# These sends are the platform lane's: the Host holds a connected cloud bridge
+# (server/support_reach.py decides where a request can go from the client).
+from server import support_reach as _sr  # noqa: E402
+
+
+class _PlatformBridge:
+    _connected = True
+
+
+_sr.client = lambda: _PlatformBridge()
+
 SHARED = [
     {"key": "versions", "label": "v", "kind": "versions", "content": "cseries v0.16.83", "included": True},
     {"key": "errors", "label": "e", "kind": "errors", "content": "boom", "included": False},

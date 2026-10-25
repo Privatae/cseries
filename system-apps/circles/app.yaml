@@ -472,7 +472,7 @@ system: false
 #   contract, and its how-to lines live in skills and tool descriptions the
 #   Host reads on demand. Bundle rebuilt, repacked and re-signed.
 # 0.16.11 (2026-10-18): rebuilt from sources whose comments were rewritten as plain rationale; no behaviour change.
-version: "0.16.11"
+version: "0.16.12"
 # 0.15.0 (2026-10-10): the
 #   cards, on their own address. cards.html, beside index.html in this
 #   bundle, draws Circles as a deck of cards: each contact one card, the

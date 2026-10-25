@@ -88,16 +88,12 @@ async def _exec_community_board(entity_id: int, args: dict) -> dict:
         return {"status": "error", "result": err} if err else {"status": "ok", "result": data}
 
     if action == "post":
-        import uuid
-        params = {"op_id": f"host-{uuid.uuid4()}", "body": str(args.get("body") or "")}
-        if args.get("thread_id") is not None:
-            params["thread_id"] = int(args["thread_id"])
-            if args.get("parent_id") is not None:
-                params["parent_id"] = int(args["parent_id"])
-        else:
-            params["category"] = str(args.get("category") or "")
-            params["title"] = str(args.get("title") or "")
-        data, err = await op("community.post", params)
-        return {"status": "error", "result": err} if err else {"status": "ok", "result": data}
+        # Never sent from here: the call files the card that shows the exact
+        # text over the chat, and only the person's 'Post it' on it sends
+        # that text (runtime/board_post_approval, applied by
+        # server/routes/tickets.decide_ticket_service).
+        from mastercode.runtime import board_post_approval as _bpa
+        from server import brain_service
+        return await _bpa.propose(brain_service.get_pool(), brain_service._entity_id, args)
 
     return _refused(f"unknown community_board action: {action!r}")

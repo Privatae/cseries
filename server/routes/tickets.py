@@ -213,7 +213,8 @@ async def decide_ticket(ticket_id: int, request: Request) -> dict:
                                 pattern_template.conditions)
         stepup_code            the code from the user's authenticator, on a
                                 pipeline proposal whose 'apply' adds a check
-                                that runs outside the platform
+                                that runs outside the platform, and on a board
+                                post card's 'Post it'
     """
     pool = brain_service.get_pool()
     eid = _entity_id()
@@ -708,7 +709,8 @@ async def decide_ticket_service(
     older bundles).
 
     `stepup_code`: a pipeline proposal whose 'apply' adds a check
-    that runs outside the platform needs a code from the user's authenticator.
+    that runs outside the platform, and a board post card's 'Post it', need a
+    code from the user's authenticator.
     It is checked and burned here, BEFORE the status flips, so a wrong or
     missing code leaves the card open to try again; only the route passes
     one, and the ticket is user_only, so the host can never supply it.
@@ -822,6 +824,18 @@ async def decide_ticket_service(
                                    "second factor enrolled in Network). Nothing was changed — "
                                    "enter a fresh code and apply again.")
         stepped_up = True
+
+    # A board post the Host wrote (runtime/board_post_approval): 'Post it'
+    # puts text every member of the network reads, under this Host's name, so
+    # it takes the person's second factor on the card, exactly as a pipeline
+    # widen's 'apply' does: the code from their authenticator, checked and
+    # burned here BEFORE the status flips, so a missing, wrong, stale or
+    # replayed code leaves the card open and sends nothing. Only the route
+    # passes a code, and the card is user_only, so the Host never supplies one.
+    if md.get("kind") == BOARD_POST_PROPOSAL_KIND and option_id == BOARD_POST_STEPUP_OPTION:
+        from server.network import nac_stepup
+        if actor != "user" or not await nac_stepup.verify_stepup(pool, str(stepup_code or "")):
+            raise TicketError(403, BOARD_POST_STEPUP_REFUSED)
 
     decision = {
         "option_id": option_id,
@@ -1035,6 +1049,24 @@ async def decide_ticket_service(
                 json.dumps(out["runbook_trigger_apply"]), ticket_id)
         except Exception as e:  # noqa: BLE001
             log.warning("ticket %d: runbook trigger result not recorded: %s", ticket_id, e)
+    # A board post the Host wrote (runtime/board_post_approval): the person's
+    # 'post' sends the request stored on the card, after the decide like the
+    # cards above, so a double click cannot post twice.
+    if md.get("kind") == BOARD_POST_PROPOSAL_KIND:
+        from mastercode.runtime.board_post_approval import apply_proposal as _bp_apply
+        try:
+            out["board_post_apply"] = await _bp_apply(
+                pool, eid, md, option_id=option_id, ticket_id=ticket_id)
+        except Exception as e:  # noqa: BLE001 — the decide already stands
+            log.warning("ticket %d: board post not sent: %s", ticket_id, e)
+            out["board_post_apply"] = {"posted": False, "why": str(e)[:300]}
+        try:
+            await pool.execute(
+                "UPDATE entity_tickets SET metadata = COALESCE(metadata, '{}'::jsonb) "
+                "|| jsonb_build_object('board_post_apply', $1::jsonb) WHERE id = $2",
+                json.dumps(out["board_post_apply"]), ticket_id)
+        except Exception as e:  # noqa: BLE001
+            log.warning("ticket %d: board post result not recorded: %s", ticket_id, e)
     # A support ticket another Host sent the platform: the operator's fix
     # / ask / decline is applied by the platform — 'fix' also opens the
     # build phase the answer rides on.
@@ -1294,6 +1326,15 @@ LIMIT_CHANGE_PROPOSAL_KIND = "limit_change_proposal"   # = runtime/user_limits.P
 # (runtime/scheduled_approval): the person's 'apply' sets it.
 RECURRING_TASK_PROPOSAL_KIND = "recurring_task_proposal"   # = runtime/scheduled_approval.PROPOSAL_KIND
 RUNBOOK_TRIGGER_PROPOSAL_KIND = "runbook_trigger_proposal"  # = runtime/scheduled_approval.TRIGGER_KIND
+# A post on the members' board the Host wrote (runtime/board_post_approval):
+# the person's 'post' sends the exact request stored on the card.
+BOARD_POST_PROPOSAL_KIND = "board_post_proposal"  # = runtime/board_post_approval.PROPOSAL_KIND
+# Its 'Post it' takes the authenticator code on the card (decide_ticket_service).
+BOARD_POST_STEPUP_OPTION = "post"  # = runtime/board_post_approval.OPT_POST
+BOARD_POST_STEPUP_REFUSED = (
+    "Posting on the members' board needs a current code from your authenticator (the "
+    "second factor enrolled in Network). Nothing was posted: enter a fresh code on the "
+    "card and press Post it again.")
 SUPPORT_NOTE_REQUIRED = ("reply", "ask", "decline")   # = support_collect.NOTE_REQUIRED (gate-pinned)
 BUILT_OPTION_ID = "built"
 _CRED_TYPES = ("api_key", "opaque")
@@ -1335,11 +1376,13 @@ def _strip_platform_locks(metadata: Any) -> dict:
                         "asked_in_session", "asked_in", "connector_pairing",
                         "limit_change", "limit_change_apply",
                         "recurring_task", "recurring_task_apply",
-                        "runbook_trigger", "runbook_trigger_apply")}
+                        "runbook_trigger", "runbook_trigger_apply",
+                        "board_post", "board_post_then", "board_post_apply")}
     if out.get("kind") in (PHASE_GATE_KIND, SUPPORT_KIND, OP_ASK_KIND, PIPELINE_PROPOSAL_KIND,
                            TURN_TYPE_PROPOSAL_KIND, LIVE_CONTEXT_PROPOSAL_KIND,
                            CONNECTOR_PAIRING_KIND, LIMIT_CHANGE_PROPOSAL_KIND,
-                           RECURRING_TASK_PROPOSAL_KIND, RUNBOOK_TRIGGER_PROPOSAL_KIND):
+                           RECURRING_TASK_PROPOSAL_KIND, RUNBOOK_TRIGGER_PROPOSAL_KIND,
+                           BOARD_POST_PROPOSAL_KIND):
         # kind=support: the platform applies the answer on another Host's
         # ticket (a verdict, or the person's 'Tell them it's fixed') — only the operator's own
         # collect may raise one.

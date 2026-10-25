@@ -25,6 +25,10 @@ attached.
      offers each run's outcome and the END of its transcript, within the item
      cap; a run of another entity's project is never offered; an explicit
      harness_session (empty = none) beats a session the card text names.
+  S. a standalone Host (no client yet, or a NoPlatform) drafts nothing:
+     support_open writes no row and answers the sentence the owner reads
+     (server/support_reach.py), with none of the shared context in it. R, U
+     and H are the platform lane's, so they run with a connected cloud bridge.
 """
 import asyncio
 import contextlib
@@ -60,6 +64,13 @@ def check(label, cond, detail=""):
         FAILED += 1
 
 
+class _PlatformBridge:
+    """A connected cloud bridge to the platform, as support_reach reads one:
+    not a NoPlatform, not a network member, connected (the lane where a
+    private ticket is drafted and sent)."""
+    _connected = True
+
+
 def _items(row) -> list:
     v = row["shared_context"]
     return json.loads(v) if isinstance(v, str) else (v or [])
@@ -71,7 +82,10 @@ async def main(dsn):
     from server.routes import support as sp
     from server.routes import tickets as tk
     from brain.mastercode.context_store import ContextStore
+    from server import support_reach as sr
+    from server.bridge.no_platform import NoPlatform
 
+    real_client = sr.client
     pool = await asyncpg.create_pool(dsn, min_size=2, max_size=6)
     _bs._pool = pool
     _bs._entity_id = E
@@ -148,6 +162,38 @@ async def main(dsn):
             "('tool', 'error', 'gitea', 'gitea answered 502 after 900 ms', '{\"fault\": \"platform\"}'::jsonb)")
         await ContextStore(pool, E).put("notes/first.md", "first file body")
         await ContextStore(pool, E).put("notes/second.md", "second file body")
+
+        # ── S ────────────────────────────────────────────────────────────
+        # A standalone Host cannot send a private ticket, so it never drafts
+        # one: no client before boot (None), or the NoPlatform a booted
+        # standalone Host holds. The files and errors above are there, so the
+        # answer carrying none of them means something.
+        for label, standalone in (("no client yet", None), ("NoPlatform", NoPlatform())):
+            sr.client = lambda _bc=standalone: _bc
+            n_before = await pool.fetchval("SELECT count(*) FROM support_tickets WHERE entity_id = $1", E)
+            alone = await T._exec_tickets({
+                "op": "support_open", "category": "bug", "title": "Old title",
+                "problem": "Old problem", "context": "Old context", "recommendation": "Keep",
+                "files": ["notes/first.md"]})
+            res = alone.get("result") or {}
+            n_after = await pool.fetchval("SELECT count(*) FROM support_tickets WHERE entity_id = $1", E)
+            check(f"S standalone ({label}): support_open drafts nothing and writes no row",
+                  alone.get("status") == "ok" and res.get("drafted") is False
+                  and res.get("lane") == sr.LANE_STANDALONE and "ticket_id" not in res
+                  and "view" not in res and n_after == n_before, (alone, n_before, n_after))
+            check(f"S standalone ({label}): it answers the sentence the owner reads",
+                  res.get("say") == sr.cannot_send(sr.LANE_STANDALONE, "bug")
+                  and res["say"].startswith(sr.NOT_ON_NETWORK) and sr.SECURITY_SAY in res["say"]
+                  and str(res.get("note") or "").startswith("NOT DRAFTED"), res)
+            told = json.dumps(alone)
+            check(f"S standalone ({label}): none of the shared context is in the answer",
+                  "first file body" not in told and "Old context" not in told
+                  and "gitea answered 502" not in told and "k9 is not a valid model ID" not in told,
+                  told[:600])
+        # R, U and H draft and send on the platform lane: a connected cloud
+        # bridge (support_reach reads the lane from the client it holds).
+        sr.client = lambda: _PlatformBridge()
+
         opened = await T._exec_tickets({
             "op": "support_open", "category": "bug", "title": "Old title",
             "problem": "Old problem", "context": "Old context", "recommendation": "Keep",
@@ -436,6 +482,7 @@ async def main(dsn):
         check("H the run item still ends on the run's last line",
               content.rstrip().endswith("FINAL RUN LINE"), content[-200:])
     finally:
+        sr.client = real_client
         await pool.close()
     return 1 if FAILED else 0
 

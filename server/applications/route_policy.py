@@ -223,6 +223,19 @@ _ENTRIES: list[tuple[str, str, str, str]] = [
     *_e("POST", "/api/owner/logout", "own-auth",
         "ends only the session named by the caller's own session cookie "
         "(owner_login.sign_out); without one there is nothing to end"),
+    # The owner from a cloud machine's unlock page (routes/owner._from_unlock_page):
+    # only on a machine that keeps a vault, only to the Host's own name, only with
+    # the unlock page's Origin, and only with the ticket the machine wrote.
+    *_e("POST", "/api/owner/claim", "own-auth",
+        "the machine's one-time claim ticket, matched by its sha-256 against the record the "
+        "unlock agent wrote (cseries_machine.write_owner_claim: kind claim, two minutes) by "
+        "owner_login.claim_owner under the sign-in's per-client backoff; only while there is "
+        "no owner and once the disk's keys are set up"),
+    *_e("POST", "/api/owner/box-sign-in", "own-auth",
+        "the machine's one-time sign-in ticket, matched by its sha-256 against the record the "
+        "unlock agent wrote after the disk-key check (kind sign-in, two minutes) by "
+        "owner_login.box_sign_in under the sign-in's per-client backoff; a ticket already "
+        "taken (owner_account.box_ticket_hash) is refused"),
     # The owner's passkeys and recovery codes (server/owner_passkeys.py).
     *_e("POST", "/api/owner/passkey/login/options", "own-auth",
         "starts a passkey sign-in: an in-memory challenge for this Host's own name, used once, "

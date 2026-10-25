@@ -213,6 +213,19 @@ takes no handoff at all. `/setup` and `/login` on such a box point to the
 unlock page. Pressing the card's button again picks up where the owner left
 off.
 
+The claim also joins the Host to the Privatae network: every machine comes
+with a network membership for its owner, so the card's form carries a
+network enrolment code (`member_code`) with the setup code and the email. The
+agent keeps it with the handoff (a code that is not one is dropped, and the
+claim goes on without it) and, with the claim ticket, writes it, the email
+and the handoff's end into `/run/cseries-door/member-enrol.json` (0640, the
+directory's group), and takes it out of the handoffs, so that file is its
+one copy on the box until the handoff's end, when the agent removes it. Once
+the ticket has made the owner and the owner is that
+email, the Host joins with the code through the same join as Settings ->
+Network (`server/bridge/membership.py` `join_from_claim`), within 30 seconds,
+and tries each code once. A box whose card sent no code joins nothing.
+
 The updater installs a release with that release's own updater: after the
 unpack it runs the unpacked tree's `cseries-cloud-update` with
 `--handed-over`, which verifies the manifest again, finds the tree unpacked

@@ -30,6 +30,15 @@ through server.main.get_bridge_client() exactly as it reached nothing before.
          again. Nothing about a lost answer deletes the passport.
   Leave  passport.revoke on the open connection, then the files are deleted
          and the Host goes back to having no platform.
+  Claim  On a C-Series Cloud machine whose owner's membership comes with the
+         machine, the account site sends a code with "Set up your machine",
+         and the machine hands it to the Host with the claim
+         (CSERIES_MACHINE_DIR/member-enrol.json). Once the claim has made the
+         owner, and the owner is the email the code came with, the Host joins
+         with it through the same join as Settings -> Network, once
+         (join_from_claim). Each code is tried once, whatever the answer, but
+         for a network that could not be reached. A Host on a person's own
+         computer has no such directory, and none of this runs there.
 
 The Host's own entity id (1, the id inside its own database) does not change.
 The network's id for it is the passport's entity_id: shown in Settings and
@@ -40,6 +49,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime as dt
+import hashlib
 import json
 import logging
 import os
@@ -75,6 +85,14 @@ RENEW_RETRY_S = 300.0
 
 # Seam for the tests that read how long the renewal loop waits.
 _sleep = asyncio.sleep
+
+# The Cloud claim's code (module docstring, Claim). Looked for every 30 s while
+# the Host waits for its owner or the network, else at the hourly check. Codes
+# tried are kept by SHA-256 in the passport directory (which leave and restore
+# keep: passport.delete takes only the passport's own files), the newest few.
+CLAIM_POLL_S = 30.0
+CLAIM_TRIED = "claim-codes.json"
+CLAIM_TRIED_KEEP = 16
 
 DELETE_ON: frozenset[str] = frozenset({"revoked", "conflict", "unknown"})
 MEMBERSHIP_NOT_ACTIVE = "membership not active"
@@ -218,13 +236,15 @@ class Membership:
                  enrol_host: str = ENROL_HOST, enrol_port: int = ENROL_PORT,
                  door_host: str = NETWORK_DOOR_HOST, door_port: int = NETWORK_DOOR_PORT,
                  set_client: Optional[Callable] = None,
-                 clock: Optional[Callable[[], dt.datetime]] = None):
+                 clock: Optional[Callable[[], dt.datetime]] = None,
+                 owner_email: Optional[Callable[[], Optional[str]]] = None):
         self.dir = Path(directory or pp.PASSPORT_DIR)
         self.anchor = Path(anchor or ROOT_CERT)
         self.enrol_host, self.enrol_port = enrol_host, enrol_port
         self.door_host, self.door_port = door_host, door_port
         self._set_client = set_client or (lambda c: None)
         self._clock = clock or (lambda: dt.datetime.now(dt.timezone.utc))
+        self._owner_email = owner_email or _owner_email
         self.passport: Optional[pp.Passport] = None
         self.client = None
         self.last_error: Optional[str] = None
@@ -233,12 +253,14 @@ class Membership:
         self._lock = asyncio.Lock()
         self._client_task: Optional[asyncio.Task] = None
         self._renew_task: Optional[asyncio.Task] = None
+        self._claim_task: Optional[asyncio.Task] = None
 
     # ── lifecycle ───────────────────────────────────────────────────────────
 
     async def boot(self):
         """At start: the member client when a passport is on disk, else a
         NoPlatform as on any standalone Host. Returns the client in use."""
+        self._start_claim_pickup()
         p = pp.load(self.dir)
         if p is None:
             client = NoPlatform()
@@ -250,6 +272,14 @@ class Membership:
         # key is of no use.
         pp.discard_next_key(self.dir)
         return self._start(p)
+
+    def _start_claim_pickup(self) -> None:
+        """The Cloud claim's code (join_from_claim): on a cloud machine only."""
+        from server import cloud_machine
+        if not cloud_machine.machine_dir():
+            return
+        if self._claim_task is None or self._claim_task.done():
+            self._claim_task = asyncio.get_running_loop().create_task(self._claim_loop())
 
     def _start(self, p: pp.Passport):
         self.passport = p
@@ -280,6 +310,13 @@ class Membership:
         self._set_client(NoPlatform())
 
     async def shutdown(self) -> None:
+        if self._claim_task is not None and self._claim_task is not asyncio.current_task():
+            self._claim_task.cancel()
+            try:
+                await self._claim_task
+            except (asyncio.CancelledError, Exception):
+                pass
+        self._claim_task = None
         if self._renew_task is not None and self._renew_task is not asyncio.current_task():
             self._renew_task.cancel()
             try:
@@ -362,6 +399,96 @@ class Membership:
 
     def _expired(self, p: pp.Passport) -> bool:
         return self._clock() >= p.not_after
+
+    # ── the Cloud claim's code ──────────────────────────────────────────────
+
+    def _claim_tried(self) -> list[str]:
+        try:
+            doc = json.loads((self.dir / CLAIM_TRIED).read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return []
+        tried = doc.get("tried") if isinstance(doc, dict) else None
+        return [h for h in tried if isinstance(h, str)] if isinstance(tried, list) else []
+
+    def _note_claim_tried(self, digest: str) -> None:
+        tried = [h for h in self._claim_tried() if h != digest] + [digest]
+        self.dir.mkdir(parents=True, exist_ok=True)
+        tmp = self.dir / f".{CLAIM_TRIED}.tmp"
+        tmp.write_text(json.dumps({"tried": tried[-CLAIM_TRIED_KEEP:]}) + "\n", encoding="utf-8")
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, self.dir / CLAIM_TRIED)
+
+    async def join_from_claim(self) -> str:
+        """Join with the code the machine handed over with the claim (module
+        docstring, Claim), through join(), as Settings -> Network does.
+        Answers what happened, in a word or two; raises nothing."""
+        from server import cloud_machine
+        if not cloud_machine.machine_dir():
+            return "not a cloud machine"
+        doc = cloud_machine.member_enrol()
+        if doc is None:
+            return "no code"
+        code = pp.canonical_code(doc.get("code") or "")
+        email = str(doc.get("email") or "").strip().lower()
+        until = doc.get("until")
+        if not pp.valid_code(code) or not email or isinstance(until, bool) \
+                or not isinstance(until, (int, float)):
+            return "no code"
+        if self._clock().timestamp() >= until:
+            return "expired"
+        digest = hashlib.sha256(code.encode("ascii")).hexdigest()
+        if digest in self._claim_tried():
+            return "tried"
+        if self.passport is not None:
+            return "member"
+        owner = (self._owner_email() or "").strip().lower()
+        if not owner:
+            return "no owner"
+        if owner != email:
+            # A code for another account than the Host's owner never joins it.
+            logger.warning("network: the claim's code is for another account than this "
+                           "Host's owner; not used")
+            self._note_claim_tried(digest)
+            return "not the owner"
+        try:
+            await self.join(code)
+        except (NetworkUnreachable, EnrolmentRefused) as e:
+            if isinstance(e, NetworkUnreachable) or e.code == 429 or e.code >= 500:
+                # The door was not reached, or could not answer now: the code
+                # is still good, so the next look tries it again.
+                logger.info("network: joining with the claim's code waits: %s", e.message)
+                return "waiting"
+            self._note_claim_tried(digest)
+            logger.warning("network: the claim's code was refused: %s", e.message)
+            return "refused"
+        except MembershipError as e:
+            if e.status == 409 and self.passport is None:
+                return "waiting"          # a join or leave of the owner's is under way
+            self._note_claim_tried(digest)
+            if self.passport is not None:
+                return "member"
+            logger.warning("network: the claim's code could not be used: %s", e.message)
+            return "refused"
+        self._note_claim_tried(digest)
+        logger.info("network: joined with the claim's code")
+        return "joined"
+
+    async def _claim_loop(self) -> None:
+        while True:
+            wait = RENEW_CHECK_S
+            try:
+                outcome = await self.join_from_claim()
+                if outcome in ("no owner", "waiting") or (
+                        outcome == "no code" and not (self._owner_email() or "")):
+                    # A box before its claim, or a code the network could not
+                    # take yet: look again soon.
+                    wait = CLAIM_POLL_S
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning("network: the claim's code could not be read: %s", e)
+                wait = CLAIM_POLL_S
+            await _sleep(wait)
 
     # ── renewal ─────────────────────────────────────────────────────────────
 
@@ -505,6 +632,12 @@ class Membership:
                     "network here, then join again with a new code from your account page "
                     f"({ACCOUNT_NETWORK_URL}).")
         return out
+
+
+def _owner_email() -> Optional[str]:
+    """The Host's owner, as the sign-in knows it (server/owner_login.py)."""
+    from server import owner_login
+    return owner_login.owner_email()
 
 
 _current: Optional[Membership] = None

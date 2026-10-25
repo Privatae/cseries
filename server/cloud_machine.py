@@ -17,6 +17,10 @@ write (vm/cloud cseries_machine.publish):
                        its SHA-256, with its kind ("claim": make the owner,
                        with this email; "sign-in"), and when it expires
                        (owner_login.claim_owner, box_sign_in)
+  member-enrol.json    the network enrolment code the account site sent
+                       with the claim, when the owner's membership comes
+                       with the machine, with the owner's email and until
+                       when it is good (membership.join_from_claim)
 
 On such a machine the owner account is made from the unlock page, never
 with the setup code: the machine makes a ticket once the person has set up
@@ -46,6 +50,7 @@ STATE = "machine-state.json"
 LOG = "access-log.jsonl"
 RECORD = "unlock-record.jsonl"
 OWNER_CLAIM = "owner-claim.json"
+MEMBER_ENROL = "member-enrol.json"
 TIMEOUT_S = 5.0
 _MAX_LINE = 4096
 _MAX_ROWS = 500
@@ -98,6 +103,13 @@ def owner_claim() -> Optional[dict]:
     """owner-claim.json (module docstring), or None."""
     d = machine_dir()
     return _read_json(os.path.join(d, OWNER_CLAIM)) if d else None
+
+
+def member_enrol() -> Optional[dict]:
+    """member-enrol.json (module docstring), or None: always None on a Host
+    with no such machine."""
+    d = machine_dir()
+    return _read_json(os.path.join(d, MEMBER_ENROL)) if d else None
 
 
 def unlock_url(st: Optional[dict] = None) -> Optional[str]:

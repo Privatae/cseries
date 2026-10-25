@@ -13,6 +13,12 @@ sign-in cookie, server/owner_login.py). A process inside the container holds
 no session, so the Host cannot join or leave on its own, and neither scope
 maps to any capability the Host's tools can hold (meta_tool_caps: an unmapped
 scope is no capability).
+
+One join is not made here: on a C-Series Cloud machine the owner's own press
+of "Set up your machine", signed in at privatae.ai, sends a code with the
+claim, and the Host joins with it once that owner is its owner
+(membership.join_from_claim). That press is the owner's consent; the Host
+never makes a code, and has no way to.
 """
 
 from __future__ import annotations

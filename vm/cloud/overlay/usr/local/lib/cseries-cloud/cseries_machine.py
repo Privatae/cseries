@@ -16,6 +16,16 @@ and cannot write):
                        sign-in ticket the unlock page holds now, by its hash
                        (write_owner_claim); the Host's /api/owner/claim and
                        /api/owner/box-sign-in take the ticket once
+  member-enrol.json    {code, email, until}: the network enrolment code the
+                       account site sent with the claim's handoff, when the
+                       owner's membership comes with the machine
+                       (write_member_enrol); the Host joins the network with
+                       it once its owner is that email
+                       (server/bridge/membership.py join_from_claim). 0640,
+                       the directory's group, like the directory itself; the
+                       only copy once written (the agent takes it out of the
+                       handoffs), removed once `until` has passed
+                       (clear_member_enrol)
 
 Standard library only, besides the box's own modules.
 """
@@ -55,6 +65,7 @@ LANES = "8810, 8811"
 # cookie.
 HANDOFF = cv.RUN + "/handoff.json"
 OWNER_CLAIM_NAME = "owner-claim.json"
+MEMBER_ENROL_NAME = "member-enrol.json"
 # On the plain disk, so a heartbeat while the vault is locked still says the
 # setup is done (setup_report). Written once both halves are seen, never
 # removed: a machine is claimed once.
@@ -337,3 +348,37 @@ def write_owner_claim(paths, kind, email, ticket, ttl_s, now=None):
            "made_at": iso(t), "expires_at": iso(t + ttl_s)}
     cc.write_json(os.path.join(paths.p(DOOR_DIR), OWNER_CLAIM_NAME), doc)
     return doc
+
+
+def write_member_enrol(paths, code, email, until):
+    """The network enrolment code from the claim's handoff, for the Host
+    (module docstring). Readable by the directory's group only: the code is
+    good for one join, so it is kept as close as the directory keeps it."""
+    d = paths.p(DOOR_DIR)
+    os.makedirs(d, exist_ok=True)
+    doc = {"code": code, "email": email, "until": int(until)}
+    cc.write_json(os.path.join(d, MEMBER_ENROL_NAME), doc, mode=0o640, gid=os.stat(d).st_gid)
+    return doc
+
+
+def clear_member_enrol(paths, now=None):
+    """Remove member-enrol.json once its code's handoff has ended (its
+    `until`): the door refuses the code by then, and a code is kept on the
+    box no longer than it can be used. A file that cannot be read is removed
+    too. True when one was removed."""
+    t = time.time() if now is None else now
+    path = os.path.join(paths.p(DOOR_DIR), MEMBER_ENROL_NAME)
+    try:
+        doc = cc.read_json(path, None)
+    except (OSError, ValueError):
+        doc = {}
+    if doc is None:
+        return False
+    until = doc.get("until") if isinstance(doc, dict) else None
+    if isinstance(until, (int, float)) and not isinstance(until, bool) and until > t:
+        return False
+    try:
+        os.unlink(path)
+    except FileNotFoundError:
+        return False
+    return True

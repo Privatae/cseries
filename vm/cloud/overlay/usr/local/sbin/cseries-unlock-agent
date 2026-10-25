@@ -9,7 +9,11 @@ out, but for the handoff:
 
   POST /api/setup           form fields setup_code and email, from the account
                             site's "Set up your machine" (or this page's own
-                            form): a handoff cookie, and a redirect to the page
+                            form): a handoff cookie, and a redirect to the page.
+                            The site may add member_code, a network enrolment
+                            code for the owner's membership when it comes with
+                            the machine; kept with the handoff and given to
+                            the Host with the claim (owner_ticket)
   GET  /api/state           what the page shows: the state, the unlock
                             passkeys (id and PRF salt), a claim's progress,
                             whether this browser holds a handoff, and whether
@@ -90,6 +94,10 @@ HANDOFF_KEEP = 8
 # A ticket is posted to the Host the moment it is made.
 TICKET_TTL_S = 120
 EMAIL_MAX = 254
+# A network enrolment code: what the Host's own check takes
+# (server/bridge/passport.py canonical_code and valid_code), Crockford base32.
+MEMBER_CODE_ALPHABET = frozenset("0123456789ABCDEFGHJKMNPQRSTVWXYZ")
+MEMBER_CODE_LENGTH = 12
 
 
 class Refused(Exception):
@@ -114,6 +122,18 @@ def normal_email(raw):
     if "@" not in email or len(email) > EMAIL_MAX or any(c.isspace() or ord(c) < 0x20 for c in email):
         return None
     return email
+
+
+def member_code(raw):
+    """The handoff's member_code, upper case with spaces and hyphens taken
+    out, or None when it is not a code. A wrong one is dropped, never
+    refused: the claim does not depend on it."""
+    if not isinstance(raw, str) or len(raw) > 64:
+        return None
+    code = "".join(c for c in raw if not c.isspace() and c != "-").upper()
+    if len(code) != MEMBER_CODE_LENGTH or not set(code) <= MEMBER_CODE_ALPHABET:
+        return None
+    return code
 
 
 def refusal_page(msg):
@@ -196,6 +216,9 @@ class Agent:
         doc = cc.read_json(self.paths.p(cm.HANDOFF), None)
         recs = doc.get("handoffs") if isinstance(doc, dict) else None
         t = self.now()
+        # The claim's network code, once its handoff has ended (every
+        # request the page makes looks at the handoffs, its state poll too).
+        cm.clear_member_enrol(self.paths, t)
         return {h: r for h, r in (recs or {}).items()
                 if isinstance(r, dict) and isinstance(r.get("until"), (int, float)) and r["until"] > t}
 
@@ -254,8 +277,11 @@ class Agent:
             raise Refused("Enter a valid email address.", 400)
         token = secrets.token_urlsafe(32)
         recs = self._handoffs()
-        recs[hashlib.sha256(token.encode("ascii")).hexdigest()] = {
-            "email": email, "until": self.now() + HANDOFF_TTL_S, "ran_claim": False}
+        rec = {"email": email, "until": self.now() + HANDOFF_TTL_S, "ran_claim": False}
+        joining = member_code((form.get("member_code") or [""])[0])
+        if joining:
+            rec["member_code"] = joining
+        recs[hashlib.sha256(token.encode("ascii")).hexdigest()] = rec
         self._keep_handoffs(recs)
         cookie = (f"{HANDOFF_COOKIE}={token}; Max-Age={HANDOFF_TTL_S}; Path=/; Secure; HttpOnly; "
                   "SameSite=Strict")
@@ -490,6 +516,20 @@ class Agent:
             kind, route = "claim", "api/owner/claim"
         ticket = secrets.token_urlsafe(32)
         cm.write_owner_claim(self.paths, kind, email, ticket, TICKET_TTL_S, now=self.now())
+        joining = ho[1].get("member_code") if (ho and kind == "claim") else None
+        if joining and member_code(joining) == joining:
+            # The owner's membership comes with this machine: the Host joins
+            # the network with this code once the ticket has made its owner.
+            cm.write_member_enrol(self.paths, joining, email, ho[1]["until"])
+        if ho and kind == "claim":
+            # The code now lives in member-enrol.json alone (until its end,
+            # cseries_machine.clear_member_enrol): out of every handoff, this
+            # one's and any earlier press's, so no second copy waits in /run.
+            recs = self._handoffs()
+            if any("member_code" in r for r in recs.values()):
+                for r in recs.values():
+                    r.pop("member_code", None)
+                self._keep_handoffs(recs)
         return {"ok": True, "kind": kind, "ticket": ticket,
                 "action": "https://" + cc.host_name(cfg) + "/" + route}
 

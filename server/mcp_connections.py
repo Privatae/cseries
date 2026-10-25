@@ -52,6 +52,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import concurrent.futures
 import datetime as _dt
 import hashlib
 import ipaddress
@@ -152,13 +153,74 @@ def check_url(url: Any) -> tuple[str, str]:
     return urlunsplit(("https", p.netloc, p.path or "/", p.query, "")), host
 
 
+# The name lookups before a contact run on threads of their own. getaddrinfo
+# cannot be stopped: a lookup whose caller gave up keeps its thread until the
+# resolver answers or gives up itself. On the loop's default executor, names
+# that never answer would hold its threads and stall everything else the Host
+# runs there. Four threads is libuv's default pool, the one Node.js runs every
+# dns.lookup (getaddrinfo) on; measured on mgmt-2 with Node 22, eight equal jobs
+# finish in two waves of four. Lookups of one name share one thread, so a name
+# that never answers holds one thread however often it is asked for.
+LOOKUP_THREADS = 4
+_LOOKUP_POOL = concurrent.futures.ThreadPoolExecutor(max_workers=LOOKUP_THREADS,
+                                                     thread_name_prefix="mcp-lookup")
+_LOOKUPS: dict[str, concurrent.futures.Future] = {}
+
+
+def _lookup_done(host: str, fut: concurrent.futures.Future) -> None:
+    if _LOOKUPS.get(host) is fut:
+        _LOOKUPS.pop(host, None)
+
+
+def _waiter(fut: concurrent.futures.Future) -> asyncio.Future:
+    """This caller's own future for the lookup `fut`. A caller that stops
+    waiting cancels only its own, so the lookup goes on for the others, and an
+    answer that comes after every caller has gone is dropped without a log
+    line (asyncio.shield would log each such failure)."""
+    loop = asyncio.get_running_loop()
+    mine = loop.create_future()
+    # Mark an error as retrieved, so one set as the caller is cancelled is not logged.
+    mine.add_done_callback(lambda m: m.cancelled() or m.exception())
+
+    def _set(f: concurrent.futures.Future) -> None:
+        if mine.done():
+            return
+        if f.cancelled():
+            mine.cancel()
+        elif f.exception() is not None:
+            mine.set_exception(f.exception())
+        else:
+            mine.set_result(f.result())
+
+    def _done(f: concurrent.futures.Future) -> None:
+        try:
+            loop.call_soon_threadsafe(_set, f)
+        except RuntimeError:            # the caller's loop has closed
+            pass
+    fut.add_done_callback(_done)
+    return mine
+
+
 async def _resolve_addrs(host: str) -> list[str]:
-    """Every address `host` resolves to from this pod (tests replace this)."""
-    infos = await asyncio.get_running_loop().getaddrinfo(host, 443, type=socket.SOCK_STREAM)
+    """Every address `host` resolves to from this pod (tests replace this).
+    Runs on _LOOKUP_POOL, joining a lookup of the same name under way."""
+    fut = _LOOKUPS.get(host)
+    if fut is None:
+        fut = _LOOKUP_POOL.submit(socket.getaddrinfo, host, 443, 0, socket.SOCK_STREAM)
+        _LOOKUPS[host] = fut
+        fut.add_done_callback(lambda f, h=host: _lookup_done(h, f))
+    infos = await _waiter(fut)
     return sorted({str(i[4][0]) for i in infos})
 
 
-async def public_host_refusal(host: str) -> Optional[str]:
+def _lookup_budget() -> float:
+    """How long a name lookup may take: the budget of one request to an
+    authorization server, the lookup included (mcp_oauth.HTTP_TIMEOUT_S)."""
+    from server import mcp_oauth
+    return float(mcp_oauth.HTTP_TIMEOUT_S)
+
+
+async def public_host_refusal(host: str, *, timeout_s: Optional[float] = None) -> Optional[str]:
     """Why the person's key may not be sent to `host`, or None when every
     address it resolves to is a public one.
 
@@ -169,13 +231,17 @@ async def public_host_refusal(host: str) -> Optional[str]:
     does not apply: a name like 127.0.0.1.nip.io passed check_url and would
     have reached the person's own machine. So the name is
     resolved here before every contact and must resolve, only, to global
-    addresses. A name that does not resolve is refused."""
+    addresses. A name that does not resolve is refused, and so is one that
+    does not resolve within `timeout_s` (default _lookup_budget())."""
     h = (host or "").strip().strip("[]").lower().rstrip(".")
     try:
         addrs = [str(ipaddress.ip_address(h))]
     except ValueError:
+        budget = _lookup_budget() if timeout_s is None else float(timeout_s)
         try:
-            addrs = await _resolve_addrs(h)
+            addrs = await asyncio.wait_for(_resolve_addrs(h), max(budget, 0.0))
+        except asyncio.TimeoutError:
+            return f"couldn't resolve {h} in time"
         except (OSError, UnicodeError) as e:
             return f"{h} does not resolve ({type(e).__name__})"
     if not addrs:
@@ -667,9 +733,12 @@ async def _use(pool, eid: int, row: dict, method: str, send, *, tool: Optional[s
                 "wrong, expired or short of the access this needs. The person replaces it in the Keys "
                 "app.") from None
     from server import mcp_oauth
+    # When the token each attempt sends was issued: a refusal is about that
+    # token, and ends the sign-in only while it is still the one in the vault.
+    seen = None
     for attempt in (0, 1):
         try:
-            secret = await mcp_oauth.access_secret(pool, eid, row, after_401=attempt == 1)
+            secret, seen = await mcp_oauth.access_secret(pool, eid, row, after_401=attempt == 1, seen=seen)
         except mcp_oauth.SignInNeeded as e:
             raise McpConnectionError(
                 f"{e}: ask the person to press the Sign in button on {row['name']}'s card in the "
@@ -692,7 +761,7 @@ async def _use(pool, eid: int, row: dict, method: str, send, *, tool: Optional[s
                 raise
             if secret is not None and e.http_status == 401 and attempt == 0:
                 continue
-            raise McpConnectionError(await mcp_oauth.on_auth_error(pool, eid, row, e)) from None
+            raise McpConnectionError(await mcp_oauth.on_auth_error(pool, eid, row, e, seen=seen)) from None
     raise McpConnectionError(f"{row['name']} was not reached")   # pragma: no cover
 
 

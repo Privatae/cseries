@@ -62,8 +62,10 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import datetime as _dt
 import hashlib
+import itertools
 import json
 import logging
 import os
@@ -94,7 +96,14 @@ REFRESH_EARLY_S = 60
 # This many sign-ins asked for the access the server names and it still
 # refused: another sign-in will not satisfy it, and the person is told so.
 MAX_STEP_UPS = 3
+# One request to a metadata, registration or token endpoint, from the name
+# lookup to the last byte (_http).
 HTTP_TIMEOUT_S = 20.0
+# A Sign in press waits for the connection's lock this long past one request
+# (HTTP_TIMEOUT_S), then says to try again: the lock is held for at most one
+# token request and the reads and writes around it (refresh), so this is for
+# a database that stalls, not for a slow authorization server.
+LOCK_MARGIN_S = 5.0
 MAX_DOC_BYTES = 256 * 1024
 _TOKEN_RE = re.compile(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+")
 _ERROR_CODE_RE = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
@@ -353,10 +362,15 @@ def redirect_uri() -> str:
 
 async def _http(method: str, url: str, *, what: str, form: Optional[dict] = None,
                 json_body: Optional[dict] = None, headers: Optional[dict] = None,
-                timeout_s: float = HTTP_TIMEOUT_S) -> tuple[int, Any]:
+                timeout_s: Optional[float] = None) -> tuple[int, Any]:
     """(status, the JSON body or None) of one request through the egress gate.
     https only, no redirects, the host checked to resolve only to public
-    addresses and not to be one of the platform's own."""
+    addresses and not to be one of the platform's own. `timeout_s` (default
+    HTTP_TIMEOUT_S) covers the whole of it, the name lookup included: a
+    refresh holds the connection's lock for this, and a Sign in press waits
+    behind it."""
+    budget = HTTP_TIMEOUT_S if timeout_s is None else float(timeout_s)
+    end = time.monotonic() + budget
     if not _https_url(url):
         raise OAuthError(f"{what} is not an https URL")
     host = (urlsplit(url).hostname or "").lower()
@@ -364,9 +378,12 @@ async def _http(method: str, url: str, *, what: str, form: Optional[dict] = None
     from server.network.nac_egress import _is_platform_dest
     if _is_platform_dest(host):
         raise OAuthError(f"{what} is on {host}, one of the platform's own services")
-    why = await public_host_refusal(host)
+    why = await public_host_refusal(host, timeout_s=budget)
     if why:
         raise OAuthError(f"{what} was not reached: {why}")
+    left = end - time.monotonic()
+    if left <= 0:
+        raise OAuthError(f"{what} did not answer in time ({host})")
     h = {"Accept": "application/json", **(headers or {})}
     data: Optional[bytes] = None
     if form is not None:
@@ -376,7 +393,7 @@ async def _http(method: str, url: str, *, what: str, form: Optional[dict] = None
         data = json.dumps(json_body).encode("utf-8")
         h["Content-Type"] = "application/json"
     try:
-        async with mcp_client._session(timeout_s) as session:
+        async with mcp_client._session(left) as session:
             async with session.request(method, url, data=data, headers=h,
                                        proxy=mcp_client.gate_proxy(), allow_redirects=False) as resp:
                 raw = await mcp_client._read_capped(resp, MAX_DOC_BYTES)
@@ -603,6 +620,21 @@ async def discover(pool, eid: int, conn: dict, challenge: Optional[dict]) -> dic
         resource = canonical_resource(conn["url"])
     issuer = servers[0]
     meta = await _fetch_as(issuer)
+    # Under refresh()'s lock: a refresh already under way at the previous
+    # authorization server finishes, and stores what it got, before this
+    # reads the row and drops that server's tokens; one that starts after
+    # finds the sign-in needed. Unlocked, a refresh answered after the drop
+    # put the old server's tokens back on a row naming the new one, marked
+    # active, and the next refresh sent the old refresh token to the new
+    # server. The wait is bounded (_lock_bounded): nothing is written yet, so
+    # a press that gives up loses nothing.
+    async with _lock_bounded(conn):
+        return await _keep_discovered(pool, eid, conn, challenge, prm_url, prm, resource, issuer, meta)
+
+
+async def _keep_discovered(pool, eid: int, conn: dict, challenge: Optional[dict], prm_url: str, prm: dict,
+                           resource: str, issuer: str, meta: dict) -> dict:
+    """discover()'s write of what it found, under the connection's lock."""
     prev = await load(pool, conn)
     same_issuer = prev is not None and prev.get("issuer") == issuer
     challenged = " ".join(_scopes((challenge or {}).get("scope"))) or None
@@ -997,7 +1029,22 @@ async def finish(pool, eid: int, params: dict) -> dict:
                            int(conn["id"]), str(e)[:300])
         return {"ok": False, "error": getattr(e, "error", None) or "token_refused", "detail": str(e),
                 "server": conn["name"]}
-    await _store_tokens(pool, eid, conn, body, asked_scope=pend["scope"], signed_in=True)
+    # Stored under refresh()'s lock. A refresh of the sign-in this one
+    # replaces, answered after it, would otherwise write its tokens (the old
+    # grant's, its scope without a step-up) over these, or end this sign-in
+    # when its old refresh token is refused; it finishes first now, and this
+    # replaces what it stored. The row is read again under the lock: a move to
+    # another authorization server while the code was traded keeps nothing.
+    # The code is spent by now, so this wait has no timeout of its own (one
+    # that gave up would lose the sign-in): it is bounded by what holds the
+    # lock, at most one token request (refresh: one in flight, the ones
+    # queued behind a failure give up) and the reads and writes around it.
+    async with _LOCKS.setdefault(int(conn["id"]), asyncio.Lock()):
+        now = await load(pool, conn)
+        if now is None or now.get("issuer") != pend["issuer"] or now.get("client_id") != pend["client_id"]:
+            return {"ok": False, "error": "server_changed", "server": conn["name"],
+                    "detail": "the server's authorization server changed during the sign-in; start it again"}
+        await _store_tokens(pool, eid, conn, body, asked_scope=pend["scope"], signed_in=True)
     from server import mcp_connections
     mcp_client.forget_session(mcp_connections.cache_key(conn))
     mcp_connections.schedule_fetch(pool, eid, conn["name"], delay=0)
@@ -1007,6 +1054,38 @@ async def finish(pool, eid: int, params: dict) -> dict:
 # ── using the token ─────────────────────────────────────────────────────────
 
 _LOCKS: dict[int, asyncio.Lock] = {}
+# The last renewal on each connection that failed and left the sign-in as it
+# was (a timeout, a 5xx, a 429, the gate, or its caller gone): (when the token
+# it was for was issued, its place in _SEQ, the error). A refresh queued
+# behind it returns that error instead of asking again (refresh).
+_FAILED: dict[int, tuple[Optional[_dt.datetime], int, OAuthError]] = {}
+_SEQ = itertools.count(1)
+
+
+class _Busy(OAuthError):
+    """The connection's lock was not free within one request and a margin."""
+
+
+@contextlib.asynccontextmanager
+async def _lock_bounded(conn: dict):
+    """The connection's lock, waited for no longer than one request and
+    LOCK_MARGIN_S; _Busy, saying to try again in a moment, after that."""
+    lock = _LOCKS.setdefault(int(conn["id"]), asyncio.Lock())
+    try:
+        await asyncio.wait_for(lock.acquire(), HTTP_TIMEOUT_S + LOCK_MARGIN_S)
+    except TimeoutError:
+        raise _Busy(f"{conn['name']} is still renewing its sign-in: try again in a moment") from None
+    try:
+        yield
+    finally:
+        lock.release()
+
+
+def _again(e: OAuthError) -> OAuthError:
+    """A copy of a recorded renewal failure, for a refresh queued behind it."""
+    if isinstance(e, _TokenRefused):
+        return _TokenRefused(str(e), error=e.error, status=e.status)
+    return OAuthError(str(e))
 
 
 async def mark_sign_in_needed(pool, eid: int, conn: dict, reason: str, *,
@@ -1023,20 +1102,52 @@ def _issued_at(oauth: dict) -> Optional[_dt.datetime]:
     return _aware(oauth.get("refreshed_at")) or _aware(oauth.get("signed_in_at"))
 
 
+async def _end_if_current(pool, eid: int, conn: dict, seen: Optional[_dt.datetime], reason: str, *,
+                          challenged: Optional[str] = None) -> bool:
+    """End the sign-in a refused token belonged to. `seen` is when that token
+    was issued (_issued_at, as access_secret returned it; None for a request
+    sent with no token). True when the person must sign in now: ended here, or
+    ended already. False when a refresh or a new sign-in replaced that token
+    while the refused request was on its way, and that sign-in is kept: a
+    late answer about an old token does not end a newer one. Under the lock
+    refresh(), finish() and discover() write under, so the row read here is
+    the one the tokens in the vault belong to."""
+    async with _LOCKS.setdefault(int(conn["id"]), asyncio.Lock()):
+        oauth = await load(pool, conn)
+        if oauth is None or oauth["status"] != "active":
+            return True
+        if _issued_at(oauth) != _aware(seen):
+            return False
+        await mark_sign_in_needed(pool, eid, conn, reason, challenged=challenged)
+        return True
+
+
 async def refresh(pool, eid: int, conn: dict, *, seen: Optional[_dt.datetime]) -> None:
     """Trade the refresh token for a new access token. One at a time per
     connection: a refresh token is rotated (OAuth 2.1 4.3.1), so a second
     refresh with the old one would be refused and end the sign-in. `seen` is
     when the token the caller found was issued (_issued_at); a caller that
     waited while another refreshed, or while the person signed in again, uses
-    that newer token instead of refreshing a second time."""
-    lock = _LOCKS.setdefault(int(conn["id"]), asyncio.Lock())
+    that newer token instead of refreshing a second time.
+
+    A refresh that waited while the one ahead of it failed for the same token
+    (_FAILED) returns that failure without a request of its own, so the lock
+    is held for one token request (at most HTTP_TIMEOUT_S, the name lookup
+    included) however many calls are queued: each one waiting through its own
+    request made a Sign in press behind them wait for all of them."""
+    cid = int(conn["id"])
+    asked = next(_SEQ)
+    lock = _LOCKS.setdefault(cid, asyncio.Lock())
     async with lock:
         oauth = await load(pool, conn)
         if oauth is None or oauth["status"] != "active":
             raise SignInNeeded(f"{conn['name']} needs you to sign in again")
-        if _issued_at(oauth) != _aware(seen):
+        issued = _issued_at(oauth)
+        if issued != _aware(seen):
             return
+        last = _FAILED.get(cid)
+        if last is not None and last[0] == issued and last[1] > asked:
+            raise _again(last[2])
         sec = await _load_secrets(pool, eid, conn)
         rt = sec.get("refresh_token")
         if not rt:
@@ -1053,55 +1164,95 @@ async def refresh(pool, eid: int, conn: dict, *, seen: Optional[_dt.datetime]) -
             # sign-in is kept for the next try.
             if e.error in ("invalid_grant", "invalid_client", "unauthorized_client") \
                     or (400 <= e.status < 500 and e.status != 429):
+                _FAILED.pop(cid, None)
                 await mark_sign_in_needed(pool, eid, conn, f"renewing the sign-in was refused ({e.error or e.status})")
                 raise SignInNeeded(f"{conn['name']}'s sign-in can no longer be renewed") from None
+            _FAILED[cid] = (issued, next(_SEQ), e)
             raise
+        except OAuthError as e:
+            _FAILED[cid] = (issued, next(_SEQ), e)
+            raise
+        except asyncio.CancelledError:
+            # No answer came: the ones queued behind this give up too, rather
+            # than each waiting through a request of its own.
+            _FAILED[cid] = (issued, next(_SEQ), OAuthError(
+                f"renewing {conn['name']}'s sign-in stopped before the authorization server answered"))
+            raise
+        _FAILED.pop(cid, None)
         await _store_tokens(pool, eid, conn, body, asked_scope=None, signed_in=False)
 
 
-async def access_secret(pool, eid: int, conn: dict, *, after_401: bool = False) -> Optional[str]:
-    """The vault name of a usable access token for this connection, refreshing
-    it first when it is about to expire (or after the server refused it once).
-    None when the server never asked for a sign-in. SignInNeeded when one is
-    needed now."""
+async def access_secret(pool, eid: int, conn: dict, *, after_401: bool = False,
+                        seen: Optional[_dt.datetime] = None) -> tuple[Optional[str], Optional[_dt.datetime]]:
+    """(the vault name of a usable access token for this connection, when that
+    token was issued), refreshing it first when it is about to expire, or
+    after the server refused the token issued at `seen` (after_401). (None,
+    None) when the server never asked for a sign-in. SignInNeeded when one is
+    needed now. The time goes back with a refusal of this token
+    (on_auth_error), so that a refusal ends only the sign-in it was about."""
     oauth = await load(pool, conn)
     if oauth is None:
-        return None
+        return None, None
     if oauth["status"] != "active":
         raise SignInNeeded(f"{conn['name']} needs you to sign in")
+    issued = _issued_at(oauth)
+    if after_401 and issued != _aware(seen):
+        # The refused token was replaced while that request was on its way
+        # (another call's refresh, or the person signed in again): the retry
+        # takes the one there now.
+        return access_secret_name(conn), issued
     exp = _aware(oauth.get("expires_at"))
     soon = exp is not None and (exp - _now()).total_seconds() <= REFRESH_EARLY_S
     if after_401 or soon:
         if oauth.get("has_refresh"):
-            await refresh(pool, eid, conn, seen=_issued_at(oauth))
-        elif after_401 or (exp is not None and exp <= _now()):
-            await mark_sign_in_needed(pool, eid, conn, "the server no longer accepts the sign-in")
-            raise SignInNeeded(f"{conn['name']} needs you to sign in again")
-    return access_secret_name(conn)
+            await refresh(pool, eid, conn, seen=issued)
+            now = await load(pool, conn)
+            return access_secret_name(conn), _issued_at(now) if now else None
+        if after_401 or (exp is not None and exp <= _now()):
+            if await _end_if_current(pool, eid, conn, issued, "the server no longer accepts the sign-in"):
+                raise SignInNeeded(f"{conn['name']} needs you to sign in again")
+            now = await load(pool, conn)
+            return access_secret_name(conn), _issued_at(now) if now else None
+    return access_secret_name(conn), issued
 
 
-async def on_auth_error(pool, eid: int, conn: dict, err: "mcp_client.McpError") -> str:
+async def on_auth_error(pool, eid: int, conn: dict, err: "mcp_client.McpError", *,
+                        seen: Optional[_dt.datetime] = None) -> str:
     """Record what a 401 or 403 means for the sign-in, and say what the person
-    does next (the Host passes it on; it never asks for a password or token)."""
+    does next (the Host passes it on; it never asks for a password or token).
+    `seen` is when the refused token was issued (access_secret's second
+    value; None for a request sent with no token): a refusal of a token that
+    a refresh or a new sign-in has replaced since leaves that sign-in as it is."""
     ch = bearer_challenge(err.www_authenticate) or {}
     oauth = await load(pool, conn)
     where = f"the Sign in button on {conn['name']}'s card in the Network app (NAC -> Egress)"
+    replaced = (f"{conn['name']} refused a token that has been replaced since the call was sent (the sign-in "
+                "was renewed, or the person signed in again): try the call again.")
     if err.http_status == 403:
         more_scopes = _scopes(ch.get("scope"))
         more = " ".join(more_scopes)
         if oauth is None or oauth["status"] != "active":
             return f"{conn['name']} refused the call (403) and needs you to sign in: {where}."
-        merged = " ".join(_union(_scopes(oauth.get("challenged_scope")), more_scopes)) or None
-        # step_ups counts the sign-ins that already asked for what the server
-        # names and still did not satisfy it. Counted once per sign-in (a
-        # second refusal before the person signs in again adds nothing); a
-        # challenge naming a scope this sign-in never asked for is a new
-        # step-up and starts the count again.
-        steps = int(oauth.get("step_ups") or 0)
-        if not oauth.get("challenged_scope"):
-            steps = steps + 1 if set(more_scopes) <= set(_scopes(oauth.get("scope"))) else 0
-        await pool.execute("UPDATE mcp_oauth SET challenged_scope = $2, step_ups = $3, updated_at = now() "
-                           "WHERE connection_id = $1", int(conn["id"]), merged, steps)
+        # Read and written under the lock finish() stores a sign-in under, so a
+        # step-up sign-in that finished while this call was on its way is not
+        # counted as refused, and does not show as needing more access.
+        async with _LOCKS.setdefault(int(conn["id"]), asyncio.Lock()):
+            oauth = await load(pool, conn)
+            if oauth is None or oauth["status"] != "active":
+                return f"{conn['name']} refused the call (403) and needs you to sign in: {where}."
+            if _issued_at(oauth) != _aware(seen):
+                return replaced
+            merged = " ".join(_union(_scopes(oauth.get("challenged_scope")), more_scopes)) or None
+            # step_ups counts the sign-ins that already asked for what the
+            # server names and still did not satisfy it. Counted once per
+            # sign-in (a second refusal before the person signs in again adds
+            # nothing); a challenge naming a scope this sign-in never asked
+            # for is a new step-up and starts the count again.
+            steps = int(oauth.get("step_ups") or 0)
+            if not oauth.get("challenged_scope"):
+                steps = steps + 1 if set(more_scopes) <= set(_scopes(oauth.get("scope"))) else 0
+            await pool.execute("UPDATE mcp_oauth SET challenged_scope = $2, step_ups = $3, updated_at = now() "
+                               "WHERE connection_id = $1", int(conn["id"]), merged, steps)
         if steps >= MAX_STEP_UPS:
             return (f"{conn['name']} still refuses this ({more or 'no scope named'}) after {steps} sign-ins "
                     "that asked for that access; the account you signed in with may not be allowed to do "
@@ -1113,11 +1264,17 @@ async def on_auth_error(pool, eid: int, conn: dict, err: "mcp_client.McpError") 
     if oauth is None or not oauth.get("issuer") or (named and named != oauth.get("resource_metadata_url")):
         try:
             oauth = await discover(pool, eid, conn, ch)
+        except _Busy:
+            return (f"{conn['name']} refused the call (401) while its sign-in was being renewed: try the "
+                    "call again in a moment.")
         except OAuthError as e:
             return f"{conn['name']} wants a sign-in, but it cannot be done from here: {e}"
     if oauth["status"] == "active":
-        await mark_sign_in_needed(pool, eid, conn, "the server no longer accepts the sign-in",
-                                  challenged=" ".join(_scopes(ch.get("scope"))) or None)
+        # Only the sign-in the refused token belonged to ends: a reply that
+        # was on its way while the person signed in again is about the old one.
+        if not await _end_if_current(pool, eid, conn, seen, "the server no longer accepts the sign-in",
+                                     challenged=" ".join(_scopes(ch.get("scope"))) or None):
+            return replaced
     elif ch.get("scope"):
         await pool.execute("UPDATE mcp_oauth SET challenged_scope = $2, updated_at = now() "
                            "WHERE connection_id = $1", int(conn["id"]), " ".join(_scopes(ch.get("scope"))))

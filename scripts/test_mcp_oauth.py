@@ -105,6 +105,8 @@ PUBLISHED = json.loads(PUBLISHED_FILE.read_text())
 PUBLISHED_URL = urlsplit(PUBLISHED["client_id"])
 # Section E6: requests that reached it, and whether it answers 404 or stalls.
 PUBLISHED_SITE = {"hits": 0, "down": False, "stall": 0.0}
+# The real mcp_connections._resolve_addrs, kept before main() replaces it (C17).
+REAL_LOOKUP: dict = {}
 HOSTS = [MCP, AS, "mcp-nopkce.example.com", "auth-nopkce.example.com", "mcp-liar.example.com",
          "auth-liar.example.com", "mcp-wrongres.example.com", "mcp-noreg.example.com",
          "auth-noreg.example.com", "mcp-cimd.example.com", "auth-cimd.example.com",
@@ -256,6 +258,10 @@ class FakeAS:
         self.reqs: list = []
         self.refuse_refresh = False
         self.refresh_error: str | None = None   # another 400 error for a refresh
+        # Section A: a refresh that arrives waits for this to be set before it
+        # is answered (refresh_waiting says one has arrived).
+        self.hold_refresh: asyncio.Event | None = None
+        self.refresh_waiting = False
         self.expires_in = 3600
         self.n = 0
 
@@ -345,6 +351,9 @@ class FakeAS:
                     return web.json_response({"error": "invalid_grant"}, status=400)
                 return web.json_response(self._issue(client, c["scope"], c["resource"]))
             if form.get("grant_type") == "refresh_token":
+                if self.hold_refresh is not None:
+                    self.refresh_waiting = True
+                    await self.hold_refresh.wait()
                 if self.refresh_error:
                     return web.json_response({"error": self.refresh_error}, status=400)
                 r = self.refresh.get(form.get("refresh_token", ""))
@@ -383,6 +392,10 @@ MCP_AS = {MCP: AUTH, "mcp-nopkce.example.com": AUTH_NOPKCE, "mcp-liar.example.co
 # Section P: write_file refuses with insufficient_scope even to a token that
 # carries files:write (an account that is not allowed to write).
 STUBBORN = [False]
+# Section C: a call to read_file with path "late" is refused (401) to any
+# token; the second such request (the retry after its refresh) is answered
+# only once "hold" is set. "seen" counts them.
+LATE: dict = {"hold": None, "seen": 0}
 
 
 def _challenge(host: str, scope: str, error: str = "") -> str:
@@ -405,6 +418,12 @@ async def _mcp(request: web.Request):
     body = await request.json()
     auth = request.headers.get("Authorization") or ""
     MCP_REQS.append((host, body.get("method"), auth))
+    if body.get("method") == "tools/call" \
+            and ((body.get("params") or {}).get("arguments") or {}).get("path") == "late":
+        LATE["seen"] += 1
+        if LATE["seen"] == 2 and LATE["hold"] is not None:
+            await LATE["hold"].wait()
+        return web.Response(status=401, headers={"WWW-Authenticate": _challenge(host, "files:read")})
     tok = a.access.get(auth[7:]) if auth.startswith("Bearer ") else None
     if not tok or tok["revoked"] or tok["resource"] != f"https://{host}/mcp":
         return web.Response(status=401, headers={"WWW-Authenticate": _challenge(host, "files:read")})
@@ -1001,6 +1020,318 @@ async def service_checks(dsn: str):
               and oauth["status"] == "sign_in_needed", (out, oauth["status"]))
         AUTH.refresh_error = None
 
+        # A call refused once, renewed, and refused again, where that second
+        # 401 is still on its way while the person signs in again: it is
+        # about the token the call sent, which the new sign-in replaced, so it
+        # ends nothing, and the new sign-in is kept and works.
+        bl = await O.begin(pool, EID, row)
+        await O.finish(pool, EID, AUTH.authorize(bl["authorize_url"]))
+        await asyncio.gather(*list(MC._PENDING), return_exceptions=True)
+        held = LATE["hold"] = asyncio.Event()
+        LATE["seen"] = 0
+        n_ref = len(_tokens(AUTH, "refresh_token"))
+        late = asyncio.create_task(MC.call(pool, EID, "mcp:files/read_file", {"path": "late"}))
+        res = {}
+        try:
+            deadline = time.monotonic() + 10
+            while LATE["seen"] < 2 and not late.done() and time.monotonic() < deadline:
+                await asyncio.sleep(0.01)
+            arrived = LATE["seen"]
+            bn = await O.begin(pool, EID, row)
+            res = await O.finish(pool, EID, AUTH.authorize(bn["authorize_url"]))
+        finally:
+            held.set()
+            LATE["hold"] = None
+        late_out = (await asyncio.gather(late, return_exceptions=True))[0]
+        await asyncio.gather(*list(MC._PENDING), return_exceptions=True)
+        oauth = await O.load(pool, row)
+        names = await _vault_names(pool)
+        out = await MC.call(pool, EID, "mcp:files/read_file", {"path": "after"})
+        parts = {"second 401 held": arrived == 2, "one refresh": len(_tokens(AUTH, "refresh_token")) == n_ref + 1,
+                 "signed in again": bool(res.get("ok")),
+                 "late call refused": isinstance(late_out, dict) and late_out.get("status") != "ok",
+                 "still signed in": oauth["status"] == "active" and oauth["has_refresh"],
+                 "token kept": acc in names, "new token works": out.get("status") == "ok"}
+        check("C10 a second 401 still on its way while the person signs in again ends nothing: the new "
+              "sign-in is kept and works", all(parts.values()),
+              (parts, repr(late_out)[:300], oauth["status"], oauth["last_error"], out))
+
+        # A refresh of the sign-in being replaced, answered after the new
+        # sign-in's code was traded: what the new sign-in got is kept, not the
+        # old grant's renewed tokens.
+        bk = await O.begin(pool, EID, row)
+        await O.finish(pool, EID, AUTH.authorize(bk["authorize_url"]))
+        await asyncio.gather(*list(MC._PENDING), return_exceptions=True)
+        bm = await O.begin(pool, EID, row)
+        held = AUTH.hold_refresh = asyncio.Event()
+        AUTH.refresh_waiting = False
+        n0 = AUTH.n
+        stale = asyncio.create_task(O.refresh(pool, EID, row, seen=O._issued_at(await O.load(pool, row))))
+        fin = None
+        try:
+            deadline = time.monotonic() + 10
+            while not AUTH.refresh_waiting and time.monotonic() < deadline:
+                await asyncio.sleep(0.01)
+            waited_refresh = AUTH.refresh_waiting
+            codes = len(_tokens(AUTH, "authorization_code"))
+            fin = asyncio.create_task(O.finish(pool, EID, AUTH.authorize(bm["authorize_url"])))
+            deadline = time.monotonic() + 10
+            while len(_tokens(AUTH, "authorization_code")) == codes and not fin.done() \
+                    and time.monotonic() < deadline:
+                await asyncio.sleep(0.01)
+            # The code is traded; the new sign-in is stored before the
+            # refresh's answer, or waits for it.
+            await asyncio.sleep(0.5)
+        finally:
+            held.set()
+            AUTH.hold_refresh = None
+        stale_out = (await asyncio.gather(stale, return_exceptions=True))[0]
+        res = (await asyncio.gather(fin, return_exceptions=True))[0] if fin else None
+        await asyncio.gather(*list(MC._PENDING), return_exceptions=True)
+        kept_at = (await vault_api.open_secret(pool, entity_id=EID, name=acc, sign_in=True) or b"").decode()
+        kept = json.loads((await vault_api.open_secret(pool, entity_id=EID, name=ref, sign_in=True)
+                           or b"{}").decode())
+        oauth = await O.load(pool, row)
+        parts = {"refresh was under way": waited_refresh, "signed in": isinstance(res, dict) and bool(res.get("ok")),
+                 "the sign-in's access token": kept_at == f"at-{AUTH.host}-{n0 + 1}",
+                 "the sign-in's refresh token": kept.get("refresh_token") == f"rt-{AUTH.host}-{n0 + 1}",
+                 "active": oauth["status"] == "active" and oauth["refreshed_at"] is None}
+        check("C11 a refresh of the old sign-in answered after the new sign-in's code was traded: the new "
+              "sign-in's tokens are kept", all(parts.values()),
+              (parts, repr(stale_out)[:200], repr(res)[:300], kept_at, kept.get("refresh_token"), n0))
+
+        # A renewal the authorization server never answers, with three more
+        # calls' renewals queued behind it: they return its failure without a
+        # request of their own, and a Sign in press, and its finish, wait for
+        # one request at most. A short budget stands in for HTTP_TIMEOUT_S.
+        await asyncio.gather(*list(MC._PENDING), return_exceptions=True)
+        saved_budget = O.HTTP_TIMEOUT_S
+        O.HTTP_TIMEOUT_S = 2.0
+        bound = O.HTTP_TIMEOUT_S + 1.0
+        held = AUTH.hold_refresh = asyncio.Event()
+        rounds = []
+        try:
+            for step in ("press", "finish"):
+                AUTH.refresh_waiting = False
+                n_ref = len(_tokens(AUTH, "refresh_token"))
+                seen12 = O._issued_at(await O.load(pool, row))
+                head = asyncio.create_task(O.refresh(pool, EID, row, seen=seen12))
+                deadline = time.monotonic() + 10
+                while not AUTH.refresh_waiting and time.monotonic() < deadline:
+                    await asyncio.sleep(0.01)
+                queued = [asyncio.create_task(O.refresh(pool, EID, row, seen=seen12)) for _ in range(3)]
+                await asyncio.sleep(0.05)
+                n_at = AUTH.n
+                t0 = time.monotonic()
+                if step == "press":
+                    caller = asyncio.create_task(O.begin(pool, EID, row))
+                else:
+                    caller = asyncio.create_task(O.finish(pool, EID, AUTH.authorize(rounds[0]["out"]["authorize_url"])))
+                await asyncio.wait([caller], timeout=bound * 5)
+                took = time.monotonic() - t0
+                if not caller.done():
+                    held.set()      # the old behaviour: let the queue drain so the gate goes on
+                outs = await asyncio.gather(head, *queued, caller, return_exceptions=True)
+                rounds.append({"step": step, "took": round(took, 2), "waited": AUTH.refresh_waiting,
+                               "requests": len(_tokens(AUTH, "refresh_token")) - n_ref,
+                               "head": outs[0], "queued": outs[1:4], "out": outs[4], "n_at": n_at})
+                if held.is_set() or not isinstance(outs[4], dict) or "authorize_url" not in outs[4]:
+                    break
+        finally:
+            O.HTTP_TIMEOUT_S = saved_budget
+            held.set()
+            AUTH.hold_refresh = None
+        await asyncio.gather(*list(MC._PENDING), return_exceptions=True)
+        r0 = rounds[0]
+        parts = {"head timed out": isinstance(r0["head"], O.OAuthError) and "in time" in str(r0["head"]),
+                 "queued got its failure": all(type(q) is O.OAuthError and str(q) == str(r0["head"])
+                                               for q in r0["queued"]),
+                 "one request": r0["requests"] == 1,
+                 "press within one request": r0["took"] <= bound and isinstance(r0["out"], dict)
+                 and "authorize_url" in r0["out"]}
+        check("C12 three renewals queued behind one the authorization server never answers return its failure "
+              "without a request of their own, and the Sign in press waits one request at most",
+              all(parts.values()), (parts, {k: repr(v)[:160] for k, v in r0.items()}))
+        r1 = rounds[1] if len(rounds) > 1 else {}
+        kept_at = (await vault_api.open_secret(pool, entity_id=EID, name=acc, sign_in=True) or b"").decode()
+        oauth = await O.load(pool, row)
+        parts = {"a later renewal asks again": r1.get("waited") and r1.get("requests") == 1,
+                 "queued got its failure": bool(r1) and all(type(q) is O.OAuthError and str(q) == str(r1["head"])
+                                                            for q in r1["queued"]),
+                 "finish within one request": bool(r1) and r1["took"] <= bound,
+                 "signed in": isinstance(r1.get("out"), dict) and bool(r1["out"].get("ok")),
+                 "the code's tokens kept": bool(r1) and kept_at == f"at-{AUTH.host}-{r1['n_at'] + 1}"
+                 and oauth["status"] == "active" and oauth["refreshed_at"] is None}
+        check("C12 ...and the press's finish, behind the same kind of queue, waits one request at most and "
+              "keeps the code it traded", all(parts.values()),
+              (parts, {k: repr(v)[:160] for k, v in r1.items()}, kept_at))
+
+        # The name lookup is inside a request's budget: a lookup that never
+        # returns ends with it, and a slow one leaves the request only what
+        # is left.
+        saved_resolve = MC._resolve_addrs
+        slow = {"s": 0.0}
+
+        async def _slow_resolve(host):
+            if host == PUBLISHED_URL.hostname:
+                await asyncio.sleep(slow["s"])
+            return await saved_resolve(host)
+        MC._resolve_addrs = _slow_resolve
+        doc_url = f"https://{PUBLISHED_URL.hostname}{PUBLISHED_URL.path}"
+        got = []
+        try:
+            for s, stall in ((60.0, 0.0), (1.0, 5.0)):
+                slow["s"], PUBLISHED_SITE["stall"] = s, stall
+                t0 = time.monotonic()
+                try:
+                    out = await asyncio.wait_for(O._http("GET", doc_url, what="the test document", timeout_s=1.5), 6)
+                except (O.OAuthError, TimeoutError) as e:
+                    out = e
+                got.append((round(time.monotonic() - t0, 2), out))
+        finally:
+            MC._resolve_addrs = saved_resolve
+            PUBLISHED_SITE["stall"] = 0.0
+        parts = {"a lookup that never returns": got[0][0] <= 2.0 and isinstance(got[0][1], O.OAuthError)
+                 and "resolve" in str(got[0][1]),
+                 "a slow lookup leaves what is left": got[1][0] <= 2.0 and isinstance(got[1][1], O.OAuthError)
+                 and "in time" in str(got[1][1])}
+        check("C13 the name lookup is inside a request's budget (1.5 s here): one that never returns ends with "
+              "it, and a slow one leaves the request what is left", all(parts.values()), (parts, got))
+
+        # Whatever else holds the connection's lock past one request and the
+        # margin, a Sign in press says to try again rather than wait on.
+        saved = O.HTTP_TIMEOUT_S, getattr(O, "LOCK_MARGIN_S", None)
+        O.HTTP_TIMEOUT_S, O.LOCK_MARGIN_S = 1.0, 0.5
+        lock = O._LOCKS.setdefault(int(row["id"]), asyncio.Lock())
+        await lock.acquire()
+        before = await O.load(pool, row)
+        t0 = time.monotonic()
+        try:
+            press = asyncio.create_task(O.begin(pool, EID, row))
+            await asyncio.wait([press], timeout=6)
+            took = time.monotonic() - t0
+        finally:
+            lock.release()
+            O.HTTP_TIMEOUT_S, O.LOCK_MARGIN_S = saved
+        out = (await asyncio.gather(press, return_exceptions=True))[0]
+        after = await O.load(pool, row)
+        parts = {"within the bound": took <= 1.5 + 1.0,
+                 "try again": isinstance(out, O.OAuthError) and "try again in a moment" in str(out),
+                 "the sign-in as it was": after["status"] == "active" and after["signed_in_at"] == before["signed_in_at"]
+                 and acc in await _vault_names(pool)}
+        check("C14 a Sign in press that cannot have the connection's lock within one request and the margin "
+              "says to try again in a moment, and changes nothing", all(parts.values()),
+              (parts, round(took, 2), repr(out)[:300]))
+
+        # Every lookup before a contact has the same budget as _http's, not
+        # only _http's own: the first sign-in's probe of the server
+        # (probe_challenge) and the check before every tool call (_use). A
+        # lookup that runs out is refused, never taken as allowed.
+        saved_resolve, saved_t = MC._resolve_addrs, O.HTTP_TIMEOUT_S
+        hang_host = "mcp-quiet.example.net"
+
+        async def _hang_resolve(host):
+            if host in (hang_host, MCP):
+                await asyncio.sleep(3600)
+            return await saved_resolve(host)
+        MC._resolve_addrs, O.HTTP_TIMEOUT_S = _hang_resolve, 1.0
+        try:
+            first = {**row, "id": 990001, "name": "quiet", "url": f"https://{hang_host}/mcp"}
+            t0 = time.monotonic()
+            try:
+                out = await asyncio.wait_for(O.begin(pool, EID, first), 6)
+            except (O.OAuthError, TimeoutError) as e:
+                out = e
+            took = time.monotonic() - t0
+            parts = {"within the budget": took <= 1.0 + 1.0,
+                     "refused as unresolved": isinstance(out, O.OAuthError)
+                     and f"couldn't resolve {hang_host} in time" in str(out),
+                     "nothing stored": await O.load(pool, first) is None}
+            check("C15 a first sign-in whose server's name never resolves is refused within the request budget "
+                  "(1 s here), saying it could not resolve the name in time", all(parts.values()),
+                  (parts, round(took, 2), repr(out)[:300]))
+
+            t0 = time.monotonic()
+            try:
+                out = await asyncio.wait_for(MC.call(pool, EID, "mcp:files/read_file", {"path": "q"}), 6)
+            except TimeoutError as e:
+                out = e
+            took = time.monotonic() - t0
+            # Up to two lookups: a stale tool list is refreshed before the call.
+            parts = {"within the budget": took <= 2 * 1.0 + 1.0,
+                     "refused as unresolved": isinstance(out, dict) and out.get("status") != "ok"
+                     and f"couldn't resolve {MCP} in time" in str(out.get("result"))}
+            check("C16 a tool call whose server's name never resolves is refused within the request budget, "
+                  "saying it could not resolve the name in time", all(parts.values()),
+                  (parts, round(took, 2), repr(out)[:300]))
+        finally:
+            MC._resolve_addrs, O.HTTP_TIMEOUT_S = saved_resolve, saved_t
+
+        # getaddrinfo cannot be stopped, so a lookup that timed out keeps its
+        # thread. Those threads are the lookups' own: lookups that never return
+        # leave the loop's default executor free, and lookups of one name share
+        # one thread, so another name still answers.
+        import socket as _socket
+        import threading
+        real_gai, release, asked, ran_on = _socket.getaddrinfo, threading.Event(), [], set()
+
+        def _gai(host, *a, **kw):
+            if str(host).endswith(".stuck.example"):
+                asked.append(host)
+                ran_on.add(threading.current_thread().name)
+                release.wait(30)
+                raise _socket.gaierror(_socket.EAI_AGAIN, "released by the test")
+            if host == "mcp-answers.example":
+                return [(_socket.AF_INET, _socket.SOCK_STREAM, 6, "", ("93.184.215.14", 443))]
+            return real_gai(host, *a, **kw)
+        loop = asyncio.get_running_loop()
+        default_pool = min(32, (os.process_cpu_count() or 1) + 4)
+        many = default_pool + 8
+        MC._resolve_addrs, _socket.getaddrinfo = REAL_LOOKUP["resolve"], _gai
+        O.HTTP_TIMEOUT_S = 1.0
+        rounds = {}
+        try:
+            for label, names in (("one name", ["one.stuck.example"] * many),
+                                 ("many names", [f"n{i}.stuck.example" for i in range(many)])):
+                asked.clear()
+                waits = [asyncio.create_task(MC.public_host_refusal(n)) for n in names]
+                await asyncio.sleep(0.2)
+                t0 = time.monotonic()
+                try:
+                    other = await asyncio.wait_for(loop.run_in_executor(None, lambda: "ran"), 3)
+                except TimeoutError:
+                    other = "blocked"
+                other_took = time.monotonic() - t0
+                answers = (await asyncio.wait_for(MC.public_host_refusal("mcp-answers.example"), 3)
+                           if label == "one name" else None)
+                t0 = time.monotonic()
+                said = await asyncio.wait_for(asyncio.gather(*waits, return_exceptions=True), 6)
+                said = [s for s in said if not str(s).startswith("couldn't resolve ")] or said[:1]
+                rounds[label] = {"other": other, "other_took": round(other_took, 2), "answers": answers,
+                                 "threads": len(asked), "took": round(time.monotonic() - t0, 2),
+                                 "said": sorted({str(s)[:80] for s in said})}
+        except TimeoutError as e:
+            rounds["timed out"] = repr(e)
+        finally:
+            release.set()
+            MC._resolve_addrs, O.HTTP_TIMEOUT_S = saved_resolve, saved_t
+            await asyncio.sleep(0.2)
+            _socket.getaddrinfo = real_gai
+        one, spread = rounds.get("one name") or {}, rounds.get("many names") or {}
+        parts = {"the default executor runs": one.get("other") == "ran" and spread.get("other") == "ran"
+                 and one["other_took"] < 0.5 and spread["other_took"] < 0.5,
+                 "every stuck lookup refused in time": all(
+                     r.get("took", 9) <= 1.5 and r.get("said") and all("in time" in s for s in r["said"])
+                     for r in (one, spread)),
+                 "one name holds one thread": one.get("threads") == 1,
+                 "another name still answers": one.get("answers") is None and "answers" in one,
+                 # Round one's thread is still held in round two: four in all.
+                 "the lookups' own threads only": len(ran_on) == getattr(MC, "LOOKUP_THREADS", None)
+                 and all(t.startswith("mcp-lookup") for t in ran_on)}
+        check(f"C17 {many} lookups that never return, of one name or of {many}, leave the default executor "
+              "free, are each refused in time, and one name holds one thread", all(parts.values()),
+              (parts, sorted(ran_on), rounds))
+
         # ── P ──
         print("P. step-up")
         b6 = await O.begin(pool, EID, row)
@@ -1045,19 +1376,79 @@ async def service_checks(dsn: str):
 
         # ── A ──
         print("A. the server moves to another authorization server")
+        # The tool fetch each sign-in above started (finish -> schedule_fetch)
+        # ends first: A1 is the move on its own. One still under way when the
+        # server moves gets a 401 and renews at the old server, which is A2.
+        await asyncio.gather(*list(MC._PENDING), return_exceptions=True)
         MCP_AS[MCP] = AUTH_MOVED
         b10 = await O.begin(pool, EID, row)
         q10 = _query(b10["authorize_url"])
         moved = await O.load(pool, row)
+        names = await _vault_names(pool)
+        parts = {"host": urlsplit(b10["authorize_url"]).hostname == AUTH_MOVED.host,
+                 "registered there": q10.get("client_id") in AUTH_MOVED.clients,
+                 "issuer": moved["issuer"] == AUTH_MOVED.issuer,
+                 "dcr": moved["client_registration"] == "dcr",
+                 "no access token": O.access_secret_name(row) not in names}
         check("A1 the next sign-in reads the resource metadata again and goes to the new authorization "
               "server, registered there; the old registration and tokens are dropped",
-              urlsplit(b10["authorize_url"]).hostname == AUTH_MOVED.host and q10.get("client_id") in AUTH_MOVED.clients
-              and moved["issuer"] == AUTH_MOVED.issuer and moved["client_registration"] == "dcr"
-              and O.access_secret_name(row) not in await _vault_names(pool), (b10, q10, moved))
+              all(parts.values()), (parts, sorted(names), b10, moved))
         res = await O.finish(pool, EID, AUTH_MOVED.authorize(b10["authorize_url"]))
         out = await MC.call(pool, EID, "mcp:files/read_file", {"path": "moved"})
         check("A1 ...and its token works at the server", res.get("ok") and out.get("status") == "ok", (res, out))
+
+        # The server moves back while a refresh at the server it is leaving is
+        # still under way (a call, or the tool fetch after a sign-in, that got
+        # a 401 and is renewing). The sign-in waits for that refresh, then
+        # drops what it brought: those are the old server's tokens, and the
+        # next refresh would send its refresh token to the new server.
+        await asyncio.gather(*list(MC._PENDING), return_exceptions=True)
         MCP_AS[MCP] = AUTH
+        held = AUTH_MOVED.hold_refresh = asyncio.Event()
+        AUTH_MOVED.refresh_waiting = False
+        stale = asyncio.create_task(O.refresh(pool, EID, row, seen=O._issued_at(await O.load(pool, row))))
+        moving = None
+        try:
+            deadline = time.monotonic() + 10
+            while not AUTH_MOVED.refresh_waiting and time.monotonic() < deadline:
+                await asyncio.sleep(0.01)
+            regs = sum(1 for r in AUTH.reqs if r[0] == "register")
+            metas = sum(1 for r in AUTH.reqs if r[0] == "meta")
+            moving = asyncio.create_task(O.begin(pool, EID, row))
+            # Until the sign-in has registered at the new server (it went
+            # past the old server's tokens), or a second after it read that
+            # server's metadata (it is waiting for the refresh).
+            deadline, read_at = time.monotonic() + 10, None
+            while not moving.done() and time.monotonic() < deadline:
+                if sum(1 for r in AUTH.reqs if r[0] == "register") > regs:
+                    break
+                if read_at is None and sum(1 for r in AUTH.reqs if r[0] == "meta") > metas:
+                    read_at = time.monotonic()
+                if read_at is not None and time.monotonic() - read_at > 1.0:
+                    break
+                await asyncio.sleep(0.01)
+            waited_refresh = AUTH_MOVED.refresh_waiting
+        finally:
+            held.set()
+            AUTH_MOVED.hold_refresh = None
+        stale_out = (await asyncio.gather(stale, return_exceptions=True))[0]
+        b12 = await moving
+        back = await O.load(pool, row)
+        names = await _vault_names(pool)
+        kept = await O._load_secrets(pool, EID, row)
+        parts = {"refresh was under way": waited_refresh,
+                 "host": urlsplit(b12["authorize_url"]).hostname == AUTH.host,
+                 "issuer": back["issuer"] == AUTH.issuer,
+                 "sign-in needed": back["status"] == "sign_in_needed" and not back["has_refresh"],
+                 "no access token": O.access_secret_name(row) not in names,
+                 "no refresh token": not kept.get("refresh_token")}
+        check("A2 a refresh at the old authorization server still under way when the sign-in moves: the "
+              "sign-in waits for it and drops what it brought, so none of the old server's tokens is kept",
+              all(parts.values()), (parts, repr(stale_out), sorted(names), back))
+        res = await O.finish(pool, EID, AUTH.authorize(b12["authorize_url"]))
+        out = await MC.call(pool, EID, "mcp:files/read_file", {"path": "back"})
+        check("A2 ...and the sign-in at the server it moved to works", res.get("ok") and out.get("status") == "ok",
+              (res, out))
 
         # The approvals below take the real path (the rule and the connection
         # signed and activated together, in the Network app's lane), but not a
@@ -1237,6 +1628,7 @@ async def main(dsn: str) -> int:
         if host in HOSTS or host == "evil.example.com":
             return ["93.184.215.14"]
         raise OSError(f"{host}: no such name in this test")
+    REAL_LOOKUP["resolve"] = _MC._resolve_addrs
     _MC._resolve_addrs = _fake_resolve
     try:
         unit_checks()

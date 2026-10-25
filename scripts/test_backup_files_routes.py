@@ -535,6 +535,64 @@ check("one with backups turned off says that", runs["status"]["state"] == "off",
 pool.bp = {"backup": {"where": "network"}}
 refuses("and Back up now says so too", R.start_backup_run(), status=409, contains="not on the network")
 
+print("== a network member whose network does not keep backups yet")
+
+
+class Door:
+    """The member door's client. A door without the backup ops answers each
+    of them as it answers any op it does not have."""
+    network_member = True
+    _connected = True
+
+    def __init__(self, listed):
+        self.listed = listed
+
+    async def request_full(self, op, params=None):
+        if op == "backup.list":
+            return dict(self.listed)
+        return {"ok": False, "error": f"Unknown operation: {op}", "code": 400}
+
+    async def request(self, op, params=None, **_):
+        return {}
+
+
+def on_door(listed):
+    door = Door(listed)
+    hb._network_answer.update(client=None, at=None, offers=None)
+    hb._raw_bridge = lambda: door
+    hb._bridge = lambda: door
+    return door
+
+
+on_door({"ok": False, "error": "Unknown operation: backup.list", "code": 400})
+pool.bp = {}
+s = asyncio.run(R.get_backup_settings())
+check("a member that chose nothing: a folder on this machine, and Settings is told the network keeps none",
+      s["mode"] == "member" and s["where"] == "local" and s["where_chosen"] is False
+      and s["network_backups"] is False,
+      {k: s.get(k) for k in ("mode", "where", "where_chosen", "network_backups")})
+refuses("choosing the network's storage is refused: nothing would be written there",
+        R.set_backup_settings(AppReq({"where": "network", "stepup_code": "123456"})), status=400,
+        contains="does not keep backups yet")
+out = asyncio.run(R.set_backup_settings(AppReq({"where": "local", "hour": 4})))
+check("saving the folder it already uses needs no code", out["where"] == "local" and out["where_chosen"], out)
+pool.bp = {"backup": {"where": "network"}}
+runs = asyncio.run(R.get_backup_runs())
+check("one that chose the network's storage: the runs say it keeps no backups yet",
+      runs["problem"] == hb.NO_NETWORK_STORAGE_TEXT, runs)
+check("  and so does the verdict at the top of Settings, Backup",
+      runs["status"]["state"] == "no_destination" and "does not keep backups yet" in runs["status"]["detail"],
+      runs["status"])
+refuses("  and Back up now", R.start_backup_run(), status=409, contains="does not keep backups yet")
+on_door({"ok": True, "data": {"objects": []}})
+pool.bp = {}
+s = asyncio.run(R.get_backup_settings())
+check("a member whose network keeps backups: the network's storage, as before",
+      s["where"] == "network" and s["network_backups"] is True, {k: s.get(k) for k in ("where", "network_backups")})
+hb._network_answer.update(client=None, at=None, offers=None)
+hb._raw_bridge = lambda: NoPlatform()
+hb._bridge = lambda: NoPlatform()
+
 print("== an export")
 exported = []
 

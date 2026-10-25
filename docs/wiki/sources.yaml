@@ -597,7 +597,7 @@ the-privatae-network:
   - system-apps/settings/index.html
   verified:
     date: '2026-10-25'
-    digest: sha256:287eab2dd313e26e17cbdc17fc12f83b56c39407164c603f1e2f7f67b13fcce1
+    digest: sha256:24fe98fca0932381d51b673b1aaf0381ed37e8fb351eecbb586ba7f8bcc728f0
 updates-and-versions:
   sources:
   - packages/cseries/src/cli.js
@@ -610,7 +610,7 @@ updates-and-versions:
   - brain/mastercode/runtime/host_changelog.py::ensure_weekly_changelog_task
   verified:
     date: '2026-10-25'
-    digest: sha256:6f5b13894b3cbf53d3573fbc3bf0195aec0d24b0d1786c1cbf2228f753aab2b7
+    digest: sha256:faf2c19866824eb9334e23e6a17ce9efe6f0daa01d7b16bd98a391c3c5ce97f9
 what-a-host-cannot-do:
   sources:
   - brain/mastercode/runtime/agent_grant.py::parse_grant
@@ -659,9 +659,10 @@ what-is-privatae:
   - brain/mastercode/runtime/scoped_agent.py::run_scoped_agent
   - server/bridge/no_platform.py
   - server/bridge/membership.py
+  - server/applications/public_store.py
   verified:
-    date: '2026-10-20'
-    digest: sha256:6991d49937800ae4a628229eacbb984543d793eaeba43fafdddeb0a27d300e2f
+    date: '2026-10-25'
+    digest: sha256:9d4abd93b7a305ef6285ebe8b5a30dd8e4102b300ed11f8f5f2b30c26cdb74ab
 where-your-data-lives:
   sources:
   - compose.yaml

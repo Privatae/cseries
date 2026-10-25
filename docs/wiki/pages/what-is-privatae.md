@@ -21,7 +21,7 @@ On your machine, inside a Linux virtual machine. The installer sets the machine 
 
 ## Do I need a Privatae account?
 
-No. A Host works without one. If you want to, you can join the Privatae network with a membership code, which adds the App Store and the community board. [Joining the Privatae network](wiki:the-privatae-network) says what that connects and what it does not.
+No. A Host works without one, and installs apps from the App Store without one. A Host can also join the optional Privatae network with a membership code, which adds the community board; membership is not on sale yet. [Joining the Privatae network](wiki:the-privatae-network) says what that connects and what it does not.
 
 ## How is it different from a chatbot?
 
@@ -43,7 +43,7 @@ No. A folder on your machine joins by a grant you approve. Your Host gets a map 
 
 ## Whose models does it use?
 
-Yours. You add a key from a provider such as OpenRouter, Anthropic or OpenAI, or point the Host at a model server running on your machine, and choose a provider and model for each role the Host has. Privatae does not sell, proxy or bill model usage, and is not an inference provider. [Models and keys](wiki:models-and-keys) has the details.
+Yours. You add a key from a provider such as OpenRouter, Anthropic or OpenAI, or point the Host at a model server on another computer on your network, and choose a provider and model for each role the Host has. Privatae does not sell, proxy or bill model usage, and is not an inference provider. [Models and keys](wiki:models-and-keys) has the details.
 
 ## What can I build?
 

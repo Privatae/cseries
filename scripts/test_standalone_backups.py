@@ -200,6 +200,12 @@ class Pool:
         if q.startswith("UPDATE host_backup_runs SET stamp"):
             self._run(a[0])["stamp"] = a[1]
             return
+        if q.startswith("UPDATE host_backup_runs SET state='failed'") and "WHERE state='running'" in q:
+            # The loop's start: a run the Host restarted during is failed.
+            for r in self.runs:
+                if r.get("state") == "running":
+                    r.update(state="failed", error="interrupted: the Host restarted during this run")
+            return
         raise AssertionError(q)
 
     async def fetch(self, q, *a):
@@ -301,7 +307,11 @@ check("any other client: the platform", hb.host_mode(object()) == "platform")
 print("== where backups go")
 check("a standalone Host that chose nothing: a folder on this machine",
       hb.destination_of({}, "standalone") == "local")
-check("a member that chose nothing: the network's storage", hb.destination_of({}, "member") == "network")
+check("a member that chose nothing, on a network that keeps backups: the network's storage",
+      hb.destination_of({}, "member", True) == "network")
+check("a member that chose nothing, on a network that keeps none or has not said: a folder on this machine",
+      hb.destination_of({}, "member", False) == "local" and hb.destination_of({}, "member", None) == "local"
+      and hb.destination_of({}, "member") == "local")
 check("on the platform, as before: platform storage", hb.destination_of({}, "platform") == "network")
 check("the owner's choice wins, whatever the Host is",
       hb.destination_of({"backup": {"where": "s3"}}, "member") == "s3"
@@ -522,6 +532,191 @@ check("a member's backup to its own folder is reported to the network",
       res["state"] == "ok" and "backup.report" in BRIDGE["bc"].calls, BRIDGE["bc"].calls)
 check("  and nothing else about it went to the network",
       not any(c.startswith("backup.upload") or c == "backup.put_url" for c in BRIDGE["bc"].calls))
+BRIDGE["bc"] = Recorder()
+
+print("== a member's backups go to the network's storage only when the network keeps them")
+
+
+class Door(Member):
+    """A member door. One without the backup ops answers every one of them as
+    the member door answers any op it does not have (code 400, "Unknown
+    operation"); `listed` is its answer to backup.list."""
+
+    def __init__(self, listed):
+        super().__init__()
+        self.listed = listed
+
+    async def request_full(self, op, params=None):
+        self.calls.append(op)
+        if op == "backup.list":
+            return dict(self.listed)
+        return {"ok": False, "error": f"Unknown operation: {op}", "code": 400}
+
+
+OLD_DOOR = {"ok": False, "error": "Unknown operation: backup.list", "code": 400}
+NO_STORE = {"ok": False, "error": "the member door has no platform credential for backups", "code": 503}
+KEEPS = {"ok": True, "data": {"objects": []}}
+NO_ANSWER = {"ok": False, "error": "not connected", "error_kind": "infra"}
+
+
+def fresh(door):
+    hb._network_answer.update(client=None, at=None, offers=None)
+    BRIDGE["bc"] = door
+    return door
+
+
+door = fresh(Door(OLD_DOOR))
+check("a door without the backup ops: the network's storage does not take this Host's backups",
+      run(hb.network_backups()) is False and door.calls == ["backup.list"], door.calls)
+check("  asked once, not on every look", run(hb.network_backups()) is False and door.calls == ["backup.list"],
+      door.calls)
+fresh(Door(NO_STORE))
+check("a door with no storage behind them (503): it does not either", run(hb.network_backups()) is False)
+door = fresh(Door(KEEPS))
+check("a door that lists this Host's backups: it does", run(hb.network_backups()) is True, door.calls)
+door.listed = NO_ANSWER
+hb._network_answer["at"] -= hb.NETWORK_ASK_S + 1
+check("no answer from the door later: the last answer stands",
+      run(hb.network_backups()) is True and door.calls == ["backup.list", "backup.list"], door.calls)
+door.listed = {"ok": False, "error": "platform storage unreachable: ClientError", "code": 502}
+hb._network_answer["at"] -= hb.NETWORK_ASK_S + 1
+check("  and so does an error that says nothing about what the door serves", run(hb.network_backups()) is True)
+door.listed = OLD_DOOR
+hb._network_answer["at"] -= hb.NETWORK_ASK_S + 1
+check("asked again once the answer is old: a door that stopped keeping them is seen",
+      run(hb.network_backups()) is False)
+door = fresh(Door(NO_ANSWER))
+check("a door that has not answered yet: not known, and the default is the folder",
+      run(hb.network_backups()) is None and hb.destination_of({}, "member", None) == "local")
+
+
+class SilentDoor(Door):
+    async def request_full(self, op, params=None):
+        self.calls.append(op)
+        await asyncio.sleep(30)
+
+
+fresh(SilentDoor(KEEPS))
+_ask, hb.NETWORK_ASK_TIMEOUT_S = hb.NETWORK_ASK_TIMEOUT_S, 0.2
+_t0 = _t.monotonic()
+check("a door that is connected and silent is not waited on: nothing learned, within the ask's own limit",
+      run(hb.network_backups()) is None and _t.monotonic() - _t0 < 5)
+
+
+class SlowDoor(Door):
+    """A door that answers its heartbeat while this question waits on storage
+    that hangs (so it stays connected), until `slow` is turned off."""
+    slow = True
+
+    async def request_full(self, op, params=None):
+        if self.slow:
+            self.calls.append(op)
+            await asyncio.sleep(30)
+        return await super().request_full(op, params)
+
+
+RETRY_S = getattr(hb, "NETWORK_RETRY_S", 60.0)
+door = fresh(SlowDoor(KEEPS))
+_t0 = _t.monotonic()
+check("a door that stays silent is not asked again on the next look: one wait, not one per look",
+      run(hb.network_backups()) is None and run(hb.network_backups()) is None
+      and door.calls == ["backup.list"] and _t.monotonic() - _t0 < 0.39, door.calls)
+
+
+async def _looks(n):
+    return await asyncio.gather(*(hb.network_backups() for _ in range(n)))
+
+
+door = fresh(SlowDoor(KEEPS))
+_t0 = _t.monotonic()
+check("  nor by five looks at once (Settings opens several): they share the one ask",
+      run(_looks(5)) == [None] * 5 and door.calls == ["backup.list"] and _t.monotonic() - _t0 < 1,
+      door.calls)
+door.slow = False
+check("  and within a minute of it the door is not asked again", run(hb.network_backups()) is None
+      and door.calls == ["backup.list"], door.calls)
+hb._network_answer["at"] -= RETRY_S + 1
+check("  after it, asked again, and its answer is heard", run(hb.network_backups()) is True
+      and door.calls == ["backup.list", "backup.list"], door.calls)
+hb._network_answer["at"] -= RETRY_S + 1
+check("an answer still stands for the full ten minutes, not one",
+      run(hb.network_backups()) is True and door.calls == ["backup.list", "backup.list"], door.calls)
+hb.NETWORK_ASK_TIMEOUT_S = _ask
+BRIDGE["bc"] = Door(KEEPS)
+check("another door (the Host joined again): asked again at once", run(hb.network_backups()) is True)
+check("the platform and a standalone Host are never asked",
+      run(hb.network_backups("platform")) is True and run(hb.network_backups("standalone")) is False
+      and BRIDGE["bc"].calls == ["backup.list"], BRIDGE["bc"].calls)
+
+pool.bp = {}
+door = fresh(Door(OLD_DOOR))
+before = sorted(backup_stores.LocalStore(hb.LOCAL_DIR).pairs())
+now = dt.datetime.now(dt.timezone.utc)
+act = run(hb.next_action(pool, 1, now + dt.timedelta(days=3), now - dt.timedelta(days=1)))
+check("a member that chose nothing, on a network that keeps no backups, still backs up",
+      act and act[0] == "run", act)
+_t.sleep(1.05)
+res = run(hb.run_once(pool, 1, "manual"))
+check("  to the folder on this machine",
+      res["state"] == "ok" and res["stored"] == "local"
+      and len(backup_stores.LocalStore(hb.LOCAL_DIR).pairs()) == len(before) + 1, res)
+check("  and nothing was sent to the network's storage",
+      not any(c.startswith("backup.upload") or c == "backup.put_url" for c in door.calls), door.calls)
+door = fresh(Door(KEEPS))
+check("the same member, once its network keeps backups, defaults to the network's storage",
+      run(hb.destination_problem(pool, 1)) is None
+      and hb.destination_of(pool.bp, "member", run(hb.network_backups())) == "network")
+
+pool.bp = {"backup": {"where": "network"}}
+door = fresh(Door(OLD_DOOR))
+act = run(hb.next_action(pool, 1, now + dt.timedelta(days=4), now - dt.timedelta(days=1)))
+check("a member that chose the network's storage, which keeps no backups: the loop says so",
+      act and act[0] == "no_destination", act)
+res = run(hb.run_once(pool, 1, "manual"))
+check("  and a run says the network does not keep backups yet, and what to choose instead",
+      res["state"] == "no_destination" and "does not keep backups yet" in res["error"]
+      and "Settings, Backup" in res["error"], res)
+check("  writing nothing, here or on the network",
+      not any(c.startswith("backup.upload") or c == "backup.put_url" for c in door.calls), door.calls)
+check("  and Settings is told why (destination_problem)",
+      run(hb.destination_problem(pool, 1)) == hb.NO_NETWORK_STORAGE_TEXT)
+door = fresh(Door(NO_ANSWER))
+check("a door that has not answered is not taken for one that keeps no backups",
+      run(hb.destination_problem(pool, 1)) is None)
+
+
+async def _one_tick(acts):
+    """The backup loop, for as many minutes as `acts` has answers from
+    next_action (each minute a millisecond); returns the rows it wrote."""
+    saved = hb.LOOP_SECONDS, hb.next_action
+    left = list(acts)
+
+    async def next_action(*_a):
+        if not left:
+            raise asyncio.CancelledError
+        return left.pop(0)
+    hb.LOOP_SECONDS, hb.next_action = 0.001, next_action
+    n = len(pool.runs)
+    try:
+        await hb.run_host_backup_loop(pool, 1)
+    except asyncio.CancelledError:
+        pass
+    finally:
+        hb.LOOP_SECONDS, hb.next_action = saved
+    return pool.runs[n:]
+
+
+fresh(Door(KEEPS))
+wrote = run(_one_tick([("no_destination", "scheduled")]))
+check("the loop found the network's storage refused, and the network answered before it wrote the row: "
+      "no row says this member is not on the network",
+      not any(r.get("error") == hb.NO_DESTINATION_TEXT for r in wrote), wrote)
+fresh(Door(OLD_DOOR))
+wrote = run(_one_tick([("no_destination", "scheduled")]))
+check("  while the refusal holds, the row gives the member's own reason",
+      [r.get("error") for r in wrote] == [hb.NO_NETWORK_STORAGE_TEXT], wrote)
+pool.bp = {"backup": {"where": "local", "local_keep": 3}}
+hb._network_answer.update(client=None, at=None, offers=None)
 BRIDGE["bc"] = Recorder()
 
 print("== the owner's own bucket")

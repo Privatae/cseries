@@ -230,10 +230,13 @@ def _readable_target(stored_target):
             else f"the saved destination cannot be used: {e}")
 
 
-def _effective(bp: dict) -> dict:
+def _effective(bp: dict, network: Optional[bool] = None) -> dict:
     """Stored settings merged over the fleet defaults, plus the timezone the
     times are expressed in. Never returns a partial record — the caller
-    rendering a form should not have to know which keys happen to be set."""
+    rendering a form should not have to know which keys happen to be set.
+    `network`: whether the network's storage takes this Host's backups
+    (host_backup.network_backups); a caller that reads where backups go
+    passes it, since a member's default follows it."""
     stored = bp.get("backup") or {}
     if not isinstance(stored, dict):
         stored = {}
@@ -255,7 +258,13 @@ def _effective(bp: dict) -> dict:
     # choice, else the default for what this Host is. Also not a schedule.
     from server import host_backup
     out["mode"] = host_backup.host_mode()
-    out["where"] = host_backup.destination_of(bp, out["mode"])
+    # Whether the network's storage takes this Host's backups: true on the
+    # platform, false for a standalone Host, and for a member what its door
+    # last said (null: not yet). Settings says why a member's backups go to
+    # the folder when this is not true.
+    out["network_backups"] = (network if out["mode"] == host_backup.MODE_MEMBER
+                              else out["mode"] == host_backup.MODE_PLATFORM)
+    out["where"] = host_backup.destination_of(bp, out["mode"], out["network_backups"])
     out["where_chosen"] = str(stored.get("where") or "") in host_backup.WHERES
     out["local_keep"] = host_backup.local_keep(bp)
     return out
@@ -298,7 +307,8 @@ async def _key_block(pool) -> dict:
 )
 async def get_backup_settings() -> dict:
     """The user's backup schedule, target, key state and custody."""
-    out = _effective(await _load_bp(brain_service._entity_id))
+    from server import host_backup
+    out = _effective(await _load_bp(brain_service._entity_id), await host_backup.network_backups())
     pool = brain_service.get_pool()
     if pool is None:
         # Schedule still answers from the row we already loaded; say the key
@@ -408,8 +418,9 @@ async def _require_owner_code(request: Request, pool, code, what: str) -> None:
     await _require_stepup(pool, str(code), what=f"choosing to {what}")
 
 
-def _reduces_protection(prior: dict, new: dict) -> Optional[str]:
-    """What, if anything, a change of backup settings takes away."""
+def _reduces_protection(prior: dict, new: dict, network: Optional[bool] = None) -> Optional[str]:
+    """What, if anything, a change of backup settings takes away. `network`
+    as for _effective: both sides are read with the same default."""
     was = str(prior.get("frequency", "daily")).lower()
     if new.get("frequency") == "off" and was != "off":
         return "turn backups off"
@@ -421,8 +432,8 @@ def _reduces_protection(prior: dict, new: dict) -> Optional[str]:
     # what it is, when the owner never chose): moving them is the owner's act.
     from server import host_backup
     mode = host_backup.host_mode()
-    if (host_backup.destination_of({"backup": new}, mode)
-            != host_backup.destination_of({"backup": prior}, mode)):
+    if (host_backup.destination_of({"backup": new}, mode, network)
+            != host_backup.destination_of({"backup": prior}, mode, network)):
         return "change where your backups go"
     if host_backup.local_keep({"backup": new}) < host_backup.local_keep({"backup": prior}):
         return "keep fewer backups on this machine"
@@ -432,7 +443,7 @@ def _reduces_protection(prior: dict, new: dict) -> Optional[str]:
     old_target = prior.get("target") or None
     new_target = new.get("target") or None
     if new_target != old_target:
-        if host_backup.destination_of({"backup": new}, mode) == host_backup.WHERE_S3:
+        if host_backup.destination_of({"backup": new}, mode, network) == host_backup.WHERE_S3:
             return "change the bucket your backups go to"
         return ("send a second copy of your backups somewhere new" if old_target is None
                 else "remove or change where the second copy goes")
@@ -505,6 +516,11 @@ async def set_backup_settings(request: Request) -> dict:
     if "platform" in body and not isinstance(body["platform"], bool):
         raise HTTPException(status.HTTP_400_BAD_REQUEST, "platform must be true or false")
     from server import host_backup
+    # Asked once, before the row is locked: whether the network's storage
+    # takes this Host's backups decides a member's default and whether it may
+    # choose that storage.
+    mode = host_backup.host_mode()
+    network = await host_backup.network_backups(mode)
     if "where" in body:
         where = str(body["where"] or "").strip().lower()
         if where not in host_backup.WHERES:
@@ -515,12 +531,15 @@ async def set_backup_settings(request: Request) -> dict:
             raise HTTPException(status.HTTP_400_BAD_REQUEST,
                                 "to send your backups to your own bucket, save the bucket too "
                                 "(target, kind s3)")
-        if (where == host_backup.WHERE_NETWORK
-                and host_backup.host_mode() == host_backup.MODE_STANDALONE):
+        if where == host_backup.WHERE_NETWORK and mode == host_backup.MODE_STANDALONE:
             raise HTTPException(status.HTTP_400_BAD_REQUEST,
                                 "this Host is not on the network, so nothing would be written "
                                 "there: join it in Settings, Network first, or choose your own "
                                 "bucket or a folder on this machine")
+        if where == host_backup.WHERE_NETWORK and host_backup.network_unavailable(mode, network):
+            raise HTTPException(status.HTTP_400_BAD_REQUEST,
+                                "the network does not keep backups yet, so nothing would be "
+                                "written there: choose your own bucket or a folder on this machine")
         settings["where"] = where
     if "local_keep" in body:
         raw_keep = body["local_keep"]
@@ -560,7 +579,7 @@ async def set_backup_settings(request: Request) -> dict:
             for k in ("where", "local_keep"):
                 if k not in settings and k in prior:
                     settings[k] = prior[k]
-            goes = host_backup.destination_of({"backup": settings}, host_backup.host_mode())
+            goes = host_backup.destination_of({"backup": settings}, mode, network)
             if goes == host_backup.WHERE_S3 and (target or {}).get("kind") != backup_ship.KIND_S3:
                 raise HTTPException(status.HTTP_400_BAD_REQUEST,
                                     "your backups go to your own bucket: keep it saved, or choose "
@@ -578,7 +597,7 @@ async def set_backup_settings(request: Request) -> dict:
                     status.HTTP_400_BAD_REQUEST,
                     "with platform storage off, choose where your backups go instead "
                     "(your bastion or your own storage); otherwise they would go nowhere")
-            reduced = _reduces_protection(prior, settings)
+            reduced = _reduces_protection(prior, settings, network)
             if reduced:
                 await _require_owner_code(request, pool, body.get("stepup_code"), reduced)
             # The bucket's address, checked when it changes (which only the
@@ -600,7 +619,7 @@ async def set_backup_settings(request: Request) -> dict:
     bp["backup"] = settings
     logger.info("backup settings updated for entity %s: %s/%02d:%02d target=%s",
              eid, freq, hour, minute, (target or {}).get("kind") or "platform-only")
-    return _effective(bp)
+    return _effective(bp, network)
 
 
 # ── The Host's own backups (server/host_backup.py) ───────────────────────────
@@ -1345,7 +1364,7 @@ async def list_backup_files() -> dict:
                         for s, p in host_backup.local_store(sub).pairs().items()]
         return out
     found = await asyncio.to_thread(collect)
-    eff = _effective(await _load_bp(eid))
+    eff = _effective(await _load_bp(eid), await host_backup.network_backups())
     await host_backup.pin_recovery_key(pool, eid)
     return {"backups": found[""], "exports": found["exports"], "uploads": found["uploads"],
             "status": await host_backup.backup_status(pool, eid),

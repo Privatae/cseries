@@ -424,19 +424,42 @@
         wday.value = String(cur.weekday == null ? 0 : cur.weekday);
         time.value = String(cur.hour == null ? 2 : cur.hour).padStart(2, '0') + ':'
                    + String(cur.minute == null ? 30 : cur.minute).padStart(2, '0');
-        // The network is a choice only for a host on it.
+        // The network is a choice only for a host on it, and for a member
+        // only once the network keeps backups (network_backups: false when
+        // its door said it does not, null while it has not said).
         var netOpt = where.querySelector('option[value="network"]');
         var onNetwork = cur.mode === 'platform' || cur.mode === 'member';
+        var notKept = cur.mode === 'member' && cur.network_backups === false;
         netOpt.textContent = cur.mode === 'platform' ? 'Platform storage'
-            : (onNetwork ? 'The network\'s storage' : 'The network\'s storage (this host is not on the network)');
-        netOpt.disabled = !onNetwork;
+            : (!onNetwork ? 'The network\'s storage (this host is not on the network)'
+                : (notKept ? 'The network\'s storage (the network does not keep backups yet)'
+                    : 'The network\'s storage'));
+        netOpt.disabled = !onNetwork || notKept;
         document.getElementById('bk-platform-text').textContent =
             'Keep my encrypted backups in ' + networkName(cur.mode);
-        where.value = cur.where || (onNetwork ? 'network' : 'local');
-        whereNote.textContent = (!onNetwork && cur.where === 'network')
-            ? 'Your backups are set to go to the network\'s storage, and this host is not on the network, '
-              + 'so it takes none. Choose another place for them and save.'
-            : (cur.where_chosen ? '' : 'Your host uses this unless you choose another place.');
+        where.value = cur.where || (cur.mode === 'platform' ? 'network' : 'local');
+        if (!onNetwork && cur.where === 'network') {
+            whereNote.textContent = 'Your backups are set to go to the network\'s storage, and this host '
+                + 'is not on the network, so it takes none. Choose another place for them and save.';
+        } else if (notKept && cur.where === 'network') {
+            whereNote.textContent = 'Your backups are set to go to the network\'s storage, and the network '
+                + 'does not keep backups yet, so your host takes none. Choose another place for them and save.';
+        } else if (cur.where_chosen) {
+            whereNote.textContent = '';
+        } else if (cur.mode === 'member' && cur.where === 'local') {
+            // The folder is the default only until the network keeps backups
+            // (host_backup.destination_of); then the default is the network's
+            // storage. Saving the tab stores the place it shows, so the owner
+            // who wants the folder for good keeps it by saving.
+            whereNote.textContent = (notKept
+                ? 'The network does not keep backups yet, so your host keeps them in this folder. '
+                  + 'When the network starts keeping them, '
+                : 'Your host has not heard from the network about its storage yet, so it keeps its '
+                  + 'backups in this folder. When the network says it keeps them, ')
+                + 'your host sends them there instead; to keep them here, save this tab.';
+        } else {
+            whereNote.textContent = 'Your host uses this unless you choose another place.';
+        }
         keep.value = String(cur.local_keep || 7);
         var t = cur.target || null;
         kind.value = (cur.where === 'network' && t && t.kind) || '';

@@ -36,8 +36,10 @@ data. So:
     owner replaces it: an offer never displaces it.
 
 WHERE IT GOES: the place the owner chose in Settings, Backup (destination_of),
-else the network's storage for a Host on the network or the platform, and a
-folder on this machine for a standalone Host.
+else the network's storage when it takes this Host's backups, and a folder on
+this machine otherwise. Platform storage always takes them; a network member's
+door takes them only once it answers the backup ops (network_backups), and a
+standalone Host has no network.
   * The network's storage (the platform's, or the member door's for a network
     member) holds ciphertext only. It gives the Host upload-only URLs for
     exactly one object at a time in its own folder (bridge ops backup.upload.*,
@@ -423,14 +425,119 @@ def host_mode(bc: Any = _LOOK_UP) -> str:
     return MODE_PLATFORM
 
 
-def destination_of(bp: dict, mode: str) -> str:
+# Whether the network's storage takes this Host's backups (network_backups).
+# Platform storage always does. The member door reports nothing about what it
+# serves, so a member Host asks it the one backup op that changes nothing,
+# backup.list, and reads the answer:
+#   * answered: the door keeps backups;
+#   * code 400, which is what a door without the backup ops answers for any op
+#     it does not have ("Unknown operation: backup.list"), or code 503, a door
+#     that has them and no storage behind them: it does not;
+#   * no answer from the door (not connected, a timeout) or any other error:
+#     nothing is learned, and the last answer stands. Before the first answer
+#     the network's storage is not offered.
+# Asked again NETWORK_ASK_S after the last answer, so a door that starts
+# keeping backups is seen within that time, and a Host that joins another
+# network (a new client) asks again at once. An ask that learned nothing is
+# not repeated for NETWORK_RETRY_S: a door that answers its heartbeat while
+# this one question hangs (the storage behind it does) would otherwise hold
+# every look up for the ask's whole limit, and Settings looks several times
+# as it opens (GET /api/backup/runs alone twice). One ask is out at a time; a
+# look that arrives meanwhile waits for it and reads its answer.
+NETWORK_ASK_S = 600.0
+NETWORK_RETRY_S = 60.0
+# Settings, Backup waits on the question when it opens, so it is not left to
+# the bridge's own 30-second request timeout: a door that is there lists one
+# Host's folder in well under a second.
+NETWORK_ASK_TIMEOUT_S = 10.0
+NETWORK_NOT_KEPT = frozenset({400, 503})
+# `for_s`: how long the ask made `at` stands (NETWORK_ASK_S after an answer,
+# NETWORK_RETRY_S after none).
+_network_answer: dict = {"client": None, "at": None, "offers": None, "for_s": NETWORK_ASK_S}
+_network_asking: list = [None, None]     # [the event loop, its lock]
+
+
+def _network_lock() -> asyncio.Lock:
+    """The one-ask-at-a-time lock, made for the running event loop (a lock
+    belongs to the loop it first waits in)."""
+    loop = asyncio.get_running_loop()
+    if _network_asking[0] is not loop:
+        _network_asking[:] = [loop, asyncio.Lock()]
+    return _network_asking[1]
+
+
+async def network_backups(mode: Optional[str] = None) -> Optional[bool]:
+    """Whether the network's storage takes this Host's backups: True on the
+    platform, False for a standalone Host, and for a network member what its
+    door last answered (above), or None while it has not answered yet."""
+    if mode is None:
+        mode = host_mode()
+    if mode == MODE_PLATFORM:
+        return True
+    if mode != MODE_MEMBER:
+        return False
+    async with _network_lock():
+        return await _ask_network()
+
+
+async def _ask_network() -> Optional[bool]:
+    bc = _bridge() or _raw_bridge()
+    seen = _network_answer
+    if seen["client"] is not bc:
+        seen.update(client=bc, at=None, offers=None)
+    if (seen["at"] is not None
+            and time.monotonic() - seen["at"] < seen.get("for_s", NETWORK_ASK_S)):
+        return seen["offers"]
+    full = getattr(bc, "request_full", None)
+    if full is None or not getattr(bc, "_connected", True):
+        return seen["offers"]
+    try:
+        env = await asyncio.wait_for(full("backup.list", {"kind": KIND_BACKUP}),
+                                     NETWORK_ASK_TIMEOUT_S)
+    except Exception as e:  # noqa: BLE001 — no answer (a timeout too): nothing learned
+        log.info("backup: the network did not say whether it keeps backups: %s", e)
+        env = None
+    if isinstance(env, dict) and env.get("ok"):
+        offers = True
+    elif isinstance(env, dict) and env.get("code") in NETWORK_NOT_KEPT:
+        offers = False
+    else:
+        # Nothing learned: the last answer stands, and the door is left alone
+        # for NETWORK_RETRY_S.
+        seen.update(at=time.monotonic(), for_s=NETWORK_RETRY_S)
+        return seen["offers"]
+    if offers != seen["offers"]:
+        log.info("backup: the network's storage %s this Host's backups",
+                 "takes" if offers else "does not take")
+    seen.update(at=time.monotonic(), offers=offers, for_s=NETWORK_ASK_S)
+    return offers
+
+
+def destination_of(bp: dict, mode: str, network: Optional[bool] = None) -> str:
     """Where this Host's backups go: the owner's choice in Settings, Backup
-    (`where`), else the network's storage for a Host on the network or the
-    platform and a folder on this machine for a standalone Host."""
+    (`where`), else the network's storage when it takes them and a folder on
+    this machine when it does not. Platform storage always takes them; a
+    network member's only when `network` (network_backups) is True, so a
+    member whose door does not keep backups, or has not said, keeps them in
+    the folder."""
     where = str(_stored(bp).get("where") or "").strip().lower()
     if where in WHERES:
         return where
-    return WHERE_NETWORK if mode in (MODE_PLATFORM, MODE_MEMBER) else WHERE_LOCAL
+    if mode == MODE_PLATFORM or (mode == MODE_MEMBER and network is True):
+        return WHERE_NETWORK
+    return WHERE_LOCAL
+
+
+def network_unavailable(mode: str, network: Optional[bool]) -> Optional[str]:
+    """Why backups set to go to the network's storage cannot go there, or
+    None: this Host is on no network, or its network said it keeps no
+    backups. A member whose door has not answered yet is not refused: its run
+    tries, and says what went wrong if the door is still not there."""
+    if mode == MODE_STANDALONE:
+        return NO_DESTINATION_TEXT
+    if mode == MODE_MEMBER and network is False:
+        return NO_NETWORK_STORAGE_TEXT
+    return None
 
 
 def local_keep(bp: dict) -> int:
@@ -1754,9 +1861,11 @@ async def _run(pool, eid: int, reason: str, keep: tuple = ()) -> dict:
     if not recips:
         return await _record_no_recipient(pool, reason)
     mode = host_mode()
-    where = destination_of(bp, mode)
-    if where == WHERE_NETWORK and mode == MODE_STANDALONE:
-        return await _record_no_destination(pool, reason)
+    network = await network_backups(mode)
+    where = destination_of(bp, mode, network)
+    nowhere = network_unavailable(mode, network) if where == WHERE_NETWORK else None
+    if nowhere:
+        return await _record_no_destination(pool, reason, nowhere)
     if where == WHERE_NETWORK:
         kind = KIND_BACKUP if platform_on(bp) else KIND_STAGED
         stored = kind
@@ -1865,6 +1974,10 @@ NO_DESTINATION_TEXT = ("not backed up: your backups are set to go to the network
                        "this Host is not on the network. Join it in Settings, Network, or choose "
                        "another place for your backups in Settings, Backup")
 
+NO_NETWORK_STORAGE_TEXT = ("not backed up: your backups are set to go to the network's storage, and "
+                           "the network does not keep backups yet. Choose a folder on this machine "
+                           "or your own bucket in Settings, Backup")
+
 
 async def _record_not_attempted(pool, reason: str, state: str, text: str) -> dict:
     rid = await pool.fetchval(
@@ -1881,18 +1994,21 @@ async def _record_no_recipient(pool, reason: str) -> dict:
     return await _record_not_attempted(pool, reason, STATE_NO_RECIPIENT, NO_RECIPIENT_TEXT)
 
 
-async def _record_no_destination(pool, reason: str) -> dict:
-    """Told to use the network's storage while not on the network: nothing is
-    written, here or anywhere else (a backup that went somewhere the owner did
-    not choose is one they do not know about). One row says so."""
-    return await _record_not_attempted(pool, reason, STATE_NO_DESTINATION, NO_DESTINATION_TEXT)
+async def _record_no_destination(pool, reason: str, text: str = NO_DESTINATION_TEXT) -> dict:
+    """Told to use the network's storage while not on the network, or on a
+    network that keeps no backups (network_unavailable gives the text):
+    nothing is written, here or anywhere else (a backup that went somewhere
+    the owner did not choose is one they do not know about). One row says so."""
+    return await _record_not_attempted(pool, reason, STATE_NO_DESTINATION, text)
 
 
 async def destination_problem(pool, eid: int) -> Optional[str]:
     """Why this Host cannot back up to where its backups go, or None."""
     bp = await _behavioral_params(pool, eid)
-    if destination_of(bp, host_mode()) == WHERE_NETWORK and host_mode() == MODE_STANDALONE:
-        return NO_DESTINATION_TEXT
+    mode = host_mode()
+    network = await network_backups(mode)
+    if destination_of(bp, mode, network) == WHERE_NETWORK:
+        return network_unavailable(mode, network)
     return None
 
 
@@ -1963,9 +2079,10 @@ async def backup_status(pool, eid: int) -> dict:
                     "This Host takes no backups until you turn them on again below.")
     if not await recipients(pool, eid, bp):
         return says("paused", PAUSED_HEADLINE, PAUSED_TEXT + ".")
-    if await destination_problem(pool, eid):
+    nowhere = await destination_problem(pool, eid)
+    if nowhere:
         return says("no_destination", "Backups are paused: choose where they go",
-                    NO_DESTINATION_TEXT[0].upper() + NO_DESTINATION_TEXT[1:] + ".")
+                    nowhere[0].upper() + nowhere[1:] + ".")
     if last is None:
         return says("none_yet", "No backup yet",
                     "Your Host takes its first one at its next scheduled time, or when you press "
@@ -2283,8 +2400,11 @@ async def next_action(pool, eid: int, now: dt.datetime, booted: dt.datetime) -> 
     blocked = None
     if not has_key:
         blocked = STATE_NO_RECIPIENT
-    elif destination_of(bp, mode) == WHERE_NETWORK and mode == MODE_STANDALONE:
-        blocked = STATE_NO_DESTINATION
+    else:
+        network = await network_backups(mode)
+        if (destination_of(bp, mode, network) == WHERE_NETWORK
+                and network_unavailable(mode, network)):
+            blocked = STATE_NO_DESTINATION
     if blocked is None:
         return ("run", why)
     # Nothing can be written. One row per scheduled slot says so; checking
@@ -2332,7 +2452,13 @@ async def run_host_backup_loop(pool, eid: int) -> None:
                 except Exception as e:  # noqa: BLE001 — the record above is what counts
                     log.warning("backup: the Host could not be told backups are paused: %s", e)
             elif act[0] == STATE_NO_DESTINATION:
-                await _record_no_destination(pool, act[1])
+                # The reason, read again as the row is written. If it no
+                # longer holds (the network answered in between), nothing is
+                # recorded: a row with the standalone text would tell a member
+                # it is on no network, and the next minute runs the backup.
+                nowhere = await destination_problem(pool, eid)
+                if nowhere:
+                    await _record_no_destination(pool, act[1], nowhere)
             else:
                 await run_once(pool, eid, act[1])
         except asyncio.CancelledError:

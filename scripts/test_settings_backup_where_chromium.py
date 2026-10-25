@@ -72,10 +72,14 @@ TICKET = "dl_" + "Q7x" * 10 + "ab"
 
 def settings_json() -> dict:
     s = state.get("saved") or {}
-    where = s.get("where") or ("local" if state["mode"] == "standalone" else "network")
+    # As server/routes/backup.py _effective: the network's storage is the
+    # default only where it takes this Host's backups.
+    network = state.get("network_backups") if state["mode"] == "member" else state["mode"] == "platform"
+    where = s.get("where") or ("network" if network is True else "local")
     return {"frequency": "daily", "hour": 2, "minute": 30, "weekday": 0, "timezone": "UTC",
             "is_default": False, "platform": True, "target": s.get("target"), "target_problem": None,
-            "mode": state["mode"], "where": where, "where_chosen": bool(s.get("where")),
+            "mode": state["mode"], "network_backups": network,
+            "where": where, "where_chosen": bool(s.get("where")),
             "local_keep": s.get("local_keep", 7),
             "key": {"registered": True, "recovery": {"fingerprint": "0a1b2c3d4e5f6a7b", "label": "x"}}}
 
@@ -156,7 +160,9 @@ class Host(ClientClosesFirst, http.server.BaseHTTPRequestHandler):
         requests.append(("PUT", path, query, body))
         if path == "/api/backup/settings":
             got = json.loads(body)
-            if got.get("where") != (state.get("saved") or {}).get("where") and not got.get("stepup_code"):
+            # As server/routes/backup.py _reduces_protection: a move from where
+            # the backups go now, the owner's choice or the default, takes the code.
+            if got.get("where") != settings_json()["where"] and not got.get("stepup_code"):
                 return self._send(428, {"detail": "enter your six-digit code to change where your backups go"})
             state["saved"] = got
             return self._send(200, settings_json())
@@ -357,8 +363,52 @@ try:
     state.pop("progress")
     page.goto("about:blank")
 
-    print("== a network member")
-    state.update(mode="member", saved=None)
+    print("== a network member whose network does not keep backups yet")
+    state.update(mode="member", saved=None, network_backups=False)
+    page.goto(BASE + "/system-apps/settings/index.html#view=backup")
+    page.wait_for_function("document.getElementById('bk-where-note').textContent.length > 0", timeout=15000)
+    check("it starts on a folder on this machine, and cannot choose the network's storage",
+          page.input_value("#bk-where") == "local"
+          and page.eval_on_selector('#bk-where option[value="network"]', "o => o.disabled"))
+    check("  and the tab says why",
+          "does not keep backups yet" in page.text_content("#bk-where-note")
+          and "does not keep backups yet" in page.text_content('#bk-where option[value="network"]'),
+          page.text_content("#bk-where-note"))
+    # The folder is this member's default only until the network keeps
+    # backups; then the default is the network's storage. The tab says so
+    # before it happens, and how to keep them in the folder instead.
+    check("  and that its backups move to the network's storage once it keeps them, unless the owner "
+          "saves this tab", "sends them there instead" in page.text_content("#bk-where-note")
+          and "save this tab" in page.text_content("#bk-where-note"), page.text_content("#bk-where-note"))
+    page.goto("about:blank")
+    state.update(network_backups=None)
+    page.goto(BASE + "/system-apps/settings/index.html#view=backup")
+    page.wait_for_function("document.getElementById('bk-where-note').textContent.length > 0", timeout=15000)
+    note = page.text_content("#bk-where-note")
+    check("one whose network has not said yet: the folder, the network's storage still a choice, and "
+          "the same notice", page.input_value("#bk-where") == "local"
+          and not page.eval_on_selector('#bk-where option[value="network"]', "o => o.disabled")
+          and "has not heard" in note and "sends them there instead" in note and "save this tab" in note,
+          note)
+    del requests[:]
+    asked = len(prompts)
+    page.click("#bk-save")
+    page.wait_for_function("document.getElementById('bk-status').textContent.indexOf('Saving') < 0",
+                           timeout=15000)
+    put = [json.loads(b) for m, p, _q, b in requests if m == "PUT" and p == "/api/backup/settings"]
+    check("  and saving the tab keeps the folder it shows, as the notice says, with no code asked",
+          len(put) == 1 and put[0].get("where") == "local" and "stepup_code" not in put[0]
+          and len(prompts) == asked, (put, prompts[asked:]))
+    state.update(saved={"where": "network"}, network_backups=False)
+    page.goto("about:blank")
+    page.goto(BASE + "/system-apps/settings/index.html#view=backup")
+    page.wait_for_function("document.getElementById('bk-where-note').textContent.length > 0", timeout=15000)
+    check("one set to the network's storage is told it takes no backups there, and to choose another place",
+          "so your host takes none" in page.text_content("#bk-where-note"), page.text_content("#bk-where-note"))
+    page.goto("about:blank")
+
+    print("== a network member whose network keeps backups")
+    state.update(mode="member", saved=None, network_backups=True)
     page.goto(BASE + "/system-apps/settings/index.html#view=backup")
     page.wait_for_function("document.getElementById('bk-where').value === 'network'", timeout=15000)
     check("a member may keep its backups in the network's storage, and starts there",

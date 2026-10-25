@@ -104,7 +104,7 @@ of what we can and cannot reach on your machine, are on
 
 ## Network membership: not on sale yet
 
-$5 a month when it opens, for a Host on your own machine. A member Host
+$9 a month when it opens, for a Host on your own machine. A member Host
 connects out to the Privatae network over one connection it keeps open, and
 nothing the network sends can run on it.
 

@@ -75,7 +75,7 @@ OVHcloud in Virginia (US East). Sizes and prices are in the
 
 ## Network membership
 
-$5 a month when it opens, for a Host on your own machine. It is not on sale
+$9 a month when it opens, for a Host on your own machine. It is not on sale
 yet. The network will keep your Host's backups and messages sealed to keys
 it does not have, and a cloud worker will keep no memory of its own. What
 you post on the community board is not sealed: other members read it.

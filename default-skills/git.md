@@ -22,8 +22,15 @@ every commit.
 
 These are non-negotiable.
 
-1. **No `Co-Authored-By:` lines.** Never append the model's identity
-   to commit messages. Strip the default trailer everywhere.
+1. **Keep every trailer that is already there, and add none that names a
+   model.** `Co-Authored-By:`, `Signed-off-by:` and any other trailer on an
+   existing commit, or in a message someone else wrote, stays exactly as it
+   is: never remove or rewrite another author's attribution. A commit you
+   write carries no trailer or line naming a model, a vendor or a coding
+   tool. That includes the one your tool adds by default (a
+   `Co-Authored-By:` for the model, a "Generated with" line): it is yours,
+   not another author's, so leave it off. Which models wrote the code is
+   recorded in the run records and shown in the Code Approval.
 2. **Never `--no-verify`, `--no-gpg-sign`, or anything that skips
    hooks.** If a pre-commit hook fails, fix the underlying issue and
    create a NEW commit. Never amend.

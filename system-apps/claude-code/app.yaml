@@ -13,17 +13,12 @@ provenance: standard
 # described as such everywhere; display name/title now 'Claude Code'.)
 # 0.1.11 (2026-08-05): Connections-app references scrubbed (the app is
 # retired — sign-in is the user's own surface, keys live in the Keys app).
-# 0.2.0 (2026-08-15): the platform-hosted Anthropic OAuth surface is GONE.
-# The 0.1.11 note above said sign-in was already the user's own surface; it
-# was not. The Connect-with-OAuth card, the paste-authorization-code step,
-# and the sidecar's /oauth/{initiate,exchange,disconnect} handlers drove a
-# platform-hosted login: the platform frontend built Anthropic authorize URLs
-# with the Claude Code CLI's own client_id, held the PKCE verifier
-# server-side, and exchanged the code at Anthropic's token endpoint. All of
-# it removed, frontend route included. The app now reads the user's own
-# credential from the entity's on-disk creds file like every other builder
-# and explains how to connect instead of offering to do it for you.
-# /oauth/disconnect is now /disconnect (it only clears local creds).
+# 0.2.0 (2026-08-15): the Connect-with-OAuth card, the paste-authorization-code
+# step and the sidecar's /oauth/{initiate,exchange,disconnect} handlers are
+# removed. The app reads the user's own credential from the entity's on-disk
+# creds file like every other builder and explains how to connect instead of
+# offering to do it for you. /oauth/disconnect is now /disconnect (it only
+# clears local creds).
 # 0.2.1 (2026-08-19): named "Claude Code" (the harness), no "coding lane" phrasing.
 # 0.2.3 (2026-08-25): prompt_behavior hardcoded the coding-engine roster and
 # had already gone stale — it omitted antigravity, which is in
@@ -73,7 +68,7 @@ provenance: standard
 # version needs runs the disconnect for this app even with no Vault copy and
 # answers 200, so a 404 no longer means "nothing was sealed": it means the
 # marker may not be set. The store lane needs the new number for the repack.
-version: "0.2.23"
+version: "0.2.24"
 # 0.2.19 (2026-09-28): manifest comment only — the ready_timeout note no longer
 # cites the SDK pip bootstrap removed in 0.2.18 (review). The store lane needs
 # the new number for the repacked bundle.

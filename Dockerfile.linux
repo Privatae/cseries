@@ -567,7 +567,6 @@ RUN git config --system init.defaultBranch main \
 # Copy application code (owned by privatae)
 COPY --chown=privatae:privatae server/ /app/server/
 COPY --chown=privatae:privatae brain/ /app/brain/
-COPY --chown=privatae:privatae services/ /app/services/
 COPY --chown=privatae:privatae dashboard/ /app/dashboard/
 COPY --chown=privatae:privatae cli/ /app/cli/
 # Shared harness runtime library (NOT app source — no app.yaml; the bundle
@@ -663,7 +662,7 @@ RUN chmod +x /app/entrypoint.sh
 # from source on every boot. Compile at build; runtime reads the baked
 # __pycache__ (DONTWRITEBYTECODE only stops writes, not reads). -q quiet;
 # a file that can't compile fails the build loudly instead of shipping.
-RUN python3 -m compileall -q /app/server /app/brain /app/services /app/cli /app/scripts
+RUN python3 -m compileall -q /app/server /app/brain /app/cli /app/scripts
 
 # Bake version metadata. A release build fills these via --build-arg and
 # passes PC_IMAGE explicitly, so build-info names the image actually

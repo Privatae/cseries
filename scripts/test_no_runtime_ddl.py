@@ -205,10 +205,10 @@ ROOTS: tuple[str, ...] = ("server", "brain")
 #
 # Why there is no third runtime root today, read off Dockerfile.linux's COPY set
 # (brain, cli, dashboard, default-skills, docs, etc, factory-bundles, migrations,
-# native-bundles, native-sdk, provisioning, scripts, server, services,
-# system-apps) and measured:
-#   - Of those, only cli/ (2 .py), services/ (1), system-apps/ (13) and scripts/
-#     (324) carry Python outside the roots at all. The first three hold no DDL.
+# native-bundles, native-sdk, provisioning, scripts, server, system-apps) and
+# measured:
+#   - Of those, only cli/ (2 .py), system-apps/ (13) and scripts/ (324) carry
+#     Python outside the roots at all. The first two hold no DDL.
 #   - dashboard/, default-skills/, docs/, etc/, factory-bundles/, migrations/,
 #     native-bundles/, native-sdk/ and provisioning/ contain ZERO .py files, so
 #     they are clear because there is no Python in them, not because their

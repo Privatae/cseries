@@ -1906,8 +1906,8 @@ fi
 # same contract, so all four gate here. Each prints PASSED: on its last line.
 pc_gate="$(APP_ROOT="$SMOKE_REPO" python3 "$SMOKE_REPO/scripts/test_proposals_checks.py" 2>&1 | tail -1 || true)"
 if [[ "$pc_gate" == PASSED:* ]]; then green "OK    proposals checks — $pc_gate"; else red "FAIL  proposals checks: $pc_gate"; failed=1; fi
-pp_gate="$(APP_ROOT="$SMOKE_REPO" python3 "$SMOKE_REPO/scripts/test_proposals_promote.py" 2>&1 | tail -1 || true)"
-if [[ "$pp_gate" == PASSED:* ]]; then green "OK    proposals intake+promote — $pp_gate"; else red "FAIL  proposals intake+promote: $pp_gate"; failed=1; fi
+pp_gate="$(APP_ROOT="$SMOKE_REPO" python3 "$SMOKE_REPO/scripts/test_proposals_intake.py" 2>&1 | tail -1 || true)"
+if [[ "$pp_gate" == PASSED:* ]]; then green "OK    proposals intake — $pp_gate"; else red "FAIL  proposals intake: $pp_gate"; failed=1; fi
 pa_gate="$(APP_ROOT="$SMOKE_REPO" python3 "$SMOKE_REPO/scripts/test_proposals_authoring.py" 2>&1 | tail -1 || true)"
 if [[ "$pa_gate" == PASSED:* ]]; then green "OK    proposals authoring — $pa_gate"; else red "FAIL  proposals authoring: $pa_gate"; failed=1; fi
 cp_gate="$(APP_ROOT="$SMOKE_REPO" python3 "$SMOKE_REPO/scripts/test_capability_propose.py" 2>&1 | tail -1 || true)"

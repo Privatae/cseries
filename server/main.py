@@ -1244,9 +1244,8 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning("Integration scheduler startup failed: %s", e)
 
-    # The app-update check, harness health and sync, the default-app install,
-    # the SDK pull and the platform grant mirror all asked the platform and
-    # are not started: a standalone Host has none to ask.
+    # The app-update check, harness health and the SDK pull asked the platform
+    # and are not started: a standalone Host has none to ask.
 
     # --- mTLS front terminator (:8443) — in-process ---
     # Owns :8443 exactly as the old standalone python3 process did (see
@@ -1974,10 +1973,6 @@ app.include_router(context.router)
 from server.routes import context_manager
 app.include_router(context_manager.router)
 
-# Claude SDK OAuth lifecycle — surfaced in Connections (portal) Accounts tab.
-from server.routes import sdk_auth
-app.include_router(sdk_auth.router)
-
 # Ship 4d-1: decision substrate routes (host proposes, user resolves via inbox)
 from server.routes import decisions as decisions_routes
 app.include_router(decisions_routes.router)
@@ -2104,11 +2099,6 @@ app.include_router(appearance_routes.router)
 # Generated images a provider returned inline (b64_json), kept on this Host.
 from server.routes import images as images_routes
 app.include_router(images_routes.router)
-
-# Project step execution engine removed 2026-05-30 (dead/unwired + contradicted
-# the "App Factory organizes; host drives harnesses via fan_out" design). The
-# remaining provenance helper in project_orchestrator.py has no router and is
-# imported directly by the factory approve/reject MCP tools.
 
 # Realtime voice: server-side ephemeral-token mint for browser voice apps
 # (POST /api/realtime/client_secrets). The provider key stays sealed in the

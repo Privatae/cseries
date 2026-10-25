@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-Phase-0 gate — intake + promote planning (server/proposals/{intake,promote}.py).
+Phase-0 gate — intake (server/proposals/intake.py).
 
 Proves the pure transforms the proposals route relies on: a community/proposals
-PR becomes the right Proposal, the gated-auto verdict flows through, and an
-approved manifest plans a correct promote PR into the platform catalog. Non-
-manifest proposals refuse to promote. Pure — no gitea, no network. Run:
-  python3 scripts/test_proposals_promote.py
+PR becomes the right Proposal, and the gated-auto verdict flows through.
+Pure — no gitea, no network. Run:
+  python3 scripts/test_proposals_intake.py
 """
 from __future__ import annotations
 
@@ -14,15 +13,8 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-# The target repos are configuration; set them before promote.py reads them.
-os.environ["CSERIES_PLATFORM_REPO"] = "owner/platform"
-os.environ["CSERIES_PLATFORM_BASE"] = "main"
-os.environ["CSERIES_ZONE_REPO"] = "owner/zone"
-os.environ["CSERIES_ZONE_BASE"] = "zone-main"
-
 from server.proposals import ProposalKind, evaluate            # noqa: E402
 from server.proposals.intake import proposal_from_pr           # noqa: E402
-from server.proposals.promote import plan_promotion, NotPromotable  # noqa: E402
 
 _failures = 0
 
@@ -120,25 +112,6 @@ pf = proposal_from_pr({"number": 8, "title": "Dark mode", "user": {"login": "u"}
 check("intake: kind FEATURE_REQUEST", pf.kind is ProposalKind.FEATURE_REQUEST, pf.kind.value)
 check("intake: feature body captured", "dark mode" in pf.body.lower(), pf.body)
 
-# ── promote planning: manifest → correct platform PR plan ───────────────────
-plan = plan_promotion(p, source_pr=7)
-check("promote: targets platform repo", plan.repo == "owner/platform", plan.repo)
-check("promote: base main", plan.base == "main", plan.base)
-check("promote: branch promote/xai-voice", plan.branch == "promote/xai-voice", plan.branch)
-check("promote: path translated to catalog",
-      set(plan.files) == {"server/integrations/manifests/xai-voice.yaml"}, str(set(plan.files)))
-check("promote: content preserved",
-      plan.files["server/integrations/manifests/xai-voice.yaml"] == GOOD_VOICE)
-check("promote: stems", plan.stems == ["xai-voice"], str(plan.stems))
-check("promote: title references source PR", "community/proposals#7" in plan.title, plan.title)
-
-# ── promote refuses a non-manifest ──────────────────────────────────────────
-try:
-    plan_promotion(pf)
-    check("promote: feature request refused", False, "did not raise")
-except NotPromotable:
-    check("promote: feature request refused (NotPromotable)", True)
-
 # ── phase 3: board-escalated request carries popularity via front matter ────
 esc = proposal_from_pr(
     {"title": "Voice provider manifests", "user": {"login": "entity-1"}},
@@ -154,25 +127,15 @@ check("intake: front-matter-less request unchanged",
       plain.popularity == 0 and plain.body == "no front matter here", repr(plain.body))
 
 
-# ── catalog-template promotion (batch 5) ────────────────────────────────────
+# ── catalog-template intake ─────────────────────────────────────────────────
 cat = proposal_from_pr(
     {"title": "add linkding", "user": {"login": "e"}},
     {"catalog-templates/linkding.yaml": "# documentation: x\nservices: {}",
      "catalog-templates/overrides/linkding.json": "{}"})
 check("intake: catalog paths -> CATALOG_TEMPLATE kind",
       cat.kind is ProposalKind.CATALOG_TEMPLATE and len(cat.files) == 2)
-plan = plan_promotion(cat, source_pr=9)
-check("catalog promote targets the ZONE repo",
-      plan.repo == "owner/zone" and plan.base == "zone-main",
-      f"{plan.repo}@{plan.base}")
-check("catalog promote lands vendor + overrides beside the slice",
-      "public-zone-agent/catalog-templates/vendor/linkding.yaml" in plan.files
-      and "public-zone-agent/catalog-templates/overrides/linkding.json" in plan.files,
-      str(sorted(plan.files)))
-check("catalog promote branch + stems",
-      plan.branch == "promote/catalog-linkding" and plan.stems == ["linkding"])
 
-# ── bug reports: the fourth kind, a separate repo, never promoted ────────────
+# ── bug reports: the fourth kind, a separate repo ───────────────────────────
 BUG_MD = (
     "---\ntitle: Tickets pane loses drafts\nkind: bug\nseverity: high\n"
     "host_version: cseries v0.16.83\nticket: 8f3a1c2e-1111-2222-3333-444455556666\n"
@@ -197,14 +160,9 @@ check("intake: a clean bug report auto-stages for the validator",
 mixed = proposal_from_pr(PR, {"bugs/x.md": BUG_MD, "manifests/xai-voice.yaml": GOOD_VOICE})
 check("intake: a bug mixed with another kind FAILS intake, naming both",
       bool(mixed.intake_error) and "bugs/x.md" in mixed.intake_error, mixed.intake_error)
-try:
-    plan_promotion(bug)
-    check("promote: a bug report never promotes", False, "did not raise")
-except NotPromotable:
-    check("promote: a bug report never promotes (NotPromotable)", True)
 
 print()
 if _failures:
     print(f"FAILED: {_failures} check(s)")
     sys.exit(1)
-print("PASSED: proposals intake + promote planning")
+print("PASSED: proposals intake")

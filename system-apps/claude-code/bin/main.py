@@ -88,22 +88,9 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 
 # ── Config / paths ────────────────────────────────────────────────────
 
-# REMOVED 2026-08-15 — the platform-hosted Anthropic OAuth surface.
-# FRONTEND_BASE / INTERNAL_TOKEN existed only to reach the platform frontend's
-# /api/integrations/claude, which built Anthropic authorize URLs with the
-# Claude Code CLI's own client_id, held the PKCE verifier server-side,
-# exchanged the code at Anthropic's token endpoint, and stored the grant.
-# That is the platform standing in the middle of a vendor's login. Every
-# login surface must be the vendor's own, with the host acting only as the
-# operator that runs it — the same rule for every vendor, no exceptions and
-# no per-vendor shortcuts. The frontend route is deleted in this same
-# change; nothing here talks to it any more.
-#
-# What remains is the path every other harness already uses: the user's own
-# credential in the vault -> the entity's on-disk creds file ->
-# LOCAL_CREDS_PATH below, self-refreshed in-pod. _get_token already
-# preferred that and called the frontend "a legacy fallback only", so this
-# removes dead-by-default code rather than a working path.
+# The credential is the user's own, the path every other harness uses: the
+# user's credential in the vault -> the entity's on-disk creds file ->
+# LOCAL_CREDS_PATH below, self-refreshed in-pod.
 
 ENTITY_ID = int(os.environ.get("ENTITY_ID", "0"))
 
@@ -133,9 +120,7 @@ def _mark_connected_locked() -> None:
 
 # The entity's OWN Claude creds — the same file every other harness reads
 # via _HARNESS_CRED_FILES, delivered by the standard wake path from the
-# user's own credential. This is now the ONLY source; the central-frontend
-# fetch that used to sit here was the platform-hosted OAuth store and is
-# gone (see the config note above).
+# user's own credential. This is the ONLY source.
 LOCAL_CREDS_PATH = Path("/home/privatae/.claude/.credentials.json")
 _REFRESH_UA = "claude-cli/2.1.145 (cseries entity)"
 
@@ -149,8 +134,7 @@ def _get_token() -> str | None:
     refresh exits through the user's bastion via the in-pod egress proxy).
 
     No creds -> None, and the caller reports not-connected. There is
-    deliberately no second source: the central-frontend fallback that used
-    to live here was the platform's own Anthropic OAuth store.
+    deliberately no second source.
     """
     with _token_lock:
         now = time.time()

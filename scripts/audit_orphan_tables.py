@@ -75,7 +75,7 @@ _DECLARED_LEDGER = os.path.join(_ROOT, "scripts", "declared_tables_baseline.txt"
 # Where runtime code lives (a table named here is "wired"). Deliberately EXCLUDES
 # migrations/, docs/, *.md, NOTES/, and scripts/test_* — a table that appears
 # ONLY in a migration or a doc is exactly the orphan we want to surface.
-_CODE_DIRS = ("server", "brain", "cli", "services", "system-apps", "sidecars")
+_CODE_DIRS = ("server", "brain", "cli", "system-apps", "sidecars")
 
 # Schema-qualified or not, so `CREATE TABLE IF NOT EXISTS public.foo` declares
 # `foo`. It once did not: the pattern captured the first
@@ -168,6 +168,13 @@ def _iter_files(root: str, exts: tuple[str, ...]):
         for f in files:
             if f.endswith(exts):
                 yield os.path.join(dirpath, f)
+
+
+def missing_code_dirs() -> list[str]:
+    """The _CODE_DIRS entries with no directory in the tree. _iter_code_files
+    skips them, so a code dir that was removed or renamed would quietly shrink
+    what arms 1 and 2 read while the gate still said OK."""
+    return [d for d in _CODE_DIRS if not os.path.isdir(os.path.join(_ROOT, d))]
 
 
 def _iter_code_files():
@@ -473,6 +480,13 @@ def main() -> int:
 
     failed = False
 
+    # ── the code dirs the arms read are all there ───────────────────────────
+    missing = missing_code_dirs()
+    if missing:
+        print("FAIL  code dir(s) this audit reads are not in the tree: " + ", ".join(missing))
+        print("      Point _CODE_DIRS at where the runtime code lives now.")
+        failed = True
+
     # ── arm 1 (unchanged contract) ──────────────────────────────────────────
     orphans = compute_orphans()
     baseline = load_baseline()
@@ -548,7 +562,8 @@ def main() -> int:
         print(f"FAIL  table hygiene: {len(new_orphans)} new orphan(s), "
               f"{len(new_undeclared)} undeclared reference(s), "
               f"{len(undropped)} retirement(s) missing a DROP"
-              + (f", {len(stray)} unaccounted live table(s)" if live_path and stray else ""))
+              + (f", {len(stray)} unaccounted live table(s)" if live_path and stray else "")
+              + (f", {len(missing)} missing code dir(s)" if missing else ""))
         return 1
     print(f"OK    no new orphan tables ({len(orphans)} known, baseline current); "
           f"{len(undeclared)} known undeclared reference(s); every retirement has its DROP")

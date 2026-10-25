@@ -154,7 +154,7 @@ async def _b_surface_role(_runtime, sess, _user_msg):
     # Pull live data so the builder can render data-driven content vs
     # hardcoded surface names + tool lists:
     #   - license_tier gates admin-only sections (sovereign-codebase,
-    #     ship pipeline) via mastercode.license_tiers.is_admin
+    #     ship pipeline)
     #   - installed_apps is the source of truth for "other surfaces the
     #     user can move between" — no more hardcoded list of 4 names
     license_tier = (sess.entity or {}).get("license_tier")

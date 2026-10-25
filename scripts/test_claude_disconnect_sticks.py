@@ -13,8 +13,7 @@ Two more holes on the same path. review._persist_rotated_creds read the marker u
 app id "claude-code" while it is only ever filed as "claude-sdk", so a run finishing after
 a Disconnect wrote the credential back. And once the marker is honoured everywhere, every
 way of connecting Claude again has to lift it, or a person who disconnects can never come
-back: Keys (POST /api/vault/secrets) did; the in-pod sign-in (sdk_auth finish) and the
-Host-run vendor login did not.
+back: Keys (POST /api/vault/secrets) did; the Host-run vendor login did not.
 
 Pins, each against the real code with a stand-in pool, a stand-in vault and temp files:
   1. the app's Disconnect calls the Vault delete, and the app holds the narrow scope for it
@@ -255,50 +254,10 @@ try:
           hs.key_state(present=cfile.exists(), valid=True,
                        disconnected=run(hs.is_disconnected("claude-sdk"))) == "connected")
 
-    # The in-pod sign-in (sdk_auth finish), with the token endpoint stood in.
-    cfile.unlink()
-    run(hs.mark_disconnected("claude-sdk"))
-    from server.routes import sdk_auth
-
-    class _Resp:
-        status = 200
-
-        async def text(self):
-            return json.dumps({"access_token": "at-new-invented", "refresh_token": "rt-new-invented",
-                               "expires_in": 3600, "scope": "user:inference"})
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-    class _Session:
-        def __init__(self, *a, **kw):
-            pass
-
-        def post(self, *a, **kw):
-            return _Resp()
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-    saved_sdk = (sdk_auth.aiohttp.ClientSession, sdk_auth.CREDS_PATH)
-    sdk_auth.aiohttp.ClientSession = _Session
-    sdk_auth.CREDS_PATH = cfile
-    try:
-        sdk_auth._SESSIONS["s-invented"] = {"verifier": "v" * 43, "state": "st", "created_at": 0,
-                                            "auth_url": "https://example.invalid/"}
-        out = run(sdk_auth.finish(sdk_auth.FinishBody(session_id="s-invented", code="code#st")))
-    finally:
-        sdk_auth.aiohttp.ClientSession, sdk_auth.CREDS_PATH = saved_sdk
-    check("sdk_auth finish: the sign-in lifts the marker and writes the credential",
-          out.get("ok") is True and not run(hs.is_disconnected("claude-sdk")) and cfile.exists(),
-          (out, pool.params))
-    check("...and seals the Vault copy", "harness:claude_oauth" in VAULT, list(VAULT))
+    # The seal-sweep then seals the signed-in file into the Vault.
+    check("...and the seal-sweep seals the signed-in credential into the Vault",
+          run(nh.seal_agent_creds(pool, 7)) is True and "harness:claude_oauth" in VAULT,
+          list(VAULT))
 
     # Restore works again: the file is gone (a pod roll), the Vault copy writes it back.
     cfile.unlink()

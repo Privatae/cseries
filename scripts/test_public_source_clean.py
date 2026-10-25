@@ -168,7 +168,7 @@ ALLOW: list[tuple[str, str, str, str]] = [
     # memory; the restore, recall and harness paths and their tests name it for
     # the same reason.
     (r"^entrypoint(-postgres)?\.sh$", "tool", "legacy database name", "legacy database name, probed at boot"),
-    (r"^server/(brain_service|code_harness|host_restore)\.py$", "tool", "legacy database name", "legacy database name"),
+    (r"^server/(brain_service|host_restore)\.py$", "tool", "legacy database name", "legacy database name"),
     (r"^scripts/(kernel_schema|test_no_hand_kernel_tables)\.py$", "tool", "legacy database name", "legacy database name"),
     (r"^tests/test_bastion_control_pool_reserved\.py$", "tool", "legacy database name", "legacy database name"),
     # The wiki leak scanner's own test: page sentences it must reject.

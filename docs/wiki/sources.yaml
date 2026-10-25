@@ -172,8 +172,8 @@ claude-code-app:
   - server/network/harness_state.py::reconnect_for_credential
   - server/network/harness_state.py::record_disconnect
   verified:
-    date: '2026-10-22'
-    digest: sha256:998130b56c8235fe8c2c4bb5d3241033d8fcee5bac9b8b78fdc86d5f695421bf
+    date: '2026-10-25'
+    digest: sha256:4b2e8fa8b042c8e09b87d658728b29ac55559df1f6ee4b1b3e97d667a0eb756d
 code-repositories:
   sources:
   - server/routes/code_approvals.py::build_body

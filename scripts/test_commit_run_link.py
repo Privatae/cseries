@@ -136,6 +136,21 @@ tl = tools_source(ROOT)
 check("the phase save point passes the build's run_id",
       'run_ids=[int(_res["run_id"])] if _res.get("run_id") else None' in tl)
 
+print("the git skill a coding harness commits by:")
+# A coding tool's own instructions add a Co-Authored-By line for the model by
+# default. The skill keeps other authors' trailers, so it has to say that this
+# one is the harness's own and stays off; otherwise "keep what is there" reads
+# as keeping it.
+_git_md = (ROOT / "default-skills" / "git.md").read_text()
+_m = re.search(r"\n1\. \*\*(.*?)\n2\. \*\*", _git_md, re.S)
+_rule1 = " ".join((_m.group(1) if _m else "").split())
+check("rule 1 keeps every trailer another author wrote",
+      "never remove or rewrite another author's attribution" in _rule1, _rule1[:200])
+check("...and has the harness leave off the model trailer its tool adds by default",
+      "adds by default" in _rule1 and "leave it off" in _rule1, _rule1[:400])
+check("...and tells it to strip nothing",
+      bool(_rule1) and "strip" not in _rule1.lower(), _rule1[:200])
+
 print()
 if FAILED:
     print(f"{len(FAILED)} FAILURE(S)")

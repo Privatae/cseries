@@ -107,7 +107,7 @@ Arguments: `repo` (owner/name), `title` (the PR title and commit subject:
 the outcome in plain words, under 70 characters), `body` (what the change
 does, why, and what you checked — plain words a person who does not read code
 understands; never a model's, vendor's or tool's name, and no Co-Authored-By
-line), the change, optional `base`, optional `branch_name`. It returns
+line naming one), the change, optional `base`, optional `branch_name`. It returns
 `{pr_url, pr_number, fork, branch, commit, updated}`. Give the user the
 pr_url.
 

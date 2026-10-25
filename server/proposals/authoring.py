@@ -130,7 +130,7 @@ def manifest_proposal(
     """Author a realtime_voice manifest and wrap it as a Proposal ready to open
     as a PR. Returns (repo_path, Proposal). The repo_path is where it lands in
     community/proposals; the same basename lands in the platform catalog on
-    approval (see promote.py)."""
+    approval."""
     yaml_text = build_realtime_voice_manifest(
         key=key, display_name=display_name, ws_url_template=ws_url_template,
         token_url=token_url, model=model,

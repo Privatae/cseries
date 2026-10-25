@@ -552,8 +552,8 @@ async def resolve_agent_creds(pool, eid: int) -> "Optional[str]":
     IMMEDIACY (2026-06-26): on a vault MISS that falls back to live plaintext, fire a
     best-effort seal of that plaintext so the very next resolve/run hits the vault instead
     of waiting for the periodic sweep. Non-blocking and fully best-effort: a seal failure
-    must NOT change the creds returned here or break the run (mirrors the sdk_auth:finish
-    seal pattern). Only seals when there IS plaintext to seal (no-op otherwise)."""
+    must NOT change the creds returned here or break the run. Only seals when there IS
+    plaintext to seal (no-op otherwise)."""
     try:
         from server.vault import api as vault_api
         raw = await vault_api.open_secret(
@@ -817,8 +817,10 @@ def harness_approval_args(spec: dict) -> list:
 # tunnel port to it.
 SERVICE_OPS = ("up", "down", "status", "mirror")
 
-# The platform's CODING HARNESS images are never run as a SERVER in a slot on a user's
-# machine: their seccomp profile is confidential. This refusal is for mode='service'
+# The CODING HARNESS images are never run as a SERVER in a slot on a user's machine:
+# they are built to run as the Host's coding jobs, in the Host's own runtime with the
+# confinement it gives every container (vm/runtime/lib/cseries_runtime/argv.py,
+# harness()). This refusal is for mode='service'
 # only — the job modes are governed by their own grants. The names cseries-harness-<id>
 # and cseries-vscode are matched on the image's last path segment from any registry, so
 # a mirrored copy under the same name is refused too. A copy re-tagged under a different
@@ -1087,20 +1089,20 @@ async def run_harness_op(pool, eid: int, server: str, harness_id: str, *,
             raise nac_mgmt.MgmtError(400, why)
         if is_coding_harness_image(image):
             raise nac_mgmt.MgmtError(
-                403, "the platform's coding harness images never run on a user's machine "
-                     "(their confinement profile is not published) — build the server from "
-                     "another image")
+                403, "the coding harness images never run on a user's machine (they run "
+                     "only as the Host's coding jobs, in the Host's own runtime) — build the "
+                     "server from another image")
     # The same rule for every job mode: a host may run any of its sandboxes on the
-    # user's own bastions, but not the platform's coding harnesses, whose seccomp
-    # profile is confidential. The one exception is the lab,
+    # user's own bastions, but not the coding harnesses, which run only as the Host's
+    # coding jobs in its own runtime. The one exception is the lab,
     # which is platform hardware: mode='lab' is answered only by a lab machine (the
     # box checks its own lab marker), so this also holds for a grant already
     # approved with 'image:*'.
     if mode != "lab" and is_coding_harness_image(image):
         raise nac_mgmt.MgmtError(
-            403, "the platform's coding harness images never run on a user's machine "
-                 "(their confinement profile is not published); only a lab run "
-                 "(mode='lab', on a lab machine) may use one")
+            403, "the coding harness images never run on a user's machine (they run "
+                 "only as the Host's coding jobs, in the Host's own runtime); only a lab "
+                 "run (mode='lab', on a lab machine) may use one")
     if mode == "lab":
         # BILLING DISCLOSURE BELONGS HERE, not in one tool. This function is the single
         # source of truth for harness dispatch (see the docstring above), and BOTH other

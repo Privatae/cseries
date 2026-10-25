@@ -25,7 +25,7 @@ import sys
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 _BASELINE = os.path.join(_ROOT, "scripts", "pinned_models_baseline.txt")
 
-_CODE_DIRS = ("server", "brain", "cli", "services", "system-apps", "sidecars")
+_CODE_DIRS = ("server", "brain", "cli", "system-apps", "sidecars")
 
 # The ONLY places a model id may legitimately appear as a literal: the routing
 # config's alias map + feature-locked batch default, and the dormant engine.
@@ -132,6 +132,14 @@ def main() -> int:
                 fh.write(p + "\n")
         print(f"baseline written: {len(pins)} pin(s) -> {_BASELINE}")
         return 0
+
+    # _iter_py skips a code dir that is not there, so a removed or renamed one
+    # would shrink what this reads while it still said OK.
+    missing = [d for d in _CODE_DIRS if not os.path.isdir(os.path.join(_ROOT, d))]
+    if missing:
+        print("FAIL  code dir(s) this audit reads are not in the tree: " + ", ".join(missing)
+              + " — point _CODE_DIRS at where the runtime code lives now")
+        return 1
 
     baseline = load_baseline()
     new_pins = pins - baseline

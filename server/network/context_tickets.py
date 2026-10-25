@@ -49,9 +49,6 @@ SAY IT PLAINLY: adding workers breaks this, and not loudly. A mint in worker A
 redeemed against worker B is a 404 indistinguishable from an expired ticket, so
 it would show up as extraction failing for roughly (workers-1)/workers of
 attempts, intermittently, with nothing in any log saying why.
-server/routes/sdk_auth.py:46 records the same dependency for its own session
-state — "Session state is process-scope (cseries runs uvicorn --workers 1)" — so
-whoever changes that has two things to fix, not one.
 
 (The mgmt relay is also an in-process singleton keyed by token id:
 server/network/nac_mgmt.py:453 MgmtRelay, get_mgmt_relay at :506. But that

@@ -59,9 +59,8 @@ PROVIDERS: dict[str, dict[str, Any]] = {
         # same flow, one less cross-origin hop.
         "authorize_url": "https://claude.ai/oauth/authorize",
         # Anthropic's manual-code page: show the code on the success page for
-        # copy-paste instead of auto-redirecting. Matches `claude setup-token`
-        # + the proven sdk_auth.py build; without it the IdP won't render a
-        # pasteable code.
+        # copy-paste instead of auto-redirecting. Matches `claude setup-token`;
+        # without it the IdP won't render a pasteable code.
         "authorize_extra": {"code": "true"},
         "token_url":     "https://platform.claude.com/v1/oauth/token",
         "redirect_uri":  "https://platform.claude.com/oauth/code/callback",

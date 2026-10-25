@@ -37,7 +37,7 @@ LIMITS, stated because a gate that oversells itself is worse than none:
   * The reachability walk covers the KERNEL roots only (brain/, server/): they
     share one process and one entry point, and all ten of today's callers live
     there. The rest of the Python here runs as SEPARATE processes with their own
-    container entry points (cli/, services/, sidecars/, system-apps/), so
+    container entry points (cli/, sidecars/, system-apps/), so
     "reachable from server/main.py" is the wrong question for them and would fail
     every one. Rather than leave them unscanned, which is what happened until
     2026-09-19, NON_KERNEL_ROOTS is swept for call_model callers and the gate
@@ -106,7 +106,7 @@ KERNEL_ROOTS = ("brain", "server")
 # is expected here today; if one lands, the gate says so instead of not looking.
 # vm/ is the machines the Host runs in: the cloud box's own programs, which run
 # on the box beside the containers (vm/cloud/overlay), and the VM test's.
-NON_KERNEL_ROOTS = ("cli", "services", "sidecars", "system-apps", "vm")
+NON_KERNEL_ROOTS = ("cli", "sidecars", "system-apps", "vm")
 
 # Run directly by the gate runner, never imported, and they name call_model in
 # assertions about other modules — so neither sweep applies.

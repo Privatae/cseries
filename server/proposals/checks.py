@@ -431,7 +431,7 @@ def check_schema_valid(proposal: Proposal) -> CheckResult:
             return CheckResult("schema_valid", False,
                                f"{path}: " + "; ".join(malformed))
         # The file is named for the provider it declares. authoring.py writes
-        # manifests/<key>.yaml and promote.py carries that basename into the
+        # manifests/<key>.yaml and approval carries that basename into the
         # platform catalog, where the loader keys providers by the YAML's own
         # `key` — so a mismatch here would promote a file whose name says one
         # provider and whose contents say another.

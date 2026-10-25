@@ -761,7 +761,7 @@ records, so what you write IS what the person reads:
 - The project's description is quoted as "Why". Keep it the person's request,
   in their words.
 - Commit messages are plain English and never name a model, a vendor or a
-  coding tool, and never carry a Co-Authored-By line. Which models wrote the
+  coding tool, and never add a Co-Authored-By line for one. Which models wrote the
   code is shown in the Code Approval, from the run records — not by you.
 - Code stays technical. Comments are accurate: they say what the code does and
   why, never what it used to do. A README is accurate and simple: what the

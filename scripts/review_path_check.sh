@@ -4,16 +4,14 @@
 # check INSIDE a live, authed C-Series and print red/green per hop.
 #
 # This does NOT provision anything. You bring a running, authed C-Series Host
-# (a dev container, or a real pod) and
+# (a dev container) and
 # point this at it. It copies review_path_check.py in and execs it with
 # the container's own python — the faithful in-process caller position
 # the entity uses. The harnesses must be CONNECTED in that environment
 # (claude-code / codex authed); the smoke container won't work.
 #
 # Usage:
-#   CSERIES_CONTAINER=cseries-dev   scripts/review_path_check.sh   # docker
-#   CSERIES_POD=entity-1 CSERIES_NS=cseries \
-#                               scripts/review_path_check.sh   # k8s
+#   CSERIES_CONTAINER=cseries-dev   scripts/review_path_check.sh
 #
 # Tunables (passed through to the python check):
 #   CHECK_MAX_MINUTES (default 6)   per-harness run budget
@@ -34,20 +32,12 @@ yellow() { printf '\033[33m%s\033[0m\n' "$1"; }
 
 ENVPASS=( -e "CHECK_MAX_MINUTES=${CHECK_MAX_MINUTES:-6}" -e "CHECK_TIMEOUT_S=${CHECK_TIMEOUT_S:-420}" )
 
-if [[ -n "${CSERIES_POD:-}" ]]; then
-    NS="${CSERIES_NS:-privatae-system}"
-    yellow "Target: pod $NS/$CSERIES_POD (kubectl exec)"
-    kubectl -n "$NS" cp "$PY_LOCAL" "$CSERIES_POD:$PY_REMOTE"
-    exec kubectl -n "$NS" exec "$CSERIES_POD" -- \
-        env CHECK_MAX_MINUTES="${CHECK_MAX_MINUTES:-6}" \
-            CHECK_TIMEOUT_S="${CHECK_TIMEOUT_S:-420}" \
-        python3 "$PY_REMOTE"
-elif [[ -n "${CSERIES_CONTAINER:-}" ]]; then
+if [[ -n "${CSERIES_CONTAINER:-}" ]]; then
     yellow "Target: docker container $CSERIES_CONTAINER (docker exec)"
     docker cp "$PY_LOCAL" "$CSERIES_CONTAINER:$PY_REMOTE"
     exec docker exec "${ENVPASS[@]}" "$CSERIES_CONTAINER" python3 "$PY_REMOTE"
 else
-    red "Set CSERIES_CONTAINER=<name> (docker) or CSERIES_POD=<pod> [CSERIES_NS=<ns>] (k8s)."
+    red "Set CSERIES_CONTAINER=<name> (docker)."
     red "The target must be a running, harness-authed C-Series Host — not the smoke container."
     exit 2
 fi

@@ -772,8 +772,8 @@ ON CONFLICT (id) DO NOTHING;
 -- bridge enforces per op (the bridge adapter's _refuse_platform_op).
 -- The LIST still reads this pod table
 -- (runtime/tools.py, the infra.codebase=admin probe), so a Host that should
--- see those tools needs a row here as well. No seed writes it: the kernel
--- copies the central level into it (server/platform_grant_sync.py).
+-- see those tools needs a row here as well. No seed writes it, and a
+-- standalone Host has no central level to copy into it.
 INSERT INTO entity_domain_access (entity_id, domain_id, access_level, granted_by, grant_reason)
 SELECT
     er.id,

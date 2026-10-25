@@ -1,0 +1,188 @@
+# Makes a release the latest one, once the maintainer has signed it. The
+# release workflow creates vX.Y.Z as a pre-release, which GitHub never offers
+# as the latest release, because the cloud boxes, the service that sets them
+# up and every Host's App Store read the latest release's cloud-release.json
+# and catalog.json and take each only once a signature sits beside it. Run this
+# right after the second signature is uploaded (docs/RELEASING.md section 3),
+# from the repository's Actions tab (Run workflow), the REST API, or:
+#
+#   gh workflow run mark-latest.yml --repo Privatae/cseries -f tag=vX.Y.Z
+#
+# It refuses unless both signature files are on the release, each named for
+# the sha256 of the manifest as it sits there, and each a valid Ed25519
+# signature by one of the pinned release keys over the statement the readers
+# check (cseries_cloud.verify_signed_manifest for kind cseries-cloud,
+# public_store.verify_signed for kind cseries-store), with the version the
+# manifest names, which must be the tag's. So a signature made for another
+# manifest, another kind or another version, or by another key, is refused
+# here rather than by every reader once the release is the latest.
+name: mark-latest
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "The release to make the latest, vX.Y.Z, once both its signatures are uploaded"
+        required: true
+        type: string
+
+permissions: {}
+
+concurrency:
+  group: mark-latest-${{ inputs.tag }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  mark-latest:
+    name: Make the release the latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ inputs.tag }}
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      # The release keys the readers pin (RELEASE_KEYS in
+      # vm/cloud/overlay/usr/local/lib/cseries-cloud/cseries_cloud.py and in
+      # server/applications/public_store.py); a test fails if they differ.
+      RELEASE_KEYS: "tWOyZm38DwTwbawSnvExQG/CQsVJBKYWc46arCBZj9E= CKL+J0VSdqrfY4AmxChvylJ1ha4e8GvcrYF2o17Ah+g="
+    steps:
+      - name: Check both signatures are on the release, then make it the latest
+        run: |
+          set -euo pipefail
+          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::the tag must be exactly vX.Y.Z"
+            exit 1
+          fi
+          if ! draft="$(gh release view "$TAG" --json isDraft --jq .isDraft)"; then
+            echo "::error::there is no release $TAG on this repository"
+            exit 1
+          fi
+          if [[ "$draft" != "false" ]]; then
+            echo "::error::$TAG is a draft; the release workflow does not make drafts"
+            exit 1
+          fi
+          work="$(mktemp -d)"
+          # Never back to an older release: the box updater, the App Store
+          # and the provisioner each refuse a release older than one they
+          # already have, so going back means a new release with a newer
+          # version. Only a repository with no latest release yet (404) has
+          # nothing to compare with.
+          if current="$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name 2> "$work/latest.err")"; then
+            if [[ ! "$current" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "::error::the latest release is $current, which is not vX.Y.Z; cannot tell whether $TAG is newer"
+              exit 1
+            fi
+            if [[ "$(printf '%s\n%s\n' "$current" "$TAG" | sort -V | tail -n 1)" != "$TAG" ]]; then
+              echo "::error::$TAG is older than the latest release, $current; to go back, release the older code again under a newer version"
+              exit 1
+            fi
+          elif ! grep -q "HTTP 404" "$work/latest.err"; then
+            echo "::error::could not read the latest release: $(cat "$work/latest.err")"
+            exit 1
+          fi
+          present="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+          bad=0
+          for manifest in cloud-release.json catalog.json; do
+            case "$manifest" in
+              cloud-release.json) kind=cseries-cloud ;;
+              catalog.json) kind=cseries-store ;;
+            esac
+            if ! grep -qxF "$manifest" <<< "$present"; then
+              echo "::error::$manifest is not on $TAG; the release workflow has not finished uploading it"
+              bad=1
+              continue
+            fi
+            gh release download "$TAG" --pattern "$manifest" --output - > "$work/manifest"
+            sha="$(sha256sum "$work/manifest" | cut -d' ' -f1)"
+            sig="$manifest.${sha:0:16}.sig"
+            if ! grep -qxF "$sig" <<< "$present"; then
+              echo "::error::$sig is not on $TAG: sign $manifest (sha256 $sha) and upload the signature (docs/RELEASING.md section 3)"
+              bad=1
+              continue
+            fi
+            gh release download "$TAG" --pattern "$sig" --output - > "$work/sig.txt"
+            # Parsed as the readers parse them: the version the manifest
+            # names, and the signature with all whitespace dropped and its
+            # padding restored, strict base64 of exactly 64 bytes.
+            if ! version="$(python3 -c '
+          import base64, json, sys
+          try:
+              m = json.loads(open(sys.argv[1], "rb").read().decode("utf-8"))
+          except ValueError:
+              sys.exit("is not valid JSON")
+          v = m.get("version") if isinstance(m, dict) else None
+          if not isinstance(v, str) or not v or "\r" in v or "\n" in v:
+              sys.exit("names no usable version")
+          s = "".join(open(sys.argv[2], "rb").read().decode("utf-8", "replace").split())
+          try:
+              raw = base64.b64decode(s + "=" * (-len(s) % 4), validate=True)
+          except ValueError:
+              raw = b""
+          if len(raw) != 64:
+              sys.exit("has a signature file that is not a base64 Ed25519 signature (64 bytes)")
+          open(sys.argv[3], "wb").write(raw)
+          print(v)
+          ' "$work/manifest" "$work/sig.txt" "$work/sig.raw" 2> "$work/why")"; then
+              echo "::error::$manifest on $TAG $(cat "$work/why")"
+              bad=1
+              continue
+            fi
+            if [[ "$version" != "${TAG#v}" ]]; then
+              echo "::error::$manifest on $TAG names version $version, not ${TAG#v}"
+              bad=1
+              continue
+            fi
+            # The statement every reader checks the signature over.
+            printf 'privatae-release-signature-v1\n%s\n%s\n%s\n' "$kind" "$version" "$sha" > "$work/statement"
+            signed=""
+            for key in $RELEASE_KEYS; do
+              # The raw 32-byte Ed25519 key as a SubjectPublicKeyInfo PEM.
+              {
+                echo "-----BEGIN PUBLIC KEY-----"
+                { printf '\x30\x2a\x30\x05\x06\x03\x2b\x65\x70\x03\x21\x00'; base64 -d <<< "$key"; } | base64 -w0
+                echo
+                echo "-----END PUBLIC KEY-----"
+              } > "$work/key.pem"
+              if openssl pkeyutl -verify -pubin -inkey "$work/key.pem" -rawin \
+                   -in "$work/statement" -sigfile "$work/sig.raw" > /dev/null 2>&1; then
+                signed="$key"
+                break
+              fi
+            done
+            if [[ -z "$signed" ]]; then
+              echo "::error::$sig is not a signature of kind $kind for $manifest $version (sha256 $sha) by a pinned release key; sign this manifest again (docs/RELEASING.md section 3)"
+              bad=1
+              continue
+            fi
+            echo "$manifest has its signature, $sig, by release key ${signed:0:8}"
+          done
+          if [[ "$bad" != "0" ]]; then
+            exit 1
+          fi
+
+          # --latest names this release even when an older line was tagged
+          # after it; the default would pick by creation date.
+          gh release edit "$TAG" --prerelease=false --latest
+
+          # What a reader of releases/latest/download now gets.
+          latest=""
+          for _ in 1 2 3 4 5; do
+            latest="$(gh api "repos/$GH_REPO/releases/latest" --jq .tag_name)"
+            [[ "$latest" == "$TAG" ]] && break
+            sleep 3
+          done
+          if [[ "$latest" != "$TAG" ]]; then
+            echo "::error::GitHub still names $latest as the latest release after the edit"
+            exit 1
+          fi
+          {
+            echo "### $TAG is the latest release"
+            echo
+            echo "Both signatures are on it. Cloud boxes and Hosts take it on their next check."
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,2 @@
+# 2026-10-25 (release order): a release is created as a pre-release and becomes GitHub's latest release, which the cloud boxes, the service that sets them up and every Host's App Store read, only through mark-latest.yml once cloud-release.json and catalog.json each have a signature file. Runs mark-latest's script against a stand-in for gh and scans the source for how it reads releases; no network, no container (needs bash and PyYAML).
+test_release_latest_after_signing.py

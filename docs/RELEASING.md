@@ -35,7 +35,8 @@ github.com/Privatae/cseries. Pushing the tag runs
   programs it carries are downloaded as x86-64 builds. The coding engines'
   images are not published at all: each machine builds the ones its owner
   turns on, from the harness source tarball below.
-- **The GitHub release** `vX.Y.Z`, with the WSL guest images
+- **The GitHub release** `vX.Y.Z`, created as a pre-release (it becomes the
+  latest release only at the end of section 3), with the WSL guest images
   `cseries-wsl-rootfs-X.Y.Z-x64.tar.gz` and `cseries-wsl-rootfs-X.Y.Z-arm64.tar.gz`
   and the Lima guest images (macOS and Linux, built by `vm/lima/build-image.sh`)
   `cseries-guest-X.Y.Z-x64.qcow2` and `cseries-guest-X.Y.Z-arm64.qcow2`,
@@ -148,8 +149,8 @@ gh release upload vX.Y.Z "cloud-release.json.${sha:0:16}.sig" --repo Privatae/cs
 `release-sign` is the bastion's signing tool (its `deploy/release-sign`); it
 asks for the key's passphrase and prints the signature. Check that the sha256
 it reports is the one in the job's summary before typing the passphrase. Boxes
-look for the newest release's manifest once a day and move to it on their next
-run after the signature appears.
+look for the latest release's manifest once a day and move to it on their next
+run after the release becomes the latest (the last step of this section).
 
 The workflow's `store` job uploads `catalog.json` and the bundles and stops
 there in the same way: until a signature for kind `cseries-store` sits beside
@@ -169,6 +170,65 @@ The catalog pins each bundle's sha256, so this one signature covers every app
 in it; the bundles themselves stay signed by the keys that signed them
 (`factory-bundles/` by the C-Series apps key), and a Host checks both.
 
+Last, once both signatures are uploaded, make the release the latest by
+running the `mark-latest` workflow with the tag. Any one of these does it,
+and none needs anything on the computer that holds the release key:
+
+- In a browser signed in to GitHub with write access to Privatae/cseries: the
+  repository's **Actions** tab, **mark-latest**, **Run workflow**, type
+  `vX.Y.Z` as the tag, **Run workflow**.
+- From the machine that uploaded the signatures, through the REST API, with a
+  token that has **Actions: read and write** on Privatae/cseries (a
+  fine-grained token; a classic token needs the `repo` scope). Uploading the
+  signatures needs only Contents: write, so check the token has both:
+
+  ```sh
+  curl -fsS -X POST \
+    -H "Authorization: Bearer $GITHUB_TOKEN" \
+    -H "Accept: application/vnd.github+json" \
+    -H "X-GitHub-Api-Version: 2022-11-28" \
+    https://api.github.com/repos/Privatae/cseries/actions/workflows/mark-latest.yml/dispatches \
+    -d '{"ref": "main", "inputs": {"tag": "vX.Y.Z"}}'
+  ```
+
+- With gh: `gh workflow run mark-latest.yml --repo Privatae/cseries -f tag=vX.Y.Z`
+
+The workflow has to be on the default branch (`main`) to be run. Its run in
+the Actions tab says whether it marked the release; afterwards anyone can
+check what is the latest, with no login:
+
+```sh
+curl -fsS https://api.github.com/repos/Privatae/cseries/releases/latest | jq -r .tag_name
+```
+
+Until then the release is a pre-release and GitHub's latest release is the
+previous one. The cloud boxes, the service that sets them up and every Host's
+App Store read the latest release (`releases/latest/download/cloud-release.json`
+and `.../catalog.json`), so none of them can see a manifest before its
+signature exists, and none is held waiting for one. `mark-latest.yml` refuses
+unless `cloud-release.json` and `catalog.json` each name the tag's version
+and each have a signature file named for the sha256 of the manifest as it
+sits on the release, holding a valid signature of the right kind
+(`cseries-cloud`, `cseries-store`) for that version and sha256 by one of the
+pinned release keys. That is the check every reader makes, so a signature
+made for another manifest or by another key, or uploaded under the other
+manifest's name, stops the run here instead of every box and Host refusing
+the latest release. It also refuses a tag older than the current latest
+release, because the boxes, the App Store and the provisioner each refuse to
+go back; going back means releasing the older code again under a newer
+version. Then it marks the release the latest and reads back what GitHub now
+calls the latest. A run that refuses changes nothing; fix the
+signature and run it again. A release that is never marked (a tag that was
+replaced by a fix-up tag, say) stays a pre-release and is never read.
+
+A pre-release and not a draft, because a draft's files are not public and the
+npm job refuses to publish a CLI whose pinned downloads cannot be fetched
+without a login. Pinned URLs (`releases/download/vX.Y.Z/...`, which
+`release.json` and the manifests use) work for a pre-release, so the npm
+package and the manifests' own downloads need nothing from the latest mark. If
+a job of the release workflow is re-run later, the release keeps whatever
+state it is in.
+
 The catalog also carries `issued_at`, the release commit's time, inside the
 signed bytes. A Host whose catalog is more than 45 days old shows a notice in
 its App Store (installs still work), because anyone serving the catalog's URL
@@ -180,7 +240,7 @@ release shows on every Host until the next one.
 These were done once for Privatae/cseries before its first public release,
 by the owner of the Privatae accounts on GitHub and npm, and are kept here for
 a new account. After them, a tag releases everything, and the only steps by
-hand are the two signatures in section 3.
+hand are the two signatures and making the release the latest, in section 3.
 
 The repository has to be public before the first release anyone installs.
 The overlay, the harness source tarball, the store catalog and its bundles,

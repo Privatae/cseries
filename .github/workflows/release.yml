@@ -8,7 +8,9 @@
 # release, the free App Store's catalog and bundles, and the npm packages with
 # a release.json that pins all of it. docs/RELEASING.md is the runbook,
 # including what the maintainer runs before tagging and the two signatures
-# added by hand after it.
+# added by hand after it. The GitHub release is created as a pre-release and
+# becomes the latest release only when mark-latest.yml is run after the second
+# signature is uploaded.
 name: release
 
 on:
@@ -949,8 +951,21 @@ jobs:
             echo
             python3 .github/scripts/release.py changes "$TAG"
           } > "$RUNNER_TEMP/notes.md"
+          # Created as a pre-release, which GitHub never offers as the latest
+          # release. The cloud boxes, the service that sets them up and every
+          # Host's App Store read releases/latest/download for
+          # cloud-release.json and catalog.json, and those two are signed by
+          # hand only after the jobs below have uploaded them
+          # (docs/RELEASING.md section 3), so until then the latest release
+          # has to stay the previous, signed one. mark-latest.yml makes this
+          # release the latest once both signatures are on it. It is a
+          # pre-release and not a draft because a draft's files cannot be
+          # fetched without a login, and the npm job below refuses to publish
+          # a CLI whose pinned downloads are not public. A re-run finds the
+          # release and leaves its state alone, so it never takes the latest
+          # mark back.
           if ! gh release view "$TAG" > /dev/null 2>&1; then
-            gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+            gh release create "$TAG" --verify-tag --prerelease --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
           fi
           present="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
           for f in "${assets[@]}"; do
@@ -1151,6 +1166,14 @@ jobs:
             echo "release-sign sign cseries-store $VERSION $sha > catalog.json.${sha:0:16}.sig"
             echo "gh release upload $TAG catalog.json.${sha:0:16}.sig --repo $GITHUB_REPOSITORY"
             echo '```'
+            echo
+            echo "When both this signature and the C-Series Cloud one are uploaded, make the release the latest:"
+            echo
+            echo '```'
+            echo "gh workflow run mark-latest.yml --repo $GITHUB_REPOSITORY -f tag=$TAG"
+            echo '```'
+            echo
+            echo "Without gh: this repository's Actions tab, mark-latest, Run workflow, with the tag $TAG (docs/RELEASING.md section 3)."
           } >> "$GITHUB_STEP_SUMMARY"
 
   # The C-Series Cloud release: the overlay a cloud box installs and
@@ -1243,6 +1266,14 @@ jobs:
             echo "release-sign sign cseries-cloud $VERSION $sha > cloud-release.json.${sha:0:16}.sig"
             echo "gh release upload $TAG cloud-release.json.${sha:0:16}.sig --repo $GITHUB_REPOSITORY"
             echo '```'
+            echo
+            echo "When both this signature and the App Store catalog's are uploaded, make the release the latest:"
+            echo
+            echo '```'
+            echo "gh workflow run mark-latest.yml --repo $GITHUB_REPOSITORY -f tag=$TAG"
+            echo '```'
+            echo
+            echo "Without gh: this repository's Actions tab, mark-latest, Run workflow, with the tag $TAG (docs/RELEASING.md section 3)."
           } >> "$GITHUB_STEP_SUMMARY"
 
   npm:

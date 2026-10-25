@@ -596,8 +596,8 @@ the-privatae-network:
   - server/applications/public_store.py
   - system-apps/settings/index.html
   verified:
-    date: '2026-10-22'
-    digest: sha256:89e47e0b390573aa8eaae537da0dc613fa0455339b27735f97c90d77d15d0e1a
+    date: '2026-10-25'
+    digest: sha256:287eab2dd313e26e17cbdc17fc12f83b56c39407164c603f1e2f7f67b13fcce1
 updates-and-versions:
   sources:
   - packages/cseries/src/cli.js
@@ -609,8 +609,8 @@ updates-and-versions:
   - circles-web/src/cards/inbox-notes.tsx
   - brain/mastercode/runtime/host_changelog.py::ensure_weekly_changelog_task
   verified:
-    date: '2026-10-23'
-    digest: sha256:79e0bafe5ca42cc9f3d7922ab9997e741622c235f8e6036dc1cd8777747f3c0b
+    date: '2026-10-25'
+    digest: sha256:6f5b13894b3cbf53d3573fbc3bf0195aec0d24b0d1786c1cbf2228f753aab2b7
 what-a-host-cannot-do:
   sources:
   - brain/mastercode/runtime/agent_grant.py::parse_grant

@@ -81,7 +81,36 @@ what this run built, and fails otherwise.
 
 ## 1. Before tagging, on the release machine
 
-From a clean checkout of the commit you will tag:
+First, **update ROADMAP.md statuses**, in a change merged before the tag:
+
+- Mark each item this release makes available as Available, and each item
+  whose work has started as In progress.
+- Change each estimate that has moved, counted from today.
+- Set the "Last updated" line to today's date.
+- Check that the prices in README.md, and the status in each of its paid
+  sections, still match [privatae.ai/pricing](https://privatae.ai/pricing)
+  and [privatae.ai/cloud](https://privatae.ai/cloud).
+
+ROADMAP.md is the one place this repository says when each part is expected.
+README.md says only whether each paid offering is on sale, and the other
+documents link to ROADMAP.md, so a release that skips this step leaves the
+plan wrong on GitHub.
+
+Opening C-Series Cloud or the network membership for orders is not a
+release, but it changes the same lines, in one change merged the day
+privatae.ai/cloud or privatae.ai/pricing stops saying "Waitlist open" or
+"Not on sale yet":
+
+- README.md: the section heading ("C-Series Cloud: waitlist open" becomes
+  "C-Series Cloud: available"; "Network membership: not on sale yet" becomes
+  "Network membership: available"), the line under it, and the opening
+  paragraph's "neither on sale yet".
+- ROADMAP.md: each Waitlist open and Built item under that offering becomes
+  Available, and the membership section's "It is not on sale yet." goes.
+- For the membership, docs/wiki/pages/the-privatae-network.md, which says
+  membership is not on sale yet.
+
+Then, from a clean checkout of the commit you will tag:
 
 1. The full gate:
 

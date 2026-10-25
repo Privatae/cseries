@@ -18,7 +18,7 @@ A Host moves to a new version when its containers are replaced by the published 
 
 On the machine, run `npx cseries update`. It checks the machine, pulls the published images and starts the Host on them, the same steps as a first install, without opening the setup page. `npx cseries status` shows whether the Host is running.
 
-If you built the images yourself from the source, rebuild them and run `docker compose up -d --build`, as the README describes.
+If you built the images yourself from the source, rebuild them and run `docker compose up -d --build`, as the guide in the C-Series source repository describes.
 
 ## What changes, and what stays?
 

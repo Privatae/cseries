@@ -122,5 +122,5 @@ cooperates. [claims.md](claims.md) gives the test behind each one.
 - There has been no outside security audit.
 - [claims.md](claims.md) ends with the claims that have no test yet.
 - The dashboard serves plain HTTP on 127.0.0.1. Reaching it from another
-  machine safely needs a reverse proxy that terminates TLS, set up as the
-  main [README](../../README.md) describes.
+  machine safely needs a reverse proxy that terminates TLS, set up as
+  [docs/GUIDE.md](../GUIDE.md#reaching-it-from-other-machines) describes.

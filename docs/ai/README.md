@@ -29,7 +29,8 @@ users, and engineers who want to read how the limits are enforced.
   19041 or later) or 11, macOS 13.5 or later, or Linux with `/dev/kvm`, x64
   or Arm64, Node.js 18 or later, about 10 GB of free disk.
 - The dashboard listens on 127.0.0.1. Reaching it from other machines takes a
-  reverse proxy you configure (the main [README](../../README.md) describes it).
+  reverse proxy you configure ([docs/GUIDE.md](../GUIDE.md#reaching-it-from-other-machines)
+  describes it).
 - Coding agents (Claude Code, Codex, Cursor and others) run in containers
   beside the Host, on the person's own key or sign-in.
 
@@ -54,16 +55,17 @@ users, and engineers who want to read how the limits are enforced.
   and the bastion agent ([github.com/Privatae/bastion-agent](https://github.com/Privatae/bastion-agent)):
   GPL-3.0-or-later.
 - Optional and paid, from Privatae: C-Series Cloud, which runs a Host on a
-  server of its own that Privatae sets up and keeps patched
+  virtual machine of its own, on a server Privatae runs, set up and kept
+  patched by Privatae
   ([privatae.ai/cloud](https://privatae.ai/cloud)), and a Privatae network
   membership, which joins a Host on your own machine to the Privatae network
   ([privatae.ai/pricing](https://privatae.ai/pricing)).
 
-A Host works without either; a membership adds the community board and the
-network's storage for backups. Setup creates the owner account on the Host
-itself. The App Store's catalog is free and public, and a Host with no
-membership installs from it. With no membership, backups go to a folder in
-the Host's own storage, or to an S3 bucket the person names.
+A Host works without either. What a membership adds, and when each part is
+expected, is in [ROADMAP.md](../../ROADMAP.md). Setup creates the owner
+account on the Host itself. The App Store's catalog is free and public, and a Host with no
+membership installs from it. Backups go to a folder in the Host's own
+storage, or to an S3 bucket the person names.
 
 ## The files in this folder
 

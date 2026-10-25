@@ -1,6 +1,6 @@
 ---
 title: Joining the Privatae network
-summary: A Host works with no Privatae account, App Store included. With a membership code it can join the Privatae network, which adds the community board and a place in the network's storage for its backups. The Host connects out to the network, and nothing the network sends can run on it.
+summary: A Host works with no Privatae account, App Store included. With a membership code it can join the Privatae network, which adds the community board; membership is not on sale yet. The Host connects out to the network, and nothing the network sends can run on it.
 section: network
 order: 5
 questions:
@@ -11,11 +11,11 @@ questions:
   - What does my Host send to the network?
 ---
 
-A Host works on its own, with no Privatae account, and installs apps from the App Store without one. Joining the Privatae network is optional and adds the community board and the network's storage for backups. The connection is made by your Host, outbound only, and nothing the network sends can run on it.
+A Host works on its own, with no Privatae account, and installs apps from the App Store without one. Joining the Privatae network is optional and adds the community board, and membership is not on sale yet. The connection is made by your Host, outbound only, and nothing the network sends can run on it.
 
 ## What does membership give me?
 
-The [Community](wiki:community-app) board, and the network's storage as a place for your Host's encrypted backups, chosen in Settings under Backup. The [App Store](wiki:app-store-app) does not need membership: every Host can read its free public catalog, and a member Host uses the network's store while the network answers. Everything else a Host does, including memory, models, keys, the bastion, coding and your own apps, works without membership and does not go through the network.
+The [Community](wiki:community-app) board. Keeping your Host's encrypted backups in the network's storage is built into your Host, but the network does not keep backups yet, so choose a folder in your Host's own storage or your own S3-compatible bucket in Settings under Backup. The [App Store](wiki:app-store-app) does not need membership: every Host can read its free public catalog, and a member Host uses the network's store while the network answers. Everything else a Host does, including memory, models, keys, the bastion, coding and your own apps, works without membership and does not go through the network.
 
 ## How do I join?
 

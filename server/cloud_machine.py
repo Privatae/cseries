@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 from typing import Optional
 
 DIR_ENV = "CSERIES_MACHINE_DIR"
@@ -103,6 +104,49 @@ def setup_blocked() -> Optional[str]:
 def access_log() -> list[dict]:
     d = machine_dir()
     return _read_lines(os.path.join(d, LOG)) if d else []
+
+
+# Who a row's actor is, for a row that does not say more (the platform's rows
+# from before detail.by, and the provider's and this machine's own). None of
+# these claims a person: until a row says so, the platform's own tools could
+# have been run by a person, a program or an AI agent alike.
+ACTOR_LABELS = {
+    "provisioner": "Privatae's provisioner (automated, no AI)",
+    "breakglass": "Privatae, through its emergency tool",
+    "server-login": "A sign-in to the server this machine runs on",
+    "ovh-task": "The provider",
+    "machine": "This machine",
+}
+# detail.by's kinds (the platform's access log: automated, ai, person).
+BY_LABELS = {
+    "automated": "A Privatae program, no AI ({name})",
+    "ai": "An AI agent working for Privatae ({name})",
+    "person": "A person at Privatae ({name})",
+}
+# A name the platform's access log takes (its BY_NAME_MAX and BY_NAME_RX):
+# words only. A row whose name is anything else is read as a row without a
+# by, so no text can pass for more of the label.
+BY_NAME_MAX = 80
+BY_NAME_RX = re.compile(r"[\w.,'\u2019()@:/+&-]+(?: [\w.,'\u2019()@:/+&-]+)*")
+
+
+def actor_label(row: dict) -> str:
+    """Who did what a row records, in words: from its detail.by when it has
+    one, else from its actor. detail is text the row's hash covers, so a row
+    is read here exactly as the machine checked it, and a detail that does
+    not parse is just a row without a by."""
+    try:
+        by = json.loads(row.get("detail") or "{}").get("by")
+    except (ValueError, TypeError, AttributeError):
+        by = None
+    name = by.get("name") if isinstance(by, dict) else None
+    if isinstance(by, dict) and by.get("kind") in BY_LABELS and isinstance(name, str) \
+            and len(name) <= BY_NAME_MAX and BY_NAME_RX.fullmatch(name):
+        if by["kind"] == "person" and name.lower() == "a person at privatae":
+            return "A person at Privatae"
+        return BY_LABELS[by["kind"]].format(name=name)
+    actor = str(row.get("actor"))
+    return ACTOR_LABELS.get(actor, actor)
 
 
 def unlock_record() -> list[dict]:

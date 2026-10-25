@@ -134,6 +134,27 @@ async def main():
         page = (await R.machine_page(Req())).body.decode()
         check(page.index("the second") < page.index("the first"), "/machine lists the newest action first")
         check("&lt;the second&gt;" in page and "<the second>" not in page, "a summary is escaped")
+        check("Privatae&#x27;s provisioner (automated, no AI)" in page and "by hand" not in page,
+              "a row without detail.by is labelled by its actor, and none claims a person")
+        by = lambda kind, name: {"actor": "breakglass", "detail": json.dumps({"by": {"kind": kind, "name": name}})}
+        check(M.actor_label(by("ai", "Claude Code")) == "An AI agent working for Privatae (Claude Code)",
+              "an AI agent's row says so")
+        check(M.actor_label(by("automated", "invented.service")) == "A Privatae program, no AI (invented.service)",
+              "a program's row says so")
+        check(M.actor_label(by("person", "a person at Privatae")) == "A person at Privatae"
+              and M.actor_label(by("person", "Invented Operator")) == "A person at Privatae (Invented Operator)",
+              "a person's row says so")
+        check(M.actor_label(by("robot", "x")) == "Privatae, through its emergency tool"
+              and M.actor_label({"actor": "breakglass", "detail": "not json"}) == "Privatae, through its emergency tool"
+              and M.actor_label({"actor": "server-login", "detail": json.dumps({"by": "person"})})
+              == "A sign-in to the server this machine runs on",
+              "a by it cannot read falls back to the actor")
+        check(M.actor_label(by("person", "Invented \u202eOperator")) == "Privatae, through its emergency tool"
+              and M.actor_label(by("person", "<b>Invented</b>")) == "Privatae, through its emergency tool"
+              and M.actor_label(by("ai", 'Invented "approved by you"')) == "Privatae, through its emergency tool"
+              and M.actor_label(by("person", "x" * 81)) == "Privatae, through its emergency tool"
+              and M.actor_label(by("person", "Zoë Example (laptop)")) == "A person at Privatae (Zoë Example (laptop))",
+              "a name the platform's access log would refuse is not shown; a name it takes is")
         check('id="mismatch"' not in page and 'id="restart"' not in page,
               "no warning while the log matches; no Restart while none is needed")
         write_state(d, {"state": "open", "since": None, "enrolled": True}, mismatch=True, reboot=True)

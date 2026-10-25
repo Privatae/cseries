@@ -207,4 +207,24 @@ with tempfile.TemporaryDirectory() as tmp:
     st = log.sync_mirror(mirror)
     check(st["mismatch"] is True, "a mirror that differs in a row both hold is a mismatch", st)
 
+# 6. Who did it (detail.by) rides inside detail, which the hash already
+# covers: a row that carries it is taken by this checker as it is, so a box
+# that predates detail.by verifies it too. The same news as a field or an
+# actor of its own would not be.
+BY = {"seq": 1, "at": "2026-10-23T10:12:01.123456Z", "actor": "server-login", "action": "server-login",
+      "summary": "Invented Operator, a person at Privatae, signed in to the server this machine runs on "
+                 "(not to this machine itself), as root, over SSH, with their own key.",
+      "detail": json.dumps({"by": {"kind": "person", "name": "Invented Operator"},
+                            "key": "SHA256:invented", "service": "sshd", "user": "root",
+                            "writer": "vh-test-1"}, sort_keys=True, separators=(",", ":")),
+      "provider_task_id": None, "prev_hash": "0" * 64}
+BY = hashed(BY)
+check(al.row_problem(BY, MID, 0, al.ZERO) is None, "a row whose detail says who did it is taken as it is")
+as_field = dict(BY, by="person")
+check(al.row_problem(as_field, MID, 0, al.ZERO) is not None,
+      "who did it as a field of its own would be refused, so it never is one")
+as_actor = hashed(dict(BY, actor="person"))
+check(al.row_problem(as_actor, MID, 0, al.ZERO) is not None,
+      "who did it as a new actor would be refused, so it never is one")
+
 sys.exit(failed)

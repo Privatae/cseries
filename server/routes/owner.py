@@ -367,11 +367,6 @@ async def passkey_page(request: Request):
     return _page("Passkeys", intro, body)
 
 
-_ACTORS = {"provisioner": "Privatae's provisioner", "breakglass": "Privatae, by hand",
-           "server-login": "Someone at Privatae", "ovh-task": "The provider",
-           "machine": "This machine"}
-
-
 @router.get("/machine", include_in_schema=False)
 async def machine_page(request: Request):
     """The machine this Host runs on (server/cloud_machine.py): its disk's
@@ -410,7 +405,7 @@ async def machine_page(request: Request):
     rows = list(reversed(cloud_machine.access_log()))
     items = []
     for r in rows:
-        who = _ACTORS.get(str(r.get("actor")), str(r.get("actor")))
+        who = cloud_machine.actor_label(r)
         items.append(f'<li>{html.escape(str(r.get("at", ""))[:19].replace("T", " "))} UTC · '
                      f'{html.escape(who)}<br>{html.escape(str(r.get("summary", "")))}</li>')
     body.append('<h2>Access log</h2>' + ('<ul class="keys">' + "".join(items) + '</ul>' if items else

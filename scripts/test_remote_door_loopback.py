@@ -274,17 +274,18 @@ _g_tmp = tempfile.mkdtemp(prefix="remote-door-guest-")
 _g_bin = os.path.join(_g_tmp, "bin")
 os.makedirs(_g_bin)
 for _n, _b in (("systemctl", '#!/bin/sh\necho "systemctl $*" >> "$FAKE_LOG"\n'
-                             'case "$1" in is-active) echo active; exit 0 ;; esac\n'
+                             'case "$1" in is-active) echo active; exit 0 ;; show) echo "${FAKE_LOADSTATE:-loaded}"; exit 0 ;; esac\n'
                              'case "$*" in *cseries-remote-door*) exit 1 ;; esac\nexit 0\n'),
-               ("podman", '#!/bin/sh\necho "podman $*" >> "$FAKE_LOG"\n[ "$1 $2" = "image exists" ] && exit 1\nexit 0\n')):
+               ("podman", '#!/bin/sh\necho "podman $*" >> "$FAKE_LOG"\n[ "$1 $2" = "image exists" ] && exit 1\n'
+                         '[ "$1" = inspect ] && echo "${FAKE_HOST_NETS-cseries_default cseries_remote }"\nexit 0\n')):
     with open(os.path.join(_g_bin, _n), "w") as _f:
         _f.write(_b)
     os.chmod(os.path.join(_g_bin, _n), 0o755)
 
 
-def _guest(root, args, stdin=""):
+def _guest(root, args, stdin="", **fake):
     env = dict(os.environ, CSERIES_GUEST_ROOT=root, FAKE_LOG=os.path.join(root, "calls.log"),
-               PATH=_g_bin + os.pathsep + os.environ.get("PATH", ""))
+               PATH=_g_bin + os.pathsep + os.environ.get("PATH", ""), **fake)
     os.makedirs(root, exist_ok=True)
     return subprocess.run(["sh", os.path.join(ROOT, "vm/wsl/rootfs/usr/local/bin/cseries-guest"), *args],
                           input=stdin, env=env, capture_output=True, text=True, check=False)
@@ -422,6 +423,38 @@ check(_r.returncode == 0 and "systemctl --no-block start cseries-remote-door.ser
       and "systemctl start cseries-postgres.service cseries-host.service" in _calls,
       "start starts the door's units beside the Host's, and a door that fails to start does not fail the Host's",
       (_r.returncode, _r.stderr, _calls))
+# An update whose drop-in the Host's unit does not take never passes for
+# one. A key Quadlet refuses leaves no cseries-host.service after the reload
+# (LoadState not-found) while the old Host runs on, on its old image and
+# networks: configure says so, and start and restart refuse rather than take
+# that old Host for started. A section systemd ignores makes a unit that
+# starts the Host without the remote network: start says so.
+_root3 = os.path.join(_g_tmp, "g3")
+# The guest's Quadlet, as podman 5's says it (its info lines, then the error).
+_q = os.path.join(_root3, "usr/libexec/podman/quadlet")
+os.makedirs(os.path.dirname(_q))
+with open(_q, "w") as _f:
+    _f.write("#!/bin/sh\necho 'quadlet-generator[7]: Loading source unit file /etc/containers/systemd/cseries-host.container' >&2\n"
+             "echo 'quadlet-generator[7]: converting \"cseries-host.container\": unsupported key '\\''DropCapabilty'\\'' "
+             "in group '\\''Container'\\'' in /etc/containers/systemd/cseries-host.container' >&2\nexit 1\n")
+os.chmod(_q, 0o755)
+_r = _guest(_root3, ["configure"], _keys + f"door={_door}\n", FAKE_LOADSTATE="not-found")
+check(_r.returncode != 0 and "systemd has no cseries-postgres.service" in _r.stderr and "changed=1" not in _r.stdout
+      and len(_r.stderr.strip().splitlines()) == 1 and "unsupported key 'DropCapabilty'" in _r.stderr
+      and "Loading source" not in _r.stderr,
+      "configure fails, on one line with Quadlet's own error, when Quadlet could not make the Host's units",
+      (_r.returncode, _r.stdout, _r.stderr))
+for _cmd in ("start", "restart"):
+    open(os.path.join(_root, "calls.log"), "w").close()
+    _r = _guest(_root, [_cmd], FAKE_LOADSTATE="not-found")
+    check(_r.returncode != 0 and "Quadlet could not make it" in _r.stderr and
+          f"systemctl {_cmd} cseries-postgres.service" not in open(os.path.join(_root, "calls.log")).read(),
+          f"{_cmd} refuses a Host whose unit is gone instead of taking the old one for started", (_r.returncode, _r.stderr))
+    _r = _guest(_root, [_cmd], FAKE_HOST_NETS="cseries_default cseries-apps ")
+    check(_r.returncode != 0 and "without its remote-access network (cseries_remote" in _r.stderr,
+          f"{_cmd} fails when the Host came up without the remote network its drop-in names", (_r.returncode, _r.stderr))
+_r = _guest(_root, ["start"])
+check(_r.returncode == 0, "start passes with the Host on the remote network", _r.stderr)
 _r = _guest(_root, ["status"])
 check(_r.returncode == 0 and f"door_image={_door}" in _r.stdout.splitlines() and
       "door=active" in _r.stdout.splitlines() and "remote_cert=active" in _r.stdout.splitlines(),
@@ -439,7 +472,7 @@ check(_r.returncode == 0 and "door's image could not be downloaded" in _r.stderr
 _root2 = os.path.join(_g_tmp, "g2")
 _r = _guest(_root2, ["configure"], _keys)
 open(os.path.join(_root2, "calls.log"), "w").close()
-_r = _guest(_root2, ["start"])
+_r = _guest(_root2, ["start"], FAKE_HOST_NETS="cseries_default ")
 check(_r.returncode == 0 and "cseries-remote" not in open(os.path.join(_root2, "calls.log")).read() and
       not os.path.exists(os.path.join(_root2, "etc/containers/systemd/cseries-remote-door.container.d")),
       "a guest given no door image has no door units and starts none")

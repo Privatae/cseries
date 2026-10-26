@@ -62,7 +62,7 @@ BR = "ghcr.io/privatae/cseries-browser@sha256:" + "c" * 64
 SRC = "https://example.test/cseries-harness-src-1.2.3.tar.gz"
 
 FAKES = {
-    "systemctl": "#!/bin/sh\necho \"systemctl $*\" >> \"$FAKE_LOG\"\n",
+    "systemctl": "#!/bin/sh\necho \"systemctl $*\" >> \"$FAKE_LOG\"\n[ \"$1\" = show ] && echo loaded\nexit 0\n",
     "getent": "#!/bin/sh\n[ \"$1 $2\" = \"group cseries-runtime\" ] && echo 'cseries-runtime:x:987:' && exit 0\nexit 2\n",
     "podman": "#!/bin/sh\necho \"podman $*\" >> \"$FAKE_LOG\"\n[ \"$1 $2\" = \"image exists\" ] && exit 1\nexit 0\n",
 }
@@ -190,6 +190,39 @@ check(len(wsl_runtime) >= 9 and all(x in lima_cust.splitlines() for x in wsl_run
 check('-v "$repo/vm/runtime:/src-runtime:ro"' in lima_build
       and '-v "$repo/seccomp-browser.json:/src-seccomp/seccomp-browser.json:ro"' in lima_build,
       "the Lima build hands its builder the runtime's sources and the browser's seccomp profile")
+# The Lima guest's quadlets, drop-ins and cseries-guest are the WSL guest's own
+# files, so the remote-access door's units (and the drop-in cseries-guest
+# writes for the Host) cannot drift between the two guests, and the WSL boot
+# test's door part speaks for both: Lima's builder copies WSL's whole overlay
+# (vm/wsl/rootfs), takes away only the two files WSL alone reads, installs
+# under etc/containers only lines WSL's customize.sh has too, removes or
+# rewrites nothing there or cseries-guest, and its own overlay, copied after,
+# brings nothing that would replace them. Its packages add no podman of
+# another series (WSL's list brings it).
+lima_lines = [x.strip() for x in lima_cust.splitlines() if x.strip() and not x.strip().startswith("#")]
+wsl_lines = [x.strip() for x in cust.splitlines()]
+copy_at = lima_lines.index('cp -R /src-wsl/rootfs/. "$root/"') if 'cp -R /src-wsl/rootfs/. "$root/"' in lima_lines else -1
+check(copy_at >= 0 and 'wsl="$repo/vm/wsl"' in lima_build and '-v "$wsl:/src-wsl:ro"' in lima_build,
+      "the Lima guest copies the WSL guest's whole overlay (vm/wsl/rootfs)")
+lima_rm = [x for x in lima_lines if x.split()[0] in ("rm", "mv", "ln", "sed", "truncate")]
+check(lima_rm == ['rm -f "$root/etc/wsl.conf" "$root/etc/wsl-distribution.conf"', 'rm -f "$root"/etc/ssh/ssh_host_*',
+                  'rm -f "$root/etc/apt/sources.list"'],
+      "the Lima guest removes only WSL's two own files, the SSH host keys and the apt list", lima_rm)
+touch = [x for x in lima_lines[copy_at + 1:] if "containers" in x or "cseries-guest" in x or "systemd/system/" in x]
+check(all(x in wsl_lines or x.startswith("chmod 0755 ") for x in touch) and
+      not [x for x in lima_lines if ">" in x and ("containers" in x or "cseries-guest" in x)],
+      "after the copy the Lima guest writes under etc/containers and cseries-guest only as the WSL guest does",
+      [x for x in touch if x not in wsl_lines])
+lima_overlay = [os.path.relpath(os.path.join(d, f), os.path.join(ROOT, "vm/lima/rootfs"))
+                for d, _s, fs in os.walk(os.path.join(ROOT, "vm/lima/rootfs")) for f in fs]
+check(lima_overlay and not [p for p in lima_overlay if p.startswith(("etc/containers/", "usr/local/", "etc/systemd/system/"))],
+      "the Lima guest's own overlay replaces none of the WSL guest's units, drop-ins or cseries-guest", lima_overlay)
+check("containers" not in read("vm/lima/mkimage.sh") and
+      not [x for x in read("vm/lima/packages").split() if x.startswith(("podman", "golang-github-containers"))],
+      "the Lima image's own build and packages add no units and no other podman")
+door_units = ("cseries-remote.network", "cseries-remote-door.container", "cseries-remote-cert.container")
+check(all(os.path.isfile(os.path.join(ROOT, "vm/wsl/rootfs/etc/containers/systemd", u)) for u in door_units),
+      "the door's network and both of its units are in the overlay both guests take")
 pk = [x.strip() for x in read("vm/wsl/packages").splitlines() if x.strip() and not x.startswith("#")]
 check("python3" in pk and "squid" in pk, "the WSL guest's packages include python3 and squid")
 boot = read("vm/cloud/overlay/usr/local/sbin/cseries-cloud-bootstrap")

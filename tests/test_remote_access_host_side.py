@@ -972,6 +972,67 @@ def test_without_a_door_on_this_install_it_cannot_be_turned_on(tmp_path, monkeyp
     assert "cannot be the door" in r.available()
 
 
+def _route_word(ip: str) -> str:
+    """An address as /proc/net/route prints it: its four network-order bytes
+    read as one native-order word."""
+    return "%08X" % int.from_bytes(socket.inet_aton(ip), sys.byteorder)
+
+
+def _routes(tmp_path, *rows) -> Path:
+    """A /proc/net/route of (iface, dest, gateway, mask) rows, each up."""
+    out = ["Iface\tDestination\tGateway \tFlags\tRefCnt\tUse\tMetric\tMask\t\tMTU\tWindow\tIRTT"]
+    for iface, dest, gw, mask in rows:
+        flags = 0x3 if gw != "0.0.0.0" else 0x1
+        out.append(f"{iface}\t{_route_word(dest)}\t{_route_word(gw)}\t{flags:04X}\t0\t0\t0\t"
+                   f"{_route_word(mask)}\t0\t0\t0")
+    p = tmp_path / "route"
+    p.write_text("\n".join(out) + "\n")
+    return p
+
+
+# The Host's routes in the guest with and without the remote network
+# (cseries-remote.network 10.89.79.0/29 beside its database's and the apps').
+ON_REMOTE = (("eth0", "0.0.0.0", "10.89.0.1", "0.0.0.0"), ("eth0", "10.89.0.0", "0.0.0.0", "255.255.255.0"),
+             ("eth1", "10.89.78.0", "0.0.0.0", "255.255.255.0"), ("eth2", "10.89.79.0", "0.0.0.0", "255.255.255.248"))
+OFF_REMOTE = ON_REMOTE[:3]
+
+
+def test_settings_says_when_the_host_is_not_on_its_doors_network(tmp_path, monkeypatch):
+    """A Host whose unit did not take the remote drop-in (a key Quadlet
+    refuses, a section systemd ignores) still runs on its old networks after
+    the guest's restart. With a door configured, Settings says the Host is not
+    on the door's network, and stays quiet once it is."""
+    monkeypatch.setenv(ra.DOOR_ENV, "10.89.79.3:8443")
+    monkeypatch.setattr(ra, "_current", None)
+    monkeypatch.setattr(ra, "ROUTES_PATH", _routes(tmp_path, *OFF_REMOTE))
+    st = ra.status()
+    assert st["door"] == "10.89.79.3:8443"
+    assert st["problem"] and "not on its door's network" in st["problem"] and "10.89.79.3" in st["problem"]
+    # Settings says so with remote access off as well as on.
+    from server.routes import remote_access as routes
+    assert "not on its door's network" in routes.summary(st)
+    assert "not on its door's network" in routes.summary({**st, "on": True})
+    # The default route reaches every address; it is not the door's network.
+    assert ra.door_network_problem(("10.89.79.3", 8443), _routes(tmp_path, *OFF_REMOTE))
+
+    monkeypatch.setattr(ra, "ROUTES_PATH", _routes(tmp_path, *ON_REMOTE))
+    assert ra.status()["problem"] is None
+
+    class M:
+        passport = client = None
+    r = ra.RemoteAccess(M(), state_path=tmp_path / "s.json")
+    monkeypatch.setattr(ra, "ROUTES_PATH", _routes(tmp_path, *OFF_REMOTE))
+    assert "not on its door's network" in (r.status()["problem"] or "")
+    monkeypatch.setattr(ra, "ROUTES_PATH", _routes(tmp_path, *ON_REMOTE))
+    assert r.status()["problem"] is None
+    # No door configured: nothing to be on.
+    monkeypatch.delenv(ra.DOOR_ENV)
+    monkeypatch.setattr(ra, "ROUTES_PATH", _routes(tmp_path, *OFF_REMOTE))
+    assert ra.status()["problem"] is None and r.status()["problem"] is None
+    # Routes that cannot be read say nothing rather than raise an alarm.
+    assert ra.door_network_problem(("10.89.79.3", 8443), tmp_path / "missing") is None
+
+
 def _door_cert():
     import importlib.machinery
     import importlib.util

@@ -202,7 +202,10 @@ def summary(st: dict) -> str:
     """One plain paragraph of how remote access stands, for the owner."""
     parts = []
     if not st.get("on"):
-        return "Remote access is off."
+        # A problem that keeps remote access from working (the Host off its
+        # door's network, a door that must not be used) is said while it is
+        # off too, before the owner turns it on.
+        return "Remote access is off." + (f" Problem: {st['problem']}" if st.get("problem") else "")
     if st.get("address"):
         parts.append(f"Address: {st['address']}.")
     dns = st.get("dns")

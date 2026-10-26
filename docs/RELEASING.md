@@ -129,10 +129,16 @@ Then, from a clean checkout of the commit you will tag:
    docker build -f sidecars/browser/Dockerfile -t cseries-browser:release-check sidecars/browser
    docker build -f sidecars/app-helper/Dockerfile -t cseries-app-helper:release-check sidecars/app-helper
    docker build -f sidecars/app-runtime-creative/Dockerfile -t cseries-app-runtime-creative:release-check .
+   docker build -f sidecars/remote-door/Dockerfile -t cseries-remote-door:release-check .
    vm/wsl/build-rootfs.sh --arch x64 --version X.Y.Z --out /var/tmp/guest-check
    vm/wsl/test/boot-test.sh /var/tmp/guest-check/cseries-wsl-rootfs-X.Y.Z-x64.tar.gz \
-     cseries:release-check cseries-postgres:release-check
+     cseries:release-check cseries-postgres:release-check cseries-remote-door:release-check
    ```
+
+   The boot test runs the guest without the door and then with it, as every
+   install of a release that pins the door runs it: the Host must start on
+   the remote network at 10.89.79.2 beside the door at 10.89.79.3, and still
+   answer on the guest's 127.0.0.1:8800, before the tag.
 
 2. The release term check must exit 0:
 

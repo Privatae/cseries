@@ -10,7 +10,13 @@
 // service is not built yet, so it ends there, softly). Then the same steps again,
 // which must change nothing.
 //
-//   node e2e-guest.js <packages/cseries dir> <host image@digest> <postgres image@digest>
+//   node e2e-guest.js <packages/cseries dir> <host image@digest> <postgres image@digest> [door image@digest]
+//
+// With the door's image the release pins it as a release does, so the
+// command's own configure step sends it to the guest (host.js configInput,
+// to a guest whose status names the door) and the guest writes the Host's
+// remote-access drop-in; boot-test.sh then checks both containers on the
+// remote network.
 //
 // Only the VM driver is replaced: guest() runs cseries-guest directly, and
 // guestShell() /bin/sh, since this already runs inside the guest.
@@ -18,7 +24,7 @@
 const assert = require('node:assert/strict');
 const { execFileSync } = require('node:child_process');
 
-const [pkg, hostImage, pgImage] = process.argv.slice(2);
+const [pkg, hostImage, pgImage, doorImage] = process.argv.slice(2);
 const { makeContext } = require(`${pkg}/src/cli`);
 const host = require(`${pkg}/src/host`);
 const bastion = require(`${pkg}/src/bastion`);
@@ -52,7 +58,7 @@ const inside = {
 
 const release = {
   version: '0.0.0-dev',
-  images: { host: split(hostImage), postgres: split(pgImage) },
+  images: { host: split(hostImage), postgres: split(pgImage), ...(doorImage ? { door: split(doorImage) } : {}) },
   guest: {},
   bastion: { min_version: '0.53.0' },
 };
@@ -106,6 +112,19 @@ async function pass(n) {
   const guestSt = execFileSync('cseries-guest', ['status']).toString();
   assert.match(guestSt, /^runtime=/m, 'the guest\'s status names the local runtime');
   assert.match(memDropIn, new RegExp(`^MemoryMax=${host.memoryMax(memKb, { runtime: true })}$`, 'm'), 'configure wrote the memory ceiling from the guest\'s MemTotal');
+  // The door: the command sent the release's door image to this guest, which
+  // knows the key (its status names door=), or, with no door in the release,
+  // sent none and the Host names no remote network.
+  assert.match(guestSt, /^door=/m, 'the guest\'s status names the remote-access door');
+  const remoteConf = '/etc/containers/systemd/cseries-host.container.d/remote.conf';
+  if (doorImage) {
+    assert.match(guestSt, new RegExp(`^door_image=${doorImage.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'm'), 'configure took the release\'s door image');
+    assert.match(require('node:fs').readFileSync(remoteConf, 'utf8'), /^Network=cseries-remote\.network:ip=10\.89\.79\.2$/m,
+      'configure wrote the Host\'s remote-access drop-in');
+  } else {
+    assert.match(guestSt, /^door_image=$/m, 'a release with no door configures none');
+    assert.equal(require('node:fs').existsSync(remoteConf), false, 'a release with no door never joins the Host to the remote network');
+  }
 
   const two = await pass(2);
   assert.equal(two.result.setup.code, one.result.setup.code, 'same Host run, same code');

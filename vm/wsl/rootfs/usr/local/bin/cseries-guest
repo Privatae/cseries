@@ -111,6 +111,43 @@ Volume=cseries_remote-cert-status:/run/cseries-remote-cert:ro
 EOF
 }
 
+# What Quadlet says about the guest's units, for a unit it could not make:
+# its errors only (not its "Loading source" lines), on one line, since the
+# cseries command shows the first line of what this prints.
+quadlet_says() {
+    q=$R/usr/libexec/podman/quadlet
+    [ -x "$q" ] || return 0
+    said=$("$q" -dryrun 2>&1 >/dev/null | sed -n 's/^quadlet-generator\[[0-9]*\]: //p' |
+        grep -v '^Loading source' | grep -i 'cseries' | head -3 | tr '\n' ' ') || true
+    [ -z "$said" ] || printf 'Quadlet: %s' "$said"
+}
+
+# The Host's and the database's units as systemd holds them after a reload.
+# A unit Quadlet cannot make from its file and drop-ins (a key it does not
+# know, in a drop-in configure wrote) is not-found; a Host already running
+# then goes on running its old unit, on its old image and networks, and a
+# restart that cannot find the unit leaves it so. That must never pass for an
+# update.
+units_made() {
+    for u in cseries-postgres.service cseries-host.service; do
+        [ "$(systemctl show -p LoadState --value "$u" 2>/dev/null)" = loaded ] ||
+            die "systemd has no $u: Quadlet could not make it from $UNITS. $(quadlet_says)"
+    done
+}
+
+# With remote access configured (configure's remote.conf drop-in), the Host
+# must be running on the remote network: a drop-in its unit did not take
+# leaves the Host up on its old networks with its door unreachable.
+REMOTE_NET=cseries_remote
+on_remote_network() {
+    [ -f "$UNITS/cseries-host.container.d/remote.conf" ] || return 0
+    nets=$(podman inspect cseries-host --format '{{range $k, $v := .NetworkSettings.Networks}}{{$k}} {{end}}' 2>/dev/null) || nets=""
+    case " $nets " in
+        *" $REMOTE_NET "*) return 0 ;;
+    esac
+    die "The Host started without its remote-access network ($REMOTE_NET; it is on: ${nets:-none}), so remote access cannot reach it. Its unit did not take $UNITS/cseries-host.container.d/remote.conf. $(quadlet_says)"
+}
+
 image_of() {
     # The Image= line configure wrote for $1 (host, postgres or remote-door),
     # or nothing.
@@ -316,6 +353,7 @@ EnvironmentFile=/etc/cseries-runtime/browser-control-token.env")
     esac
     if [ "$any" = 1 ]; then
         systemctl daemon-reload
+        units_made
         echo changed=1
     else
         echo changed=0
@@ -353,12 +391,16 @@ unit_state() {
 # answer is the units' state after those retries, not the first systemctl
 # call's exit status.
 run_units() {
+    # A unit that is not-found but still active is the old Host: the call
+    # below fails for it and the wait would take it for started.
+    units_made
     systemctl "$1" cseries-postgres.service cseries-host.service 2>/dev/null || true
     door_units "$1"
     i=0
     while [ $i -lt 90 ]; do
         if [ "$(unit_state cseries-postgres.service)" = active ] &&
            [ "$(unit_state cseries-host.service)" = active ]; then
+            on_remote_network
             return 0
         fi
         sleep 2

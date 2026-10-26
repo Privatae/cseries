@@ -54,6 +54,7 @@ import ipaddress
 import json
 import logging
 import os
+import sys
 import tempfile
 import time
 from dataclasses import dataclass
@@ -137,6 +138,52 @@ def door_address(env: Optional[dict] = None) -> Optional[tuple[str, int]]:
             raise DoorAddressError(f"{raw!r}: the port is not a number")
         port = int(p)
     return check_door(host, port)
+
+
+# The kernel's IPv4 routes for this network namespace (the Host's container).
+ROUTES_PATH = Path("/proc/net/route")
+_RTF_UP = 0x1
+
+
+def door_network_problem(door: tuple[str, int], routes: Optional[Path] = None) -> Optional[str]:
+    """Why this Host is not on its door's network, or None.
+
+    The guest joins the Host to the door's network with the drop-in that also
+    names the door (cseries-host.container.d/remote.conf). A Host whose unit
+    could not be made from that drop-in keeps running on its old networks
+    after a restart, and the door's address then leads nowhere: remote access
+    is broken with nothing to say so. So the Host looks for a route of its own
+    straight onto the door's address (on its link, no gateway). Only IPv4 is
+    read (the guest's door is IPv4); no answer when the routes can't be read."""
+    try:
+        addr = ipaddress.ip_address(door[0])
+    except (ValueError, TypeError, IndexError):
+        return None
+    if addr.version != 4:
+        return None
+    try:
+        lines = (routes or ROUTES_PATH).read_text().splitlines()[1:]
+    except OSError:
+        return None
+    want = int(addr)
+    for line in lines:
+        f = line.split()
+        if len(f) < 8:
+            continue
+        try:
+            # An address field is its four network-order bytes printed as one
+            # native-order word.
+            dest, gw, mask = (int.from_bytes(int(x, 16).to_bytes(4, sys.byteorder), "big")
+                              for x in (f[1], f[2], f[7]))
+            flags = int(f[3], 16)
+        except (ValueError, OverflowError):
+            continue
+        if flags & _RTF_UP and gw == 0 and mask != 0 and want & mask == dest & mask:
+            return None
+    return (f"this Host is not on its door's network (no route of its own to {addr}): "
+            "its unit did not take the remote-access settings, so a browser from the "
+            "internet cannot reach it. Run the cseries command again; if this stays, "
+            "its log says why (cseries-guest logs host)")
 
 
 # ── what the door's answers carry ───────────────────────────────────────────
@@ -327,6 +374,7 @@ class RemoteAccess:
                  acme_directory: Optional[str] = None, acme_session=None, acme_allow_http: bool = False,
                  dial: Optional[Callable[[str], tuple[str, int]]] = None,
                  door: Optional[Callable[[], Optional[tuple[str, int]]]] = None,
+                 door_network: Optional[Callable[[tuple[str, int]], Optional[str]]] = None,
                  tunnel_kw: Optional[dict] = None, enable_poll: float = ENABLE_POLL_S,
                  refused_retry: float = REFUSED_RETRY_S, check_every: float = CHECK_S,
                  ticket_reuse: float = TICKET_REUSE_S,
@@ -342,6 +390,9 @@ class RemoteAccess:
         # Where the tunnel hands browsers over: CSERIES_REMOTE_DOOR, checked
         # (door_address). A test rig gives its own.
         self._door = door or door_address
+        # Whether this Host is on that door's network (door_network_problem);
+        # a rig that gives its own door gives its own answer, or none.
+        self._door_network = door_network or (door_network_problem if door is None else (lambda _d: None))
         self._tunnel_kw = dict(tunnel_kw or {})
         self._enable_poll = enable_poll
         self._refused_retry = refused_retry
@@ -762,6 +813,9 @@ class RemoteAccess:
         try:
             door = self._door()
             out["door"] = f"{door[0]}:{door[1]}" if door else None
+            off_net = self._door_network(door) if door else None
+            if off_net:
+                out["problem"] = off_net
         except DoorAddressError as exc:
             out["problem"] = str(exc)
         if self.tunnel is not None:
@@ -809,6 +863,8 @@ def status() -> dict:
     try:
         door = door_address()
         out["door"] = f"{door[0]}:{door[1]}" if door else None
+        if door:
+            out["problem"] = door_network_problem(door)
     except DoorAddressError as exc:
         out["problem"] = str(exc)
     return out

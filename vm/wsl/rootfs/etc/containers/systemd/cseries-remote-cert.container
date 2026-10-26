@@ -1,0 +1,51 @@
+# Remote access: the certificate job, run the way compose.remote.yaml's
+# remote-cert service runs it. Keep the two in step.
+#
+# The cloud box's cseries-cert (sidecars/remote-door/door-cert runs it): the
+# remote address's wildcard certificate by DNS-01 through acme-dns, renewed
+# within 30 days of expiry, checked daily. The ACME account the Host made and
+# the acme-dns credential come read-only from the remote-acme volume; the
+# certificate's key is made here and stays in this job's volumes; the
+# certificate goes to the door's tls volume; its status, for the Host's
+# Settings, to the status volume.
+#
+# It needs the internet (Let's Encrypt and acme-dns), so it is on the Host's
+# ordinary network and never on the remote one: the door, which is, has no way
+# out.
+#
+# The image is the door's. `cseries-guest configure` writes it, pinned by
+# digest, to cseries-remote-cert.container.d/image.conf; until it has, this
+# unit does not exist.
+[Unit]
+Description=C-Series remote access certificate
+Requires=cseries-machine-firewall.service
+After=cseries-machine-firewall.service
+
+[Container]
+ContainerName=cseries-remote-cert
+Entrypoint=/usr/local/sbin/door-cert
+Exec=--loop
+User=1000
+Group=1000
+ReadOnly=true
+ReadOnlyTmpfs=false
+Tmpfs=/tmp:rw,nosuid,nodev,noexec
+PidsLimit=256
+DropCapability=ALL
+NoNewPrivileges=true
+Network=cseries.network
+Volume=cseries_remote-tls:/etc/caddy/tls:U
+Volume=cseries_remote-cert-state:/var/lib/cseries-cloud:U
+Volume=cseries_remote-acme:/etc/cseries-cloud:ro
+Volume=cseries_remote-cert-status:/var/lib/cseries-cert-status:U
+Pull=missing
+
+[Service]
+Restart=always
+RestartSec=30
+TimeoutStartSec=900
+MemoryMax=256M
+MemorySwapMax=0
+
+[Install]
+WantedBy=multi-user.target

@@ -254,6 +254,17 @@ class Membership:
         self._client_task: Optional[asyncio.Task] = None
         self._renew_task: Optional[asyncio.Task] = None
         self._claim_task: Optional[asyncio.Task] = None
+        self._remote = None
+
+    @property
+    def remote(self):
+        """Remote access (server/network/remote_access.py), which rides on
+        this membership: its tunnel uses the passport, its tickets come
+        through the member client."""
+        if self._remote is None:
+            from server.network.remote_access import RemoteAccess
+            self._remote = RemoteAccess(self)
+        return self._remote
 
     # ── lifecycle ───────────────────────────────────────────────────────────
 
@@ -291,6 +302,9 @@ class Membership:
             self._renew_task = asyncio.get_running_loop().create_task(self._renew_loop())
         logger.info("network member: entity %s on %s, passport valid until %s",
                     p.entity_id, p.network, p.not_after.isoformat())
+        # Remote access, when the owner turned it on: its tunnel starts once
+        # the member door gives a ticket.
+        self.remote.start()
         return self.client
 
     async def _stop_client(self) -> None:
@@ -324,6 +338,8 @@ class Membership:
             except (asyncio.CancelledError, Exception):
                 pass
         self._renew_task = None
+        if self._remote is not None:
+            await self._remote.shutdown()
         client, task = self.client, self._client_task
         self.client, self._client_task = None, None
         if client is not None:
@@ -340,6 +356,9 @@ class Membership:
 
     async def _drop(self) -> None:
         """Back to no platform, with the passport files gone."""
+        if self._remote is not None:
+            # The remote address was this passport's Host's.
+            await self._remote.left_network()
         await self._stop_client()
         if self._renew_task is not None and self._renew_task is not asyncio.current_task():
             self._renew_task.cancel()
@@ -513,6 +532,8 @@ class Membership:
             self.passport, self.renew_note = finished, None
             logger.info("passport renewal finished: serial %s", finished.serial)
             await client.reconnect()
+            if self._remote is not None:
+                self._remote.passport_renewed()
             return "renewed"
         key = pp.new_key()
         pp.stage_next_key(self.dir, key)
@@ -565,6 +586,10 @@ class Membership:
         logger.info("passport renewed: serial %s, valid until %s",
                     renewed.serial, renewed.not_after.isoformat())
         await client.reconnect()
+        if self._remote is not None:
+            # The tunnel's certificate is the passport's: it starts again
+            # with the new one, and a ticket for its serial.
+            self._remote.passport_renewed()
         return "renewed"
 
     async def _renew_loop(self) -> None:
@@ -586,6 +611,10 @@ class Membership:
 
     def _on_accepted(self) -> None:
         self.reason = self.last_error = None
+        if self._remote is not None:
+            # A new connection (after a renewal, or the door back): remote
+            # access asks for its ticket on it now, not at its next look.
+            self._remote.wake()
 
     async def _on_refusal(self, reason: str, error: str, serial: Optional[str]) -> None:
         p = self.passport
@@ -608,6 +637,8 @@ class Membership:
             return
         self.reason = reason
         self.last_error = MEMBERSHIP_NOT_ACTIVE if reason == "membership" else (error or reason)
+        if self._remote is not None:
+            self._remote.membership_refused(reason, error)
 
     # ── status ──────────────────────────────────────────────────────────────
 
@@ -656,6 +687,8 @@ async def boot(set_client: Callable):
     """Called once from the lifespan with the setter for get_bridge_client()."""
     m = current()
     m._set_client = set_client
+    from server.network import remote_access
+    remote_access.install(m.remote)
     return await m.boot()
 
 

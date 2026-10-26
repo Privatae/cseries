@@ -13,7 +13,12 @@ github.com/Privatae/cseries. Pushing the tag runs
   `/app`. The full smoke test (`scripts/smoke_test.sh`) is not run here: it
   runs on the build machine before the tag, in the full gate below. The
   checked image is pushed by digest with a provenance attestation, and the
-  index is made from exactly those digests.
+  index is made from exactly those digests. The remote-access door's image,
+  `ghcr.io/privatae/cseries-remote-door:X.Y.Z` (`sidecars/remote-door/
+  Dockerfile`; a member's machine runs its door and certificate job from
+  it), is built, scanned, pushed and tagged in the same jobs and the same
+  way; it has no `/app`, so the public-source gate over the image does not
+  apply to it.
 - **The runtime images**, which a machine's local runtime starts the Host's
   app, browser and creative containers from, each built from this tree at
   the tag, checked the same way as the two images above (trivy's secret
@@ -295,10 +300,10 @@ With the repository public:
 
 On the first release, in this order:
 
-1. **Make every GHCR package public.** The first run's image jobs create six
+1. **Make every GHCR package public.** The first run's image jobs create seven
    packages under the Privatae account: `cseries`, `cseries-postgres`,
-   `cseries-app-runtime-python`, `cseries-browser`, `cseries-app-helper` and
-   `cseries-app-runtime-creative`. Each image carries
+   `cseries-remote-door`, `cseries-app-runtime-python`, `cseries-browser`,
+   `cseries-app-helper` and `cseries-app-runtime-creative`. Each image carries
    `org.opencontainers.image.source`, so GHCR links every package to the
    repository. If any is not public, the npm job stops at "Check what
    release.json pins is public". On GitHub open each package, then Package

@@ -34,7 +34,7 @@ import sys
 
 os.environ["CSERIES_URL"] = "http://home.cseries.localhost:8800"
 os.environ["CSERIES_REMOTE_URL"] = "https://home.k7x2m9.remote.privatae.ai"
-os.environ["CSERIES_TRUSTED_PROXIES"] = "172.31.254.3/32"
+os.environ["CSERIES_TRUSTED_PROXIES"] = "10.89.79.3/32"
 os.environ.pop("CSERIES_ALLOWED_ORIGINS", None)
 
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
@@ -158,7 +158,7 @@ OS._door_key = lambda: b"k" * 40
 
 
 def door(uri, host):
-    scope = {"type": "http", "client": ("172.31.254.3", 1),
+    scope = {"type": "http", "client": ("10.89.79.3", 1),
              "headers": [(b"host", host.encode()), (b"x-cseries-door", b"k" * 40),
                          (b"x-forwarded-method", b"POST"), (b"x-forwarded-uri", uri.encode())]}
     return asyncio.run(OS.door_decision(scope))[0]
@@ -296,7 +296,7 @@ from starlette.requests import Request as _Req  # noqa: E402
 from server.routes import browser_forms as BF  # noqa: E402
 from server.routes import vault as V  # noqa: E402
 
-PROXY = "172.31.254.3"          # CSERIES_TRUSTED_PROXIES above
+PROXY = "10.89.79.3"          # CSERIES_TRUSTED_PROXIES above
 CHOSEN = "203.0.113.66"         # whatever a page or a relay writes in the header
 
 

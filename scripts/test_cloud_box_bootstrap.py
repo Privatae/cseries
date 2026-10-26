@@ -435,6 +435,13 @@ with tempfile.TemporaryDirectory() as tmp:
               "the box's own network drop-in (with the Host's address) replaces the WSL guest's")
         check("root/etc/systemd/system/cseries-runtime-firewall.service" not in members,
               "the WSL guest's runtime firewall is not on a box: door.nft carries its rules")
+        # A member's own machine runs the remote-access door beside the Host
+        # (vm/wsl/rootfs: cseries-remote-*.container, the remote network and
+        # the Host's remote.conf). A box has its own Caddy door, so none of
+        # those reach it.
+        check(not [n for n in members if "cseries-remote" in n or n.endswith("cseries-host.container.d/remote.conf")],
+              "the member machine's remote-access door, network and Host drop-in are not on a box",
+              [n for n in members if "remote" in n])
         for prog in ["root/usr/local/bin/cseries-guest", "root/usr/local/sbin/cseries-door-helper",
                      "root/usr/local/sbin/cseries-cloud-update", "bootstrap.sh"]:
             check(members[prog].mode == 0o755, f"{prog} is executable")

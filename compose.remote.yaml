@@ -22,30 +22,45 @@
 # network is internal: nothing but the Host and the door is on it, and it has
 # no way out. scripts/test_remote_door_loopback.py checks this file.
 #
-# The two addresses are fixed so each side can name the other exactly. If
-# 172.31.254.0/29 is in use on this machine, set all four of
-# CSERIES_REMOTE_SUBNET, CSERIES_REMOTE_HOST_ADDR, CSERIES_REMOTE_DOOR_ADDR and
-# CSERIES_REMOTE_URL's machine to other values.
+# The two addresses are fixed so each side can name the other exactly. The
+# default, 10.89.79.0/29, is the guest's (vm/wsl/rootfs/etc/containers/
+# systemd/cseries-remote.network): outside 172.16.0.0/12, where WSL's NAT and
+# Docker's default networks are, and 192.168.0.0/16, where home networks and
+# Docker's later pools are. If it is in use on this machine anyway, set all
+# three of CSERIES_REMOTE_SUBNET, CSERIES_REMOTE_HOST_ADDR and
+# CSERIES_REMOTE_DOOR_ADDR to other values.
+#
+# The remote address is not set here: the owner turns remote access on in
+# Settings, the network answers with the address, and the Host keeps it
+# (server/network/remote_access.py) and writes what the certificate job needs
+# into the remote-acme volume. CSERIES_REMOTE_URL and CSERIES_REMOTE_ZONE, when
+# set, are used instead.
 
 services:
   host:
     environment:
-      # The remote address: https://<handle>.<address_id>.<zone>, given with
-      # remote access. Its first label is the desktop's own.
-      CSERIES_REMOTE_URL: ${CSERIES_REMOTE_URL:?set CSERIES_REMOTE_URL to this Host's remote address}
+      # The remote address: https://<handle>.<address_id>.<zone>. Unset, the
+      # one the network gave when the owner turned remote access on.
+      CSERIES_REMOTE_URL: ${CSERIES_REMOTE_URL:-}
       # Where the tunnel hands browsers over: the door, on its own address.
-      CSERIES_REMOTE_DOOR: ${CSERIES_REMOTE_DOOR_ADDR:-172.31.254.3}:8443
+      CSERIES_REMOTE_DOOR: ${CSERIES_REMOTE_DOOR_ADDR:-10.89.79.3}:8443
       # The door is the only proxy in front of the Host on that address:
       # its X-Forwarded-For (the browser's address) is believed, and only
       # its /__host/door question, carrying the door key, is answered.
-      CSERIES_TRUSTED_PROXIES: ${CSERIES_REMOTE_DOOR_ADDR:-172.31.254.3}/32
+      CSERIES_TRUSTED_PROXIES: ${CSERIES_REMOTE_DOOR_ADDR:-10.89.79.3}/32
       CSERIES_DOOR_SECRET_FILE: /run/cseries-door/door-secret
+      # Where the Host writes the certificate job's inputs (its ACME account,
+      # the acme-dns credential, cloud.json), and the job's last result.
+      CSERIES_REMOTE_ACME_DIR: /var/lib/cseries-remote
+      CSERIES_REMOTE_CERT_STATUS: /run/cseries-remote-cert/status.json
     volumes:
       - remote-door-key:/run/cseries-door:ro
+      - remote-acme:/var/lib/cseries-remote
+      - remote-cert-status:/run/cseries-remote-cert:ro
     networks:
       default: {}
       remote:
-        ipv4_address: ${CSERIES_REMOTE_HOST_ADDR:-172.31.254.2}
+        ipv4_address: ${CSERIES_REMOTE_HOST_ADDR:-10.89.79.2}
 
   remote-door:
     build:
@@ -59,21 +74,25 @@ services:
     read_only: true
     pids_limit: 256
     environment:
-      CSERIES_DOOR_BIND: ${CSERIES_REMOTE_DOOR_ADDR:-172.31.254.3}
+      CSERIES_DOOR_BIND: ${CSERIES_REMOTE_DOOR_ADDR:-10.89.79.3}
       CSERIES_DOOR_PORT: "8443"
-      CSERIES_TUNNEL_FROM: ${CSERIES_REMOTE_HOST_ADDR:-172.31.254.2}
-      CSERIES_HOST_UPSTREAM: ${CSERIES_REMOTE_HOST_ADDR:-172.31.254.2}:8800
-      CSERIES_REMOTE_ZONE: ${CSERIES_REMOTE_ZONE:?set CSERIES_REMOTE_ZONE to <address_id>.<zone>}
+      CSERIES_TUNNEL_FROM: ${CSERIES_REMOTE_HOST_ADDR:-10.89.79.2}
+      CSERIES_HOST_UPSTREAM: ${CSERIES_REMOTE_HOST_ADDR:-10.89.79.2}:8800
+      # <address_id>.<zone>; unset, door-run reads it from cloud.json.
+      CSERIES_REMOTE_ZONE: ${CSERIES_REMOTE_ZONE:-}
     volumes:
       - remote-door-key:/data/door-key
       - remote-door-tls:/etc/caddy/tls:ro
+      - remote-acme:/etc/cseries-cloud:ro
     tmpfs:
-      - /run/caddy
+      # Caddy's admin socket and its data, written by the door's own user: a
+      # tmpfs is root's 0755 unless told otherwise.
+      - /run/caddy:mode=1777
       - /tmp
     # No ports: only the Host's tunnel dials the door, on the remote network.
     networks:
       remote:
-        ipv4_address: ${CSERIES_REMOTE_DOOR_ADDR:-172.31.254.3}
+        ipv4_address: ${CSERIES_REMOTE_DOOR_ADDR:-10.89.79.3}
     cap_drop: [ALL]
     security_opt:
       - no-new-privileges:true
@@ -93,10 +112,13 @@ services:
     volumes:
       - remote-door-tls:/etc/caddy/tls
       - remote-cert-state:/var/lib/cseries-cloud
-      # cloud.json (address_id, zone, ACME account email and server),
-      # acme-dns.json and acme-dns-api.json, as on a cloud box: what remote
-      # access hands this machine.
+      # cloud.json (address_id, zone, ACME account label and server),
+      # acme-dns.json and acme-dns-api.json, as on a cloud box, and the
+      # Host's ACME account: what the Host writes when remote access is
+      # turned on.
       - remote-acme:/etc/cseries-cloud:ro
+      # Its last result, which Settings shows.
+      - remote-cert-status:/var/lib/cseries-cert-status
     tmpfs:
       - /tmp
     networks:
@@ -110,10 +132,11 @@ networks:
     internal: true
     ipam:
       config:
-        - subnet: ${CSERIES_REMOTE_SUBNET:-172.31.254.0/29}
+        - subnet: ${CSERIES_REMOTE_SUBNET:-10.89.79.0/29}
 
 volumes:
   remote-door-key:
   remote-door-tls:
   remote-cert-state:
   remote-acme:
+  remote-cert-status:

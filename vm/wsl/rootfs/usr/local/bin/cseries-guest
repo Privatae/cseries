@@ -6,19 +6,25 @@
 #
 #   wait-boot          wait until systemd has finished starting
 #   configure          read the pinned images from stdin (host=, postgres=,
-#                      release=, and optionally cpu_quota= and
-#                      memory_max=) and write them where the units read
-#                      them; on a machine with the local runtime also its
+#                      release=, and optionally cpu_quota=, memory_max=
+#                      and door=, the remote-access door's image, which its
+#                      door and certificate units both run, and with which
+#                      the Host joins the door's network) and write them
+#                      where the units read them; on a machine with the
+#                      local runtime also its
 #                      images (python=, creative=, helper=, browser=, each
 #                      pinned by digest) and the engines' sources
 #                      (harness_src_url=, harness_src_sha256=), the
 #                      browser's control token, and the Host's drop-in that
 #                      joins it to the runtime
-#   pull               pull both images (and the runtime's python image), with
-#                      progress
+#   pull               pull both images (and the runtime's python image, and
+#                      the door's when one is configured), with progress
 #   start | stop | restart
+#                      the Host and its database, waiting until both run;
+#                      the door's two units beside them, never waited on
 #   status             key=value lines, cpus= and mem_total_kb= among them
-#                      (this system's processor count and MemTotal)
+#                      (this system's processor count and MemTotal), and
+#                      door= and remote_cert= (the door's two units)
 #   health             exit 0 when the Host answers on 127.0.0.1:8800
 #   ready              exit 0 when the Host's deep health check says ready:
 #                      its database, its migrations and its runtime are up
@@ -60,8 +66,54 @@ leave_root_cgroup() {
 }
 leave_root_cgroup
 
+# Remote access's two units (cseries-remote-door.container and
+# cseries-remote-cert.container), which run the door's image. Neither is
+# waited on: a door that cannot start never keeps the Host from starting.
+DOOR_UNITS="cseries-remote-door.service cseries-remote-cert.service"
+# The Host's and the door's addresses on the remote network
+# (cseries-remote.network, 10.89.79.0/29; cseries-remote-door.container).
+REMOTE_HOST_IP=10.89.79.2
+REMOTE_DOOR_IP=10.89.79.3
+
+remote_host_dropin() {
+    # The Host's drop-in for remote access (compose.remote.yaml's host
+    # service), written by configure only once it has the door's image: until
+    # then the Host names no remote network, so a Host without the door never
+    # depends on that network being made.
+    cat <<EOF
+# Written by cseries-guest configure with the remote-access door's image.
+#
+# The Host's address on the remote network, where its door reaches it, and
+# what the Host needs to hand browsers to the door and to answer it.
+#
+# CSERIES_REMOTE_DOOR is the door's own address, never loopback: a request
+# from loopback is let into the Host without a session, so a browser from the
+# internet must arrive from the door's address. The Host believes the door's
+# X-Forwarded-For and answers its /__host/door question only from exactly the
+# door's /32. This drop-in's CSERIES_TRUSTED_PROXIES replaces the base unit's
+# empty one: Quadlet reads drop-ins after the unit, in name order, and the
+# last value given for a variable is the one the container gets.
+#
+# The volumes: the door key the door makes (read-only here); the remote-acme
+# directory, where the Host writes what the certificate job reads (the zone,
+# the ACME account it made, and the acme-dns credential the network hands it
+# once); and the job's status, read-only, for Settings.
+[Container]
+Network=cseries-remote.network:ip=$REMOTE_HOST_IP
+Environment=CSERIES_REMOTE_DOOR=$REMOTE_DOOR_IP:8443
+Environment=CSERIES_TRUSTED_PROXIES=$REMOTE_DOOR_IP/32
+Environment=CSERIES_DOOR_SECRET_FILE=/run/cseries-door/door-secret
+Environment=CSERIES_REMOTE_ACME_DIR=/var/lib/cseries-remote
+Environment=CSERIES_REMOTE_CERT_STATUS=/run/cseries-remote-cert/status.json
+Volume=cseries_remote-door-key:/run/cseries-door:ro
+Volume=cseries_remote-acme:/var/lib/cseries-remote:U
+Volume=cseries_remote-cert-status:/run/cseries-remote-cert:ro
+EOF
+}
+
 image_of() {
-    # The Image= line configure wrote for $1 (host or postgres), or nothing.
+    # The Image= line configure wrote for $1 (host, postgres or remote-door),
+    # or nothing.
     f="$UNITS/cseries-$1.container.d/image.conf"
     [ -f "$f" ] || return 0
     sed -n 's/^Image=//p' "$f"
@@ -150,7 +202,7 @@ browser_token() {
 }
 
 configure() {
-    host="" postgres="" release="" cpu_quota="" memory_max=""
+    host="" postgres="" release="" cpu_quota="" memory_max="" door=""
     rt_python="" rt_creative="" rt_helper="" rt_browser="" rt_hs_url="" rt_hs_sha="" rt_given=""
     while IFS='=' read -r key value || [ -n "$key" ]; do
         case "$key" in
@@ -159,6 +211,9 @@ configure() {
             release) release=$value ;;
             cpu_quota) cpu_quota=$value ;;
             memory_max) memory_max=$value ;;
+            door)
+                valid_ref "$value" || die "configure: door image is not pinned by digest: $value"
+                door=$value ;;
             python|creative|helper|browser)
                 valid_ref "$value" || die "configure: $key image is not pinned by digest: $value"
                 eval "rt_$key=\$value"
@@ -211,6 +266,20 @@ Image=$postgres")
 [Service]
 CPUQuota=$cpu_quota")
     fi
+    # door (optional): the remote-access door's image, for both of its units,
+    # and the Host's drop-in that joins it to the door's network
+    # (remote_host_dropin). Without it the files are left as they are, so a
+    # release without the door never takes away one an earlier release
+    # configured.
+    h=0
+    if [ -n "$door" ]; then
+        h1=$(write_if_changed "$UNITS/cseries-remote-door.container.d/image.conf" "[Container]
+Image=$door")
+        h2=$(write_if_changed "$UNITS/cseries-remote-cert.container.d/image.conf" "[Container]
+Image=$door")
+        h3=$(write_if_changed "$UNITS/cseries-host.container.d/remote.conf" "$(remote_host_dropin)")
+        h=$h1$h2$h3
+    fi
     e=0
     if [ -n "$memory_max" ]; then
         e=$(write_if_changed "$UNITS/cseries-host.container.d/10-memory.conf" "# Written by cseries-guest configure from this system's memory.
@@ -241,7 +310,11 @@ Environment=CSERIES_RUNTIME_KERNEL_ADDR=$RT_HOST_IP:8800
 Environment=CSERIES_RUNTIME_NET=$RT_NET
 EnvironmentFile=/etc/cseries-runtime/browser-control-token.env")
     fi
-    if [ "$a$b$d$e$f" != 00000 ]; then
+    case "$a$b$d$e$f$h" in
+        *1*) any=1 ;;
+        *) any=0 ;;
+    esac
+    if [ "$any" = 1 ]; then
         systemctl daemon-reload
         echo changed=1
     else
@@ -254,6 +327,15 @@ runtime_image_of() {
     # The ref the image table pins for family $1, or nothing.
     [ -f "$RT_ETC/images.json" ] || return 0
     sed -n "s/^ *\"$1\": \"\([^\"]*\)\".*/\1/p" "$RT_ETC/images.json"
+}
+
+# The door's two units, when configure has given them their image; their
+# own failure is theirs (journalctl -u cseries-remote-door), never the Host's.
+# Queued without waiting: a unit still pulling its image would otherwise hold
+# the Host's start for as long as the pull takes.
+door_units() {
+    [ -n "$(image_of remote-door)" ] || return 0
+    systemctl --no-block "$1" $DOOR_UNITS 2>/dev/null || true
 }
 
 need_config() {
@@ -272,6 +354,7 @@ unit_state() {
 # call's exit status.
 run_units() {
     systemctl "$1" cseries-postgres.service cseries-host.service 2>/dev/null || true
+    door_units "$1"
     i=0
     while [ $i -lt 90 ]; do
         if [ "$(unit_state cseries-postgres.service)" = active ] &&
@@ -318,12 +401,23 @@ case "$cmd" in
         if [ -n "$ref" ]; then
             podman image exists "$ref" || podman pull "$ref"
         fi
+        # The door's image, when configured: both of its units run it. A
+        # download that fails is not the Host's: its units pull it again when
+        # they start (Pull=missing).
+        ref=$(image_of remote-door)
+        if [ -n "$ref" ]; then
+            podman image exists "$ref" || podman pull "$ref" ||
+                echo "The remote-access door's image could not be downloaded; its units try again when they start." >&2
+        fi
         ;;
     start)
         need_config
         run_units start
         ;;
     stop)
+        # Each unit on its own line: a guest whose door has no image has no
+        # door units, and that must not stop the Host's from stopping.
+        systemctl stop $DOOR_UNITS 2>/dev/null || true
         systemctl stop cseries-host.service cseries-postgres.service 2>/dev/null || true
         ;;
     restart)
@@ -340,6 +434,9 @@ case "$cmd" in
         echo "cpus=$(getconf _NPROCESSORS_ONLN)"
         echo "mem_total_kb=$(sed -n 's/^MemTotal: *\([0-9]*\) kB$/\1/p' /proc/meminfo)"
         echo "runtime=$(unit_state cseries-runtime.socket)"
+        echo "door_image=$(image_of remote-door)"
+        echo "door=$(unit_state cseries-remote-door.service)"
+        echo "remote_cert=$(unit_state cseries-remote-cert.service)"
         if curl -fsS --max-time 3 -o /dev/null http://127.0.0.1:8800/api/system/health 2>/dev/null; then
             echo "health=ok"
         else

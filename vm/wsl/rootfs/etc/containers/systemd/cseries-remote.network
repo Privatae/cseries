@@ -1,0 +1,27 @@
+# Remote access (compose.remote.yaml's `remote` network): the Host and its
+# door, and nothing else. The Host's tunnel hands each browser's connection to
+# the door at its address here, and the door passes what the Host lets in to
+# the Host's address here, so a browser from the internet never reaches the
+# Host from loopback (server/network/remote_access.py says why).
+#
+# Internal: no route out and no NAT, so the door, which is on this network
+# only, can reach nothing but the Host. No DNS either: both sides name each
+# other by address, and a resolver on a network with no way out would only
+# stand in front of the Host's own.
+#
+# The two addresses are fixed (the Host's remote.conf drop-in, which
+# cseries-guest configure writes once it has the door's image, and
+# cseries-remote-door.container), so each side can name the other exactly.
+#
+# 10.89.79.0/29: beside the local runtime's 10.89.78.0/24, inside the range
+# this guest keeps for its own fixed networks (containers.conf.d/subnets.conf
+# keeps podman from handing it to any other). Not 172.16.0.0/12, which WSL's
+# NAT draws its /20 from and Docker its default networks, nor 192.168.0.0/16,
+# where home networks and Docker's later pools are. Nothing starts this
+# network but a unit that names it: the Host joins it only once the door is
+# configured.
+[Network]
+NetworkName=cseries_remote
+Internal=true
+DisableDNS=true
+Subnet=10.89.79.0/29

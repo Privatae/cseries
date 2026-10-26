@@ -281,6 +281,17 @@ _ENTRIES: list[tuple[str, str, str, str]] = [
         "the new passkey for the ceremony the join code was spent for, verified by the webauthn "
         "library for the remote address's relying party before it is kept; only on the remote "
         "address"),
+    *_e("GET", "/api/owner/remote/status", "own-auth",
+        "the owner's live session cookie on this Host's own name (refused on every other name); "
+        "answers how remote access stands: the address, each relay's link, the certificate's "
+        "expiry and error, never the acme-dns credential"),
+    *_e("POST", "/api/owner/remote/enable", "own-auth",
+        "the owner's live session cookie on this Host's own name (refused on every other name); "
+        "makes this Host's own ACME account and asks the member door for remote access over the "
+        "passport's connection, which the door judges by that passport and the membership"),
+    *_e("POST", "/api/owner/remote/disable", "own-auth",
+        "the owner's live session cookie on this Host's own name (refused on every other name); "
+        "stops the tunnel and clears the remote address"),
     # The machine a cloud Host runs on (server/cloud_machine.py).
     *_e("POST", "/api/owner/machine/restart", "own-auth",
         "the owner's live session cookie on this Host's own name; asks the machine's door "

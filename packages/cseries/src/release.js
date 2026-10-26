@@ -45,6 +45,17 @@ function validate(m) {
     field(`images.${which}.ref`, img.ref, (v) => REF.test(v));
     field(`images.${which}.digest`, img.digest, (v) => DIGEST.test(v));
   }
+  // The remote-access door's image (sidecars/remote-door), which its door
+  // and certificate units run. Optional: a manifest from before it (one
+  // CSERIES_RELEASE_JSON names for a test) installs a Host without a door,
+  // as those releases did. The release workflow always writes it
+  // (.github/scripts/release.py release-json), and when present it is
+  // pinned like the Host's.
+  if ((m.images || {}).door !== undefined) {
+    const img = m.images.door || {};
+    field('images.door.ref', img.ref, (v) => REF.test(v));
+    field('images.door.digest', img.digest, (v) => DIGEST.test(v));
+  }
   for (const key of GUEST_KEYS) {
     const g = (m.guest || {})[key] || {};
     field(`guest.${key}.url`, g.url, (v) => /^https:\/\/[^\s]+$/.test(v));
@@ -105,6 +116,11 @@ function load(env = process.env) {
   return { ...result, file };
 }
 
+// Whether the release pins the remote-access door's image.
+function hasDoor(release) {
+  return Boolean(release && release.images && release.images.door);
+}
+
 // The image as the guest runs it: name pinned by digest.
 function pinnedImage(release, which) {
   const img = release.images[which];
@@ -131,4 +147,4 @@ function runtimeLines(release) {
   return out;
 }
 
-module.exports = { load, validate, pinnedImage, requirePinned, defaultPath, runtimeLines, GUEST_KEYS, RUNTIME_FAMILIES };
+module.exports = { load, validate, pinnedImage, hasDoor, requirePinned, defaultPath, runtimeLines, GUEST_KEYS, RUNTIME_FAMILIES };

@@ -57,8 +57,14 @@ NETWORK_DOOR_PORT = 8643
 # (server/host_backup.py): the door scopes each to the Host's own folder.
 # backup.recovery_key is left out until the door answers it: it would hand the
 # Host a recovery key its owner never registered through the network.
+#
+# remote.enable and remote.ticket are remote access (server/network/
+# remote_access.py; the door's side is privatae bridge/member_remote.py):
+# turning it on with the Host's own ACME account URL, and the one-hour ticket
+# its tunnels show the relays.
 NETWORK_OPS: frozenset[str] = frozenset({
     "heartbeat.ping", "passport.renew", "passport.revoke",
+    "remote.enable", "remote.ticket",
     "appstore.list", "appstore.icon", "appstore.fetch_bundle", "appstore.purchase",
     "appstore.refund.request", "appstore.entitlement.check",
     "appstore.agreement", "appstore.publisher.my_apps", "appstore.publisher.sales",

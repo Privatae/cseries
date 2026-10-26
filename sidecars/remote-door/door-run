@@ -11,9 +11,16 @@ environment of anything but this Caddy.
 Caddy starts once door-cert has put a certificate in CSERIES_DOOR_TLS; until
 then this waits. It checks the certificate every CHECK_S and reloads Caddy
 through its admin socket when the file changes.
+
+The zone the certificate is for (<address_id>.<zone>) is CSERIES_REMOTE_ZONE
+when that is set, else what the Host wrote to /etc/cseries-cloud/cloud.json
+when the owner turned remote access on (server/network/remote_access.py): an
+install learns its address only then. A changed zone reloads Caddy with it.
 """
 
+import json
 import os
+import re
 import secrets
 import signal
 import subprocess
@@ -24,6 +31,8 @@ CONFIG = "/etc/caddy/Caddyfile"
 ADMIN = "unix/" + os.environ.get("CSERIES_DOOR_ADMIN", "/run/caddy/admin.sock")
 KEY_DIR = os.environ.get("CSERIES_DOOR_KEY_DIR", "/data/door-key")
 CHECK_S = 60.0
+CLOUD_JSON = os.environ.get("CSERIES_DOOR_CLOUD_JSON", "/etc/cseries-cloud/cloud.json")
+_ZONE_RE = re.compile(r"[a-km-np-z][a-km-np-z2-9]{5}(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+")
 
 
 def log(msg):
@@ -57,12 +66,30 @@ def stamp(tls):
         return None
 
 
+def zone():
+    """<address_id>.<zone>: the environment's, else cloud.json's; None when
+    neither names one that can be."""
+    z = (os.environ.get("CSERIES_REMOTE_ZONE") or "").strip().lower()
+    if not z:
+        try:
+            with open(CLOUD_JSON, encoding="utf-8") as f:
+                doc = json.load(f)
+            z = f"{doc.get('address_id')}.{doc.get('zone')}".lower()
+        except (OSError, ValueError, AttributeError):
+            return None
+    return z if _ZONE_RE.fullmatch(z) and len(z) <= 200 else None
+
+
 def main():
     env = dict(os.environ, CSERIES_DOOR_SECRET=door_key())
     tls = env["CSERIES_DOOR_TLS"]
-    while stamp(tls) is None:
-        log(f"no certificate in {tls} yet; waiting for door-cert")
+    # Every install runs this, and most never turn remote access on: say so
+    # once, then wait quietly.
+    if stamp(tls) is None or zone() is None:
+        log(f"no certificate in {tls} or no remote address yet; waiting for remote access and door-cert")
+    while stamp(tls) is None or zone() is None:
         time.sleep(10)
+    env["CSERIES_REMOTE_ZONE"] = zone()
     caddy = subprocess.Popen(["caddy", "run", "--config", CONFIG, "--adapter", "caddyfile"], env=env)
     for sig in (signal.SIGTERM, signal.SIGINT):
         signal.signal(sig, lambda s, _f: caddy.send_signal(s))
@@ -72,9 +99,11 @@ def main():
             caddy.wait(timeout=CHECK_S)
         except subprocess.TimeoutExpired:
             pass
-        now = stamp(tls)
-        if caddy.poll() is None and now is not None and now != seen:
-            log("the certificate changed; reloading")
+        now, z = stamp(tls), zone()
+        if caddy.poll() is None and now is not None and (now != seen or (z and z != env["CSERIES_REMOTE_ZONE"])):
+            log("the certificate or the address changed; reloading")
+            if z:
+                env["CSERIES_REMOTE_ZONE"] = z
             subprocess.run(["caddy", "reload", "--config", CONFIG, "--adapter", "caddyfile",
                             "--address", ADMIN], env=env, check=False)
             seen = now

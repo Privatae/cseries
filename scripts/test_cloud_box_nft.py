@@ -17,9 +17,12 @@ changed.
      DNAT; and the meter when its sets are full, where new sources share one
      budget instead of going unmetered.
 
-Needs nft and a way into a private network namespace (root's `unshare -n`, or
-an unprivileged `unshare -rn`). Without them it says so and skips, unless
-CSERIES_REQUIRE_NFT=1, which makes that a failure.
+Needs nft, ip(8) and a way into private namespaces: root's `unshare -mn`
+(root in rootlesskit's user namespace counts, as on the forge runner), or an
+unprivileged user namespace (`unshare -rmn`). Without them it FAILS and says
+why: a skip reads as a pass. It never runs mount(8): the forge runner's unit
+makes /usr/bin/mount inaccessible (InaccessiblePaths), so the packet tests
+make their two mounts with mount(2) (MOUNTS below).
 
 Container-free: python3 scripts/test_cloud_box_nft.py
 """
@@ -95,27 +98,46 @@ nft = shutil.which("nft") or ("/usr/sbin/nft" if os.path.exists("/usr/sbin/nft")
 unshare = shutil.which("unshare")
 
 
+# Root (or root in a user namespace, as under rootlesskit) makes the
+# namespaces itself; anyone else asks for a user namespace of their own, where
+# it is root.
+NS_ROOT = os.geteuid() == 0
+NETNS = ["unshare", "-n"] if NS_ROOT else ["unshare", "-rn"]
+MOUNTNETNS = ["unshare", "-mn"] if NS_ROOT else ["unshare", "-rmn"]
+
+
+def no_namespace_why(stderr):
+    """Why no private namespace could be made, for the failure message."""
+    why = (stderr or "").strip().splitlines()[-1:] or ["unshare failed"]
+    hint = ""
+    try:
+        with open("/proc/sys/kernel/apparmor_restrict_unprivileged_userns") as f:
+            if f.read().strip() == "1" and not NS_ROOT:
+                hint = (" (kernel.apparmor_restrict_unprivileged_userns=1 refuses a user namespace "
+                        "to an unprivileged process; run it as root, or under rootlesskit as the "
+                        "forge runner's gate lane does)")
+    except OSError:
+        pass
+    return f"no private namespace can be made here: {why[0]}{hint}"
+
+
 def in_netns(script):
-    """Run a shell script in a new network namespace; (returncode, output)."""
-    for prefix in (["unshare", "-n"], ["unshare", "-rn"]):
-        if prefix == ["unshare", "-n"] and os.geteuid() != 0:
-            continue
-        r = subprocess.run(prefix + ["sh", "-c", script], capture_output=True, text=True, check=False)
-        if "Operation not permitted" in r.stderr and "unshare" in r.stderr:
-            continue
-        return r.returncode, r.stdout + r.stderr
-    return None, "no private network namespace available"
+    """Run a shell script in a new network namespace; (returncode, output),
+    or (None, why) when no namespace can be made."""
+    r = subprocess.run(NETNS + ["sh", "-c", script], capture_output=True, text=True, check=False)
+    if r.returncode != 0 and "unshare" in r.stderr and (
+            "Operation not permitted" in r.stderr or "uid_map" in r.stderr):
+        return None, no_namespace_why(r.stderr)
+    return r.returncode, r.stdout + r.stderr
 
 
-usable = None
-if nft and unshare:
-    usable = in_netns(f"{nft} list ruleset")
-if not nft or not unshare or usable[0] is None:
-    msg = "nft or a private network namespace is not available here"
-    if os.environ.get("CSERIES_REQUIRE_NFT") == "1":
-        check(False, msg)
-    else:
-        print(f"SKIP  the nft load checks: {msg}")
+missing = [n for n, p in (("nft", nft), ("unshare", unshare), ("ip", shutil.which("ip"))) if not p]
+if missing:
+    check(False, f"this gate needs {', '.join(missing)} on PATH")
+    sys.exit(failed)
+usable = in_netns(f"{nft} list ruleset")
+if usable[0] is None:
+    check(False, f"the nft load checks: {usable[1]}")
     sys.exit(failed)
 
 # A cgroup that exists on this machine, at level 1, in place of the service's.
@@ -188,17 +210,35 @@ DIAL = ("import socket\n"
         "s = socket.create_connection(('127.0.0.1', 8810), 3)\n"
         "print(s.recv(2).decode())\n").replace("'", '"')
 
+# The two mounts each packet test makes in its own mount namespace, with
+# mount(2): every mount stays private to it, and /run/netns is a tmpfs of its
+# own, so `ip netns add` neither needs the machine's /run nor leaves anything
+# there. Not mount(8): the forge runner's unit makes /usr/bin/mount
+# inaccessible, and there the shell's `mount` failed with "Permission denied"
+# (2026-10-26). Where /run/netns is missing and /run is read-only (a
+# ProtectSystem=strict unit), /run gets the tmpfs and /run/netns is made in it.
+MOUNTS = r'''
+import ctypes, os, sys
+libc = ctypes.CDLL(None, use_errno=True)
+MS_REC, MS_PRIVATE = 0x4000, 0x40000
+def mount(src, target, fstype, flags, data):
+    if libc.mount(src, target.encode(), fstype, flags, data) != 0:
+        sys.exit("mount(2) on " + target + ": " + os.strerror(ctypes.get_errno()))
+mount(None, "/", None, MS_REC | MS_PRIVATE, None)
+if not os.path.isdir("/run/netns"):
+    mount(b"none", "/run", b"tmpfs", 0, b"mode=0755")
+    os.mkdir("/run/netns")
+mount(b"none", "/run/netns", b"tmpfs", 0, b"mode=0755")
+'''
+
 
 def packet_test(door_path):
     """SYNs that reached the Host's 8810, after each of: a SYN to
     127.0.0.1:8810, a SYN to the box's address with no window open, and one
-    with a window open for the sender. None when it cannot run here."""
-    if os.geteuid() != 0 or not shutil.which("ip"):
-        return None, "needs root and ip(8)"
+    with a window open for the sender. (False, output) when it did not run
+    through."""
     script = f"""set -eu
-mount --make-rprivate /
-mkdir -p /run/netns
-mount -t tmpfs none /run/netns
+python3 -I -c '{MOUNTS}'
 ip link set lo up
 ip netns add out
 ip netns add host
@@ -265,7 +305,7 @@ echo "local=$(timeout 5 python3 -I -c '{DIAL}' 2>/dev/null || echo refused)"
 kill "$lst" 2>/dev/null || true
 wait 2>/dev/null || true
 """
-    r = subprocess.run(["unshare", "-mn", "sh", "-c", script], capture_output=True, text=True, check=False)
+    r = subprocess.run(MOUNTNETNS + ["sh", "-c", script], capture_output=True, text=True, check=False)
     got = dict(re.findall(r"^(loopback|nowindow|lockedwindow|window)=(\d+)$", r.stdout, re.M))
     local = re.search(r"^local=(\S+)$", r.stdout, re.M)
     if r.returncode != 0 or len(got) != 4 or not local:
@@ -333,13 +373,10 @@ def overflow_test(door_path):
     """SYNs to 443 let through by door_meter in each phase, or (None|False,
     why). Phases: three sources of 100 each and one of 300 while the IPv4
     set has room; then, with it full, a new source of 300, and 100 from a
-    source already in the set; then the same for IPv6 /64s."""
-    if os.geteuid() != 0 or not shutil.which("ip"):
-        return None, "needs root and ip(8)"
+    source already in the set; then the same for IPv6 /64s. (False, output)
+    when it did not run through."""
     script = f"""set -eu
-mount --make-rprivate /
-mkdir -p /run/netns
-mount -t tmpfs none /run/netns
+python3 -I -c '{MOUNTS}'
 work=$(mktemp -d)
 ip link set lo up
 ip netns add out
@@ -394,7 +431,7 @@ flood 2001:db8:5::2 2001:db8:5::1 300
 echo "v6_new=$(seen v6)"
 rm -rf "$work"
 """
-    r = subprocess.run(["unshare", "-mn", "sh", "-c", script], capture_output=True, text=True, check=False)
+    r = subprocess.run(MOUNTNETNS + ["sh", "-c", script], capture_output=True, text=True, check=False)
     got = {k: int(v) for k, v in re.findall(r"^(v[46]_[a-z]+)=(\d+)$", r.stdout, re.M)}
     want = ["v4_start", "v4_member", "v4_three", "v4_one", "v4_full", "v4_new", "v4_old",
             "v6_start", "v6_one", "v6_full", "v6_new"]
@@ -407,43 +444,31 @@ rm -rf "$work"
 
 
 counts, out = packet_test(DOOR)
-if counts is None:
-    if os.environ.get("CSERIES_REQUIRE_NFT") == "1":
-        check(False, f"the packet checks: {out}")
-    else:
-        print(f"SKIP  the packet checks: {out}")
-else:
-    check(counts is not False, "the packet test runs (three namespaces, door.nft, a loopback DNAT)", out)
-    if counts:
-        check(counts["window"] == 1 and counts["nowindow"] == 0,
-              "a SYN to the box's 8810 reaches the Host only from an address in the pairing window",
-              counts)
-        check(counts["lockedwindow"] == 0,
-              "while the vault is locked (lanes_open empty) not even the pairing window reaches 8810",
-              counts)
-        check(counts["loopback"] == 0,
-              "a SYN a neighbour sends to 127.0.0.1:8810 does not reach the Host through a loopback DNAT",
-              counts)
-        check(counts["local"] == "ok",
-              "the box itself still reaches the Host through its 127.0.0.1 publish", counts)
+check(counts is not False, "the packet test runs (three namespaces, door.nft, a loopback DNAT)", out)
+if counts:
+    check(counts["window"] == 1 and counts["nowindow"] == 0,
+          "a SYN to the box's 8810 reaches the Host only from an address in the pairing window",
+          counts)
+    check(counts["lockedwindow"] == 0,
+          "while the vault is locked (lanes_open empty) not even the pairing window reaches 8810",
+          counts)
+    check(counts["loopback"] == 0,
+          "a SYN a neighbour sends to 127.0.0.1:8810 does not reach the Host through a loopback DNAT",
+          counts)
+    check(counts["local"] == "ok",
+          "the box itself still reaches the Host through its 127.0.0.1 publish", counts)
 
 meter, out = overflow_test(DOOR)
-if meter is None:
-    if os.environ.get("CSERIES_REQUIRE_NFT") == "1":
-        check(False, f"the meter packet checks: {out}")
-    else:
-        print(f"SKIP  the meter packet checks: {out}")
-else:
-    check(meter is not False, "the meter packet test runs (two namespaces, door.nft)", out)
-    if meter:
-        check(meter["three"] >= 295, "with room in the set, three sources of 100 each all pass: "
-              "no shared limit applies then", meter)
-        check(90 <= meter["one"] <= 130, "one IPv4 source of 300 gets about its burst of 100", meter)
-        check(meter["full4"] == 65535 and 150 <= meter["new4"] <= 240,
-              "with conn_v4 full, a new source of 300 gets about the shared burst of 200, not all 300", meter)
-        check(meter["old4"] >= 95, "a source already in the full set keeps its own budget of 100", meter)
-        check(80 <= meter["one6"] <= 130, "one IPv6 /64 of 300 gets about its burst of 100", meter)
-        check(meter["full6"] == 65535 and 150 <= meter["new6"] <= 240,
-              "with conn_v6 full, a new /64 of 300 gets about the shared burst of 200, not all 300", meter)
+check(meter is not False, "the meter packet test runs (two namespaces, door.nft)", out)
+if meter:
+    check(meter["three"] >= 295, "with room in the set, three sources of 100 each all pass: "
+          "no shared limit applies then", meter)
+    check(90 <= meter["one"] <= 130, "one IPv4 source of 300 gets about its burst of 100", meter)
+    check(meter["full4"] == 65535 and 150 <= meter["new4"] <= 240,
+          "with conn_v4 full, a new source of 300 gets about the shared burst of 200, not all 300", meter)
+    check(meter["old4"] >= 95, "a source already in the full set keeps its own budget of 100", meter)
+    check(80 <= meter["one6"] <= 130, "one IPv6 /64 of 300 gets about its burst of 100", meter)
+    check(meter["full6"] == 65535 and 150 <= meter["new6"] <= 240,
+          "with conn_v6 full, a new /64 of 300 gets about the shared burst of 200, not all 300", meter)
 
 sys.exit(failed)

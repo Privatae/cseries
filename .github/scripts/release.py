@@ -227,7 +227,7 @@ def _set_runtime(data, a):
 def release_json(a):
     if not VERSION_RE.match(a.version):
         fail(f"--version must be X.Y.Z, got {a.version!r}")
-    for d in (a.host_digest, a.postgres_digest):
+    for d in (a.host_digest, a.postgres_digest, a.door_digest):
         if not DIGEST_RE.match(d):
             fail(f"not a sha256 digest: {d!r}")
     with open(a.file, encoding="utf-8") as f:
@@ -252,6 +252,9 @@ def release_json(a):
     images = data.setdefault("images", {})
     images["host"] = {"ref": f"{a.host_image}:{a.version}", "digest": a.host_digest}
     images["postgres"] = {"ref": f"{a.postgres_image}:{a.version}", "digest": a.postgres_digest}
+    # The remote-access door (sidecars/remote-door): its door and certificate
+    # units on the machine run it. Every CLI release pins it.
+    images["door"] = {"ref": f"{a.door_image}:{a.version}", "digest": a.door_digest}
     data.setdefault("guest", {}).update(guest)
     _set_runtime(data, a)
 
@@ -517,7 +520,7 @@ def main():
     r = sub.add_parser("release-json")
     r.add_argument("file")
     for flag in ("--version", "--host-image", "--host-digest", "--postgres-image",
-                 "--postgres-digest", "--guest-dir", "--download-base"):
+                 "--postgres-digest", "--door-image", "--door-digest", "--guest-dir", "--download-base"):
         r.add_argument(flag, required=True)
     c = sub.add_parser("cloud-json")
     c.add_argument("file")

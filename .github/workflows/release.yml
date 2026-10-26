@@ -1,6 +1,7 @@
-# A pushed tag vX.Y.Z releases version X.Y.Z: the two images (multi-arch,
-# each architecture built and scanned natively before anything is pushed; the
-# full smoke test runs on the build machine before the tag, docs/RELEASING.md),
+# A pushed tag vX.Y.Z releases version X.Y.Z: the Host's two images and the
+# remote-access door's (multi-arch, each architecture built and scanned
+# natively before anything is pushed; the full smoke test runs on the build
+# machine before the tag, docs/RELEASING.md),
 # the four runtime images a machine starts its app, browser and creative
 # containers from (built, scanned and given a short smoke test), the
 # guest images (WSL's and Lima's), the coding engines' source tarball, the Blender source and
@@ -31,6 +32,9 @@ defaults:
 env:
   HOST_IMAGE: ghcr.io/privatae/cseries
   POSTGRES_IMAGE: ghcr.io/privatae/cseries-postgres
+  # The remote-access door (sidecars/remote-door): a member's machine runs its
+  # door and its certificate job from it, beside the Host.
+  DOOR_IMAGE: ghcr.io/privatae/cseries-remote-door
   # The runtime images, one per image family a machine's local runtime
   # starts containers from. The runtime-image matrix names the same repos.
   PYTHON_IMAGE: ghcr.io/privatae/cseries-app-runtime-python
@@ -156,7 +160,7 @@ jobs:
       # not be: the apt-indexes stage re-reads the Debian and PostgreSQL
       # archives on every build. A fresh builder, so nothing comes from a
       # cache.
-      - name: Build both images
+      - name: Build the three images
         run: |
           set -euo pipefail
           docker buildx create --name release --driver docker-container \
@@ -177,6 +181,10 @@ jobs:
             --build-arg PC_TAG="$VERSION" --build-arg PC_IMAGE="$HOST_IMAGE" \
             --build-arg PC_DIGEST= --build-arg PC_BUILT_AT="$built_at" \
             --output "type=docker,dest=$out/host.tar,name=cseries:release,oci-mediatypes=true" .
+          # The door's base image is pinned by digest in its Dockerfile.
+          docker buildx build --builder release --platform "linux/$ARCH" \
+            --provenance=false --sbom=false -f sidecars/remote-door/Dockerfile \
+            --output "type=docker,dest=$out/door.tar,name=cseries-remote-door:release,oci-mediatypes=true" .
           # Nothing below builds.
           docker buildx rm release
 
@@ -184,18 +192,23 @@ jobs:
         id: oci
         run: |
           set -euo pipefail
-          for name in postgres host; do
+          for name in postgres host door; do
             docker load -i "$RUNNER_TEMP/oci/$name.tar"
             mkdir -p "$RUNNER_TEMP/oci/$name"
             tar -xf "$RUNNER_TEMP/oci/$name.tar" -C "$RUNNER_TEMP/oci/$name"
           done
           host="$(python .github/scripts/release.py oci-check "$RUNNER_TEMP/oci/host" cseries:release "$ARCH")"
           postgres="$(python .github/scripts/release.py oci-check "$RUNNER_TEMP/oci/postgres" cseries-postgres:release "$ARCH")"
+          door="$(python .github/scripts/release.py oci-check "$RUNNER_TEMP/oci/door" cseries-remote-door:release "$ARCH")"
           echo "host=$host" >> "$GITHUB_OUTPUT"
           echo "postgres=$postgres" >> "$GITHUB_OUTPUT"
+          echo "door=$door" >> "$GITHUB_OUTPUT"
 
       # What the build generates and bakes is in the image and not in the
-      # tree, so the tree's own run of this gate does not cover it.
+      # tree, so the tree's own run of this gate does not cover it. The door's
+      # image has no /app: it holds Caddy, lego and files copied unchanged
+      # from the tree (sidecars/remote-door/Dockerfile), which the tree's own
+      # run covers.
       - name: Public-source gate over each image's /app
         run: |
           set -euo pipefail
@@ -216,7 +229,7 @@ jobs:
         run: |
           set -euo pipefail
           trivy image --download-db-only
-          for name in host postgres; do
+          for name in host postgres door; do
             archive="$RUNNER_TEMP/oci/$name.tar"
             trivy image --skip-db-update --input "$archive" \
               --scanners secret --exit-code 1
@@ -237,12 +250,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           HOST_DIGEST: ${{ steps.oci.outputs.host }}
           POSTGRES_DIGEST: ${{ steps.oci.outputs.postgres }}
+          DOOR_DIGEST: ${{ steps.oci.outputs.door }}
         run: |
           set -euo pipefail
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           crane push "$RUNNER_TEMP/oci/host" "$HOST_IMAGE@$HOST_DIGEST"
           crane push "$RUNNER_TEMP/oci/postgres" "$POSTGRES_IMAGE@$POSTGRES_DIGEST"
-          for ref in "$HOST_IMAGE@$HOST_DIGEST" "$POSTGRES_IMAGE@$POSTGRES_DIGEST"; do
+          crane push "$RUNNER_TEMP/oci/door" "$DOOR_IMAGE@$DOOR_DIGEST"
+          for ref in "$HOST_IMAGE@$HOST_DIGEST" "$POSTGRES_IMAGE@$POSTGRES_DIGEST" "$DOOR_IMAGE@$DOOR_DIGEST"; do
             got="sha256:$(crane manifest "$ref" | sha256sum | cut -d' ' -f1)"
             if [[ "$ref" != *"@$got" ]]; then
               echo "::error::the registry's manifest for $ref hashes to $got"
@@ -252,6 +267,7 @@ jobs:
           mkdir -p "$RUNNER_TEMP/digests"
           echo "$HOST_DIGEST" > "$RUNNER_TEMP/digests/host"
           echo "$POSTGRES_DIGEST" > "$RUNNER_TEMP/digests/postgres"
+          echo "$DOOR_DIGEST" > "$RUNNER_TEMP/digests/door"
 
       - name: Attest the host image
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -267,6 +283,14 @@ jobs:
         with:
           subject-name: ${{ env.POSTGRES_IMAGE }}
           subject-digest: ${{ steps.oci.outputs.postgres }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Attest the door image
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.DOOR_IMAGE }}
+          subject-digest: ${{ steps.oci.outputs.door }}
           push-to-registry: true
           create-storage-record: false
 
@@ -296,6 +320,7 @@ jobs:
     outputs:
       host: ${{ steps.tag.outputs.host }}
       postgres: ${{ steps.tag.outputs.postgres }}
+      door: ${{ steps.tag.outputs.door }}
     steps:
       - name: Check out
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -319,7 +344,7 @@ jobs:
           echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
 
       # A tag is never moved: an existing X.Y.Z is accepted only when it is
-      # already exactly these two images (this job, re-run).
+      # already exactly these two architectures' images (this job, re-run).
       - name: Tag X.Y.Z from exactly the tested digests
         id: tag
         env:
@@ -328,8 +353,12 @@ jobs:
           set -euo pipefail
           echo "$GH_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
           d="$RUNNER_TEMP/digests"
-          for image in host postgres; do
-            if [[ "$image" == host ]]; then repo="$HOST_IMAGE"; else repo="$POSTGRES_IMAGE"; fi
+          for image in host postgres door; do
+            case "$image" in
+              host) repo="$HOST_IMAGE" ;;
+              postgres) repo="$POSTGRES_IMAGE" ;;
+              door) repo="$DOOR_IMAGE" ;;
+            esac
             amd64="$(cat "$d/digests-amd64/$image")"
             arm64="$(cat "$d/digests-arm64/$image")"
             if crane digest "$repo:$VERSION" > /dev/null 2> "$RUNNER_TEMP/probe.err"; then
@@ -364,6 +393,14 @@ jobs:
         with:
           subject-name: ${{ env.POSTGRES_IMAGE }}
           subject-digest: ${{ steps.tag.outputs.postgres }}
+          push-to-registry: true
+          create-storage-record: false
+
+      - name: Attest the door index
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.DOOR_IMAGE }}
+          subject-digest: ${{ steps.tag.outputs.door }}
           push-to-registry: true
           create-storage-record: false
 
@@ -903,6 +940,7 @@ jobs:
       TAG: ${{ github.ref_name }}
       HOST_DIGEST: ${{ needs.merge.outputs.host }}
       POSTGRES_DIGEST: ${{ needs.merge.outputs.postgres }}
+      DOOR_DIGEST: ${{ needs.merge.outputs.door }}
     steps:
       # The whole history and its tags, for the notes' list of changes since
       # the previous release.
@@ -945,6 +983,7 @@ jobs:
             echo
             echo "- \`$HOST_IMAGE:$VERSION\` \`$HOST_DIGEST\`"
             echo "- \`$POSTGRES_IMAGE:$VERSION\` \`$POSTGRES_DIGEST\`"
+            echo "- \`$DOOR_IMAGE:$VERSION\` \`$DOOR_DIGEST\`"
             echo
             echo "Guest images for x64 and arm64 are attached, each with its .sha256: WSL's root filesystem (Windows) and Lima's qcow2 disk (macOS and Linux)."
             echo "Install with \`npx cseries@$VERSION\`."
@@ -1288,6 +1327,7 @@ jobs:
       VERSION: ${{ needs.version.outputs.version }}
       HOST_DIGEST: ${{ needs.merge.outputs.host }}
       POSTGRES_DIGEST: ${{ needs.merge.outputs.postgres }}
+      DOOR_DIGEST: ${{ needs.merge.outputs.door }}
       PYTHON_DIGEST: ${{ needs.runtime-merge.outputs.python }}
       BROWSER_DIGEST: ${{ needs.runtime-merge.outputs.browser }}
       HELPER_DIGEST: ${{ needs.runtime-merge.outputs.helper }}
@@ -1321,6 +1361,7 @@ jobs:
             --version "$VERSION" \
             --host-image "$HOST_IMAGE" --host-digest "$HOST_DIGEST" \
             --postgres-image "$POSTGRES_IMAGE" --postgres-digest "$POSTGRES_DIGEST" \
+            --door-image "$DOOR_IMAGE" --door-digest "$DOOR_DIGEST" \
             --guest-dir "$RUNNER_TEMP/guest" --download-base "$DOWNLOAD_BASE" \
             --runtime "python=$PYTHON_IMAGE@$PYTHON_DIGEST" \
             --runtime "browser=$BROWSER_IMAGE@$BROWSER_DIGEST" \
@@ -1334,7 +1375,7 @@ jobs:
       - name: Check what release.json pins is public
         run: |
           set -euo pipefail
-          for ref in "$HOST_IMAGE@$HOST_DIGEST" "$POSTGRES_IMAGE@$POSTGRES_DIGEST" \
+          for ref in "$HOST_IMAGE@$HOST_DIGEST" "$POSTGRES_IMAGE@$POSTGRES_DIGEST" "$DOOR_IMAGE@$DOOR_DIGEST" \
                      "$PYTHON_IMAGE@$PYTHON_DIGEST" "$BROWSER_IMAGE@$BROWSER_DIGEST" \
                      "$HELPER_IMAGE@$HELPER_DIGEST" "$CREATIVE_IMAGE@$CREATIVE_DIGEST"; do
             if ! docker buildx imagetools inspect "$ref" > /dev/null; then

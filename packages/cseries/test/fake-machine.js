@@ -39,6 +39,9 @@ function signer() {
 //        and the default when cpus is null),
 //        runtime: the guest carries the local runtime, so its status names it
 //        (default false: a guest image from before it did),
+//        door: the guest knows the remote-access door, so its status names it
+//        and its configure takes door= (default false: a guest image from
+//        before it did, whose configure refuses the key),
 //        tokenPrefix (the pairing tokens minted are <it>-1, <it>-2, ...)}
 function fakeMachine(paths, opts = {}) {
   const m = {
@@ -47,6 +50,7 @@ function fakeMachine(paths, opts = {}) {
     cpus: opts.cpus === undefined ? 8 : opts.cpus,
     memKb: opts.memKb !== undefined ? opts.memKb : (opts.cpus === null ? null : 8 * 1024 * 1024),
     runtime: opts.runtime === true,
+    door: opts.door === true,
     wsl: opts.wsl !== false,
     distros: opts.distro ? ['cseries'] : [],
     running: false,
@@ -105,6 +109,7 @@ function fakeMachine(paths, opts = {}) {
       case 'configure': {
         if (m.cpus === null && /^cpu_quota=/m.test(input)) return { code: 1, stderr: 'configure: unknown key cpu_quota\n' };
         if (m.memKb === null && /^memory_max=/m.test(input)) return { code: 1, stderr: 'configure: unknown key memory_max\n' };
+        if (!m.door && /^door=/m.test(input)) return { code: 1, stderr: 'configure: unknown key door\n' };
         const changed = input !== m.images;
         m.images = input;
         return { stdout: `changed=${changed ? 1 : 0}\n` };
@@ -114,7 +119,7 @@ function fakeMachine(paths, opts = {}) {
       case 'restart': m.hostStarted = true; m.restarts++; return {};
       case 'stop': m.hostStarted = false; return {};
       case 'health': return { code: m.hostStarted ? 0 : 1 };
-      case 'status': return { stdout: `guest=1.2.3\nrelease=1.2.3\nhost=${m.hostStarted ? 'active' : 'inactive'}\npostgres=active\nhealth=ok\n${m.cpus === null ? '' : `cpus=${m.cpus}\n`}${m.memKb === null ? '' : `mem_total_kb=${m.memKb}\n`}${m.runtime ? 'runtime=active\n' : ''}` };
+      case 'status': return { stdout: `guest=1.2.3\nrelease=1.2.3\nhost=${m.hostStarted ? 'active' : 'inactive'}\npostgres=active\nhealth=ok\n${m.cpus === null ? '' : `cpus=${m.cpus}\n`}${m.memKb === null ? '' : `mem_total_kb=${m.memKb}\n`}${m.runtime ? 'runtime=active\n' : ''}${m.door ? 'door=inactive\nremote_cert=inactive\n' : ''}` };
       case 'host-log': return { stdout: 'boot\nCSERIES SETUP CODE: 111111-222222-333333 old\nCSERIES SETUP CODE: abc123-def456-0789ab — open /setup\n' };
       case 'pair-token':
         m.tokens++;

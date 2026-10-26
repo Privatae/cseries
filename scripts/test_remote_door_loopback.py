@@ -122,6 +122,8 @@ from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID  # noqa: E402
 from fastapi import FastAPI  # noqa: E402
 
 from server import home_origin, owner_login as L, owner_passkeys as P, remote_join as J  # noqa: E402
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
+from gate_loopback import IDLE_KEEP_ALIVE_S  # noqa: E402
 from server.middleware import localhost_only as G  # noqa: E402
 from server.middleware.app_origin_guard import AppOriginGuard  # noqa: E402
 from server.middleware.host_header import HostHeaderGuard  # noqa: E402
@@ -153,7 +155,7 @@ for bad in ("127.0.0.1", "127.0.0.2", "::1", "::ffff:127.0.0.1", "0.0.0.0", "::"
     except RA.DoorAddressError:
         ok = True
     check(ok, f"the tunnel refuses a door at {bad or '(empty)'}")
-check(RA.check_door("172.31.254.3", 8443) == ("172.31.254.3", 8443), "a container address is a door")
+check(RA.check_door("10.89.79.3", 8443) == ("10.89.79.3", 8443), "a container address is a door")
 check(RA.door_address({"CSERIES_REMOTE_DOOR": "[fd00:77::3]:8443"}) == ("fd00:77::3", 8443),
       "an IPv6 door is written [address]:port")
 for raw in ("127.0.0.1:8443", "[::1]:8443", "localhost:8443"):
@@ -211,6 +213,239 @@ for line in ("@door path /__host/door /__host/door/*", "respond 404", "uri /__ho
              "header_up X-Cseries-Door {$CSERIES_DOOR_SECRET}", "header_up -X-Forwarded-Method",
              "header_up -X-Forwarded-Uri", "header_up -X-Cseries-Door", "protocols tls1.3", "protocols h1 h2"):
     check(line in code and line in cloud_cf, f"the door keeps the cloud box's rule: {line}")
+
+
+# The released install's wiring: the guest's quadlets (WSL and Lima share
+# vm/wsl/rootfs) hold the same rules as compose.remote.yaml, with the same
+# numbers. A unit is read as Quadlet reads it: the unit, then its drop-ins in
+# name order, and the last value given for an environment variable wins.
+
+UNITS = os.path.join(ROOT, "vm/wsl/rootfs/etc/containers/systemd")
+
+
+def _quadlet(name, extra=()):
+    """{section: [(key, value), ...]} for a unit and its .d/*.conf drop-ins,
+    with `extra` drop-ins (ones cseries-guest configure writes) among them in
+    name order."""
+    out = {}
+    d = os.path.join(UNITS, name) + ".d"
+    drops = [os.path.join(d, f) for f in os.listdir(d) if f.endswith(".conf")] if os.path.isdir(d) else []
+    paths = [os.path.join(UNITS, name)] + sorted([*drops, *extra], key=os.path.basename)
+    for path in paths:
+        section = None
+        with open(path) as f:
+            for raw in f:
+                line = raw.strip()
+                if not line or line.startswith(("#", ";")):
+                    continue
+                if line.startswith("[") and line.endswith("]"):
+                    section = out.setdefault(line[1:-1], [])
+                    continue
+                k, _, v = line.partition("=")
+                section.append((k.strip(), v.strip()))
+    return out
+
+
+def _all(unit, section, key):
+    return [v for k, v in unit.get(section, []) if k == key]
+
+
+def _env(unit):
+    env = {}
+    for v in _all(unit, "Container", "Environment"):
+        for word in v.split():
+            k, _, val = word.partition("=")
+            env[k] = val
+    return env
+
+
+def _volumes(unit):
+    """{volume name: (path, options)} for the named volumes a unit mounts."""
+    out = {}
+    for v in _all(unit, "Container", "Volume"):
+        name, path, *opts = v.split(":")
+        out[name] = (path, opts[0] if opts else "")
+    return out
+
+
+# cseries-guest configure takes the door's image for both of its units, and
+# start never makes the Host wait on (or fail with) the door.
+_g_tmp = tempfile.mkdtemp(prefix="remote-door-guest-")
+_g_bin = os.path.join(_g_tmp, "bin")
+os.makedirs(_g_bin)
+for _n, _b in (("systemctl", '#!/bin/sh\necho "systemctl $*" >> "$FAKE_LOG"\n'
+                             'case "$1" in is-active) echo active; exit 0 ;; esac\n'
+                             'case "$*" in *cseries-remote-door*) exit 1 ;; esac\nexit 0\n'),
+               ("podman", '#!/bin/sh\necho "podman $*" >> "$FAKE_LOG"\n[ "$1 $2" = "image exists" ] && exit 1\nexit 0\n')):
+    with open(os.path.join(_g_bin, _n), "w") as _f:
+        _f.write(_b)
+    os.chmod(os.path.join(_g_bin, _n), 0o755)
+
+
+def _guest(root, args, stdin=""):
+    env = dict(os.environ, CSERIES_GUEST_ROOT=root, FAKE_LOG=os.path.join(root, "calls.log"),
+               PATH=_g_bin + os.pathsep + os.environ.get("PATH", ""))
+    os.makedirs(root, exist_ok=True)
+    return subprocess.run(["sh", os.path.join(ROOT, "vm/wsl/rootfs/usr/local/bin/cseries-guest"), *args],
+                          input=stdin, env=env, capture_output=True, text=True, check=False)
+
+
+_D = "@sha256:" + "a" * 64
+_keys = f"host=ghcr.io/privatae/cseries{_D}\npostgres=ghcr.io/privatae/cseries-postgres{_D}\nrelease=1.2.3\n"
+_door = "ghcr.io/privatae/cseries-remote-door@sha256:" + "9" * 64
+
+# The Host joins the remote network only through the drop-in configure writes
+# once it has the door's image: the guest's own units for the Host name no
+# remote network, so a Host without the door never waits on that network, or
+# fails when it cannot be made.
+_g_cfg = os.path.join(_g_tmp, "g0")
+_r = _guest(_g_cfg, ["configure"], _keys + f"door={_door}\n")
+_host_remote = os.path.join(_g_cfg, "etc/containers/systemd/cseries-host.container.d/remote.conf")
+check(_r.returncode == 0 and os.path.isfile(_host_remote),
+      "configure, given the door's image, writes the Host's remote-access drop-in", _r.stderr)
+check(not any("cseries-remote" in v for kv in _quadlet("cseries-host.container").values() for _k, v in kv),
+      "the guest's own units for the Host name no remote network: only configure's drop-in does")
+q_net = _quadlet("cseries-remote.network")
+q_host = _quadlet("cseries-host.container", extra=[_host_remote] if os.path.isfile(_host_remote) else [])
+q_door, q_cert = _quadlet("cseries-remote-door.container"), _quadlet("cseries-remote-cert.container")
+q_subnet = (_all(q_net, "Network", "Subnet") or [""])[-1]
+q_door_ip = next((n.split(":ip=", 1)[1] for n in _all(q_door, "Container", "Network")
+                  if n.startswith("cseries-remote.network:ip=")), "")
+q_host_ip = next((n.split(":ip=", 1)[1] for n in _all(q_host, "Container", "Network")
+                  if n.startswith("cseries-remote.network:ip=")), "")
+q_env_h, q_env_d = _env(q_host), _env(q_door)
+check(_all(q_net, "Network", "Internal") == ["true"] and _all(q_net, "Network", "DisableDNS") == ["true"],
+      "the guest's remote network is internal (no way out) and has no resolver")
+check((q_subnet, q_door_ip, q_host_ip) == (
+          _default(compose["networks"]["remote"]["ipam"]["config"][0]["subnet"]), door_ip, host_ip),
+      "the guest's remote network and both addresses are compose.remote.yaml's", (q_subnet, q_door_ip, q_host_ip))
+check(_all(q_door, "Container", "Network") == [f"cseries-remote.network:ip={q_door_ip}"],
+      "the guest's door is on the remote network only", _all(q_door, "Container", "Network"))
+check(not _all(q_door, "Container", "PublishPort") and not _all(q_cert, "Container", "PublishPort"),
+      "the guest's door and certificate job publish no port")
+check(_all(q_cert, "Container", "Network") == ["cseries.network"],
+      "the guest's certificate job is on the Host's ordinary network, never the remote one",
+      _all(q_cert, "Container", "Network"))
+check(f"cseries-remote.network:ip={q_host_ip}" in _all(q_host, "Container", "Network"),
+      "the guest's Host joins the remote network at its own address")
+check(q_env_h.get("CSERIES_REMOTE_DOOR") == f"{q_door_ip}:8443" and
+      RA.door_address({"CSERIES_REMOTE_DOOR": q_env_h.get("CSERIES_REMOTE_DOOR", "")}) == (q_door_ip, 8443),
+      "the guest's tunnel dials the door's own address, and it passes the tunnel's own check",
+      q_env_h.get("CSERIES_REMOTE_DOOR"))
+check(q_env_h.get("CSERIES_TRUSTED_PROXIES") == f"{q_door_ip}/32",
+      "the guest's Host trusts exactly the door's /32 (the drop-in replaces the unit's empty value)",
+      q_env_h.get("CSERIES_TRUSTED_PROXIES"))
+check(q_env_d.get("CSERIES_HOST_UPSTREAM") == f"{q_host_ip}:8800" and q_env_d.get("CSERIES_TUNNEL_FROM") == q_host_ip
+      and q_env_d.get("CSERIES_DOOR_BIND") == q_door_ip and q_env_d.get("CSERIES_DOOR_PORT") == "8443",
+      "the guest's door listens on its own address, believes PROXY from the Host's only, and passes to the Host's",
+      q_env_d)
+for ip in (q_door_ip, q_host_ip):
+    try:
+        a = ipaddress.ip_address(ip)
+        inside = ipaddress.ip_network(q_subnet).supernet_of(ipaddress.ip_network(f"{ip}/32"))
+    except ValueError:
+        a, inside = None, False
+    check(a is not None and not (a.is_loopback or a.is_unspecified) and inside,
+          f"the guest's {ip or '(missing)'} is a non-loopback address in the remote subnet")
+# Where the remote subnet sits: away from what WSL, Docker, podman and home
+# networks draw from, and never handed by podman here to another network.
+try:
+    _rs = ipaddress.ip_network(q_subnet)
+except ValueError:
+    _rs = None
+for _net, _who in (("172.16.0.0/12", "WSL's NAT range and Docker's default networks"),
+                   ("192.168.0.0/16", "home networks and Docker's later pools"),
+                   ("10.88.0.0/16", "podman's own default network")):
+    check(_rs is not None and not _rs.overlaps(ipaddress.ip_network(_net)),
+          f"the remote subnet {q_subnet} is outside {_net} ({_who})")
+with open(os.path.join(ROOT, "vm/runtime/containers/cseries-apps.network")) as _f:
+    _rt = ipaddress.ip_network(next(ln.split("=", 1)[1].strip() for ln in _f if ln.startswith("Subnet=")))
+check(_rs is not None and not _rs.overlaps(_rt), f"the remote subnet is not the local runtime's {_rt}")
+import tomllib  # noqa: E402
+with open(os.path.join(ROOT, "vm/wsl/rootfs/etc/containers/containers.conf.d/subnets.conf"), "rb") as _f:
+    _pools = tomllib.load(_f)["network"]["default_subnet_pools"]
+_pnets = [ipaddress.ip_network(p["base"]) for p in _pools]
+# podman's own default pools (containers.conf(5), default_subnet_pools).
+_podman = [ipaddress.ip_network(n) for n in
+           ("10.89.0.0/16", "10.90.0.0/15", "10.92.0.0/14", "10.96.0.0/11", "10.128.0.0/9")]
+check(all(p.get("size") == 24 for p in _pools) and _pnets and _pnets[0].network_address == _podman[0].network_address,
+      "the guest's subnet pools hand out /24s, the first still 10.89.0.0/24, as podman's own")
+check(_rs is not None and not any(n.overlaps(_rs) or n.overlaps(_rt) for n in _pnets),
+      "podman here never hands the remote subnet or the runtime's to another network", _pools)
+check(all(any(n.subnet_of(d) for d in _podman) for n in _pnets)
+      and not any(a.overlaps(b) for i, a in enumerate(_pnets) for b in _pnets[i + 1:])
+      and sum(n.num_addresses for n in _pnets) == sum(d.num_addresses for d in _podman) - 512,
+      "the guest's pools are podman's own less 10.89.78.0/23 and nothing else")
+for name, unit in (("door", q_door), ("certificate job", q_cert)):
+    c = dict(unit.get("Container", []))
+    check((c.get("User"), c.get("ReadOnly"), c.get("DropCapability"), c.get("NoNewPrivileges")) ==
+          ("1000", "true", "ALL", "true") and "Image" not in c,
+          f"the guest's {name} runs as 1000, read-only, with no capabilities, its image left to configure")
+v_h, v_d, v_c = _volumes(q_host), _volumes(q_door), _volumes(q_cert)
+check(v_d.get("cseries_remote-door-key") == ("/data/door-key", "U") and
+      v_h.get("cseries_remote-door-key") == ("/run/cseries-door", "ro") and
+      q_env_h.get("CSERIES_DOOR_SECRET_FILE") == "/run/cseries-door/door-secret",
+      "the door makes the door key and the Host reads it, read-only, where CSERIES_DOOR_SECRET_FILE names it")
+check(v_h.get("cseries_remote-acme") == (q_env_h.get("CSERIES_REMOTE_ACME_DIR"), "U") and
+      v_c.get("cseries_remote-acme") == ("/etc/cseries-cloud", "ro") and
+      v_d.get("cseries_remote-acme") == ("/etc/cseries-cloud", "ro"),
+      "the Host writes the remote-acme volume; the certificate job and the door only read it")
+check(v_c.get("cseries_remote-tls") == ("/etc/caddy/tls", "U") and v_d.get("cseries_remote-tls") == ("/etc/caddy/tls", "ro")
+      and "cseries_remote-tls" not in v_h and "cseries_remote-cert-state" not in v_h
+      and "cseries_remote-cert-state" not in v_d,
+      "the certificate's key reaches the door, read-only, and never the Host")
+check(v_c.get("cseries_remote-cert-status") == ("/var/lib/cseries-cert-status", "U") and
+      v_h.get("cseries_remote-cert-status", ("", ""))[1] == "ro" and
+      q_env_h.get("CSERIES_REMOTE_CERT_STATUS", "").startswith(v_h.get("cseries_remote-cert-status", ("?",))[0] + "/"),
+      "the certificate job writes its status and the Host reads it, read-only, where CSERIES_REMOTE_CERT_STATUS names it")
+
+# cseries-guest configure takes the door's image for both of its units, and
+# start never makes the Host wait on (or fail with) the door.
+_root = os.path.join(_g_tmp, "g1")
+_r = _guest(_root, ["configure"], _keys + f"door={_door}\n")
+_units = os.path.join(_root, "etc/containers/systemd")
+check(_r.returncode == 0 and "changed=1" in _r.stdout and all(
+      open(os.path.join(_units, f"cseries-remote-{u}.container.d/image.conf")).read() == f"[Container]\nImage={_door}\n"
+      for u in ("door", "cert")), "configure writes the door's image for its door and its certificate job", _r.stderr)
+_r = _guest(_root, ["configure"], _keys + f"door={_door}\n")
+check(_r.returncode == 0 and "changed=0" in _r.stdout, "the same door image again changes nothing", _r.stdout)
+_r = _guest(_root, ["configure"], _keys)
+check(_r.returncode == 0 and "changed=0" in _r.stdout and
+      os.path.exists(os.path.join(_units, "cseries-remote-door.container.d/image.conf")),
+      "a release without a door keeps the one configured", _r.stdout)
+_r = _guest(_root, ["configure"], _keys + "door=ghcr.io/privatae/cseries-remote-door:latest\n")
+check(_r.returncode != 0 and "door image is not pinned by digest" in _r.stderr, "an unpinned door image is refused")
+open(os.path.join(_root, "calls.log"), "w").close()
+_r = _guest(_root, ["start"])
+_calls = open(os.path.join(_root, "calls.log")).read()
+check(_r.returncode == 0 and "systemctl --no-block start cseries-remote-door.service cseries-remote-cert.service" in _calls
+      and "systemctl start cseries-postgres.service cseries-host.service" in _calls,
+      "start starts the door's units beside the Host's, and a door that fails to start does not fail the Host's",
+      (_r.returncode, _r.stderr, _calls))
+_r = _guest(_root, ["status"])
+check(_r.returncode == 0 and f"door_image={_door}" in _r.stdout.splitlines() and
+      "door=active" in _r.stdout.splitlines() and "remote_cert=active" in _r.stdout.splitlines(),
+      "status names the door's image and both units' state", _r.stdout)
+open(os.path.join(_root, "calls.log"), "w").close()
+_r = _guest(_root, ["pull"])
+check(_r.returncode == 0 and f"podman pull {_door}" in open(os.path.join(_root, "calls.log")).read(),
+      "pull fetches the door's image when one is configured")
+with open(os.path.join(_g_bin, "podman"), "w") as _f:
+    _f.write('#!/bin/sh\necho "podman $*" >> "$FAKE_LOG"\n[ "$1 $2" = "image exists" ] && exit 1\n'
+             'case "$*" in *cseries-remote-door*) exit 125 ;; esac\nexit 0\n')
+_r = _guest(_root, ["pull"])
+check(_r.returncode == 0 and "door's image could not be downloaded" in _r.stderr,
+      "a door image that cannot be downloaded does not fail the Host's pull", (_r.returncode, _r.stderr))
+_root2 = os.path.join(_g_tmp, "g2")
+_r = _guest(_root2, ["configure"], _keys)
+open(os.path.join(_root2, "calls.log"), "w").close()
+_r = _guest(_root2, ["start"])
+check(_r.returncode == 0 and "cseries-remote" not in open(os.path.join(_root2, "calls.log")).read() and
+      not os.path.exists(os.path.join(_root2, "etc/containers/systemd/cseries-remote-door.container.d")),
+      "a guest given no door image has no door units and starts none")
+check(not os.path.exists(os.path.join(_root2, "etc/containers/systemd/cseries-host.container.d/remote.conf")),
+      "a guest given no door image never joins the Host to the remote network")
+shutil.rmtree(_g_tmp, ignore_errors=True)
 
 
 # ── 3. the Host's gates: no loopback lane for a remote name ─────────────────
@@ -501,7 +736,8 @@ async def wait_port(addr, port, timeout=15.0):
 
 async def part4():
     server = uvicorn.Server(uvicorn.Config(APP, host=HOST, port=8800, log_level="warning", lifespan="off",
-                                           proxy_headers=False, access_log=False))
+                                           proxy_headers=False, access_log=False,
+                                           timeout_keep_alive=IDLE_KEEP_ALIVE_S))
     serve = asyncio.ensure_future(server.serve())
     caddy_env = dict(os.environ, CSERIES_DOOR_BIND=DOOR, CSERIES_DOOR_PORT="8443", CSERIES_TUNNEL_FROM=HOST,
                      CSERIES_REMOTE_ZONE=f"{AID}.{ZONE}", CSERIES_HOST_UPSTREAM=f"{HOST}:8800",

@@ -1476,7 +1476,8 @@ def test_a_staged_key_the_certificate_on_disk_needs_is_never_replaced(pki, tmp_p
 # ── the op table matches the door's ─────────────────────────────────────────
 
 def test_network_ops_are_the_doors_phase_1_table(pki, tmp_path):
-    """The member door's MEMBER_OPS for phase 1 plus its three own ops and
+    """The member door's MEMBER_OPS for phase 1 plus its three own ops, its
+    two remote-access ops (privatae bridge/member_remote.py REMOTE_OPS) and
     the backup ops. Three App Store ops the door leaves out are answered here
     without a byte sent: appstore.yank_version (until the store checks that
     the caller published the app) and appstore.checkout.create and
@@ -1484,6 +1485,7 @@ def test_network_ops_are_the_doors_phase_1_table(pki, tmp_path):
     backup.recovery_key, until the door answers it."""
     assert mc.NETWORK_OPS == frozenset({
         "heartbeat.ping", "passport.renew", "passport.revoke",
+        "remote.enable", "remote.ticket",
         "appstore.list", "appstore.icon", "appstore.fetch_bundle", "appstore.purchase",
         "appstore.refund.request", "appstore.entitlement.check", "appstore.agreement",
         "appstore.publisher.my_apps", "appstore.publisher.sales",

@@ -1,0 +1,57 @@
+# Remote access: the door, run the way compose.remote.yaml's remote-door
+# service runs it. Keep the two in step: a setting changed there changes here.
+#
+# The TLS front end for the Host's remote address (sidecars/remote-door): it
+# ends TLS with the remote address's certificate, asks the Host about every
+# request (GET /__host/door), and passes on only what the Host lets in, to the
+# Host's address on the remote network. It believes a PROXY header from the
+# Host's address only (the Host's tunnel writes one ahead of each browser).
+#
+# It is on the remote network alone and publishes no port: only the Host's
+# tunnel dials it, and it can reach nothing but the Host. It reads its zone
+# from cloud.json, which the Host writes into the remote-acme volume when
+# remote access is turned on, and waits for a certificate before Caddy starts;
+# on a Host without remote access it waits and does nothing.
+#
+# The image is not named here. `cseries-guest configure` writes it, pinned by
+# digest, to cseries-remote-door.container.d/image.conf; until it has, this
+# unit does not exist.
+[Unit]
+Description=C-Series remote access door
+# As the Host: with no machine wall, a container would reach the machine the
+# VM runs on.
+Requires=cseries-machine-firewall.service
+After=cseries-machine-firewall.service
+
+[Container]
+ContainerName=cseries-remote-door
+User=1000
+Group=1000
+ReadOnly=true
+ReadOnlyTmpfs=false
+# mode=1777: Caddy's admin socket is made there by the door's own user, and a
+# tmpfs is not that user's unless told (podman takes mode=, not uid=).
+Tmpfs=/run/caddy:rw,nosuid,nodev,noexec,mode=1777
+Tmpfs=/tmp:rw,nosuid,nodev,noexec
+PidsLimit=256
+DropCapability=ALL
+NoNewPrivileges=true
+Network=cseries-remote.network:ip=10.89.79.3
+Environment=CSERIES_DOOR_BIND=10.89.79.3
+Environment=CSERIES_DOOR_PORT=8443
+Environment=CSERIES_TUNNEL_FROM=10.89.79.2
+Environment=CSERIES_HOST_UPSTREAM=10.89.79.2:8800
+Volume=cseries_remote-door-key:/data/door-key:U
+Volume=cseries_remote-tls:/etc/caddy/tls:ro
+Volume=cseries_remote-acme:/etc/cseries-cloud:ro
+Pull=missing
+
+[Service]
+Restart=always
+RestartSec=5
+TimeoutStartSec=900
+MemoryMax=256M
+MemorySwapMax=0
+
+[Install]
+WantedBy=multi-user.target

@@ -146,9 +146,11 @@ with tempfile.TemporaryDirectory() as tmp:
     for arch in ("x64", "arm64"):
         guest_file(f"cseries-wsl-rootfs-4.5.6-{arch}.tar.gz", f"wsl-{arch}".encode())
         guest_file(f"cseries-guest-4.5.6-{arch}.qcow2", f"lima-{arch}".encode())
+    DOOR_DIGEST = "sha256:" + "9" * 64
     npm_args = ("--version", "4.5.6",
                 "--host-image", "ghcr.io/privatae/cseries", "--host-digest", D["host"],
                 "--postgres-image", "ghcr.io/privatae/cseries-postgres", "--postgres-digest", D["postgres"],
+                "--door-image", "ghcr.io/privatae/cseries-remote-door", "--door-digest", DOOR_DIGEST,
                 "--guest-dir", guest, "--download-base", BASE, *runtime_args())
     npm = os.path.join(tmp, "release.json")
     shutil.copy(os.path.join(ROOT, "packages/cseries/release.json"), npm)
@@ -158,6 +160,16 @@ with tempfile.TemporaryDirectory() as tmp:
           "release-json writes the same runtime section into the npm release.json", r.stderr)
     check(m.get("guest", {}).get("wsl-x64", {}).get("url") == f"{BASE}/cseries-wsl-rootfs-4.5.6-x64.tar.gz",
           "and the guest images as before")
+    check(m.get("images", {}).get("door") == {"ref": "ghcr.io/privatae/cseries-remote-door:4.5.6",
+                                              "digest": DOOR_DIGEST},
+          "and the remote-access door's image, pinned by digest", m.get("images"))
+    shutil.copy(os.path.join(ROOT, "packages/cseries/release.json"), npm)
+    no_door = [x for x in npm_args]
+    i = no_door.index("--door-image")
+    del no_door[i:i + 4]
+    r = run("release-json", npm, *no_door)
+    check(r.returncode != 0 and "--door-image" in r.stderr,
+          "release-json refuses to write a CLI release without the door's image", r.stderr[-200:])
     check(all(m.get("guest", {}).get(f"lima-{arch}") ==
               {"url": f"{BASE}/cseries-guest-4.5.6-{arch}.qcow2",
                "sha256": hashlib.sha256(f"lima-{arch}".encode()).hexdigest()} for arch in ("x64", "arm64")),
@@ -354,6 +366,28 @@ npm_s = script(jobs.get("npm") or {})
 check('"$CREATIVE_IMAGE@$CREATIVE_DIGEST"' in npm_s and 'm["runtime"]["harness_src"]' in npm_s,
       "the npm job checks the runtime images and the tarball are public before publishing")
 check("secrets." not in json.dumps(wf), "the workflow uses no secret")
+
+# The remote-access door's image goes through the Host's image jobs the way
+# the database image does: built from its Dockerfile, checked against its
+# layout, scanned, pushed by digest, attested, tagged from the tested
+# digests, and pinned in the npm release.json, whose public check covers it.
+hi = script(jobs.get("image") or {})
+check(env.get("DOOR_IMAGE") == "ghcr.io/privatae/cseries-remote-door" and
+      "-f sidecars/remote-door/Dockerfile" in hi and
+      'oci-check "$RUNNER_TEMP/oci/door" cseries-remote-door:release "$ARCH"' in hi and
+      "for name in host postgres door; do" in hi and
+      'crane push "$RUNNER_TEMP/oci/door" "$DOOR_IMAGE@$DOOR_DIGEST"' in hi and
+      '"$RUNNER_TEMP/digests/door"' in hi and
+      any((st.get("with") or {}).get("subject-name") == "${{ env.DOOR_IMAGE }}"
+          for st in (jobs.get("image") or {}).get("steps", [])),
+      "the door's image is built, checked, scanned, pushed by digest and attested like the database's")
+mj = jobs.get("merge") or {}
+check("for image in host postgres door; do" in script(mj) and
+      (mj.get("outputs") or {}).get("door") == "${{ steps.tag.outputs.door }}",
+      "its multi-arch tag is made from exactly the tested digests and handed on")
+check('--door-image "$DOOR_IMAGE" --door-digest "$DOOR_DIGEST"' in npm_s and '"$DOOR_IMAGE@$DOOR_DIGEST"' in npm_s and
+      ((jobs.get("npm") or {}).get("env") or {}).get("DOOR_DIGEST") == "${{ needs.merge.outputs.door }}",
+      "the npm job pins the door's image in release.json and checks it is public")
 
 # The guest job builds every guest image release.json pins, and the release
 # job attaches each of them.

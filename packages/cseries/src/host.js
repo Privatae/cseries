@@ -7,7 +7,7 @@
 const { CliError } = require('./errors');
 const { formatBytes } = require('./output');
 const { NO_LOG } = require('./log');
-const { pinnedImage, runtimeLines } = require('./release');
+const { pinnedImage, hasDoor, runtimeLines } = require('./release');
 const machineFirewall = require('./vm/machine-firewall');
 
 // The Host's processor ceiling, as systemd's CPUQuota= takes it (100% is one
@@ -121,10 +121,20 @@ function hasRuntime(st) {
   return Object.prototype.hasOwnProperty.call(st || {}, 'runtime');
 }
 
-function configInput(release, { cpuQuota: quota = null, memoryMax: mem = null } = {}) {
+// The guest knows the remote-access door when its status names it (door=,
+// the state of the door's unit); a guest image from before it does not, and
+// its configure would refuse the door= key.
+function guestHasDoor(st) {
+  return Object.prototype.hasOwnProperty.call(st || {}, 'door');
+}
+
+function configInput(release, { cpuQuota: quota = null, memoryMax: mem = null, door = false } = {}) {
   let s = `host=${pinnedImage(release, 'host')}\npostgres=${pinnedImage(release, 'postgres')}\nrelease=${release.version}\n`;
   if (quota) s += `cpu_quota=${quota}\n`;
   if (mem) s += `memory_max=${mem}\n`;
+  // The door's image, for its door and certificate units: only to a guest
+  // that knows the key, and only when this release pins one.
+  if (door && hasDoor(release)) s += `door=${pinnedImage(release, 'door')}\n`;
   return s + runtimeLines(release);
 }
 
@@ -147,6 +157,7 @@ const IMAGE_WORDS = {
   creative: 'the creative engines\' image',
   helper: 'the helper image',
   browser: 'the browser\'s image',
+  door: 'the remote access door\'s image',
 };
 
 function imagesByDigest(release) {
@@ -300,7 +311,7 @@ const step = {
     const quota = cpuQuota(st.cpus);
     const runtime = hasRuntime(st);
     const mem = memoryMax(st.mem_total_kb, { runtime });
-    const changed = await configure(ctx, { cpuQuota: quota, memoryMax: mem });
+    const changed = await configure(ctx, { cpuQuota: quota, memoryMax: mem, door: guestHasDoor(st) });
     if (quota) {
       ctx.out.detail(`The Host may use ${Math.max(1, Number(st.cpus) - 1)} of this Linux system's ${st.cpus} processors.`);
     }
@@ -317,4 +328,4 @@ const step = {
   },
 };
 
-module.exports = { step, configure, configInput, cpuQuota, memoryMax, containersMax, hasRuntime, systemReserve, pull, pullProgress, start, guestStatus };
+module.exports = { step, configure, configInput, cpuQuota, memoryMax, containersMax, hasRuntime, guestHasDoor, systemReserve, pull, pullProgress, start, guestStatus };

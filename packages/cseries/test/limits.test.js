@@ -418,3 +418,28 @@ test('the machine is measured on any Node 18 the package accepts (availableParal
     if (had) Object.defineProperty(os, 'availableParallelism', had);
   }
 });
+
+// The remote-access door's image goes to configure only when the guest's
+// status names the door (a guest image from before it would refuse door=).
+test('an install hands a guest that knows the door the door\'s image, and an older guest none', async () => {
+  const door = { ref: 'ghcr.io/privatae/cseries-remote-door:1.2.3', digest: `sha256:${'9'.repeat(64)}` };
+  for (const knows of [true, false]) {
+    const r = await (async () => {
+      // validRelease() has no door: give this run's release one.
+      const p = testPaths();
+      const mm = fakeMachine(p, { distro: true, door: knows });
+      const rel = validRelease({ images: { ...validRelease().images, door } });
+      rel.guest['wsl-x64'].sha256 = mm.rootfsSha256;
+      const out = captureOutput();
+      const code = await main([], {
+        platform: 'win32', arch: 'x64', env: {}, paths: p, out, runner: mm.runner, net: mm.net,
+        sleep: async () => {}, prompt: async () => false, portState: async () => 'free', freeBytes: () => 64 * 1024 ** 3, osRelease: '10.0.22631',
+        releaseInfo: { release: rel, placeholders: [], file: 'test' }, bastionKeys: mm.bastionKeys,
+      });
+      return { code, err: out.errText(), images: mm.images };
+    })();
+    assert.equal(r.code, 0, r.err);
+    if (knows) assert.match(r.images, new RegExp(`^door=ghcr\\.io/privatae/cseries-remote-door:1\\.2\\.3@sha256:${'9'.repeat(64)}$`, 'm'));
+    else assert.doesNotMatch(r.images, /door=/);
+  }
+});

@@ -1,9 +1,13 @@
 """Remote access pages: adding a phone, the phone's join page, and what the
 remote address shows when the Host cannot be reached.
 
-On the desktop's own address (signed in): /remote shows the remote address,
-"Add a phone" with its QR code (server/remote_join.py), and the passkeys that
-work on the remote address, each with a Remove button.
+On the desktop's own address (signed in): /remote turns remote access on and
+off (server/network/remote_access.py) and shows how it stands: the remote
+address, each relay's link, and the certificate's expiry or its job's error.
+Once it is on, "Add a phone" with its QR code (server/remote_join.py), and the
+passkeys that work on the remote address, each with a Remove button.
+/api/owner/remote/status answers the same as JSON, and
+/api/owner/remote/enable and /api/owner/remote/disable are the two buttons.
 
 On the remote address: /remote/join is the page the QR code opens; its two
 posts spend the code and keep the phone's new passkey, which starts a session
@@ -166,6 +170,128 @@ async def remote_new_phone(request: Request):
     return _no_store(JSONResponse({"ok": True, **got}))
 
 
+# The page's own script: the two buttons, and the status line kept fresh.
+CONTROL_SCRIPT = r"""
+async function remoteSwitch(path, wait) {
+  say('err', ''); say('done', wait);
+  // Turning it on asks for a fresh passkey check first, as adding a phone does.
+  const res = await withCheck(() => post(path, {}));
+  if (!res.ok) { fail(res.j.error); return; }
+  location.reload();
+}
+on('remote-on', () => remoteSwitch('/api/owner/remote/enable', 'Turning remote access on...'));
+on('remote-off', () => remoteSwitch('/api/owner/remote/disable', 'Turning remote access off...'));
+if ($('remote-status')) {
+  setInterval(async () => {
+    const r = await fetch('/api/owner/remote/status', {credentials: 'same-origin'});
+    if (!r.ok) return;
+    const j = await r.json().catch(() => null);
+    if (j && typeof j.summary === 'string') say('remote-status', j.summary);
+  }, 10000);
+}
+"""
+
+
+def _when(ts) -> str:
+    if not isinstance(ts, (int, float)) or isinstance(ts, bool):
+        return str(ts or "")
+    return time.strftime("%Y-%m-%d %H:%M UTC", time.gmtime(ts))
+
+
+def summary(st: dict) -> str:
+    """One plain paragraph of how remote access stands, for the owner."""
+    parts = []
+    if not st.get("on"):
+        return "Remote access is off."
+    if st.get("address"):
+        parts.append(f"Address: {st['address']}.")
+    dns = st.get("dns")
+    if dns and dns != "ready":
+        parts.append("The network is still making this Host's DNS records." if dns == "wanted" else
+                     f"DNS: {dns}" + (f" ({st['dns_error']})" if st.get("dns_error") else "") + ".")
+    links = st.get("links") or []
+    if links:
+        up = sum(1 for link in links if link.get("state") == "up")
+        each = "; ".join(f"{link.get('relay')}: {link.get('state')}"
+                         + (f" ({link['last_error']})" if link.get("last_error") and link.get("state") != "up"
+                            else "") for link in links)
+        parts.append(f"Links to the network: {up} of {len(links)} up ({each}).")
+    elif st.get("on"):
+        parts.append("The connection to the network is not running yet.")
+    cert = st.get("certificate") or {}
+    if cert.get("not_after"):
+        parts.append(f"Certificate valid until {cert['not_after']}.")
+    elif st.get("on"):
+        parts.append("No certificate yet.")
+    if cert.get("error"):
+        parts.append(f"Certificate problem (checked {_when(cert.get('checked_at'))}): {cert['error']}")
+    if st.get("problem"):
+        parts.append(f"Problem: {st['problem']}")
+    return " ".join(parts)
+
+
+def _remote():
+    from server.bridge import membership
+    return membership.current().remote
+
+
+async def _owner_on_desktop(request: Request):
+    """None when the request is the signed-in owner on the desktop's own
+    address, else the answer to give."""
+    if request_host(request.scope) != HOME.host:
+        return _no_store(JSONResponse(_NOT_HERE, status_code=404))
+    email, _token = await live_session(request.scope)
+    if not email:
+        return _no_store(JSONResponse({"error": "Sign in first."}, status_code=401))
+    return None
+
+
+@router.get("/api/owner/remote/status", include_in_schema=False)
+async def remote_status(request: Request):
+    refused = await _owner_on_desktop(request)
+    if refused is not None:
+        return refused
+    st = _remote().status()
+    st["summary"] = summary(st)
+    return _no_store(JSONResponse(st))
+
+
+@router.post("/api/owner/remote/enable", include_in_schema=False)
+async def remote_enable(request: Request):
+    """Turn remote access on: the Host's ACME account, then remote.enable.
+    It puts this Host on an address the whole internet can reach, so it asks
+    what adding a phone asks (remote_join.require_fresh_check): a passkey on
+    this computer and a fresh check with it. Turning it off asks only for the
+    session."""
+    refused = await _owner_on_desktop(request)
+    if refused is not None:
+        return refused
+    _email, token = await live_session(request.scope)
+    try:
+        await remote_join.require_fresh_check(
+            token, "Turning on remote access",
+            "Add a passkey on this computer first: on the remote address only a passkey "
+            "signs in.")
+    except owner_login.LoginError as exc:
+        return _refusal(exc, 403)
+    try:
+        st = await _remote().turn_on()
+    except remote_access.RemoteError as exc:
+        return _no_store(JSONResponse({"error": exc.message}, status_code=exc.status))
+    st["summary"] = summary(st)
+    return _no_store(JSONResponse({"ok": True, **st}))
+
+
+@router.post("/api/owner/remote/disable", include_in_schema=False)
+async def remote_disable(request: Request):
+    refused = await _owner_on_desktop(request)
+    if refused is not None:
+        return refused
+    st = await _remote().turn_off()
+    st["summary"] = summary(st)
+    return _no_store(JSONResponse({"ok": True, **st}))
+
+
 @router.get("/remote", include_in_schema=False)
 async def remote_page(request: Request):
     """Remote access, on the desktop's own address: the remote address,
@@ -176,11 +302,29 @@ async def remote_page(request: Request):
     if not email:
         return _no_store(RedirectResponse("/setup" if owner_login.needs_setup() else "/login",
                                           status_code=303))
+    st = _remote().status()
+    status_line = f'<p id="remote-status" role="status">{html.escape(summary(st))}</p>'
+    err = '<p id="err" role="alert"></p><p id="done" role="status"></p>'
     r = home_origin.REMOTE
-    if r is None:
-        return _page("Remote access", '<p class="note">Remote access is not set up on this '
-                     'Host.</p>', '<p><a href="/">Continue to C-Series</a></p>')
-    st = remote_access.status()
+    if not st.get("on") or r is None:
+        intro = ('<p>Remote access lets you open this Host from a phone or another computer '
+                 'anywhere. Nothing on this computer is opened to the internet: your Host keeps '
+                 'one connection out to the network, and your passkey decides who gets in. It is '
+                 'part of the network membership.</p>')
+        if not st.get("member"):
+            body = ('<p class="note">Join the network first, in Settings, Network.</p>'
+                    '<p><a href="/">Continue to C-Series</a></p>')
+        elif not st.get("available"):
+            body = (f'<p class="note">{html.escape(_remote().available() or "")}</p>'
+                    '<p><a href="/">Continue to C-Series</a></p>')
+        elif st.get("on"):
+            body = (status_line + err + '<button id="remote-off" type="button">Turn off remote access'
+                    '</button><p><a href="/">Continue to C-Series</a></p>')
+        else:
+            body = ((status_line if st.get("problem") or st.get("refused") else "") + err
+                    + '<button id="remote-on" type="button">Turn on remote access</button>'
+                    '<p><a href="/">Continue to C-Series</a></p>')
+        return _page("Remote access", intro, body, CONTROL_SCRIPT)
     pool = owner_login._pool()
     rows = await owner_passkeys.list_passkeys(pool) if pool is not None else []
     phones = [p for p in rows if p["rp_id"] == r.host]
@@ -194,7 +338,7 @@ async def remote_page(request: Request):
         intro += f'<p id="problem" role="alert">{html.escape(st["problem"])}</p>'
     elif not st["running"]:
         intro += '<p class="note">The connection to the network is not running yet.</p>'
-    body = []
+    body = [status_line, err]
     if desktop_keys:
         body.append('<button id="add-phone" type="button">Add a phone</button>'
                     '<div id="phone" hidden><p>Scan this with the phone&#39;s camera. The code '
@@ -212,6 +356,7 @@ async def remote_page(request: Request):
     body.append('<h2>Phones</h2>' + ('<ul class="keys">' + "".join(items) + '</ul>' if items else
                                      '<p class="note">No phone yet.</p>'))
     body.append('<script src="/js/qrcode.js"></script>')
+    body.append('<p><button id="remote-off" type="button">Turn off remote access</button></p>')
     body.append('<p><a href="/passkey">Passkeys on this computer</a></p>'
                 '<p><a href="/">Continue to C-Series</a></p>')
-    return _page("Remote access", intro, "".join(body))
+    return _page("Remote access", intro, "".join(body), CONTROL_SCRIPT)

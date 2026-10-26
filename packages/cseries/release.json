@@ -2,7 +2,8 @@
   "version": "dev",
   "images": {
     "host": {"ref": "ghcr.io/privatae/cseries:dev", "digest": "dev"},
-    "postgres": {"ref": "ghcr.io/privatae/cseries-postgres:dev", "digest": "dev"}
+    "postgres": {"ref": "ghcr.io/privatae/cseries-postgres:dev", "digest": "dev"},
+    "door": {"ref": "ghcr.io/privatae/cseries-remote-door:dev", "digest": "dev"}
   },
   "guest": {
     "wsl-x64": {"url": "dev", "sha256": "dev"},

@@ -13,14 +13,22 @@ beats one more literal.
 
 from __future__ import annotations
 
-from server.home_origin import HOME, ORIGINS
+from server import home_origin
+from server.home_origin import HOME
 
 HOST_SUFFIXES: tuple[str, ...] = (HOME.zone,)
 # The desktop's zone and, on a member Host with remote access, the remote
 # address's zone (home_origin.REMOTE): where its app origins are framed from.
 # HOST_SUFFIXES stays the desktop's alone, since it names what a bastion's
-# certificate and records carry.
-APP_ZONES: tuple[str, ...] = tuple(o.zone for o in ORIGINS)
+# certificate and records carry. The remote address can be set while the Host
+# runs (home_origin.set_remote calls refresh), so read APP_ZONES from this
+# module when it is needed, never a copy of it.
+APP_ZONES: tuple[str, ...] = tuple(o.zone for o in home_origin.ORIGINS)
+
+
+def refresh() -> None:
+    global APP_ZONES
+    APP_ZONES = tuple(o.zone for o in home_origin.ORIGINS)
 
 
 def host_name(handle: str) -> str:
@@ -46,4 +54,4 @@ def frame_ancestors() -> str:
     port. A source with no port matches only the scheme's default port (CSP3
     §6.7.2.11), so the port is written out whenever there is one.
     """
-    return " ".join(o.origin_of(f"*{o.zone}") for o in ORIGINS)
+    return " ".join(o.origin_of(f"*{o.zone}") for o in home_origin.ORIGINS)

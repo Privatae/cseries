@@ -22,7 +22,7 @@ test('the committed release.json loads, holds only placeholders, and refuses to 
 test('the committed release.json has the shape of section 2', () => {
   const m = JSON.parse(fs.readFileSync(release.defaultPath(), 'utf8'));
   assert.deepEqual(Object.keys(m).sort(), ['bastion', 'guest', 'images', 'version']);
-  assert.deepEqual(Object.keys(m.images).sort(), ['host', 'postgres']);
+  assert.deepEqual(Object.keys(m.images).sort(), ['door', 'host', 'postgres']);
   assert.deepEqual(Object.keys(m.guest).sort(), ['lima-arm64', 'lima-x64', 'wsl-arm64', 'wsl-x64']);
 });
 
@@ -96,4 +96,35 @@ test('a malformed runtime section is refused, each field by name', () => {
     assert.throws(() => release.validate({ ...validRelease(), runtime }),
       (e) => e.message.includes(name), name);
   }
+});
+
+// The remote-access door's image (sidecars/remote-door): the committed copy
+// pins it as a placeholder like the Host's, a manifest that pins it is
+// checked like the Host's, and one from before it still loads.
+test('the door image is pinned like the Host\'s, and a manifest without it still loads', () => {
+  const loaded = release.load({});
+  assert.ok(loaded.placeholders.includes('images.door.digest'));
+  const door = { ref: 'ghcr.io/privatae/cseries-remote-door:1.2.3', digest: `sha256:${'9'.repeat(64)}` };
+  const { release: r, placeholders } = release.validate(validRelease({ images: { ...validRelease().images, door } }));
+  assert.deepEqual(placeholders, []);
+  assert.equal(release.hasDoor(r), true);
+  assert.equal(release.pinnedImage(r, 'door'), `ghcr.io/privatae/cseries-remote-door:1.2.3@sha256:${'9'.repeat(64)}`);
+  assert.equal(release.hasDoor(release.validate(validRelease()).release), false);
+  for (const [bad, name] of [[{ ...door, digest: 'sha256:abc' }, 'images.door.digest'],
+    [{ ...door, ref: 'not a ref' }, 'images.door.ref'], [null, 'images.door.ref']]) {
+    assert.throws(() => release.validate(validRelease({ images: { ...validRelease().images, door: bad } })),
+      new RegExp(name.replace(/\./g, '\\.')), name);
+  }
+});
+
+test('configure sends the door image only to a guest that knows it, and only when the release pins one', () => {
+  const { configInput, guestHasDoor } = require('../src/host');
+  const door = { ref: 'ghcr.io/privatae/cseries-remote-door:1.2.3', digest: `sha256:${'9'.repeat(64)}` };
+  const withDoor = validRelease({ images: { ...validRelease().images, door } });
+  assert.match(configInput(withDoor, { door: true }),
+    new RegExp(`\ndoor=ghcr\\.io/privatae/cseries-remote-door:1\\.2\\.3@sha256:${'9'.repeat(64)}\n`));
+  assert.doesNotMatch(configInput(withDoor), /door=/, 'a guest from before the door gets no door= key');
+  assert.doesNotMatch(configInput(validRelease(), { door: true }), /door=/, 'a release without a door sends none');
+  assert.equal(guestHasDoor({ door: 'inactive' }), true);
+  assert.equal(guestHasDoor({ host: 'active' }), false);
 });

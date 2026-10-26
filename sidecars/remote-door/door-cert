@@ -4,26 +4,63 @@ box's own job (vm/cloud/overlay/usr/local/sbin/cseries-cert, copied into this
 image unchanged) with the files kept by the door's own user and no systemd to
 reload. door-run notices the new files and reloads Caddy itself.
 
-The ACME account key and the certificate's key are made here, by lego, and
-stay in this machine's volumes (the cert state and the door's tls directory);
-nothing sends them anywhere. The acme-dns credential that lets lego answer
-the DNS challenge for <address_id>.<zone> comes with remote access from the
-network (with the member door's remote-access ticket, not built yet) and sits in
-/etc/cseries-cloud beside cloud.json, as on a cloud box. Without it this
-waits and does nothing.
+The Host writes what this job needs into /etc/cseries-cloud when the owner
+turns remote access on (server/network/remote_access.py): cloud.json (the
+address ID, the zone, the ACME server), the acme-dns credential the member
+door hands over once (acme-dns.json, 0600, keyed by <address_id>.<zone>) and
+acme-dns-api.json, as on a cloud box, and the Host's own ACME account
+(acme-account/, in lego's own layout; server/network/remote_acme.py). That
+account is the one the zone's CAA record names, so it is copied into lego's
+--path before every run: lego then finds it and registers no other. The ACME
+account key and the certificate's key stay in this machine's volumes; nothing
+sends them anywhere.
 
     door-cert           once
-    door-cert --loop    once now, then every day at a random minute
+    door-cert --loop    every POLL_S: a run as soon as the Host's files are
+                        there or change, then a renewal check every day at a
+                        random minute, and RETRY_S after a failed run
+
+Each run's result goes to STATUS_DIR/status.json, which the Host reads for
+Settings: when it looked, the certificate's expiry and names, and the error.
 """
 
+import contextlib
 import importlib.machinery
 import importlib.util
+import io
+import json
+import os
 import random
+import re
+import ssl
+import subprocess
 import sys
+import tempfile
 import time
 
 CERT = "/usr/local/sbin/cseries-cert"
+ETC = os.environ.get("CSERIES_CERT_ETC", "/etc/cseries-cloud")
+STATE = os.environ.get("CSERIES_CERT_STATE", "/var/lib/cseries-cloud")
+TLS = os.environ.get("CSERIES_DOOR_TLS", "/etc/caddy/tls")
+STATUS_DIR = os.environ.get("CSERIES_CERT_STATUS_DIR", "/var/lib/cseries-cert-status")
 DAY_S = 86400
+POLL_S = 60
+# A failed run is tried again this soon, as cseries-cert.service retries on a
+# cloud box.
+RETRY_S = 1200
+ERROR_MAX = 600
+# The lego this job runs (cseries-cert's LEGO), and the release series whose
+# account layout seed_account writes (accounts/<server>/<email>/account.json
+# and keys/<email>.key; server/network/remote_acme.py). Another series may lay
+# its account out otherwise and register an account of its own, which the
+# zone's CAA record does not name, so it is refused before anything is
+# written (the Dockerfile pins the 4.29 series).
+LEGO = os.environ.get("CSERIES_LEGO", "/usr/bin/lego")
+LEGO_SERIES = (4, 29)
+
+
+def log(msg):
+    print(f"door-cert: {msg}", file=sys.stderr, flush=True)
 
 
 def load():
@@ -36,16 +73,185 @@ def load():
     return mod
 
 
+def _write(path, data, mode):
+    os.makedirs(os.path.dirname(path), mode=0o700, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=".new-", dir=os.path.dirname(path))
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.chmod(tmp, mode)
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(FileNotFoundError):
+            os.unlink(tmp)
+        raise
+
+
+def seed_account(etc=ETC, state=STATE):
+    """Copy the Host's ACME account (etc/acme-account/accounts/...) into
+    lego's path (state/lego/accounts/...), file by file, when it differs.
+    Symbolic links are skipped. True when there is an account to use."""
+    src = os.path.join(etc, "acme-account", "accounts")
+    if not os.path.isdir(src) or os.path.islink(src):
+        return False
+    dst = os.path.join(state, "lego", "accounts")
+    found = False
+    for root, dirs, files in os.walk(src, followlinks=False):
+        dirs[:] = [d for d in dirs if not os.path.islink(os.path.join(root, d))]
+        rel = os.path.relpath(root, src)
+        for name in files:
+            s = os.path.join(root, name)
+            if os.path.islink(s) or name.startswith(".new-"):
+                continue
+            with open(s, "rb") as f:
+                data = f.read()
+            d = os.path.normpath(os.path.join(dst, rel, name))
+            try:
+                with open(d, "rb") as f:
+                    same = f.read() == data
+            except FileNotFoundError:
+                same = False
+            if not same:
+                _write(d, data, 0o600)
+            found = found or name == "account.json"
+    return found
+
+
+def lego_series(lego=LEGO):
+    """(major, minor) of the lego that would run, or None when its version
+    cannot be read."""
+    try:
+        r = subprocess.run([lego, "--version"], capture_output=True, text=True, timeout=30, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    m = re.search(r"\bversion v?(\d+)\.(\d+)\.\d+", r.stdout + r.stderr)
+    return (int(m.group(1)), int(m.group(2))) if m else None
+
+
+def lego_refusal(lego=LEGO):
+    """Why this lego must not be run with the Host's account, or None."""
+    got = lego_series(lego)
+    want = "%d.%d" % LEGO_SERIES
+    if got == LEGO_SERIES:
+        return None
+    seen = "%d.%d" % got if got else "of a version that could not be read"
+    return (f"this door image's lego is {seen}, not {want}.x, whose account layout this job "
+            "writes, so no certificate is asked for and no account is written. Update C-Series "
+            "to a release whose door image carries lego " + want + ".")
+
+
+def inputs(etc=ETC):
+    """What a run depends on, so a change starts one."""
+    out = []
+    for rel in ("cloud.json", "acme-dns.json", "acme-dns-api.json"):
+        try:
+            st = os.stat(os.path.join(etc, rel))
+            out.append((rel, st.st_mtime_ns, st.st_size))
+        except FileNotFoundError:
+            out.append((rel, None, None))
+    for root, _dirs, files in os.walk(os.path.join(etc, "acme-account"), followlinks=False):
+        for name in sorted(files):
+            if name == "account.json":
+                st = os.stat(os.path.join(root, name))
+                out.append((os.path.join(root, name), st.st_mtime_ns, st.st_size))
+    return tuple(out)
+
+
+def ready(etc=ETC):
+    return all(os.path.exists(os.path.join(etc, n)) for n in ("cloud.json", "acme-dns.json", "acme-dns-api.json"))
+
+
+def certificate(tls=TLS):
+    """The installed certificate's expiry and names, or (None, [])."""
+    path = os.path.join(tls, "cert.pem")
+    if not os.path.exists(path):
+        return None, []
+    try:
+        info = ssl._ssl._test_decode_cert(path)  # noqa: SLF001 — the stdlib's own PEM reader
+    except (ssl.SSLError, OSError, ValueError):
+        return None, []
+    names = [v for k, v in info.get("subjectAltName", ()) if k == "DNS"]
+    after = info.get("notAfter")
+    if after:
+        try:
+            after = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(ssl.cert_time_to_seconds(after)))
+        except ValueError:
+            pass
+    return after, names
+
+
+def write_status(ok, error, next_at, status_dir=STATUS_DIR, tls=TLS, now=None):
+    after, names = certificate(tls)
+    doc = {"checked_at": int(now or time.time()), "ok": bool(ok), "error": (error or None),
+           "not_after": after, "names": names, "next_check_at": int(next_at) if next_at else None}
+    try:
+        _write(os.path.join(status_dir, "status.json"),
+               (json.dumps(doc, sort_keys=True) + "\n").encode(), 0o644)
+    except OSError as exc:
+        log(f"status not written: {exc}")
+
+
+class _Tee(io.TextIOBase):
+    def __init__(self, other):
+        self.other, self.buf = other, io.StringIO()
+
+    def write(self, s):
+        self.other.write(s)
+        self.buf.write(s)
+        return len(s)
+
+    def flush(self):
+        self.other.flush()
+
+
+def run_once(cert):
+    """One cseries-cert run: (ok, error)."""
+    if not ready():
+        return False, "waiting for remote access to be turned on in the Host's Settings"
+    why = lego_refusal()
+    if why:
+        return False, why
+    try:
+        seed_account()
+    except OSError as exc:
+        return False, f"the Host's ACME account could not be copied for lego: {exc}"
+    tee = _Tee(sys.stderr)
+    try:
+        with contextlib.redirect_stderr(tee):
+            rc = cert.main()
+    except Exception as exc:  # noqa: BLE001 — reported, and tried again
+        return False, f"{exc.__class__.__name__}: {exc}"[:ERROR_MAX]
+    if rc == 0:
+        return True, None
+    lines = [ln.strip() for ln in tee.buf.getvalue().splitlines() if ln.strip()]
+    # The hook's own words say why the challenge failed (acme-dns refused,
+    # unreachable); lego's last lines say what failed.
+    hook = [ln for ln in lines if "acme-dns-hook:" in ln][-1:]
+    return False, (" / ".join(hook + lines[-2:]) or f"cseries-cert exited {rc}")[-ERROR_MAX:]
+
+
 def main(argv):
     cert = load()
     if "--loop" not in argv:
-        return cert.main()
+        ok, error = run_once(cert)
+        write_status(ok, error, None)
+        return 0 if ok else 1
+    rng = random.SystemRandom()
+    seen, next_at = None, 0.0
     while True:
-        try:
-            cert.main()
-        except Exception as exc:  # noqa: BLE001 — the next day tries again
-            print(f"cert: {exc.__class__.__name__}: {exc}", file=sys.stderr, flush=True)
-        time.sleep(DAY_S + random.SystemRandom().uniform(-3600, 3600))
+        now = time.time()
+        have = inputs()
+        if ready() and (have != seen or now >= next_at):
+            ok, error = run_once(cert)
+            seen = have
+            next_at = now + (DAY_S + rng.uniform(-3600, 3600) if ok else RETRY_S)
+            if error:
+                log(error)
+            write_status(ok, error, next_at, now=now)
+        elif not ready() and have != seen:
+            seen = have
+            write_status(False, None, None, now=now)
+        time.sleep(POLL_S)
 
 
 if __name__ == "__main__":

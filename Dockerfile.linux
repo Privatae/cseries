@@ -633,6 +633,15 @@ COPY --chown=privatae:privatae etc/ceigas_root_v2.crt /etc/cseries/keys/ceigas_r
 RUN mkdir -p /var/lib/cseries/apps /var/lib/cseries/appdata /var/lib/cseries/cc-sessions \
     && chown -R privatae:privatae /var/lib/cseries
 
+# Remote access (server/network/remote_access.py, compose.remote.yaml): where
+# the Host writes its ACME account, the acme-dns credential and cloud.json for
+# the certificate job, and where it reads the door key and the job's status.
+# Made here, owned by the Host's user, so a volume mounted on one starts with
+# that owner when the Host is the first to mount it.
+RUN mkdir -p /var/lib/cseries-remote /run/cseries-door /run/cseries-remote-cert \
+    && chown privatae:privatae /var/lib/cseries-remote /run/cseries-door /run/cseries-remote-cert \
+    && chmod 0700 /var/lib/cseries-remote
+
 # Brain code AND the app root on PYTHONPATH.
 # Not ":${PYTHONPATH:-}": PYTHONPATH is set nowhere earlier in this file, so
 # that expansion is always empty and produces "/app/brain:" — a TRAILING

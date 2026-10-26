@@ -132,20 +132,65 @@ def parse_remote(url: str, home: HomeOrigin) -> HomeOrigin:
     return o
 
 
+# A member who turns remote access on in Settings learns the address only from
+# the network's answer (server/network/remote_access.py), so the Host keeps it
+# in its state (CSERIES_REMOTE_STATE, "remote_url") and sets it at run time
+# with set_remote(). CSERIES_REMOTE_URL, when set, is used instead. Every
+# reader asks this module at the time it needs the answer (REMOTE, ORIGINS,
+# is_remote_host), never a copy taken at import.
+REMOTE_STATE_ENV = "CSERIES_REMOTE_STATE"
+DEFAULT_REMOTE_STATE = "/var/lib/cseries/remote-access.json"
+
+
+def remote_state_path() -> str:
+    return os.environ.get(REMOTE_STATE_ENV, "").strip() or DEFAULT_REMOTE_STATE
+
+
+def _stored_remote_url() -> str:
+    import json
+    try:
+        with open(remote_state_path(), encoding="utf-8") as f:
+            doc = json.load(f)
+    except (OSError, ValueError):
+        return ""
+    if not isinstance(doc, dict) or not doc.get("on"):
+        return ""
+    url = doc.get("remote_url")
+    return url.strip() if isinstance(url, str) else ""
+
+
 def _load_remote() -> HomeOrigin | None:
     raw = os.environ.get(REMOTE_URL_ENV, "").strip()
+    source = REMOTE_URL_ENV
+    if not raw:
+        raw, source = _stored_remote_url(), remote_state_path()
     if not raw:
         return None
     try:
         return parse_remote(raw, HOME)
     except ValueError as exc:
-        log.error("%s=%r is not usable (%s); there is no remote address", REMOTE_URL_ENV, raw, exc)
+        log.error("%s: %r is not usable (%s); there is no remote address", source, raw, exc)
         return None
 
 
 REMOTE: HomeOrigin | None = _load_remote()
 # Every address this Host answers on, the desktop's own first.
 ORIGINS: tuple[HomeOrigin, ...] = (HOME,) if REMOTE is None else (HOME, REMOTE)
+
+
+def set_remote(url: str | None) -> HomeOrigin | None:
+    """Set (or, with None, clear) the remote address while the Host runs.
+    Raises ValueError for an address parse_remote refuses; CSERIES_REMOTE_URL,
+    when set, is the address and is not replaced."""
+    global REMOTE, ORIGINS
+    if os.environ.get(REMOTE_URL_ENV, "").strip():
+        return REMOTE
+    new = parse_remote(url, HOME) if url else None
+    REMOTE = new
+    ORIGINS = (HOME,) if new is None else (HOME, new)
+    from server import host_names
+    host_names.refresh()
+    return new
 
 
 def origin_of_zone(zone: str) -> HomeOrigin | None:

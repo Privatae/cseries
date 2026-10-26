@@ -65,6 +65,23 @@ def remote() -> home_origin.HomeOrigin:
     return home_origin.REMOTE
 
 
+async def require_fresh_check(token: str, doing: str, no_passkey: str) -> None:
+    """What the owner's session `token` needs before it may open this Host
+    to the internet: a passkey on the desktop's own address, and a check with
+    it (or a recovery code) in the last STEP_UP_S. Adding a phone needs it,
+    and so does turning remote access on (routes/remote_access.py), the step
+    that puts the Host on a public address: a session cookie alone, which a
+    page could ride or a stolen cookie could carry, is not enough for either.
+    Raises JoinError, or StepUpNeeded (the page then asks for the check and
+    tries again)."""
+    pool = L._pool()
+    if pool is None or not await P.passkey_count(pool, HOME):
+        raise JoinError(no_passkey)
+    if not P.fresh_step_up(token, (P.PASSKEY, P.RECOVERY)):
+        raise P.StepUpNeeded(f"{doing} needs a check with your passkey, or a recovery code, "
+                             "in the last five minutes.")
+
+
 async def new_code(token: str, host: str) -> dict:
     """A join code for a phone, made by the signed-in owner's session `token`
     on the desktop's own address `host`. Returns {"url", "expires_at"}; the
@@ -72,13 +89,9 @@ async def new_code(token: str, host: str) -> dict:
     origin = remote()
     if (host or "").lower() != HOME.host:
         raise JoinError(f"Add a phone from this Host's own address, {HOME.origin}.")
-    pool = L._pool()
-    if not await P.passkey_count(pool, HOME):
-        raise JoinError("Add a passkey on this computer first, so you can still sign in here "
-                        "without the phone.")
-    if not P.fresh_step_up(token, (P.PASSKEY, P.RECOVERY)):
-        raise P.StepUpNeeded("Adding a phone needs a check with your passkey, or a recovery "
-                             "code, in the last five minutes.")
+    await require_fresh_check(token, "Adding a phone",
+                              "Add a passkey on this computer first, so you can still sign in "
+                              "here without the phone.")
     now = time.monotonic()
     _forget_old(now)
     code = secrets.token_urlsafe(32)

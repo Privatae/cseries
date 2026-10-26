@@ -1203,8 +1203,8 @@ async def _support_elsewhere(a: dict, bc, lane: str, *, pool=None, eid=None) -> 
            "security": sr.SECURITY_SAY}
     head = ("NOT DRAFTED: there is no support ticket, and nothing was sent. Never tell the "
             "person you drafted, filed or sent a ticket. Tell them `say` first, in your own "
-            "words. If the problem is a security problem, give them `security` and offer "
-            "nothing public. ")
+            "words. If the problem is a security problem, give them `security` and keep it out "
+            "of any public issue or board post. ")
     if lane in (sr.LANE_STANDALONE, sr.LANE_MEMBER_NONE):
         if category in sr.PUBLIC_ISSUE_CATEGORIES:
             out["public_issue"] = sr.public_draft(**fields, issue=True)

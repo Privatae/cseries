@@ -32,8 +32,14 @@ nothing on this machine's own ruleset is read or changed.
          wall is about the containers, not the guest's own processes);
        - loaded a second time, all of that holds.
 
-Needs nft, ip, python3 and root's `unshare -mn`. Without them it says so and
-skips, unless CSERIES_REQUIRE_NFT=1, which makes that a failure.
+Needs nft, ip(8), python3 and a way into private namespaces: root's
+`unshare -mn` (root in rootlesskit's user namespace counts, as on the forge
+runner), or an unprivileged user namespace (`unshare -rmn`, where the plain
+proxy's uid 13 cannot be set: that check fails and says so). Without them it
+FAILS and says why: a skip reads as a pass. It never runs mount(8): the forge
+runner's unit makes /usr/bin/mount inaccessible (InaccessiblePaths), so the one
+mount the packet test needs is made with mount(2) (MOUNTS, in
+scripts/private_netns.py).
 
 Container-free: python3 scripts/test_vm_machine_firewall.py
 """
@@ -97,14 +103,19 @@ nft = shutil.which("nft") or ("/usr/sbin/nft" if os.path.exists("/usr/sbin/nft")
 ip = shutil.which("ip") or ("/usr/sbin/ip" if os.path.exists("/usr/sbin/ip") else None)
 unshare = shutil.which("unshare")
 missing = [n for n, p in (("nft", nft), ("ip", ip), ("unshare", unshare)) if not p]
-if os.geteuid() != 0:
-    missing.append("root")
 if missing:
-    msg = f"no {', '.join(missing)} here, so the loader and the packets are not checked"
-    if os.environ.get("CSERIES_REQUIRE_NFT") == "1":
-        check(False, msg)
-    else:
-        print(f"SKIP  {msg}")
+    check(False, f"this gate needs {', '.join(missing)} on PATH, so the loader and the packets are not checked")
+    sys.exit(failed)
+
+# How into private namespaces (root's `unshare -mn`, or `unshare -rmn`), why
+# they could not be made, and the one mount the packet script makes in them
+# (MOUNTS): scripts/private_netns.py, shared with the other packet gates.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from private_netns import MOUNTNETNS, MOUNTS, no_namespace_why  # noqa: E402
+
+r = subprocess.run(MOUNTNETNS + ["true"], capture_output=True, text=True, check=False)
+if r.returncode != 0:
+    check(False, no_namespace_why(r.stderr, "private mount and network namespace"))
     sys.exit(failed)
 
 work = tempfile.mkdtemp(prefix="cseries-machine-wall-")
@@ -144,7 +155,10 @@ PROBE = r'''
 import os, socket, sys
 uid = int(os.environ.get("PROBE_UID", "0"))
 if uid:
-    os.setgid(uid); os.setuid(uid)
+    try:
+        os.setgid(uid); os.setuid(uid)
+    except OSError as e:
+        print("no-uid:" + str(e.errno)); sys.exit(0)
 out = []
 for spec in sys.argv[1:]:
     proto, addr, port = spec.split(":")
@@ -165,8 +179,7 @@ print(" ".join(out))
 
 MACHINE_PORTS = ["22", "7877", "7878", "7978", "8800"]
 script = f"""set -eu
-mkdir -p /run/netns
-mount -t tmpfs none /run/netns
+python3 -I -c '{MOUNTS}'
 ip link set lo up
 ip netns add machine
 ip netns add lan
@@ -223,7 +236,7 @@ for round in 1 2; do
 done
 {nft} list set inet cseries_machine machine_v4 | tr -d '\\n\\t' | sed 's/^/set: /'; echo
 """
-r = subprocess.run(["unshare", "-mn", "sh", "-c", script], capture_output=True, text=True, check=False)
+r = subprocess.run(MOUNTNETNS + ["sh", "-c", script], capture_output=True, text=True, check=False)
 out = r.stdout
 lines = dict(ln.split(": ", 1) for ln in out.splitlines() if ": " in ln)
 detail = f"\n--- stdout\n{out}\n--- stderr\n{r.stderr}"
@@ -265,8 +278,11 @@ for rnd in ("1", "2"):
           f"a model server on the LAN and the internet still answer{again}", detail)
     check(lines.get(f"inbound{rnd}") == "open",
           f"the machine still reaches a forwarded port in the container (the bastion's lane){again}", detail)
+    unmapped = str(lines.get(f"proxyuser{rnd}", "")).startswith("no-uid")
     check(lines.get(f"proxyuser{rnd}") == "dropped dropped",
-          f"the plain proxy's user (uid 13) cannot reach the machine{again}", detail)
+          f"the plain proxy's user (uid 13) cannot reach the machine{again}",
+          ("uid 13 is not mapped in this user namespace (an unprivileged `unshare -rmn` maps only root): "
+           "run it as root, or under rootlesskit as the forge runner's gate lane does" if unmapped else detail))
     check(lines.get(f"guestroot{rnd}") == "open",
           f"the guest's own root processes are not walled{again}", detail)
 

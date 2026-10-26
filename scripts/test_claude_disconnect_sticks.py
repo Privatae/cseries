@@ -104,6 +104,7 @@ check("disconnect:own_harness is a known scope (an unknown one fails the manifes
 # ── 2. the scope opens the delete for the app's own sign-in only ───────────────────────
 print("2. disconnect:own_harness reaches only the app's own sign-in")
 from fastapi import HTTPException  # noqa: E402
+from starlette.requests import Request  # noqa: E402
 from server.routes import vault as vault_routes  # noqa: E402
 
 route = next(r for r in vault_routes.router.routes
@@ -115,8 +116,13 @@ check("DELETE /api/vault/secrets/{name} takes write:vault or disconnect:own_harn
 
 
 def _req(app_id, perms):
-    return types.SimpleNamespace(state=types.SimpleNamespace(
-        app_token=types.SimpleNamespace(app_id=app_id, permissions=list(perms))))
+    """What the route is handed in production: a Starlette Request, whose scope is
+    what the audit's source (trusted_proxies.audit_source) reads the Host header and the
+    peer from, with the app's token on its state as the app-token middleware leaves it."""
+    r = Request({"type": "http", "method": "DELETE", "path": "/api/vault/secrets/x",
+                 "headers": [], "query_string": b"", "client": None})
+    r.state.app_token = types.SimpleNamespace(app_id=app_id, permissions=list(perms))
+    return r
 
 
 def _admits(app_id, perms, name):
@@ -208,10 +214,7 @@ try:
     run(hs.clear_disconnected("claude-sdk"))
     cfile.write_text(CREDS)
     VAULT.pop("harness:claude_oauth", None)
-    _app_req = types.SimpleNamespace(
-        headers={}, client=None,
-        state=types.SimpleNamespace(app_token=types.SimpleNamespace(
-            app_id="claude-code", permissions=["disconnect:own_harness"])))
+    _app_req = _req("claude-code", ["disconnect:own_harness"])
     try:
         _route_out = run(vault_routes.revoke_secret("harness:claude_oauth", _app_req))
     except HTTPException as e:
@@ -224,10 +227,7 @@ try:
     cfile.unlink(missing_ok=True)   # the app's second call: its sidecar removes the file
     run(review._persist_rotated_creds("claude-code", {"rotated_creds": {".credentials.json": CREDS}}))
     check("...so a run finishing after it does not write the credential back", not cfile.exists())
-    _keys_req = types.SimpleNamespace(
-        headers={}, client=None,
-        state=types.SimpleNamespace(app_token=types.SimpleNamespace(
-            app_id="keys", permissions=["write:vault"])))
+    _keys_req = _req("keys", ["write:vault"])
     try:
         _keys_out = run(vault_routes.revoke_secret("openrouter", _keys_req))
     except HTTPException as e:

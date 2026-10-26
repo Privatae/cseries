@@ -115,7 +115,7 @@ from mastercode.runtime.tools_codespace import (  # noqa: E402,F401
 from mastercode.runtime.tools_comms import (  # noqa: E402,F401
     _exec_calendar_read, _exec_circles_manage, _exec_contacts_manage, _exec_host_message,
     _exec_inbox_read, _exec_phone_alias, _exec_reachout, _exec_reachout_channel,
-    _exec_schedule_task, _exec_task_template, _exec_tickets, _planned_text,
+    _exec_schedule_task, _exec_task_template, _exec_tickets, _planned_text, _support_elsewhere,
 )
 from mastercode.runtime.tools_community import (  # noqa: E402,F401
     _exec_community_board,

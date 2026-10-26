@@ -22,7 +22,8 @@ The tunnel, end to end:
       DATA    both           at most MAX_DATA bytes of that connection
       WINDOW  both           4-byte credit: the sender may send that many more
                              DATA bytes on the stream
-      FIN     both           the sender has no more bytes (a half close)
+      FIN     both           the sender has no more bytes (a half close); once
+                             per stream, and no DATA after it
       RST     both           the stream is over, without the rest of its bytes
 
     Only the relay opens streams, so nothing the Host sends can make the relay
@@ -523,12 +524,15 @@ class MuxStream:
         self.bytes_in = 0                # from the peer, out to the socket
         self.bytes_out = 0               # from the socket, out to the peer
         self._reset = False
+        self._peer_fin = False
         self._tasks: list[asyncio.Task] = []
         self.done = asyncio.Event()
 
     # ── what the tunnel's reader hands this stream ──
 
     def feed(self, payload: bytes) -> None:
+        if self._peer_fin:
+            raise ProtocolError(f"stream {self.sid}: DATA after the peer's FIN")
         if len(payload) > self._recv_credit:
             raise ProtocolError(f"stream {self.sid}: {len(payload)} bytes beyond its "
                                 f"credit of {self._recv_credit}")
@@ -544,6 +548,12 @@ class MuxStream:
         self._credit.set()
 
     def peer_fin(self) -> None:
+        # Once: the first FIN ends the writer (_to_socket), so nothing would
+        # ever read a second one, and a peer repeating it would grow this
+        # queue, outside every window, for as long as the stream stays open.
+        if self._peer_fin:
+            raise ProtocolError(f"stream {self.sid}: a second FIN")
+        self._peer_fin = True
         self._queue.put_nowait(None)
 
     def peer_reset(self) -> None:

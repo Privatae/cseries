@@ -557,6 +557,203 @@ def test_a_peer_sending_beyond_its_credit_is_refused():
     run(main())
 
 
+def test_a_peer_that_half_closes_twice_or_sends_after_its_fin_is_refused():
+    """FIN says the sender has no more bytes. A second FIN, or DATA after
+    one, breaks the protocol: each FIN costs the receiver a queue entry that
+    nothing reads once the first has ended the stream's writer, so a peer
+    repeating it could grow the other side's memory for as long as the
+    browser's connection stays open."""
+    async def main():
+        async def send(_frame):
+            pass
+        s = rp.MuxStream(1, send)
+        s.peer_fin()
+        with pytest.raises(rp.ProtocolError):
+            s.peer_fin()
+        t = rp.MuxStream(2, send)
+        t.peer_fin()
+        with pytest.raises(rp.ProtocolError):
+            t.feed(b"x")
+    run(main())
+
+
+def test_a_host_repeating_fin_loses_its_tunnel(pki, loopback_door):
+    """A Host that sends FIN again and again on a stream a browser keeps open
+    has its tunnel closed at the second, and the relay holds nothing for it.
+    The edge relay is this relay (vendored byte for byte), shared by every
+    member Host, and its memory budget counts stream windows only."""
+    import aiohttp
+
+    async def main():
+        # A heartbeat longer than the test, so only the FINs can end the
+        # tunnel (this raw Host stops reading, and would miss its pongs).
+        rig = await Rig(pki, heartbeat=60.0).start()
+        try:
+            async with aiohttp.ClientSession() as http:
+                ws = await http.ws_connect(
+                    f"https://127.0.0.1:{rig.relay.tunnel_port}{rp.TUNNEL_PATH}",
+                    protocols=(rp.PROTOCOL,), ssl=pki.client_ssl("a"),
+                    server_hostname=rp.tunnel_name(ZONE),
+                    headers={rp.TICKET_HEADER: pki.ticket("a")})
+                ready = await ws.receive()
+                assert '"ready"' in ready.data and AID in rig.relay.tunnels
+                # A browser connects and stays: the relay sends OPEN.
+                reader, writer = await asyncio.open_connection("127.0.0.1",
+                                                               rig.relay.browser_port)
+                writer.write(_client_hello(HOST_NAME))
+                await writer.drain()
+                sid = None
+                while sid is None:
+                    msg = await asyncio.wait_for(ws.receive(), 5)
+                    if msg.type == aiohttp.WSMsgType.BINARY:
+                        ftype, s, _p = rp.decode(msg.data)
+                        if ftype == rp.OPEN:
+                            sid = s
+                tunnel = rig.relay.tunnels[AID]
+                for _ in range(2000):
+                    try:
+                        await ws.send_bytes(rp.encode(rp.FIN, sid))
+                    except ConnectionError:
+                        break       # the relay has closed the tunnel
+                deadline = time.monotonic() + 3
+                while AID in rig.relay.tunnels and time.monotonic() < deadline:
+                    await asyncio.sleep(0.05)
+                held = [st._queue.qsize() for st in tunnel.streams.values()]
+                writer.close()
+                assert AID not in rig.relay.tunnels, f"tunnel still up, queues {held}"
+        finally:
+            await rig.close()
+    run(main())
+
+
+def test_a_host_that_half_closes_once_keeps_its_tunnel(pki, loopback_door):
+    """One FIN from the Host, then the frames a half-closed stream still
+    legitimately carries (credit for what the browser sends, and the RST that
+    ends it), leave the tunnel up and end only that stream. The browser's own
+    data keeps flowing to the Host after the Host's FIN."""
+    import aiohttp
+
+    async def main():
+        rig = await Rig(pki, heartbeat=60.0).start()
+        try:
+            async with aiohttp.ClientSession() as http:
+                ws = await http.ws_connect(
+                    f"https://127.0.0.1:{rig.relay.tunnel_port}{rp.TUNNEL_PATH}",
+                    protocols=(rp.PROTOCOL,), ssl=pki.client_ssl("a"),
+                    server_hostname=rp.tunnel_name(ZONE),
+                    headers={rp.TICKET_HEADER: pki.ticket("a")})
+                await ws.receive()
+                reader, writer = await asyncio.open_connection("127.0.0.1",
+                                                               rig.relay.browser_port)
+                writer.write(_client_hello(HOST_NAME))
+                await writer.drain()
+                sid = None
+                while sid is None:
+                    msg = await asyncio.wait_for(ws.receive(), 5)
+                    if msg.type == aiohttp.WSMsgType.BINARY:
+                        ftype, s, _p = rp.decode(msg.data)
+                        if ftype == rp.OPEN:
+                            sid = s
+                tunnel = rig.relay.tunnels[AID]
+                await ws.send_bytes(rp.encode(rp.FIN, sid))
+                await ws.send_bytes(rp.encode(rp.WINDOW, sid, rp.window_payload(4096)))
+                await ws.send_bytes(rp.encode(rp.WINDOW, sid, rp.window_payload(4096)))
+                writer.write(b"more from the browser")      # still flows to the Host
+                await writer.drain()
+                await asyncio.sleep(0.5)
+                assert AID in rig.relay.tunnels and sid in tunnel.streams
+                await ws.send_bytes(rp.encode(rp.RST, sid))
+                deadline = time.monotonic() + 3
+                while sid in tunnel.streams and time.monotonic() < deadline:
+                    await asyncio.sleep(0.05)
+                writer.close()
+                assert AID in rig.relay.tunnels and sid not in tunnel.streams
+        finally:
+            await rig.close()
+    run(main())
+
+
+async def _talk(reader, writer, mine: bytes, after_theirs: bool) -> bytes:
+    """One end of a stream's socket: sends `mine` then half-closes, and reads
+    until the other end half-closes. With `after_theirs` it sends only once
+    the other end's half close has come, so the other end is the first to FIN."""
+    async def pour():
+        for i in range(0, len(mine), 16384):
+            writer.write(mine[i:i + 16384])
+            await writer.drain()
+        writer.write_eof()
+    if after_theirs:
+        got = await reader.read()
+        await pour()
+        return got
+    pouring = asyncio.ensure_future(pour())
+    got = await reader.read()
+    await pouring
+    return got
+
+
+def test_a_half_close_in_either_direction_is_not_a_second_fin():
+    """The one-FIN rule must not close a stream on a legitimate half close: one
+    side FINs and the other keeps sending, with credit (WINDOW) still flowing
+    to the side that has FINed. Two MuxStreams, each on a real socket, joined
+    the way a tunnel joins them (a frame sent is decoded and handed to the
+    other as remote_relay.serve and remote_tunnel._frame hand it); a
+    ProtocolError there is what closes a tunnel, so it is recorded. Both ways:
+    the browser's end FINs first, then the door's."""
+    window = 64 * 1024
+
+    async def case(browser_first: bool):
+        errors: list[str] = []
+        ends: dict[str, rp.MuxStream] = {}
+
+        def link(to):
+            async def send(frame):
+                ftype, _sid, payload = rp.decode(frame)
+                peer = ends[to]
+                try:
+                    if ftype == rp.DATA:
+                        peer.feed(payload)
+                    elif ftype == rp.WINDOW:
+                        peer.grant(rp.parse_window(payload))
+                    elif ftype == rp.FIN:
+                        peer.peer_fin()
+                    elif ftype == rp.RST:
+                        peer.peer_reset()
+                except rp.ProtocolError as exc:
+                    errors.append(str(exc))
+            return send
+
+        browser_sock, a_sock = socket.socketpair()
+        door_sock, b_sock = socket.socketpair()
+        b_r, b_w = await asyncio.open_connection(sock=browser_sock)
+        a_r, a_w = await asyncio.open_connection(sock=a_sock)
+        d_r, d_w = await asyncio.open_connection(sock=door_sock)
+        e_r, e_w = await asyncio.open_connection(sock=b_sock)
+        ends["a"] = rp.MuxStream(1, link("b"), a_r, a_w, window=window)
+        ends["b"] = rp.MuxStream(1, link("a"), e_r, e_w, window=window)
+        # Five windows each way, so credit goes back and forth after the FIN.
+        up, down = os.urandom(5 * window), os.urandom(5 * window)
+        got_door, got_browser = await asyncio.wait_for(_both(
+            ends, _talk(d_r, d_w, down, after_theirs=browser_first),
+            _talk(b_r, b_w, up, after_theirs=not browser_first)), 20)
+        assert errors == []
+        assert got_door == up and got_browser == down
+        assert not ends["a"].was_reset and not ends["b"].was_reset
+        assert ends["a"].done.is_set() and ends["b"].done.is_set()
+
+    async def main():
+        await case(browser_first=True)
+        await case(browser_first=False)
+    run(main())
+
+
+async def _both(ends, door_talk, browser_talk):
+    """Both ends' talk and both streams' run, together; (door, browser) got."""
+    door, browser, _a, _b = await asyncio.gather(door_talk, browser_talk,
+                                                 ends["a"].run(), ends["b"].run())
+    return door, browser
+
+
 def test_only_a_passport_with_its_own_ticket_gets_a_tunnel(pki, loopback_door):
     async def main():
         rig = await Rig(pki).start()

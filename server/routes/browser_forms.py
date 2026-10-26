@@ -41,6 +41,7 @@ from pydantic import BaseModel, Field
 
 from server import brain_service
 from server import browser_autofill as autofill
+from server import trusted_proxies
 from server.applications.middleware import requires_permission
 from server.operator_identity import request_email
 from server.vault import api as vault
@@ -82,10 +83,11 @@ _HOST_RX = re.compile(r"^[a-z0-9][a-z0-9.-]{0,252}$")
 def _actor(request: Request, action: str) -> str:
     """Audit actor — who, and from where. Mirrors server/routes/vault.py so
     a form entry and a hand-added key read the same way in vault_audit.
-    request_email returns "" when the header is absent, never None."""
+    request_email returns "" when the header is absent, never None. The
+    address is trusted_proxies.audit_source's: believed only from a trusted
+    proxy, "remote" through remote access."""
     email = request_email(request.headers) or "unknown"
-    xff = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
-    ip = xff or (request.client.host if request.client else "unknown")
+    ip = trusted_proxies.audit_source(request)
     return f"user:{email} ip:{ip} {action}"
 
 

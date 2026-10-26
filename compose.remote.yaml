@@ -1,0 +1,119 @@
+# Remote access for a member's Host: open this Host from a phone or another
+# computer anywhere, with nothing on this machine open to the internet.
+#
+#   docker compose -f compose.yaml -f compose.remote.yaml up -d --build
+#
+# compose.yaml alone is the local install, unchanged: this file only adds.
+#
+# How a browser gets in: the Host keeps a connection out to the network's
+# relay (server/network/remote_tunnel.py). The relay passes a browser's
+# still-encrypted connection down it, and the Host hands it to the door, a
+# container of its own (sidecars/remote-door). The door ends TLS with the
+# remote address's certificate, whose key is made in the door's volumes and
+# never leaves this machine, asks the Host about every request, and passes on
+# only what the Host lets in.
+#
+# THE RULE THIS FILE KEEPS. The Host lets a request from loopback in without
+# a session. A browser from the internet must never arrive that way, so it
+# reaches the Host only from the door's own address on the `remote` network
+# below: the tunnel dials the door at its address (CSERIES_REMOTE_DOOR, never
+# loopback; server/network/remote_access.py refuses one), and the door passes
+# to the Host's address there. The door publishes no port, and the `remote`
+# network is internal: nothing but the Host and the door is on it, and it has
+# no way out. scripts/test_remote_door_loopback.py checks this file.
+#
+# The two addresses are fixed so each side can name the other exactly. If
+# 172.31.254.0/29 is in use on this machine, set all four of
+# CSERIES_REMOTE_SUBNET, CSERIES_REMOTE_HOST_ADDR, CSERIES_REMOTE_DOOR_ADDR and
+# CSERIES_REMOTE_URL's machine to other values.
+
+services:
+  host:
+    environment:
+      # The remote address: https://<handle>.<address_id>.<zone>, given with
+      # remote access. Its first label is the desktop's own.
+      CSERIES_REMOTE_URL: ${CSERIES_REMOTE_URL:?set CSERIES_REMOTE_URL to this Host's remote address}
+      # Where the tunnel hands browsers over: the door, on its own address.
+      CSERIES_REMOTE_DOOR: ${CSERIES_REMOTE_DOOR_ADDR:-172.31.254.3}:8443
+      # The door is the only proxy in front of the Host on that address:
+      # its X-Forwarded-For (the browser's address) is believed, and only
+      # its /__host/door question, carrying the door key, is answered.
+      CSERIES_TRUSTED_PROXIES: ${CSERIES_REMOTE_DOOR_ADDR:-172.31.254.3}/32
+      CSERIES_DOOR_SECRET_FILE: /run/cseries-door/door-secret
+    volumes:
+      - remote-door-key:/run/cseries-door:ro
+    networks:
+      default: {}
+      remote:
+        ipv4_address: ${CSERIES_REMOTE_HOST_ADDR:-172.31.254.2}
+
+  remote-door:
+    build:
+      context: .
+      dockerfile: sidecars/remote-door/Dockerfile
+    image: cseries-remote-door:dev
+    restart: unless-stopped
+    depends_on:
+      - host
+    user: "1000:1000"
+    read_only: true
+    pids_limit: 256
+    environment:
+      CSERIES_DOOR_BIND: ${CSERIES_REMOTE_DOOR_ADDR:-172.31.254.3}
+      CSERIES_DOOR_PORT: "8443"
+      CSERIES_TUNNEL_FROM: ${CSERIES_REMOTE_HOST_ADDR:-172.31.254.2}
+      CSERIES_HOST_UPSTREAM: ${CSERIES_REMOTE_HOST_ADDR:-172.31.254.2}:8800
+      CSERIES_REMOTE_ZONE: ${CSERIES_REMOTE_ZONE:?set CSERIES_REMOTE_ZONE to <address_id>.<zone>}
+    volumes:
+      - remote-door-key:/data/door-key
+      - remote-door-tls:/etc/caddy/tls:ro
+    tmpfs:
+      - /run/caddy
+      - /tmp
+    # No ports: only the Host's tunnel dials the door, on the remote network.
+    networks:
+      remote:
+        ipv4_address: ${CSERIES_REMOTE_DOOR_ADDR:-172.31.254.3}
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+
+  # The certificate job: the cloud box's cseries-cert, daily. It needs the
+  # internet (Let's Encrypt and acme-dns), so it is not on the remote network,
+  # and the door, which is, has no way out.
+  remote-cert:
+    image: cseries-remote-door:dev
+    restart: unless-stopped
+    depends_on:
+      - remote-door
+    user: "1000:1000"
+    read_only: true
+    pids_limit: 256
+    entrypoint: ["/usr/local/sbin/door-cert", "--loop"]
+    volumes:
+      - remote-door-tls:/etc/caddy/tls
+      - remote-cert-state:/var/lib/cseries-cloud
+      # cloud.json (address_id, zone, ACME account email and server),
+      # acme-dns.json and acme-dns-api.json, as on a cloud box: what remote
+      # access hands this machine.
+      - remote-acme:/etc/cseries-cloud:ro
+    tmpfs:
+      - /tmp
+    networks:
+      - default
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  remote:
+    internal: true
+    ipam:
+      config:
+        - subnet: ${CSERIES_REMOTE_SUBNET:-172.31.254.0/29}
+
+volumes:
+  remote-door-key:
+  remote-door-tls:
+  remote-cert-state:
+  remote-acme:

@@ -166,7 +166,8 @@ class Store:
 
     async def fetch(self, sql, *a):
         if sql.startswith("SELECT credential_id, transports FROM owner_passkeys") \
-                or sql.startswith("SELECT credential_id, label, created_at, last_used_at FROM owner_passkeys"):
+                or sql.startswith("SELECT credential_id, label, created_at, last_used_at, rp_id "
+                                  "FROM owner_passkeys"):
             return sorted(self.passkeys.values(), key=lambda r: r["created_at"])
         if sql.startswith("DELETE FROM owner_sessions WHERE token_hash <> $1 AND parent IS DISTINCT FROM $1"):
             keep = a[0]
@@ -441,6 +442,28 @@ async def main():
     check(held_code is None, "with every password sign-in held, a recovery code still signs in",
           held_code)
     L._password_failures = (0, 0.0, 0.0)
+
+    # 14. wrong recovery codes from a new address each time (a relay writes
+    # the source on the remote address) meet one wait for the whole Host,
+    # and a passkey still signs in through it
+    L._failures.clear()
+    L._recovery_failures = (0, 0.0, 0.0)
+    outcomes = []
+    for i in range(L.GLOBAL_FREE + 2):
+        err = await refused(P.recovery_sign_in("AAAAA-BBBBB-CCCCC-DDDDD", f"198.51.100.{i + 1}", HOST))
+        outcomes.append("held" if err and "Too many" in str(err) else "wrong")
+    check(outcomes == ["wrong"] * L.GLOBAL_FREE + ["held"] * 2,
+          "wrong recovery codes from ever-new addresses: GLOBAL_FREE, then a wait for every source",
+          outcomes)
+    spare = await P.new_recovery_codes(DB)
+    held_code = await refused(P.recovery_sign_in(spare[0], "198.51.100.200", HOST))
+    check(held_code is not None and "Too many" in str(held_code),
+          "while it holds, a right code from a new address waits too", held_code)
+    lo = await P.login_options(CLIENT, HOST)
+    held_tok = await refused(P.passkey_sign_in(lo["ceremony"], dev.get(lo["options"]), CLIENT, HOST))
+    check(held_tok is None, "with every recovery code held, a passkey still signs in", held_tok)
+    L._recovery_failures = (0, 0.0, 0.0)
+    L._failures.clear()
 
     # 11. removing a passkey; 12. signing out every other session
     survivor = await removal(dev, dev2)

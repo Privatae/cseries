@@ -19,6 +19,13 @@ when the desktop has one (server/routes/owner.py).
 A session counts only on the host name it was issued on
 (owner_login.session_email), read from Host — X-Forwarded-Host too, but only
 from a trusted proxy: HostHeaderGuard removes anyone else's.
+
+On a member Host with remote access (home_origin.REMOTE) the same holds on the
+remote address, which has its own app origins and its own sessions. A request
+for a name on the remote address is never passed for coming from loopback:
+it reaches the Host only through the machine's door, from the door's own
+address (compose.remote.yaml), and a loopback peer naming it means something
+on this machine is relaying the internet to the Host's own listener.
 """
 
 from __future__ import annotations
@@ -31,10 +38,11 @@ from urllib.parse import urlencode
 
 from server import owner_login, trusted_proxies
 from server.applications import app_origin
+from server import home_origin
 from server.home_origin import HOME
 from server.middleware.localhost_only import (
-    DOOR_PATH, LOOPBACK_HOSTS, OWNER_PUBLIC_PATHS, _PROBE_EXEMPT_PATHS, _unmap_v4, door_question_path,
-    is_oauth_callback, runtime_peer,
+    DOOR_PATH, LOOPBACK_HOSTS, OWNER_PUBLIC_PATHS, REMOTE_REFUSED_PATHS, _PROBE_EXEMPT_PATHS, _unmap_v4,
+    door_question_path, is_oauth_callback, runtime_peer,
 )
 
 log = logging.getLogger("cseries.owner_session")
@@ -51,7 +59,7 @@ def _cookies(scope) -> list[str]:
     value, a space), and cookies are shared by every port of a host, so any
     other program served on that name could otherwise hide the owner's
     session."""
-    want = owner_login.cookie_name()
+    want = owner_login.cookie_name(request_host(scope))
     out = []
     for key, value in scope.get("headers") or ():
         if key != b"cookie":
@@ -88,13 +96,17 @@ async def live_session(scope) -> tuple[str | None, str | None]:
 
 def own_app_origin(host: str) -> bool:
     """Whether `host` is one of this Host's app origins (apps-<key>-<handle>
-    in the home zone)."""
+    in the home zone, or in the remote address's zone)."""
     o = app_origin.classify(host)
-    return o.kind == app_origin.APP and o.handle == HOME.handle and o.zone == HOME.zone
+    home = home_origin.origin_of_zone(o.zone) if o.kind == app_origin.APP else None
+    return home is not None and o.handle == home.handle
 
 
 def join_url(app_host: str, rd: str) -> str:
-    return HOME.origin + "/__host/join?" + urlencode({"to": HOME.origin_of(app_host), "rd": rd})
+    """The desktop's /__host/join for app origin `app_host`: the desktop of
+    the address that app origin is under."""
+    home = home_origin.origin_of_zone(app_origin.classify(app_host).zone) or HOME
+    return home.origin + "/__host/join?" + urlencode({"to": home.origin_of(app_host), "rd": rd})
 
 
 def _wants_page(scope, method: str | None = None) -> bool:
@@ -113,6 +125,8 @@ def _page_redirect(scope, path: str, query: str) -> str:
     host = request_host(scope)
     if own_app_origin(host) and not owner_login.needs_setup():
         return join_url(host, path + (f"?{query}" if query else ""))
+    if home_origin.is_remote_host(host):
+        return "/login"        # never set up from the remote address
     return "/setup" if owner_login.needs_setup() else "/login"
 
 
@@ -228,6 +242,8 @@ async def door_decision(scope) -> tuple[int, str | None]:
     path = door_question_path(uri)
     if path == DOOR_PATH:
         return 401, None        # only the proxy's own question reaches the door
+    if path in REMOTE_REFUSED_PATHS and home_origin.is_remote_host(request_host(scope)):
+        return 403, None        # the routes refuse these there too (routes/owner.py)
     if path in OWNER_PUBLIC_PATHS or path in _PROBE_EXEMPT_PATHS:
         return 200, None
     if is_oauth_callback(path) and method == "GET":
@@ -251,7 +267,8 @@ class OwnerSessionGate:
 
         client = _unmap_v4((scope.get("client") or (None,))[0])
         path = scope.get("path") or ""
-        if client in LOOPBACK_HOSTS or path in OWNER_PUBLIC_PATHS or is_oauth_callback(path):
+        if (client in LOOPBACK_HOSTS and not home_origin.is_remote_host(request_host(scope))) \
+                or path in OWNER_PUBLIC_PATHS or is_oauth_callback(path):
             return await self.app(scope, receive, send)
         if runtime_peer(client):
             # A container of the local runtime has no browser session to make,

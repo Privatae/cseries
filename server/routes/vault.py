@@ -20,6 +20,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel
 
 from server import brain_service
+from server import trusted_proxies
 from server.applications.middleware import requires_any_permission, requires_permission
 from server.network import nac_stepup
 from server.operator_identity import request_email
@@ -37,10 +38,11 @@ def _actor(request: Request, action: str) -> str:
     """Audit actor string recording WHO (the router-verified operator email) and
     FROM WHERE (client IP) triggered a vault op — the provenance the 2026-07-17
     cross-tenant incident had no way to record. Lands verbatim in
-    vault_audit.actor (server/vault/store.py)."""
+    vault_audit.actor (server/vault/store.py). The address is believed only
+    from a trusted proxy, and through remote access it reads "remote"
+    (trusted_proxies.audit_source)."""
     email = request_email(request.headers) or "unknown"
-    xff = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip()
-    ip = xff or (request.client.host if request.client else "unknown")
+    ip = trusted_proxies.audit_source(request)
     return f"user:{email} ip:{ip} {action}"
 
 

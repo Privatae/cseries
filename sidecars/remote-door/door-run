@@ -1,0 +1,85 @@
+#!/usr/bin/python3 -I
+"""The door's entrypoint: the door key, then Caddy, reloaded when the
+certificate changes.
+
+The door key is what tells the Host a /__host/door question is this door's
+own (server/middleware/owner_session.py). It is made here once, 32 random
+bytes in hex, in the door-key volume, which the Host mounts read-only as its
+CSERIES_DOOR_SECRET_FILE; it is never written into the compose file or the
+environment of anything but this Caddy.
+
+Caddy starts once door-cert has put a certificate in CSERIES_DOOR_TLS; until
+then this waits. It checks the certificate every CHECK_S and reloads Caddy
+through its admin socket when the file changes.
+"""
+
+import os
+import secrets
+import signal
+import subprocess
+import sys
+import time
+
+CONFIG = "/etc/caddy/Caddyfile"
+ADMIN = "unix/" + os.environ.get("CSERIES_DOOR_ADMIN", "/run/caddy/admin.sock")
+KEY_DIR = os.environ.get("CSERIES_DOOR_KEY_DIR", "/data/door-key")
+CHECK_S = 60.0
+
+
+def log(msg):
+    print(f"door: {msg}", file=sys.stderr, flush=True)
+
+
+def door_key():
+    path = os.path.join(KEY_DIR, "door-secret")
+    try:
+        with open(path, encoding="ascii") as f:
+            key = f.read().strip()
+        if len(key) >= 32:
+            return key
+    except FileNotFoundError:
+        pass
+    key = secrets.token_hex(32)
+    tmp = path + ".new"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o640)
+    with os.fdopen(fd, "w", encoding="ascii") as f:
+        f.write(key + "\n")
+    os.replace(tmp, path)
+    log("made the door key")
+    return key
+
+
+def stamp(tls):
+    try:
+        st = os.stat(os.path.join(tls, "cert.pem"))
+        return (st.st_mtime_ns, st.st_size)
+    except FileNotFoundError:
+        return None
+
+
+def main():
+    env = dict(os.environ, CSERIES_DOOR_SECRET=door_key())
+    tls = env["CSERIES_DOOR_TLS"]
+    while stamp(tls) is None:
+        log(f"no certificate in {tls} yet; waiting for door-cert")
+        time.sleep(10)
+    caddy = subprocess.Popen(["caddy", "run", "--config", CONFIG, "--adapter", "caddyfile"], env=env)
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        signal.signal(sig, lambda s, _f: caddy.send_signal(s))
+    seen = stamp(tls)
+    while caddy.poll() is None:
+        try:
+            caddy.wait(timeout=CHECK_S)
+        except subprocess.TimeoutExpired:
+            pass
+        now = stamp(tls)
+        if caddy.poll() is None and now is not None and now != seen:
+            log("the certificate changed; reloading")
+            subprocess.run(["caddy", "reload", "--config", CONFIG, "--adapter", "caddyfile",
+                            "--address", ADMIN], env=env, check=False)
+            seen = now
+    return caddy.returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main())

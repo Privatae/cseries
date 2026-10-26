@@ -33,6 +33,12 @@ import cseries_cloud as cc  # noqa: E402
 
 LEGO = "/usr/bin/lego"
 HOOK = "/usr/local/sbin/cseries-acme-dns-hook"
+# Who reads the installed files, and how Caddy learns of them. A member's
+# machine runs this same file in its remote-access door image
+# (sidecars/remote-door/door-cert), which sets both to None: there the files
+# belong to the door's own user and the door reloads itself when they change.
+TLS_GROUP = "caddy"
+RELOAD = ["systemctl", "reload", "caddy.service"]
 
 
 def log(msg):
@@ -69,14 +75,18 @@ def install(paths, crt, key):
                 return False
     except FileNotFoundError:
         pass
-    gid = grp.getgrnam("caddy").gr_gid
     os.makedirs(paths.tls, exist_ok=True)
-    os.chown(paths.tls, 0, gid)
-    os.chmod(paths.tls, 0o750)
+    if TLS_GROUP is None:
+        uid = gid = None
+        os.chmod(paths.tls, 0o700)
+    else:
+        uid, gid = 0, grp.getgrnam(TLS_GROUP).gr_gid
+        os.chown(paths.tls, 0, gid)
+        os.chmod(paths.tls, 0o750)
     # The key first: a reload that reads a new certificate with the old key
     # would fail, the other way round it cannot happen.
-    cc.atomic_write(dest_k, k, 0o640, 0, gid)
-    cc.atomic_write(dest_c, c, 0o640, 0, gid)
+    cc.atomic_write(dest_k, k, 0o640 if gid is not None else 0o600, uid, gid)
+    cc.atomic_write(dest_c, c, 0o640 if gid is not None else 0o644, uid, gid)
     cc.write_json(os.path.join(paths.state, "cert.json"), {"source": "lego"})
     return True
 
@@ -110,7 +120,8 @@ def main():
         return 1
     if os.path.exists(crt) and install(paths, crt, key):
         log("new certificate installed; reloading Caddy")
-        subprocess.run(["systemctl", "reload", "caddy.service"], check=False)
+        if RELOAD:
+            subprocess.run(RELOAD, check=False)
     return 0
 
 

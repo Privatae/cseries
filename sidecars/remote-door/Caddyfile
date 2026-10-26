@@ -1,0 +1,121 @@
+# The door on a member's own machine, for remote access (compose.remote.yaml).
+#
+# The cloud box's front door (vm/cloud/overlay/etc/caddy/Caddyfile.in), with
+# three changes: it listens on the containers' own network only, behind the
+# PROXY v2 header the Host's tunnel writes (so the browser's address reaches
+# the Host's per-client limits); its certificate is the remote address's
+# wildcard, made by door-cert in this image; and the Host it asks and passes
+# to is the Host's container address, never loopback. A loopback peer passes
+# the Host's session gate without a session (server/middleware/
+# owner_session.py), which no browser on the internet may; from here the Host
+# sees this container's address. scripts/test_remote_door_loopback.py runs
+# this file with a real Caddy between a relay, the tunnel and the Host.
+#
+# Every value comes from the environment when Caddy reads this file
+# (door-run sets them):
+#   CSERIES_DOOR_BIND        this container's address on that network
+#   CSERIES_DOOR_PORT        the port the tunnel dials (8443)
+#   CSERIES_TUNNEL_FROM      the Host container's address: the only peer whose
+#                            PROXY header is believed, and the only one let in
+#   CSERIES_REMOTE_ZONE      <address_id>.<zone>, the certificate's base
+#   CSERIES_HOST_UPSTREAM    the Host's <address>:8800 on that network
+#   CSERIES_DOOR_SECRET      the door key (from the door-key volume, never
+#                            the compose file)
+#   CSERIES_DOOR_TLS         the directory holding cert.pem and key.pem
+#   CSERIES_DOOR_ADMIN       Caddy's admin socket (/run/caddy/admin.sock)
+{
+	admin unix/{$CSERIES_DOOR_ADMIN:/run/caddy/admin.sock}
+	# The certificate is the machine's own (door-cert); Caddy fetches none
+	# and listens on nothing but the door's port.
+	auto_https disable_redirects
+	https_port {$CSERIES_DOOR_PORT}
+	default_bind {$CSERIES_DOOR_BIND}
+	ocsp_stapling off
+	servers {
+		listener_wrappers {
+			# The Host's tunnel starts every connection with the browser's
+			# address, and only the Host's address is believed: a PROXY
+			# header from anywhere else is refused. Nothing else can reach
+			# the door anyway: it is on an internal network with the Host
+			# alone (compose.remote.yaml).
+			proxy_protocol {
+				timeout 5s
+				allow {$CSERIES_TUNNEL_FROM}/32
+				fallback_policy reject
+			}
+			tls
+		}
+		protocols h1 h2
+		# The name inside the TLS must be the name the request is for: a
+		# browser that reached this door for one of the machine's names
+		# cannot ask it about another one.
+		strict_sni_host on
+		timeouts {
+			read_header 10s
+			idle 5m
+		}
+	}
+}
+
+https://*.{$CSERIES_REMOTE_ZONE} {
+	tls {$CSERIES_DOOR_TLS}/cert.pem {$CSERIES_DOOR_TLS}/key.pem {
+		protocols tls1.3
+	}
+	# The Host sets its own framing, CSP and Referrer-Policy.
+	header {
+		Strict-Transport-Security "max-age=63072000; includeSubDomains"
+		X-Content-Type-Options nosniff
+		-Server
+	}
+	# The Host's door answers Caddy's forward_auth question and nobody else:
+	# a request from outside for it ends here, before it is asked about or
+	# passed on. The path matcher compares the decoded, lower-cased path, so
+	# /__host%2Fdoor and /__HOST/door end here too.
+	@door path /__host/door /__host/door/*
+	handle @door {
+		respond 404
+	}
+	handle {
+		forward_auth {$CSERIES_HOST_UPSTREAM} {
+			uri /__host/door
+			# The door key tells the Host this is Caddy's own question, so
+			# it believes X-Forwarded-Method and -Uri only here. Set, not
+			# added: a value a client sent is replaced.
+			header_up X-Cseries-Door {$CSERIES_DOOR_SECRET}
+		}
+		reverse_proxy {$CSERIES_HOST_UPSTREAM} {
+			# Caddy sets these two on the forward_auth question only. A
+			# client's own copies are removed, so the Host never reads a
+			# request's method or URI from a header the client wrote.
+			header_up -X-Forwarded-Method
+			header_up -X-Forwarded-Uri
+			# Nor the door key: a request passed on never carries it.
+			header_up -X-Cseries-Door
+		}
+	}
+	# While the Host restarts nothing answers on its port, and Caddy's own
+	# answer would be 502 (504 on a timeout). Those get the starting answer
+	# instead, 503 with Retry-After. What the Host answers itself is passed
+	# on as it is.
+	handle_errors {
+		header {
+			Strict-Transport-Security "max-age=63072000; includeSubDomains"
+			X-Content-Type-Options nosniff
+			-Server
+		}
+		@starting expression `{err.status_code} in [502, 503, 504]`
+		handle @starting {
+			header Retry-After 5
+			header Cache-Control no-store
+			@page header Accept *text/html*
+			handle @page {
+				header Content-Type "text/html; charset=utf-8"
+				respond `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta http-equiv="refresh" content="5"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Starting</title></head><body style="font-family:system-ui,sans-serif;margin:3rem auto;max-width:32rem;padding:0 1rem;color:#222"><h1 style="font-size:1.4rem">This Host is starting</h1><p>It will be ready in a few seconds. This page tries again by itself.</p></body></html>` 503
+			}
+			handle {
+				header Content-Type "application/json"
+				respond `{"error": "This Host is starting. Try again in a few seconds."}` 503
+			}
+		}
+	}
+}

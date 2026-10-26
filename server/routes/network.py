@@ -368,6 +368,15 @@ async def setup_bastion(request: Request):
     return minted
 
 
+def _from_remote_address(request: Request) -> bool:
+    """Whether the request came through remote access: a name on the remote
+    address, or the remote door's own container as the peer (whatever Host
+    header it carries). One rule with the audit's source
+    (trusted_proxies.from_remote_address)."""
+    from server import trusted_proxies
+    return trusted_proxies.from_remote_address(request)
+
+
 async def _open_pairing_window(request: Request) -> dict:
     """Open the enroll port to the requester for the pairing window, after
     the owner's passkey check in the last five minutes. The requester is the
@@ -376,6 +385,15 @@ async def _open_pairing_window(request: Request) -> dict:
     from server.home_origin import HOME
     from server.middleware.owner_session import live_session
     from server.network import door_helper
+    if _from_remote_address(request):
+        # The port would open to the address the door forwarded for, and on
+        # the remote address that is whatever the relay wrote into the
+        # tunnel's OPEN (the door believes the Host's PROXY header, the Host
+        # believes the door): a relay could open this Host's enroll port to
+        # any address it liked.
+        raise HTTPException(403, "A bastion can't be set up from the remote address. Set it up "
+                                 "from a computer on the machine's own network, at "
+                                 f"{HOME.origin}.")
     _email, token = await live_session(request.scope)
     if not owner_passkeys.fresh_step_up(token):
         raise HTTPException(403, "Pairing a machine needs your passkey in the last five minutes: "

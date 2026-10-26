@@ -269,6 +269,18 @@ _ENTRIES: list[tuple[str, str, str, str]] = [
     *_e("POST", "/api/owner/recovery/new", "own-auth",
         "the owner's live session cookie and a passkey check or recovery-code sign-in in the "
         "last five minutes"),
+    # Remote access (server/routes/remote_access.py, server/remote_join.py).
+    *_e("POST", "/api/owner/remote/phone", "own-auth",
+        "the owner's live session cookie on this Host's own name, a passkey on that name, and a "
+        "passkey check or recovery-code sign-in in the last five minutes; answers a one-time "
+        "join code (ten minutes, kept only as its sha-256) for the remote address"),
+    *_e("POST", "/api/owner/remote/join/options", "own-auth",
+        "the one-time join code from the desktop's QR code, spent by remote_join.start under the "
+        "sign-in's per-client backoff; only on the remote address"),
+    *_e("POST", "/api/owner/remote/join/verify", "own-auth",
+        "the new passkey for the ceremony the join code was spent for, verified by the webauthn "
+        "library for the remote address's relying party before it is kept; only on the remote "
+        "address"),
     # The machine a cloud Host runs on (server/cloud_machine.py).
     *_e("POST", "/api/owner/machine/restart", "own-auth",
         "the owner's live session cookie on this Host's own name; asks the machine's door "

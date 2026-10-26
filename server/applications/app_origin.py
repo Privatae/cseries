@@ -50,8 +50,8 @@ import re
 from dataclasses import dataclass
 from typing import Iterable, Mapping
 
-from server.home_origin import HOME
-from server.host_names import HOST_SUFFIXES
+from server.home_origin import ORIGINS
+from server.host_names import APP_ZONES
 
 KEY_RECIPE = b"app-origin/v1\x00"
 KEY_LEN = 20
@@ -123,7 +123,7 @@ def browser_host(headers: Mapping[str, str] | Iterable[tuple[bytes, bytes]]) -> 
 
 def classify(host: str) -> Origin:
     """Which of the label shapes `host` (already host_of'd) is."""
-    for zone in HOST_SUFFIXES:
+    for zone in APP_ZONES:
         if host.endswith(zone):
             label = host[: -len(zone)]
             break
@@ -158,7 +158,7 @@ def frame_ancestors_for(handle: str) -> str:
     (a source without a port matches only the default one). frame-ancestors
     is checked against EVERY ancestor, so no app's origin can frame another
     app's origin."""
-    return " ".join(HOME.origin_of(f"{handle}{zone}") for zone in HOST_SUFFIXES)
+    return " ".join(o.origin_of(f"{handle}{o.zone}") for o in ORIGINS)
 
 
 _FA_RE = re.compile(r"(?i)(^|;)\s*frame-ancestors[^;]*")

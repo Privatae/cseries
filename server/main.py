@@ -1879,6 +1879,8 @@ async def bastion_git_relay(ws: WebSocket):
 app.include_router(system.router)
 from server.routes import owner as _owner_route  # noqa: E402
 app.include_router(_owner_route.router)
+from server.routes import remote_access as _remote_access_route  # noqa: E402
+app.include_router(_remote_access_route.router)
 app.include_router(files.router)
 app.include_router(screen.router)
 app.include_router(input.router)

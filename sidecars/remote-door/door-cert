@@ -1,0 +1,52 @@
+#!/usr/bin/python3 -I
+"""The remote address's wildcard certificate, made on this machine: the cloud
+box's own job (vm/cloud/overlay/usr/local/sbin/cseries-cert, copied into this
+image unchanged) with the files kept by the door's own user and no systemd to
+reload. door-run notices the new files and reloads Caddy itself.
+
+The ACME account key and the certificate's key are made here, by lego, and
+stay in this machine's volumes (the cert state and the door's tls directory);
+nothing sends them anywhere. The acme-dns credential that lets lego answer
+the DNS challenge for <address_id>.<zone> comes with remote access from the
+network (with the member door's remote-access ticket, not built yet) and sits in
+/etc/cseries-cloud beside cloud.json, as on a cloud box. Without it this
+waits and does nothing.
+
+    door-cert           once
+    door-cert --loop    once now, then every day at a random minute
+"""
+
+import importlib.machinery
+import importlib.util
+import random
+import sys
+import time
+
+CERT = "/usr/local/sbin/cseries-cert"
+DAY_S = 86400
+
+
+def load():
+    loader = importlib.machinery.SourceFileLoader("cseries_cert", CERT)
+    spec = importlib.util.spec_from_loader("cseries_cert", loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    mod.TLS_GROUP = None
+    mod.RELOAD = None
+    return mod
+
+
+def main(argv):
+    cert = load()
+    if "--loop" not in argv:
+        return cert.main()
+    while True:
+        try:
+            cert.main()
+        except Exception as exc:  # noqa: BLE001 — the next day tries again
+            print(f"cert: {exc.__class__.__name__}: {exc}", file=sys.stderr, flush=True)
+        time.sleep(DAY_S + random.SystemRandom().uniform(-3600, 3600))
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

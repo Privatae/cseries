@@ -43,6 +43,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
+from server import home_origin
 from server.home_origin import HOME
 
 logger = logging.getLogger("cseries.owner_login")
@@ -97,6 +98,15 @@ _FAILURE_FORGET_S = 3600.0
 _password_failures: tuple[int, float, float] = (0, 0.0, 0.0)
 GLOBAL_FREE = 20
 _GLOBAL_WAIT_MAX = 900
+# Every wrong recovery code on this Host, whoever sent it, held the same way
+# and to the same numbers (NIST SP 800-63B 5.2.2: no more than 100 failed
+# attempts on one account). The per-source record cannot bound these: on the
+# remote address the source is the one the relay wrote into the tunnel's
+# OPEN (the door believes the Host's PROXY header, the Host believes the
+# door), so a relay, or anyone with many addresses, would never meet it.
+# Kept apart from the password's, so neither flood holds the other, and only
+# a recovery code waits on it: a passkey signs in whatever this says.
+_recovery_failures: tuple[int, float, float] = (0, 0.0, 0.0)
 # Sessions signed out in this process -> when. A check that read the row just
 # before the sign-out deleted it must not then cache it as live.
 _signed_out: dict[str, float] = {}
@@ -230,19 +240,22 @@ def needs_setup() -> bool:
     return _owner_email is None
 
 
-def secure_cookie() -> bool:
+def secure_cookie(host: Optional[str] = None) -> bool:
     """Whether the session cookie is Secure and __Host- named: CSERIES_URL is
-    an https address. A plain-http Host (the local default) keeps its cookie
-    as it was; a browser would drop a Secure cookie set over plain HTTP."""
-    return HOME.scheme == "https"
+    an https address, or `host` (the request's) is on the remote address,
+    which is always https (home_origin.REMOTE). A plain-http Host (the local
+    default) keeps its cookie as it was on its own address; a browser would
+    drop a Secure cookie set over plain HTTP."""
+    return HOME.scheme == "https" or (host is not None and home_origin.is_remote_host(host))
 
 
-def cookie_name() -> str:
-    """The session cookie's name for this Host. Cookies are shared by every
-    port of a host name, so the name carries a suffix chosen when the owner was
-    created: a second Host on the same machine uses a different cookie."""
+def cookie_name(host: Optional[str] = None) -> str:
+    """The session cookie's name for this Host, on `host`. Cookies are shared
+    by every port of a host name, so the name carries a suffix chosen when the
+    owner was created: a second Host on the same machine uses a different
+    cookie."""
     name = f"{COOKIE_PREFIX}_{_cookie_suffix}" if _cookie_suffix else COOKIE_PREFIX
-    return HOST_ONLY_PREFIX + name if secure_cookie() else name
+    return HOST_ONLY_PREFIX + name if secure_cookie(host) else name
 
 
 # ── setup and sign-in ───────────────────────────────────────────────────────
@@ -365,6 +378,22 @@ def _note_password_failure() -> None:
     _password_failures = (count, now_m + wait, now_m)
 
 
+def _recovery_locked_for() -> float:
+    _count, until, _last = _recovery_failures
+    return max(0.0, until - time.monotonic())
+
+
+def _note_recovery_failure() -> None:
+    global _recovery_failures
+    now_m = time.monotonic()
+    count, until, last = _recovery_failures
+    if now_m - max(until, last) > _FAILURE_FORGET_S:
+        count = 0
+    count += 1
+    wait = 0.0 if count < GLOBAL_FREE else min(2 ** (count - GLOBAL_FREE), _GLOBAL_WAIT_MAX)
+    _recovery_failures = (count, now_m + wait, now_m)
+
+
 async def _new_session(pool, origin: str) -> str:
     """A new desktop session valid on host `origin` only; the token to set
     as its cookie. Every way of signing in ends here, so each issues the
@@ -381,6 +410,11 @@ async def _new_session(pool, origin: str) -> str:
 async def sign_in(email: str, password: str, client: str, origin: str) -> str:
     """Check the owner's credentials and return a new session token, valid
     on host `origin` only."""
+    if home_origin.is_remote_host(origin):
+        # The remote address is open to the whole internet: the password
+        # never signs in there, even on a Host that still has one.
+        raise LoginError("On this address the Host signs in with a passkey or a recovery "
+                         "code only.")
     pool = _pool()
     async with _sign_in_lock:
         wait = _locked_for(client)

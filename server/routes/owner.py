@@ -15,7 +15,7 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 from fastapi import APIRouter, Request, WebSocket
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 
-from server import cloud_machine, owner_login, owner_passkeys, trusted_proxies
+from server import cloud_machine, home_origin, owner_login, owner_passkeys, trusted_proxies
 from server.home_origin import HOME
 from server.middleware.localhost_only import DOOR_PATH, _unmap_v4
 from server.middleware.owner_session import (_cookie, door_decision, join_url, live_session,
@@ -190,6 +190,25 @@ on('restart', async () => {
   if (!res.ok) { fail(res.j.error); return; }
   say('done', 'The machine restarts in a few seconds. It comes back locked: unlock it, then sign in again.');
 });
+on('add-phone', async () => {
+  say('err', '');
+  const res = await withCheck(() => post('/api/owner/remote/phone', {}));
+  if (!res.ok) { fail(res.j.error); return; }
+  const box = $('qr');
+  box.textContent = '';
+  if (window.qrcode) {
+    const q = qrcode(0, 'M');
+    q.addData(res.j.url);
+    q.make();
+    box.innerHTML = q.createSvgTag({cellSize: 5, margin: 4, scalable: true, alt: 'QR code for adding a phone'});
+  }
+  say('phone-link', 'Or open this on the phone: ' + res.j.url);
+  $('phone').hidden = false;
+  say('done', 'The code works for ten minutes.');
+});
+if ($('remote-sw') && 'serviceWorker' in navigator) {
+  navigator.serviceWorker.register('/remote-sw.js').catch(() => {});
+}
 on('new-codes', async () => {
   say('err', '');
   const res = await withCheck(() => post('/api/owner/recovery/new', {}));
@@ -204,8 +223,9 @@ def _form_html(action: str, fields: str, button: str) -> str:
     return f'<form data-action="{action}">{fields}<button type="submit">{button}</button></form>'
 
 
-def _page(title: str, intro: str, body: str) -> HTMLResponse:
-    return HTMLResponse(_PAGE.format(title=title, intro=intro, body=body, script=_SCRIPT),
+def _page(title: str, intro: str, body: str, extra_script: str = "") -> HTMLResponse:
+    return HTMLResponse(_PAGE.format(title=title, intro=intro, body=body,
+                                     script=_SCRIPT + extra_script),
                         headers={"Cache-Control": "no-store"})
 
 
@@ -231,7 +251,7 @@ def _browser_used_https(request: Request) -> bool:
     otherwise (server/launch.py turns uvicorn's own reading of it off).
     Anyone else's X-Forwarded-Proto or Forwarded is a header the visitor
     wrote, and is not read."""
-    if owner_login.secure_cookie() or request.url.scheme == "https":
+    if owner_login.secure_cookie(request_host(request.scope)) or request.url.scheme == "https":
         return True
     if not trusted_proxies.peer_is_trusted(_unmap_v4(request.client.host if request.client else None)):
         return False
@@ -243,7 +263,7 @@ def _browser_used_https(request: Request) -> bool:
 
 
 def _with_cookie(resp, token: str, request: Request):
-    resp.set_cookie(owner_login.cookie_name(), token,
+    resp.set_cookie(owner_login.cookie_name(request_host(request.scope)), token,
                     max_age=int(owner_login.SESSION_MAX.total_seconds()),
                     httponly=True, samesite="strict",
                     secure=_browser_used_https(request), path="/")
@@ -270,8 +290,23 @@ def _unlock_link(st: dict | None, text: str) -> str:
     return f'<p><a href="{html.escape(url, quote=True)}">{text}</a></p>' if url else ""
 
 
+def _remote_refusal() -> HTMLResponse:
+    """/setup and the password on the remote address: never there."""
+    resp = _page("Not on this address", '<p>Set up your Host, and sign in with your password, on '
+                 'the computer it runs on. On this address your Host signs in with a passkey or a '
+                 'recovery code only.</p>', '<p><a href="/login">Sign in</a></p>')
+    resp.status_code = 403
+    return _no_store(resp)
+
+
+def _is_remote(request: Request | None) -> bool:
+    return request is not None and home_origin.is_remote_host(request_host(request.scope))
+
+
 @router.get("/setup", include_in_schema=False)
-async def setup_page():
+async def setup_page(request: Request = None):
+    if _is_remote(request):
+        return _remote_refusal()
     if not owner_login.needs_setup():
         return RedirectResponse("/login", status_code=303)
     st = cloud_machine.state()
@@ -323,8 +358,31 @@ async def _passkeys_and_codes() -> tuple[int, int]:
     return await owner_passkeys.passkey_count(pool), await owner_passkeys.unused_recovery_codes(pool)
 
 
+_RECOVERY_FORM = ('<details><summary>Sign in with a recovery code instead</summary>'
+                  + _form_html("/api/owner/recovery/login",
+                               '<label for="code">Recovery code</label><input id="code" name="code" '
+                               'autocomplete="one-time-code" required>',
+                               "Sign in with the code")
+                  + '<p class="note">Each recovery code works once.</p></details>')
+
+
+def _remote_login_page() -> HTMLResponse:
+    """The remote address's sign-in: a passkey made on this address, or a
+    recovery code. Never the password."""
+    if owner_login.needs_setup():
+        return _page("Sign in to C-Series", '<p>This Host is not set up yet. Set it up on the '
+                     'computer it runs on.</p>', "")
+    body = ('<button id="passkey" type="button">Sign in with a passkey</button>' + _RECOVERY_FORM
+            + '<p class="note">No passkey on this device yet? On the computer your Host runs on, '
+            'open Settings, Remote access, and choose Add a phone.</p>'
+            '<span id="remote-sw" hidden></span>')
+    return _page("Sign in to C-Series", "", body)
+
+
 @router.get("/login", include_in_schema=False)
-async def login_page():
+async def login_page(request: Request = None):
+    if _is_remote(request):
+        return _remote_login_page()
     if owner_login.needs_setup():
         return RedirectResponse("/setup", status_code=303)
     passkeys, _codes = await _passkeys_and_codes()
@@ -400,6 +458,8 @@ async def passkey_page(request: Request):
                 + await _passkey_list(passkeys) + end_others)
     if cloud_machine.state() is not None:
         body += '<p><a href="/machine">This machine: its disk, its access log, restarts</a></p>'
+    if home_origin.REMOTE is not None:
+        body += '<p><a href="/remote">Remote access: add a phone</a></p>'
     body += '<p><a href="/">Continue to C-Series</a></p>'
     return _page("Passkeys", intro, body)
 
@@ -506,6 +566,8 @@ async def owner_status(request: Request):
 
 @router.post("/api/owner/setup", include_in_schema=False)
 async def owner_setup(request: Request):
+    if _is_remote(request):
+        return JSONResponse({"error": "Set up your Host on the computer it runs on."}, status_code=403)
     body = await _form(request)
     try:
         await owner_login.create_owner(_text(body, "code"), _text(body, "email"),
@@ -520,6 +582,10 @@ async def owner_setup(request: Request):
 
 @router.post("/api/owner/login", include_in_schema=False)
 async def owner_sign_in(request: Request):
+    if _is_remote(request):
+        # owner_login.sign_in refuses it too.
+        return JSONResponse({"error": "On this address the Host signs in with a passkey or a "
+                                      "recovery code only."}, status_code=403)
     body = await _form(request)
     try:
         token = await owner_login.sign_in(_text(body, "email"), _text(body, "password"),
@@ -622,8 +688,10 @@ async def recovery_login(request: Request):
                                                       request_host(request.scope))
     except owner_login.LoginError as exc:
         return _refusal(exc, 401)
-    # Someone signing in with a code has usually lost their passkey.
-    return _with_cookie(JSONResponse({"ok": True, "next": "/passkey"}), token, request)
+    # Someone signing in with a code has usually lost their passkey. The
+    # passkeys page is the desktop's; on the remote address, the Host.
+    nxt = "/" if _is_remote(request) else "/passkey"
+    return _with_cookie(JSONResponse({"ok": True, "next": nxt}), token, request)
 
 
 @router.post("/api/owner/passkey/register/options", include_in_schema=False)
@@ -723,7 +791,8 @@ async def owner_sign_out(request: Request):
     resp = JSONResponse({"ok": True})
     # The same attributes it was set with: a browser ignores a clearing
     # Set-Cookie for a __Host- name that lacks Secure or path /.
-    resp.delete_cookie(owner_login.cookie_name(), path="/", secure=_browser_used_https(request),
+    resp.delete_cookie(owner_login.cookie_name(request_host(request.scope)), path="/",
+                       secure=_browser_used_https(request),
                        httponly=True, samesite="strict")
     return resp
 
@@ -788,7 +857,8 @@ async def host_door_ws(websocket: WebSocket):
 async def host_join(request: Request, to: str = "", rd: str = "/"):
     """On the desktop, with its session: send the frame to app origin `to`
     with a one-time code for a session there."""
-    if request_host(request.scope) != HOME.host:
+    home = home_origin.desktop_origin(request_host(request.scope))
+    if home is None:
         return _no_store(JSONResponse({"error": "not the desktop"}, status_code=404))
     _email, token = await live_session(request.scope)
     if not token:
@@ -799,12 +869,14 @@ async def host_join(request: Request, to: str = "", rd: str = "/"):
     except ValueError:
         port = -1
     host = (target.hostname or "").lower()
-    if target.scheme != HOME.scheme or port != HOME.port or not own_app_origin(host) \
-            or HOME.origin_of(host) != to.rstrip("/"):
+    # An app origin of THIS address: the remote desktop's session never makes
+    # one for the desktop's own address, nor the other way round.
+    if target.scheme != home.scheme or port != home.port or not own_app_origin(host) \
+            or not host.endswith(home.zone) or home.origin_of(host) != to.rstrip("/"):
         return _no_store(JSONResponse({"error": "not an app origin of this Host"}, status_code=400))
     code = owner_login.start_join(token, host)
     return _no_store(RedirectResponse(
-        HOME.origin_of(host) + "/__host/session?" + urlencode({"code": code, "rd": _safe_rd(rd)}),
+        home.origin_of(host) + "/__host/session?" + urlencode({"code": code, "rd": _safe_rd(rd)}),
         status_code=303))
 
 
@@ -818,7 +890,8 @@ async def host_session(request: Request, code: str = "", rd: str = "/"):
     rd = _safe_rd(rd)
     if not own_app_origin(host):
         email, _token = await live_session(request.scope)
-        target = rd if email else ("/setup" if owner_login.needs_setup() else "/login")
+        target = rd if email else ("/setup" if owner_login.needs_setup() and not _is_remote(request)
+                                   else "/login")
         return _no_store(RedirectResponse(target, status_code=303))
     token = await owner_login.finish_join(code, host) if code else None
     if not token:

@@ -123,9 +123,15 @@ def origin_allowed(origin: str, host_header: str | None, *, own_origin: bool) ->
 
 def loopback_host_ok(host_header: str | None) -> bool:
     """Whether a session-free loopback request names this machine in its Host
-    header: a localhost name or one in CSERIES_ALLOWED_ORIGINS."""
+    header: a localhost name or one in CSERIES_ALLOWED_ORIGINS. Never a name
+    on the remote address (home_origin.REMOTE), even one listed there: those
+    come from the internet, through the machine's door, which reaches the
+    Host from its own address and never from loopback."""
+    from server.home_origin import is_remote_host
     host = _host_parts(host_header)
-    return host is not None and (host[0] in ALLOWED_HOSTS or host[0] in _EXTRA_ORIGIN_HOSTS)
+    if host is None or is_remote_host(host[0]):
+        return False
+    return host[0] in ALLOWED_HOSTS or host[0] in _EXTRA_ORIGIN_HOSTS
 
 
 def _unmap_v4(host: str | None) -> str | None:
@@ -239,10 +245,23 @@ PASSKEY_PUBLIC_PATHS = frozenset({"/api/owner/passkey/login/options",
                                   "/api/owner/passkey/login/verify",
                                   "/api/owner/recovery/login"})
 OWNER_BOX_PATHS = frozenset({"/api/owner/claim", "/api/owner/box-sign-in"})
+# Remote access (server/routes/remote_access.py): a phone joins with the
+# one-time code from the desktop's QR code (the page and its two posts), and
+# the remote address's service worker and its "not reachable" page are files
+# with nothing of the owner's in them. Each route answers on the remote
+# address only and checks its own credential.
+REMOTE_PUBLIC_PATHS = frozenset({"/remote/join", "/api/owner/remote/join/options",
+                                 "/api/owner/remote/join/verify", "/remote-sw.js",
+                                 "/remote/offline"})
 OWNER_PUBLIC_PATHS = frozenset({"/login", "/setup", "/api/owner/login", "/api/owner/setup",
                                 "/api/owner/status", "/api/owner/logout",
                                 "/__host/session", "/__host/renew", DOOR_PATH}
-                               | PASSKEY_PUBLIC_PATHS | OWNER_BOX_PATHS)
+                               | PASSKEY_PUBLIC_PATHS | OWNER_BOX_PATHS | REMOTE_PUBLIC_PATHS)
+# Refused on the remote address, at its door and in the routes: the Host is
+# set up only on its own machine, the password never signs in from the
+# internet, and the unlock page's tickets belong to a cloud machine.
+REMOTE_REFUSED_PATHS = frozenset({"/setup", "/api/owner/setup", "/api/owner/login"}
+                                 | OWNER_BOX_PATHS)
 
 
 def door_question_path(uri: str | None) -> str:

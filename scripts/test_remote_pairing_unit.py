@@ -191,7 +191,7 @@ async def _raises(coro, exc_type):
     return None
 
 
-def _request(peer, headers=()):
+def _request(peer, headers=(), host="home.box.example"):
     from starlette.requests import Request
     body = b"{}"
     sent = [False]
@@ -201,7 +201,7 @@ def _request(peer, headers=()):
             sent[0] = True
             return {"type": "http.request", "body": body, "more_body": False}
         return {"type": "http.disconnect"}
-    hdrs = [(b"content-type", b"application/json"), (b"host", b"home.box.example")]
+    hdrs = [(b"content-type", b"application/json"), (b"host", host.encode())]
     hdrs += [(k.encode(), v.encode()) for k, v in headers]
     return Request({"type": "http", "method": "POST", "path": "/api/network/bastions/setup",
                     "headers": hdrs, "client": (peer, 40000), "server": ("10.88.0.5", 8800),
@@ -309,6 +309,32 @@ async def setup_route(d):
             err = await _raises(NR.setup_bastion(via_proxy_again()), HTTPException)
             check(err is not None and err.status_code == 403, "no owner session: no check, 403", err)
             session["token"] = "tok-owner"
+
+            # Through remote access the address X-Forwarded-For names is the
+            # relay's word (it wrote the tunnel's OPEN): refused, with a fresh
+            # check, whatever address it names.
+            from server import home_origin
+            saved_remote = home_origin.REMOTE
+            home_origin.REMOTE = home_origin.parse_remote(
+                f"https://{home_origin.HOME.handle}.k7x2m9.remote.example.test", home_origin.HOME)
+            try:
+                h.lines.clear()
+                minted.clear()
+                owner_passkeys._note_step_up("tok-owner", owner_passkeys.PASSKEY)
+                err = await _raises(NR.setup_bastion(_request(
+                    "10.88.0.1", [("x-forwarded-for", PUBLIC)],
+                    host=home_origin.REMOTE.host)), HTTPException)
+                check(err is not None and err.status_code == 403 and "own network" in str(err.detail)
+                      and not h.lines and not minted,
+                      "on the remote address: 403, set it up from the machine's own network; the "
+                      "port stays shut, nothing minted", (err and err.detail, h.lines, minted))
+            finally:
+                home_origin.REMOTE = saved_remote
+            with Env(CSERIES_REMOTE_DOOR="10.88.0.1:8443"):
+                err = await _raises(NR.setup_bastion(via_proxy_again()), HTTPException)
+                check(err is not None and err.status_code == 403 and not h.lines and not minted,
+                      "from the remote door's own address, whatever Host it names: 403, the port "
+                      "stays shut", (err and err.detail, h.lines))
 
         with Env(CSERIES_LANE_HOST="home.box.example", CSERIES_DOOR_HELPER=None,
                  CSERIES_TRUSTED_PROXIES=None, CSERIES_ENROLL_PORT=None, CSERIES_LANE_PORT=None):

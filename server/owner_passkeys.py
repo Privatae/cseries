@@ -38,6 +38,16 @@ one the password would sign in again, so the owner adds another first.
 Each ceremony's challenge lives in this process (the server is one process,
 server/launch.py) for CEREMONY_TTL_S, bound to its purpose, the host and, for
 a signed-in owner, the session; it is used once.
+
+On a member Host with remote access there is a second address
+(home_origin.REMOTE). A passkey's relying party is the address it was made on,
+exactly, so a passkey made on a phone on the remote address works there and
+nowhere else, and the desktop's own passkeys work only on the desktop's own
+address. Each passkey keeps its relying party (rp_id, v252; '' for one made
+before there were two, which is the desktop's). Once any passkey exists the
+password no longer signs in; a phone is added only once the desktop has a
+passkey of its own (server/remote_join.py), so the owner is never left with
+passkeys that only work from a phone.
 """
 
 from __future__ import annotations
@@ -51,6 +61,7 @@ from typing import Optional
 
 from server import owner_login as L
 from server.backup_key import new_recovery_code, normalize_recovery_code
+from server import home_origin
 from server.home_origin import HOME
 
 logger = logging.getLogger("cseries.owner_passkeys")
@@ -108,9 +119,20 @@ def _webauthn():
     return webauthn, structs
 
 
-def _check_host(host: str) -> None:
-    if (host or "").lower() != HOME.host:
+def _check_host(host: str):
+    """The address (HOME, or the remote one) whose desktop name is `host`;
+    passkeys are used there and nowhere else."""
+    origin = home_origin.desktop_origin(host)
+    if origin is None:
         raise PasskeyError(f"Passkeys are used on this Host's own address, {HOME.origin}.")
+    return origin
+
+
+def rp_ids(origin) -> list[str]:
+    """The rp_id values a passkey of `origin`'s relying party is kept with:
+    its desktop name, and for the desktop's own address also '' (a passkey
+    kept before there were two addresses)."""
+    return [origin.host, ""] if origin is HOME else [origin.host]
 
 
 def _holder_of_session(token: str) -> str:
@@ -169,8 +191,13 @@ def _transports(names) -> list:
 
 # ── what exists ─────────────────────────────────────────────────────────────
 
-async def passkey_count(pool) -> int:
-    return int(await pool.fetchval("SELECT count(*) FROM owner_passkeys") or 0)
+async def passkey_count(pool, origin=None) -> int:
+    """How many passkeys this Host has; with `origin`, how many for that
+    address's relying party."""
+    if origin is None:
+        return int(await pool.fetchval("SELECT count(*) FROM owner_passkeys") or 0)
+    return int(await pool.fetchval("SELECT count(*) FROM owner_passkeys WHERE rp_id = ANY($1::text[])",
+                                   rp_ids(origin)) or 0)
 
 
 async def unused_recovery_codes(pool) -> int:
@@ -179,18 +206,24 @@ async def unused_recovery_codes(pool) -> int:
 
 
 async def list_passkeys(pool) -> list[dict]:
-    """Every passkey, oldest first: its id (base64url), label and dates."""
+    """Every passkey, oldest first: its id (base64url), label, dates and the
+    address it works on (rp_id, '' for the desktop's own)."""
     webauthn, _ = _webauthn()
-    rows = await pool.fetch("SELECT credential_id, label, created_at, last_used_at "
+    rows = await pool.fetch("SELECT credential_id, label, created_at, last_used_at, rp_id "
                             "FROM owner_passkeys ORDER BY created_at")
     return [{"id": webauthn.helpers.bytes_to_base64url(bytes(r["credential_id"])),
-             "label": r["label"], "created_at": r["created_at"], "last_used_at": r["last_used_at"]}
+             "label": r["label"], "created_at": r["created_at"], "last_used_at": r["last_used_at"],
+             "rp_id": r.get("rp_id") or ""}
             for r in rows]
 
 
-async def _descriptors(pool) -> list:
+async def _descriptors(pool, origin=None) -> list:
+    """The passkeys of `origin`'s relying party (the desktop's by default),
+    as the browser is told about them."""
     _, structs = _webauthn()
-    rows = await pool.fetch("SELECT credential_id, transports FROM owner_passkeys ORDER BY created_at")
+    rows = await pool.fetch("SELECT credential_id, transports FROM owner_passkeys "
+                            "WHERE rp_id = ANY($1::text[]) ORDER BY created_at",
+                            rp_ids(origin or HOME))
     return [structs.PublicKeyCredentialDescriptor(id=bytes(r["credential_id"]),
                                                   transports=_transports(r["transports"]))
             for r in rows]
@@ -259,7 +292,8 @@ async def new_recovery_codes(pool) -> list[str]:
 
 
 async def recovery_sign_in(code: str, client: str, host: str) -> str:
-    """Spend one recovery code and return a new session token for `host`."""
+    """Spend one recovery code and return a new session token for `host`
+    (the desktop's own address or the remote one)."""
     _check_host(host)
     pool = L._pool()
     async with L._sign_in_lock:
@@ -268,12 +302,19 @@ async def recovery_sign_in(code: str, client: str, host: str) -> str:
             raise PasskeyError(f"Too many wrong tries. Wait {int(wait) + 1} seconds.")
         if L.needs_setup():
             raise PasskeyError("This Host has no owner yet.")
+        # Every source's wrong codes together (owner_login._recovery_failures):
+        # the source above is the relay's word on the remote address.
+        wait = L._recovery_locked_for()
+        if wait > 0:
+            raise PasskeyError(f"Too many wrong recovery codes on this Host. Wait {int(wait) + 1} "
+                               "seconds, or sign in with your passkey.")
         h = _code_hash(code)
         spent = h and await pool.fetchval(
             "UPDATE owner_recovery_codes SET used_at = now() "
             "WHERE code_hash = $1 AND used_at IS NULL RETURNING code_hash", h)
         if not spent:
             L._note_failure(client)
+            L._note_recovery_failure()
             raise PasskeyError("That recovery code is not right, or it was used already.")
         L._forget_failures(client)
     token = await L._new_session(pool, host)
@@ -348,22 +389,27 @@ async def _may_add(pool, token: str, starting: bool = False) -> None:
                             "minutes. Sign in again at /login, then add it here.")
 
 
-async def registration_options(token: str, host: str) -> dict:
-    _check_host(host)
+async def creation_options(pool, origin, purpose: str, host: str, holder: str) -> dict:
+    """A new passkey's ceremony for `origin`'s relying party."""
     webauthn, structs = _webauthn()
-    pool = L._pool()
-    await _may_add(pool, token, starting=True)
     email = L.owner_email() or "owner"
     opts = webauthn.generate_registration_options(
-        rp_id=HOME.host, rp_name=RP_NAME, user_id=USER_HANDLE, user_name=email,
+        rp_id=origin.host, rp_name=RP_NAME, user_id=USER_HANDLE, user_name=email,
         user_display_name=email,
         attestation=structs.AttestationConveyancePreference.NONE,
         authenticator_selection=structs.AuthenticatorSelectionCriteria(
             resident_key=structs.ResidentKeyRequirement.REQUIRED,
             user_verification=structs.UserVerificationRequirement.REQUIRED),
-        exclude_credentials=await _descriptors(pool))
-    cid = _new_ceremony(REGISTER, host, _holder_of_session(token), opts.challenge)
+        exclude_credentials=await _descriptors(pool, origin))
+    cid = _new_ceremony(purpose, host, holder, opts.challenge)
     return {"ceremony": cid, "options": _rp_options(opts)}
+
+
+async def registration_options(token: str, host: str) -> dict:
+    origin = _check_host(host)
+    pool = L._pool()
+    await _may_add(pool, token, starting=True)
+    return await creation_options(pool, origin, REGISTER, host, _holder_of_session(token))
 
 
 def _label(raw) -> str:
@@ -372,34 +418,41 @@ def _label(raw) -> str:
     return text or time.strftime("added %Y-%m-%d", time.gmtime())
 
 
-async def register(token: str, host: str, ceremony, credential, label=None) -> dict:
-    """Keep the passkey the browser just made. Returns {"recovery_codes": [...],
-    "sessions_ended": n}: fresh codes when the owner has none left unused,
-    else None there; and how many other sessions ended (only the first
-    passkey ends them)."""
-    _check_host(host)
+async def keep_new_passkey(pool, origin, challenge: bytes, credential, label) -> None:
+    """Check the browser's new passkey for `origin`'s relying party against
+    `challenge`, and keep it with that relying party."""
     webauthn, _ = _webauthn()
-    pool = L._pool()
-    challenge = _take_ceremony(ceremony, REGISTER, host, _holder_of_session(token))
-    await _may_add(pool, token)
-    first = not await passkey_count(pool)
     if not isinstance(credential, dict):
         raise PasskeyError("That answer is not a passkey's.")
     try:
         got = webauthn.verify_registration_response(
-            credential=credential, expected_challenge=challenge, expected_rp_id=HOME.host,
-            expected_origin=HOME.origin, require_user_verification=True)
+            credential=credential, expected_challenge=challenge, expected_rp_id=origin.host,
+            expected_origin=origin.origin, require_user_verification=True)
     except Exception as exc:
         logger.info("owner passkey: registration refused: %s", exc)
         raise PasskeyError("The passkey could not be checked. Start again.")
     response = credential.get("response") if isinstance(credential.get("response"), dict) else {}
     transports = [t for t in (response.get("transports") or []) if t in _TRANSPORTS][:8]
     inserted = await pool.fetchval(
-        "INSERT INTO owner_passkeys (credential_id, public_key, sign_count, transports, label) "
-        "VALUES ($1, $2, $3, $4, $5) ON CONFLICT (credential_id) DO NOTHING RETURNING credential_id",
-        got.credential_id, got.credential_public_key, int(got.sign_count), transports, _label(label))
+        "INSERT INTO owner_passkeys (credential_id, public_key, sign_count, transports, label, rp_id) "
+        "VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (credential_id) DO NOTHING RETURNING credential_id",
+        got.credential_id, got.credential_public_key, int(got.sign_count), transports, _label(label),
+        origin.host)
     if not inserted:
         raise PasskeyError("That passkey is already on this Host.")
+
+
+async def register(token: str, host: str, ceremony, credential, label=None) -> dict:
+    """Keep the passkey the browser just made. Returns {"recovery_codes": [...],
+    "sessions_ended": n}: fresh codes when the owner has none left unused,
+    else None there; and how many other sessions ended (only the first
+    passkey ends them)."""
+    origin = _check_host(host)
+    pool = L._pool()
+    challenge = _take_ceremony(ceremony, REGISTER, host, _holder_of_session(token))
+    await _may_add(pool, token)
+    first = not await passkey_count(pool)
+    await keep_new_passkey(pool, origin, challenge, credential, label)
     codes = await new_recovery_codes(pool) if not await unused_recovery_codes(pool) else None
     logger.warning("owner login: a passkey was added; the password no longer signs in")
     # The first passkey: every session the password made, but this one, ends.
@@ -412,7 +465,7 @@ async def register(token: str, host: str, ceremony, credential, label=None) -> d
 async def _options_for(purpose: str, host: str, holder: str, allow: list) -> dict:
     webauthn, structs = _webauthn()
     opts = webauthn.generate_authentication_options(
-        rp_id=HOME.host, allow_credentials=allow,
+        rp_id=_check_host(host).host, allow_credentials=allow,
         user_verification=structs.UserVerificationRequirement.REQUIRED)
     return {"ceremony": _new_ceremony(purpose, host, holder, opts.challenge),
             "options": _rp_options(opts)}
@@ -428,17 +481,19 @@ async def login_options(client: str, host: str) -> dict:
 
 
 async def step_up_options(token: str, host: str) -> dict:
-    _check_host(host)
+    origin = _check_host(host)
     pool = L._pool()
-    allow = await _descriptors(pool)
+    allow = await _descriptors(pool, origin)
     if not allow:
         raise PasskeyError("There is no passkey on this Host yet.")
     return await _options_for(STEP_UP, host, _holder_of_session(token), allow)
 
 
-async def _assert(pool, challenge: bytes, credential, client: str) -> None:
-    """Check an assertion against the passkey it names and move that
-    passkey's counter on. Call with owner_login._sign_in_lock held."""
+async def _assert(pool, challenge: bytes, credential, client: str, origin=None) -> None:
+    """Check an assertion against the passkey it names, for `origin`'s
+    relying party (the desktop's by default), and move that passkey's counter
+    on. Call with owner_login._sign_in_lock held."""
+    origin = origin or HOME
     webauthn, _ = _webauthn()
     if not isinstance(credential, dict):
         L._note_failure(client)
@@ -455,8 +510,8 @@ async def _assert(pool, challenge: bytes, credential, client: str) -> None:
         raise PasskeyError("That passkey is not one this Host knows.")
     try:
         got = webauthn.verify_authentication_response(
-            credential=credential, expected_challenge=challenge, expected_rp_id=HOME.host,
-            expected_origin=HOME.origin, credential_public_key=bytes(row["public_key"]),
+            credential=credential, expected_challenge=challenge, expected_rp_id=origin.host,
+            expected_origin=origin.origin, credential_public_key=bytes(row["public_key"]),
             credential_current_sign_count=int(row["sign_count"]), require_user_verification=True)
     except Exception as exc:
         logger.info("owner passkey: assertion refused: %s", exc)
@@ -470,14 +525,14 @@ async def _assert(pool, challenge: bytes, credential, client: str) -> None:
 
 async def passkey_sign_in(ceremony, credential, client: str, host: str) -> str:
     """Check a passkey sign-in and return a new session token for `host`."""
-    _check_host(host)
+    origin = _check_host(host)
     pool = L._pool()
     async with L._sign_in_lock:
         wait = L._locked_for(client)
         if wait > 0:
             raise PasskeyError(f"Too many wrong tries. Wait {int(wait) + 1} seconds.")
         challenge = _take_ceremony(ceremony, LOGIN, host, _holder_of_client(client))
-        await _assert(pool, challenge, credential, client)
+        await _assert(pool, challenge, credential, client, origin)
     token = await L._new_session(pool, host)
     _note_step_up(token, PASSKEY)
     return token
@@ -486,14 +541,14 @@ async def passkey_sign_in(ceremony, credential, client: str, host: str) -> str:
 async def step_up(token: str, ceremony, credential, client: str, host: str) -> None:
     """Check a signed-in owner's passkey now; fresh_step_up then holds for
     STEP_UP_S."""
-    _check_host(host)
+    origin = _check_host(host)
     pool = L._pool()
     async with L._sign_in_lock:
         wait = L._locked_for(client)
         if wait > 0:
             raise PasskeyError(f"Too many wrong tries. Wait {int(wait) + 1} seconds.")
         challenge = _take_ceremony(ceremony, STEP_UP, host, _holder_of_session(token))
-        await _assert(pool, challenge, credential, client)
+        await _assert(pool, challenge, credential, client, origin)
     _note_step_up(token, PASSKEY)
 
 

@@ -958,11 +958,63 @@ TEMPLATE_HTML = """\
   // ── Apps, the bar, presence — from the shell, re-drawn on change ──────
   function esc(s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
     return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); }
-  // Rewrite a region only when its markup changed: the shell re-posts state on
-  // every window and dock event, and replacing a button between press and
-  // release loses the click.
+  // Rewrite a region only when its markup changed, and then only what changed:
+  // the shell re-posts state on every window and dock event, and a button
+  // replaced between its press and its release loses the click. A control that
+  // is still wanted stays the same element (its class and label are updated in
+  // place); only controls that came or went are added or removed.
   var drawn = {};
-  function put(id, html) { if (drawn[id] !== html) { drawn[id] = html; $(id).innerHTML = html; } }
+  function keyOf(n) {
+    if (n.nodeType !== 1) return "";
+    for (var i = 0; i < n.attributes.length; i++)
+      if (n.attributes[i].name.indexOf("data-cseries-") === 0)
+        return n.nodeName + " " + n.attributes[i].name + "=" + n.attributes[i].value;
+    return "";
+  }
+  // Bring one wanted node into an existing one, in place: attributes, then
+  // children by position. Nothing is re-parsed from text, so markup is never
+  // serialized and parsed a second time; a child that is the same kind of node
+  // is updated where it stands (so a press on a label survives the label being
+  // rewritten) and any other is swapped.
+  function mend(have, want) {
+    var i, a, h, w;
+    if (want.nodeType !== 1) { if (have.nodeValue !== want.nodeValue) have.nodeValue = want.nodeValue; return; }
+    for (i = 0; i < want.attributes.length; i++) {
+      a = want.attributes[i];
+      if (have.getAttribute(a.name) !== a.value) have.setAttribute(a.name, a.value);
+    }
+    for (i = have.attributes.length - 1; i >= 0; i--)
+      if (!want.hasAttribute(have.attributes[i].name)) have.removeAttribute(have.attributes[i].name);
+    h = Array.prototype.slice.call(have.childNodes);
+    w = Array.prototype.slice.call(want.childNodes);
+    for (i = 0; i < w.length; i++) {
+      if (i >= h.length) have.appendChild(w[i]);
+      else if (h[i].nodeName === w[i].nodeName && h[i].namespaceURI === w[i].namespaceURI) mend(h[i], w[i]);
+      else have.replaceChild(w[i], h[i]);
+    }
+    for (i = w.length; i < h.length; i++) have.removeChild(h[i]);
+  }
+  // A region is its controls, each matched by its first data-cseries-* attribute
+  // (kind and value, so another window with the same label is another control).
+  // Whatever is no control (text, an element with no such attribute) is replaced
+  // each time, as it always was; a duplicate of a control is a new element.
+  function put(id, html) {
+    if (drawn[id] === html) return;
+    drawn[id] = html;
+    var box = $(id), t = document.createElement("template"), kept = {}, order = [], i, k, el;
+    t.innerHTML = html;
+    var next = Array.prototype.slice.call(t.content.childNodes), now = Array.prototype.slice.call(box.childNodes);
+    for (i = 0; i < next.length; i++) order.push(keyOf(next[i]));
+    for (i = 0; i < now.length; i++) {
+      k = keyOf(now[i]);
+      if (k && order.indexOf(k) >= 0 && !kept[k]) kept[k] = now[i]; else box.removeChild(now[i]);
+    }
+    for (i = 0; i < next.length; i++) {
+      el = order[i] && kept[order[i]];
+      if (el) { delete kept[order[i]]; mend(el, next[i]); } else el = next[i];
+      if (box.childNodes[i] !== el) box.insertBefore(el, box.childNodes[i] || null);
+    }
+  }
   function draw(S) {
     document.body.classList.toggle("phone", !!S.phone);
     document.body.classList.toggle("owns-bar", !!CSeriesDesktop.ownsBar);

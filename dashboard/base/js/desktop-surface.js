@@ -105,6 +105,15 @@ const DesktopSurface = (() => {
     // document `window.CSeriesDesktop`, auto-fills any `[data-cseries-apps]`
     // container with a default icon grid, and turns TRUSTED clicks on
     // `[data-cseries-app]` / right-clicks / Escape into port messages.
+    //
+    // The default renderers (render / renderDock / renderWindows) bring a
+    // container to the new state IN PLACE (fill): a control that is still
+    // wanted stays the same element and only its class and label change. The
+    // shell re-posts state after every window event, and a button replaced
+    // between its press and its release loses the click. fill() matches
+    // controls by their first data-cseries-* attribute (kind and value), moves
+    // the wanted nodes in rather than re-parsing text, and replaces anything
+    // that is no control (text, an element without one) as innerHTML did.
     const BRIDGE_SRC = `(function(){"use strict";
 var P=window.parent,now=performance.now.bind(performance),ch=new MessageChannel(),port=ch.port1,AP=Reflect.apply,PM=MessagePort.prototype.postMessage,DG=Object.getOwnPropertyDescriptor(MessageEvent.prototype,"data").get;
 var S={apps:[],all:[],host:"",presence:"",phone:false,reduced_motion:false,mode:"wallpaper",owns_bar:false,dock:[],windows:[],desktop_shown:false,machine:"",ready:false};
@@ -115,9 +124,21 @@ function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){retur
 function near(t,a){return t&&t.closest?t.closest("["+a+"]"):null}
 function appOf(t){return near(t,"data-cseries-app")}
 function idOf(el){return String(el.getAttribute("data-cseries-app")||"").slice(0,64)}
-function render(el){if(!el)return;el.innerHTML=S.apps.map(function(a){return '<button class="sk-app'+(a.running?' is-running':'')+(a.focused?' is-focused':'')+'" type="button" data-cseries-app="'+esc(a.id)+'" title="'+esc(a.description||a.name)+'"><span class="sk-app-icon">'+(a.icon||'')+'</span><span class="sk-app-label">'+esc(a.name)+'</span></button>'}).join("")}
-function renderDock(el){el.innerHTML=S.dock.map(function(a){return '<button class="sk-dock-item'+(a.running?' is-running':'')+(a.focused?' is-focused':'')+'" type="button" data-cseries-activate="'+esc(a.id)+'" title="'+esc(a.name)+'"><span class="sk-dock-icon">'+(a.icon||'')+'</span></button>'}).join("")}
-function renderWindows(el){el.innerHTML=S.windows.map(function(w){return '<button class="sk-window'+(w.focused?' is-focused':'')+(w.minimized?' is-minimized':'')+'" type="button" data-cseries-window="'+esc(w.id)+'" title="'+esc(w.title)+'"><span class="sk-window-icon">'+(w.icon||'')+'</span><span class="sk-window-title">'+esc(w.title)+'</span></button>'}).join("")}
+function keyOf(n){if(n.nodeType!==1)return "";for(var i=0;i<n.attributes.length;i++)if(n.attributes[i].name.indexOf("data-cseries-")===0)return n.nodeName+" "+n.attributes[i].name+"="+n.attributes[i].value;return ""}
+function mend(have,want){var i,a,h,w;if(want.nodeType!==1){if(have.nodeValue!==want.nodeValue)have.nodeValue=want.nodeValue;return}
+for(i=0;i<want.attributes.length;i++){a=want.attributes[i];if(have.getAttribute(a.name)!==a.value)have.setAttribute(a.name,a.value)}
+for(i=have.attributes.length-1;i>=0;i--)if(!want.hasAttribute(have.attributes[i].name))have.removeAttribute(have.attributes[i].name);
+h=Array.prototype.slice.call(have.childNodes);w=Array.prototype.slice.call(want.childNodes);
+for(i=0;i<w.length;i++){if(i>=h.length)have.appendChild(w[i]);else if(h[i].nodeName===w[i].nodeName&&h[i].namespaceURI===w[i].namespaceURI)mend(h[i],w[i]);else have.replaceChild(w[i],h[i])}
+for(i=w.length;i<h.length;i++)have.removeChild(h[i])}
+function fill(box,html){var t=document.createElement("template"),kept={},order=[],i,k,el;t.innerHTML=html;
+var next=Array.prototype.slice.call(t.content.childNodes),now=Array.prototype.slice.call(box.childNodes);
+for(i=0;i<next.length;i++)order.push(keyOf(next[i]));
+for(i=0;i<now.length;i++){k=keyOf(now[i]);if(k&&order.indexOf(k)>=0&&!kept[k])kept[k]=now[i];else box.removeChild(now[i])}
+for(i=0;i<next.length;i++){el=order[i]&&kept[order[i]];if(el){delete kept[order[i]];mend(el,next[i])}else el=next[i];if(box.childNodes[i]!==el)box.insertBefore(el,box.childNodes[i]||null)}}
+function render(el){if(!el)return;fill(el,S.apps.map(function(a){return '<button class="sk-app'+(a.running?' is-running':'')+(a.focused?' is-focused':'')+'" type="button" data-cseries-app="'+esc(a.id)+'" title="'+esc(a.description||a.name)+'"><span class="sk-app-icon">'+(a.icon||'')+'</span><span class="sk-app-label">'+esc(a.name)+'</span></button>'}).join(""))}
+function renderDock(el){fill(el,S.dock.map(function(a){return '<button class="sk-dock-item'+(a.running?' is-running':'')+(a.focused?' is-focused':'')+'" type="button" data-cseries-activate="'+esc(a.id)+'" title="'+esc(a.name)+'"><span class="sk-dock-icon">'+(a.icon||'')+'</span></button>'}).join(""))}
+function renderWindows(el){fill(el,S.windows.map(function(w){return '<button class="sk-window'+(w.focused?' is-focused':'')+(w.minimized?' is-minimized':'')+'" type="button" data-cseries-window="'+esc(w.id)+'" title="'+esc(w.title)+'"><span class="sk-window-icon">'+(w.icon||'')+'</span><span class="sk-window-title">'+esc(w.title)+'</span></button>'}).join(""))}
 function each(sel,fn){var els=document.querySelectorAll(sel);for(var i=0;i<els.length;i++)fn(els[i])}
 function renderAll(){each("[data-cseries-apps]",render);each("[data-cseries-dock]",renderDock);each("[data-cseries-windows]",renderWindows)}
 port.onmessage=function(e){var d=AP(DG,e,[]);if(!d||d.type!=="desktop:state")return;
@@ -629,13 +650,79 @@ if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",
         return String(s || '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
     }
 
+    // ── Icon markup: ONE fixed, safe form ─────────────────────────────────
+    // The document inserts an app's `icon` as markup (a design does
+    // `(a.icon || "")` into its own HTML), and what feeds it is not all ours:
+    // an image icon is a URL from the app's manifest, fetched here, and an app
+    // that serves its own icon (a process sidecar) also chooses the response's
+    // Content-Type, which used to become part of the <img> tag. So every icon
+    // is rebuilt here, from an allowlist, whatever its source: only the shapes
+    // below, only attributes whose values pass a strict pattern, text escaped,
+    // anything else (a script, an event handler, an iframe, a style, a link)
+    // dropped with its subtree. What the document receives cannot carry code.
+    const ICON_NUMS = /^[0-9eE.,+\s-]{1,40}$/;
+    const ICON_PAINT = /^(none|currentColor|#[0-9a-fA-F]{3,8}|var\(--[A-Za-z0-9-]{1,40}(, ?#[0-9a-fA-F]{3,8})?\))$/;
+    const ICON_PATH = /^[MmLlHhVvCcSsQqTtAaZz0-9eE.,+\s-]{0,4000}$/;
+    const ICON_IMG_SRC = /^data:image\/(png|jpeg|gif|webp|avif|svg\+xml|x-icon|vnd\.microsoft\.icon);base64,[A-Za-z0-9+/]+={0,2}$/;
+    const ICON_ATTRS = {
+        class: /^[A-Za-z0-9_ -]{0,60}$/, 'aria-hidden': /^true$/,
+        viewBox: ICON_NUMS, width: ICON_NUMS, height: ICON_NUMS, x: ICON_NUMS, y: ICON_NUMS,
+        x1: ICON_NUMS, y1: ICON_NUMS, x2: ICON_NUMS, y2: ICON_NUMS, cx: ICON_NUMS, cy: ICON_NUMS,
+        r: ICON_NUMS, rx: ICON_NUMS, ry: ICON_NUMS, points: ICON_NUMS, d: ICON_PATH,
+        fill: ICON_PAINT, stroke: ICON_PAINT, 'stroke-width': ICON_NUMS, opacity: ICON_NUMS,
+        'fill-opacity': ICON_NUMS, 'stroke-opacity': ICON_NUMS,
+        'stroke-linecap': /^(round|butt|square)$/, 'stroke-linejoin': /^(round|miter|bevel)$/,
+        'fill-rule': /^(evenodd|nonzero)$/, 'clip-rule': /^(evenodd|nonzero)$/,
+        src: ICON_IMG_SRC,
+    };
+    // element → the attributes it may carry (an attribute on another element is dropped)
+    const ICON_TAGS = {
+        svg: ['class', 'aria-hidden', 'viewBox', 'width', 'height', 'fill', 'stroke', 'stroke-width',
+              'stroke-linecap', 'stroke-linejoin'],
+        g: ['fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'opacity'],
+        path: ['d', 'fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'opacity',
+               'fill-opacity', 'stroke-opacity', 'fill-rule', 'clip-rule'],
+        circle: ['cx', 'cy', 'r', 'fill', 'stroke', 'stroke-width', 'opacity', 'fill-opacity', 'stroke-opacity'],
+        ellipse: ['cx', 'cy', 'rx', 'ry', 'fill', 'stroke', 'stroke-width', 'opacity', 'fill-opacity', 'stroke-opacity'],
+        rect: ['x', 'y', 'width', 'height', 'rx', 'ry', 'fill', 'stroke', 'stroke-width', 'opacity',
+               'fill-opacity', 'stroke-opacity'],
+        line: ['x1', 'y1', 'x2', 'y2', 'stroke', 'stroke-width', 'stroke-linecap', 'opacity'],
+        polyline: ['points', 'fill', 'stroke', 'stroke-width', 'stroke-linecap', 'stroke-linejoin', 'opacity'],
+        polygon: ['points', 'fill', 'stroke', 'stroke-width', 'stroke-linejoin', 'opacity', 'fill-opacity'],
+        span: ['class'],
+        img: ['src'],
+    };
+    function iconNode(n, inSpan) {
+        if (n.nodeType === 3) return inSpan ? esc(n.nodeValue) : '';
+        if (n.nodeType !== 1 || !Object.prototype.hasOwnProperty.call(ICON_TAGS, n.localName)) return '';
+        const tag = n.localName;
+        let attrs = '';
+        for (const a of Array.from(n.attributes)) {
+            const rule = ICON_ATTRS[a.name];
+            if (ICON_TAGS[tag].includes(a.name) && rule && rule.test(a.value)) attrs += ` ${a.name}="${esc(a.value)}"`;
+        }
+        if (tag === 'img') return /\ssrc="/.test(attrs) ? `<img${attrs} alt="">` : '';
+        const inner = Array.from(n.childNodes).map((c) => iconNode(c, tag === 'span')).join('');
+        return `<${tag}${attrs}>${inner}</${tag}>`;
+    }
+    function safeIcon(markup) {
+        const t = document.createElement('template');
+        t.innerHTML = String(markup == null ? '' : markup);
+        return Array.from(t.content.childNodes).map((c) => iconNode(c, false)).join('');
+    }
+
     /**
-     * Inline icon markup for the document. Glyph apps are already inline SVG
-     * (icons.js). Image icons are fetched HERE — with the shell's session —
-     * and inlined as data URLs, because the opaque-origin frame carries no
-     * cookie and must never be handed a URL to fetch.
+     * Inline icon markup for the document, always in the safe form above.
+     * Glyph apps are already inline SVG (icons.js). Image icons are fetched
+     * HERE — with the shell's session — and inlined as data URLs, because the
+     * opaque-origin frame carries no cookie and must never be handed a URL to
+     * fetch.
      */
-    function iconFor(app) {
+    async function iconFor(app) {
+        return safeIcon(await rawIconFor(app));
+    }
+
+    function rawIconFor(app) {
         const m = window.iconMarkup ? window.iconMarkup(app, 40) : '';
         if (!/^<img/i.test(m)) return Promise.resolve(m);
         const url = app.icon_url;
@@ -653,7 +740,9 @@ if(document.readyState==="loading")document.addEventListener("DOMContentLoaded",
                     fr.onerror = rej;
                     fr.readAsDataURL(blob);
                 });
-                return `<img src="${dataUrl}" alt="">`;
+                // The type is the response's own header, so it is checked, not
+                // trusted: anything but a plain image type is the letter.
+                return ICON_IMG_SRC.test(dataUrl) ? `<img src="${dataUrl}" alt="">` : letter;
             } catch (_) {
                 state.iconCache.delete(url);   // retry on the next state post
                 return letter;

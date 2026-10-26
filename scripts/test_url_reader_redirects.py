@@ -234,6 +234,9 @@ class _Resp:
 
 
 class _Session:
+    def __init__(self, **kw):
+        self.kw = kw
+
     def __enter__(self):
         return self
 
@@ -249,8 +252,15 @@ class _Session:
 _fake = types.ModuleType("curl_cffi")
 _fake.requests = types.SimpleNamespace(Session=_Session)
 _saved_mods = {k: sys.modules.get(k) for k in ("curl_cffi", "curl_cffi.requests")}
+_fake.CurlOpt = types.SimpleNamespace(RESOLVE=10000 + 203)
 sys.modules["curl_cffi"] = _fake
 sys.modules["curl_cffi.requests"] = _fake.requests
+# No proxy here, so the fetcher resolves each stand-in name itself and pins
+# libcurl to it (test_url_reader_internal_names.py pins that): each answers a
+# documentation address, counted as outside for this test.
+_real_resolve = ur._resolve_addrs
+ur._resolve_addrs = lambda host, port: ["198.51.100.7"]
+os.environ["CSERIES_EGRESS_TEST_NETS"] = "198.51.100.0/24"
 try:
     SCRIPT.update({
         "https://a.example/": (302, {"Location": "https://b.example/page"}, b""),
@@ -316,6 +326,8 @@ try:
           [u for u, _ in REQUESTED] == ["https://slow.example/1", "https://slow.example/2"],
           REQUESTED)
 finally:
+    ur._resolve_addrs = _real_resolve
+    os.environ.pop("CSERIES_EGRESS_TEST_NETS", None)
     for k, v in _saved_mods.items():
         if v is None:
             sys.modules.pop(k, None)

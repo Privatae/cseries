@@ -334,13 +334,194 @@ def normalize_url(raw: str) -> tuple[str, str]:
         return "", f"refusing to fetch internal host {host!r}"
     ip = _as_ip(host)
     if ip is None:
-        pass  # a name — squid resolves and applies its own internal-CIDR deny
+        # A name: the proxy resolves it and refuses the internal ranges, and
+        # with no proxy the fetchers resolve it here first and dial only the
+        # addresses checked (_direct_pin, _checked_connector).
+        pass
     elif (ip.is_private or ip.is_loopback or ip.is_link_local
-            or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            or ip.is_reserved or ip.is_multicast or ip.is_unspecified
+            or not _outside(str(ip))):
+        # The last test is the rule a name is held to (_outside): an address
+        # written as a literal is dialled as it stands, by both fetchers, so
+        # it gets no laxer rule than a name that resolves to it. 100.64.0.0/10
+        # (shared address space: carrier NAT, a tailnet's machines and its
+        # 100.100.100.100) is neither private nor global, and passed the tests
+        # above.
         return "", f"refusing to fetch internal address {host} ({ip})"
     # Drop the fragment: it never reaches the server and only splits the
     # per-host politeness key.
     return urlunsplit((parts.scheme, netloc, parts.path, parts.query, "")), ""
+
+
+# ── a dial with no proxy: the address is checked, and that address is dialled ─
+#
+# normalize_url judges an address written as a literal and leaves a name to the
+# proxy, which resolves it and refuses the internal ranges. A Host with no proxy
+# in its environment (a C-Series Host: nothing sets HTTPS_PROXY in its
+# container) has the fetchers resolve and dial the name themselves, so there a
+# name is resolved here first and refused when any address it has is not on
+# the internet, by the rule the Host's egress gate holds its app lane to
+# (server/network/nac_egress.py _outside). The fetcher is then held to the
+# addresses that were checked: libcurl is handed them (CURLOPT_RESOLVE) and
+# never resolves the name again, and aiohttp dials through a resolver that
+# refuses an internal answer at connection time. A name that answered a public
+# address to the check and 127.0.0.1 to the dial is never dialled.
+# CSERIES_EGRESS_TEST_NETS counts ranges as outside, for a test machine whose
+# stand-in sites live in documentation ranges, as it does for the gate; nothing
+# sets it on a real machine.
+
+class AddressRefused(RedirectRefused):
+    """A name that resolves to this machine or a private network, refused
+    before it is dialled (a RedirectRefused, so every caller already answers
+    it as a refusal and never retries it on the fallback)."""
+
+
+_NAT64_WKP = ipaddress.ip_network("64:ff9b::/96")
+_NAT64_ALL = ipaddress.ip_network("64:ff9b::/32")
+
+
+def _test_nets() -> list:
+    out = []
+    for n in (os.environ.get("CSERIES_EGRESS_TEST_NETS") or "").split(","):
+        n = n.strip()
+        if n:
+            try:
+                out.append(ipaddress.ip_network(n, strict=False))
+            except ValueError:
+                pass
+    return out
+
+
+def _outside(addr: str) -> bool:
+    """Whether an address is on the internet (or a test's stand-in): the egress
+    gate's rule. A NAT64 address is judged by the IPv4 address inside it, and
+    the rest of 64:ff9b::/32 is refused."""
+    try:
+        ip = ipaddress.ip_address(str(addr).split("%", 1)[0])
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address):
+        if ip.ipv4_mapped:
+            ip = ip.ipv4_mapped
+        elif ip in _NAT64_WKP:
+            ip = ipaddress.IPv4Address(int(ip) & 0xFFFFFFFF)
+        elif ip in _NAT64_ALL:
+            return False
+    if any(ip.version == n.version and ip in n for n in _test_nets()):
+        return True
+    return ip.is_global
+
+
+def _no_proxy_all() -> bool:
+    return any(e.strip() == "*" for v in ("no_proxy", "NO_PROXY")
+               for e in (os.environ.get(v) or "").split(","))
+
+
+def _curl_proxied(scheme: str) -> bool:
+    """Whether libcurl sends a request for this scheme to a proxy from the
+    environment: http_proxy (lower case only, as libcurl reads it) for http,
+    https_proxy or HTTPS_PROXY for https, all_proxy or ALL_PROXY for both;
+    never with no_proxy=*. A host NO_PROXY lists never gets here
+    (normalize_url refuses it)."""
+    if _no_proxy_all():
+        return False
+    env = os.environ
+    if env.get("all_proxy") or env.get("ALL_PROXY"):
+        return True
+    if scheme == "http":
+        return bool(env.get("http_proxy"))
+    return bool(env.get("https_proxy") or env.get("HTTPS_PROXY"))
+
+
+def _aiohttp_proxied(url: str) -> bool:
+    """Whether aiohttp's trust_env sends this URL to a proxy: its own rule."""
+    try:
+        from aiohttp.helpers import get_env_proxy_for_url
+        from yarl import URL
+        get_env_proxy_for_url(URL(url))
+        return True
+    except LookupError:
+        return False
+
+
+def _resolve_addrs(host: str, port: int) -> list:
+    """Every address host resolves to, in the resolver's order."""
+    import socket
+    out = []
+    for info in socket.getaddrinfo(host, port, type=socket.SOCK_STREAM):
+        a = info[4][0]
+        if a not in out:
+            out.append(a)
+    return out
+
+
+def _refuse_internal(host: str, addrs: list) -> None:
+    bad = [a for a in addrs if not _outside(a)]
+    if not addrs or bad:
+        raise AddressRefused(
+            f"refusing to fetch internal host {host!r}: it resolves to "
+            f"{(bad or ['nothing'])[0]}, which is this machine or a private network")
+
+
+def _direct_pin(url: str) -> list:
+    """For a URL libcurl will dial itself: CURLOPT_RESOLVE entries holding it
+    to the addresses checked here ([] when a proxy takes it, or the host is an
+    address normalize_url already judged). Raises AddressRefused."""
+    parts = urlsplit(url)
+    if _curl_proxied(parts.scheme):
+        return []
+    written = parts.hostname or ""
+    host = written.rstrip(".")
+    if not host or _as_ip(host) is not None:
+        return []
+    port = parts.port or (443 if parts.scheme == "https" else 80)
+    try:
+        addrs = _resolve_addrs(host, port)
+    except OSError as e:
+        raise AddressRefused(f"refusing to fetch {host!r}: it does not resolve ({e})") from None
+    _refuse_internal(host, addrs)
+    pinned = ",".join(f"[{a}]" if ":" in a else a for a in addrs)
+    # libcurl matches an entry against the host as the URL writes it, trailing
+    # dot and all: an entry for "example.com" is not used for "example.com.",
+    # and libcurl then resolves that name itself (measured on libcurl 8.18
+    # with --resolve). So the name is pinned in both spellings.
+    names = [host] + ([written] if written != host else [])
+    return [f"{n}:{port}:{pinned}" for n in names]
+
+
+def _checked_connector():
+    """An aiohttp connector whose resolver refuses an internal answer when it
+    is asked at connection time (an address literal is never sent to it:
+    normalize_url judged that)."""
+    import aiohttp
+    from aiohttp.abc import AbstractResolver
+
+    class _Checked(AbstractResolver):
+        def __init__(self):
+            self._inner = aiohttp.ThreadedResolver()
+
+        async def resolve(self, host, port=0, family=0):
+            try:
+                infos = await self._inner.resolve(host, port, family)
+            except OSError as e:
+                raise AddressRefused(f"refusing to fetch {host!r}: it does not resolve ({e})") from None
+            _refuse_internal(host, [i["host"] for i in infos])
+            return infos
+
+        async def close(self):
+            await self._inner.close()
+
+    return aiohttp.TCPConnector(resolver=_Checked())
+
+
+def _aiohttp_session(url: str):
+    """A session for this fetch: on the proxy when the environment names one
+    (the proxy resolves, and refuses), else dialling through the checked
+    resolver."""
+    import aiohttp
+    if _aiohttp_proxied(url):
+        return aiohttp.ClientSession(trust_env=True)
+    return aiohttp.ClientSession(trust_env=True, connector=_checked_connector())
 
 
 def _time_left(deadline: float) -> float:
@@ -387,48 +568,49 @@ async def _fetch_aiohttp(url: str) -> dict:
     import aiohttp
     # One deadline for the whole redirect chain, as the single request had.
     deadline = time.monotonic() + _FALLBACK_TIMEOUT_S
-    async with aiohttp.ClientSession(trust_env=True) as s:
-        cur, hops = url, 0
-        while True:
-            left = _time_left(deadline)
-            # The same rule the curl_cffi fetcher runs under (stream=True: a
-            # connect limit and curl's low-speed limit, never a total): the
-            # redirect chain has its deadline, and a body is read as long as
-            # bytes keep arriving — a large page on a slow server is not cut
-            # at a wall clock (no fixed time ceilings).
-            async with s.get(cur, headers=_HONEST_HEADERS, allow_redirects=False,
-                             timeout=aiohttp.ClientTimeout(total=None, connect=min(10, left),
-                                                           sock_read=_FALLBACK_TIMEOUT_S)) as r:
-                loc = r.headers.get("Location") if r.status in _REDIRECT_CODES else None
-                if not loc:
-                    # One read(n) returns only what is buffered so far, not n
-                    # bytes; read until one byte past the bound or EOF, so the
-                    # body is whole up to the bound and a cut means the page
-                    # really is longer.
-                    bound = _MAX_HTML_BYTES
-                    buf = bytearray()
-                    while len(buf) <= bound:
-                        chunk = await r.content.read(bound + 1 - len(buf))
-                        if not chunk:
-                            break
-                        buf += chunk
-                    cut = len(buf) > bound
-                    raw = bytes(buf[:bound])
-                    del buf
-                    enc = r.charset or "utf-8"
-                    try:
-                        body = raw.decode(enc, "replace")
-                    except LookupError:
-                        body = raw.decode("utf-8", "replace")
-                    # Leaving the context with the body unread closes the
-                    # connection: the rest of an over-bound page is never
-                    # downloaded.
-                    return {"status": r.status, "body": body,
-                            "final_url": str(r.url), "via": "aiohttp",
-                            "content_type": (r.headers.get("Content-Type") or ""),
-                            "source_cut": cut}
-            cur = _next_hop(cur, loc, hops)
-            hops += 1
+    cur, hops = url, 0
+    while True:
+        left = _time_left(deadline)
+        # The same rule the curl_cffi fetcher runs under (stream=True: a
+        # connect limit and curl's low-speed limit, never a total): the
+        # redirect chain has its deadline, and a body is read as long as
+        # bytes keep arriving — a large page on a slow server is not cut
+        # at a wall clock (no fixed time ceilings). A session per hop, so
+        # each is dialled as its own URL's proxy rule says (_aiohttp_session).
+        async with _aiohttp_session(cur) as s, \
+                s.get(cur, headers=_HONEST_HEADERS, allow_redirects=False,
+                      timeout=aiohttp.ClientTimeout(total=None, connect=min(10, left),
+                                                    sock_read=_FALLBACK_TIMEOUT_S)) as r:
+            loc = r.headers.get("Location") if r.status in _REDIRECT_CODES else None
+            if not loc:
+                # One read(n) returns only what is buffered so far, not n
+                # bytes; read until one byte past the bound or EOF, so the
+                # body is whole up to the bound and a cut means the page
+                # really is longer.
+                bound = _MAX_HTML_BYTES
+                buf = bytearray()
+                while len(buf) <= bound:
+                    chunk = await r.content.read(bound + 1 - len(buf))
+                    if not chunk:
+                        break
+                    buf += chunk
+                cut = len(buf) > bound
+                raw = bytes(buf[:bound])
+                del buf
+                enc = r.charset or "utf-8"
+                try:
+                    body = raw.decode(enc, "replace")
+                except LookupError:
+                    body = raw.decode("utf-8", "replace")
+                # Leaving the context with the body unread closes the
+                # connection: the rest of an over-bound page is never
+                # downloaded.
+                return {"status": r.status, "body": body,
+                        "final_url": str(r.url), "via": "aiohttp",
+                        "content_type": (r.headers.get("Content-Type") or ""),
+                        "source_cut": cut}
+        cur = _next_hop(cur, loc, hops)
+        hops += 1
 
 
 def _fetch_curl_cffi_sync(url: str) -> dict:
@@ -436,6 +618,7 @@ def _fetch_curl_cffi_sync(url: str) -> dict:
     synchronous. `impersonate` swaps in a real Chrome TLS + HTTP/2 fingerprint;
     the proxy comes from http_proxy/https_proxy in the environment, which
     libcurl reads on its own (verified — see the module docstring)."""
+    import contextlib
     from curl_cffi import requests as cc
     bound = _MAX_HTML_BYTES
     # STREAMED (stream=True + iter_content), so the transfer is closed at the
@@ -443,9 +626,17 @@ def _fetch_curl_cffi_sync(url: str) -> dict:
     # the bound protects pod memory only if nothing past it is ever read. The
     # session stays open while the body streams; close() stops the transfer.
     deadline = time.monotonic() + _FETCH_TIMEOUT_S
-    with cc.Session() as s:
+    with contextlib.ExitStack() as stack:
         cur, hops = url, 0
         while True:
+            # A session per hop: each is held to the addresses its own host
+            # was checked to have, when libcurl dials it itself (_direct_pin).
+            pin = _direct_pin(cur)
+            if pin:
+                from curl_cffi import CurlOpt
+                s = stack.enter_context(cc.Session(curl_options={CurlOpt.RESOLVE: pin}))
+            else:
+                s = stack.enter_context(cc.Session())
             r = s.request("GET", cur, impersonate="chrome",
                           timeout=_time_left(deadline),
                           headers={"Accept-Language": _HONEST_HEADERS["Accept-Language"]},
@@ -792,31 +983,33 @@ async def fetch_bytes(url: str, max_bytes: int) -> dict:
     headers = {**_HONEST_HEADERS, "Accept": "image/png,image/jpeg,image/gif,image/webp;q=0.9,*/*;q=0.1"}
     deadline = time.monotonic() + _FALLBACK_TIMEOUT_S
     try:
-        async with aiohttp.ClientSession(trust_env=True) as s:
-            cur, hops = clean, 0
-            while True:
-                left = _time_left(deadline)
-                async with s.get(cur, headers=headers, allow_redirects=False,
-                                 timeout=aiohttp.ClientTimeout(total=None, connect=min(10, left),
-                                                               sock_read=_FALLBACK_TIMEOUT_S)) as r:
-                    loc = r.headers.get("Location") if r.status in _REDIRECT_CODES else None
-                    if not loc:
-                        if r.status >= 400:
-                            return {"ok": False, "error": f"{cur} returned HTTP {r.status}"}
-                        buf = bytearray()
-                        while len(buf) <= max_bytes:
-                            chunk = await r.content.read(max_bytes + 1 - len(buf))
-                            if not chunk:
-                                break
-                            buf += chunk
-                        if len(buf) > max_bytes:
-                            return {"ok": False, "error": (
-                                f"{cur} is over {max_bytes // (1024 * 1024)} MB")}
-                        return {"ok": True, "url": clean, "final_url": str(r.url),
-                                "body": bytes(buf),
-                                "content_type": r.headers.get("Content-Type") or ""}
-                cur = _next_hop(cur, loc, hops)
-                hops += 1
+        cur, hops = clean, 0
+        while True:
+            left = _time_left(deadline)
+            # A session per hop, dialled as its own URL's proxy rule says
+            # (_aiohttp_session): with no proxy, through the checked resolver.
+            async with _aiohttp_session(cur) as s, \
+                    s.get(cur, headers=headers, allow_redirects=False,
+                          timeout=aiohttp.ClientTimeout(total=None, connect=min(10, left),
+                                                        sock_read=_FALLBACK_TIMEOUT_S)) as r:
+                loc = r.headers.get("Location") if r.status in _REDIRECT_CODES else None
+                if not loc:
+                    if r.status >= 400:
+                        return {"ok": False, "error": f"{cur} returned HTTP {r.status}"}
+                    buf = bytearray()
+                    while len(buf) <= max_bytes:
+                        chunk = await r.content.read(max_bytes + 1 - len(buf))
+                        if not chunk:
+                            break
+                        buf += chunk
+                    if len(buf) > max_bytes:
+                        return {"ok": False, "error": (
+                            f"{cur} is over {max_bytes // (1024 * 1024)} MB")}
+                    return {"ok": True, "url": clean, "final_url": str(r.url),
+                            "body": bytes(buf),
+                            "content_type": r.headers.get("Content-Type") or ""}
+            cur = _next_hop(cur, loc, hops)
+            hops += 1
     except RedirectRefused as e:
         return {"ok": False, "error": str(e)}
     except Exception as e:  # noqa: BLE001 — a failed fetch is said, never raised

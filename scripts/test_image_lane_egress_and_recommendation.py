@@ -130,9 +130,14 @@ check("generate builds its session with trust_env=True (the proxy is the only wa
 
 _ur = (ROOT / "brain/mastercode/runtime/url_reader.py").read_text(encoding="utf-8")
 _fb = _ur[_ur.index("async def fetch_bytes("):]
+# fetch_bytes opens each hop's session with _aiohttp_session, which keeps
+# trust_env=True either way (with no proxy it adds only the checked resolver:
+# scripts/test_url_reader_internal_names.py).
+_as = _ur[_ur.index("def _aiohttp_session("):_ur.index("def _time_left(")]
 check("a web picture for look is fetched on the proxy (url_reader.fetch_bytes, trust_env=True)",
-      "aiohttp.ClientSession(trust_env=True)" in _fb and "normalize_url(url)" in _fb
-      and "_next_hop(" in _fb, _fb[:200])
+      "_aiohttp_session(cur)" in _fb and "normalize_url(url)" in _fb
+      and "_next_hop(" in _fb and _as.count("aiohttp.ClientSession(trust_env=True") == 2,
+      _fb[:200])
 
 # A route pinned to a PRIVATE address (the user's own machine, loopback) is
 # dialled direct: NO_PROXY cannot name a CIDR and the node proxy refuses

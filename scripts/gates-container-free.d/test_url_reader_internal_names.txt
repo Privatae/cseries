@@ -1,0 +1,4 @@
+# With no egress proxy (a C-Series Host), the URL reader resolves a name
+# itself, refuses one that resolves to this machine or a private network,
+# and dials only the addresses it checked.
+test_url_reader_internal_names.py

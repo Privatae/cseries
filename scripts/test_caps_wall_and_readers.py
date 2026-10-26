@@ -434,6 +434,9 @@ def main() -> int:
             consumed["closed"] = True
 
     class _StubSession:
+        def __init__(self, **kw):
+            self.kw = kw
+
         def __enter__(self):
             return self
 
@@ -448,8 +451,13 @@ def main() -> int:
     stub_req.Session = _StubSession
     stub_req.get = lambda url, **kw: _StubResp()
     stub_pkg.requests = stub_req
+    stub_pkg.CurlOpt = types.SimpleNamespace(RESOLVE=10000 + 203)
     saved_mods = {k: sys.modules.get(k) for k in ("curl_cffi", "curl_cffi.requests")}
     sys.modules["curl_cffi"], sys.modules["curl_cffi.requests"] = stub_pkg, stub_req
+    # With no proxy the fetcher resolves the name itself and pins libcurl to
+    # it: the stand-in name answers a public address.
+    saved_resolve = ur._resolve_addrs
+    ur._resolve_addrs = lambda host, port: ["93.184.215.14"]
     ur._MAX_HTML_BYTES = 1024 * 1024
     try:
         r = _real_curl("https://e.com/big")
@@ -465,6 +473,7 @@ def main() -> int:
         check("16: the curl_cffi lane stops at the bound: body = the bound, source_cut true", False, repr(e))
     finally:
         ur._MAX_HTML_BYTES = saved_bound
+        ur._resolve_addrs = saved_resolve
         for k, v in saved_mods.items():
             if v is None:
                 sys.modules.pop(k, None)

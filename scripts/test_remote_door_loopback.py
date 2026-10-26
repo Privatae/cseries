@@ -36,7 +36,7 @@ browser would be the machine's owner. This gate proves it cannot happen:
        - EVERY request the Host received came from the door's address (none
          from loopback), with the browser's own address in X-Forwarded-For.
 
-Needs `unshare` (user and network namespaces), `ip` and `caddy` (2.11.2 is
+Needs `unshare` (user and network namespaces), `ip` and `caddy` (2.11.7 is
 what the door image pins); the gate re-runs itself inside the namespace.
 
     python3 scripts/test_remote_door_loopback.py       (from the repo root)

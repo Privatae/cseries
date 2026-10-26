@@ -1,7 +1,7 @@
 # The door on a member's own machine, for remote access (compose.remote.yaml).
 #
-# Caddy, upstream 2.11.2, pinned by digest (the multi-arch index of
-# caddy:2.11.2-alpine, read from Docker Hub on 2026-10-25): its standard
+# Caddy, upstream 2.11.7, pinned by digest (the multi-arch index of
+# caddy:2.11.7-alpine, read from Docker Hub on 2026-10-26): its standard
 # proxy_protocol listener wrapper reads the browser's address the Host's
 # tunnel writes ahead of each connection. Python and lego are for the
 # certificate job (door-cert), which is the cloud box's own cseries-cert and
@@ -9,7 +9,7 @@
 #
 # Build from the repository root:
 #   docker build -f sidecars/remote-door/Dockerfile -t cseries-remote-door:dev .
-FROM caddy:2.11.2-alpine@sha256:834468128c7696cec0ceea6172f7d692daf645ae51983ca76e39da54a97c570d
+FROM caddy:2.11.7-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f
 
 # Links the published package to its source, as the Host and postgres images do
 # (docs/RELEASING.md).

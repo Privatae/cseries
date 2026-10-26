@@ -5,7 +5,7 @@ updates the status of every item here ([docs/RELEASING.md](docs/RELEASING.md)).
 Other documents in this repository say whether each paid offering is on sale,
 and link here for the rest.
 
-Last updated 2026-10-25. An estimate is our guess, counted from that date.
+Last updated 2026-10-26. An estimate is our guess, counted from that date.
 It is not a promised date, and it is changed here when it moves.
 
 - **Available**: in a published release, or on sale.
@@ -100,9 +100,11 @@ you post on the community board is not sealed: other members read it.
   network that runs for your Host while your machine is off. It will keep no
   memory of its own, and what it stores for your Host will be encrypted to
   your Host's key.
-- **Your Host from anywhere.** In progress; estimate about 5 to 8 weeks.
-  Reach your own Host from a phone or a browser anywhere, through the
-  network, while it keeps running on your machine.
+- **Your Host from anywhere.** Built; it opens with membership. Reach your
+  own Host from a phone or a browser anywhere, through the network, while it
+  keeps running on your machine. The connection stays encrypted from the
+  browser to a door on your machine, which holds the only key that opens it;
+  the network's relay passes it on without one.
 
 ## Later
 

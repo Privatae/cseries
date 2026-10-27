@@ -6,6 +6,10 @@
 # tunnel writes ahead of each connection. Python and lego are for the
 # certificate job (door-cert), which is the cloud box's own cseries-cert and
 # cseries-acme-dns-hook, copied here unchanged with the module they import.
+# nft is for door-filter, the door's own firewall in the Docker Compose
+# install (compose.remote.yaml), where nothing else keeps the door to the
+# Host's web port; the WSL and Lima guests filter on their bridge instead and
+# run door-run directly.
 #
 # Build from the repository root:
 #   docker build -f sidecars/remote-door/Dockerfile -t cseries-remote-door:dev .
@@ -22,15 +26,25 @@ LABEL org.opencontainers.image.source="https://github.com/Privatae/cseries"
 # checks it at run time too). When Alpine replaces a revision, this build
 # fails until the pins are moved to the new one; move lego off 4.29 only with
 # door-cert's account layout checked against the new series.
-RUN apk add --no-cache python3=3.12.15-r0 lego=4.29.0-r6 \
-    && test -x /usr/bin/lego && test -x /usr/bin/python3 \
-    && /usr/bin/lego --version | grep -q ' 4\.29\.'
+#
+# The caddy base image gives /usr/bin/caddy, and Alpine's package /usr/bin/lego,
+# the file capability cap_net_bind_service=+ep. The door and its certificate
+# job run with an empty bounding set (compose.remote.yaml's cap_drop and
+# door-filter, the guests' DropCapability=ALL), and the kernel refuses to run a
+# binary with an effective file capability it cannot grant: "exec: Operation
+# not permitted", so Caddy never starts and lego never makes a certificate.
+# Neither needs it (Caddy listens on 8443; lego answers DNS-01 through
+# cseries-acme-dns-hook), so both lose it here.
+RUN apk add --no-cache python3=3.12.15-r0 lego=4.29.0-r6 nftables=1.1.5-r2 \
+    && test -x /usr/bin/lego && test -x /usr/bin/python3 && test -x /usr/sbin/nft \
+    && /usr/bin/lego --version | grep -q ' 4\.29\.' \
+    && /usr/bin/python3 -I -c 'import os; fc = "security.capability"; bins = ("/usr/bin/caddy", "/usr/bin/lego"); [os.removexattr(b, fc) for b in bins if fc in os.listxattr(b)]; left = [b for b in bins if fc in os.listxattr(b)]; raise SystemExit(f"file capabilities left on {left}" if left else 0)'
 
 COPY vm/cloud/overlay/usr/local/lib/cseries-cloud/cseries_cloud.py /usr/local/lib/cseries-cloud/cseries_cloud.py
 COPY vm/cloud/overlay/usr/local/sbin/cseries-cert /usr/local/sbin/cseries-cert
 COPY vm/cloud/overlay/usr/local/sbin/cseries-acme-dns-hook /usr/local/sbin/cseries-acme-dns-hook
 COPY sidecars/remote-door/Caddyfile /etc/caddy/Caddyfile
-COPY sidecars/remote-door/door-run sidecars/remote-door/door-cert /usr/local/sbin/
+COPY sidecars/remote-door/door-run sidecars/remote-door/door-cert sidecars/remote-door/door-filter /usr/local/sbin/
 
 # Every place the door and its certificate job write, owned by the user they
 # run as, so the named volumes mounted there start with that owner. The

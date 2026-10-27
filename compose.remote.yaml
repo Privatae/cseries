@@ -22,11 +22,19 @@
 # network is internal: nothing but the Host and the door is on it, and it has
 # no way out. scripts/test_remote_door_loopback.py checks this file.
 #
-# In the WSL and Lima guests, remote access's firewall also keeps the door to
-# the Host's web port (vm/wsl/rootfs/etc/cseries-remote/remote.nft). Compose
-# has no filter between two containers on one network, so here the door can
-# open a connection to the Host's other ports too; each of them asks for its
-# own credential.
+# The door reaches the Host's web port and nothing else. The Host listens on
+# more than that on every address it has (the bastion's 8810 and 8811, the
+# apps' egress lane on 13129, whatever an app binds), the remote network among
+# them. In the WSL and Lima guests remote access's firewall filters the
+# remote network's bridge (vm/wsl/rootfs/etc/cseries-remote/remote.nft).
+# Compose has no filter between two containers on one network, so here the
+# door filters itself: its container starts as root with NET_ADMIN, SETUID,
+# SETGID and SETPCAP only, door-filter (sidecars/remote-door/door-filter)
+# loads a table in the door's own network namespace that lets it open a
+# connection to the Host's web port and nothing else, and take one from the
+# Host's tunnel on its own port and nothing else, then drops every capability
+# and runs the door as 1000:1000. If the table does not load, the door does
+# not start. scripts/test_remote_door_compose_filter.py checks this.
 #
 # The two addresses are fixed so each side can name the other exactly. The
 # default, 10.89.79.0/29, is the guest's (vm/wsl/rootfs/etc/containers/
@@ -76,7 +84,10 @@ services:
     restart: unless-stopped
     depends_on:
       - host
-    user: "1000:1000"
+    # Root only until door-filter has loaded the door's table; the door itself
+    # runs as 1000:1000 with no capability.
+    user: "0:0"
+    entrypoint: ["/usr/local/sbin/door-filter"]
     read_only: true
     pids_limit: 256
     environment:
@@ -100,6 +111,10 @@ services:
       remote:
         ipv4_address: ${CSERIES_REMOTE_DOOR_ADDR:-10.89.79.3}
     cap_drop: [ALL]
+    # Loading the table (NET_ADMIN) and leaving root for 1000:1000 with an
+    # empty bounding set (SETUID, SETGID, SETPCAP); door-filter drops all four
+    # before the door starts.
+    cap_add: [NET_ADMIN, SETGID, SETPCAP, SETUID]
     security_opt:
       - no-new-privileges:true
 

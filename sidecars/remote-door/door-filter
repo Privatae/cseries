@@ -1,0 +1,157 @@
+#!/usr/bin/python3 -I
+"""The door's own firewall, for the Docker Compose install (compose.remote.yaml):
+the door reaches the Host's web port and nothing else.
+
+In the WSL and Lima guests remote.nft does this on the remote network's bridge
+(vm/wsl/rootfs/etc/cseries-remote/remote.nft). Compose has no filter between
+two containers on one network, and the Host listens on more than its web port
+on every address it has: the bastion's 8810 and 8811 (0.0.0.0), the apps'
+egress lane on 13129 (::), and whatever an app it runs binds. So here the
+filter is the door's own, in its container's network namespace, which nothing
+else shares, loaded before the door starts:
+
+  output  a new connection goes only to the Host's web port
+          (CSERIES_HOST_UPSTREAM); replies on connections made to the door
+          pass, and loopback
+  input   a new connection comes only from the Host's tunnel
+          (CSERIES_TUNNEL_FROM) to the door's own port (CSERIES_DOOR_BIND,
+          CSERIES_DOOR_PORT), where it writes each browser's PROXY header;
+          replies on the door's own connections pass, and loopback
+  IPv6    nothing but loopback, either way
+
+The container starts as root with NET_ADMIN, SETUID, SETGID and SETPCAP and no
+other capability (compose.remote.yaml). This loads the table, reads it back,
+drops every capability (the bounding set too), becomes 1000:1000 with no
+supplementary group, sets no_new_privs, checks /proc/self/status says so,
+and only then runs door-run, the door itself. If any step fails it exits without running the door,
+and Docker starts the container again (restart: unless-stopped): the door
+never runs without its filter. A container started again has a new network
+namespace, and this loads the table into it again.
+
+`door-filter rules` prints the table and does nothing else
+(scripts/test_remote_door_compose_filter.py loads it in private namespaces).
+"""
+
+import ctypes
+import ipaddress
+import os
+import subprocess
+import sys
+
+DOOR_RUN = "/usr/local/sbin/door-run"
+NFT = "/usr/sbin/nft"
+TABLE = "cseries_door"
+UID = GID = 1000
+PR_CAPBSET_DROP = 24
+PR_SET_NO_NEW_PRIVS = 38
+
+
+def fail(msg):
+    print(f"door-filter: {msg}; the door does not start", file=sys.stderr, flush=True)
+    sys.exit(1)
+
+
+def ipv4(name, env):
+    v = env.get(name, "")
+    try:
+        return str(ipaddress.IPv4Address(v))
+    except ValueError:
+        fail(f"{name} is {v!r}, not an IPv4 address")
+
+
+def port(name, v):
+    if not (v.isdigit() and 0 < int(v) < 65536 and str(int(v)) == v):
+        fail(f"{name} is {v!r}, not a port")
+    return v
+
+
+def rules(env):
+    host, _, host_port = env.get("CSERIES_HOST_UPSTREAM", "").rpartition(":")
+    host = ipv4("CSERIES_HOST_UPSTREAM", {"CSERIES_HOST_UPSTREAM": host})
+    host_port = port("CSERIES_HOST_UPSTREAM's port", host_port)
+    tunnel = ipv4("CSERIES_TUNNEL_FROM", env)
+    bind = ipv4("CSERIES_DOOR_BIND", env)
+    door_port = port("CSERIES_DOOR_PORT", env.get("CSERIES_DOOR_PORT", ""))
+    return f"""table inet {TABLE}
+delete table inet {TABLE}
+
+table inet {TABLE} {{
+	chain output {{
+		type filter hook output priority filter; policy drop;
+		oifname "lo" accept
+		ct state established,related accept
+		ip daddr {host} tcp dport {host_port} ct state new accept
+	}}
+	chain input {{
+		type filter hook input priority filter; policy drop;
+		iifname "lo" accept
+		ct state established,related accept
+		ip saddr {tunnel} ip daddr {bind} tcp dport {door_port} ct state new accept
+	}}
+}}
+"""
+
+
+def load(text):
+    r = subprocess.run([NFT, "-f", "-"], input=text, capture_output=True, text=True, check=False)
+    if r.returncode != 0:
+        fail(f"nft could not load the door's table: {(r.stderr or '').strip()[-400:]}")
+    r = subprocess.run([NFT, "list", "table", "inet", TABLE], capture_output=True, text=True, check=False)
+    if r.returncode != 0 or "policy drop" not in r.stdout:
+        fail("the door's table is not in place after loading it")
+
+
+def drop_privileges():
+    libc = ctypes.CDLL(None, use_errno=True)
+    with open("/proc/sys/kernel/cap_last_cap") as f:
+        last = int(f.read())
+    for cap in range(last + 1):
+        if libc.prctl(PR_CAPBSET_DROP, cap, 0, 0, 0) != 0:
+            fail(f"could not drop capability {cap} from the bounding set: {os.strerror(ctypes.get_errno())}")
+    try:
+        os.setgroups([])
+        os.setresgid(GID, GID, GID)
+        os.setresuid(UID, UID, UID)
+    except OSError as e:
+        fail(f"could not become {UID}:{GID}: {e.strerror}")
+    # Its own no_new_privs, not only compose.remote.yaml's: nothing the door
+    # runs gains a privilege at exec (a setuid file, a file capability).
+    if libc.prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0:
+        fail(f"could not set no_new_privs: {os.strerror(ctypes.get_errno())}")
+    status = {}
+    with open("/proc/self/status") as f:
+        for line in f:
+            k, _, v = line.partition(":")
+            status[k] = v.split()
+    if status.get("Uid") != [str(UID)] * 4 or status.get("Gid") != [str(GID)] * 4 or status.get("Groups"):
+        fail(f"still not only {UID}:{GID} (Uid {status.get('Uid')}, Gid {status.get('Gid')}, "
+             f"Groups {status.get('Groups')})")
+    for k in ("CapInh", "CapPrm", "CapEff", "CapBnd", "CapAmb"):
+        if int((status.get(k) or ["1"])[0], 16) != 0:
+            fail(f"{k} is {status.get(k)}, not empty")
+    if status.get("NoNewPrivs") != ["1"]:
+        fail(f"NoNewPrivs is {status.get('NoNewPrivs')}, not 1")
+
+
+def main():
+    text = rules(os.environ)
+    if sys.argv[1:] == ["rules"]:
+        sys.stdout.write(text)
+        return 0
+    if sys.argv[1:]:
+        fail(f"takes no arguments but `rules`, not {sys.argv[1:]}")
+    if os.geteuid() != 0:
+        fail("it must start as root to load its table (compose.remote.yaml: user 0:0)")
+    load(text)
+    drop_privileges()
+    print("door-filter: the door reaches only "
+          f"{os.environ['CSERIES_HOST_UPSTREAM']}; running the door as {UID}:{GID} with no capability",
+          file=sys.stderr, flush=True)
+    try:
+        os.execv(DOOR_RUN, [DOOR_RUN])
+    except OSError as e:
+        fail(f"could not run {DOOR_RUN}: {e.strerror}")
+
+
+if __name__ == "__main__":
+    sys.exit(main())

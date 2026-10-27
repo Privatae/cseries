@@ -26,6 +26,13 @@ still waiting gets the same refusal as its answer. Only this frame carries a
 "reason"; the door's ordinary errors never do. The client passes the reason
 and the text to its owner (membership.py), which decides what happens to the
 passport, and waits REFUSED_RETRY_S before trying again unless told to stop.
+
+Two copies of one passport are caught by the door seeing two live connections
+for one Host that name different processes. So every heartbeat.ping and
+passport.renew carries instance_id (instance_id() below): 32 lowercase hex
+characters from os.urandom(16), made once when this Host process starts and
+kept only in memory. It is not written to disk, not logged and not in a backup,
+and a restarted Host has a new one.
 """
 
 from __future__ import annotations
@@ -33,6 +40,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import time
 from typing import Awaitable, Callable, Optional
 
@@ -83,6 +91,27 @@ NETWORK_OPS: frozenset[str] = frozenset({
 # The reasons the door gives when it refuses or drops a connection.
 REFUSAL_REASONS: frozenset[str] = frozenset({
     "revoked", "conflict", "membership", "unknown", "mismatch", "refused"})
+# The door freezes a Host whose certificate was used from two places (a copy of
+# its passport beside the real one, or two processes at once): every copy is
+# refused, with this reason and the text "your Host's network certificate was
+# used from two places; it has been stopped", and the door closes. A passport
+# issued before the Host rejoined gets the same reason with its own text. The
+# only way back is a one-time join code from the account page, entered here.
+FROZEN = "conflict"
+
+# The two ops that carry instance_id.
+INSTANCE_OPS: frozenset[str] = frozenset({"heartbeat.ping", "passport.renew"})
+
+# This process's id, made when the module is first imported (the Host's start).
+# Module state and not an attribute of a client, so nothing that dumps a client
+# (status, vars()) can carry it, and every client in the process sends the same.
+_INSTANCE_ID: str = os.urandom(16).hex()
+
+
+def instance_id() -> str:
+    """This Host process's id: 32 lowercase hex characters, the same for the
+    whole life of the process and new at every start. Never store or log it."""
+    return _INSTANCE_ID
 
 # After a refusal the door will say the same thing again until something
 # changes on the account page, so the next try waits this long.
@@ -160,6 +189,10 @@ class MemberClient(BridgeClient):
     async def request_full(self, op: str, params: dict = None) -> dict:
         if not self.offers(op):
             return self._not_offered(op)
+        if op in INSTANCE_OPS:
+            # The one place these two ops' arguments are built: heartbeat
+            # (request) and renewal (request_full) both come through here.
+            params = {**(params or {}), "instance_id": _INSTANCE_ID}
         return await super().request_full(op, params)
 
     async def request_stream(self, op: str, params: dict, on_delta) -> dict:

@@ -2,7 +2,9 @@
 
   GET  /api/network/status  what the panel shows: member or not, the network's
                             id for this Host, the network, until when the
-                            passport is valid, the connection, the last error
+                            passport is valid, the connection, the last error,
+                            and whether the network froze the Host (frozen,
+                            frozen_note: what happened and what to do)
   POST /api/network/join    {code, host_name?}: enrol with a one-time code
   POST /api/network/leave   revoke the passport and delete it
 

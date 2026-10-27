@@ -18,7 +18,20 @@ through server.main.get_bridge_client() exactly as it reached nothing before.
          passport (it is no longer any use, and a copy elsewhere is what a
          conflict means); membership keeps it and says "membership not active";
          mismatch and refused keep it and show the door's words.
-  Renew  At start and every hour: once renew_after has passed, a new key, a CSR
+         A conflict is the door having frozen this Host because its
+         certificate was used from two places: it cut off every copy, and
+         the real machine comes back with a new join code. The Host stops
+         connecting and is not dialled again, remote access's tunnel stops
+         with it (the owner's choice and the address stay: the same Host
+         comes back), and Settings says what happened and what to do (status()
+         frozen and frozen_note, until a join succeeds, across a restart too:
+         FROZEN_FILE). The rejoin is a
+         normal join; the answer names the Host's previous host_uuid and
+         entity id, and the Host takes them as they are.
+  Renew  About daily: once the certificate is a day old (RENEW_AGE, and never
+         before the renew_after the door gave) plus a random delay of up to
+         RENEW_JITTER_S, chosen once per certificate so a fleet does not renew
+         in step. Checked at start and at least hourly. A new key, a CSR
          with an empty subject, passport.renew, the files, and a reconnect with
          the new certificate. The old key is deleted only after the new
          certificate is on disk. The door keeps the new certificate as pending
@@ -53,13 +66,14 @@ import hashlib
 import json
 import logging
 import os
+import random
 import ssl
 from pathlib import Path
 from typing import Callable, Optional
 
 from server.bridge import passport as pp
-from server.bridge.member_client import (MemberClient, NETWORK_DOOR_HOST, NETWORK_DOOR_PORT,
-                                         REFUSAL_REASONS)
+from server.bridge.member_client import (FROZEN, MemberClient, NETWORK_DOOR_HOST,
+                                         NETWORK_DOOR_PORT, REFUSAL_REASONS)
 from server.bridge.no_platform import NoPlatform
 
 logger = logging.getLogger("cseries.membership")
@@ -82,6 +96,19 @@ ROOT_CERT = Path(os.environ.get("CSERIES_NETWORK_ROOT_CERT",
 RENEW_CHECK_S = 3600.0
 # Renewal due but the door not reachable yet: look again sooner than hourly.
 RENEW_RETRY_S = 300.0
+# A passport lasts seven days; the Host renews it when the certificate is about
+# a day old, so a copy that is never renewed, or that renews and so shows a
+# second passport, is seen within a day. The door takes a renewal from 24 h
+# after issue (privatae bridge/passport.py RENEW_WINDOW), so the age rule never
+# asks sooner than that and the jitter only adds to it.
+RENEW_AGE = dt.timedelta(hours=24)
+# Added to RENEW_AGE, once per certificate: Hosts enrolled together (a fleet
+# claimed at one time) spread their renewals over this window instead of coming
+# in step. Two hours is a twelfth of the day: wide enough to spread a fleet,
+# short enough that a renewal is still about daily.
+RENEW_JITTER_S = 2 * 3600.0
+# The shortest wait the renewal loop sleeps before looking again.
+RENEW_MIN_WAIT_S = 60.0
 
 # Seam for the tests that read how long the renewal loop waits.
 _sleep = asyncio.sleep
@@ -96,6 +123,20 @@ CLAIM_TRIED_KEEP = 16
 
 DELETE_ON: frozenset[str] = frozenset({"revoked", "conflict", "unknown"})
 MEMBERSHIP_NOT_ACTIVE = "membership not active"
+# What Settings tells the owner of a frozen Host (Network, and Remote access):
+# the door's own words for what happened (or this when it sent none), then what
+# to do.
+FROZEN_WHY = "This Host's network certificate was used from two places, so the network stopped it."
+FROZEN_NEXT = (
+    "This Host has stopped connecting, and remote access is paused. To use the network again, "
+    f"get a new join code from your account page ({ACCOUNT_NETWORK_URL}) and enter it here, "
+    "in Settings, Network.")
+# The freeze outlives a restart: the passport is gone, so without this a Host
+# restarted after the door froze it reads as one that never joined. In the
+# passport directory beside claim-codes.json (pp.delete leaves both), holding
+# only the door's words for it, cut at FROZEN_WHY_MAX; deleted by a join.
+FROZEN_FILE = "frozen.json"
+FROZEN_WHY_MAX = 1024
 
 
 class MembershipError(Exception):
@@ -237,7 +278,8 @@ class Membership:
                  door_host: str = NETWORK_DOOR_HOST, door_port: int = NETWORK_DOOR_PORT,
                  set_client: Optional[Callable] = None,
                  clock: Optional[Callable[[], dt.datetime]] = None,
-                 owner_email: Optional[Callable[[], Optional[str]]] = None):
+                 owner_email: Optional[Callable[[], Optional[str]]] = None,
+                 jitter: Optional[Callable[[], float]] = None):
         self.dir = Path(directory or pp.PASSPORT_DIR)
         self.anchor = Path(anchor or ROOT_CERT)
         self.enrol_host, self.enrol_port = enrol_host, enrol_port
@@ -245,16 +287,67 @@ class Membership:
         self._set_client = set_client or (lambda c: None)
         self._clock = clock or (lambda: dt.datetime.now(dt.timezone.utc))
         self._owner_email = owner_email or _owner_email
+        # Seconds added to the renewal time of one certificate (renew_due_at).
+        self._jitter = jitter or (lambda: random.uniform(0.0, RENEW_JITTER_S))
+        self._jitter_held: Optional[tuple[str, float]] = None
         self.passport: Optional[pp.Passport] = None
         self.client = None
         self.last_error: Optional[str] = None
         self.reason: Optional[str] = None
         self.renew_note: Optional[str] = None
+        # The door froze this Host (reason "conflict"): true from that refusal
+        # until a join succeeds, whatever a failed join says in between, with
+        # the door's words for it.
+        self.frozen = False
+        self._frozen_why: Optional[str] = None
         self._lock = asyncio.Lock()
         self._client_task: Optional[asyncio.Task] = None
         self._renew_task: Optional[asyncio.Task] = None
         self._claim_task: Optional[asyncio.Task] = None
         self._remote = None
+
+    @property
+    def frozen_note(self) -> Optional[str]:
+        """What happened (the door's words) and what to do, while the door has
+        this Host frozen."""
+        if not self.frozen:
+            return None
+        why = (self._frozen_why or "").strip() or FROZEN_WHY
+        if why[-1] not in ".!?":
+            why += "."
+        return f"{why} {FROZEN_NEXT}"
+
+    def _set_frozen(self, frozen: bool, why: Optional[str]) -> None:
+        """The frozen state, in memory and in FROZEN_FILE, so a restart shows
+        it too. A file that cannot be written or removed leaves the state in
+        memory as it is (logged): the door holds the freeze either way."""
+        self.frozen, self._frozen_why = frozen, (why or None)
+        path = self.dir / FROZEN_FILE
+        try:
+            if frozen:
+                self.dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+                tmp = self.dir / f".{FROZEN_FILE}.tmp"
+                tmp.write_text(json.dumps({"why": (why or "")[:FROZEN_WHY_MAX]}) + "\n",
+                               encoding="utf-8")
+                os.replace(tmp, path)
+            else:
+                path.unlink(missing_ok=True)
+        except OSError as e:
+            logger.warning("could not %s %s: %s", "write" if frozen else "remove", path, e)
+
+    def _load_frozen(self) -> None:
+        """At start with no passport: a freeze recorded before the restart."""
+        try:
+            doc = json.loads((self.dir / FROZEN_FILE).read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError) as e:
+            # Unreadable, so the door's words are lost; the Host was frozen.
+            logger.warning("could not read %s: %s", self.dir / FROZEN_FILE, e)
+            doc = {}
+        why = doc.get("why") if isinstance(doc, dict) else None
+        self.frozen = True
+        self._frozen_why = why[:FROZEN_WHY_MAX] if isinstance(why, str) and why.strip() else None
 
     @property
     def remote(self):
@@ -274,6 +367,7 @@ class Membership:
         self._start_claim_pickup()
         p = pp.load(self.dir)
         if p is None:
+            self._load_frozen()
             client = NoPlatform()
             self._set_client(client)
             return client
@@ -354,11 +448,16 @@ class Membership:
             except (asyncio.CancelledError, Exception):
                 pass
 
-    async def _drop(self) -> None:
-        """Back to no platform, with the passport files gone."""
+    async def _drop(self, *, frozen: bool = False) -> None:
+        """Back to no platform, with the passport files gone. A frozen Host
+        keeps its remote access settings: the same Host comes back with a
+        rejoin code, and the address is still its own."""
         if self._remote is not None:
-            # The remote address was this passport's Host's.
-            await self._remote.left_network()
+            if frozen:
+                await self._remote.network_stopped()
+            else:
+                # The remote address was this passport's Host's.
+                await self._remote.left_network()
         await self._stop_client()
         if self._renew_task is not None and self._renew_task is not asyncio.current_task():
             self._renew_task.cancel()
@@ -383,6 +482,7 @@ class Membership:
                 self.last_error, self.reason = e.message, None
                 raise
             self.last_error = self.reason = self.renew_note = None
+            self._set_frozen(False, None)
             self._start(p)
             return self.status()
 
@@ -511,11 +611,28 @@ class Membership:
 
     # ── renewal ─────────────────────────────────────────────────────────────
 
+    def renew_due_at(self, p: pp.Passport) -> dt.datetime:
+        """When this passport is renewed: RENEW_AGE after its certificate began,
+        never before the renew_after the door gave (it refuses a renewal
+        sooner), plus a delay of up to RENEW_JITTER_S that is chosen once for
+        each certificate and kept in memory."""
+        due = p.renew_after
+        if p.not_before is not None:
+            due = max(due, p.not_before + RENEW_AGE)
+        held = self._jitter_held
+        if held is None or held[0] != p.serial:
+            held = self._jitter_held = (p.serial, max(0.0, float(self._jitter())))
+        # The jitter only spreads renewals; it never takes one past half the
+        # time left before the certificate expires, whatever renew_after the
+        # door gave.
+        left = (p.not_after - due).total_seconds()
+        return due + dt.timedelta(seconds=min(held[1], max(0.0, left / 2)))
+
     async def renew_if_due(self) -> str:
         p, client = self.passport, self.client
         if p is None or client is None:
             return "not a member"
-        if self._clock() <= p.renew_after:
+        if self._clock() <= self.renew_due_at(p):
             return "not due"
         if not client.connected:
             return "not connected"
@@ -594,12 +711,16 @@ class Membership:
 
     async def _renew_loop(self) -> None:
         # A lost answer ("no answer") and a 429 wait for the next hourly check.
+        # A passport not yet due is looked at again when it is, or in an hour.
         while True:
             wait = RENEW_CHECK_S
             try:
                 outcome = await self.renew_if_due()
                 if outcome in ("not connected", "failed"):
                     wait = RENEW_RETRY_S
+                elif outcome == "not due" and self.passport is not None:
+                    left = (self.renew_due_at(self.passport) - self._clock()).total_seconds()
+                    wait = min(RENEW_CHECK_S, max(RENEW_MIN_WAIT_S, left))
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -633,7 +754,11 @@ class Membership:
                 logger.warning("passport deleted after the door refused it (%s): %s",
                                reason, error)
                 self.reason, self.last_error = reason, error or reason
-                await self._drop()
+                if reason == FROZEN:
+                    # Before the drop, so remote access (which the drop stops)
+                    # and Settings already read it as frozen.
+                    self._set_frozen(True, error or None)
+                await self._drop(frozen=reason == FROZEN)
             return
         self.reason = reason
         self.last_error = MEMBERSHIP_NOT_ACTIVE if reason == "membership" else (error or reason)
@@ -647,7 +772,8 @@ class Membership:
         out = {"member": p is not None,
                "connected": bool(client is not None and client.connected),
                "last_error": self.last_error, "reason": self.reason,
-               "renew_note": self.renew_note}
+               "renew_note": self.renew_note,
+               "frozen": self.frozen, "frozen_note": self.frozen_note}
         if p is not None:
             expired = self._expired(p)
             out.update(entity_id=p.entity_id, host_uuid=p.host_uuid, network=p.network,

@@ -83,6 +83,11 @@ class Passport:
     renew_after: dt.datetime
     enrolled_at: Optional[str]
     serial: str                      # lower-case hex, no leading zeros
+    # When the certificate's validity began (the door backdates it five
+    # minutes), read from the certificate itself: a renewal is due by the
+    # certificate's age (membership.renew_due_at). None only for a Passport
+    # built by hand.
+    not_before: Optional[dt.datetime] = None
 
     @property
     def key_path(self) -> Path:
@@ -282,7 +287,8 @@ def load(directory: Optional[Path] = None) -> Optional[Passport]:
                         network=str(meta.get("network") or "privatae"),
                         door=str(meta.get("door") or "net.privatae.ai:8643"),
                         not_after=not_after, renew_after=renew_after,
-                        enrolled_at=meta.get("enrolled_at"), serial=serial_hex(leaf))
+                        enrolled_at=meta.get("enrolled_at"), serial=serial_hex(leaf),
+                        not_before=leaf.not_valid_before_utc)
     except (KeyError, TypeError, ValueError):
         return None
 

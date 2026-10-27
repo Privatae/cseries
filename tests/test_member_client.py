@@ -18,6 +18,15 @@ These pin:
   19. a refusal naming revocation deletes the passport, and the status endpoint
       says why; the other refusal reasons are handled as agreed with the door;
 
+  20. a frozen Host (the door saw its certificate used from two places and
+      refuses it with reason "conflict"): the passport is deleted, the member
+      connection is not dialled again, remote access's tunnel stops, Settings
+      says what happened and what to do, and the rejoin with a new code takes
+      the Host's previous host_uuid and entity id as they are;
+  21. every heartbeat.ping and passport.renew carries this process's
+      instance_id, kept only in memory; a certificate is renewed about daily,
+      with jitter;
+
 plus: the cloud client's TLS settings are unchanged by the new keyword
 arguments, join dials the enrolment name on port 8643 with the root as its only
 trust anchor, only the network's own ops ever leave the Host, the join and
@@ -29,12 +38,18 @@ Every certificate here is made in the test; nothing reads a real key.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import datetime as dt
+import io
 import json
+import logging
 import os
+import re
 import ssl
 import stat
+import subprocess
 import sys
+import tarfile
 import time
 import uuid
 from pathlib import Path
@@ -55,6 +70,17 @@ from server.bridge import passport as pp  # noqa: E402
 from server.bridge.no_platform import NoPlatform  # noqa: E402
 
 NOW = dt.datetime.now(dt.timezone.utc)
+
+# What a Host really adds to a renewal's time; read before any test changes it.
+_REAL_JITTER_S = getattr(ms, "RENEW_JITTER_S", 0.0)
+
+
+@pytest.fixture(autouse=True)
+def _renewals_are_due_at_renew_after(monkeypatch):
+    """The renewal tests below pick their moment from the passport's renew_after.
+    A real Host adds up to RENEW_JITTER_S to it (Membership.renew_due_at); the
+    tests for that give their own jitter."""
+    monkeypatch.setattr(ms, "RENEW_JITTER_S", 0.0, raising=False)
 
 
 # ── test PKI ────────────────────────────────────────────────────────────────
@@ -486,7 +512,15 @@ def test_19_refusals(pki, tmp_path, monkeypatch, reason, deleted, shown):
             if deleted:
                 assert st["member"] is False
                 assert isinstance(swaps[-1], NoPlatform)
-                assert not any(d.iterdir()), sorted(x.name for x in d.iterdir())
+                left = sorted(x.name for x in d.iterdir())
+                if reason == "conflict":
+                    # A freeze keeps one file, the door's words for it, so a
+                    # restarted Host still says it was stopped; nothing of
+                    # the passport is in it.
+                    assert left == [ms.FROZEN_FILE], left
+                    assert json.loads((d / ms.FROZEN_FILE).read_text()) == {"why": error}
+                else:
+                    assert not left, left
             else:
                 assert st["member"] is True
                 assert pp.load(d) is not None
@@ -1752,6 +1786,703 @@ def test_settings_network_tab_in_a_browser(pki, tmp_path, monkeypatch):
                 expect(state).to_contain_text("not a member")
                 assert "passport.revoke" in seen["door"]
                 assert pp.load(d) is None and not (d / "passport.json").exists()
+                assert errors == [], errors
+            finally:
+                browser.close()
+    finally:
+        server.should_exit = True
+        thread.join(timeout=15)
+
+
+# ── 21. instance_id: one per Host process, on heartbeat.ping and passport.renew ──
+
+_HEX32 = re.compile(r"^[0-9a-f]{32}$")
+
+
+def test_21_instance_id_is_32_lowercase_hex_and_the_same_for_the_whole_process(pki, tmp_path):
+    first = mc.instance_id()
+    assert _HEX32.match(first), first
+    assert mc.instance_id() == first
+    # Every client in the process names the same Host process.
+    p = _enrolled(pki, tmp_path / "passport")
+    assert mc.MemberClient(p).__class__ is mc.MemberClient and mc.instance_id() == first
+
+
+def test_21_instance_id_is_new_after_a_restart():
+    """A restart is a new process: run two, each importing the module fresh."""
+    code = ("import sys; sys.path.insert(0, sys.argv[1]); "
+            "from server.bridge import member_client as m; print(m.instance_id())")
+    ids = []
+    for _ in range(2):
+        out = subprocess.run([sys.executable, "-I", "-c", code, ROOT], capture_output=True,
+                             text=True, timeout=120, check=True)
+        ids.append(out.stdout.strip())
+    assert all(_HEX32.match(i) for i in ids), ids
+    assert ids[0] != ids[1], "a restarted Host must not repeat its instance id"
+
+
+def test_21_only_heartbeat_ping_and_passport_renew_carry_it(pki, tmp_path, monkeypatch):
+    sent = []
+
+    async def record(self, op, params=None):
+        sent.append((op, params))
+        return {"ok": True, "data": {}}
+
+    monkeypatch.setattr(bridge_client.BridgeClient, "request_full", record)
+    p = _enrolled(pki, tmp_path / "passport")
+    iid = mc.instance_id()
+
+    async def run():
+        c = mc.MemberClient(p)
+        await c.request_full("heartbeat.ping", {})
+        await c.request_full("heartbeat.ping", None)
+        await c.request_full("passport.renew", {"csr_pem": "CSR"})
+        # A caller cannot choose it.
+        await c.request_full("passport.renew", {"csr_pem": "CSR", "instance_id": "f" * 32})
+        await c.request_full("appstore.list", {"q": 1})
+        await c.request_full("passport.revoke", {})
+        # An op the network does not offer is answered here and never sent.
+        assert (await c.request_full("memory.search", {}))["ok"] is False
+
+    asyncio.run(run())
+    assert sent == [("heartbeat.ping", {"instance_id": iid}),
+                    ("heartbeat.ping", {"instance_id": iid}),
+                    ("passport.renew", {"csr_pem": "CSR", "instance_id": iid}),
+                    ("passport.renew", {"csr_pem": "CSR", "instance_id": iid}),
+                    ("appstore.list", {"q": 1}),
+                    ("passport.revoke", {})]
+
+
+def test_21_the_same_instance_id_is_on_the_wire_before_and_after_a_renewal(pki, tmp_path,
+                                                                           monkeypatch):
+    """Over real TLS: the heartbeats on the first connection, the renewal, and
+    the heartbeats on the connection made with the new certificate all carry
+    one id."""
+    monkeypatch.setattr(bridge_client, "HEARTBEAT_INTERVAL", 0.1)
+    d = tmp_path / "passport"
+    before = _enrolled(pki, d)
+    got, conns = [], []
+
+    async def door(reader, writer):
+        conns.append(1)
+        n = len(conns)
+        while True:
+            line = await reader.readline()
+            if not line:
+                return
+            req = json.loads(line)
+            got.append((n, req["op"], req.get("params")))
+            if req["op"] == "passport.renew":
+                out = {"ok": True, "data": pki.passport_answer(
+                    req["params"]["csr_pem"], before.host_uuid, identity=False)}
+            else:
+                out = {"ok": True, "data": {"ts": 1}}
+            out["id"] = req.get("id")
+            writer.write(json.dumps(out).encode() + b"\n")
+            await writer.drain()
+
+    def beats(n):
+        return [p for c, op, p in got if c == n and op == "heartbeat.ping"]
+
+    async def run():
+        srv = await _door(pki, "net.privatae.ai", door, client_cert=True)
+        m = ms.Membership(directory=d, anchor=pki.root_path, door_host="127.0.0.1",
+                          door_port=srv.port, set_client=lambda c: None,
+                          clock=lambda: before.renew_after - dt.timedelta(hours=1))
+        try:
+            await m.boot()
+            assert await _wait_for(lambda: len(beats(1)) >= 2)
+            m._clock = lambda: before.renew_after + dt.timedelta(minutes=1)
+            assert await m.renew_if_due() == "renewed"
+            assert await _wait_for(lambda: len(beats(2)) >= 2)
+        finally:
+            await m.shutdown()
+            await srv.close()
+
+    asyncio.run(run())
+    iid = mc.instance_id()
+    renews = [p for _, op, p in got if op == "passport.renew"]
+    assert len(renews) == 1 and renews[0]["instance_id"] == iid and "csr_pem" in renews[0]
+    assert all(p == {"instance_id": iid} for n in (1, 2) for p in beats(n)), got
+
+
+def test_21_instance_id_is_not_on_disk_in_logs_in_status_or_in_a_backup(pki, tmp_path, caplog):
+    """A whole session (join's files, heartbeats, a renewal, a refusal, leave)
+    against real TLS doors, with every log level on: the id is nowhere that
+    outlives the process or leaves the Host."""
+    from server import host_backup
+    caplog.set_level(logging.DEBUG)
+    iid = mc.instance_id().encode()
+    apps_root = tmp_path / "var-lib-cseries"          # stands for the apps volume
+    d = apps_root / "passport"
+    before = _enrolled(pki, d)
+    seen_ops = []
+
+    async def door(reader, writer):
+        while True:
+            line = await reader.readline()
+            if not line:
+                return
+            req = json.loads(line)
+            seen_ops.append(req["op"])
+            if req["op"] == "passport.renew":
+                out = {"ok": True, "data": pki.passport_answer(
+                    req["params"]["csr_pem"], before.host_uuid, identity=False)}
+            else:
+                out = {"ok": True, "data": {"ts": 1}}
+            out["id"] = req.get("id")
+            writer.write(json.dumps(out).encode() + b"\n")
+            await writer.drain()
+
+    shown = []
+
+    async def run():
+        srv = await _door(pki, "net.privatae.ai", door, client_cert=True)
+        m = ms.Membership(directory=d, anchor=pki.root_path, door_host="127.0.0.1",
+                          door_port=srv.port, set_client=lambda c: None,
+                          clock=lambda: before.renew_after + dt.timedelta(minutes=1))
+        try:
+            await m.boot()
+            assert await _wait_for(lambda: m.client.connected and "heartbeat.ping" in seen_ops)
+            assert await m.renew_if_due() == "renewed"
+            assert await _wait_for(lambda: m.client.connected)
+            shown.append(json.dumps(m.status()))
+            shown.append(json.dumps(m.client.status, default=str))
+            shown.append(json.dumps(m.remote.status(), default=str))
+            # A refusal on the connection, then the owner leaving.
+            await m._on_refusal("membership", "membership not active", m.passport.serial)
+            shown.append(json.dumps(m.status()))
+            assert (await m.leave())["member"] is False
+        finally:
+            await m.shutdown()
+            await srv.close()
+
+    asyncio.run(run())
+    assert "passport.renew" in seen_ops and "passport.revoke" in seen_ops
+
+    # Not in anything written under the Host's volume.
+    for f in tmp_path.rglob("*"):
+        if f.is_file():
+            assert iid not in f.read_bytes(), f"the instance id is on disk in {f}"
+    # Not in a log line, at any level.
+    logged = caplog.text + "\n".join(r.getMessage() + (r.exc_text or "") for r in caplog.records)
+    assert caplog.records and iid.decode() not in logged
+    # Not in what Settings reads.
+    assert all(iid.decode() not in text for text in shown), shown
+    # Not in a backup of the volume: the backup writer's own walk of it, with the
+    # Host's passport files in it (leave removed them, so make them again).
+    _enrolled(pki, d)
+    (apps_root / "remote-access.json").write_text('{"on": false}')
+    buf, files = io.BytesIO(), []
+    with tarfile.open(fileobj=buf, mode="w") as tout:
+        notes = host_backup._add_apps(tout, str(apps_root), files)
+    assert notes["files"] >= 6 and any(f["path"] == "apps/passport/host.key" for f in files), files
+    assert iid not in buf.getvalue() + json.dumps(files).encode()
+
+
+def test_21_the_id_is_named_in_no_other_module():
+    """It is made and sent in member_client.py and nowhere else under server/,
+    so nothing else can write it down."""
+    found = sorted(str(f.relative_to(Path(ROOT))) for f in (Path(ROOT) / "server").rglob("*.py")
+                   if "instance_id" in f.read_text(encoding="utf-8", errors="replace"))
+    assert found == ["server/bridge/member_client.py"], found
+
+
+# ── 21. renewal: about daily, with jitter ──────────────────────────────────
+
+def test_21_a_passport_remembers_when_its_certificate_began(pki, tmp_path):
+    d = tmp_path / "passport"
+    p = _enrolled(pki, d)
+    leaf = x509.load_pem_x509_certificates((d / "chain.crt").read_bytes())[0]
+    assert p.not_before == leaf.not_valid_before_utc == pp.load(d).not_before
+    # The door backdates a certificate five minutes, makes it seven days long,
+    # and allows its renewal a day after issue.
+    assert p.not_after - p.not_before == dt.timedelta(days=7, minutes=5)
+    assert p.renew_after - p.not_before == dt.timedelta(days=1, minutes=5)
+
+
+def test_21_renewal_is_due_a_day_after_the_certificate_began_plus_one_jitter(pki, tmp_path):
+    d = tmp_path / "passport"
+    before = _enrolled(pki, d)
+    draws = []
+
+    def jitter():
+        draws.append(1)
+        return 5400.0
+
+    def door(op, params):
+        assert op == "passport.renew"
+        return {"ok": True, "data": pki.passport_answer(params["csr_pem"], before.host_uuid,
+                                                         identity=False)}
+
+    async def run():
+        m = ms.Membership(directory=d, anchor=pki.root_path, set_client=lambda c: None,
+                          jitter=jitter)
+        m.passport, m.client = before, _StubClient(door)
+        due = m.renew_due_at(before)
+        # A day old (24 h after issue, which is what the door takes), plus the jitter.
+        assert due == before.renew_after + dt.timedelta(seconds=5400)
+        assert dt.timedelta(hours=24) <= due - before.not_before <= dt.timedelta(hours=26, minutes=5)
+        # One draw for the certificate, however often it is asked.
+        m.renew_due_at(before)
+        m.renew_due_at(before)
+        assert len(draws) == 1
+        m._clock = lambda: before.renew_after + dt.timedelta(hours=1)        # inside the jitter
+        assert await m.renew_if_due() == "not due" and m.client.sent == []
+        m._clock = lambda: due + dt.timedelta(minutes=1)
+        assert await m.renew_if_due() == "renewed"
+        # The new certificate gets a draw of its own.
+        assert m.passport.serial != before.serial and len(draws) == 1
+        m.renew_due_at(m.passport)
+        assert len(draws) == 2
+
+    asyncio.run(run())
+
+
+def test_21_hosts_spread_their_renewals_over_the_jitter_window(pki, tmp_path, monkeypatch):
+    """Two hundred Hosts with one and the same certificate (a fleet enrolled
+    together) do not all come at once, and none comes before the door takes it."""
+    monkeypatch.setattr(ms, "RENEW_JITTER_S", _REAL_JITTER_S)
+    assert _REAL_JITTER_S == 2 * 3600.0 and ms.RENEW_AGE == dt.timedelta(hours=24)
+    p = _enrolled(pki, tmp_path / "passport")
+
+    async def run():
+        out = []
+        for _ in range(200):
+            m = ms.Membership(directory=tmp_path / "passport", set_client=lambda c: None)
+            out.append((m.renew_due_at(p) - p.renew_after).total_seconds())
+        return out
+
+    late = asyncio.run(run())
+    assert min(late) >= 0 and max(late) <= _REAL_JITTER_S
+    assert max(late) - min(late) > _REAL_JITTER_S / 2
+    assert len(set(late)) > 150
+
+
+def test_21_renewal_is_never_before_the_door_takes_it_and_never_later_than_the_age_rule(
+        pki, tmp_path):
+    p = _enrolled(pki, tmp_path / "passport")
+    t0 = p.not_before
+
+    async def due(**kw):
+        m = ms.Membership(directory=tmp_path / "passport", set_client=lambda c: None,
+                          jitter=lambda: 0.0)
+        return m.renew_due_at(dataclasses.replace(p, **kw))
+
+    async def run():
+        # The door's renew_after is later than a day: the Host waits for it.
+        assert await due(renew_after=t0 + dt.timedelta(days=3)) == t0 + dt.timedelta(days=3)
+        # The door's renew_after is earlier than a day: a day old is the rule.
+        assert await due(renew_after=t0) == t0 + dt.timedelta(hours=24)
+        # No start time known (a passport built by hand): the door's word.
+        assert await due(not_before=None, renew_after=t0 + dt.timedelta(hours=30)) \
+            == t0 + dt.timedelta(hours=30)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize("left,connected,want", [
+    (dt.timedelta(hours=23), True, ms.RENEW_CHECK_S),           # far off: the hourly look
+    (dt.timedelta(minutes=10), True, 600.0),                    # soon: when it is due
+    (dt.timedelta(seconds=5), True, 60.0),                      # not busier than this
+    (dt.timedelta(minutes=-1), False, ms.RENEW_RETRY_S),        # due, door not reached: the retry
+])
+def test_21_the_renewal_loop_sleeps_until_the_renewal_is_due(pki, tmp_path, monkeypatch,
+                                                            left, connected, want):
+    d = tmp_path / "passport"
+    before = _enrolled(pki, d)
+    waits = []
+
+    class _Stop(Exception):
+        pass
+
+    async def sleep(seconds):
+        waits.append(seconds)
+        raise _Stop
+
+    monkeypatch.setattr(ms, "_sleep", sleep)
+
+    async def run():
+        m = ms.Membership(directory=d, anchor=pki.root_path, set_client=lambda c: None,
+                          jitter=lambda: 1800.0)
+        m._clock = lambda: m.renew_due_at(before) - left
+        m.passport = before
+        m.client = _StubClient(lambda op, params: pytest.fail(f"{op} was sent"))
+        m.client.connected = connected
+        with pytest.raises(_Stop):
+            await m._renew_loop()
+
+    asyncio.run(run())
+    assert waits == [want]
+    assert ms.RENEW_MIN_WAIT_S == 60.0
+
+
+# ── 20. a frozen Host ──────────────────────────────────────────────────────
+
+# The door's words (privatae bridge/member_server.py ERR_FROZEN and
+# REFUSED_BEFORE_REJOIN), both with reason "conflict".
+DOOR_FROZEN = "your Host's network certificate was used from two places; it has been stopped"
+DOOR_BEFORE_REJOIN = ("this passport was issued before its Host joined the network again; "
+                      "it no longer connects")
+
+
+def _frozen_frame(error: str = DOOR_FROZEN) -> bytes:
+    return json.dumps({"ok": False, "error": error, "code": 403,
+                       "reason": "conflict"}).encode() + b"\n"
+
+
+def test_20_the_freeze_is_the_conflict_reason_and_deletes_the_passport():
+    assert mc.FROZEN == "conflict" and "conflict" in mc.REFUSAL_REASONS
+    assert "conflict" in ms.DELETE_ON
+    assert "frozen" not in mc.REFUSAL_REASONS and "frozen" not in ms.DELETE_ON
+
+
+def test_20_heartbeats_stay_thirty_seconds_apart():
+    """The door's grace for two instances is three heartbeats (INSTANCE_GRACE,
+    90 s): a Host that beat slower would be taken for two."""
+    assert bridge_client.HEARTBEAT_INTERVAL == 30
+
+
+@pytest.mark.parametrize("reason,redialled", [("conflict", False), ("refused", True)])
+def test_20_a_frozen_host_is_not_dialled_again_where_a_refused_one_is(pki, tmp_path,
+                                                                     monkeypatch, reason,
+                                                                     redialled):
+    """The same door and the same waits; only the reason differs. A refusal that
+    keeps the passport is tried again after REFUSED_RETRY_S (here 0.3 s). A
+    frozen Host's passport is gone and nothing dials again, however long we
+    wait."""
+    monkeypatch.setattr(bridge_client, "HEARTBEAT_INTERVAL", 0.1)
+    monkeypatch.setattr(mc, "REFUSED_RETRY_S", 0.3)
+    d = tmp_path / "passport"
+    _enrolled(pki, d)
+    swaps = []
+
+    async def refuse(writer):
+        writer.write(json.dumps({"ok": False, "error": DOOR_FROZEN, "code": 403,
+                                 "reason": reason}).encode() + b"\n")
+        await writer.drain()
+
+    conns, on_conn = _accept_twice_then(refuse)
+
+    async def run():
+        door = await _door(pki, "net.privatae.ai", on_conn, client_cert=True)
+        m = ms.Membership(directory=d, anchor=pki.root_path, door_host="127.0.0.1",
+                          door_port=door.port, set_client=swaps.append)
+        try:
+            await m.boot()
+            await asyncio.sleep(2.0)
+            return m
+        finally:
+            await m.shutdown()
+            await door.close()
+
+    m = asyncio.run(run())
+    if redialled:
+        assert len(conns) >= 3, f"{len(conns)} connections in 2 s"
+        assert pp.load(d) is not None and m.frozen is False
+    else:
+        assert len(conns) == 1, f"{len(conns)} connections in 2 s"
+        assert pp.load(d) is None and m.client is None and m.frozen is True
+        assert isinstance(swaps[-1], NoPlatform)
+
+
+def test_20_a_frozen_answer_to_a_renewal_ends_the_renewals_too(pki, tmp_path):
+    d = tmp_path / "passport"
+    before = _enrolled(pki, d)
+    ops, conns = [], []
+
+    async def door(reader, writer):
+        conns.append(1)
+        while True:
+            line = await reader.readline()
+            if not line:
+                return
+            req = json.loads(line)
+            ops.append(req["op"])
+            if req["op"] == "passport.renew":
+                writer.write(_frozen_frame())         # no id, then the door closes
+                await writer.drain()
+                return
+            writer.write(json.dumps({"ok": True, "data": {}, "id": req.get("id")}).encode() + b"\n")
+            await writer.drain()
+
+    async def run():
+        srv = await _door(pki, "net.privatae.ai", door, client_cert=True)
+        m = ms.Membership(directory=d, anchor=pki.root_path, door_host="127.0.0.1",
+                          door_port=srv.port, set_client=lambda c: None,
+                          clock=lambda: before.renew_after + dt.timedelta(minutes=1))
+        try:
+            await m.boot()
+            assert await _wait_for(lambda: m.client is not None and m.client.connected)
+            assert await m.renew_if_due() == "refused"
+            assert await _wait_for(lambda: m.frozen)
+            await asyncio.sleep(0.5)
+            assert ops.count("passport.renew") == 1 and len(conns) == 1
+            assert m.passport is None and m.client is None and pp.load(d) is None
+            assert not (d / "host.key.next").exists()
+            assert await m.renew_if_due() == "not a member"
+            return m.status()
+        finally:
+            await m.shutdown()
+            await srv.close()
+
+    st = asyncio.run(run())
+    assert st["frozen"] is True and st["reason"] == "conflict"
+
+
+@pytest.mark.parametrize("door_words", [DOOR_FROZEN, DOOR_BEFORE_REJOIN])
+def test_20_the_frozen_host_says_what_happened_and_what_to_do_until_a_rejoin(
+        pki, tmp_path, monkeypatch, door_words):
+    """The door's words are shown as they are, then the way back: a new join
+    code from the account page, entered in Settings, Network. A code the door
+    refuses changes nothing; the rejoin's answer names the Host's previous
+    host_uuid and entity id, which the Host takes unchanged."""
+    d = tmp_path / "passport"
+    first = _enrolled(pki, d, entity_id=731)
+    enrol_says = {"refuse": True}
+
+    async def frozen_door(reader, writer):
+        writer.write(_frozen_frame(door_words))
+        await writer.drain()
+
+    async def enrol_door(reader, writer):
+        req = json.loads(await reader.readline())
+        if enrol_says["refuse"]:
+            out = {"ok": False, "error": "this code is not valid", "code": 403}
+        else:
+            # A rejoin is a normal enrolment; the Host it names is the same one.
+            out = {"ok": True, "data": pki.passport_answer(
+                req["params"]["csr_pem"], first.host_uuid, entity_id=first.entity_id)}
+        writer.write(json.dumps(out).encode() + b"\n")
+        await writer.drain()
+
+    async def run():
+        srv = await _door(pki, "net.privatae.ai", frozen_door, client_cert=True)
+        enrol = await _door(pki, "enrol.privatae.ai", enrol_door, client_cert=False)
+        m = ms.Membership(directory=d, anchor=pki.root_path, door_host="127.0.0.1",
+                          door_port=srv.port, enrol_host="127.0.0.1", enrol_port=enrol.port,
+                          set_client=lambda c: None)
+        try:
+            await m.boot()
+            assert await _wait_for(lambda: m.frozen)
+            from server.routes import network_membership as routes
+            monkeypatch.setattr(ms, "_current", m)
+            st = await routes.status()
+            assert st["member"] is False and st["frozen"] is True and st["reason"] == "conflict"
+            assert st["last_error"] == door_words
+            note = st["frozen_note"]
+            assert note.startswith(door_words + ". ")
+            assert "new join code" in note and ACCOUNT_NETWORK_URL in note
+            assert "Settings, Network" in note
+            # A code the door refuses does not make it look any less frozen.
+            with pytest.raises(ms.EnrolmentRefused):
+                await m.join("K7Q2-M9XD-4PWR")
+            st = m.status()
+            assert st["frozen"] is True and st["last_error"] == "this code is not valid"
+            assert st["frozen_note"] == note
+            # The rejoin: the same Host, taken as it is.
+            enrol_says["refuse"] = False
+            srv.server.close()                      # the old door is no longer asked
+            st = await m.join("K7Q2-M9XD-4PWR")
+            assert st["member"] is True and st["frozen"] is False and st["frozen_note"] is None
+            assert st["reason"] is None and st["last_error"] is None
+            assert st["host_uuid"] == first.host_uuid and st["entity_id"] == 731
+            assert pp.load(d).host_uuid == first.host_uuid and pp.load(d).entity_id == 731
+        finally:
+            await m.shutdown()
+            await srv.close()
+            await enrol.close()
+
+    asyncio.run(run())
+
+
+def test_20_a_frozen_refusal_without_words_still_says_what_to_do(pki, tmp_path):
+    async def run():
+        m = ms.Membership(directory=tmp_path / "passport", set_client=lambda c: None)
+        m.passport = _enrolled(pki, tmp_path / "passport")
+        await m._on_refusal("conflict", "", m.passport.serial)
+        return m.status()
+
+    st = asyncio.run(run())
+    assert st["frozen"] is True and "used from two places" in st["frozen_note"]
+    assert "new join code" in st["frozen_note"]
+
+
+def test_20_a_frozen_host_still_says_so_after_a_restart(pki, tmp_path, monkeypatch):
+    """The freeze deletes the passport, so a restarted Host has none. It still
+    says it was stopped and what to do, in Settings, Network and Remote access,
+    until a join succeeds; a refused code changes nothing. No door is dialled:
+    the only address given is a closed port on this machine."""
+    from server.network.remote_access import RemoteAccess
+    d = tmp_path / "passport"
+    nowhere = dict(door_host="127.0.0.1", door_port=1, enrol_host="127.0.0.1", enrol_port=1,
+                   set_client=lambda c: None)
+
+    def membership():
+        m = ms.Membership(directory=d, **nowhere)
+        m._remote = RemoteAccess(m, state_path=tmp_path / "remote.json")
+        return m
+
+    async def run():
+        m = membership()
+        m.passport = _enrolled(pki, d, entity_id=731)
+        await m._on_refusal("conflict", DOOR_FROZEN, m.passport.serial)
+        frozen = m.status()
+        assert pp.load(d) is None and frozen["frozen"] is True
+        # The restart: a new process, nothing in memory, no passport on disk.
+        again = membership()
+        try:
+            await again.boot()
+            st = again.status()
+            assert st["member"] is False and st["frozen"] is True
+            assert st["frozen_note"] == frozen["frozen_note"]
+            assert st["frozen_note"].startswith(DOOR_FROZEN + ". ")
+            assert again.remote.status()["frozen"] == frozen["frozen_note"]
+
+            async def refused(code, **kw):
+                raise ms.EnrolmentRefused("this code is not valid", 403)
+
+            monkeypatch.setattr(ms, "enrol", refused)
+            with pytest.raises(ms.EnrolmentRefused):
+                await again.join("K7Q2-M9XD-4PWR")
+            assert again.status()["frozen_note"] == frozen["frozen_note"]
+            assert (d / ms.FROZEN_FILE).exists()
+
+            async def rejoined(code, **kw):
+                return _enrolled(pki, d, entity_id=731)
+
+            monkeypatch.setattr(ms, "enrol", rejoined)
+            st = await again.join("K7Q2-M9XD-4PWR")
+            assert st["member"] is True and st["frozen"] is False
+        finally:
+            await again.shutdown()
+        assert not (d / ms.FROZEN_FILE).exists()
+        # And the restart after the rejoin is a member's, not a frozen Host's.
+        third = membership()
+        try:
+            await third.boot()
+            assert third.status()["frozen"] is False and third.status()["member"] is True
+        finally:
+            await third.shutdown()
+
+    asyncio.run(run())
+
+
+def test_21_the_jitter_never_takes_a_renewal_past_the_expiry(pki, tmp_path):
+    """Whatever renew_after the door gave, the jitter only spreads renewals:
+    a passport whose renew_after is an hour before its expiry is renewed
+    before it expires, and an ordinary one keeps its whole draw."""
+    d = tmp_path / "passport"
+    ordinary = _enrolled(pki, d)
+    late = dataclasses.replace(ordinary, renew_after=ordinary.not_after - dt.timedelta(hours=1))
+    m = ms.Membership(directory=d, set_client=lambda c: None, jitter=lambda: 7200.0)
+    due = m.renew_due_at(late)
+    assert late.renew_after <= due < late.not_after
+    assert m.renew_due_at(ordinary) == ordinary.renew_after + dt.timedelta(seconds=7200)
+
+
+def test_20_settings_network_in_a_browser_says_the_host_is_frozen(pki, tmp_path, monkeypatch):
+    """The Settings page in headless Chromium over the real routes and a real
+    Membership the door has frozen: the Network panel says what happened and what
+    to do, with the door's own words as text, and the join box is the way back."""
+    sync_api = pytest.importorskip("playwright.sync_api", reason="playwright not available")
+    import contextlib
+    import socket
+    import threading
+
+    import uvicorn
+    import yaml
+    from fastapi import FastAPI, Request
+    from fastapi.responses import FileResponse, JSONResponse, Response
+    from server.applications.tokens import AppToken
+    from server.routes import network_membership as routes
+
+    app_dir = Path(ROOT) / "system-apps" / "settings"
+    css_dir = Path(ROOT) / "dashboard" / "base" / "css"
+    perms = list(yaml.safe_load((app_dir / "app.yaml").read_text())["permissions"])
+    door_words = "<b>your Host's network certificate was used from two places</b>"
+    monkeypatch.setattr(ms, "_current", None)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_app):
+        m = ms.Membership(directory=tmp_path / "passport", anchor=pki.root_path)
+        m.frozen, m._frozen_why = True, door_words
+        m.reason, m.last_error = "conflict", door_words
+        ms._current = m
+        yield
+        await m.shutdown()
+
+    app = FastAPI(lifespan=lifespan)
+
+    @app.middleware("http")
+    async def window_token(request: Request, call_next):
+        if request.url.path.startswith("/api/"):
+            request.state.app_token = AppToken(app_id="settings", permissions=perms,
+                                               window_id="test", iat=0)
+        return await call_next(request)
+
+    async def _owner_signed_in():
+        return None
+
+    app.dependency_overrides[routes.owner_only] = _owner_signed_in
+    app.include_router(routes.router)
+
+    @app.api_route("/api/{rest:path}", methods=["GET", "PUT", "POST", "DELETE"])
+    def elsewhere(rest: str):
+        return JSONResponse({"detail": "Not Found"}, status_code=404)
+
+    @app.get("/css/{name}")
+    def css(name: str):
+        target = (css_dir / name).resolve()
+        if target.parent != css_dir.resolve() or not target.is_file():
+            return Response(status_code=404)
+        return FileResponse(str(target), media_type="text/css")
+
+    @app.get("/system-apps/settings/{rest:path}")
+    def static(rest: str):
+        target = (app_dir / (rest or "index.html")).resolve()
+        if app_dir.resolve() not in target.parents:
+            return Response(status_code=403)
+        return FileResponse(str(target)) if target.is_file() else Response(status_code=404)
+
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        port = s.getsockname()[1]
+    server = uvicorn.Server(uvicorn.Config(app, host="127.0.0.1", port=port, log_level="error"))
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    try:
+        for _ in range(300):
+            if server.started:
+                break
+            time.sleep(0.05)
+        assert server.started, "the test server did not start"
+        expect = sync_api.expect
+        with sync_api.sync_playwright() as pw:
+            try:
+                browser = pw.chromium.launch()
+            except Exception as e:  # noqa: BLE001
+                pytest.skip(f"chromium unavailable: {e}")
+            try:
+                page = browser.new_page(viewport={"width": 1440, "height": 900})
+                errors = []
+                page.on("pageerror", lambda e: errors.append(str(e)))
+                page.goto(f"http://127.0.0.1:{port}/system-apps/settings/index.html#view=network",
+                          wait_until="domcontentloaded", timeout=15_000)
+                state = page.locator("#net-state")
+                expect(state).to_contain_text("This Host was stopped by the network",
+                                              timeout=10_000)
+                expect(state).to_contain_text("get a new join code from your account page")
+                expect(state).to_contain_text(ACCOUNT_NETWORK_URL)
+                expect(state).to_contain_text("enter it here, in Settings, Network")
+                # The door's own words, as text, once.
+                expect(state).to_contain_text(door_words)
+                assert state.inner_text().count(door_words) == 1
+                assert page.locator("#net-state b").count() == 0
+                # The way back is on the page; there is nothing to leave.
+                expect(page.locator("#net-join")).to_be_visible()
+                expect(page.locator("#net-code")).to_be_visible()
+                expect(page.locator("#net-leave-row")).to_be_hidden()
                 assert errors == [], errors
             finally:
                 browser.close()

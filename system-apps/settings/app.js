@@ -3081,10 +3081,20 @@
             rows.appendChild(netRow('Member Host id', st.entity_id));
             rows.appendChild(netRow('Passport valid until', netWhen(st.not_after)));
             rows.appendChild(netRow('Connection', st.connected ? 'Connected' : 'Not connected'));
+        } else if (st && st.frozen) {
+            // The network froze this Host (its certificate was used from two
+            // places). The join box below is the way back; frozen_note says
+            // what happened, in the door's words, and what to do.
+            rows.appendChild(netRow('Membership', 'This Host was stopped by the network'));
+            rows.appendChild(netRow('What happened, and what to do', st.frozen_note));
         } else {
             rows.appendChild(netRow('Membership', 'This Host is not a member of the network'));
         }
-        if (st && st.last_error) rows.appendChild(netRow('Last error', st.last_error));
+        // A frozen Host's note already carries the door's words.
+        if (st && st.last_error && !(st.frozen && st.frozen_note
+                && st.frozen_note.indexOf(st.last_error) === 0)) {
+            rows.appendChild(netRow('Last error', st.last_error));
+        }
         if (st && st.renew_note) rows.appendChild(netRow('Renewal', st.renew_note));
         box.appendChild(rows);
         join.hidden = !!(st && st.member);

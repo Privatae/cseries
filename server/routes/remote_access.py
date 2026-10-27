@@ -201,6 +201,10 @@ def _when(ts) -> str:
 def summary(st: dict) -> str:
     """One plain paragraph of how remote access stands, for the owner."""
     parts = []
+    if st.get("frozen"):
+        # The tunnel is off because the network froze this Host, whatever the
+        # owner had chosen: say so, with what to do, before anything else.
+        return str(st["frozen"])
     if not st.get("on"):
         # A problem that keeps remote access from working (the Host off its
         # door's network, a door that must not be used) is said while it is
@@ -309,6 +313,12 @@ async def remote_page(request: Request):
     status_line = f'<p id="remote-status" role="status">{html.escape(summary(st))}</p>'
     err = '<p id="err" role="alert"></p><p id="done" role="status"></p>'
     r = home_origin.REMOTE
+    if st.get("frozen"):
+        # The network stopped this Host: the tunnel is down, whatever was
+        # chosen, until the owner rejoins with a new code.
+        return _page("Remote access", "<p>Remote access is paused.</p>",
+                     f'<p id="frozen" role="alert">{html.escape(st["frozen"])}</p>'
+                     '<p><a href="/">Continue to C-Series</a></p>', CONTROL_SCRIPT)
     if not st.get("on") or r is None:
         intro = ('<p>Remote access lets you open this Host from a phone or another computer '
                  'anywhere. Nothing on this computer is opened to the internet: your Host keeps '

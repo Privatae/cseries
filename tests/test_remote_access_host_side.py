@@ -79,6 +79,9 @@ ERR_OFF = "remote access is not offered on this door yet"
 ERR_NOT_ENTITLED = "remote access is not part of this membership"
 ERR_NOT_ENABLED = "remote access is not turned on for this Host; ask remote.enable first"
 ERR_MEMBERSHIP = "membership not active"
+# The refusal the door sends a frozen Host (privatae bridge/member_server.py
+# ERR_FROZEN), with reason "conflict".
+ERR_FROZEN = "your Host's network certificate was used from two places; it has been stopped"
 
 
 def run(coro, timeout=60):
@@ -171,6 +174,19 @@ class PKI:
         chain.write_bytes(_pem(c))
         key.write_bytes(_key_pem(k))
         return str(chain), str(key)
+
+    def enrol_answer(self, csr_pem: str, host_uuid: str, entity_id: int = 412) -> dict:
+        """What the enrolment door answers a CSR with: a new passport."""
+        csr = x509.load_pem_x509_csr(csr_pem.encode())
+        leaf = _leaf(csr.public_key(), self.members, self.members_key, server=False,
+                     uris=[f"spiffe://net.privatae.ai/host/{host_uuid}",
+                           "spiffe://net.privatae.ai/owner/acct-test",
+                           "spiffe://net.privatae.ai/network/privatae"])
+        na = leaf.not_valid_after_utc
+        return {"cert_pem": _pem(leaf).decode(), "chain_pem": (_pem(leaf) + _pem(self.members)).decode(),
+                "root_pem": _pem(self.root).decode(), "not_after": na.isoformat(),
+                "renew_after": (na - dt.timedelta(days=6)).isoformat(), "network": "privatae",
+                "door": "net.privatae.ai:8643", "host_uuid": host_uuid, "entity_id": entity_id}
 
     def passport(self, directory: Path, host_uuid="0b5e4c2a-0000-4000-8000-00000000a001") -> pp.Passport:
         key = pp.new_key()
@@ -282,6 +298,11 @@ class StubDoor:
         self.dns_after = 1
         self.lifetime = 3600
         self.row = None
+        # The door has frozen this Host (its certificate was used from two
+        # places): every request is answered with the refusal frame, the
+        # connection closed, as privatae bridge/member_server.py refuses.
+        self.frozen = False
+        self.connections = 0
         self.calls: list[tuple[str, dict]] = []
         self.issued: list[dict] = []
         self.password = "invented-acme-dns-key-" + secrets.token_hex(12)
@@ -307,6 +328,7 @@ class StubDoor:
     async def _conn(self, reader, writer):
         der = writer.get_extra_info("ssl_object").getpeercert(binary_form=True)
         serial = x509.load_der_x509_certificate(der).serial_number
+        self.connections += 1
         try:
             while True:
                 line = await reader.readline()
@@ -315,6 +337,11 @@ class StubDoor:
                 msg = json.loads(line)
                 op, params, mid = msg.get("op"), msg.get("params") or {}, msg.get("id")
                 self.calls.append((op, params))
+                if self.frozen:
+                    writer.write(json.dumps({"ok": False, "error": ERR_FROZEN, "code": 403,
+                                             "reason": "conflict"}).encode() + b"\n")
+                    await writer.drain()
+                    break
                 data, err, code = self.handle(op, params, serial)
                 frame = ({"ok": True, "data": data} if err is None else
                          {"ok": False, "error": err, "code": code})
@@ -805,6 +832,102 @@ def test_tunnel_stops_when_a_lapsed_membership_is_refused_a_ticket(pki, tmp_path
             assert all(AID not in r.tunnels for r in rig.relays.values())
             assert rig.remote.state.on is True       # the owner's choice stands
         finally:
+            await rig.close()
+    run(go())
+
+
+def test_tunnel_stops_when_the_door_freezes_the_host_and_a_rejoin_brings_it_back(
+        pki, tmp_path, monkeypatch):
+    """Up through both relays; then the door freezes the Host (a copy of its
+    passport was used beside it) and answers its next request with the freeze
+    refusal (reason "conflict"): the tunnel stops on both relays, the member
+    connection is not dialled again, the passport is deleted, and Settings ->
+    Remote access says what happened and what to do, in place of "join the
+    network first". The owner's choice and the address stand, so a rejoin with
+    a new code (the same Host, as the door's answer says) starts the tunnel
+    again with nothing turned on by hand."""
+    import httpx
+    from fastapi import FastAPI
+    from server.routes import remote_access as routes
+    host_uuid = "0b5e4c2a-0000-4000-8000-00000000a001"
+
+    async def enrol_door(reader, writer):
+        req = json.loads(await reader.readline())
+        writer.write(json.dumps({"ok": True, "data": pki.enrol_answer(
+            req["params"]["csr_pem"], host_uuid)}).encode() + b"\n")
+        await writer.drain()
+
+    async def go():
+        rig = await Rig(pki, tmp_path, monkeypatch, refused_retry=0.3, ticket_refresh=0.5).start()
+        chain, key = pki._server("enrol", ["enrol.privatae.ai"], pki.root, pki.root_key)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(chain, key)
+        enrol = await asyncio.start_server(enrol_door, "127.0.0.1", 0, ssl=ctx)
+        try:
+            rig.door.dns_after = 0
+            await rig.remote.turn_on()
+            await rig.wait_links(2)
+            assert rig.remote.status()["frozen"] is None
+            address = rig.remote.status()["address"]
+            rig.door.frozen = True
+            await until(lambda: rig.remote.tunnel is None, what="the tunnel to stop")
+            await until(lambda: all(AID not in r.tunnels for r in rig.relays.values()),
+                        what="both relays to drop the tunnel")
+            await until(lambda: rig.m.passport is None and rig.m.client is None, what="the drop")
+            assert not (tmp_path / "passport" / "host.key").exists()
+            st = rig.remote.status()
+            assert st["running"] is False and st["links"] == [] and st["member"] is False
+            assert st["frozen"].startswith(ERR_FROZEN + ". ")
+            assert "new join code" in st["frozen"] and "Settings, Network" in st["frozen"]
+            assert ms.ACCOUNT_NETWORK_URL in st["frozen"]
+            # The owner's choice and the address stand.
+            assert st["on"] is True and st["address"] == address
+            # Nothing dials the member door or asks it anything again, however
+            # many refusal waits go by (here 0.3 s each).
+            dialled, asked = rig.door.connections, len(rig.door.calls)
+            await asyncio.sleep(1.5)
+            assert (rig.door.connections, len(rig.door.calls)) == (dialled, asked)
+            assert all(AID not in r.tunnels for r in rig.relays.values())
+            # Turning it on is refused with the way back, not "join first".
+            with pytest.raises(ra.RemoteError) as e:
+                await rig.remote.turn_on()
+            assert e.value.message == st["frozen"]
+
+            # What Settings shows, on the desktop's own address.
+            async def session(scope):
+                return ("owner@example.test", "tok")
+            monkeypatch.setattr(routes, "live_session", session)
+            monkeypatch.setattr(ms, "_current", rig.m)
+            monkeypatch.setattr(routes.owner_passkeys, "list_passkeys",
+                                lambda pool: asyncio.sleep(0, []))
+            monkeypatch.setattr(routes.owner_login, "_pool", lambda: object())
+            app = FastAPI()
+            app.include_router(routes.router)
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                         base_url=f"http://{home_origin.HOME.host}") as c:
+                said = (await c.get("/api/owner/remote/status")).json()
+                assert said["summary"] == st["frozen"] == said["frozen"]
+                page = await c.get("/remote")
+                assert page.status_code == 200 and 'id="frozen"' in page.text
+                assert "used from two places" in page.text and "new join code" in page.text
+                assert "Join the network first" not in page.text
+                assert 'id="remote-on"' not in page.text and 'id="remote-off"' not in page.text
+
+            # The way back: a new code, entered in Settings -> Network. The
+            # door answers it as it answers any enrolment, with the Host's own
+            # host_uuid and entity id.
+            rig.door.frozen = False
+            rig.m.enrol_host, rig.m.enrol_port = "127.0.0.1", enrol.sockets[0].getsockname()[1]
+            joined = await rig.m.join("K7Q2-M9XD-4PWR")
+            assert joined["member"] is True and joined["frozen"] is False
+            assert joined["host_uuid"] == host_uuid and joined["entity_id"] == 412
+            await rig.wait_links(2)
+            back = rig.remote.status()
+            assert back["frozen"] is None and back["on"] is True and back["address"] == address
+            assert back["running"] is True
+        finally:
+            enrol.close()
+            await enrol.wait_closed()
             await rig.close()
     run(go())
 

@@ -453,6 +453,9 @@ class RemoteAccess:
         why = self.available()
         if why:
             raise RemoteError(why, 409)
+        frozen = getattr(self.m, "frozen_note", None)
+        if frozen:
+            raise RemoteError(frozen, 409)
         if self._passport() is None:
             raise RemoteError("join the network first: remote access is part of the membership", 409)
         client = self._client()
@@ -687,8 +690,8 @@ class RemoteAccess:
             t.cancel()
 
     async def left_network(self) -> None:
-        """The passport is gone (the Host left, or the door revoked it). The
-        address belonged to that passport's Host, so it is forgotten."""
+        """The passport is gone (the Host left, or the door revoked or froze
+        it). The address belonged to that passport's Host, so it is forgotten."""
         await self._stop_supervisor()
         await self._stop_tunnel()
         had = self.state.on or self.state.address_id is not None
@@ -699,6 +702,17 @@ class RemoteAccess:
             except OSError as exc:
                 log.warning("remote access: state not written: %s", exc)
             self._set_origin(None)
+        self.problem = self.refusal = None
+
+    async def network_stopped(self) -> None:
+        """The door froze this Host (membership.py: a copy of its passport was
+        used beside it) and its passport is gone. The tunnel and the supervisor
+        stop; the owner's choice, the address and the certificate's credential
+        stay, because the same Host comes back with a rejoin code and the
+        address is still its own. Membership starts the supervisor again when
+        the Host rejoins."""
+        await self._stop_supervisor()
+        await self._stop_tunnel()
         self.problem = self.refusal = None
 
     def passport_renewed(self) -> None:
@@ -809,7 +823,10 @@ class RemoteAccess:
                "running": self.tunnel is not None, "problem": self.problem,
                "refused": self.refusal.message if self.refusal else None,
                "available": self.available() is None, "certificate": certificate_status(),
-               "member": self._passport() is not None}
+               "member": self._passport() is not None,
+               # The door froze this Host (membership.py): the tunnel is off
+               # and the owner is told what to do.
+               "frozen": getattr(self.m, "frozen_note", None)}
         try:
             door = self._door()
             out["door"] = f"{door[0]}:{door[1]}" if door else None

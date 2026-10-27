@@ -214,13 +214,16 @@ def staged_manifest(overlay, version, keys=cc.RELEASE_KEYS):
 
 
 def image_refs(cfg, manifest=None):
-    """(host ref, postgres ref, bastion min_version, runtime lines) for the
-    images to run; the runtime lines are cseries-guest configure's for the
-    local runtime's images, from the signed manifest ("" without one)."""
+    """(host ref, postgres ref, bastion min_version, more lines) for the
+    images to run; the more lines are the rest of what cseries-guest configure
+    takes: the local runtime's images, from the signed manifest ("" without
+    one), and the remote-access door's image (door=), where the images name
+    one (cc.door_lines)."""
     if cfg["image_archive"]:
         a = cfg["image_archive"]
-        names = [a[w] if "/" in a[w] else "localhost/" + a[w] for w in ("host", "postgres")]
-        # A run after the first finds both images loaded and needs the
+        which = [w for w in ("host", "postgres", "door") if w in a]
+        names = [a[w] if "/" in a[w] else "localhost/" + a[w] for w in which]
+        # A run after the first finds the images loaded and needs the
         # archive no more.
         if not all(subprocess.run(["podman", "image", "exists", n], check=False).returncode == 0
                    for n in names):
@@ -230,16 +233,18 @@ def image_refs(cfg, manifest=None):
             digest = sh(["podman", "image", "inspect", "--format", "{{.Digest}}", name]).strip()
             base = name.rsplit(":", 1)[0] if ":" in name.split("/")[-1] else name
             refs.append(f"{base}@{digest}")
-        return refs[0], refs[1], cc.BASTION_MIN_VERSION, cc.runtime_lines(manifest)
+        door = f"door={refs[2]}\n" if "door" in a else ""
+        return refs[0], refs[1], cc.BASTION_MIN_VERSION, cc.runtime_lines(manifest) + door
     if cfg["images"]:
         return (cc.pinned(cfg["images"]["host"]), cc.pinned(cfg["images"]["postgres"]),
-                cc.BASTION_MIN_VERSION, cc.runtime_lines(manifest))
+                cc.BASTION_MIN_VERSION, cc.runtime_lines(manifest) + cc.door_lines(cfg["images"]))
     if manifest is None:
         url = f"{cfg['release_base']}/{cc.MANIFEST_NAME}"
         manifest, _, _ = cc.fetch_signed(url, cc.KIND)
         cc.validate_manifest(manifest)
     return (cc.pinned(manifest["images"]["host"]), cc.pinned(manifest["images"]["postgres"]),
-            manifest["bastion"]["min_version"], cc.runtime_lines(manifest))
+            manifest["bastion"]["min_version"],
+            cc.runtime_lines(manifest) + cc.door_lines(manifest["images"]))
 
 
 def guest(*args, input=None, check=True, timeout=None):

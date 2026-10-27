@@ -5,6 +5,12 @@
 # CSERIES_TRUSTED_PROXIES is the address the Host sees Caddy's connections
 # come from: Caddy, on this machine, connects to the container's fixed
 # address, so they arrive from the box's own end of the containers' bridge.
+# With remote access configured, cseries-guest's remote.conf (which comes
+# after this file) replaces it with the same address, read from
+# /etc/cseries/front-proxies, and the remote door's: both doors stay trusted.
+# The door key here is this box's front door's; the remote door's is
+# CSERIES_REMOTE_DOOR_SECRET_FILE, mounted at /run/cseries-remote-door and
+# never on /run/cseries-door below.
 [Container]
 Environment=CSERIES_URL=https://@HOST_NAME@
 Environment=CSERIES_TRUSTED_PROXIES=@TRUSTED_PROXIES@

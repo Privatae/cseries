@@ -158,6 +158,20 @@ def manifest(version="0.2.0", host="ghcr.io/privatae/cseries:0.2.0", digest=D, o
 
 
 check(cc.validate_manifest(manifest()) is not None, "a well-formed manifest validates")
+m = manifest()
+m["images"]["door"] = {"ref": "ghcr.io/privatae/cseries-remote-door:0.2.0", "digest": D}
+check(cc.validate_manifest(m) is m and cc.door_lines(m["images"]) ==
+      f"door=ghcr.io/privatae/cseries-remote-door:0.2.0@{D}\n" and cc.door_lines(manifest()["images"]) == "",
+      "a manifest may pin the remote-access door's image, which becomes configure's door= line")
+for what, door in [("a door image without a digest", {"ref": "ghcr.io/privatae/cseries-remote-door:0.2.0"}),
+                   ("a door image ref that carries a digest", {"ref": "ghcr.io/privatae/cseries-remote-door@" + D,
+                                                               "digest": D})]:
+    m = manifest()
+    m["images"]["door"] = door
+    check(refuses(lambda: cc.validate_manifest(m)) is not None, f"a manifest with {what} is refused")
+m = manifest()
+m["images"]["other"] = {"ref": "ghcr.io/privatae/other:0.2.0", "digest": D}
+check(refuses(lambda: cc.validate_manifest(m)) is not None, "a manifest naming an image the box does not know is refused")
 for what, m in [("a version that is not X.Y.Z", manifest(version="0.2")),
                 ("an image digest that is not sha256", manifest(digest="sha256:xyz")),
                 ("an image ref that carries a digest", manifest(host="ghcr.io/privatae/cseries@" + D)),
@@ -204,6 +218,16 @@ if cmd == "configure":
             os.makedirs(os.path.dirname(p), exist_ok=True)
             open(p, "w").write(new)
             changed = 1
+    # door=, as cseries-guest configure writes it: both door units' images
+    # and the Host's remote.conf; without door= they are left as they are.
+    if "door" in vals:
+        for w in ("remote-door", "remote-cert"):
+            os.makedirs(os.path.dirname(conf(w)), exist_ok=True)
+            open(conf(w), "w").write(f"[Container]\nImage={vals['door']}\n")
+        os.makedirs(os.path.join(units, "cseries-host.container.d"), exist_ok=True)
+        open(os.path.join(units, "cseries-host.container.d", "remote.conf"), "w").write(
+            "[Container]\nNetwork=cseries-remote.network:ip=10.89.79.2\n")
+        changed = 1
     os.makedirs(os.path.join(root, "etc/cseries"), exist_ok=True)
     open(os.path.join(root, "etc/cseries/release"), "w").write(vals["release"] + "\n")
     print(f"changed={changed}")
@@ -521,6 +545,44 @@ with tempfile.TemporaryDirectory() as tmp:
           "@sha256:" + "1" * 64 in clog[-2] and "harness_src_url=" in clog[-2],
           "a rollback hands configure back the runtime images the box had before", clog[-3:])
 
+# A release that brings the remote-access door to a box without one and is
+# rolled back leaves none of configure's door files behind (a remote.conf
+# naming a network whose unit the rollback removed would leave the Host with
+# no unit), and stops the door's units. A box that had a door gets exactly
+# its own door files back.
+DOOR_FILES = ("etc/containers/systemd/cseries-remote-door.container.d/image.conf",
+              "etc/containers/systemd/cseries-remote-cert.container.d/image.conf",
+              "etc/containers/systemd/cseries-host.container.d/remote.conf")
+with tempfile.TemporaryDirectory() as tmp:
+    box = Box(tmp)
+    m = box.offer("0.7.1", host="localhost/broken", text="broken\n")
+    m["images"]["door"] = {"ref": "ghcr.io/privatae/cseries-remote-door:0.7.1", "digest": "sha256:" + "4" * 64}
+    box.publish(m)
+    st = box.u.run()
+    clog = open(os.path.join(tmp, "configure.log")).read().split("--\n")
+    left = [r for r in DOOR_FILES if os.path.exists(box.paths.p(r))]
+    check(st["result"] == "rolled_back" and "door=" in clog[-3] and "door=" not in clog[-2] and not left,
+          "a rollback to a release without the door leaves none of configure's door files", (st, left, clog[-3:]))
+    check(("stop", "cseries-remote-door.service", "cseries-remote-cert.service") in box.calls,
+          "and stops the door's units", box.calls[-12:])
+with tempfile.TemporaryDirectory() as tmp:
+    box = Box(tmp)
+    m = box.offer("0.7.2")
+    m["images"]["door"] = {"ref": "ghcr.io/privatae/cseries-remote-door:0.7.2", "digest": "sha256:" + "5" * 64}
+    box.publish(m)
+    st = box.u.run()
+    before = {r: open(box.paths.p(r)).read() for r in DOOR_FILES}
+    m = box.offer("0.7.3", host="localhost/broken", text="broken\n")
+    m["images"]["door"] = {"ref": "ghcr.io/privatae/cseries-remote-door:0.7.3", "digest": "sha256:" + "6" * 64}
+    box.publish(m)
+    calls = len(box.calls)
+    st = box.u.run()
+    after = {r: open(box.paths.p(r)).read() if os.path.exists(box.paths.p(r)) else None for r in DOOR_FILES}
+    check(st["result"] == "rolled_back" and after == before and "5" * 64 in after[DOOR_FILES[0]] and
+          not [c for c in box.calls[calls:] if c[:1] == ("stop",)],
+          "a rollback on a box that had a door puts its door files back as they were, its units left running",
+          (st, after))
+
 # The Host's memory ceiling for the box's memory now goes to configure on
 # every update (a resized box gets its new size's), and on a rollback too.
 with tempfile.TemporaryDirectory() as tmp:
@@ -746,6 +808,7 @@ with tempfile.TemporaryDirectory() as tmp:
             os.path.join(ROOT, "vm/cloud/cloud-release.json"), "--version", "4.5.6",
             "--host-image", "ghcr.io/privatae/cseries", "--host-digest", D,
             "--postgres-image", "ghcr.io/privatae/cseries-postgres", "--postgres-digest", "sha256:" + "f" * 64,
+            "--door-image", "ghcr.io/privatae/cseries-remote-door", "--door-digest", "sha256:" + "e" * 64,
             "--overlay", tgz, "--download-base", "https://github.com/Privatae/cseries/releases/download/v4.5.6",
             "--out", out]
     r = subprocess.run(args, capture_output=True, text=True, check=False)
@@ -761,6 +824,14 @@ with tempfile.TemporaryDirectory() as tmp:
           "it names the overlay that was built, at the release's download URL", m["overlay"])
     check(m["images"]["host"] == {"ref": "ghcr.io/privatae/cseries:4.5.6", "digest": D} and
           m["bastion"]["min_version"] == cc.BASTION_MIN_VERSION, "and the merged images, and the committed floor")
+    check(m["images"]["door"] == {"ref": "ghcr.io/privatae/cseries-remote-door:4.5.6", "digest": "sha256:" + "e" * 64}
+          and cc.door_lines(m["images"]) == f"door=ghcr.io/privatae/cseries-remote-door:4.5.6@sha256:{'e' * 64}\n",
+          "and the remote-access door's image, which the box hands cseries-guest configure as door=", m["images"])
+    r = subprocess.run([a for a in args if a not in ("--door-image", "--door-digest",
+                                                    "ghcr.io/privatae/cseries-remote-door", "sha256:" + "e" * 64)],
+                       capture_output=True, text=True, check=False)
+    check(r.returncode != 0 and "--door-image" in r.stderr,
+          "cloud-json without the door's image is refused, as release-json is", r.stderr[-200:])
     k = Ed25519PrivateKey.generate()
     check(cc.verify_signed_manifest(cc.KIND, body, sign(k, cc.KIND, body), [key_b64(k)]) == m,
           "its exact bytes are what a signature covers")

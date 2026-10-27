@@ -74,6 +74,62 @@ DOOR_UNITS="cseries-remote-door.service cseries-remote-cert.service"
 # (cseries-remote.network, 10.89.79.0/29; cseries-remote-door.container).
 REMOTE_HOST_IP=10.89.79.2
 REMOTE_DOOR_IP=10.89.79.3
+# The proxies in front of the Host besides the remote door, on a system that
+# has a front door of its own (a cloud box's Caddy; its overlay writes this
+# file from the same value its cseries-host.container.d/cloud.conf trusts).
+# remote.conf's CSERIES_TRUSTED_PROXIES replaces the one the Host had, so it
+# names them too, or that door would be refused once remote access is
+# configured. No file, as in the WSL and Lima guests: the remote door alone.
+FRONT_PROXIES=$R/etc/cseries/front-proxies
+
+# Whether $1 is one address: IPv4 dotted, with no prefix or /32, or IPv6,
+# with no prefix or /128. A front door is one proxy, so its entry never
+# names a network: 0.0.0.0/0 would have the Host believe any peer's
+# X-Forwarded-For, and 10.89.0.0/16 the apps' and the remote network's.
+one_address() {
+    addr=${1%/*} pfx=""
+    [ "$addr" = "$1" ] || pfx=${1##*/}
+    case "$addr" in
+        *:*)
+            case "$addr" in *[!0-9A-Fa-f:]*|*:::*) return 1 ;; esac
+            [ -z "$pfx" ] || [ "$pfx" = 128 ] ;;
+        *)
+            [ -z "$pfx" ] || [ "$pfx" = 32 ] || return 1
+            case "$addr" in *[!0-9.]*|.*|*.|*..*) return 1 ;; esac
+            old_ifs=$IFS
+            IFS=.
+            # shellcheck disable=SC2086
+            set -- $addr
+            IFS=$old_ifs
+            [ $# -eq 4 ] || return 1
+            for o in "$@"; do
+                [ ${#o} -le 3 ] && [ "$o" -le 255 ] || return 1
+            done ;;
+    esac
+}
+
+# The trusted proxies remote.conf gives the Host (remote_host_dropin reads
+# them from REMOTE_PROXIES): the front door's, when this system has one, and
+# the remote door's /32. Each of the file's entries must be one address
+# (one_address), or configure stops.
+remote_trusted_proxies() {
+    front=""
+    if [ -f "$FRONT_PROXIES" ]; then
+        front=$(tr -d ' \t\r\n' < "$FRONT_PROXIES")
+        case "$front" in
+            *[!0-9A-Fa-f.:/,]*) die "configure: $FRONT_PROXIES holds something other than addresses: $front" ;;
+        esac
+        old_ifs=$IFS
+        IFS=,
+        for entry in $front; do
+            IFS=$old_ifs
+            [ -z "$entry" ] || one_address "$entry" ||
+                die "configure: $FRONT_PROXIES names $entry, which is not one address (a network is never a front door's proxy)"
+        done
+        IFS=$old_ifs
+    fi
+    printf '%s%s/32' "${front:+$front,}" "$REMOTE_DOOR_IP"
+}
 
 remote_host_dropin() {
     # The Host's drop-in for remote access (compose.remote.yaml's host
@@ -90,11 +146,18 @@ remote_host_dropin() {
 # from loopback is let into the Host without a session, so a browser from the
 # internet must arrive from the door's address. The Host believes the door's
 # X-Forwarded-For and answers its /__host/door question only from exactly the
-# door's /32. This drop-in's CSERIES_TRUSTED_PROXIES replaces the base unit's
-# empty one: Quadlet reads drop-ins after the unit, in name order, and the
-# last value given for a variable is the one the container gets.
+# door's /32 (and, on a system with a front door of its own, from that door's
+# proxy too: $FRONT_PROXIES). This drop-in's CSERIES_TRUSTED_PROXIES replaces
+# the one before it: Quadlet reads drop-ins after the unit, in name order, and
+# the last value given for a variable is the one the container gets.
 #
-# The volumes: the door key the door makes (read-only here); the remote-acme
+# The door key: the remote door's own, in CSERIES_REMOTE_DOOR_SECRET_FILE,
+# which the Host believes from the door's address and nowhere else. A front
+# door's key, where there is one, stays CSERIES_DOOR_SECRET_FILE
+# (server/middleware/owner_session.py).
+#
+# The volumes: the door key the door makes (read-only here, beside and never
+# on /run/cseries-door, which a cloud box mounts for its own); the remote-acme
 # directory, where the Host writes what the certificate job reads (the zone,
 # the ACME account it made, and the acme-dns credential the network hands it
 # once); and the job's status, read-only, for Settings. Each is shared with
@@ -103,11 +166,11 @@ remote_host_dropin() {
 [Container]
 Network=cseries-remote.network:ip=$REMOTE_HOST_IP
 Environment=CSERIES_REMOTE_DOOR=$REMOTE_DOOR_IP:8443
-Environment=CSERIES_TRUSTED_PROXIES=$REMOTE_DOOR_IP/32
-Environment=CSERIES_DOOR_SECRET_FILE=/run/cseries-door/door-secret
+Environment=CSERIES_TRUSTED_PROXIES=$REMOTE_PROXIES
+Environment=CSERIES_REMOTE_DOOR_SECRET_FILE=/run/cseries-remote-door/door-secret
 Environment=CSERIES_REMOTE_ACME_DIR=/var/lib/cseries-remote
 Environment=CSERIES_REMOTE_CERT_STATUS=/run/cseries-remote-cert/status.json
-Volume=cseries-remote-door-key.volume:/run/cseries-door:ro
+Volume=cseries-remote-door-key.volume:/run/cseries-remote-door:ro
 Volume=cseries-remote-acme.volume:/var/lib/cseries-remote:U
 Volume=cseries-remote-cert-status.volume:/run/cseries-remote-cert:ro
 EOF
@@ -293,6 +356,12 @@ configure() {
     esac
     if [ -n "$rt_hs_url$rt_hs_sha" ] && { [ -z "$rt_hs_url" ] || [ -z "$rt_hs_sha" ]; }; then
         die "configure: harness_src_url and harness_src_sha256 go together"
+    fi
+    # The door's trusted proxies, read now, so a front-proxies file that is
+    # wrong stops configure before it writes any file.
+    REMOTE_PROXIES=""
+    if [ -n "$door" ]; then
+        REMOTE_PROXIES=$(remote_trusted_proxies) || exit 1
     fi
     a=$(write_if_changed "$UNITS/cseries-host.container.d/image.conf" "[Container]
 Image=$host")

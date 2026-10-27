@@ -1,0 +1,43 @@
+{
+ "_comment": [
+  "A copy of privatae bridge/tests/fixtures/remote_ticket_vector.json: one remote-access ticket,",
+  "pinned. The network's member door (privatae bridge/remote_ticket.py) must produce `ticket` byte",
+  "for byte from these inputs, and so must this repo's server/network/remote_protocol.py",
+  "sign_ticket, which the VM test's stand-in member door (member_door.py) signs with and checks",
+  "against this file at its start. The seed is RFC 8032 section 7.1 TEST 1's secret key, a",
+  "published test key; every other value is invented."
+ ],
+ "ed25519_seed_hex": "9d61b19deffd5a60ba844af492ec2cc44449c5697b326919703bac031cae7f60",
+ "kid": "vector-1",
+ "payload": {
+  "v": 1,
+  "kid": "vector-1",
+  "host_uuid": "5b1f3c2e-8d4a-4f6b-9c0e-1a2b3c4d5e6f",
+  "serial": "5f3a9c1",
+  "address_id": "k7x2m9",
+  "zone": "remote.privatae.ai",
+  "iat": 1793000000,
+  "exp": 1793003600,
+  "relays": [
+   {
+    "name": "tunnel.remote.privatae.ai",
+    "addrs": [
+     "192.0.2.10",
+     "198.51.100.20"
+    ]
+   }
+  ],
+  "limits": {
+   "streams": 512,
+   "open_rate": 100,
+   "open_burst": 200,
+   "window": 262144,
+   "bps": 100000000000
+  }
+ },
+ "cert_serial_int": 99854785,
+ "door_serial_hex": "05f3a9c1",
+ "verify_at": 1793000100,
+ "public_pem": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA11qYAYKxCrfVS/7TyWQHOg7hcvPapiMlrwIaaPcHURo=\n-----END PUBLIC KEY-----\n",
+ "ticket": "v1.eyJhZGRyZXNzX2lkIjoiazd4Mm05IiwiZXhwIjoxNzkzMDAzNjAwLCJob3N0X3V1aWQiOiI1YjFmM2MyZS04ZDRhLTRmNmItOWMwZS0xYTJiM2M0ZDVlNmYiLCJpYXQiOjE3OTMwMDAwMDAsImtpZCI6InZlY3Rvci0xIiwibGltaXRzIjp7ImJwcyI6MTAwMDAwMDAwMDAwLCJvcGVuX2J1cnN0IjoyMDAsIm9wZW5fcmF0ZSI6MTAwLCJzdHJlYW1zIjo1MTIsIndpbmRvdyI6MjYyMTQ0fSwicmVsYXlzIjpbeyJhZGRycyI6WyIxOTIuMC4yLjEwIiwiMTk4LjUxLjEwMC4yMCJdLCJuYW1lIjoidHVubmVsLnJlbW90ZS5wcml2YXRhZS5haSJ9XSwic2VyaWFsIjoiNWYzYTljMSIsInYiOjEsInpvbmUiOiJyZW1vdGUucHJpdmF0YWUuYWkifQ.dmyTO8H0niePvEElCujGIC5LACITtmTHQbL1xZjWxUeQY-bsder452n2Q6qrr69SOmjpT2Zs3s3HSWCpXjXeAA"
+}

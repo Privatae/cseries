@@ -297,6 +297,8 @@ class StubDoor:
         self.active = True
         self.dns_after = 1
         self.lifetime = 3600
+        # The acme-dns API the credential names (privatae CONFIG.acme_dns_api).
+        self.acme_dns_api = "https://acme.example.test"
         self.row = None
         # The door has frozen this Host (its certificate was used from two
         # places): every request is answered with the refusal frame, the
@@ -404,7 +406,7 @@ class StubDoor:
                     r["password"] = self.password if r["issued"] == 1 else f"{self.password}-{r['issued']}"
         credential = None
         if r["dns"] == "ready" and r["password"] is not None:
-            credential = {"api_base": "https://acme.example.test", "username": "8d3f2c1a-user",
+            credential = {"api_base": self.acme_dns_api, "username": "8d3f2c1a-user",
                           "password": r["password"], "subdomain": "4a9e7b2c-sub",
                           "fulldomain": "4a9e7b2c-sub.acme.example.test"}
             r["password"], r["delivered"] = None, time.time()
@@ -1377,7 +1379,8 @@ def test_the_certificate_job_refuses_a_lego_of_another_series(tmp_path, monkeypa
         def main(self):
             ran.append(True)
             return 0
-    ok, error = dc.run_once(Cert())
+    ok, error, refused = dc.run_once(Cert())
+    assert refused is False
     if lego == "4.29.0":
         assert ok and error is None and ran
         assert (state / "lego" / "accounts").is_dir()
@@ -1393,3 +1396,419 @@ def test_the_certificate_job_refuses_a_lego_of_another_series(tmp_path, monkeypa
     from server.routes import remote_access as routes
     line = routes.summary({"on": True, "certificate": ra.certificate_status(), "links": []})
     assert "Certificate problem" in line and "not 4.29.x" in line, line
+
+
+# ── acme-dns refusing the Host's credential ─────────────────────────────────
+#
+# A Host whose acme-dns account was pinned to its Cloud machine's addresses
+# (privatae-controller features/machines/acme_dns.py, allowfrom), then moved
+# to its owner's own computer with its passport and credential, holds a
+# credential acme-dns refuses from there. The real certificate job
+# (sidecars/remote-door/door-cert) and the real hook (cseries-acme-dns-hook)
+# run on the Host's certificate directory, against a stub acme-dns over real
+# TLS; lego's own part (running the hook, logging its lines) is played here.
+
+import http.server  # noqa: E402
+import importlib.util  # noqa: E402
+import ipaddress  # noqa: E402
+import threading  # noqa: E402
+import urllib.request  # noqa: E402
+from importlib.machinery import SourceFileLoader  # noqa: E402
+
+_REPO = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(_REPO / "vm/cloud/overlay/usr/local/lib/cseries-cloud"))
+import cseries_cloud as cc  # noqa: E402
+
+# The Cloud machine the first account was pinned to (documentation ranges);
+# the Host now sends its updates from 127.0.0.1.
+CLOUD_MACHINE = ("192.0.2.20/32", "2001:db8::20/128")
+ACME_DNS_USER = "8d3f2c1a-user"
+ACME_DNS_SUB = "4a9e7b2c-sub"
+
+
+def _hook():
+    path = str(_REPO / "vm/cloud/overlay/usr/local/sbin/cseries-acme-dns-hook")
+    loader = SourceFileLoader("acme_dns_hook_under_test", path)
+    spec = importlib.util.spec_from_loader("acme_dns_hook_under_test", loader)
+    mod = importlib.util.module_from_spec(spec)
+    loader.exec_module(mod)
+    return mod
+
+
+
+class StubAcmeDns:
+    """acme-dns's POST /update as acme-dns v1.0 answers it (api.go
+    webUpdatePost behind auth.go Auth): 200 {"txt": <value>} for a known user
+    and key, the account's own subdomain, from an address in the account's
+    allowfrom (an empty list: any address); 401 {"error": "forbidden"} for
+    anything else. `status` set: that answer instead, as an acme-dns in
+    trouble gives."""
+
+    def __init__(self, pki: PKI):
+        self.accounts: dict[tuple[str, str], tuple[str, tuple[str, ...]]] = {}
+        self.seen: list[dict] = []
+        self.status: int | None = None
+        chain, key = pki._server("acme-dns", ["localhost"], pki.root, pki.root_key)
+        self.ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        self.ctx.load_cert_chain(chain, key)
+        self.client_ctx = ssl.create_default_context(cafile=str(pki.root_path))
+
+    def add(self, password: str, allowfrom=()):
+        self.accounts[(ACME_DNS_USER, password)] = (ACME_DNS_SUB, tuple(allowfrom))
+
+    def _answer(self, peer, user, key, body):
+        if self.status is not None:
+            return self.status, {"error": "db_error"}
+        acct = self.accounts.get((user, key))
+        if acct is None or body.get("subdomain") != acct[0]:
+            return 401, {"error": "forbidden"}
+        if acct[1] and not any(ipaddress.ip_address(peer) in ipaddress.ip_network(n) for n in acct[1]):
+            return 401, {"error": "forbidden"}
+        return 200, {"txt": body.get("txt")}
+
+    def start(self):
+        stub = self
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_POST(self):
+                n = int(self.headers.get("Content-Length") or 0)
+                try:
+                    body = json.loads(self.rfile.read(n) or b"{}")
+                except ValueError:
+                    body = {}
+                user, key = self.headers.get("X-Api-User"), self.headers.get("X-Api-Key")
+                code, answer = stub._answer(self.client_address[0], user, key, body)
+                stub.seen.append({"key": key, "txt": body.get("txt"), "code": code})
+                out = json.dumps(answer).encode()
+                self.send_response(code)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(out)))
+                self.end_headers()
+                self.wfile.write(out)
+
+            def log_message(self, *a):
+                pass
+
+        self.server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.server.socket = self.ctx.wrap_socket(self.server.socket, server_side=True)
+        self.port = self.server.server_address[1]
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        return self
+
+    def stop(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+    @property
+    def base(self):
+        return f"https://localhost:{self.port}"
+
+
+
+class CertJob:
+    """The door's certificate job on the Host's certificate directory: the
+    real door-cert loop (tick) and the real hook. lego's part is played here
+    as lego 4.29 plays it (providers/dns/exec): the hook is run with
+    `present <challenge name> <value>`, each line it prints is logged, and
+    the order fails when the hook does."""
+
+    def __init__(self, tmp: Path, monkeypatch, etc: Path, acme: StubAcmeDns):
+        self.status_dir = tmp / "cert-status"
+        monkeypatch.setenv("CSERIES_CERT_ETC", str(etc))
+        monkeypatch.setenv("CSERIES_CERT_STATE", str(tmp / "cert-state"))
+        monkeypatch.setenv("CSERIES_CERT_STATUS_DIR", str(self.status_dir))
+        monkeypatch.setenv("CSERIES_DOOR_TLS", str(tmp / "door-tls"))
+        self.dc = _door_cert()
+        monkeypatch.setattr(self.dc, "lego_refusal", lambda lego=None: None)
+        self.hook = _hook()
+        self.paths = cc.Paths(str(etc.parents[1]))
+        assert self.paths.etc == str(etc)
+        self.opener = urllib.request.build_opener(
+            self.hook._NoRedirect, urllib.request.HTTPSHandler(context=acme.client_ctx)).open
+        self.seen, self.next_at, self.now = None, 0.0, time.time()
+        self.rng = random.Random(3)
+        self.values: list[str] = []
+
+    def main(self):
+        value = secrets.token_urlsafe(32)
+        self.values.append(value)
+        rc = self.hook.main(["cseries-acme-dns-hook", "present", f"_acme-challenge.{AID}.{ZONE}.", value],
+                            paths=self.paths, opener=self.opener)
+        if rc:
+            print(f"[*.{AID}.{ZONE}] acme: error presenting token: exec: wait command: exit status 1",
+                  file=sys.stderr)
+        return rc
+
+    async def tick(self, *, due=False):
+        """One pass of door-cert --loop, `due`: at its next check's time."""
+        self.now = max(time.time(), self.next_at if due else 0.0)
+        self.seen, self.next_at = await asyncio.to_thread(
+            self.dc.tick, self, self.seen, self.next_at, self.now, self.rng)
+
+    @property
+    def status(self) -> dict:
+        return json.loads((self.status_dir / "status.json").read_text())
+
+
+async def _cert_rig(pki, tmp, monkeypatch, *, retry_ok=True):
+    """The rig with the certificate job beside it, remote access on and the
+    first credential held; acme-dns takes the first account only from the
+    Cloud machine, and the reissued one (`retry_ok`) from anywhere."""
+    acme = StubAcmeDns(pki).start()
+    rig = Rig(pki, tmp, monkeypatch)
+    rig.acme_dir = tmp / "root" / "etc" / "cseries-cloud"
+    monkeypatch.setenv(ra.ACME_DIR_ENV, str(rig.acme_dir))
+    job = CertJob(tmp, monkeypatch, rig.acme_dir, acme)
+    monkeypatch.setenv(ra.CERT_STATUS_ENV, str(job.status_dir / "status.json"))
+    await rig.start()
+    rig.door.dns_after = 0
+    rig.door.acme_dns_api = acme.base
+    await rig.remote.turn_on()
+    await until(lambda: rig.remote.state.credential_stored and rig.remote.state.dns == "ready",
+                what="the first credential")
+    await rig.wait_links(2)
+    acme.add(rig.door.password, CLOUD_MACHINE)
+    acme.add(f"{rig.door.password}-2", () if retry_ok else CLOUD_MACHINE)
+    return rig, job, acme
+
+
+def _reissues(rig) -> int:
+    return sum(1 for p in rig.door.ops("remote.enable") if p.get("reissue_acme_dns"))
+
+
+def _held(rig) -> str:
+    return json.loads((rig.acme_dir / "acme-dns.json").read_text())[f"{AID}.{ZONE}"]["password"]
+
+
+async def _refused_then_reissued(rig, job):
+    """The job is refused with the first credential; the Host gets a new one."""
+    await job.tick()
+    st = job.status
+    assert st["ok"] is False and st["acme_dns_refused"] is True, st
+    assert st["credential_mtime_ns"] == (rig.acme_dir / "acme-dns.json").stat().st_mtime_ns
+    await until(lambda: _reissues(rig) == 1, what="a reissue")
+    await until(lambda: _held(rig) == f"{rig.door.password}-2", what="the new credential")
+
+
+def test_a_refused_credential_is_reissued_once_and_the_update_tried_again(pki, tmp_path, monkeypatch):
+    """acme-dns answers 401 to the first credential (an account pinned to the
+    Cloud machine the Host has left): the Host asks remote.enable with
+    reissue_acme_dns once, keeps the new credential where the job reads it,
+    and the job, started by the changed file before its retry time, sets the
+    TXT value with the new one. Then it is quiet."""
+    async def go():
+        rig, job, acme = await _cert_rig(pki, tmp_path, monkeypatch)
+        try:
+            await _refused_then_reissued(rig, job)
+            await job.tick()                      # not due: the changed file starts it
+            st = job.status
+            assert st["ok"] is True and st["acme_dns_refused"] is False and st["error"] is None, st
+            assert [s["code"] for s in acme.seen] == [401, 200]
+            assert acme.seen[0]["key"] == rig.door.password
+            assert acme.seen[1]["key"] == f"{rig.door.password}-2" and acme.seen[1]["txt"] == job.values[-1]
+            await job.tick()                      # nothing changed, nothing due: no run
+            assert len(acme.seen) == 2
+            await asyncio.sleep(0.5)              # five supervisor passes
+            assert _reissues(rig) == 1
+            # The ask stays counted though the job got through: a status that
+            # says refused again for the credential now held (another
+            # container writes it) asks for nothing until a day has passed.
+            assert rig.remote.state.acme_dns_reissued_at is not None
+            job.dc.write_status(False, "acme-dns-hook: refused", None, status_dir=str(job.status_dir),
+                                refused=True, credential=(rig.acme_dir / "acme-dns.json").stat().st_mtime_ns)
+            await asyncio.sleep(0.5)
+            assert _reissues(rig) == 1
+        finally:
+            await rig.close()
+            acme.stop()
+    run(go())
+
+
+def test_a_second_refusal_right_after_does_not_loop(pki, tmp_path, monkeypatch):
+    """acme-dns refuses the reissued credential too (a misconfigured acme-dns):
+    no second reissue, at the job's retry pace or between, until
+    ACME_DNS_REISSUE_S has passed since the first; then exactly one more."""
+    async def go():
+        rig, job, acme = await _cert_rig(pki, tmp_path, monkeypatch, retry_ok=False)
+        try:
+            await _refused_then_reissued(rig, job)
+            for due in (False, True, True):       # the retry the new file starts, then RETRY_S later, twice
+                await job.tick(due=due)
+                st = job.status
+                assert st["acme_dns_refused"] is True, st
+                # About the credential the Host holds now, so only the bound holds it back.
+                assert st["credential_mtime_ns"] == (rig.acme_dir / "acme-dns.json").stat().st_mtime_ns
+                await asyncio.sleep(0.5)
+                assert _reissues(rig) == 1
+            assert [s["code"] for s in acme.seen] == [401, 401, 401, 401]
+            assert rig.remote.state.acme_dns_reissued_at is not None
+            # The bound is kept on disk: a restart does not ask again.
+            assert ra._State.load(rig.state_path).acme_dns_reissued_at == rig.remote.state.acme_dns_reissued_at
+            rig.remote.state.acme_dns_reissued_at -= ra.ACME_DNS_REISSUE_S
+            await until(lambda: _reissues(rig) == 2, what="the next reissue, a day on")
+            await until(lambda: _held(rig) == f"{rig.door.password}-3", what="the third credential")
+            await asyncio.sleep(0.5)
+            assert _reissues(rig) == 2
+        finally:
+            await rig.close()
+            acme.stop()
+    run(go())
+
+
+@pytest.mark.parametrize("case", ["5xx", "unreachable"])
+def test_an_acme_dns_outage_never_reissues(pki, tmp_path, monkeypatch, case):
+    """A 5xx from acme-dns, or no acme-dns at all, is the job's failure and
+    tried again at its pace; it is not a refusal of the credential, so the
+    Host asks for no new account, though the job's word is about the
+    credential it holds."""
+    async def go():
+        rig, job, acme = await _cert_rig(pki, tmp_path, monkeypatch)
+        try:
+            if case == "5xx":
+                acme.status = 503
+            else:
+                acme.stop()
+            for due in (False, True):
+                await job.tick(due=due)
+                st = job.status
+                assert st["ok"] is False and st["acme_dns_refused"] is False, st
+                assert st["credential_mtime_ns"] == (rig.acme_dir / "acme-dns.json").stat().st_mtime_ns
+                assert "acme-dns update failed" in st["error"], st["error"]
+                await asyncio.sleep(0.5)
+            assert _reissues(rig) == 0
+            assert _held(rig) == rig.door.password
+            assert rig.remote.state.acme_dns_reissued_at is None
+        finally:
+            await rig.close()
+            if case == "5xx":
+                acme.stop()
+    run(go())
+
+
+def test_the_refused_credential_and_its_replacement_are_never_logged(pki, tmp_path, monkeypatch, caplog, capfd):
+    """Through a refusal, the reissue and the retried update: neither
+    credential is in any log record at any level, in what the job and the
+    hook print, in the job's status or in the Host's state. The new one is in
+    acme-dns.json, where the job reads it."""
+    caplog.set_level(logging.DEBUG)
+
+    async def go():
+        rig, job, acme = await _cert_rig(pki, tmp_path, monkeypatch)
+        try:
+            await _refused_then_reissued(rig, job)
+            await job.tick()
+            assert job.status["ok"] is True
+            return (rig.door.password, (job.status_dir / "status.json").read_text(),
+                    rig.state_path.read_text(), _held(rig))
+        finally:
+            await rig.close()
+            acme.stop()
+    first, status, state, held = run(go())
+    printed = capfd.readouterr()
+    assert held == f"{first}-2"
+    assert "acme-dns-hook:" in printed.err and "HTTP 401" in printed.err, \
+        "the hook printed nothing; the check would prove nothing"
+    assert any("acme-dns refused" in r.getMessage() for r in caplog.records)
+    # The second credential is the first with a suffix: one check covers both.
+    for text in (printed.out, printed.err, status, state):
+        assert first not in text
+    for rec in caplog.records:
+        assert first not in rec.getMessage() + (rec.exc_text or "") + repr(rec.args), rec.name
+
+
+def _forge_status(job, rig, *, refused: bool):
+    """The job's status for the credential the Host holds now, as the
+    certificate job's container could write it."""
+    job.dc.write_status(not refused, "acme-dns-hook: refused" if refused else None, None,
+                        status_dir=str(job.status_dir), refused=refused,
+                        credential=(rig.acme_dir / "acme-dns.json").stat().st_mtime_ns)
+
+
+def test_a_status_that_flips_between_ok_and_refused_asks_at_most_once_a_day(pki, tmp_path, monkeypatch):
+    """Only the certificate job's container writes its status; whatever it
+    says, refused then ok then refused again, the Host asks for at most one
+    new account a day. A clock set back past the last ask restarts the day
+    from now, never waits for a time that may not come."""
+    async def go():
+        rig, job, acme = await _cert_rig(pki, tmp_path, monkeypatch)
+        try:
+            await _refused_then_reissued(rig, job)
+            for _ in range(4):
+                _forge_status(job, rig, refused=False)
+                await asyncio.sleep(0.3)
+                _forge_status(job, rig, refused=True)
+                await asyncio.sleep(0.3)
+            assert _reissues(rig) == 1
+            # The clock went back ten days past the ask.
+            rig.remote.state.acme_dns_reissued_at = time.time() + 10 * ra.ACME_DNS_REISSUE_S
+            await until(lambda: rig.remote.state.acme_dns_reissued_at <= time.time(), what="the ask counted from now")
+            assert _reissues(rig) == 1
+            rig.remote.state.acme_dns_reissued_at -= ra.ACME_DNS_REISSUE_S
+            await until(lambda: _reissues(rig) == 2, what="the next reissue, a day on")
+        finally:
+            await rig.close()
+            acme.stop()
+    run(go())
+
+
+def test_a_reissued_credential_that_cannot_be_kept_is_asked_for_again_a_day_on(pki, tmp_path, monkeypatch):
+    """The door hands the new credential over once. When the Host cannot keep
+    it, the one it held stays on disk and counts as held: acme-dns still
+    refuses it, so a day on the Host asks again, and keeps that one."""
+    async def go():
+        rig, job, acme = await _cert_rig(pki, tmp_path, monkeypatch)
+        acme.add(f"{rig.door.password}-3")
+        real, failed = ra.store_credential, []
+
+        def store_once_failing(directory, **kw):
+            if not failed:
+                failed.append(True)
+                raise OSError(28, "No space left on device")
+            return real(directory, **kw)
+        monkeypatch.setattr(ra, "store_credential", store_once_failing)
+        try:
+            await job.tick()
+            assert job.status["acme_dns_refused"] is True
+            await until(lambda: _reissues(rig) == 1 and failed, what="a reissue that cannot be kept")
+            await asyncio.sleep(0.5)
+            assert _held(rig) == rig.door.password
+            assert rig.remote.state.credential_stored is True
+            assert _reissues(rig) == 1
+            rig.remote.state.acme_dns_reissued_at -= ra.ACME_DNS_REISSUE_S
+            await until(lambda: _reissues(rig) == 2, what="the next reissue, a day on")
+            await until(lambda: _held(rig) == f"{rig.door.password}-3", what="the credential kept")
+            await job.tick()
+            assert job.status["ok"] is True, job.status
+        finally:
+            await rig.close()
+            acme.stop()
+    run(go())
+
+
+def test_a_reissue_whose_answer_is_lost_still_gets_the_new_credential(pki, tmp_path, monkeypatch):
+    """The door took the reissue (it registers the new account after it
+    answers) but its answer never came: the Host polls remote.enable without
+    reissue_acme_dns and picks the new credential up, one registration."""
+    async def go():
+        rig, job, acme = await _cert_rig(pki, tmp_path, monkeypatch)
+        rig.door.dns_after = 1
+        real = rig.door.enable
+
+        def enable_answer_lost(params):
+            out = real(params)
+            if params.get("reissue_acme_dns"):
+                return {}, "the network did not answer in time", 504
+            return out
+        rig.door.enable = enable_answer_lost
+        try:
+            await job.tick()
+            assert job.status["acme_dns_refused"] is True
+            await until(lambda: _held(rig) == f"{rig.door.password}-2", what="the new credential")
+            assert _reissues(rig) == 1
+            await job.tick()
+            assert job.status["ok"] is True, job.status
+        finally:
+            await rig.close()
+            acme.stop()
+    run(go())

@@ -1,0 +1,9 @@
+# The values host-door.caddy (the door's rules, which this box's Caddyfile
+# and the remote-access door both import) reads from the environment, for
+# this box: the Host's fixed container address, which Caddy asks and passes
+# to, and the unlock page the locked answer names. The door key is the
+# other one it reads (cloud.conf's EnvironmentFile). systemd sets these
+# before each start and each reload, as it does the key.
+[Service]
+Environment=CSERIES_HOST_UPSTREAM=@HOST_UPSTREAM@
+Environment=CSERIES_UNLOCK_HOST=@UNLOCK_HOST@

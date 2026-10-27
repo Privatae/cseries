@@ -20,6 +20,15 @@ _acme-challenge.<address_id>.<zone>, or the acme-dns name its CNAME points at
 (the credential's fulldomain), which is the name lego passes once it has
 followed that CNAME (measured with Debian 13's lego 4.9.1-2, 2026-10-22). Any
 other name is refused, as the credential could change no other anyway.
+
+acme-dns answers 401 {"error": "forbidden"} when the credential cannot change
+the name from where the update came: a wrong user or key, a subdomain that is
+not the account's, or an address outside the account's allowfrom (acme-dns
+v1.0 auth.go, Auth). That one says REFUSED in its line, so the remote-access
+door's certificate job (sidecars/remote-door/door-cert) can tell the Host,
+which asks the member door for a new account (server/network/remote_access.py):
+a Host whose account was pinned to the addresses of a Cloud machine it has
+since left holds a credential acme-dns will never take again.
 """
 
 import http.client
@@ -31,6 +40,11 @@ import urllib.request
 
 sys.path.insert(0, "/usr/local/lib/cseries-cloud")
 import cseries_cloud as cc  # noqa: E402
+
+
+# door-cert's REFUSED: the same words, which it looks for in this hook's line
+# (lego 4.29 logs each line the hook prints).
+REFUSED = "acme-dns refused this machine's credential (HTTP 401)"
 
 
 def log(msg):
@@ -75,20 +89,24 @@ def present(paths, fqdn, value, opener=_open):
     try:
         with opener(req, timeout=30) as r:
             answer = json.loads(r.read().decode("utf-8", "replace") or "{}")
+    except urllib.error.HTTPError as e:
+        if e.code == 401:
+            raise cc.CloudError(f"{REFUSED}: it cannot change {zone}'s challenge from here") from None
+        raise cc.CloudError(f"acme-dns update failed: {e}") from None
     except (OSError, ValueError, http.client.HTTPException) as e:
         raise cc.CloudError(f"acme-dns update failed: {e}") from None
     if not isinstance(answer, dict) or answer.get("txt") != value:
         raise cc.CloudError("acme-dns did not confirm the TXT value it was given")
 
 
-def main(argv):
+def main(argv, paths=None, opener=_open):
     if len(argv) == 4 and argv[1] == "cleanup":
         return 0
     if len(argv) != 4 or argv[1] != "present":
         log("usage: cseries-acme-dns-hook present|cleanup <fqdn> <value>")
         return 2
     try:
-        present(cc.Paths(), argv[2], argv[3])
+        present(paths or cc.Paths(), argv[2], argv[3], opener=opener)
     except cc.CloudError as e:
         log(str(e))
         return 1

@@ -1,10 +1,12 @@
 #!/bin/sh
 # Loads the cloud box's firewall (/etc/cseries-cloud/nftables).
 #
-#   cseries-firewall load      door.nft, then the SSH rule while the box is not
-#                              sealed, then the Host's ports (8810, 8811) unless
-#                              its vault is locked, then the bastion's rule
-#                              when it runs
+#   cseries-firewall load      door.nft, then br_netfilter's hooks off (when the
+#                              kernel has them), then the SSH rule while the box
+#                              is not sealed, then the Host's ports (8810, 8811)
+#                              unless its vault is locked, then the bastion's
+#                              rule when it runs
+#   cseries-firewall bridge-off  br_netfilter's hooks off alone
 #   cseries-firewall bastion   the bastion's rule alone (its ExecStartPre)
 #   cseries-firewall seal      drop the SSH rule
 set -eu
@@ -15,9 +17,32 @@ VAULT_CONFIG=/etc/cseries-cloud/vault.json
 VAULT_MOUNT=/var/lib/cseries-vault
 BASTION_CGROUP=/sys/fs/cgroup/system.slice/privatae-bastion.service
 
+# Frames bridged between two containers of one network stay out of the IP
+# hooks. door.nft's forward chain drops every new connection to a private
+# range, which is right for what a container routes out, but with
+# br_netfilter's bridge-nf-call-* on it would meet the frames between the
+# Host and its database, its apps and its remote-access door too, all on
+# 10/8. /etc/modprobe.d/cseries-cloud.conf keeps the module from being
+# loaded; this turns the hooks off where the kernel has it anyway (built in,
+# or loaded before that file). A write that fails is said, not fatal: the
+# rules are in place either way.
+bridge_off() {
+    for f in /proc/sys/net/bridge/bridge-nf-call-iptables \
+             /proc/sys/net/bridge/bridge-nf-call-ip6tables \
+             /proc/sys/net/bridge/bridge-nf-call-arptables; do
+        if [ -e "$f" ]; then
+            echo 0 2>/dev/null > "$f" || echo "cseries-firewall: could not turn $f off" >&2
+        fi
+    done
+}
+
 case "${1:-load}" in
+    bridge-off)
+        bridge_off
+        ;;
     load)
         nft -f "$D/door.nft"
+        bridge_off
         if [ ! -e "$SEALED" ]; then
             # The provisioner's way in until it runs `bootstrap.sh seal`.
             nft add rule inet cseries_door pre_seal tcp dport 22 accept
@@ -39,7 +64,7 @@ case "${1:-load}" in
         nft flush chain inet cseries_door pre_seal
         ;;
     *)
-        echo "usage: cseries-firewall load|bastion|seal" >&2
+        echo "usage: cseries-firewall load|bridge-off|bastion|seal" >&2
         exit 2
         ;;
 esac

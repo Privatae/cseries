@@ -250,8 +250,15 @@ class Updater:
         if any(c.startswith("etc/cseries-cloud/nftables/") or c.endswith("cseries-firewall")
                for c in changed):
             self.systemctl("reload", "cseries-firewall.service")
-        if "etc/caddy/Caddyfile" in changed:
+        if any(c in changed for c in ("etc/caddy/Caddyfile", "etc/caddy/host-door.caddy",
+                                      "etc/systemd/system/caddy.service.d/door.conf")):
+            # The door's rules and the values they read: a reload reads the
+            # files, and the daemon-reload above gave it the environment.
             self.systemctl("reload", "caddy.service")
+        if "etc/cseries-remote/remote.nft" in changed:
+            # Reloaded, never restarted: the door requires this unit, and a
+            # restart would take the door down with it.
+            self.systemctl("try-reload-or-restart", "cseries-remote-firewall.service")
         if any("cseries-door-helper" in c for c in changed):
             self.systemctl("try-restart", "cseries-door-helper.service")
         if any(c.endswith("sbin/cseries-unlock-agent") or c.startswith("usr/local/lib/cseries-cloud/")
@@ -326,7 +333,12 @@ class Updater:
         prev_tree = self.paths.overlay_dir(prev_overlay) if prev_overlay else None
         prev_host, prev_pg = self.current_images()
         prev_release = self.current_release() or installed
-        prev_runtime = cc.runtime_lines_installed(self.paths)
+        # With the door's image, so a rollback puts the previous release's
+        # back: configure leaves the door's files alone without a door= line.
+        prev_runtime = cc.runtime_lines_installed(self.paths) + cc.door_lines_installed(self.paths)
+        # And configure's own door files, which a rollback to a release
+        # without the door must take away again (cc.DOOR_CONFIG_FILES).
+        prev_door = cc.door_backup(self.paths)
         log(f"updating {installed} -> {new}")
         try:
             tree = self.unpack_overlay(manifest)
@@ -346,11 +358,11 @@ class Updater:
             quadlets = any(c.startswith("etc/containers/") for c in changed)
             self.run_images(cc.pinned(manifest["images"]["host"]),
                             cc.pinned(manifest["images"]["postgres"]), new, quadlets,
-                            cc.runtime_lines(manifest))
+                            cc.runtime_lines(manifest) + cc.door_lines(manifest["images"]))
         except (cc.CloudError, OSError, subprocess.SubprocessError) as e:
             log(f"failed: {e}; going back to {installed}")
             back = self.roll_back(prev_overlay, backup, prev_host, prev_pg, prev_release, units,
-                                  prev_runtime)
+                                  prev_runtime, prev_door)
             return self.record(result="rolled_back", error=str(e), offered=new,
                                rollback=back,
                                held={"version": new, "manifest_sha256": signed, "at": self.now()})
@@ -360,7 +372,7 @@ class Updater:
         return self.record(bastion=b)
 
     def roll_back(self, prev_overlay, backup, prev_host, prev_pg, prev_release, units=None,
-                  prev_runtime=""):
+                  prev_runtime="", prev_door=None):
         """Put the previous overlay's files, units and images back and
         restart the Host on them. Returns what happened, for update.json."""
         notes = []
@@ -372,9 +384,19 @@ class Updater:
             # and the rest of the rollback goes on: the images matter more.
             if units.get("enabled"):
                 self._undo("disable", "--now", *units["enabled"], notes=notes)
+            # The door the failed release configured: on a box that had none
+            # its units are stopped while their files still name them, and
+            # configure's door files go back to what they were before.
+            door_moved = prev_door is not None and cc.door_backup(self.paths) != prev_door
+            if door_moved and prev_door[cc.DOOR_CONFIG_FILES[0]] is None:
+                self._undo("stop", *cc.DOOR_UNITS, notes=notes)
             if backup:
                 self.reload_for(cc.restore_files(self.paths, backup))
                 notes.append(f"overlay {prev_overlay} restored ({len(backup)} files)")
+            if door_moved:
+                cc.restore_files(self.paths, prev_door)
+                self.systemctl("daemon-reload")
+                notes.append("remote access's configuration restored")
             back_on = [u for u in units.get("disabled", ()) if u not in units.get("restart", ())]
             if back_on:
                 self._undo("enable", *back_on, notes=notes)

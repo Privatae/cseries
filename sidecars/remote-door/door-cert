@@ -22,6 +22,11 @@ sends them anywhere.
 
 Each run's result goes to STATUS_DIR/status.json, which the Host reads for
 Settings: when it looked, the certificate's expiry and names, and the error.
+It also says whether acme-dns refused the credential (acme_dns_refused: the
+hook's REFUSED, a 401) and which acme-dns.json the run read
+(credential_mtime_ns), so the Host asks the member door for a new account
+only for the credential it still holds; when the new one is written, the
+changed file starts the next run at once, which is the update tried again.
 """
 
 import contextlib
@@ -57,6 +62,9 @@ ERROR_MAX = 600
 # written (the Dockerfile pins the 4.29 series).
 LEGO = os.environ.get("CSERIES_LEGO", "/usr/bin/lego")
 LEGO_SERIES = (4, 29)
+# cseries-acme-dns-hook's REFUSED, the same words: acme-dns answered the
+# update 401, so this credential will not do from here.
+REFUSED = "acme-dns refused this machine's credential (HTTP 401)"
 
 
 def log(msg):
@@ -180,10 +188,21 @@ def certificate(tls=TLS):
     return after, names
 
 
-def write_status(ok, error, next_at, status_dir=STATUS_DIR, tls=TLS, now=None):
+def credential_mtime(have):
+    """acme-dns.json's st_mtime_ns in inputs()' answer, or None: which
+    credential a run read, without anything of what it holds."""
+    for rel, mtime, _size in have:
+        if rel == "acme-dns.json":
+            return mtime
+    return None
+
+
+def write_status(ok, error, next_at, status_dir=STATUS_DIR, tls=TLS, now=None, refused=False,
+                 credential=None):
     after, names = certificate(tls)
     doc = {"checked_at": int(now or time.time()), "ok": bool(ok), "error": (error or None),
-           "not_after": after, "names": names, "next_check_at": int(next_at) if next_at else None}
+           "not_after": after, "names": names, "next_check_at": int(next_at) if next_at else None,
+           "acme_dns_refused": bool(refused), "credential_mtime_ns": credential}
     try:
         _write(os.path.join(status_dir, "status.json"),
                (json.dumps(doc, sort_keys=True) + "\n").encode(), 0o644)
@@ -205,52 +224,61 @@ class _Tee(io.TextIOBase):
 
 
 def run_once(cert):
-    """One cseries-cert run: (ok, error)."""
+    """One cseries-cert run: (ok, error, refused), refused when acme-dns
+    answered the hook's update 401 (REFUSED)."""
     if not ready():
-        return False, "waiting for remote access to be turned on in the Host's Settings"
+        return False, "waiting for remote access to be turned on in the Host's Settings", False
     why = lego_refusal()
     if why:
-        return False, why
+        return False, why, False
     try:
         seed_account()
     except OSError as exc:
-        return False, f"the Host's ACME account could not be copied for lego: {exc}"
+        return False, f"the Host's ACME account could not be copied for lego: {exc}", False
     tee = _Tee(sys.stderr)
     try:
         with contextlib.redirect_stderr(tee):
             rc = cert.main()
     except Exception as exc:  # noqa: BLE001 — reported, and tried again
-        return False, f"{exc.__class__.__name__}: {exc}"[:ERROR_MAX]
+        return False, f"{exc.__class__.__name__}: {exc}"[:ERROR_MAX], False
     if rc == 0:
-        return True, None
+        return True, None, False
     lines = [ln.strip() for ln in tee.buf.getvalue().splitlines() if ln.strip()]
     # The hook's own words say why the challenge failed (acme-dns refused,
     # unreachable); lego's last lines say what failed.
-    hook = [ln for ln in lines if "acme-dns-hook:" in ln][-1:]
-    return False, (" / ".join(hook + lines[-2:]) or f"cseries-cert exited {rc}")[-ERROR_MAX:]
+    hooks = [ln for ln in lines if "acme-dns-hook:" in ln]
+    refused = any(REFUSED in ln for ln in hooks)
+    return False, (" / ".join(hooks[-1:] + lines[-2:]) or f"cseries-cert exited {rc}")[-ERROR_MAX:], refused
+
+
+def tick(cert, seen, next_at, now, rng):
+    """One pass of --loop: a run when the Host's files changed or the next
+    check is due. (seen, next_at) for the next pass."""
+    have = inputs()
+    if ready() and (have != seen or now >= next_at):
+        ok, error, refused = run_once(cert)
+        seen = have
+        next_at = now + (DAY_S + rng.uniform(-3600, 3600) if ok else RETRY_S)
+        if error:
+            log(error)
+        write_status(ok, error, next_at, now=now, refused=refused, credential=credential_mtime(have))
+    elif not ready() and have != seen:
+        seen = have
+        write_status(False, None, None, now=now)
+    return seen, next_at
 
 
 def main(argv):
     cert = load()
     if "--loop" not in argv:
-        ok, error = run_once(cert)
-        write_status(ok, error, None)
+        have = inputs()
+        ok, error, refused = run_once(cert)
+        write_status(ok, error, None, refused=refused, credential=credential_mtime(have))
         return 0 if ok else 1
     rng = random.SystemRandom()
     seen, next_at = None, 0.0
     while True:
-        now = time.time()
-        have = inputs()
-        if ready() and (have != seen or now >= next_at):
-            ok, error = run_once(cert)
-            seen = have
-            next_at = now + (DAY_S + rng.uniform(-3600, 3600) if ok else RETRY_S)
-            if error:
-                log(error)
-            write_status(ok, error, next_at, now=now)
-        elif not ready() and have != seen:
-            seen = have
-            write_status(False, None, None, now=now)
+        seen, next_at = tick(cert, seen, next_at, time.time(), rng)
         time.sleep(POLL_S)
 
 

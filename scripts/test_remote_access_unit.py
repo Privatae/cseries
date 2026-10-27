@@ -154,7 +154,7 @@ r = tc.get("/login", headers={"Host": LOCAL + ":8800"}, follow_redirects=False)
 check(r.status_code == 200 and 'id="remote-sw"' not in r.text, "the desktop's own sign-in page is as before")
 
 from server.middleware import owner_session as OS  # noqa: E402
-OS._door_key = lambda: b"k" * 40
+OS._door_key = lambda *_setting: b"k" * 40
 
 
 def door(uri, host):

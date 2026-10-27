@@ -21,10 +21,12 @@
 
     release.py cloud-json FILE --version X.Y.Z --host-image REPO
             --host-digest D --postgres-image REPO --postgres-digest D
+            --door-image REPO --door-digest D
             --overlay TARBALL --download-base URL --out OUT
         Writes OUT, the C-Series Cloud release manifest, from the committed
         FILE (vm/cloud/cloud-release.json, "dev" placeholders): the release's
-        images and the overlay tarball's URL and sha256, checked against the
+        images (the remote-access door's among them, which a cloud box runs
+        the way a guest does), and the overlay tarball's URL and sha256, checked against the
         .sha256 beside it. bastion.min_version is kept as committed. Refuses
         to write a manifest that still says "dev" anywhere. The maintainer
         signs OUT's exact bytes afterwards (docs/RELEASING.md).
@@ -287,7 +289,7 @@ def placeholders(data):
 def cloud_json(a):
     if not VERSION_RE.match(a.version):
         fail(f"--version must be X.Y.Z, got {a.version!r}")
-    for d in (a.host_digest, a.postgres_digest):
+    for d in (a.host_digest, a.postgres_digest, a.door_digest):
         if not DIGEST_RE.match(d):
             fail(f"not a sha256 digest: {d!r}")
     with open(a.file, encoding="utf-8") as f:
@@ -306,6 +308,9 @@ def cloud_json(a):
     data["images"] = {
         "host": {"ref": f"{a.host_image}:{a.version}", "digest": a.host_digest},
         "postgres": {"ref": f"{a.postgres_image}:{a.version}", "digest": a.postgres_digest},
+        # The remote-access door, as release.json pins it: a cloud box runs
+        # its door and certificate units beside its own front door.
+        "door": {"ref": f"{a.door_image}:{a.version}", "digest": a.door_digest},
     }
     data["overlay"] = {"url": f"{a.download_base.rstrip('/')}/{name}", "sha256": got}
     if not VERSION_RE.match(str((data.get("bastion") or {}).get("min_version", ""))):
@@ -525,7 +530,8 @@ def main():
     c = sub.add_parser("cloud-json")
     c.add_argument("file")
     for flag in ("--version", "--host-image", "--host-digest", "--postgres-image",
-                 "--postgres-digest", "--overlay", "--download-base", "--out"):
+                 "--postgres-digest", "--door-image", "--door-digest", "--overlay",
+                 "--download-base", "--out"):
         c.add_argument(flag, required=True)
     for sp in (r, c):
         sp.add_argument("--runtime", action="append", metavar="FAMILY=REPO@DIGEST")

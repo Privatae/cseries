@@ -188,6 +188,11 @@ check("remote" not in (cert_svc.get("networks") or []), "the certificate job is 
 check(_default(env_h["CSERIES_REMOTE_DOOR"]) == f"{door_ip}:8443", "the tunnel dials the door's own address",
       env_h["CSERIES_REMOTE_DOOR"])
 check(_default(env_h["CSERIES_TRUSTED_PROXIES"]) == f"{door_ip}/32", "the Host trusts exactly the door's /32")
+check(env_h.get("CSERIES_REMOTE_DOOR_SECRET_FILE") == "/run/cseries-remote-door/door-secret" and
+      "remote-door-key:/run/cseries-remote-door:ro" in host_svc["volumes"] and
+      "CSERIES_DOOR_SECRET_FILE" not in env_h,
+      "compose: the Host reads the remote door's key as CSERIES_REMOTE_DOOR_SECRET_FILE, mounted read-only "
+      "where the guests mount it")
 check(_default(env_d["CSERIES_HOST_UPSTREAM"]) == f"{host_ip}:8800", "the door passes to the Host's own address")
 check(_default(env_d["CSERIES_TUNNEL_FROM"]) == host_ip and _default(env_d["CSERIES_DOOR_BIND"]) == door_ip,
       "the door believes a PROXY header from the Host's address only, and listens on its own")
@@ -200,9 +205,25 @@ check(RA.door_address({"CSERIES_REMOTE_DOOR": _default(env_h["CSERIES_REMOTE_DOO
       "the shipped door address passes the tunnel's own check")
 
 with open(os.path.join(ROOT, "sidecars/remote-door/Caddyfile")) as f:
-    door_cf = f.read()
+    door_own = f.read()
 with open(os.path.join(ROOT, "vm/cloud/overlay/etc/caddy/Caddyfile.in")) as f:
-    cloud_cf = f.read()
+    cloud_own = f.read()
+# Both doors import the door's rules from one file, which the door's image
+# copies beside its Caddyfile (as the cloud box's overlay installs it beside
+# its own): they are read here as Caddy reads them, with the import in place.
+with open(os.path.join(ROOT, "vm/cloud/overlay/etc/caddy/host-door.caddy")) as f:
+    door_rules = f.read()
+with open(os.path.join(ROOT, "sidecars/remote-door/Dockerfile")) as f:
+    dockerfile = f.read()
+check(door_own.count("import host-door.caddy") == 1 and cloud_own.count("import host-door.caddy") == 1 and
+      "COPY vm/cloud/overlay/etc/caddy/host-door.caddy /etc/caddy/host-door.caddy" in dockerfile and
+      "COPY sidecars/remote-door/Caddyfile /etc/caddy/Caddyfile" in dockerfile and
+      not [ln for ln in (door_own + cloud_own).splitlines()
+           if not ln.strip().startswith("#") and re.search(r"forward_auth|reverse_proxy \{", ln)],
+      "one source for the door's rules: both Caddyfiles import host-door.caddy once and hold no rules of "
+      "their own, and the door's image puts it beside its Caddyfile")
+door_cf = door_own.replace("import host-door.caddy", door_rules)
+cloud_cf = cloud_own.replace("import host-door.caddy", door_rules)
 code = "\n".join(ln.strip() for ln in door_cf.splitlines() if ln.strip() and not ln.strip().startswith("#"))
 check("forward_auth {$CSERIES_HOST_UPSTREAM} {" in code and "reverse_proxy {$CSERIES_HOST_UPSTREAM} {" in code,
       "the door asks and passes to the Host's address, from the environment")
@@ -389,9 +410,11 @@ for name, unit in (("door", q_door), ("certificate job", q_cert)):
           f"the guest's {name} runs as 1000, read-only, with no capabilities, its image left to configure")
 v_h, v_d, v_c = _volumes(q_host), _volumes(q_door), _volumes(q_cert)
 check(v_d.get("cseries_remote-door-key") == ("/data/door-key", "U") and
-      v_h.get("cseries_remote-door-key") == ("/run/cseries-door", "ro") and
-      q_env_h.get("CSERIES_DOOR_SECRET_FILE") == "/run/cseries-door/door-secret",
-      "the door makes the door key and the Host reads it, read-only, where CSERIES_DOOR_SECRET_FILE names it")
+      v_h.get("cseries_remote-door-key") == ("/run/cseries-remote-door", "ro") and
+      q_env_h.get("CSERIES_REMOTE_DOOR_SECRET_FILE") == "/run/cseries-remote-door/door-secret" and
+      "CSERIES_DOOR_SECRET_FILE" not in q_env_h,
+      "the door makes the door key and the Host reads it, read-only, where CSERIES_REMOTE_DOOR_SECRET_FILE "
+      "names it, off /run/cseries-door and leaving a front door's CSERIES_DOOR_SECRET_FILE alone")
 check(v_h.get("cseries_remote-acme") == (q_env_h.get("CSERIES_REMOTE_ACME_DIR"), "U") and
       v_c.get("cseries_remote-acme") == ("/etc/cseries-cloud", "ro") and
       v_d.get("cseries_remote-acme") == ("/etc/cseries-cloud", "ro"),
@@ -782,7 +805,14 @@ async def part4():
                      CSERIES_DOOR_SECRET=KEY, CSERIES_DOOR_TLS=os.path.join(TMP, "door-tls"),
                      CSERIES_DOOR_ADMIN=os.path.join(TMP, "admin.sock"), HOME=TMP,
                      XDG_DATA_HOME=TMP, XDG_CONFIG_HOME=TMP)
-    caddy = subprocess.Popen(["caddy", "run", "--config", os.path.join(ROOT, "sidecars/remote-door/Caddyfile"),
+    # The door's /etc/caddy as its image lays it out: its Caddyfile and the
+    # door's rules beside it (sidecars/remote-door/Dockerfile).
+    etc = os.path.join(TMP, "door-etc")
+    os.makedirs(etc, exist_ok=True)
+    shutil.copy(os.path.join(ROOT, "sidecars/remote-door/Caddyfile"), os.path.join(etc, "Caddyfile"))
+    shutil.copy(os.path.join(ROOT, "vm/cloud/overlay/etc/caddy/host-door.caddy"),
+                os.path.join(etc, "host-door.caddy"))
+    caddy = subprocess.Popen(["caddy", "run", "--config", os.path.join(etc, "Caddyfile"),
                               "--adapter", "caddyfile"], env=caddy_env, stdout=subprocess.DEVNULL,
                              stderr=open(os.path.join(TMP, "caddy.log"), "wb"))
     relay = relay_mod.Relay(zone=ZONE, ticket_keys={"t1": TICKET_KEY.public_key()},

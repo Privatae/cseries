@@ -89,6 +89,42 @@ same order holds, and `door-secret` must be rewritten in place (`truncate` and w
 the Host's mount is of that one file and keeps its inode, so a renamed file
 would never reach the Host.
 
+## Remote access beside the front door
+
+The box keeps its own front door, and its Host reaches the network the way a
+Host on someone's own computer does: the member door for every network
+service, and remote access through the network's relay when the owner turns
+it on in Settings (it is off until then). The release pins the remote-access
+door's image (`images.door` in `cloud-release.json`), and bootstrap and the
+updater hand it to `cseries-guest configure` as `door=`, which sets up the
+same units a member's own machine runs (`vm/wsl/rootfs`: the door and its
+certificate job, their volumes, the `cseries_remote` network and
+`cseries-remote-firewall.service`). Until remote access is on, the door waits
+for an address and a certificate and answers nothing. The two doors share one
+set of rules, `etc/caddy/host-door.caddy`, which this box's Caddyfile and the
+remote door's both import.
+
+What keeps the two doors apart in the Host's unit:
+
+| Setting | Front door (Caddy on the box) | Remote-access door |
+|---|---|---|
+| door key | `CSERIES_DOOR_SECRET_FILE`, `/run/cseries-cloud/door-secret` | `CSERIES_REMOTE_DOOR_SECRET_FILE`, `/run/cseries-remote-door/door-secret` (the door makes it in its volume) |
+| believed from | `10.89.77.1`, the box's end of the containers' bridge | `10.89.79.3/32`, the door's own address, and only there |
+| trusted proxies | `CSERIES_TRUSTED_PROXIES`: `remote.conf` names both, the front one read from `/etc/cseries/front-proxies` | |
+
+`/run/cseries-door` stays the box's own directory (the machine's state and
+the pairing helper). The guests' door units require
+`cseries-machine-firewall.service`; on a box that name stands for
+`cseries-firewall.service` (door.nft). Every `cseries-remote-*` unit waits
+for the vault (`cseries-remote-.service.d/vault.conf`), and the unlock starts
+the door and its job with the Host. door.nft needs no rule for the Host's hop
+to the door: the two are ports of one bridge, and the box keeps bridged
+frames out of the IP hooks, which the Host's database and the local runtime's
+network rely on too. `/etc/modprobe.d/cseries-cloud.conf` refuses to load
+`br_netfilter`, and `cseries-firewall load` turns its `bridge-nf-call-*`
+hooks off where a kernel has them anyway; with them on, door.nft's
+private-range drop cuts all of those hops (`scripts/test_cloud_box_remote_hop.py`).
+
 ## The vault: the customer holds the disk key
 
 Everything on the box that is the customer's sits in one LUKS2 volume, the
@@ -336,8 +372,20 @@ docker build -f sidecars/app-runtime-python/Dockerfile -t cseries-app-runtime-py
 docker build -t cseries-app-helper:cloud-box sidecars/app-helper
 docker build -t cseries-browser:cloud-box sidecars/browser
 docker build -f sidecars/app-runtime-creative/Dockerfile -t cseries-app-runtime-creative:cloud-box .
+docker build -f sidecars/remote-door/Dockerfile -t cseries-remote-door:cloud-box .
 BASTION_BIN=/path/to/privatae-bastion-linux-amd64 vm/cloud/test/run-vm-test.sh
 ```
+
+`CLOUD_VM_RUNTIME=0` leaves out the local runtime's sections and its four
+images. The remote-access door's image rides in bootstrap's archive, as the
+release pins it. A stand-in member door on the tap (`member_door.py`) takes
+the enrolment code the card's handoff carries, so the claim joins the Host to
+the network, and answers `remote.enable` and `remote.ticket` as the network's
+door does. With remote access on, the Host holds its tunnel to the reference
+relay (`relay.py`, on this machine), and a browser here reaches the Host's
+remote name through the relay and the remote door (its certificate a
+stand-in), before and after a reboot, after the seal, and not while the
+platform is blocked, as the design has it.
 
 It downloads the Debian 13 cloud image once (checked against Debian's
 SHA512SUMS), boots a fresh VM, runs the bootstrap as a provisioner would, and

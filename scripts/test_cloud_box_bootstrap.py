@@ -435,12 +435,27 @@ with tempfile.TemporaryDirectory() as tmp:
               "the box's own network drop-in (with the Host's address) replaces the WSL guest's")
         check("root/etc/systemd/system/cseries-runtime-firewall.service" not in members,
               "the WSL guest's runtime firewall is not on a box: door.nft carries its rules")
-        # A member's own machine runs the remote-access door beside the Host
-        # (vm/wsl/rootfs: cseries-remote-*.container, the remote network and
-        # the Host's remote.conf). A box has its own Caddy door, so none of
-        # those reach it.
-        check(not [n for n in members if "cseries-remote" in n or n.endswith("cseries-host.container.d/remote.conf")],
-              "the member machine's remote-access door, network and Host drop-in are not on a box",
+        # Remote access, as a member's own machine runs it (vm/wsl/rootfs:
+        # the door and its certificate job, their volumes, the remote network
+        # and its firewall), unchanged, beside the box's own Caddy door. The
+        # Host's remote.conf is not shipped: cseries-guest configure writes it
+        # once the release names the door's image.
+        remote = ["etc/containers/systemd/cseries-remote-door.container",
+                  "etc/containers/systemd/cseries-remote-cert.container",
+                  "etc/containers/systemd/cseries-remote-acme.volume",
+                  "etc/containers/systemd/cseries-remote-cert-status.volume",
+                  "etc/containers/systemd/cseries-remote-door-key.volume",
+                  "etc/containers/systemd/cseries-remote-tls.volume",
+                  "etc/containers/systemd/cseries-remote.network",
+                  "etc/cseries-remote/remote.nft",
+                  "etc/systemd/system/cseries-remote-firewall.service",
+                  "etc/containers/containers.conf.d/subnets.conf"]
+        for rel in remote:
+            with open(os.path.join(ROOT, "vm/wsl/rootfs", rel), "rb") as f:
+                check(t.extractfile("root/" + rel).read() == f.read(), f"{rel} is the WSL guest's, unchanged")
+        check(not [n for n in members if n.endswith("cseries-host.container.d/remote.conf")
+                   or n.endswith("cseries-remote-door.container.d/machine-firewall.conf")],
+              "the Host's remote.conf is configure's to write, never the overlay's",
               [n for n in members if "remote" in n])
         for prog in ["root/usr/local/bin/cseries-guest", "root/usr/local/sbin/cseries-door-helper",
                      "root/usr/local/sbin/cseries-cloud-update", "bootstrap.sh"]:
@@ -486,7 +501,28 @@ with tempfile.TemporaryDirectory() as tmp:
     check("Network=cseries.network:ip=10.89.77.2" in netconf.splitlines(),
           "the Host's fixed address is set on its network", netconf)
     with open(paths.p("etc/caddy/Caddyfile")) as f:
-        caddy = f.read()
+        caddy_own = f.read()
+    # The Host's site imports the door's rules (host-door.caddy, the file the
+    # remote-access door imports too), which read the Host's address and the
+    # unlock page from Caddy's environment (caddy.service.d/door.conf). The
+    # checks below read the Caddyfile as Caddy does: the import in place, and
+    # those values put in.
+    with open(paths.p("etc/caddy/host-door.caddy")) as f:
+        door_rules = f.read()
+    with open(paths.p("etc/systemd/system/caddy.service.d/door.conf")) as f:
+        door_env = dict(ln.strip()[len("Environment="):].split("=", 1) for ln in f
+                        if ln.strip().startswith("Environment="))
+    check(door_env == {"CSERIES_HOST_UPSTREAM": "10.89.77.2:8800",
+                       "CSERIES_UNLOCK_HOST": "unlock-orchard.k7x2m9.cloud.privatae.ai"},
+          "Caddy's environment names the Host's fixed address and the unlock page", door_env)
+    check(caddy_own.count("import host-door.caddy") == 1 and
+          re.findall(r"\{\$([A-Z_]+)\}", door_rules) and
+          set(re.findall(r"\{\$([A-Z_]+)\}", door_rules)) == set(door_env) | {"CSERIES_DOOR_SECRET"},
+          "the Host's site imports the door's rules once, and every value they read is set for Caddy",
+          sorted(set(re.findall(r"\{\$([A-Z_]+)\}", door_rules))))
+    for k, v in door_env.items():
+        door_rules = door_rules.replace("{$" + k + "}", v)
+    caddy = caddy_own.replace("import host-door.caddy", door_rules)
     check("https://*.k7x2m9.cloud.privatae.ai {" in caddy and "forward_auth 10.89.77.2:8800" in caddy and
           "uri /__host/door" in caddy and "reverse_proxy 10.89.77.2:8800" in caddy and
           "protocols tls1.3" in caddy and "admin unix//run/caddy/admin.sock" in caddy,

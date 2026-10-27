@@ -19,12 +19,21 @@ FROM caddy:2.11.7-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d
 # (docs/RELEASING.md).
 LABEL org.opencontainers.image.source="https://github.com/Privatae/cseries"
 
-# Exact versions, from the Alpine branch the base image above is (3.23,
-# read from its /etc/alpine-release on 2026-10-26), so the same build inputs
-# make the same image. lego is held to the 4.29 series because door-cert
-# writes the account into lego 4.29's own layout (door-cert LEGO_SERIES
-# checks it at run time too). When Alpine replaces a revision, this build
-# fails until the pins are moved to the new one; move lego off 4.29 only with
+# Version series, from the Alpine branch the base image above is (3.23,
+# read from its /etc/alpine-release on 2026-10-26). The base is pinned by
+# digest, but apk resolves against the branch's live index, which keeps only
+# the newest revision of each package: an exact revision pin (3.12.15-r0 was
+# one) breaks the release build the day Alpine replaces it. A series pin
+# (~X.Y, matched by version component: python3~3.12 takes 3.12.16, never
+# 3.120 or 3.13) takes that branch's current revision of the series and still
+# refuses a new series. The cost: two builds of this file can carry
+# different revisions within a series, as they always could for the
+# libraries these three pull in, which are not pinned. What a release ships
+# is fixed by the door image's digest in release.json, and the release job
+# scans that archive, the one it pushes (.github/workflows/release.yml).
+# lego is held to the 4.29 series because door-cert writes the
+# account into lego 4.29's own layout (door-cert LEGO_SERIES checks it at run
+# time too, and the build checks it below); move lego off 4.29 only with
 # door-cert's account layout checked against the new series.
 #
 # The caddy base image gives /usr/bin/caddy, and Alpine's package /usr/bin/lego,
@@ -35,7 +44,7 @@ LABEL org.opencontainers.image.source="https://github.com/Privatae/cseries"
 # not permitted", so Caddy never starts and lego never makes a certificate.
 # Neither needs it (Caddy listens on 8443; lego answers DNS-01 through
 # cseries-acme-dns-hook), so both lose it here.
-RUN apk add --no-cache python3=3.12.15-r0 lego=4.29.0-r6 nftables=1.1.5-r2 \
+RUN apk add --no-cache python3~3.12 lego~4.29 nftables~1.1 \
     && test -x /usr/bin/lego && test -x /usr/bin/python3 && test -x /usr/sbin/nft \
     && /usr/bin/lego --version | grep -q ' 4\.29\.' \
     && /usr/bin/python3 -I -c 'import os; fc = "security.capability"; bins = ("/usr/bin/caddy", "/usr/bin/lego"); [os.removexattr(b, fc) for b in bins if fc in os.listxattr(b)]; left = [b for b in bins if fc in os.listxattr(b)]; raise SystemExit(f"file capabilities left on {left}" if left else 0)'
@@ -44,6 +53,8 @@ COPY vm/cloud/overlay/usr/local/lib/cseries-cloud/cseries_cloud.py /usr/local/li
 COPY vm/cloud/overlay/usr/local/sbin/cseries-cert /usr/local/sbin/cseries-cert
 COPY vm/cloud/overlay/usr/local/sbin/cseries-acme-dns-hook /usr/local/sbin/cseries-acme-dns-hook
 COPY sidecars/remote-door/Caddyfile /etc/caddy/Caddyfile
+# The door's rules, the one file the cloud box's front door imports too.
+COPY vm/cloud/overlay/etc/caddy/host-door.caddy /etc/caddy/host-door.caddy
 COPY sidecars/remote-door/door-run sidecars/remote-door/door-cert sidecars/remote-door/door-filter /usr/local/sbin/
 
 # Every place the door and its certificate job write, owned by the user they

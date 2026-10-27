@@ -1,11 +1,12 @@
 # The door on a member's own machine, for remote access (compose.remote.yaml).
 #
-# The cloud box's front door (vm/cloud/overlay/etc/caddy/Caddyfile.in), with
-# three changes: it listens on the containers' own network only, behind the
-# PROXY v2 header the Host's tunnel writes (so the browser's address reaches
-# the Host's per-client limits); its certificate is the remote address's
-# wildcard, made by door-cert in this image; and the Host it asks and passes
-# to is the Host's container address, never loopback. A loopback peer passes
+# The cloud box's front door (vm/cloud/overlay/etc/caddy/Caddyfile.in): the
+# same door rules, from the one file both import (host-door.caddy), with
+# three changes here: it listens on the containers' own network only, behind
+# the PROXY v2 header the Host's tunnel writes (so the browser's address
+# reaches the Host's per-client limits); its certificate is the remote
+# address's wildcard, made by door-cert in this image; and the Host it asks
+# and passes to is the Host's container address, never loopback. A loopback peer passes
 # the Host's session gate without a session (server/middleware/
 # owner_session.py), which no browser on the internet may; from here the Host
 # sees this container's address. scripts/test_remote_door_loopback.py runs
@@ -61,61 +62,8 @@ https://*.{$CSERIES_REMOTE_ZONE} {
 	tls {$CSERIES_DOOR_TLS}/cert.pem {$CSERIES_DOOR_TLS}/key.pem {
 		protocols tls1.3
 	}
-	# The Host sets its own framing, CSP and Referrer-Policy.
-	header {
-		Strict-Transport-Security "max-age=63072000; includeSubDomains"
-		X-Content-Type-Options nosniff
-		-Server
-	}
-	# The Host's door answers Caddy's forward_auth question and nobody else:
-	# a request from outside for it ends here, before it is asked about or
-	# passed on. The path matcher compares the decoded, lower-cased path, so
-	# /__host%2Fdoor and /__HOST/door end here too.
-	@door path /__host/door /__host/door/*
-	handle @door {
-		respond 404
-	}
-	handle {
-		forward_auth {$CSERIES_HOST_UPSTREAM} {
-			uri /__host/door
-			# The door key tells the Host this is Caddy's own question, so
-			# it believes X-Forwarded-Method and -Uri only here. Set, not
-			# added: a value a client sent is replaced.
-			header_up X-Cseries-Door {$CSERIES_DOOR_SECRET}
-		}
-		reverse_proxy {$CSERIES_HOST_UPSTREAM} {
-			# Caddy sets these two on the forward_auth question only. A
-			# client's own copies are removed, so the Host never reads a
-			# request's method or URI from a header the client wrote.
-			header_up -X-Forwarded-Method
-			header_up -X-Forwarded-Uri
-			# Nor the door key: a request passed on never carries it.
-			header_up -X-Cseries-Door
-		}
-	}
-	# While the Host restarts nothing answers on its port, and Caddy's own
-	# answer would be 502 (504 on a timeout). Those get the starting answer
-	# instead, 503 with Retry-After. What the Host answers itself is passed
-	# on as it is.
-	handle_errors {
-		header {
-			Strict-Transport-Security "max-age=63072000; includeSubDomains"
-			X-Content-Type-Options nosniff
-			-Server
-		}
-		@starting expression `{err.status_code} in [502, 503, 504]`
-		handle @starting {
-			header Retry-After 5
-			header Cache-Control no-store
-			@page header Accept *text/html*
-			handle @page {
-				header Content-Type "text/html; charset=utf-8"
-				respond `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta http-equiv="refresh" content="5"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Starting</title></head><body style="font-family:system-ui,sans-serif;margin:3rem auto;max-width:32rem;padding:0 1rem;color:#222"><h1 style="font-size:1.4rem">This Host is starting</h1><p>It will be ready in a few seconds. This page tries again by itself.</p></body></html>` 503
-			}
-			handle {
-				header Content-Type "application/json"
-				respond `{"error": "This Host is starting. Try again in a few seconds."}` 503
-			}
-		}
-	}
+	# The Host's door: the cloud box's own rules, from the one file both
+	# doors import (vm/cloud/overlay/etc/caddy/host-door.caddy; this image
+	# copies it beside this file).
+	import host-door.caddy
 }

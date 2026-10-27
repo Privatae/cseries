@@ -114,7 +114,7 @@ dockerfile = read(DOCKERFILE)
 copy = [ln for ln in dockerfile.splitlines() if ln.startswith("COPY ") and "door-run" in ln]
 check(len(copy) == 1 and "sidecars/remote-door/door-filter" in copy[0].split() and copy[0].endswith(" /usr/local/sbin/"),
       "the door image carries door-filter at /usr/local/sbin/door-filter", copy)
-check(re.search(r"apk add --no-cache [^\n]*\bnftables=[0-9][^\s]*", dockerfile) is not None
+check(re.search(r"apk add --no-cache [^\n]*\bnftables[=~][0-9][^\s]*", dockerfile) is not None
       and "test -x /usr/sbin/nft" in dockerfile, "and nft, pinned, at /usr/sbin/nft")
 check('ENTRYPOINT ["/usr/local/sbin/door-run"]' in dockerfile and "/usr/local/sbin/door-run" in read(FILTER),
       "the image's own entrypoint is door-run, which door-filter runs last")

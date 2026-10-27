@@ -168,36 +168,46 @@ def _header(scope, name: bytes) -> str:
 
 DOOR_KEY_HEADER = b"x-cseries-door"
 DOOR_KEY_FILE_ENV = "CSERIES_DOOR_SECRET_FILE"
+# A Host with two doors, a front door of its own and the remote-access door
+# (sidecars/remote-door) beside it, as on a cloud box, has a key for each:
+# the front door's in CSERIES_DOOR_SECRET_FILE, the remote door's in this
+# one. Each door's key is believed only from that door: the remote door's
+# from its own address (CSERIES_REMOTE_DOOR) and from nowhere else, the front
+# door's from every other trusted proxy and never from the remote door's
+# address. With this unset, as on an install where the remote door is the only
+# door, CSERIES_DOOR_SECRET_FILE is the key of whichever door asks.
+REMOTE_DOOR_KEY_FILE_ENV = "CSERIES_REMOTE_DOOR_SECRET_FILE"
 # What a key may be: printable, no spaces, long enough not to be guessed.
 # 32 random bytes in hex or base64 are 64 or 44 characters.
 _DOOR_KEY_RE = re.compile(rb"[A-Za-z0-9._~+/=-]{32,512}")
-# (path, mtime_ns, size, key or None): the file is read again only when it
-# changes, so the box can replace the key without restarting the Host.
-_door_key_cache: tuple | None = None
+# Per setting, (path, mtime_ns, size, key or None): the file is read again
+# only when it changes, so the box can replace the key without restarting
+# the Host.
+_door_key_cache: dict[str, tuple] = {}
 
 
-def _door_key() -> bytes | None:
-    """The door key from CSERIES_DOOR_SECRET_FILE, or None when that is not
-    set, cannot be read, or does not hold a key. Never logged."""
-    global _door_key_cache
-    path = os.environ.get(DOOR_KEY_FILE_ENV, "").strip()
+def _door_key(env_name: str = DOOR_KEY_FILE_ENV) -> bytes | None:
+    """The door key from the file the setting env_name names, or None when
+    that is not set, cannot be read, or does not hold a key. Never logged."""
+    cached = _door_key_cache.get(env_name)
+    path = os.environ.get(env_name, "").strip()
     if not path:
-        if _door_key_cache != ("", 0, 0, None):
-            _door_key_cache = ("", 0, 0, None)
-            log.error("the front door is answered with 401 only: %s is not set, so no "
-                      "question can carry the door key", DOOR_KEY_FILE_ENV)
+        if cached != ("", 0, 0, None):
+            _door_key_cache[env_name] = ("", 0, 0, None)
+            log.error("the door is answered with 401 only: %s is not set, so no "
+                      "question can carry the door key", env_name)
         return None
     try:
         st = os.stat(path)
     except OSError as exc:
-        if _door_key_cache is None or _door_key_cache[:3] != (path, -1, -1):
-            _door_key_cache = (path, -1, -1, None)
-            log.error("the front door is answered with 401 only: %s %s cannot be read (%s)",
-                      DOOR_KEY_FILE_ENV, path, exc.__class__.__name__)
+        if cached is None or cached[:3] != (path, -1, -1):
+            _door_key_cache[env_name] = (path, -1, -1, None)
+            log.error("the door is answered with 401 only: %s %s cannot be read (%s)",
+                      env_name, path, exc.__class__.__name__)
         return None
     stamp = (path, st.st_mtime_ns, st.st_size)
-    if _door_key_cache is not None and _door_key_cache[:3] == stamp:
-        return _door_key_cache[3]
+    if cached is not None and cached[:3] == stamp:
+        return cached[3]
     key = None
     try:
         with open(path, "rb") as f:
@@ -205,18 +215,41 @@ def _door_key() -> bytes | None:
         if _DOOR_KEY_RE.fullmatch(raw):
             key = raw
         else:
-            log.error("the front door is answered with 401 only: %s %s does not hold a key "
-                      "(32 to 512 characters, letters, digits and ._~+/=-)", DOOR_KEY_FILE_ENV, path)
+            log.error("the door is answered with 401 only: %s %s does not hold a key "
+                      "(32 to 512 characters, letters, digits and ._~+/=-)", env_name, path)
     except OSError as exc:
-        log.error("the front door is answered with 401 only: %s %s cannot be read (%s)",
-                  DOOR_KEY_FILE_ENV, path, exc.__class__.__name__)
-    _door_key_cache = (*stamp, key)
+        log.error("the door is answered with 401 only: %s %s cannot be read (%s)",
+                  env_name, path, exc.__class__.__name__)
+    _door_key_cache[env_name] = (*stamp, key)
     return key
 
 
-def _carries_door_key(scope) -> bool:
-    """Whether the request carries the door key, exactly once."""
-    key = _door_key()
+def _remote_door_ip() -> str | None:
+    """The remote-access door's address (CSERIES_REMOTE_DOOR), or None when
+    there is none or it is one the Host refuses."""
+    from server.network import remote_access
+    try:
+        door = remote_access.door_address()
+    except remote_access.DoorAddressError:
+        return None
+    return door[0] if door else None
+
+
+def _door_key_for(client: str | None) -> bytes | None:
+    """The key a question from client must carry (REMOTE_DOOR_KEY_FILE_ENV
+    says which door's)."""
+    if not os.environ.get(REMOTE_DOOR_KEY_FILE_ENV, "").strip():
+        return _door_key(DOOR_KEY_FILE_ENV)
+    remote = _remote_door_ip()
+    if remote is not None and client == remote:
+        return _door_key(REMOTE_DOOR_KEY_FILE_ENV)
+    return _door_key(DOOR_KEY_FILE_ENV)
+
+
+def _carries_door_key(scope, client: str | None = None) -> bool:
+    """Whether the request carries the key of the door at client, exactly
+    once."""
+    key = _door_key_for(client)
     if key is None:
         return False
     sent = [v for k, v in scope.get("headers") or () if k == DOOR_KEY_HEADER]
@@ -228,7 +261,7 @@ async def door_decision(scope) -> tuple[int, str | None]:
     about. A WebSocket handshake is asked about the same way and gets no
     redirect."""
     client = _unmap_v4((scope.get("client") or (None,))[0])
-    if not trusted_proxies.peer_is_trusted(client) or not _carries_door_key(scope):
+    if not trusted_proxies.peer_is_trusted(client) or not _carries_door_key(scope, client):
         return 401, None
     method = _header(scope, b"x-forwarded-method").strip().upper()
     uri = _header(scope, b"x-forwarded-uri").strip()

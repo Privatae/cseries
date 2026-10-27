@@ -1232,6 +1232,7 @@ jobs:
       TAG: ${{ github.ref_name }}
       HOST_DIGEST: ${{ needs.merge.outputs.host }}
       POSTGRES_DIGEST: ${{ needs.merge.outputs.postgres }}
+      DOOR_DIGEST: ${{ needs.merge.outputs.door }}
       PYTHON_DIGEST: ${{ needs.runtime-merge.outputs.python }}
       BROWSER_DIGEST: ${{ needs.runtime-merge.outputs.browser }}
       HELPER_DIGEST: ${{ needs.runtime-merge.outputs.helper }}
@@ -1256,6 +1257,7 @@ jobs:
             --version "$VERSION" \
             --host-image "$HOST_IMAGE" --host-digest "$HOST_DIGEST" \
             --postgres-image "$POSTGRES_IMAGE" --postgres-digest "$POSTGRES_DIGEST" \
+            --door-image "$DOOR_IMAGE" --door-digest "$DOOR_DIGEST" \
             --overlay "$out/cseries-cloud-overlay-$VERSION.tar.gz" \
             --download-base "$DOWNLOAD_BASE" --out "$out/cloud-release.json" \
             --runtime "python=$PYTHON_IMAGE@$PYTHON_DIGEST" \

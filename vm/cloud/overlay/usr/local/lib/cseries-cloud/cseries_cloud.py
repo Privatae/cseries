@@ -176,10 +176,18 @@ BOOTSTRAP_KEYS = frozenset({
 })
 
 
+# The images a manifest or bootstrap.json may name: the Host and its database,
+# always, and the remote-access door (sidecars/remote-door), whose door and
+# certificate units run it, when the release has one.
+IMAGES_REQUIRED = ("host", "postgres")
+IMAGES_OPTIONAL = ("door",)
+
+
 def _image_pair(images, what):
-    if not isinstance(images, dict) or set(images) != {"host", "postgres"}:
-        raise CloudError(f"{what} must name exactly host and postgres")
-    for which in ("host", "postgres"):
+    if not isinstance(images, dict) or not set(IMAGES_REQUIRED) <= set(images) or \
+            set(images) - set(IMAGES_REQUIRED) - set(IMAGES_OPTIONAL):
+        raise CloudError(f"{what} must name host and postgres, and may name door, and nothing else")
+    for which in sorted(images):
         img = images[which]
         if not isinstance(img, dict):
             raise CloudError(f"{what}.{which} must be an object")
@@ -251,14 +259,15 @@ def validate_bootstrap(raw):
         cfg["images"] = raw["images"]
     if "image_archive" in raw:
         a = raw["image_archive"]
-        if not isinstance(a, dict) or set(a) != {"path", "host", "postgres"}:
-            raise CloudError("image_archive must hold exactly path, host and postgres")
-        for k in ("path", "host", "postgres"):
+        if not isinstance(a, dict) or set(a) not in ({"path", "host", "postgres"},
+                                                     {"path", "host", "postgres", "door"}):
+            raise CloudError("image_archive must hold exactly path, host and postgres, and may hold door")
+        for k in sorted(a):
             if not isinstance(a[k], str) or not a[k]:
                 raise CloudError(f"image_archive.{k} must be a non-empty string")
         if not os.path.isabs(a["path"]):
             raise CloudError("image_archive.path must be an absolute path on this machine")
-        for k in ("host", "postgres"):
+        for k in sorted(set(a) - {"path"}):
             if not IMAGE_REF_RE.match(a[k]):
                 raise CloudError(f"image_archive.{k} must be the image's name in the archive")
         cfg["image_archive"] = dict(a)
@@ -711,7 +720,8 @@ def runtime_lines_installed(paths):
 def validate_manifest(m):
     """A cloud-release.json, checked: {version, images:{host:{ref,digest},
     postgres:{ref,digest}}, overlay:{url,sha256}, bastion:{min_version}}, and
-    optionally runtime (the local runtime's images and the engines' sources)."""
+    optionally images.door (the remote-access door's image) and runtime (the
+    local runtime's images and the engines' sources)."""
     if not isinstance(m, dict):
         raise CloudError("the cloud release manifest is not an object")
     if not isinstance(m.get("version"), str) or not VERSION_RE.match(m["version"]):
@@ -735,6 +745,61 @@ def validate_manifest(m):
 
 def pinned(img):
     return f"{img['ref']}@{img['digest']}"
+
+
+def door_lines(images):
+    """cseries-guest configure's door= line for the remote-access door's image
+    in images (a manifest's or bootstrap.json's), or "" when it names none.
+    configure then writes the door's two units' images and the Host's
+    remote.conf; without the line it leaves what an earlier release wrote."""
+    img = (images or {}).get("door")
+    return f"door={pinned(img)}\n" if img else ""
+
+
+def door_lines_installed(paths):
+    """The door= line for the door's image now on the box, so a rollback puts
+    back exactly what the previous release pinned. "" when there is none."""
+    try:
+        with open(paths.image_conf("remote-door"), encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("Image=") and "@sha256:" in line:
+                    return f"door={line[len('Image='):].strip()}\n"
+    except FileNotFoundError:
+        pass
+    return ""
+
+
+# The files cseries-guest configure writes for the remote-access door: its two
+# units' images and the Host's remote.conf (relative, as apply_overlay names
+# paths). They are configure's, not the overlay's, so an overlay's backup
+# never holds them, and configure without a door= line leaves them as they
+# are. An update records them before it starts (door_backup) and its
+# rollback puts back exactly that: a release that brought the door, rolled
+# back to one without it, would otherwise leave a remote.conf naming the
+# network and the key volume whose units the rollback took away, and Quadlet
+# then makes no unit for the Host at all.
+DOOR_CONFIG_FILES = (
+    "etc/containers/systemd/cseries-remote-door.container.d/image.conf",
+    "etc/containers/systemd/cseries-remote-cert.container.d/image.conf",
+    "etc/containers/systemd/cseries-host.container.d/remote.conf",
+)
+DOOR_UNITS = ("cseries-remote-door.service", "cseries-remote-cert.service")
+
+
+def door_backup(paths):
+    """What each of DOOR_CONFIG_FILES holds now, recorded as apply_overlay's
+    backup records a path ((bytes, mode), or None for no file), for
+    restore_files."""
+    backup = {}
+    for rel in DOOR_CONFIG_FILES:
+        dest = paths.p(rel)
+        try:
+            st = os.stat(dest)
+            with open(dest, "rb") as f:
+                backup[rel] = (f.read(), st.st_mode & 0o777)
+        except FileNotFoundError:
+            backup[rel] = None
+    return backup
 
 
 # ── fetching ────────────────────────────────────────────────────────────────

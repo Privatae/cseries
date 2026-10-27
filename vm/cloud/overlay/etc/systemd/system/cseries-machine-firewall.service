@@ -1,0 +1,17 @@
+# The remote-access door's units, as the guests ship them, require the
+# guest's machine wall (cseries-machine-firewall.service): with no wall, a
+# container would reach the machine the VM runs on. A cloud box has no
+# machine under it to wall off; its wall is door.nft (cseries-firewall.service,
+# whose forward chain keeps every container off private and special ranges),
+# so on a cloud box this name stands for that firewall and nothing else.
+# Nothing enables it; the door's units pull it in.
+[Unit]
+Description=C-Series Cloud firewall, as the remote-access door's units name it
+Requires=cseries-firewall.service
+After=cseries-firewall.service
+DefaultDependencies=no
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true

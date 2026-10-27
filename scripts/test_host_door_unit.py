@@ -380,6 +380,49 @@ async def main():
     st, _h = await ask(app, "/api/owner/login", method="POST", extra=[("origin", "https://" + DESKTOP)])
     check(st == 200, "and the Host's own Origin passes there as before", st)
 
+    # 10. two doors, as on a cloud box with remote access: the front door
+    # (CSERIES_DOOR_SECRET_FILE) and the remote-access door at its own address
+    # (CSERIES_REMOTE_DOOR, CSERIES_REMOTE_DOOR_SECRET_FILE). Each door's key
+    # is believed from that door only.
+    remote = ("10.89.79.3", 41000)
+    rkey = "r3mote-door-k3y-0123456789abcdefABCDEF_-~"
+    rkey_file = os.path.join(KEY_DIR, "remote-door-secret")
+    with open(rkey_file, "w") as f:
+        f.write(rkey + "\n")
+    os.environ["CSERIES_TRUSTED_PROXIES"] = "10.88.0.1/32,10.89.79.3/32"
+    os.environ["CSERIES_REMOTE_DOOR"] = "10.89.79.3:8443"
+    st, _h = await ask(app, "/login", peer=remote, key=KEY)
+    check(st == 200, "one door key (no CSERIES_REMOTE_DOOR_SECRET_FILE): the remote door asks with "
+          "CSERIES_DOOR_SECRET_FILE's key, as on an install where it is the only door", st)
+    os.environ["CSERIES_REMOTE_DOOR_SECRET_FILE"] = rkey_file
+    st, _h = await ask(app, "/login", peer=remote, key=rkey)
+    check(st == 200, "two door keys: the remote door's own key from the remote door's address: 200", st)
+    st, _h = await ask(app, "/login", key=KEY)
+    check(st == 200, "two door keys: the front door's key from the front door's proxy: 200", st)
+    st, _h = await ask(app, "/login", peer=remote, key=KEY)
+    check(st == 401, "the front door's key from the remote door's address: 401", st)
+    st, _h = await ask(app, "/login", key=rkey)
+    check(st == 401, "the remote door's key from the front door's proxy: 401", st)
+    st, _h = await ask(app, "/login", peer=STRANGER, key=rkey)
+    check(st == 401, "the remote door's key from a stranger: 401", st)
+    st, _h = await ask(app, "/login", peer=remote, extra=[("x-cseries-door", rkey)], key=rkey)
+    check(st == 401, "the remote door's key sent twice: 401", st)
+    got = await ask_ws(app, "/ws", peer=remote, key=rkey, cookie="tok-desktop",
+                       origin="https://home.box.example")
+    check(got == ("http", 200), "a socket question from the remote door with its key and a session: 200", got)
+    os.environ["CSERIES_REMOTE_DOOR_SECRET_FILE"] = os.path.join(KEY_DIR, "missing-remote")
+    st_r, _h = await ask(app, "/login", peer=remote, key=rkey)
+    st_f, _h = await ask(app, "/login", key=KEY)
+    check(st_r == 401 and st_f == 200,
+          "the remote door's key file unreadable: the remote door gets 401, the front door is untouched",
+          (st_r, st_f))
+    os.environ["CSERIES_REMOTE_DOOR_SECRET_FILE"] = rkey_file
+    os.environ.pop("CSERIES_REMOTE_DOOR")
+    st, _h = await ask(app, "/login", peer=remote, key=rkey)
+    check(st == 401, "no CSERIES_REMOTE_DOOR: the remote door's key is believed from no address", st)
+    os.environ.pop("CSERIES_REMOTE_DOOR_SECRET_FILE")
+    os.environ["CSERIES_TRUSTED_PROXIES"] = "10.88.0.1/32"
+
 
 asyncio.run(main())
 sys.exit(failed)

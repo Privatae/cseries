@@ -90,6 +90,7 @@ with tempfile.TemporaryDirectory() as tmp:
     cloud = ["cloud-json", os.path.join(ROOT, "vm/cloud/cloud-release.json"), "--version", "4.5.6",
              "--host-image", "ghcr.io/privatae/cseries", "--host-digest", D["host"],
              "--postgres-image", "ghcr.io/privatae/cseries-postgres", "--postgres-digest", D["postgres"],
+             "--door-image", "ghcr.io/privatae/cseries-remote-door", "--door-digest", "sha256:" + "d" * 64,
              "--overlay", overlay, "--download-base", BASE, "--out", out]
 
     r = run(*cloud, *runtime_args())

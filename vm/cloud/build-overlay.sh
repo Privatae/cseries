@@ -10,8 +10,9 @@
 #   bootstrap.sh    vm/cloud/bootstrap.sh
 #   root/           the files, under / on the box: vm/cloud/overlay/, and from
 #                   the WSL guest the parts a cloud box runs unchanged (both
-#                   quadlets, cseries.network, containers.conf.d/cseries.conf,
-#                   cseries-guest), the local runtime (vm/runtime: its code,
+#                   quadlets, cseries.network, containers.conf.d/cseries.conf
+#                   and subnets.conf, cseries-guest, and remote access's
+#                   quadlets, network and firewall), the local runtime (vm/runtime: its code,
 #                   units, network and plain proxy's config), both seccomp
 #                   profiles, etc/tmpfiles.d/privatae-host.conf and the QR
 #                   library the unlock page uses
@@ -59,9 +60,23 @@ repo, version, epoch, dest = sys.argv[1], sys.argv[2], int(sys.argv[3]), sys.arg
 wsl = os.path.join(repo, "vm/wsl/rootfs")
 REUSED = [
     "etc/containers/containers.conf.d/cseries.conf",
+    "etc/containers/containers.conf.d/subnets.conf",
     "etc/containers/systemd/cseries-host.container",
     "etc/containers/systemd/cseries-postgres.container",
     "etc/containers/systemd/cseries.network",
+    # Remote access, as the guests run it: the door and its certificate job,
+    # the volumes they share with the Host, the door's network and its
+    # firewall. The cloud's own drop-ins (vm/cloud/overlay) hold them to the
+    # box's firewall and its vault.
+    "etc/containers/systemd/cseries-remote-door.container",
+    "etc/containers/systemd/cseries-remote-cert.container",
+    "etc/containers/systemd/cseries-remote-acme.volume",
+    "etc/containers/systemd/cseries-remote-cert-status.volume",
+    "etc/containers/systemd/cseries-remote-door-key.volume",
+    "etc/containers/systemd/cseries-remote-tls.volume",
+    "etc/containers/systemd/cseries-remote.network",
+    "etc/cseries-remote/remote.nft",
+    "etc/systemd/system/cseries-remote-firewall.service",
     "usr/local/bin/cseries-guest",
 ]
 EXEC_DIRS = ("root/usr/local/bin/", "root/usr/local/sbin/")

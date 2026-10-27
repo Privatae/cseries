@@ -62,13 +62,16 @@ services:
       # its X-Forwarded-For (the browser's address) is believed, and only
       # its /__host/door question, carrying the door key, is answered.
       CSERIES_TRUSTED_PROXIES: ${CSERIES_REMOTE_DOOR_ADDR:-10.89.79.3}/32
-      CSERIES_DOOR_SECRET_FILE: /run/cseries-door/door-secret
+      # The remote door's key, believed from the door's address only
+      # (server/middleware/owner_session.py), and mounted where the guests
+      # and a cloud box mount it too.
+      CSERIES_REMOTE_DOOR_SECRET_FILE: /run/cseries-remote-door/door-secret
       # Where the Host writes the certificate job's inputs (its ACME account,
       # the acme-dns credential, cloud.json), and the job's last result.
       CSERIES_REMOTE_ACME_DIR: /var/lib/cseries-remote
       CSERIES_REMOTE_CERT_STATUS: /run/cseries-remote-cert/status.json
     volumes:
-      - remote-door-key:/run/cseries-door:ro
+      - remote-door-key:/run/cseries-remote-door:ro
       - remote-acme:/var/lib/cseries-remote
       - remote-cert-status:/run/cseries-remote-cert:ro
     networks:

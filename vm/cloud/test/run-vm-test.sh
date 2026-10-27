@@ -26,6 +26,36 @@
 # The certificate is self-signed through the same file paths; the real
 # acme-dns and Let's Encrypt run needs real DNS and is not made here.
 #
+# Remote access beside the front door: DOOR_IMAGE (default
+# cseries-remote-door:cloud-box, built from this tree with
+# sidecars/remote-door/Dockerfile) rides in bootstrap's image archive, as the
+# release pins it, so the box runs the remote-access door and its certificate
+# job and the Host joins the remote network. Remote access is then on: the
+# owner's choice in the Host's state, so the Host itself asks the stand-in
+# member door for its address (remote.enable, with an ACME account already
+# made) and for tickets (remote.ticket), and holds its tunnel to the network's
+# relay, the reference relay (relay.py, server/network/remote_relay.py) on
+# this machine at an address of its own on the tap device. The box reaches
+# the relay as it reaches the network's edge, over its uplink; a browser here
+# reaches the Host's remote name through the relay, the tunnel and the
+# remote door, which asks the Host with its own key, over TLS that ends at
+# the box. The remote certificate is a stand-in (Let's Encrypt needs real
+# DNS). The tunnel's hop from the Host's own namespace through the remote
+# door, and the relay leg, run before and after a reboot; with the platform
+# off (the member door and the relay blocked with the rest) the relay holds
+# no tunnel for the Host and a browser there gets nothing from it, while the
+# hop and every door check pass; once the platform is back the tunnel and
+# the relay leg are back too, and after the seal and a reboot again.
+# CLOUD_VM_RUNTIME=0 leaves out the local runtime's sections and images.
+#
+# The member phase: a stand-in member door on the tap (member_door.py, with a
+# test root the Host is told to trust) takes the network enrolment code the
+# card's handoff posts with the setup code. After the claim the Host joins
+# with it and connects with its passport, and /api/network/status says
+# member; after a reboot it connects again, and with the platform off (the
+# stand-in blocked with the rest) it is a member whose client is unreachable
+# while every door check still passes.
+#
 # The local runtime (vm/runtime) gets its own sections: its socket and who may
 # use it; the runtime images (RT_PY_IMAGE, RT_HELPER_IMAGE, RT_BROWSER_IMAGE,
 # RT_CREATIVE_IMAGE, built from this tree) pinned through cseries-guest
@@ -86,6 +116,27 @@ RT_PY_IMAGE=${RT_PY_IMAGE:-cseries-app-runtime-python:cloud-box}
 RT_HELPER_IMAGE=${RT_HELPER_IMAGE:-cseries-app-helper:cloud-box}
 RT_BROWSER_IMAGE=${RT_BROWSER_IMAGE:-cseries-browser:cloud-box}
 RT_CREATIVE_IMAGE=${RT_CREATIVE_IMAGE:-cseries-app-runtime-creative:cloud-box}
+# The remote-access door's image (sidecars/remote-door/Dockerfile), which the
+# release pins for the box's door and certificate units, built from this tree.
+DOOR_IMAGE=${DOOR_IMAGE:-cseries-remote-door:cloud-box}
+# CLOUD_VM_RUNTIME=0 leaves out the local runtime's sections (R1-R8, the
+# stale image at the reboot) and their images, for a run about the rest of
+# the box; every other check runs as it does with them.
+RUNTIME=${CLOUD_VM_RUNTIME:-1}
+# The remote address remote access would give this Host: an invented address
+# ID under the network's remote zone.
+REMOTE_AID=m4r7q2
+REMOTE_NAME=$NAME.$REMOTE_AID.remote.privatae.ai
+# The network's relay (relay.py): an address of its own on the tap device,
+# from the documentation range, because the Telegram stand-in holds 443 on
+# $OUT4. Tunnels come to its 443 (a Host dials every relay address its
+# ticket names on 443), browsers to RELAY_WEB.
+RELAY4=198.51.100.10
+RELAY_WEB=8444
+# The network enrolment code the account site mints for the machine and the
+# card posts with the setup code (invented; 12 Crockford characters). A
+# stand-in member door on the tap (member_door.py) takes it once.
+MEMBER_CODE=K7MW-3QXR-9TPA
 # An invented bot token, in the shape Telegram's are.
 BOT_TOKEN=900001:AAFakeBotTokenForTheVmTest012345678
 # The settings app's own origin under this Host (server/applications/app_origin.py).
@@ -126,6 +177,7 @@ handoff() {
     curl -sk -m 60 -b "$UJAR" -c "$UJAR" -o "$WORK/ubody" -D "$WORK/uhdrs" -w '%{http_code}' \
         --resolve "$UNLOCK:443:$VM4" -H 'Origin: https://privatae.ai' \
         --data-urlencode "setup_code=$SETUP_CODE" --data-urlencode "email=$OWNER_EMAIL" \
+        --data-urlencode "member_code=$MEMBER_CODE" \
         "https://$UNLOCK/api/setup" || echo 000
 }
 page_api() {  # unlock_api as the page's own calls make it: its Origin and the handoff's cookie
@@ -164,8 +216,11 @@ finish() {
     docker ps -aq --filter name=^cbx-bastion- | xargs -r docker rm -f >/dev/null 2>&1 || true
     if [ -z "$KEEP" ]; then "$V" down >/dev/null 2>&1 || true; fi
     ip -6 addr del "$OTHER6/64" dev "$TAP" 2>/dev/null || true
+    ip addr del "$RELAY4/32" dev "$TAP" 2>/dev/null || true
     if [ -n "${srv_pid:-}" ]; then kill "$srv_pid" 2>/dev/null || true; fi
     if [ -n "${fake_pid:-}" ]; then kill "$fake_pid" 2>/dev/null || true; fi
+    if [ -n "${door_pid:-}" ]; then kill "$door_pid" 2>/dev/null || true; fi
+    if [ -n "${relay_pid:-}" ]; then kill "$relay_pid" 2>/dev/null || true; fi
 }
 trap finish EXIT
 
@@ -401,7 +456,7 @@ done
 cp "$R/cseries-cloud-overlay-0.1.0.tar.gz" "$F/"
 cp "$repo/vm/cloud/bootstrap.sh" "$here/release_server.py" "$F/"
 cp "$BASTION_BIN" "$F/privatae-bastion"
-docker save "$HOST_IMAGE" "$PG_IMAGE" | gzip -1 > "$F/images.tar.gz"
+docker save "$HOST_IMAGE" "$PG_IMAGE" "$DOOR_IMAGE" | gzip -1 > "$F/images.tar.gz"
 # A test CA the VM trusts, for the stand-in release location on its loopback.
 # Strict verification (Python 3.13 on Debian 13) wants key usage on the CA
 # and an authority key identifier on the leaf.
@@ -434,8 +489,128 @@ for host, port in [("deb.debian.org", 443), ("169.254.169.254", 80), ("10.0.2.2"
         r = type(e).__name__
     print(f"{host}:{port} {r}")
 EOF
+# Remote access's hop as the Host's tunnel makes it (server/network/
+# remote_tunnel.py): from the Host's own network namespace to the door's
+# address, a PROXY v2 header naming a browser's address first, then the
+# browser's TLS for the remote name. Prints the status line, the Location
+# when there is one, and whether the page is the remote sign-in page (its
+# offline worker, id="remote-sw"). Accept is text/html (a page) unless given.
+cat > "$F/remote_probe.py" <<'EOF'
+import socket, ssl, struct, sys
+door, name, path = sys.argv[1:4]
+accept = sys.argv[4] if len(sys.argv) > 4 else "text/html"
+host, port = door.rsplit(":", 1)
+try:
+    s = socket.create_connection((host, int(port)), timeout=10)
+    s.sendall(b"\r\n\r\n\x00\r\nQUIT\n" + bytes([0x21, 0x11]) + struct.pack("!H", 12) +
+              socket.inet_aton("198.51.100.7") + socket.inet_aton(host) + struct.pack("!HH", 40000, int(port)))
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    t = ctx.wrap_socket(s, server_hostname=name)
+    t.sendall(f"GET {path} HTTP/1.1\r\nHost: {name}\r\nAccept: {accept}\r\nConnection: close\r\n\r\n".encode())
+    data = b""
+    while True:
+        chunk = t.recv(65536)
+        if not chunk:
+            break
+        data += chunk
+except OSError as e:
+    print(f"error {type(e).__name__}")
+    sys.exit(0)
+head, _, body = data.partition(b"\r\n\r\n")
+lines = head.decode("latin-1").split("\r\n")
+print(lines[0])
+print(next((ln for ln in lines[1:] if ln.lower().startswith("location:")), "no-location"))
+print("remote-sw" if b'id="remote-sw"' in body else "no-remote-sw")
+EOF
+# The remote door's own question, asked from the door's container: what the
+# Host answers about GET /login with a given door key, from the door's address.
+cat > "$F/remote_ask.py" <<'EOF'
+import sys, urllib.error, urllib.request
+key, name = sys.argv[1:3]
+req = urllib.request.Request("http://10.89.79.2:8800/__host/door", headers={
+    "Host": name, "X-Forwarded-Method": "GET", "X-Forwarded-Uri": "/login", "X-Cseries-Door": key})
+try:
+    print(urllib.request.urlopen(req, timeout=10).status)
+except urllib.error.HTTPError as e:
+    print(e.code)
+except OSError as e:
+    print("error", type(e).__name__)
+EOF
+# The remote address's certificate stands in for the one door-cert makes
+# through acme-dns and Let's Encrypt, which needs real DNS (as the box's own
+# certificate does in this test): the same files in the same volume.
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 2 \
+    -subj "/CN=*.$REMOTE_AID.remote.privatae.ai" -addext "subjectAltName=DNS:*.$REMOTE_AID.remote.privatae.ai" \
+    -keyout "$F/remote-key.pem" -out "$F/remote-cert.pem" 2>/dev/null
+# The member phase's network: a test root the Host is told to trust (the
+# image's own root is the network's), and the stand-in member door's
+# certificate under it, for both of its names. Only the root goes to the box.
+mkdir -p "$WORK/net"
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -days 2 \
+    -subj "/CN=cloud box test network root" -addext "basicConstraints=critical,CA:TRUE" \
+    -addext "keyUsage=critical,keyCertSign,cRLSign" \
+    -keyout "$WORK/net/root.key" -out "$WORK/net/root.pem" 2>/dev/null
+openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj "/CN=net.privatae.ai" \
+    -keyout "$WORK/net/door.key" -out "$WORK/net/door.csr" 2>/dev/null
+openssl x509 -req -in "$WORK/net/door.csr" -CA "$WORK/net/root.pem" -CAkey "$WORK/net/root.key" -days 2 \
+    -extfile <(printf '%s\n' 'subjectAltName=DNS:net.privatae.ai,DNS:enrol.privatae.ai' 'basicConstraints=critical,CA:FALSE' \
+        'keyUsage=critical,digitalSignature' 'extendedKeyUsage=serverAuth' \
+        'subjectKeyIdentifier=hash' 'authorityKeyIdentifier=keyid,issuer') -out "$WORK/net/door.pem" 2>/dev/null
+cp "$WORK/net/root.pem" "$F/net-root.pem"
+# The relay leg: the relay's certificate for tunnel.remote.privatae.ai under
+# the same root (the Host checks the relay against the root its passport came
+# with), and the member door's ticket key, whose public half the relay holds.
+openssl req -newkey ec -pkeyopt ec_paramgen_curve:P-256 -nodes -subj "/CN=tunnel.remote.privatae.ai" \
+    -keyout "$WORK/net/relay.key" -out "$WORK/net/relay.csr" 2>/dev/null
+openssl x509 -req -in "$WORK/net/relay.csr" -CA "$WORK/net/root.pem" -CAkey "$WORK/net/root.key" -days 2 \
+    -extfile <(printf '%s\n' 'subjectAltName=DNS:tunnel.remote.privatae.ai' 'basicConstraints=critical,CA:FALSE' \
+        'keyUsage=critical,digitalSignature' 'extendedKeyUsage=serverAuth' \
+        'subjectKeyIdentifier=hash' 'authorityKeyIdentifier=keyid,issuer') -out "$WORK/net/relay.pem" 2>/dev/null
+openssl genpkey -algorithm ed25519 -out "$WORK/net/ticket.key" 2>/dev/null
+openssl pkey -in "$WORK/net/ticket.key" -pubout -out "$WORK/net/ticket.pub" 2>/dev/null
+# The Host's ACME account, as its one newAccount request leaves it (server/
+# network/remote_acme.py ensure_account, in lego's layout), so turning remote
+# access on sends nothing to Let's Encrypt: an invented account URL and a key
+# made here.
+openssl ecparam -name prime256v1 -genkey -noout -out "$F/acme-account.key" 2>/dev/null
+printf '{"email": "info@privatae.ai", "registration": {"body": {"status": "valid"}, "uri": "https://acme-v02.api.letsencrypt.org/acme/acct/900000001"}}\n' \
+    > "$F/acme-account.json"
+printf '{"on": true}\n' > "$F/remote-on.json"
+# A browser on this machine, at the relay: TLS for the remote name to the
+# relay's browser port, checked against the box's remote certificate alone
+# (so the TLS ends at the box, not at the relay); prints what remote_probe.py
+# prints, and "error <kind>" when no page comes.
+cat > "$WORK/relay_browser.py" <<'EOF'
+import socket, ssl, sys
+relay, name, path, cafile = sys.argv[1:5]
+accept = sys.argv[5] if len(sys.argv) > 5 else "text/html"
+host, port = relay.rsplit(":", 1)
+try:
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    ctx.load_verify_locations(cafile=cafile)
+    t = ctx.wrap_socket(socket.create_connection((host, int(port)), timeout=15), server_hostname=name)
+    t.sendall(f"GET {path} HTTP/1.1\r\nHost: {name}\r\nAccept: {accept}\r\nConnection: close\r\n\r\n".encode())
+    data = b""
+    while True:
+        chunk = t.recv(65536)
+        if not chunk:
+            break
+        data += chunk
+except (OSError, ssl.SSLError) as e:
+    print(f"error {type(e).__name__}")
+    sys.exit(0)
+head, _, body = data.partition(b"\r\n\r\n")
+lines = head.decode("latin-1").split("\r\n")
+print(lines[0])
+print(next((ln for ln in lines[1:] if ln.lower().startswith("location:")), "no-location"))
+print("remote-sw" if b'id="remote-sw"' in body else "no-remote-sw")
+EOF
 # ── the local runtime's inputs ──────────────────────────────────────────────
-docker save "$RT_PY_IMAGE" "$RT_HELPER_IMAGE" "$RT_BROWSER_IMAGE" "$RT_CREATIVE_IMAGE" | gzip -1 > "$F/runtime-images.tar.gz"
+if [ "$RUNTIME" = 1 ]; then
+    docker save "$RT_PY_IMAGE" "$RT_HELPER_IMAGE" "$RT_BROWSER_IMAGE" "$RT_CREATIVE_IMAGE" | gzip -1 > "$F/runtime-images.tar.gz"
+fi
 S=$WORK/static
 mkdir -p "$S/harness" "$S/store"
 "$repo/vm/runtime/build-harness-src.sh" --version 0.1.0 --out "$S/harness" >/dev/null
@@ -496,7 +671,7 @@ cat > "$F/bootstrap.json" <<EOF
   "machine_id": "$MACHINE_ID",
   "heartbeat_url": "https://127.0.0.1:8443/api/machines/heartbeat",
   "release_base": "https://127.0.0.1:8443/release",
-  "image_archive": {"path": "/var/tmp/cloud-test/images.tar.gz", "host": "$HOST_IMAGE", "postgres": "$PG_IMAGE"},
+  "image_archive": {"path": "/var/tmp/cloud-test/images.tar.gz", "host": "$HOST_IMAGE", "postgres": "$PG_IMAGE", "door": "$DOOR_IMAGE"},
   "overlay_archive": "/var/tmp/cloud-test/cseries-cloud-overlay-0.1.0.tar.gz",
   "bastion_binary": "/var/tmp/cloud-test/privatae-bastion",
   "reboot_window": "04:00",
@@ -517,9 +692,70 @@ rm -f "$F/images.tar.gz" "$F/runtime-images.tar.gz"
 python3 "$here/fake_services.py" "$OUT4" "$WORK/tg.crt" "$WORK/tg.key" "$S" "$WORK/fake.log" \
     >"$WORK/fake.out" 2>&1 &
 fake_pid=$!
+# The member door, as the network's: enrol.privatae.ai and net.privatae.ai,
+# both on 8643.
+: > "$WORK/member.log"
+python3 "$here/member_door.py" "$OUT4" "$WORK/net" "$MEMBER_CODE" "$WORK/member.log" "$REMOTE_AID" "$RELAY4" \
+    >"$WORK/member.out" 2>&1 &
+door_pid=$!
+# The network's relay, at its own address on the tap device (removed again
+# with the tap, and in finish).
+ip addr add "$RELAY4/32" dev "$TAP"
+python3 "$here/relay.py" "$RELAY4" "$WORK/net" "$WORK/relay.log" "$WORK/relay-status.json" >"$WORK/relay.out" 2>&1 &
+relay_pid=$!
+for _ in $(seq 1 20); do grep -q 'relay listening' "$WORK/relay.log" 2>/dev/null && break; sleep 0.5; done
+check "the relay listens at $RELAY4 (tunnels 443, browsers $RELAY_WEB)" grep -q 'relay listening' "$WORK/relay.log"
+check "the member door listens (its ticket signer made the pinned ticket)" grep -q '^listening ' "$WORK/member.log"
+member_lines() { grep -c -- "$1" "$WORK/member.log" || true; }
+wait_member() {  # <pattern> <more than this many lines> <seconds>
+    for _ in $(seq 1 "$3"); do [ "$(member_lines "$1")" -gt "$2" ] && return 0; sleep 1; done
+    return 1
+}
+# net_wait <member True|False> <connected True|False> <tries>:
+# /api/network/status as Settings -> Network asks it, signed in once as the
+# owner with the Settings app's token, every 3 s until it says that or the
+# tries run out. Prints the last answer; it is also in $WORK/net-status.json.
+net_is() {  # <member> <connected>: the last answer says that
+    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if (str(d.get("member")), str(d.get("connected"))) == (sys.argv[2], sys.argv[3]) else 1)' \
+        "$WORK/net-status.json" "$1" "$2" 2>/dev/null
+}
+net_wait() {
+    local jar=$WORK/jar-net tok
+    : > "$jar"
+    : > "$WORK/net-status.json"
+    box_sign_in "$jar" >/dev/null
+    web "$jar" "https://$HOSTNAME/api/applications/settings/launch" -X POST -H 'Content-Type: application/json' --data '{}' >/dev/null
+    tok=$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("token") or d.get("app_token") or "")' "$WORK/body" 2>/dev/null || true)
+    for _ in $(seq 1 "$3"); do
+        web "$jar" "https://$HOSTNAME/api/network/status" -H "X-Application-Token: $tok" >/dev/null
+        cp "$WORK/body" "$WORK/net-status.json"
+        net_is "$1" "$2" && break
+        sleep 3
+    done
+    web "$jar" "https://$HOSTNAME/api/owner/logout" -X POST >/dev/null
+    cat "$WORK/net-status.json"
+}
 
 say "bootstrap, as the provisioner runs it"
 vm 'sudo install -d -m 0755 /etc/cseries-cloud && sudo install -m 0600 /var/tmp/cloud-test/bootstrap.json /etc/cseries-cloud/bootstrap.json'
+# Test-only, in place before bootstrap starts the Host, for the member phase:
+# the network's two names at the stand-in member door on the tap, and its
+# test root as the root the Host trusts for both (the image's own is the
+# network's). Nothing of bootstrap's own is changed.
+vmsh <<EOF
+{
+set -e
+install -m 0644 /var/tmp/cloud-test/net-root.pem /etc/cseries-cloud/test-net-root.pem
+install -d -m 0755 /etc/containers/systemd/cseries-host.container.d
+cat > /etc/containers/systemd/cseries-host.container.d/zz-member-test.conf <<'X'
+[Container]
+AddHost=enrol.privatae.ai:$OUT4
+AddHost=net.privatae.ai:$OUT4
+Volume=/etc/cseries-cloud/test-net-root.pem:/run/cseries-test/net-root.pem:ro
+Environment=CSERIES_NETWORK_ROOT_CERT=/run/cseries-test/net-root.pem
+X
+}
+EOF
 result=$(vm 'sudo /var/tmp/cloud-test/bootstrap.sh 2>/var/tmp/cloud-test/bootstrap.err' || true)
 echo "$result"
 check "bootstrap prints one JSON line with ok:true" ok_json "$result"
@@ -529,6 +765,9 @@ if ! ok_json "$result"; then
     exit 1
 fi
 check "bootstrap made the door key" vm 'grep -q "door key: made" /var/tmp/cloud-test/bootstrap.err'
+check "member: the Host runs with the stand-in network's names and root" \
+    vm "sudo podman exec cseries-host sh -c 'grep -qE \"^192\.0\.2\.1[[:space:]]+net\.privatae\.ai\$\" /etc/hosts && test -s /run/cseries-test/net-root.pem'"
+check "member: before the claim the Host has not tried to join" test "$(member_lines 'enrol ')" = 0
 # Its space back, through the disk's discard.
 vm 'sudo rm -f /var/tmp/cloud-test/images.tar.gz && sudo fstrim -a >/dev/null 2>&1 || true'
 hb_pub=$(python3 -c 'import json,sys; print(json.loads(sys.argv[1]).get("heartbeat_pubkey") or "")' "$result")
@@ -632,9 +871,181 @@ code=$(page_api POST /owner-ticket '{}')
 check "once the Host has its owner, the handoff alone signs nobody in" test "$code" = 403
 web "$jar" "https://$HOSTNAME/api/owner/logout" -X POST >/dev/null
 
+say "the member phase: the claim's code joins the Host to the network"
+# The card's handoff carried MEMBER_CODE; the unlock agent kept it with the
+# handoff and wrote member-enrol.json with the claim ticket; the Host, once
+# that owner is its owner, joins with it through the same enrolment Settings
+# -> Network uses (membership.join_from_claim), and connects to the member
+# door with its new passport.
+check "member: the Host enrols with the claim's code at the member door" wait_member 'enrol ok' 0 150
+check "member: and connects to the member door with its passport (heartbeat)" wait_member 'op heartbeat.ping passport=yes' 0 120
+check "member: the code is used once, and no other code was tried" \
+    sh -c "test '$(member_lines 'enrol ok')' = 1 && test '$(member_lines 'enrol refused')' = 0"
+echo "network status: $(net_wait True True 40)"
+check "member: /api/network/status says member and connected, with the network's id for this Host" \
+    python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if d.get("member") is True and d.get("connected") is True and d.get("entity_id") == 4242 else 1)' "$WORK/net-status.json"
+
 say "the door, signed in and not"
 door_checks "before a reboot" 1
 
+say "remote access on the box: the remote door beside the front door"
+# The release pins the remote-access door's image (bootstrap.json's archive
+# carries it here), so bootstrap configured the door and its certificate job
+# and joined the Host to the remote network. Remote access itself stays off
+# until the owner turns it on: the door waits for an address and a
+# certificate. The test turns it on as the owner's choice in the Host's state
+# (what Settings' switch keeps, after its passkey check, which this test does
+# not drive), with the Host's ACME account already made, and restarts the
+# Host: its own supervisor then asks the member door for the address
+# (remote.enable), writes cloud.json for the door into the remote-acme
+# volume, takes a ticket (remote.ticket) and holds its tunnel to the relay.
+# The certificate is the stand-in (door-cert's would come from Let's
+# Encrypt). Then the tunnel's hop from the Host's own network namespace to
+# the door, as the tunnel makes it for each browser the relay passes down it,
+# and a browser on this machine through the relay itself.
+env=$(vm 'sudo podman inspect cseries-host --format "{{range .Config.Env}}{{println .}}{{end}}"')
+measure "container env: $(echo "$env" | grep -E '^CSERIES_(TRUSTED_PROXIES|DOOR_SECRET_FILE|REMOTE_DOOR_SECRET_FILE|REMOTE_DOOR|MACHINE_DIR|REMOTE_ACME_DIR|REMOTE_STATE)=' | tr '\n' ' ')"
+check "remote access: the Host trusts Caddy's address and the remote door's, both" \
+    grep -qx 'CSERIES_TRUSTED_PROXIES=10.89.77.1,10.89.79.3/32' <<< "$env"
+check "remote access: the front door's key and the remote door's are two settings" \
+    bash -c "grep -qx 'CSERIES_DOOR_SECRET_FILE=/run/cseries-cloud/door-secret' <<< '$env' &&
+           grep -qx 'CSERIES_REMOTE_DOOR_SECRET_FILE=/run/cseries-remote-door/door-secret' <<< '$env' &&
+           grep -qx 'CSERIES_MACHINE_DIR=/run/cseries-door' <<< '$env'"
+nets=$(vm "sudo podman inspect cseries-host --format '{{range \$k, \$v := .NetworkSettings.Networks}}{{\$k}}={{\$v.IPAddress}} {{end}}'")
+measure "the Host's networks: $nets"
+check "remote access: the Host is 10.89.77.2 on its own network and 10.89.79.2 on the remote one" \
+    bash -c "grep -q 'cseries_default=10.89.77.2' <<< '$nets' && grep -q 'cseries_remote=10.89.79.2' <<< '$nets'"
+units=$(vm 'systemctl is-active cseries-remote-door.service cseries-remote-cert.service cseries-remote-firewall.service' | tr '\n' ' ')
+measure "remote access units (door, certificate job, firewall): $units"
+check "remote access: the door, its certificate job and its firewall run" test "$units" = "active active active "
+check "remote access: the Host reads the remote door's key, which is not the front door's" \
+    vm "k=\$(sudo podman exec cseries-host cat /run/cseries-remote-door/door-secret) && [ \${#k} -ge 32 ] &&
+        [ \"\$k\" != \"\$(sudo cat /etc/cseries-cloud/door-secret)\" ]"
+brnf=$(vm 'cat /proc/sys/net/bridge/bridge-nf-call-iptables 2>/dev/null || echo absent')
+measure "bridge-nf-call-iptables on the box: $brnf ($(vm 'lsmod | grep -c ^br_netfilter || true') br_netfilter loaded)"
+check "the box keeps bridged frames out of the IP hooks, which door.nft's private-range rule relies on for the Host's hops to the door and to the runtime's apps (scripts/test_cloud_box_remote_hop.py)" \
+    sh -c "test '$brnf' = absent || test '$brnf' = 0"
+check "remote access: off until the owner turns it on (no remote.enable yet)" test "$(member_lines 'op remote.')" = 0
+# Each file through the Host container itself, as the user who owns its
+# directory there (the Host's own; the remote-acme volume is the Host's, :U),
+# each from a file and never from this script's stdin.
+vmsh <<EOF
+{
+set -e
+tls=\$(podman volume inspect cseries_remote-tls --format '{{.Mountpoint}}')
+install -m 0644 -o 1000 -g 1000 /var/tmp/cloud-test/remote-cert.pem "\$tls/cert.pem"
+install -m 0600 -o 1000 -g 1000 /var/tmp/cloud-test/remote-key.pem "\$tls/key.pem"
+acme=\$(podman exec cseries-host printenv CSERIES_REMOTE_ACME_DIR)
+u=\$(podman exec cseries-host stat -c %u "\$acme")
+a=\$acme/acme-account/accounts/acme-v02.api.letsencrypt.org/info@privatae.ai
+podman exec -u "\$u" cseries-host sh -c "umask 077; mkdir -p '\$a/keys'"
+podman exec -i -u "\$u" cseries-host sh -c "umask 077; cat > '\$a/account.json'" < /var/tmp/cloud-test/acme-account.json
+podman exec -i -u "\$u" cseries-host sh -c "umask 077; cat > '\$a/keys/info@privatae.ai.key'" < /var/tmp/cloud-test/acme-account.key
+st=\$(podman exec cseries-host sh -c 'echo "\${CSERIES_REMOTE_STATE:-/var/lib/cseries/remote-access.json}"')
+u=\$(podman exec cseries-host stat -c %u "\$(dirname "\$st")")
+podman exec -i -u "\$u" cseries-host sh -c "umask 077; cat > '\$st'" < /var/tmp/cloud-test/remote-on.json
+cseries-guest restart </dev/null >/dev/null
+}
+EOF
+for _ in $(seq 1 100); do vm 'sudo cseries-guest health' >/dev/null 2>&1 && break; sleep 3; done
+# remote_checks <label>: the tunnel's hop to the door, from the Host's own
+# network namespace, once the door's Caddy answers (door-run starts it within
+# ten seconds of the certificate and the address being there).
+remote_hop() { vm "sudo podman cp /var/tmp/cloud-test/remote_probe.py cseries-host:/tmp/remote_probe.py && sudo podman exec cseries-host python3 /tmp/remote_probe.py 10.89.79.3:8443 $REMOTE_NAME '$1' '${2:-text/html}'"; }
+# remote_ask <remote|front|wrong>: the Host's answer to the door's question
+# from the remote door's address, with that key.
+remote_ask() {
+    vm "sudo sh -c 'case $1 in remote) k=\$(podman exec cseries-host cat /run/cseries-remote-door/door-secret) ;;
+        front) k=\$(cat /etc/cseries-cloud/door-secret) ;; *) k=fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210 ;; esac
+        podman exec -i cseries-remote-door python3 - \"\$k\" $REMOTE_NAME < /var/tmp/cloud-test/remote_ask.py'" || echo error
+}
+remote_key() { vm 'sudo podman exec cseries-host cat /run/cseries-remote-door/door-secret' | tr -d '[:space:]'; }
+remote_checks() {
+    local L=$1 r
+    for _ in $(seq 1 45); do
+        r=$(remote_hop /login 2>/dev/null || true)
+        grep -q '^HTTP/' <<< "$r" && break
+        sleep 4
+    done
+    echo "remote hop ($L): $(tr '\n' ' ' <<< "$r")"
+    check "$L: the tunnel's hop reaches the remote door, which asks the Host with its own key: /login on the remote name is the remote sign-in page" \
+        bash -c "grep -q '^HTTP/1.1 200' <<< '$r' && grep -qx remote-sw <<< '$r'"
+    r=$(remote_hop / text/html)
+    check "$L: through the remote door a page without a session is sent to /login (303)" \
+        bash -c "grep -q '^HTTP/1.1 303' <<< '$r' && grep -qi '^location: /login' <<< '$r'"
+    r=$(remote_hop /api/applications application/json)
+    check "$L: through the remote door an API call without a session gets the door's 401" grep -q '^HTTP/1.1 401' <<< "$r"
+    check "$L: from the remote door's address the Host answers the remote door's key (200)" test "$(remote_ask remote)" = 200
+    check "$L: from the remote door's address the front door's key gets 401" test "$(remote_ask front)" = 401
+    check "$L: from the remote door's address a wrong key gets 401" test "$(remote_ask wrong)" = 401
+    check "$L: from the front door's proxy the remote door's key gets 401" test "$(door_ask "$(remote_key)")" = 401
+    r=$(remote_hop /__host/door)
+    check "$L: through the remote door /__host/door itself ends at the door (404)" grep -q '^HTTP/1.1 404' <<< "$r"
+}
+# relay_tunnel: whether the relay holds a tunnel for this Host's address ID.
+relay_tunnel() { python3 -c 'import json,sys; sys.exit(0 if sys.argv[2] in json.load(open(sys.argv[1]))["tunnels"] else 1)' "$WORK/relay-status.json" "$REMOTE_AID" 2>/dev/null; }
+tunnels_up() { grep -c "tunnel up for $REMOTE_AID" "$WORK/relay.log" || true; }
+wait_tunnel() {  # <more tunnels up than this> <seconds>: a new tunnel for the Host, held
+    for _ in $(seq 1 "$2"); do [ "$(tunnels_up)" -gt "$1" ] && relay_tunnel && return 0; sleep 1; done
+    return 1
+}
+check "remote access: the Host asks the member door for its address with its own ACME account (remote.enable)" \
+    wait_member 'remote.enable ok' 0 150
+check "remote access: and the door's answer goes to the door: cloud.json names the address ID and the zone" \
+    vm "sudo sh -c 'python3 -c \"import json,sys; d=json.load(open(sys.argv[1])); sys.exit(0 if (d.get(\\\"address_id\\\"), d.get(\\\"zone\\\")) == (\\\"$REMOTE_AID\\\", \\\"remote.privatae.ai\\\") else 1)\" \$(podman volume inspect cseries_remote-acme --format {{.Mountpoint}})/cloud.json'"
+check "remote access: the Host takes a ticket for its passport (remote.ticket)" wait_member 'remote.ticket ok' 0 120
+check "remote access: with it the Host's tunnel is up at the relay" wait_tunnel 0 120
+measure "remote access: the member door's remote ops: $(grep -c 'remote.enable ok' "$WORK/member.log") remote.enable, $(grep -c 'remote.ticket ok' "$WORK/member.log") remote.ticket, $(grep -c 'remote\.[a-z]* refused' "$WORK/member.log") refused"
+# relay_get <path> [accept]: a browser on this machine at the relay.
+relay_get() { python3 "$WORK/relay_browser.py" "$RELAY4:$RELAY_WEB" "$REMOTE_NAME" "$1" "$F/remote-cert.pem" "${2:-text/html}"; }
+relay_streams() { grep -c "stream $REMOTE_AID from [0-9.]*\.0/24," "$WORK/relay.log" || true; }
+# remote_status: what Settings shows about remote access, asked as the owner
+# signed in through the front door; the answer in $WORK/remote-status.json.
+remote_status() {
+    local jar=$WORK/jar-remote
+    : > "$jar"
+    box_sign_in "$jar" >/dev/null
+    web "$jar" "https://$HOSTNAME/api/owner/remote/status" >/dev/null
+    cp "$WORK/body" "$WORK/remote-status.json"
+    web "$jar" "https://$HOSTNAME/api/owner/logout" -X POST >/dev/null
+}
+remote_status_up() {  # on, at the remote address, the link to the relay up
+    python3 -c 'import json,sys; d=json.load(open(sys.argv[1]))
+sys.exit(0 if d.get("on") is True and d.get("address") == "https://" + sys.argv[2] and d.get("running") is True
+         and any(sys.argv[3] in str(l.get("relay")) and l.get("state") == "up" for l in d.get("links") or []) else 1)' \
+        "$WORK/remote-status.json" "$REMOTE_NAME" "$RELAY4" 2>/dev/null
+}
+# relay_checks <label>: a browser on this machine reaches the Host's remote
+# name through the relay, the Host's tunnel and the remote door, which asks
+# the Host with its own key; and Settings says so.
+relay_checks() {
+    local L=$1 r n0
+    n0=$(relay_streams)
+    for _ in $(seq 1 30); do
+        r=$(relay_get /login)
+        grep -q '^HTTP/' <<< "$r" && break
+        sleep 4
+    done
+    echo "relay leg ($L): $(tr '\n' ' ' <<< "$r")"
+    check "$L: a browser on this machine reaches the Host through the relay and the remote door, over TLS that ends at the box under its remote certificate: /login on the remote name is the remote sign-in page" \
+        bash -c "grep -q '^HTTP/1.1 200' <<< '$r' && grep -qx remote-sw <<< '$r'"
+    r=$(relay_get / text/html)
+    check "$L: through the relay a page without a session is sent to /login (303)" \
+        bash -c "grep -q '^HTTP/1.1 303' <<< '$r' && grep -qi '^location: /login' <<< '$r'"
+    r=$(relay_get /api/applications application/json)
+    check "$L: through the relay an API call without a session gets the door's 401" grep -q '^HTTP/1.1 401' <<< "$r"
+    check "$L: the relay passed each of those as a stream of this Host's tunnel, and logged the browser's /24 only" \
+        test "$(relay_streams)" -ge $((n0 + 3))
+    remote_status
+    measure "$L: Settings -> Remote access: $(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d.get("summary"), d.get("links"), "problem:", d.get("problem"))' "$WORK/remote-status.json" 2>/dev/null || head -c 300 "$WORK/remote-status.json")"
+    check "$L: Settings says remote access is on at the remote address, with the link to the relay up" remote_status_up
+}
+remote_checks "remote access, before a reboot"
+relay_checks "remote access, before a reboot"
+check "remote access: the front door still answers from outside with its own key (/login 200)" \
+    sh -c "curl -sk -o /dev/null -w '%{http_code}' --resolve $HOSTNAME:443:$VM4 https://$HOSTNAME/login | grep -qx 200"
+
+if [ "$RUNTIME" = 1 ]; then
 say "the local runtime: its socket"
 m=$(vm 'sudo stat -c "%n %a %U:%G" /run/cseries-runtime /run/cseries-runtime/runtime.sock')
 echo "$m"
@@ -911,6 +1322,8 @@ done
 web "$jar" "https://$HOSTNAME/api/owner/logout" -X POST >/dev/null
 nb=$(fake_lines "getUpdates offset=4243")
 
+fi
+
 say "pairing from the Network app needs a passkey check on this box"
 jar=$WORK/jar-stepup
 : > "$jar"
@@ -1150,6 +1563,7 @@ say "a reboot"
 # A runtime image the release no longer pins: the helper's repository under
 # another digest. The runtime removes it at its next start.
 STALE=localhost/${RT_HELPER_IMAGE%%:*}:stale
+if [ "$RUNTIME" = 1 ]; then
 vmsh <<EOF
 {
 set -e
@@ -1161,7 +1575,9 @@ rm -rf "\$d"
 }
 EOF
 check "a stale runtime image is in the store before the reboot" vm "sudo podman image exists $STALE"
+fi
 sums2=$(door_sums)
+tun0=$(tunnels_up)
 "$V" reboot
 "$V" wait-ssh 150
 check "after a reboot: the box waits locked for its owner" vm "sudo /usr/local/sbin/cseries-vault state | grep -q '\"state\": \"locked\"'"
@@ -1175,6 +1591,14 @@ check "after a reboot: 443 answers outside" sh -c "curl -sk -o /dev/null --resol
 check "after a reboot and the unlock: the door key was replaced" test "$(door_sums)" != "$sums2"
 check "after a reboot: the outside bastion holds its lane again" wait_lanes 1 45
 door_checks "after a reboot" 1
+echo "network status after a reboot: $(net_wait True True 40)"
+check "after a reboot: the Host is a member again and connects with its passport" net_is True True
+check "after a reboot and the unlock: the remote door and its certificate job run again" \
+    test "$(vm 'systemctl is-active cseries-remote-door.service cseries-remote-cert.service' | tr '\n' ' ')" = "active active "
+remote_checks "after a reboot"
+check "after a reboot: the Host's tunnel is up at the relay again (a new one, with a new ticket)" wait_tunnel "$tun0" 150
+relay_checks "after a reboot"
+if [ "$RUNTIME" = 1 ]; then
 say "R5: the local runtime after a reboot"
 check "R5: the Host brings Telegram back by itself (a resident app)" wait_ct cseries-app-telegram 90
 both_back() { wait_ct cseries-app-discord 60 && wait_ct cseries-app-slack 60; }
@@ -1192,10 +1616,12 @@ p=$(rth pair-telegram telegram-bot "$BOT_TOKEN")
 echo "$p"
 check "R5: a new pairing reaches the connector after the reboot" jtrue "$p" 'd["live"] is True'
 check "R5: the connector asks from its saved offset: its data volume survived" wait_fake "getUpdates offset=4243" "$nb" 120
+fi
 outside_pairing "after a reboot"
 
 say "platform off: every Privatae address blocked at the box"
-vmsh <<'EOF'
+tun_off=$(tunnels_up)
+{ printf 'relay=%s\n' "$RELAY4"; cat <<'EOF'
 set -e
 names="privatae.ai api.privatae.ai net.privatae.ai enrol.privatae.ai dl.privatae.ai git.privatae.ai
        auth.privatae.ai acme.privatae.ai mail.privatae.ai"
@@ -1207,6 +1633,9 @@ v6=$(for n in $names; do getent ahostsv6 "$n"; done | awk '$1 ~ /:/ && $1 !~ /^:
      sort -u | paste -sd, - | sed 's/,/, /g')
 rules="ip daddr { $v4 } drop"
 [ -n "$v6" ] && rules="$rules; ip6 daddr { $v6 } drop"
+# The stand-in member door and the relay are the network's here, so they go
+# too.
+rules="$rules; ip daddr 192.0.2.1 tcp dport 8643 drop; ip daddr $relay drop"
 nft -f - <<NFT
 table inet cloud_test_platform_off {
   chain block_out { type filter hook output priority -10; policy accept; $rules; }
@@ -1216,11 +1645,30 @@ NFT
 echo "blocked: $v4 ${v6:+/ $v6}"
 cseries-guest restart >/dev/null
 EOF
+} | vmsh
 for _ in $(seq 1 100); do vm 'sudo cseries-guest health' >/dev/null 2>&1 && break; sleep 3; done
 check "platform off: the block is in place" vm 'sudo nft list table inet cloud_test_platform_off >/dev/null'
 check "platform off: the Host restarts and is healthy" vm 'sudo cseries-guest health'
 check "platform off: privatae.ai is unreachable from the box" sh -c "! $V ssh 'curl -s -m 5 -o /dev/null https://privatae.ai/'"
 door_checks "platform off" 1
+remote_checks "platform off"
+# The relay is the network's and lets a tunnel in only with the member
+# door's ticket, which a restarted Host holds no copy of (remote_access.py
+# keeps it in memory). With only the member door down, a tunnel that is
+# already up keeps going for the rest of its ticket's hour; this leg restarts
+# the Host and blocks the relay too, so the Host has no tunnel and a browser
+# at the relay gets nothing from it, and once the door is back the Host takes
+# a ticket again. The box's own front door, and the remote door's hop on the
+# box, go on as before.
+relay_gone() { for _ in $(seq 1 120); do relay_tunnel || return 0; sleep 1; done; return 1; }
+check "platform off: the relay holds no tunnel for this Host (no ticket, the relay out of reach)" relay_gone
+check "platform off: and no new tunnel came up" test "$(tunnels_up)" = "$tun_off"
+r=$(relay_get /login)
+echo "relay leg, platform off: $(tr '\n' ' ' <<< "$r")"
+check "platform off: a browser at the relay gets no page from this Host" lacks '^HTTP/' "$r"
+echo "network status, platform off: $(net_wait True False 40)"
+check "platform off: the Host is still a member and its member client is unreachable (not connected)" net_is True False
+if [ "$RUNTIME" = 1 ]; then
 say "R6: the local runtime with the platform blocked"
 # Paired again for the same reason as R5: the pairing is the Host's own, and
 # it opens with every Privatae address blocked.
@@ -1236,7 +1684,10 @@ rth release harness browser >/dev/null
 w=$(rth op harness.wake '{"harness": "opencode"}')
 check "R6: the coding engine wakes (built on the box, nothing to fetch)" jtrue "$w" 'd["ok"] is True'
 rth release harness opencode >/dev/null
+fi
 vm 'sudo nft delete table inet cloud_test_platform_off' || true
+check "platform back: the Host's tunnel is up at the relay again" wait_tunnel "$tun_off" 300
+relay_checks "platform back"
 
 # A session's own checks, in this script's context (its functions and
 # variables), while the box still has SSH: BEFORE_SEAL=<file>.
@@ -1260,6 +1711,7 @@ check "after seal: the v4 scan shows 443 and 8811 only" grep -qx 'Ports: 443/ope
 check "after seal: the v6 scan shows 443 and 8811 only" grep -qx 'Ports: 443/open/tcp//https///, 8811/open/tcp/////' <<< "$s6"
 
 say "a reboot after seal"
+tun_seal=$(tunnels_up)
 "$V" reboot
 for _ in $(seq 1 100); do curl -sk -o /dev/null -m 3 --resolve "$HOSTNAME:443:$VM4" "https://$HOSTNAME/login" && break; sleep 3; done
 check "after seal and a reboot: 443 answers" sh -c "curl -sk -o /dev/null -m 5 --resolve $HOSTNAME:443:$VM4 https://$HOSTNAME/login"
@@ -1271,6 +1723,8 @@ check "after seal and a reboot: the door still has its key (/login 200 through C
 s4=$(scan "$VM4")
 check "after seal and a reboot: still 443 and 8811 only" grep -qx 'Ports: 443/open/tcp//https///, 8811/open/tcp/////' <<< "$s4"
 door_checks "after seal and a reboot" 0
+check "after seal and a reboot: the Host's tunnel is up at the relay again" wait_tunnel "$tun_seal" 150
+relay_checks "after seal and a reboot"
 
 say "done: $fails failed"
 [ "$fails" = 0 ]

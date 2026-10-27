@@ -17,8 +17,12 @@ in this process:
      the answer (store_credential), 0600, into the directory the certificate
      job reads (CSERIES_REMOTE_ACME_DIR, the job's /etc/cseries-cloud), with
      cloud.json and acme-dns-api.json beside it, as on a cloud box. A Host
-     that lost it asks again with reissue_acme_dns. It is never logged and
-     never shown.
+     that lost it asks again with reissue_acme_dns. So does a Host whose
+     credential acme-dns refuses (401, which the certificate job reports:
+     acme_dns_refused for the acme-dns.json it read): an account pinned to
+     the addresses of a Cloud machine the Host has since left never works
+     again. At once, then at most once every ACME_DNS_REISSUE_S, whatever
+     the job's status says in between. It is never logged and never shown.
   4. The address (https://<handle>.<address_id>.<zone>) is kept in the Host's
      state (CSERIES_REMOTE_STATE) and set at once (home_origin.set_remote).
   5. The tunnel (server/network/remote_tunnel.py) starts: one link per relay
@@ -87,6 +91,16 @@ RELAY_PORT = 443
 CHECK_S = 60.0
 # How long a step waits when the member door is not connected yet.
 NOT_CONNECTED_S = 10.0
+# acme-dns refused the credential the certificate job used (401): one new
+# account at once, then never two asks closer than this, whether or not the
+# job got through in between. A day is the job's own pace once it works
+# (door-cert DAY_S): an acme-dns that refuses every account, or a status file
+# that says refused and then ok over and over (only the certificate job's
+# container writes it), costs the platform one registration a day per Host,
+# never a loop, and lego's 30-day renewal window (cseries-cert
+# `renew --days 30`) still holds about 30 tries before the certificate
+# expires.
+ACME_DNS_REISSUE_S = 86400.0
 
 
 class DoorAddressError(ValueError):
@@ -348,6 +362,11 @@ class _State:
     dns_error: Optional[str] = None
     credential_stored: bool = False
     enabled_at: Optional[float] = None
+    # When this Host last asked for a new acme-dns account because acme-dns
+    # refused the one it had. Kept on disk, so a restart does not ask again,
+    # and kept when the certificate job gets through, so the bound holds
+    # whatever its status says.
+    acme_dns_reissued_at: Optional[float] = None
 
     @classmethod
     def load(cls, path: Path) -> "_State":
@@ -378,6 +397,7 @@ class RemoteAccess:
                  tunnel_kw: Optional[dict] = None, enable_poll: float = ENABLE_POLL_S,
                  refused_retry: float = REFUSED_RETRY_S, check_every: float = CHECK_S,
                  ticket_reuse: float = TICKET_REUSE_S,
+                 acme_dns_reissue_every: float = ACME_DNS_REISSUE_S,
                  clock: Callable[[], float] = time.time):
         from server import home_origin
         from server.network import remote_acme
@@ -398,6 +418,7 @@ class RemoteAccess:
         self._refused_retry = refused_retry
         self._check_every = check_every
         self._ticket_reuse = ticket_reuse
+        self._acme_dns_reissue_every = acme_dns_reissue_every
         self._clock = clock
         self.state = _State.load(self.state_path)
         self.problem: Optional[str] = None
@@ -492,9 +513,11 @@ class RemoteAccess:
             self.problem = f"the remote address {url!r} cannot be used here: {exc}"
             log.error("remote access: %s", self.problem)
 
-    async def _enable(self) -> None:
+    async def _enable(self, *, reissue_acme_dns: bool = False) -> None:
         """One remote.enable round trip and what it says. Raises RemoteError
-        for a refusal; stores the credential first when it comes."""
+        for a refusal; stores the credential first when it comes.
+        `reissue_acme_dns`: acme-dns refused the credential this Host holds,
+        so the door is asked for a new account (_acme_dns_reissue_due)."""
         from server import home_origin
         from server.network import remote_acme
         directory = acme_dir()
@@ -514,8 +537,19 @@ class RemoteAccess:
         reissue = bool(s.address_id and s.dns == "ready" and not have_credential(
             directory, address_id=s.address_id, zone=s.zone or ""))
         params = {"acme_account_uri": uri}
-        if reissue:
+        if reissue or reissue_acme_dns:
             params["reissue_acme_dns"] = True
+        if reissue_acme_dns:
+            # Counted when it is sent, whatever the door answers: the bound
+            # holds however the round trip ends. dns "wanted": the door
+            # registers the new account after it answers, so until an answer
+            # comes the Host polls remote.enable without reissue_acme_dns,
+            # which picks the new credential up even when this answer is lost.
+            s.acme_dns_reissued_at = self._clock()
+            s.dns = "wanted"
+            self._save()
+            log.warning("remote access: acme-dns refused this Host's certificate credential; "
+                        "asking the network for a new acme-dns account")
         env = await client.request_full("remote.enable", params)
         if not env.get("ok"):
             code = env.get("code")
@@ -539,7 +573,13 @@ class RemoteAccess:
                 store_credential(directory, address_id=aid, zone=zone, cred=data["acme_dns"])
                 stored = True
             except (OSError, ValueError) as exc:
-                stored = False
+                # The new one is lost: the door hands it over once. `stored`
+                # stays what it was: a credential this Host already held for
+                # this address is still on disk (store_credential writes
+                # atomically), and if acme-dns refuses it the refusal bound
+                # asks again (_acme_dns_reissue_due). credential_stored False
+                # would only poll remote.enable without reissue_acme_dns,
+                # which never hands a new one over.
                 self.problem = f"the certificate credential could not be kept: {exc.__class__.__name__}"
                 log.error("remote access: %s; it is asked for again", self.problem)
         url = f"https://{home_origin.HOME.handle}.{aid}.{zone}"
@@ -616,6 +656,9 @@ class RemoteAccess:
                 await self._enable()
             if s.dns == "failed":
                 self.problem = f"the network could not make this Host's DNS: {s.dns_error or 'no reason given'}"
+        elif self._acme_dns_reissue_due():
+            async with self._lock:
+                await self._enable(reissue_acme_dns=True)
         if self.tunnel is not None and self._tunnel_serial != p.serial:
             # A renewed passport (the tunnel's certificate and its tickets are
             # the old one's), or the ticket's relays changed.
@@ -628,6 +671,46 @@ class RemoteAccess:
         if s.dns != "ready" or not s.credential_stored:
             return self._enable_poll
         return self._check_every
+
+    def _credential_refused(self) -> Optional[bool]:
+        """The certificate job's last word on the acme-dns credential this
+        Host holds now: True when acme-dns refused it (401), False when the
+        job got through, None when that word is about another credential
+        (its run read an acme-dns.json this is not, or says not which) or is
+        neither. An outage, a 5xx or a refused name is never True."""
+        directory = acme_dir()
+        doc = _read_json(cert_status_path())
+        if directory is None or not isinstance(doc, dict):
+            return None
+        try:
+            held = (directory / "acme-dns.json").stat().st_mtime_ns
+        except OSError:
+            return None
+        ran_with = doc.get("credential_mtime_ns")
+        if not isinstance(ran_with, int) or isinstance(ran_with, bool) or ran_with != held:
+            return None
+        if doc.get("acme_dns_refused") is True:
+            return True
+        return False if doc.get("ok") is True else None
+
+    def _acme_dns_reissue_due(self) -> bool:
+        """Whether to ask the door for a new acme-dns account now: acme-dns
+        refused the credential this Host holds, and this Host never asked, or
+        asked ACME_DNS_REISSUE_S ago or more. A job that got through in
+        between changes nothing: the job's status is another container's
+        word, and the bound must hold whatever it says."""
+        if self._credential_refused() is not True:
+            return False
+        s = self.state
+        last, now = s.acme_dns_reissued_at, self._clock()
+        if not isinstance(last, (int, float)) or isinstance(last, bool):
+            last = None
+        elif last > now:
+            # The clock went back past the last ask: counted from now, so the
+            # bound neither lapses nor waits for a time that may never come.
+            s.acme_dns_reissued_at = last = now
+            self._save()
+        return last is None or now - last >= self._acme_dns_reissue_every
 
     async def _start_tunnel(self) -> None:
         from server.network import remote_tunnel as rt

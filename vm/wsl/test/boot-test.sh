@@ -288,37 +288,105 @@ systemctl restart cseries-host.service
 [ "$(cat $cg/cseries-host.service/cpu.max)" = "$quota 100000" ] || { echo "FAIL: the limits did not come back without the drop-in"; exit 1; }
 near "$(cat $cg/cseries-host.service/memory.max)" "$hmax" || { echo "FAIL: the memory ceiling did not come back without the drop-in"; exit 1; }
 echo "a later drop-in replaced all three ($got) and its removal restored them"
-# A process in the Host that takes more than the Host may have is stopped,
-# and the Host answers after it (it goes on, or systemd brings it back).
-healthy() {
-    for _ in $(seq 1 60); do
-        curl -fsS --max-time 3 -o /dev/null http://127.0.0.1:8800/api/system/health && return 0
-        sleep 3
+# A process in the Host that takes more than the Host may have is stopped by
+# the Host'"'"'s own ceiling, nothing outside the Host is touched, and the Host
+# answers again within a bounded time. Which process the kernel stops is not
+# part of that, and cannot be made so. A runaway that puts itself first in
+# line (oom_score_adj 1000, which any process may raise for itself) is
+# stopped first, but while its memory is still being freed another charge
+# against the ceiling (conmon'"'"'s, on a loaded machine) can have the kernel
+# stop a second process, when the runaway is no longer one it may choose: the
+# Host'"'"'s server and the container'"'"'s init (tini) are all that is left, and
+# either takes the container down (exit 255). Only a score that made both
+# unkillable would keep them out, and then a leak in the server itself would
+# never be stopped; nor can the container give the work it runs a ceiling of
+# its own, as its cgroup is read-only to it (uid 1000, no capabilities).
+# systemd starts the Host again (Restart=always). So the runaway runs twice
+# under a 1500 MB ceiling: first in line, and with the Host'"'"'s server first in
+# line (set from outside, as only root may) and podman exec held still as a
+# loaded machine held it, the worst case made certain.
+BOUND=180
+up=
+serves() {
+    t0=$(date +%s)
+    while [ $(( $(date +%s) - t0 )) -lt "$BOUND" ]; do
+        if curl -fsS --max-time 3 -o /dev/null http://127.0.0.1:8800/api/system/health 2>/dev/null; then
+            up=$(( $(date +%s) - t0 )); return 0
+        fi
+        sleep 2
     done
     return 1
+}
+# OOM kills of processes outside the Host: every cgroup but the Host'"'"'s own.
+outside() {
+    find /sys/fs/cgroup -name memory.events.local -not -path "*/cseries-host.service/*" \
+        -exec sed -n "s/^oom_kill //p" {} + 2>/dev/null | awk "{ s += \$1 } END { print s + 0 }"
+}
+# OOM kills under system.slice, the Host'"'"'s included: memory.events counts a
+# cgroup'"'"'s whole subtree, and system.slice outlives a restart of the Host,
+# whose own cgroup systemd makes again (and so its counters).
+kills() { sed -n "s/^oom_kill //p" $cg/memory.events; }
+# The Host'"'"'s server, as this system numbers it: the container'"'"'s init (tini)
+# has it as its one child.
+server() { t=$(podman inspect -f "{{.State.Pid}}" cseries-host); cut -d" " -f1 /proc/$t/task/$t/children; }
+# The runaway'"'"'s processes, wherever they are in the Host'"'"'s cgroup.
+marked() {
+    for f in $(find $cg/cseries-host.service -name cgroup.procs); do
+        for p in $(cat "$f"); do grep -qz "^CSERIES_BOOT_TEST_RUNAWAY=1$" /proc/$p/environ 2>/dev/null && printf " %s" "$p"; done
+    done
+    return 0
+}
+# runaway <code before the allocation> <which run> [<the server to hold for>]
+# With a server named, the client that started the runaway (podman exec) is
+# held still from before the runaway allocates until that server is gone and
+# the Host answers again, as a loaded machine held it: it then finds the
+# container gone and says so (exit 255), as it did there.
+runaway() {
+    rc=0; held=no; o0=$(outside); k0=$(kills); db0=$(podman inspect -f "{{.State.Pid}} {{.State.StartedAt}}" cseries-postgres)
+    run="${1}b = b\"x\" * (3 * 1024**3)"
+    if [ -n "${3:-}" ]; then
+        timeout 300 podman exec -e CSERIES_BOOT_TEST_RUNAWAY=1 cseries-host python3 -c "import time; time.sleep(5); $run" & te=$!
+        pe=
+        for _ in $(seq 1 40); do
+            pe=$(cut -d" " -f1 /proc/$te/task/$te/children 2>/dev/null || true)
+            [ -n "$pe" ] && [ -n "$(marked)" ] && break
+            pe=; sleep 0.1
+        done
+        [ -n "$pe" ] && kill -STOP "$pe" 2>/dev/null && held=yes
+        for _ in $(seq 1 120); do [ -e "/proc/$3" ] || break; sleep 1; done
+        serves || { echo "FAIL: the Host did not answer on 8800 within ${BOUND}s of a runaway ($2)"; exit 1; }
+        [ "$held" = no ] || kill -CONT "$pe"
+        wait "$te" || rc=$?
+    else
+        timeout 120 podman exec -e CSERIES_BOOT_TEST_RUNAWAY=1 cseries-host python3 -c "$run" || rc=$?
+        serves || { echo "FAIL: the Host did not answer on 8800 within ${BOUND}s of a runaway ($2)"; exit 1; }
+    fi
+    left=$(marked)
+    [ "$rc" != 0 ] || { echo "FAIL: a 3 GB runaway ran to its end under a 1500 MB ceiling ($2)"; exit 1; }
+    [ "$rc" != 124 ] && [ -z "$left" ] || { echo "FAIL: a runaway was not stopped (exit $rc, still running:${left:- none}) ($2)"; exit 1; }
+    [ "$(kills)" -gt "$k0" ] || { echo "FAIL: the Host'"'"'s own ceiling did not stop the runaway (oom_kill $k0 -> $(kills)) ($2)"; exit 1; }
+    [ "$(outside)" = "$o0" ] || { echo "FAIL: a runaway in the Host had a process outside it killed (oom_kill $o0 -> $(outside)) ($2)"; exit 1; }
+    [ "$(podman inspect -f "{{.State.Pid}} {{.State.StartedAt}}" cseries-postgres)" = "$db0" ] ||
+        { echo "FAIL: a runaway in the Host restarted the database ($2)"; exit 1; }
 }
 printf "[Service]\nMemoryMax=1500M\n" > "$d"
 systemctl daemon-reload
 systemctl restart cseries-host.service
-healthy || { echo "FAIL: the Host did not start under a 1500 MB ceiling"; exit 1; }
-# The runaway makes itself the OOM killer'"'"'s first choice (oom_score_adj
-# 1000, which any process may raise for itself): while it is still growing the
-# Host'"'"'s own server can be the biggest process in the unit, and a kill of the
-# server instead (a loaded machine) took the container and the runaway with
-# it (exit 255). This measures the ceiling, not which process the kernel picks.
-rc=0
-k0=$(sed -n "s/^oom_kill //p" $cg/cseries-host.service/memory.events)
-timeout 120 podman exec cseries-host python3 -c "import os; fd = os.open(\"/proc/self/oom_score_adj\", os.O_WRONLY); os.write(fd, b\"1000\"); os.close(fd); b = b\"x\" * (3 * 1024**3)" || rc=$?
-kills=$(sed -n "s/^oom_kill //p" $cg/cseries-host.service/memory.events)
-ok=0
-healthy && ok=1
+serves || { echo "FAIL: the Host did not start under a 1500 MB ceiling"; exit 1; }
+s0=$(server)
+runaway "import os; fd = os.open(\"/proc/self/oom_score_adj\", os.O_WRONLY); os.write(fd, b\"1000\"); os.close(fd); " "the runaway first in line"
+s1=$(server)
+[ "$s1" = "$s0" ] && kept="kept its server" || kept="was started again"
+echo "a 3 GB runaway, first in line: stopped (exit $rc, oom_kill $k0 -> $(kills)), nothing outside the Host killed, the database untouched; the Host $kept and answered on 8800 after ${up}s"
+echo 1000 > /proc/$s1/oom_score_adj
+runaway "" "the Host'"'"'s server first in line" "$s1"
+s2=$(server)
+[ -n "$s2" ] && [ "$s2" != "$s1" ] && [ ! -e /proc/$s1 ] || { echo "FAIL: the kernel did not stop the Host'"'"'s server when it was first in line"; exit 1; }
+echo "a 3 GB runaway, the Host'"'"'s server first in line: the kernel stopped the server, the runaway was stopped (exit $rc, its client held: $held; oom_kill $k0 -> $(kills)), nothing outside the Host killed, the database untouched; systemd started the Host again and it answered on 8800 after ${up}s"
 rm -f "$d"
 systemctl daemon-reload
 systemctl restart cseries-host.service
-[ "$rc" = 137 ] || { echo "FAIL: a 3 GB runaway under a 1500 MB ceiling was not stopped (exit $rc)"; exit 1; }
-[ "${kills:-0}" -gt "${k0:-0}" ] || { echo "FAIL: the runaway was not stopped by the Host'"'"'s own ceiling (oom_kill ${k0:-?} -> ${kills:-?})"; exit 1; }
-[ "$ok" = 1 ] || { echo "FAIL: the Host did not answer after the runaway"; exit 1; }
-echo "a 3 GB runaway under a 1500 MB ceiling was stopped (exit 137, ${kills:-?} OOM kill(s) in the Host) and the Host answered after it"
+serves || { echo "FAIL: the Host did not answer on 8800 within ${BOUND}s with its ceiling back"; exit 1; }
 '
 
 say "inside the containers"
@@ -386,12 +454,47 @@ door_ref="${door_loaded}@$(G podman image inspect --format '{{.Digest}}' "$door_
 echo "door:     $door_ref"
 G node /opt/cseries-test/e2e-guest.js /opt/cseries-cli "$host_ref" "$pg_ref" "$door_ref"
 
+# runs_in <container> <what the check is for> <program> [arguments]: the
+# program is executed in the running container as the container executes
+# everything, as its own user with its own capability set (podman exec takes
+# both from the container). The door and its certificate job have no
+# capability at all (DropCapability=ALL), and the kernel refuses to execute a
+# binary that carries an effective file capability then: "exec: Operation not
+# permitted". The caddy base image's /usr/bin/caddy and Alpine's
+# /usr/bin/lego both came with cap_net_bind_service=+ep, so in a real guest
+# neither ever ran, and the door could not come up. Nothing else in this test
+# starts either one (there is no certificate yet), so this does. When it
+# fails, the failure says whether the binary carries a file capability.
+runs_in() {
+    local c=$1 what=$2 prog held out
+    shift 2
+    prog=$1
+    if out=$(G podman exec "$c" "$@" </dev/null 2>&1); then
+        echo "$c runs $prog: ${out%%$'\n'*}"
+        return 0
+    fi
+    held=$(G podman exec "$c" python3 -I -c '
+import os, sys
+st = dict(line.split(":", 1) for line in open("/proc/self/status"))
+caps = "security.capability" in os.listxattr(sys.argv[1])
+print("uid %s, bounding set %s, file capability on the program: %s" % (
+    st["Uid"].split()[0], st["CapBnd"].strip(), "yes" if caps else "no"))' "$prog" </dev/null 2>&1 || true)
+    case "$held" in
+        *"bounding set 0000000000000000, file capability on the program: yes")
+            echo "FAIL: $prog does not run in $c ($what): $out" \
+                "-- $prog carries a file capability and the container's bounding set is empty ($held), so the kernel refuses to execute it; remote access cannot come up." \
+                "The image must remove the capability (sidecars/remote-door/Dockerfile)." ;;
+        *) echo "FAIL: $prog does not run in $c ($what): $out ($held)" ;;
+    esac
+    exit 1
+}
+
 # The Host and the door, each at its own address on the remote network and
 # nowhere else for the door; the network as cseries-remote.network makes it;
 # the Host's dashboard on the guest's 127.0.0.1:8800 as before; and nothing
 # failed.
 door_checks() {
-    local st nets dnets net probe listen got p gw
+    local st nets dnets net probe listen got p gw pair caddy_start
     for _ in $(seq 1 100); do G cseries-guest ready >/dev/null 2>&1 && break; sleep 3; done
     G cseries-guest ready || { echo "FAIL: the Host is not ready with the door configured ($1)"; G cseries-guest logs host --lines 40 || true; exit 1; }
     for _ in $(seq 1 60); do
@@ -489,6 +592,89 @@ while time.time() < end:
     got=$(G podman exec cseries-host python3 -I -c "$probe" 10.89.79.3 8443 </dev/null)
     case "$got" in refused|open) ;; *) echo "FAIL: the Host does not reach the door's address 10.89.79.3:8443 ($1): $got"; exit 1 ;; esac
     echo "the door reaches the Host at 10.89.79.2:8800 and nothing out; the Host reaches the door at 10.89.79.3 ($got: no certificate yet)"
+    # The door's Caddy and the certificate job's lego must run at all (see
+    # runs_in), then Caddy must start on the door's real Caddyfile and listen
+    # on 8443 in the door's network namespace. Without a certificate the
+    # door's own entrypoint (door-run) waits and never starts Caddy, so a
+    # throwaway self-signed one goes into the door's tmpfs /tmp, and a
+    # second Caddy runs from it, as the door's own user, with its own
+    # capability set, beside the waiting door-run. Nothing may listen on the
+    # port beforehand (it would answer for a Caddy that could not bind), the
+    # certificate, key, log and Caddy's own files live in a directory of /tmp
+    # that is removed again, nothing is written to the door's volumes, and
+    # the port must be closed once Caddy is stopped.
+    runs_in cseries-remote-door "$1" /usr/bin/caddy version
+    runs_in cseries-remote-cert "$1" /usr/bin/lego --version
+    pair=$(G sh -c 'd=$(mktemp -d) && openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 1 \
+            -subj /CN=boot-test -addext subjectAltName=DNS:*.abcdef.example.test -keyout "$d/k" -out "$d/c" 2>/dev/null \
+        && cat "$d/c" "$d/k"; rm -rf "$d"')
+    [ "$(grep -c '^-----BEGIN ' <<< "$pair")" = 2 ] || { echo "FAIL: the guest made no throwaway certificate for Caddy ($1)"; exit 1; }
+    caddy_start='
+import os, shutil, socket, subprocess, sys, tempfile, time
+
+def listening(host, port):
+    try:
+        socket.create_connection((host, port), 1).close()
+        return True
+    except OSError:
+        return False
+
+host, port = os.environ["CSERIES_DOOR_BIND"], int(os.environ["CSERIES_DOOR_PORT"])
+where = "%s:%d" % (host, port)
+# Anything already listening there would answer for a Caddy that could not bind.
+if listening(host, port):
+    print("caddy on %s: not tried, something listens there already" % where)
+    sys.exit()
+d = tempfile.mkdtemp(prefix="caddy-check-")
+p = None
+state = None
+log = os.path.join(d, "caddy.log")
+tail = ""
+try:
+    parts = sys.stdin.read().split("-----BEGIN ")
+    for name, pem in (("cert.pem", parts[1]), ("key.pem", parts[2])):
+        with os.fdopen(os.open(os.path.join(d, name), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
+            f.write("-----BEGIN " + pem)
+    env = dict(os.environ, CSERIES_DOOR_TLS=d, CSERIES_REMOTE_ZONE="abcdef.example.test",
+               CSERIES_DOOR_SECRET="0" * 64, CSERIES_DOOR_ADMIN=d + "/admin.sock",
+               XDG_DATA_HOME=d, XDG_CONFIG_HOME=d)
+    try:
+        with open(log, "w") as out:
+            p = subprocess.Popen(["/usr/bin/caddy", "run", "--config", "/etc/caddy/Caddyfile",
+                                  "--adapter", "caddyfile"], env=env, stdout=out, stderr=out)
+    except OSError as e:
+        state = "could not be started: " + e.strerror
+    end = time.time() + 30
+    while p and state is None and time.time() < end:
+        if p.poll() is not None:
+            state = "exited with status %d" % p.returncode
+        elif listening(host, port):
+            state = "listening" if p.poll() is None else "exited with status %d" % p.returncode
+        else:
+            time.sleep(0.5)
+finally:
+    if p and p.poll() is None:
+        p.terminate()
+        try:
+            p.wait(10)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.wait()
+    if p:
+        tail = open(log).read()[-1500:]
+    shutil.rmtree(d, ignore_errors=True)
+if state == "listening" and listening(host, port):
+    state = "still listening after Caddy was stopped"
+print("caddy on %s: %s" % (where, state or "not listening after 30 s"))
+if state != "listening" and tail:
+    print(tail)
+'
+    got=$(printf '%s\n' "$pair" | G podman exec -i cseries-remote-door python3 -I -c "$caddy_start" 2>&1) ||
+        { echo "FAIL: Caddy could not be tried in the door ($1): $got"; exit 1; }
+    case "$got" in
+        "caddy on 10.89.79.3:8443: listening") echo "$got (in the door's namespace, started by the door's own user)" ;;
+        *) echo "FAIL: Caddy does not start and listen on 10.89.79.3:8443 in the door ($1): $got"; exit 1 ;;
+    esac
     got=$(G curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8800/setup)
     [ "$got" = 200 ] || { echo "FAIL: the Host's dashboard does not answer on the guest's 127.0.0.1:8800 ($1): GET /setup -> $got"; exit 1; }
     echo "GET http://127.0.0.1:8800/setup -> 200"

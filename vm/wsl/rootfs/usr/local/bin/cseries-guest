@@ -97,7 +97,9 @@ remote_host_dropin() {
 # The volumes: the door key the door makes (read-only here); the remote-acme
 # directory, where the Host writes what the certificate job reads (the zone,
 # the ACME account it made, and the acme-dns credential the network hands it
-# once); and the job's status, read-only, for Settings.
+# once); and the job's status, read-only, for Settings. Each is shared with
+# the door or its certificate job, so each is named by its own unit
+# (cseries-remote-*.volume), which makes it once before any of them starts.
 [Container]
 Network=cseries-remote.network:ip=$REMOTE_HOST_IP
 Environment=CSERIES_REMOTE_DOOR=$REMOTE_DOOR_IP:8443
@@ -105,9 +107,9 @@ Environment=CSERIES_TRUSTED_PROXIES=$REMOTE_DOOR_IP/32
 Environment=CSERIES_DOOR_SECRET_FILE=/run/cseries-door/door-secret
 Environment=CSERIES_REMOTE_ACME_DIR=/var/lib/cseries-remote
 Environment=CSERIES_REMOTE_CERT_STATUS=/run/cseries-remote-cert/status.json
-Volume=cseries_remote-door-key:/run/cseries-door:ro
-Volume=cseries_remote-acme:/var/lib/cseries-remote:U
-Volume=cseries_remote-cert-status:/run/cseries-remote-cert:ro
+Volume=cseries-remote-door-key.volume:/run/cseries-door:ro
+Volume=cseries-remote-acme.volume:/var/lib/cseries-remote:U
+Volume=cseries-remote-cert-status.volume:/run/cseries-remote-cert:ro
 EOF
 }
 

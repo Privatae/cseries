@@ -9,6 +9,12 @@
 # other by address, and a resolver on a network with no way out would only
 # stand in front of the Host's own.
 #
+# On the Host, the door reaches only its web port: the Host listens on other
+# ports on every address it has, this network's included, and remote
+# access's firewall (/etc/cseries-remote/remote.nft, which the door's unit
+# requires) drops the rest at this network's bridge, which it finds by the
+# name set below.
+#
 # The two addresses are fixed (the Host's remote.conf drop-in, which
 # cseries-guest configure writes once it has the door's image, and
 # cseries-remote-door.container), so each side can name the other exactly.
@@ -22,6 +28,10 @@
 # configured.
 [Network]
 NetworkName=cseries_remote
+# Its bridge's name, which remote.nft matches (Quadlet in Podman 5.4 has no
+# InterfaceName key for a network, so it is passed as is, as
+# cseries-apps.network passes its own).
+PodmanArgs=--interface-name=cseries-remote0
 Internal=true
 DisableDNS=true
 Subnet=10.89.79.0/29

@@ -463,7 +463,12 @@ RUN --mount=type=bind,from=apt-indexes,target=/run/apt-indexes \
         # no X server in an entity pod; server/capabilities/linux/mouse_keyboard.py
         # fail-softs when the binary is absent. wget dropped: zero code callers.
         ripgrep \
-        git openssh-client \
+        # git without openssh-client: the Host's git is https only and SSH is
+        # not a tool the Host has. git Recommends the
+        # client, so this install keeps --no-install-recommends;
+        # scripts/test_host_image_no_ssh.py and smoke ("no SSH client") hold
+        # both.
+        git \
         # CLIENT ONLY. The SERVER (postgresql-17 + pgvector + AGE) is in
         # the cseries-postgres image — see Dockerfile.postgres.
         #

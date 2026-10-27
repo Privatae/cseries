@@ -22,6 +22,12 @@
 # network is internal: nothing but the Host and the door is on it, and it has
 # no way out. scripts/test_remote_door_loopback.py checks this file.
 #
+# In the WSL and Lima guests, remote access's firewall also keeps the door to
+# the Host's web port (vm/wsl/rootfs/etc/cseries-remote/remote.nft). Compose
+# has no filter between two containers on one network, so here the door can
+# open a connection to the Host's other ports too; each of them asks for its
+# own credential.
+#
 # The two addresses are fixed so each side can name the other exactly. The
 # default, 10.89.79.0/29, is the guest's (vm/wsl/rootfs/etc/containers/
 # systemd/cseries-remote.network): outside 172.16.0.0/12, where WSL's NAT and

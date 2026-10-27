@@ -361,6 +361,38 @@ else
     failed=1
 fi
 
+# ── no SSH client in the Host image ──────────────────────────────────────
+# SSH is not a tool the Host has: its git is https only and nothing in it runs
+# ssh. The source half (Dockerfile.linux installs no openssh package, and git
+# without its Recommends) is scripts/test_host_image_no_ssh.py; this is the
+# built image, where a dependency could still bring the client in, or a COPY
+# a static binary. The image's whole own filesystem (-xdev: not the data
+# volumes mounted over it), executables and links only (bash-completion's
+# 0644 `ssh` script is not a client; apt's methods/ssh is apt's own `rsh`
+# method, which only runs an ssh binary), dpkg's own record, and the Python
+# SSH libraries a pip dependency could pull in. git stays.
+ssh_found="$(docker exec "$CNAME" sh -c '
+    find / -xdev \( -path /proc -o -path /sys -o -path /dev -o -path /usr/lib/apt/methods \) -prune -o \
+        \( -type l -o -type f -perm /111 \) \( -name ssh -o -name scp -o -name sftp \
+        -o -name slogin -o -name "ssh-*" -o -name dbclient -o -name "dropbear*" \
+        -o -name plink -o -name pscp -o -name psftp -o -name puttygen -o -name rclone \) \
+        -print 2>/dev/null
+    for b in ssh scp sftp; do command -v "$b"; done
+    dpkg-query -W -f="\${Package} \${db:Status-Abbrev}\n" 2>/dev/null \
+        | awk "\$2 ~ /^.i/ && \$1 ~ /^(openssh|ssh\$|ssh-client\$|dropbear|putty|lsh-client\$|rclone\$|python3-(paramiko|asyncssh|fabric)\$)/ {print \"package \" \$1}"
+    python3 -I -c "import importlib.util as u
+for m in (\"paramiko\", \"asyncssh\", \"fabric\", \"ssh2\", \"pssh\", \"pysftp\", \"sshtunnel\", \"scp\"):
+    u.find_spec(m) and print(\"python module \" + m)"
+    command -v git >/dev/null || echo "git MISSING"
+' 2>&1 | sort -u)"
+if [[ -z "$ssh_found" ]]; then
+    green "OK    no SSH client — no ssh, scp or sftp in the Host image, no openssh package; git present"
+else
+    red "FAIL  the Host image carries an SSH client (or lost git):"
+    printf '%s\n' "$ssh_found" | sed 's/^/      /'
+    failed=1
+fi
+
 # ── mTLS front terminator runs in-process (2026-07-19 density pass) ───
 # The :8443 terminator is a supervised asyncio task inside uvicorn now, not
 # a second python3 process, and it reports its state through health/deep

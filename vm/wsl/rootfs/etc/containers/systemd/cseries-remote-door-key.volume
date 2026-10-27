@@ -1,0 +1,17 @@
+# Remote access: the door key, which the door (cseries-remote-door.container)
+# makes and the Host reads, through the remote.conf drop-in cseries-guest
+# configure writes.
+#
+# Made here, once, before either of them starts: each names it as
+# cseries-remote-door-key.volume, so Quadlet starts each only after this
+# unit's cseries-remote-door-key-volume.service. Were each container to make
+# the volume as it starts, two starting together would race to make it, and
+# the second would fail (podman's exit 125, "volume with name ... already
+# exists").
+#
+# VolumeName is the name the volume has always had, so an install that made
+# it before this unit existed keeps what is in it: Quadlet runs
+# `podman volume create --ignore`, which leaves a volume that exists as it is.
+# No [Install]: only a unit that names it makes it.
+[Volume]
+VolumeName=cseries_remote-door-key

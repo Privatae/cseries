@@ -34,10 +34,13 @@ PidsLimit=256
 DropCapability=ALL
 NoNewPrivileges=true
 Network=cseries.network
-Volume=cseries_remote-tls:/etc/caddy/tls:U
+# The volumes it shares with the door or the Host are each made by its own
+# unit (cseries-remote-*.volume) before any of them starts; its own state,
+# which nothing else mounts, podman makes as it starts.
+Volume=cseries-remote-tls.volume:/etc/caddy/tls:U
 Volume=cseries_remote-cert-state:/var/lib/cseries-cloud:U
-Volume=cseries_remote-acme:/etc/cseries-cloud:ro
-Volume=cseries_remote-cert-status:/var/lib/cseries-cert-status:U
+Volume=cseries-remote-acme.volume:/etc/cseries-cloud:ro
+Volume=cseries-remote-cert-status.volume:/var/lib/cseries-cert-status:U
 Pull=missing
 
 [Service]

@@ -141,6 +141,9 @@ grep -q 'cseries-apps=10.89.78.2' <<< "$nets" || { echo "FAIL: the Host is not o
 # made it (cseries-remote.network: only a unit that names it starts it).
 if grep -q 'cseries_remote' <<< "$nets"; then echo "FAIL: the Host joined the remote network with no door configured"; exit 1; fi
 if G podman network exists cseries_remote; then echo "FAIL: the remote network was made with no door configured"; exit 1; fi
+# Nor its volumes (cseries-remote-*.volume: only a unit that names one makes it).
+got=$(G podman volume ls --format '{{.Name}}' | grep '^cseries_remote' || true)
+[ -z "$got" ] || { echo "FAIL: remote access's volumes were made with no door configured: $got"; exit 1; }
 G sh -c 'test -s /etc/cseries-runtime/browser-control-token && stat -c "%a" /etc/cseries-runtime/browser-control-token' | grep -qx 600 ||
     { echo "FAIL: the browser's control token is missing or not 0600"; exit 1; }
 
@@ -388,7 +391,7 @@ G node /opt/cseries-test/e2e-guest.js /opt/cseries-cli "$host_ref" "$pg_ref" "$d
 # the Host's dashboard on the guest's 127.0.0.1:8800 as before; and nothing
 # failed.
 door_checks() {
-    local st nets dnets net probe got
+    local st nets dnets net probe listen got p gw
     for _ in $(seq 1 100); do G cseries-guest ready >/dev/null 2>&1 && break; sleep 3; done
     G cseries-guest ready || { echo "FAIL: the Host is not ready with the door configured ($1)"; G cseries-guest logs host --lines 40 || true; exit 1; }
     for _ in $(seq 1 60); do
@@ -436,8 +439,51 @@ if len(sys.argv) > 3:
 else:
     print("open")
 '
+    # A listener for a minute on the address and port given, accepting and
+    # closing each connection.
+    listen='
+import socket, sys, time
+s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+s.bind((sys.argv[1], int(sys.argv[2]))); s.listen(8); s.settimeout(1)
+end = time.time() + 60
+while time.time() < end:
+    try:
+        s.accept()[0].close()
+    except OSError:
+        pass
+'
     got=$(G podman exec cseries-remote-door python3 -I -c "$probe" 10.89.79.2 8800 http </dev/null)
     [ "$got" = HTTP/1.1 ] || { echo "FAIL: the door does not reach the Host's web server at 10.89.79.2:8800 ($1): $got"; exit 1; }
+    # Only that port (remote access's firewall, /etc/cseries-remote/remote.nft):
+    # the Host listens on every address it has, the remote network's
+    # included, so its other ports, and one this test opens in the Host
+    # where nothing publishes it, are dropped from the door; so is a listener
+    # of the guest's own on every address. "dropped" is no answer, error:113
+    # no neighbour; "refused" or "open" mean the door got there.
+    G podman exec -d cseries-host python3 -I -c "$listen" 0.0.0.0 18899 </dev/null >/dev/null
+    docker exec -d "$name" sh -c 'grep -qx "0::/" /proc/self/cgroup && echo $$ > /sys/fs/cgroup/init.scope/cgroup.procs 2>/dev/null; exec "$@"' \
+        sh python3 -I -c "$listen" 0.0.0.0 18898
+    sleep 1
+    got=$(G podman exec cseries-host python3 -I -c "$probe" 127.0.0.1 18899 </dev/null)
+    [ "$got" = open ] || { echo "FAIL: the test's listener in the Host did not start ($1): $got"; exit 1; }
+    for p in 8810 8811 13129 18899; do
+        got=$(G podman exec cseries-remote-door python3 -I -c "$probe" 10.89.79.2 "$p" </dev/null)
+        case "$got" in dropped|error:113) ;; *) echo "FAIL: the door reaches the Host's port $p at 10.89.79.2 ($1): $got"; exit 1 ;; esac
+    done
+    # The guest at the network's gateway; an internal network may have none
+    # (podman says <nil>), and then the subnet's first address stands for it.
+    gw=$(G podman network inspect cseries_remote --format '{{range .Subnets}}{{.Gateway}}{{end}}')
+    case "$gw" in ""|"<nil>") gw=10.89.79.1 ;; esac
+    got=$(G ip -4 -o addr show dev cseries-remote0 | awk '{print $4}' | tr '\n' ' ')
+    echo "the guest's own addresses on the remote network's bridge: ${got:-none}"
+    got=$(G podman exec cseries-remote-door python3 -I -c "$probe" "$gw" 18898 </dev/null)
+    case "$got" in dropped|error:113) ;; *) echo "FAIL: the door reaches the guest itself at $gw:18898 ($1): $got"; exit 1 ;; esac
+    echo "the door reaches the Host on 8800 only: 8810, 8811, 13129, 18899 and the guest at $gw dropped"
+    G systemctl is-active cseries-remote-firewall.service >/dev/null ||
+        { echo "FAIL: remote access's firewall unit is not active ($1)"; exit 1; }
+    G nft list table bridge cseries_remote >/dev/null || { echo "FAIL: remote access's bridge filter is not loaded ($1)"; exit 1; }
+    got=$(G podman network inspect cseries_remote --format '{{.NetworkInterface}}')
+    [ "$got" = cseries-remote0 ] || { echo "FAIL: the remote network's bridge is $got, not the cseries-remote0 remote.nft matches ($1)"; exit 1; }
     got=$(G podman exec cseries-remote-door python3 -I -c "$probe" 1.1.1.1 443 </dev/null)
     [ "$got" = error:101 ] || { echo "FAIL: the door has a way out of the remote network ($1): 1.1.1.1:443 gave $got"; exit 1; }
     got=$(G podman exec cseries-host python3 -I -c "$probe" 10.89.79.3 8443 </dev/null)
@@ -474,5 +520,102 @@ docker restart "$name" >/dev/null
 for _ in $(seq 1 30); do G true 2>/dev/null && break; sleep 1; done
 G cseries-guest wait-boot
 door_checks "after the restart"
+
+# The four volumes the door, its certificate job and the Host share
+# (cseries-remote-*.volume). Each is made once, by its own unit, before any of
+# the three starts: were each container to make it as it starts, the three
+# starting together would race to make it, and the second would fail
+# (podman's exit 125, "volume with name ... already exists") and be started
+# again. A fresh install, several times: the three stopped, the volumes
+# removed and their units stopped, and the three started at once; each must
+# start once, with no restart. Then an install from before these units, whose
+# volumes podman made under the same names, with a file in each: the three
+# start on them as they are, and every file is still there.
+say "remote access: the shared volumes, each made once before the three units that mount it start"
+shared_vols="cseries_remote-tls cseries_remote-acme cseries_remote-door-key cseries_remote-cert-status"
+three="cseries-host.service cseries-remote-door.service cseries-remote-cert.service"
+echo "the Host's unit: $(G systemctl show -p Restart -p RestartUSec -p StartLimitBurst -p StartLimitIntervalUSec cseries-host.service | tr '\n' ' ')"
+three_down() {
+    local v
+    G systemctl stop $three
+    # A volume's unit is a oneshot that stays active once it has run; stopped,
+    # it runs again (podman volume create --ignore) when a unit that names it
+    # starts. A guest from before these units has none.
+    G systemctl stop 'cseries-remote-*-volume.service' || true
+    for v in $shared_vols; do
+        if G podman volume exists "$v"; then G podman volume rm "$v" >/dev/null; fi
+    done
+}
+# Starts the three in one call, so their starts overlap, and waits for all
+# three. Sets lost to each unit that did not start at its first attempt.
+three_up() {
+    local u n i t0 ok st why
+    local -a before=()
+    lost=""
+    for u in $three; do before+=("$(G systemctl show -p NRestarts --value "$u")"); done
+    t0=$(G date +%s)
+    G systemctl start $three 2>/dev/null || true
+    for _ in $(seq 1 60); do
+        ok=1
+        for u in $three; do [ "$(G systemctl is-active "$u" || true)" = active ] || ok=""; done
+        [ -n "$ok" ] && break
+        sleep 2
+    done
+    i=0
+    for u in $three; do
+        n=$(G systemctl show -p NRestarts --value "$u")
+        st=$(G systemctl is-active "$u" || true)
+        if [ "$n" != "${before[$i]}" ] || [ "$st" != active ]; then
+            why=$(G journalctl -u "$u" --since "@$t0" --no-pager -o cat | grep -o 'volume with name [^ ]* already exists' | head -1 || true)
+            lost="$lost $u ($st, NRestarts ${before[$i]} -> $n${why:+: $why})"
+        fi
+        i=$((i + 1))
+    done
+    vols_down=""
+    for u in cseries-remote-tls cseries-remote-acme cseries-remote-door-key cseries-remote-cert-status; do
+        st=$(G systemctl is-active "$u-volume.service" || true)
+        [ "$st" = active ] || vols_down="$vols_down $u-volume.service ($st)"
+    done
+}
+races=0 down_any=""
+for round in 1 2 3 4 5; do
+    three_down
+    got=$(G podman volume ls --format '{{.Name}}' | grep '^cseries_remote-\(tls\|acme\|door-key\|cert-status\)$' || true)
+    [ -z "$got" ] || { echo "FAIL: the shared volumes were not removed for a fresh start: $got"; exit 1; }
+    three_up
+    if [ -n "$lost" ]; then
+        races=$((races + 1))
+        echo "fresh start $round: did not start at the first attempt:$lost"
+    else
+        echo "fresh start $round: the Host, the door and the certificate job each started once"
+    fi
+    for v in $shared_vols; do
+        G podman volume exists "$v" || { echo "FAIL: $v was not made (fresh start $round)"; exit 1; }
+    done
+    [ -z "$vols_down" ] || down_any="$down_any (fresh start $round)$vols_down"
+done
+got=$(G podman volume ls --format '{{.Name}}' | grep '^systemd-' || true)
+[ -z "$got" ] || { echo "FAIL: a volume was made under Quadlet's default name, not the one it always had: $got"; exit 1; }
+[ "$races" = 0 ] || { echo "FAIL: in $races of 5 fresh starts a unit lost the race for a shared volume"; exit 1; }
+[ -z "$down_any" ] || { echo "FAIL: a shared volume's unit is not active:$down_any"; exit 1; }
+
+# An install from before these units: the same four volumes, made by podman
+# under the same names, each holding a file.
+three_down
+for v in $shared_vols; do
+    G podman volume create "$v" >/dev/null
+    G sh -c 'm=$(podman volume inspect --format "{{.Mountpoint}}" "$1") && echo "made before its unit: $1" > "$m/boot-test-marker"' sh "$v"
+done
+made=$(for v in $shared_vols; do G podman volume inspect --format '{{.Name}} {{.CreatedAt}}' "$v"; done)
+three_up
+[ -z "$lost$vols_down" ] || { echo "FAIL: on volumes made before their units, a unit did not start at the first attempt:$lost$vols_down"; exit 1; }
+for v in $shared_vols; do
+    got=$(G sh -c 'cat "$(podman volume inspect --format "{{.Mountpoint}}" "$1")/boot-test-marker"' sh "$v" 2>&1 || true)
+    [ "$got" = "made before its unit: $v" ] || { echo "FAIL: $v lost what it held before its unit existed: $got"; exit 1; }
+done
+got=$(for v in $shared_vols; do G podman volume inspect --format '{{.Name}} {{.CreatedAt}}' "$v"; done)
+[ "$got" = "$made" ] || { echo "FAIL: a volume made before its unit was made again: $made -> $got"; exit 1; }
+echo "on volumes made before their units, the three started once each and every volume kept its file"
+door_checks "on volumes made before their units"
 
 say "PASS"

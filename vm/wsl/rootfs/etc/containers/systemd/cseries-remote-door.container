@@ -8,7 +8,9 @@
 # Host's address only (the Host's tunnel writes one ahead of each browser).
 #
 # It is on the remote network alone and publishes no port: only the Host's
-# tunnel dials it, and it can reach nothing but the Host. It reads its zone
+# tunnel dials it, and it can reach nothing but the Host's web port
+# (CSERIES_HOST_UPSTREAM; remote access's firewall drops the Host's other
+# ports and everything else on that network). It reads its zone
 # from cloud.json, which the Host writes into the remote-acme volume when
 # remote access is turned on, and waits for a certificate before Caddy starts;
 # on a Host without remote access it waits and does nothing.
@@ -22,6 +24,10 @@ Description=C-Series remote access door
 # VM runs on.
 Requires=cseries-machine-firewall.service
 After=cseries-machine-firewall.service
+# Remote access's firewall (/etc/cseries-remote/remote.nft): without it the
+# door would reach every port the Host listens on.
+Requires=cseries-remote-firewall.service
+After=cseries-remote-firewall.service
 
 [Container]
 ContainerName=cseries-remote-door
@@ -41,9 +47,11 @@ Environment=CSERIES_DOOR_BIND=10.89.79.3
 Environment=CSERIES_DOOR_PORT=8443
 Environment=CSERIES_TUNNEL_FROM=10.89.79.2
 Environment=CSERIES_HOST_UPSTREAM=10.89.79.2:8800
-Volume=cseries_remote-door-key:/data/door-key:U
-Volume=cseries_remote-tls:/etc/caddy/tls:ro
-Volume=cseries_remote-acme:/etc/cseries-cloud:ro
+# Each shared with the Host or the certificate job, so each is made by its
+# own unit (cseries-remote-*.volume) before any of them starts.
+Volume=cseries-remote-door-key.volume:/data/door-key:U
+Volume=cseries-remote-tls.volume:/etc/caddy/tls:ro
+Volume=cseries-remote-acme.volume:/etc/cseries-cloud:ro
 Pull=missing
 
 [Service]

@@ -260,10 +260,15 @@ def _env(unit):
 
 
 def _volumes(unit):
-    """{volume name: (path, options)} for the named volumes a unit mounts."""
+    """{volume name: (path, options)} for the named volumes a unit mounts. A
+    volume named by its own unit (X.volume) is that unit's VolumeName, the name
+    podman gives it; one with no such unit, or none, is left as written, so a
+    check on it fails."""
     out = {}
     for v in _all(unit, "Container", "Volume"):
         name, path, *opts = v.split(":")
+        if name.endswith(".volume") and os.path.isfile(os.path.join(UNITS, name)):
+            name = (_all(_quadlet(name), "Volume", "VolumeName") or [name])[-1]
         out[name] = (path, opts[0] if opts else "")
     return out
 

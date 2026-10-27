@@ -1,0 +1,65 @@
+#!/usr/sbin/nft -f
+# Remote access's firewall: on the remote network (cseries-remote.network,
+# 10.89.79.0/29, bridge cseries-remote0) the door reaches the Host on the
+# Host's web port and nothing else. Loaded by cseries-remote-firewall.service,
+# which the door's unit requires, so the door never runs without it. Its own
+# two tables, each replaced whole on every load, so nothing else is touched;
+# the runtime's runtime.nft and the machine wall's machine.nft are separate.
+#
+# The door is the one container here that browsers from the internet talk to.
+# The Host listens on more than its web port on every address it has (the
+# bastion's 8810 and 8811, the apps' egress lane on 13129), and the remote
+# network is one of those addresses. What the two need from each other:
+#   - the door asks the Host about each request and passes it on, both to
+#     the Host's web port (cseries-remote-door.container's
+#     CSERIES_HOST_UPSTREAM, 10.89.79.2:8800; sidecars/remote-door/Caddyfile's
+#     forward_auth and reverse_proxy);
+#   - the Host's tunnel hands each browser's connection to the door's port
+#     (the Host's CSERIES_REMOTE_DOOR, 10.89.79.3:8443), and the door answers
+#     on that connection;
+#   - nothing else: no DNS on this network (DisableDNS), no way out of it
+#     (Internal), and nothing on it talks to this system itself.
+#
+#   bridge   a frame between two of the network's ports passes when it is
+#            ARP, or from the Host, or to the Host's web port, or to the Host
+#            and not a new connection (the door's side of the tunnel's
+#            connections); anything else, IPv6 included, is dropped
+#   input    nothing from the network reaches this system itself
+#   forward  nothing routed out of the network, nothing routed into it
+
+define REMOTE_NET = 10.89.79.0/29
+define REMOTE_HOST = 10.89.79.2
+define REMOTE_DOOR = 10.89.79.3
+define REMOTE_HOST_PORT = 8800
+
+table bridge cseries_remote
+delete table bridge cseries_remote
+
+table bridge cseries_remote {
+	chain forward {
+		type filter hook forward priority filter; policy accept;
+		meta ibrname != "cseries-remote0" accept
+		ether type arp accept
+		ip saddr $REMOTE_HOST accept
+		ip saddr $REMOTE_DOOR ip daddr $REMOTE_HOST tcp dport $REMOTE_HOST_PORT accept
+		ip saddr $REMOTE_DOOR ip daddr $REMOTE_HOST tcp flags & (syn | ack) != syn accept
+		drop
+	}
+}
+
+table inet cseries_remote
+delete table inet cseries_remote
+
+table inet cseries_remote {
+	chain input {
+		type filter hook input priority filter; policy accept;
+		iifname "cseries-remote0" drop
+	}
+	chain forward {
+		type filter hook forward priority filter; policy accept;
+		iifname "cseries-remote0" meta nfproto ipv6 drop
+		oifname "cseries-remote0" meta nfproto ipv6 drop
+		ip saddr $REMOTE_NET ip daddr != $REMOTE_NET drop
+		ip daddr $REMOTE_NET ip saddr != $REMOTE_NET drop
+	}
+}

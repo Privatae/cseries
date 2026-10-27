@@ -170,6 +170,26 @@ class McpSpec:
 _MCP_PATH_RE = re.compile(r"^/[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*$")
 
 
+# An app's icon is a FILE in its own bundle: a relative path of plain name
+# segments ending in an image extension. The shell fetches it as
+# /system-apps/<id>/<icon> and the proxy answers exactly that path from disk
+# (proxy._declared_icons), so the value must be the path the browser will send:
+# no scheme, query, fragment, %-escape or dot segment that the browser or the
+# server would rewrite into a path the app's backend answers instead.
+_ICON_PATH_RE = re.compile(
+    r"[A-Za-z0-9_][A-Za-z0-9._-]{0,99}(?:/[A-Za-z0-9_][A-Za-z0-9._-]{0,99}){0,7}"
+    r"\.(?:png|jpe?g|gif|webp|avif|svg|ico)", re.IGNORECASE)
+
+
+def icon_path(value: Any) -> str | None:
+    """The manifest's `icon` / `icon_small` if it is such a path, else None.
+    None, not a refusal: an app with an odd icon still loads and shows its
+    letter, as an app with no icon does."""
+    if isinstance(value, str) and _ICON_PATH_RE.fullmatch(value):
+        return value
+    return None
+
+
 def mcp_spec(raw: dict[str, Any]) -> tuple[McpSpec, list[str]]:
     """(the app's McpSpec, violations) for its `mcp:` block. Absent = none.
     Only a process app in its own pod can serve one: a static app has no
@@ -1401,8 +1421,8 @@ def load(yaml_path: Path) -> AppManifest:
         permissions=permissions,
         network=network,
         description=str(raw.get("description") or ""),
-        icon=raw.get("icon"),
-        icon_small=raw.get("icon_small"),
+        icon=icon_path(raw.get("icon")),
+        icon_small=icon_path(raw.get("icon_small")),
         version=str(raw.get("version") or "0.0.0"),
         system=bool(raw.get("system", False)),
         window=window,

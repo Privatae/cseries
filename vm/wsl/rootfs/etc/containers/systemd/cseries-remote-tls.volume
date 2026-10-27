@@ -1,0 +1,16 @@
+# Remote access: the remote address's certificate. The certificate job
+# (cseries-remote-cert.container) writes it and the door
+# (cseries-remote-door.container) reads it.
+#
+# Made here, once, before either of them starts: each names it as
+# cseries-remote-tls.volume, so Quadlet starts each only after this unit's
+# cseries-remote-tls-volume.service. Were each container to make the volume
+# as it starts, two starting together would race to make it, and the second
+# would fail (podman's exit 125, "volume with name ... already exists").
+#
+# VolumeName is the name the volume has always had, so an install that made
+# it before this unit existed keeps what is in it: Quadlet runs
+# `podman volume create --ignore`, which leaves a volume that exists as it is.
+# No [Install]: only a unit that names it makes it.
+[Volume]
+VolumeName=cseries_remote-tls

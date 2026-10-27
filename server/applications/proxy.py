@@ -202,6 +202,21 @@ async def _require_own_window(pool, app_id: str, request: Request) -> None:
     await _require_own_token(pool, app_id, request, missing=_BACKEND_TOKEN_MISSING)
 
 
+def _declared_icons(install_dir: Path) -> frozenset[str]:
+    """The app's `icon` and `icon_small` from its on-disk manifest, each only
+    if it is a plain bundle path (manifest.icon_path, the rule the icon_url the
+    shell fetches is built from)."""
+    from server.applications.manifest import icon_path
+    manifest_path = install_dir / "app.yaml"
+    try:
+        raw = yaml.safe_load(manifest_path.read_text()) or {}
+    except (OSError, yaml.YAMLError):
+        return frozenset()
+    if not isinstance(raw, dict):
+        return frozenset()
+    return frozenset(p for p in (icon_path(raw.get("icon")), icon_path(raw.get("icon_small"))) if p)
+
+
 def _read_image(install_dir: Path) -> str | None:
     """runtime.image from the on-disk manifest, or None — the raw-YAML twin of
     manifest.runs_in_pod for a process app (this module reads manifests raw,
@@ -435,6 +450,18 @@ async def serve_app(app_id: str, path: str, request: Request) -> Response:
         # directory, which _serve_static would answer with its index.html.
         if not _is_static_file(install_dir, path):
             raise HTTPException(status.HTTP_404_NOT_FOUND, "not served on this address")
+        resp = _serve_static(install_dir, path, app_id)
+        resp.headers.update(app_origin.IMAGE_HEADERS)
+        return resp
+
+    if path in _declared_icons(install_dir):
+        # The app's declared icon (the shell fetches /system-apps/<id>/<icon>
+        # and inlines it into the design frame): the FILE in its bundle, typed
+        # by its extension, or nothing. Never the app's backend, which picks
+        # its own Content-Type, and a type that closed the shell's <img src>
+        # planted an event handler in the frame.
+        if not _is_static_file(install_dir, path):
+            raise HTTPException(status.HTTP_404_NOT_FOUND, "no such icon")
         resp = _serve_static(install_dir, path, app_id)
         resp.headers.update(app_origin.IMAGE_HEADERS)
         return resp

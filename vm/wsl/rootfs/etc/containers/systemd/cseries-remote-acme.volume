@@ -1,0 +1,18 @@
+# Remote access: what the Host writes when remote access is turned on (the
+# zone, the ACME account it made and the acme-dns credential), which the
+# certificate job (cseries-remote-cert.container) and the door
+# (cseries-remote-door.container) read. The Host mounts it through the
+# remote.conf drop-in cseries-guest configure writes.
+#
+# Made here, once, before any of the three starts: each names it as
+# cseries-remote-acme.volume, so Quadlet starts each only after this unit's
+# cseries-remote-acme-volume.service. Were each container to make the volume
+# as it starts, two starting together would race to make it, and the second
+# would fail (podman's exit 125, "volume with name ... already exists").
+#
+# VolumeName is the name the volume has always had, so an install that made
+# it before this unit existed keeps what is in it: Quadlet runs
+# `podman volume create --ignore`, which leaves a volume that exists as it is.
+# No [Install]: only a unit that names it makes it.
+[Volume]
+VolumeName=cseries_remote-acme

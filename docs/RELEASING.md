@@ -137,7 +137,12 @@ Then, from a clean checkout of the commit you will tag:
 
    The boot test runs the guest without the door and then with it, as every
    install of a release that pins the door runs it: the Host must start on
-   the remote network at 10.89.79.2 beside the door at 10.89.79.3, and still
+   the remote network at 10.89.79.2 beside the door at 10.89.79.3, the door
+   must reach the Host's 8800 and none of its other ports (remote access's
+   firewall, /etc/cseries-remote/remote.nft), the Host, the door and its
+   certificate job must each start at the first attempt when started
+   together, on fresh volumes and on volumes an earlier install made (their
+   shared volumes are cseries-remote-*.volume units), and the Host must still
    answer on the guest's 127.0.0.1:8800, before the tag.
 
 2. The release term check must exit 0:

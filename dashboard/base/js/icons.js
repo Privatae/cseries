@@ -90,6 +90,16 @@ const CSeriesIcons = (() => {
         'claude-code-harness': 'claude-code',
     };
 
+    // The glyph for an app id, or null — OWN properties only. A plain `GLYPHS[id]`
+    // reaches Object.prototype, so an id like "constructor" or "toString" returned
+    // a function's source instead of a glyph (and read as "has a glyph").
+    const own = (o, k) => Object.prototype.hasOwnProperty.call(o, k);
+    function glyphFor(id) {
+        if (own(GLYPHS, id)) return GLYPHS[id];
+        if (own(ALIASES, id) && own(GLYPHS, ALIASES[id])) return GLYPHS[ALIASES[id]];
+        return null;
+    }
+
     /**
      * Inline SVG for an app — self-contained, no <use>/defs resolution.
      * `app` is a manifest-shaped object ({ id, name, icon_url }) or a bare
@@ -99,7 +109,7 @@ const CSeriesIcons = (() => {
     function markup(app, size) {
         size = size || 34;
         const a = (typeof app === 'string') ? { id: app } : (app || {});
-        const body = GLYPHS[a.id] || GLYPHS[ALIASES[a.id]];
+        const body = glyphFor(a.id);
         if (body) {
             return `<svg class="cseries-icon" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
         }
@@ -110,7 +120,7 @@ const CSeriesIcons = (() => {
     }
 
     function has(appId) {
-        return !!(GLYPHS[appId] || GLYPHS[ALIASES[appId]]);
+        return !!glyphFor(appId);
     }
 
     // Escapes all five, so the result is safe as text and inside a quoted

@@ -1,0 +1,19 @@
+# Remote access's firewall (/etc/cseries-remote/remote.nft): on the remote
+# network the door reaches the Host's web port and nothing else. The door's
+# unit requires it (cseries-remote-door.container), so the door never starts
+# without it; nothing enables it, since only the door needs it. There is no
+# ExecStop: stopping this unit leaves the rules in place. Never restart it
+# while the door runs, since systemd restarts a unit along with what it
+# requires; reload it instead.
+[Unit]
+Description=C-Series remote access firewall (the door reaches the Host's web port only)
+DefaultDependencies=no
+After=local-fs.target
+Before=shutdown.target
+Conflicts=shutdown.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f /etc/cseries-remote/remote.nft
+ExecReload=/usr/sbin/nft -f /etc/cseries-remote/remote.nft

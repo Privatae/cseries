@@ -139,9 +139,10 @@ elaborate beyond what the question needs."""
 # The FLOOR every model gets when it has no registered counterweight
 # (after a Kimi K3 recap closed on "Loose ends worth
 # knowing: …" and "Next move when you're ready: …" — month-old memory
-# restated as current, then a tail that opened new work). Two rules only,
-# both universal: finish on the point (_FINISH_RULE above), and date what
-# you recall. The Opus 5 block is composed from the same constant.
+# restated as current, then a tail that opened new work). Universal rules
+# only: finish on the point (_FINISH_RULE above), date what you recall, and
+# plain words for the person (below). The Opus 5 block is composed from the
+# same constant.
 
 # The recall rule joins every model-specific block too — it is about the
 # platform's memory, not any one model's tics.
@@ -151,15 +152,36 @@ What you recall from earlier sessions carries its date. State it as of \
 that date, or check the live source (your tools) before reporting it as \
 the current state of anything — configuration, jobs, routing, connections."""
 
-_BASE_BLOCK = "## Model calibration\n" + _FINISH_RULE + "\n" + _RECALL_RULE
+# Plain words for the person. A Host's replies read its tools' words and ids
+# back to the person (a folder named as a numbered "store", a "grant", a
+# "baseline"), which someone new to the platform cannot follow. The Opus
+# block already says "plain language"; what it did not say is what that
+# means on this platform. Every model gets it, after its own block, so
+# _OPUS5_BLOCK itself is unchanged.
+_PLAIN_WORDS_RULE = """\
+
+Your tools take ids; the person reads names. Write to them as someone who \
+has never seen this platform. Name a thing by what it is and where it is \
+("the test listener on the dev server", "the old test folder on the build \
+box"), not by an internal number such as a ticket, store, grant or finding \
+id; give the number only when the person asks for it or has to type it. Say \
+a platform term in everyday words: a permission rather than a grant, the \
+folder or bucket by its name rather than a store, the machine's check-in \
+rather than its heartbeat or beat, what the machine normally looks like \
+rather than its baseline or accounting. Open with the answer in one or two \
+sentences; use a short list for three or more parallel items, a small table \
+to compare machines or numbers, and bold only for the one thing the person \
+must not miss."""
+
+_BASE_BLOCK = "## Model calibration\n" + _FINISH_RULE + "\n" + _RECALL_RULE + _PLAIN_WORDS_RULE
 
 # (pattern, block) — patterns are substring matches on the normalized id
 # (lowercased, "." → "-"). Order matters: first match wins.
 MODEL_STYLE_BLOCKS: list[tuple[str, str]] = [
-    ("opus-5", _OPUS5_BLOCK + _RECALL_RULE),
-    ("opus-latest", _OPUS5_BLOCK + _RECALL_RULE),   # alias follows the current Opus
-    ("opus-4-8", _OPUS48_BLOCK + _RECALL_RULE),
-    ("fable-5", _FABLE5_BLOCK + _RECALL_RULE),
+    ("opus-5", _OPUS5_BLOCK + _RECALL_RULE + _PLAIN_WORDS_RULE),
+    ("opus-latest", _OPUS5_BLOCK + _RECALL_RULE + _PLAIN_WORDS_RULE),   # alias follows the current Opus
+    ("opus-4-8", _OPUS48_BLOCK + _RECALL_RULE + _PLAIN_WORDS_RULE),
+    ("fable-5", _FABLE5_BLOCK + _RECALL_RULE + _PLAIN_WORDS_RULE),
 ]
 
 
@@ -167,11 +189,11 @@ def build_model_style_block(model_id: str | None) -> str:
     """The per-model calibration block for the system prompt.
 
     A model with a registered counterweight gets it; every other model
-    (Sonnet, Kimi, OSS, unknown ids) gets _BASE_BLOCK — the finish-cleanly
-    and date-your-recall floor. Before 2026-08-18 the unregistered case
-    returned "" ("an unstyled model is never worse than a mis-styled one");
-    that held for the Opus-specific paragraphs and does not hold for the
-    two universal rules, which is why they are the floor and nothing else
+    (Sonnet, Kimi, OSS, unknown ids) gets _BASE_BLOCK — the finish-cleanly,
+    date-your-recall and plain-words floor. Before 2026-08-18 the unregistered
+    case returned "" ("an unstyled model is never worse than a mis-styled
+    one"); that held for the Opus-specific paragraphs and does not hold for
+    the universal rules, which is why they are the floor and nothing else
     is. Returns "" only for an unknown/empty model id.
     """
     if not model_id:

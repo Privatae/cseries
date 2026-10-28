@@ -1,0 +1,2 @@
+# Every model's calibration carries the plain-words rule (names, not internal numbers; everyday words for platform terms; the answer first), its examples are everyday words, and _OPUS5_BLOCK itself is unchanged. Container-free.
+test_plain_words.py

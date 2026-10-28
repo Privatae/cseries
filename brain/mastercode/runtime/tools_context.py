@@ -26,7 +26,7 @@ async def _exec_dcn(args: dict) -> dict:
             stores = await dcn.list_stores(pool, eid)
             note = ("per-store sweep freshness lands with the indexers (CN-2); "
                     "grant status is live" if op == "status" else
-                    "cite store + path in answers — the route map's answer IS the citation")
+                    "cite the store by its name, and the path, in answers — the route map's answer IS the citation")
             return {"status": "ok", "result": {"stores": stores, "count": len(stores),
                                                "note": note}}
 
@@ -173,7 +173,7 @@ async def _exec_dcn(args: dict) -> dict:
                 res["next"] = ("Hits are SANITIZED windows ([PII_*] placeholders stand for "
                                "redacted personal data — keep them as they are). To read "
                                "more of a hit, call op='read_range' with its `doc` id and "
-                               "start_byte/end_byte; cite store + doc as provenance.")
+                               "start_byte/end_byte; cite the store by its name, and the document, as provenance.")
             return {"status": "ok", "result": res}
 
         return _refused(f"unknown dcn op '{op}' (stores|status|propose_store|list|stat|"

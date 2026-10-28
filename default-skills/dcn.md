@@ -9,7 +9,7 @@ allowed-tools: dcn, get_network, propose_mgmt_grant
 The DCN is a ROUTE MAP over stores THE USER owns — folders on machines they
 run (machine class, index: locations only) and S3 buckets they keep files in
 (cabinet class, index: locations + previews). The route map's answer IS the
-citation: cite store + path as provenance.
+citation: cite the store by its name, and the path, as provenance.
 
 ## dcn — guidance
 

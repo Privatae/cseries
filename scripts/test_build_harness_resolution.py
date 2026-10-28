@@ -379,6 +379,49 @@ def main() -> int:
         check("empty stderr → a {type:error} stdout frame is the reason (whitespace folded)",
               r7.startswith("harness exited 1: Internal error:") and "error decoding response body" in r7
               and "\n" not in r7, r7)
+        # opencode can exit 1 with an empty stderr while its stdout's last
+        # frame is a NamedError, {"type":"error","error":{"name":…,"data":
+        # {"message":…}}}, whose message is the provider's JSON body. Read as
+        # "with no output", the Host and the run history never saw the
+        # provider refuse the model.
+        _oc_body = json.dumps({"code": 404, "message": "Publisher model `acme/coder-x` was not "
+                               "found or your project does not have access to it.",
+                               "metadata": {"error_type": "not_found"}})
+        _oc_tr = ('{"type":"step_start","sessionID":"ses_x","part":{"type":"step-start"}}\n'
+                  + json.dumps({"type": "error", "sessionID": "ses_x",
+                                "error": {"name": "UnknownError", "data": {"message": _oc_body}}})
+                  + "\n")
+        r12 = _reason({"ok": False, "exit_code": 1, "stderr": "", "transcript": _oc_tr})
+        check("empty stderr → opencode's {type:error, error:{name, data:{message}}} frame is the reason",
+              r12 == "harness exited 1: 404: Publisher model `acme/coder-x` was not found or your "
+                     "project does not have access to it.", r12)
+        r13 = _reason({"ok": False, "exit_code": 1, "stderr": "",
+                       "transcript": json.dumps({"type": "error", "error": {
+                           "name": "ProviderAuthError", "data": {"message": "invalid api key"}}}) + "\n"})
+        check("an opencode error whose message is plain text is the reason as written",
+              r13 == "harness exited 1: invalid api key", r13)
+        r14 = _reason({"ok": False, "exit_code": 1, "stderr": "",
+                       "transcript": json.dumps({"type": "error", "error": {"name": "UnknownError"}}) + "\n"})
+        check("an opencode error with only a name still names it",
+              r14 == "harness exited 1: UnknownError", r14)
+        # The unwrap only ever REPLACES the text with a body's own message: a
+        # body with no usable message, or brace text that is not JSON, stays
+        # as written (never "500: " or "None").
+        _unusable = [json.dumps({"code": 500}), json.dumps({"code": 500, "message": "   "}),
+                     json.dumps([{"message": "x"}]), "{not json"]
+        _r15 = [_reason({"ok": False, "exit_code": 1, "stderr": "", "transcript": json.dumps(
+                    {"type": "error", "error": {"name": "UnknownError", "data": {"message": m}}}) + "\n"})
+                for m in _unusable]
+        check("an opencode body with no usable message is the reason as written, not unwrapped",
+              _r15 == ["harness exited 1: " + " ".join(m.split()) for m in _unusable], _r15)
+        # The 300-char cap and the whitespace folding apply AFTER the unwrap.
+        _long = json.dumps({"code": 404, "message": "model\n\tgone " * 120})
+        r16 = _reason({"ok": False, "exit_code": 1, "stderr": "", "transcript": json.dumps(
+            {"type": "error", "error": {"name": "UnknownError", "data": {"message": _long}}}) + "\n"})
+        _v16 = r16[len("harness exited 1: "):]
+        check("an unwrapped body is still folded and capped at 300 chars",
+              r16.startswith("harness exited 1: 404: model gone model gone") and "\n" not in r16
+              and "\t" not in r16 and _v16.endswith(" …") and len(_v16) == 302, r16[-60:])
         r8 = _reason({"ok": False, "exit_code": 1, "stderr": "",
                       "transcript": '{"type":"text","data":"all fine"}\n{"type":"end","stopReason":"EndTurn"}\n'})
         check("empty stderr + a clean stdout → still 'with no output' (no invented reason)",

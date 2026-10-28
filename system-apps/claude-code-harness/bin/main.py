@@ -1209,6 +1209,9 @@ def run_stream(request):
                 except Exception:  # noqa: BLE001 — liveness is best-effort
                     return None
             prev_sample, prev_t = _sample(), time.time()
+            # When a reading last saw the tree holding a connection (see
+            # `held_net` below).
+            net_seen_at = prev_t if (prev_sample is not None and prev_sample.net) else None
             gate = ActivityGate()
             sig = worktree_signature(project_dir)
             next_scan = time.time() + PROGRESS_SCAN_S
@@ -1225,6 +1228,8 @@ def run_stream(request):
                         last_activity = now
                     prev_sample, prev_t = cur, now
                     on_net = bool(cur is not None and cur.net)
+                    if on_net:
+                        net_seen_at = now
                     if now >= next_scan:
                         # Evidence only: a worktree write resets no clock.
                         next_scan = now + PROGRESS_SCAN_S
@@ -1244,11 +1249,25 @@ def run_stream(request):
                             "detail": f"no new output for {now - last_frame:.0f}s — "
                                       + ("a tool is still running" if open_tools
                                          else "the model is still responding")}})
+                    # A connection that closed since an earlier reading keeps
+                    # the model-wait window for one idle window after the last
+                    # reading that saw it, as in harness_core. The CLI closes
+                    # its provider connection when the model's reply has been
+                    # delivered, and the watchdog can read the tree before this
+                    # loop's reader has handled that message. Judging that
+                    # reading on the idle window, counted from the run's last
+                    # activity (often its start), stopped a run that had just
+                    # answered as "never started". The activity clock is not
+                    # reset, so the model-wait stop still bounds the run, and a
+                    # tree that goes silent once its connection closes meets
+                    # the idle stop one idle window after the close.
+                    held_net = on_net or (net_seen_at is not None
+                                          and now - net_seen_at <= idle_s)
                     in_model_turn = spoke and not open_tools
-                    waiting = in_model_turn or (on_net and not open_tools)
-                    window = turn_budget_s if (waiting or on_net) else idle_s
+                    waiting = in_model_turn or (held_net and not open_tools)
+                    window = turn_budget_s if (waiting or held_net) else idle_s
                     if now - last_activity > window:
-                        timed_out, model_wait, net_wait = True, waiting, on_net
+                        timed_out, model_wait, net_wait = True, waiting, held_net
                         log.warning("[sdk] showed no sign of life for %.0fs while %s — "
                                     "stopping a run that has gone quiet (no total cap)",
                                     window, "waiting on the model" if waiting

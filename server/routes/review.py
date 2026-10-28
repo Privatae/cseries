@@ -6272,8 +6272,11 @@ def _vendor_error_from_transcript(transcript: str, scan_lines: int = 40) -> str:
     """The vendor's own error text from the LAST JSON lines of a raw stdout
     transcript, or "". Shapes read: {"event":"result","result":{"status":
     "ERROR","error":…}} (agy), {"type":"error","message":…} (grok / codex /
-    claude-family), {"type":"turn.failed","error":{"message":…}} (codex), and a
-    top-level {"error": "…"} string. Scans from the end; the first hit wins."""
+    claude-family), {"type":"turn.failed","error":{"message":…}} (codex),
+    {"type":"error","error":{"name":…,"data":{"message":…}}} (opencode's
+    NamedError), and a top-level {"error": "…"} string. A message that is
+    itself a provider's JSON body ({"code":404,"message":…}) is read for its
+    message. Scans from the end; the first hit wins."""
     if not transcript:
         return ""
     lines = [ln.strip() for ln in str(transcript).splitlines() if ln.strip()]
@@ -6292,9 +6295,22 @@ def _vendor_error_from_transcript(transcript: str, scan_lines: int = 40) -> str:
             msg = res.get("error") or res.get("message")
         elif str(o.get("type") or o.get("event") or "").lower() in ("error", "turn.failed"):
             e = o.get("error")
-            msg = (e.get("message") if isinstance(e, dict) else e) or o.get("message")
+            if isinstance(e, dict):
+                data = e.get("data") if isinstance(e.get("data"), dict) else {}
+                msg = e.get("message") or data.get("message") or o.get("message") or e.get("name")
+            else:
+                msg = e or o.get("message")
         elif isinstance(o.get("error"), str) and o.get("error").strip():
             msg = o["error"]
+        if isinstance(msg, str) and msg.lstrip().startswith("{"):
+            # opencode passes the provider's response body through verbatim.
+            try:
+                body = json.loads(msg)
+            except (ValueError, TypeError):
+                body = None
+            if isinstance(body, dict) and isinstance(body.get("message"), str) and body["message"].strip():
+                code = body.get("code")
+                msg = f"{code}: {body['message']}" if isinstance(code, (int, str)) and str(code) else body["message"]
         if msg:
             text = " ".join(str(msg).split())
             return text[:300] + (" …" if len(text) > 300 else "")

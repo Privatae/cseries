@@ -147,13 +147,28 @@ exit 0
     threading.Thread(target=_accept, daemon=True).start()
     wait_sock = (f"{py} -c 'import socket,time\ns=socket.create_connection((\"127.0.0.1\",{port}))\n"
                  f"time.sleep(3.0)\nprint(\"TEXT\")'")
-    final, el, _ = run("net-wait", f"""
-{wait_sock}
+    # A connect that fails must fail this case: the stub exits non-zero then,
+    # instead of `exit 0` turning a CLI that never waited on anything into a
+    # run that "survived" in a tenth of a second.
+    final, el, frames = run("net-wait", f"""
+{wait_sock} || exit 3
 exit 0
 """)
     check("a CLI silent for 3 s with an open connection (idle 1.2 s, model "
           "wait 4.8 s) SURVIVES", final.get("state") == "complete" and final.get("ok") is True,
           f"state={final.get('state')} err={final.get('error')!r} el={el:.1f}")
+    # The connection was accepted before the stub began its 3 s wait, so this
+    # bounded wait only guards against a starved accept thread.
+    end = time.time() + 5.0
+    while not held and time.time() < end:
+        time.sleep(0.01)
+    texts = [(f.get("payload") or {}).get("text") for f in frames if f.get("kind") == "text"]
+    check("...and it really waited on the connection: the provider accepted it, "
+          "the run outlived the idle window, and the line printed after the wait "
+          "reached the caller",
+          len(held) >= 1 and el >= 3.0 and "TEXT" in texts,
+          f"accepted={len(held)} el={el:.1f} texts={texts!r} "
+          f"stderr={(final.get('stderr') or '')[-200:]!r}")
 
     print("== 3. no sign of life at all is still stopped at the idle window ==")
     final, el, _ = run("wedged", """

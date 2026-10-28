@@ -2502,6 +2502,9 @@ def _make_watched_run(spec: HarnessSpec, stream_flags: bool = True):
                                                   spec.display)
                             prev = None
                         prev_t = time.time()
+                        # When a reading last saw the tree holding a connection
+                        # (see `held_net` below).
+                        net_seen_at = prev_t if (prev is not None and prev.net) else None
                         gate = ActivityGate()
                         try:
                             sig = worktree_signature(project_dir)
@@ -2641,7 +2644,27 @@ def _make_watched_run(spec: HarnessSpec, stream_flags: bool = True):
                                 cmd_running[0] = in_tool
                                 in_model_turn = (events_seen[0] > 0 and not in_tool)
                                 on_net = bool(cur is not None and cur.net)
-                                waiting = in_model_turn or (on_net and not in_tool)
+                                if on_net:
+                                    net_seen_at = now
+                                # A connection that closed since an earlier
+                                # reading keeps the model-wait window for one
+                                # idle window after the last reading that saw
+                                # it. A CLI closes its provider connection the
+                                # moment it prints the reply, and that line is
+                                # activity only once the stdout thread has read
+                                # it. Picking the window from this reading alone
+                                # judged that gap on the idle window counted
+                                # from the run's last activity, often its
+                                # start, and stopped a run that had just
+                                # answered as "never started" on a loaded
+                                # machine. The activity clock is not reset,
+                                # so the model-wait stop still bounds the run,
+                                # and a tree that goes silent once its
+                                # connection closes meets the idle stop one
+                                # idle window after the close.
+                                held_net = on_net or (net_seen_at is not None
+                                                      and now - net_seen_at <= idle_s)
+                                waiting = in_model_turn or (held_net and not in_tool)
                                 if on_net and in_tool and cmds and not waiting and not reported:
                                     # A silent grok whose OWN process holds the
                                     # connection is waiting on its model, whatever
@@ -2652,14 +2675,14 @@ def _make_watched_run(spec: HarnessSpec, stream_flags: bool = True):
                                     # it said it is in a command, not its model.
                                     waiting = holds_own_connection(
                                         p.pid, [c for c, _st in cmds])
-                                window = turn_budget_s if (waiting or on_net) else idle_s
+                                window = turn_budget_s if (waiting or held_net) else idle_s
                                 if now - last_activity[0] > window:
                                     idle_killed[0] = True
                                     stop_in_cmd[0] = in_tool
                                     model_wait_killed[0] = waiting
-                                    net_wait[0] = on_net
+                                    net_wait[0] = held_net
                                     stop_kind[0] = ("model" if waiting else
-                                                    "net" if on_net else "idle")
+                                                    "net" if held_net else "idle")
                                     spec.logger.warning(
                                         "%s showed no sign of life for %.0fs while "
                                         "%s — killing a run that has gone quiet "

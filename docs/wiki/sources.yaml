@@ -115,9 +115,11 @@ browser-app:
   - system-apps/browser/app.js
   - server/applications/harness_backend.py
   - sidecars/browser/control/sessions.py
+  - sidecars/browser/control/fs_api.py
+  - vm/runtime/lib/cseries_runtime/argv.py::harness
   verified:
     date: '2026-10-28'
-    digest: sha256:28cb470d27aec79749f034c9e3444870dcd8fd384f54f77978ad2bae0838ca43
+    digest: sha256:e1c8422fd5ee46982b1fd14c0afc77bc44f4729994686ee5e981e5058c070e1b
 building-apps:
   sources:
   - server/applications/manifest.py::AppManifest

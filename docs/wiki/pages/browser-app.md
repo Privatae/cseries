@@ -29,4 +29,4 @@ Yes. Press **Create agent**, name it, and do the task once by hand: sign in, cli
 
 ## Can a website see my files?
 
-Only if you grant it. **Grant to project** gives a site that asks for a local folder the files of one of your projects. With nothing granted, a site gets no access to your projects' files.
+No. The Browser cannot reach your projects' files yet, so a site that asks for a local folder gets nothing of yours, and **Grant to project** has no folder to give it.

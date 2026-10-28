@@ -119,13 +119,20 @@ async def main(dsn):
         # fixed vocabulary, or one named twice with one of those answers, is
         # not a Host the machine serves, so the request is refused before
         # anything is sent.
-        for pid, what in ((501, "a pending pairing"), (502, "a revoked pairing"),
-                          (503, "a pairing named with no state"),
-                          (504, "a pairing in an unknown state"),
-                          (505, "a pairing named both active and revoked")):
+        # Each refusal names its reason. A pending pairing is a 409, because
+        # trying again once the machine confirms it can succeed
+        # (test_peer_request_after_approval.py has the approval itself).
+        for pid, what, status, says in (
+                (501, "a pending pairing", 409, "reports that host's pairing as waiting for approval"),
+                (502, "a revoked pairing", 404, "reports that host's pairing as removed"),
+                (503, "a pairing named with no state", 404, "doesn't report its pairing as active"),
+                (504, "a pairing in an unknown state", 404, "doesn't report its pairing as active"),
+                (505, "a pairing named both active and revoked", 404,
+                 "reports that host's pairing as removed")):
             before = len(sent)
             r = await client.post("/api/contacts/request-peer", json={"peer_entity_id": pid})
-            check(f"{what} is refused 404 (got {r.status_code})", r.status_code == 404, r.text[:200])
+            check(f"{what} is refused {status} (got {r.status_code})", r.status_code == status, r.text[:200])
+            check(f"...saying why: {says!r}", says in r.text, r.text[:300])
             check(f"...and NOTHING was sent for {what}", len(sent) == before, sent[before:])
         n = await pool.fetchval("SELECT count(*) FROM contacts WHERE peer_entity_id BETWEEN 501 AND 505")
         check("no pending host contact was recorded for any of them", n == 0, n)

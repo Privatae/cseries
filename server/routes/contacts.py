@@ -1029,7 +1029,15 @@ async def request_peer_service(pool, *, peer_entity_id: int, note: str | None = 
     the machine reports as pending or revoked, or names with no state or an
     unknown one: only an active pairing is a Host the machine serves.
     list_peerings' `requestable` is both conditions, and requestable_peering
-    is the lookup.
+    is the lookup. A pairing this Host approved as the machine's anchor counts
+    as active once the box has confirmed the grant, without waiting for its next
+    beat to say so (else it is refused for up to a minute after the
+    approval).
+
+    A refusal names its reason (peer_discovery.request_refusal). A pairing the
+    machine reports pending is a 409, because the same request can succeed once
+    it is approved and confirmed, unless the machine refused this Host's approval
+    of it; every other reason is a 404.
 
     The announcement still authorizes nothing beyond this knock. The receiver
     treats the endpoint_request the way it treats one arriving by phone alias,
@@ -1045,12 +1053,11 @@ async def request_peer_service(pool, *, peer_entity_id: int, note: str | None = 
     if eid == me:
         raise ContactsError(400, "that is this host")
 
-    match = peer_discovery.requestable_peering(
-        await peer_discovery.list_peerings(pool, me), eid)
+    peerings = await peer_discovery.list_peerings(pool, me)
+    match = peer_discovery.requestable_peering(peerings, eid)
     if match is None:
-        raise ContactsError(
-            404, "that host is not on a machine you share — a connection request may only be "
-                 "sent to a host one of your machines currently reports serving")
+        reason, sentence = peer_discovery.request_refusal(peerings, eid)
+        raise ContactsError(409 if reason == "pending" else 404, sentence)
 
     peer_handle = match.get("peer_handle") or f"host {eid}"
     machine = match.get("introduced_by") or ""

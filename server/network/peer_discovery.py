@@ -277,9 +277,14 @@ async def record_and_notify(
 
 async def list_peerings(pool, entity_id: int) -> list[dict]:
     """Every peering this host has been told about, with the machine that
-    introduced it, whether the claim is still being made, and the pairing state
-    the machine reports for it. Dormant rows are kept and labelled, never
-    dropped."""
+    introduced it, whether the claim is still being made, the pairing state the
+    machine reports for it, and whether a connection request may go to it
+    (`requestable`). Dormant rows are kept and labelled, never dropped.
+
+    `requestable` reads the latest beat, and also what the box confirmed to
+    this Host after that beat: an anchor that has just approved a pairing does
+    not wait up to a minute for the box to say so again, and one that has just
+    removed a pairing does not keep sending requests through it."""
     try:
         rows = await pool.fetch(
             """
@@ -319,7 +324,61 @@ async def list_peerings(pool, entity_id: int) -> list[dict]:
                            END
                       FROM jsonb_array_elements(h.peers) e
                      WHERE e->>'host_name' = p.peer_host_name)
-                   AS reported_state
+                   AS reported_state,
+                   -- What the box told THIS Host since that beat, when this
+                   -- Host is the machine's anchor. The beat is up to a minute
+                   -- old (the box beats on a 60-second ticker, and neither an
+                   -- approval nor a revoke triggers one), so on its own it
+                   -- refuses a pairing the anchor has just approved and still
+                   -- serves one the anchor has just removed.
+                   --
+                   -- confirmed_at: the box accepted this Host's pairing grant
+                   -- for that Host on that machine AFTER the beat. synced_at is
+                   -- written only when pairing_grant_sync exits 0
+                   -- (pairing_grants._record_sync), and the box answers 0 only
+                   -- after it has written the pairing active (the gateway's
+                   -- pairing_ops.go handlePairingGrantSync). A grant the box
+                   -- has not confirmed, one revoked or superseded, one expired,
+                   -- or one for another machine or Host is not counted.
+                   (SELECT max(g.synced_at)
+                      FROM nac_pairing_grants g
+                     WHERE g.entity_id = t.entity_id
+                       AND g.server = h.hostname
+                       AND g.subject = p.peer_host_name
+                       AND g.revoked_at IS NULL
+                       AND g.synced_at IS NOT NULL
+                       AND (g.expires_at IS NULL OR g.expires_at > now())
+                       AND g.synced_at > h.last_seen_at)
+                   AS confirmed_at,
+                   -- withdrawn_at: this Host revoked its grant for that Host on
+                   -- that machine AFTER the beat (a revoke signs revoke terms;
+                   -- a re-approval superseding a grant does not).
+                   (SELECT max(g.revoked_at)
+                      FROM nac_pairing_grants g
+                     WHERE g.entity_id = t.entity_id
+                       AND g.server = h.hostname
+                       AND g.subject = p.peer_host_name
+                       AND g.revoke_terms_canonical IS NOT NULL
+                       AND g.revoked_at > h.last_seen_at)
+                   AS withdrawn_at,
+                   -- approval: this Host's live approval of that Host on that
+                   -- machine that the box has not confirmed: 'refused' when the
+                   -- box refused it (the heartbeat retry never resends those
+                   -- bytes, pairing_grants.record_and_notify), else 'unconfirmed'
+                   -- (offline at approval; delivered on a later beat). NULL when
+                   -- there is none. It lifts nothing; it only lets a refusal say
+                   -- what is true.
+                   (SELECT CASE WHEN g.sync_detail LIKE 'refused:%' THEN 'refused'
+                                ELSE 'unconfirmed' END
+                      FROM nac_pairing_grants g
+                     WHERE g.entity_id = t.entity_id
+                       AND g.server = h.hostname
+                       AND g.subject = p.peer_host_name
+                       AND g.revoked_at IS NULL
+                       AND g.synced_at IS NULL
+                       AND (g.expires_at IS NULL OR g.expires_at > now())
+                     ORDER BY g.id DESC LIMIT 1)
+                   AS approval
               FROM network_bastion_peer p
               JOIN mcp_client_tokens t ON t.id = p.token_id
               LEFT JOIN network_bastion_heartbeat h ON h.token_id = p.token_id
@@ -333,27 +392,60 @@ async def list_peerings(pool, entity_id: int) -> list[dict]:
     except Exception as e:
         logger.info("list_peerings unavailable: %s", e)
         return []
-    return [{
+    return [_peering(r) for r in rows]
+
+
+def _iso(v) -> Optional[str]:
+    return v.isoformat() if v else None
+
+
+def _peering(r) -> dict:
+    current = bool(r["current"])
+    state = r["reported_state"]
+    # Read with .get: a row without them (a stub of this query) reads as "the
+    # box confirmed nothing since its beat", which lifts nothing.
+    confirmed, withdrawn = r.get("confirmed_at"), r.get("withdrawn_at")
+    # The newest word wins. A revoke this Host made after the beat outranks the
+    # beat's "active" and any confirmation older than the revoke. A
+    # confirmation lifts only "pending": the box refuses a grant for a revoked
+    # pairing (handlePairingGrantSync), so a confirmation never stands against
+    # "revoked", and a missing or unknown state is never read as active.
+    if withdrawn is not None and (confirmed is None or withdrawn >= confirmed):
+        active = False
+    elif state == "active":
+        active = True
+    else:
+        active = state == "pending" and confirmed is not None
+    return {
         "token_id": r["token_id"],
         "peer_host_name": r["peer_host_name"],
         "peer_handle": r["peer_handle"] or r["peer_host_name"].split(".")[0],
         "peer_entity_id": r["peer_entity_id"],
         "peer_since": r["peer_since"],
-        "first_seen_at": r["first_seen_at"].isoformat() if r["first_seen_at"] else None,
-        "last_seen_at": r["last_seen_at"].isoformat() if r["last_seen_at"] else None,
+        "first_seen_at": _iso(r["first_seen_at"]),
+        "last_seen_at": _iso(r["last_seen_at"]),
         "introduced_by": r["bastion_hostname"] or r["bastion_name"],
-        "current": bool(r["current"]),
+        "current": current,
         # "active", "pending", "revoked", or None when the machine does not
-        # report one for this Host now.
-        "state": r["reported_state"],
+        # report one for this Host now. The latest beat's word, unchanged.
+        "state": state,
+        # When the box confirmed this Host's approval of that pairing after its
+        # latest beat, else None. Present only on the anchor that approved it.
+        "confirmed_at": _iso(confirmed),
+        # When this Host removed that pairing after the box's latest beat.
+        "withdrawn_at": _iso(withdrawn),
+        # This Host's approval the box has not confirmed: "unconfirmed",
+        # "refused", or None. For the refusal sentence only.
+        "approval": r.get("approval"),
         # Whether a connection request may go to this Host through this
-        # peering: the machine still names it AND reports the pairing active.
-        # A pending Host has not been admitted to the machine and a revoked one
-        # was removed from it, so neither is a Host the machine serves. A
-        # missing or unknown state is treated the same way, because the
-        # request is the one thing a peering authorizes.
-        "requestable": bool(r["current"]) and r["reported_state"] == "active",
-    } for r in rows]
+        # peering: the machine still names it AND the pairing is active, by
+        # the latest beat or by the box's own confirmation of an approval made
+        # since. A pending Host has not been admitted to the machine and a
+        # revoked one was removed from it, so neither is a Host the machine
+        # serves. A missing or unknown state is treated the same way, because
+        # the request is the one thing a peering authorizes.
+        "requestable": current and active,
+    }
 
 
 def requestable_peering(peerings: list[dict], peer_entity_id) -> Optional[dict]:
@@ -362,3 +454,63 @@ def requestable_peering(peerings: list[dict], peer_entity_id) -> Optional[dict]:
     archive guard both look a Host up this way, so they cannot disagree."""
     return next((p for p in peerings or []
                  if p.get("requestable") and p.get("peer_entity_id") == peer_entity_id), None)
+
+
+def request_refusal(peerings: list[dict], peer_entity_id) -> tuple[str, str]:
+    """Why a connection request cannot go to that Host now: (reason, sentence).
+
+    For a Host with no requestable peering (requestable_peering returned None).
+    reason is one of "pending", "approval_refused", "withdrawn", "revoked",
+    "no_state", "dormant" or "not_shared"; the sentence is what the person
+    reads. With several peerings, the one closest to working speaks: a pairing
+    about to be confirmed says so rather than hiding behind one that is gone.
+
+    Every sentence says only what this Host knows. A pending pairing is not
+    "about to work": nobody may have approved it, and an approval the box
+    refused is never resent, so no sentence promises a time."""
+    mine = [p for p in peerings or [] if p.get("peer_entity_id") == peer_entity_id]
+    live = [p for p in mine if p.get("current")]
+
+    def machine(p: dict) -> str:
+        return _plain(p.get("introduced_by") or "") or "the machine you share with that host"
+
+    pending = [p for p in live if p.get("state") == "pending" and not p.get("withdrawn_at")]
+    for p in pending:
+        if p.get("approval") == "unconfirmed":
+            return "pending", (
+                f"you approved that host's pairing on {machine(p)}, but the machine hasn't "
+                "confirmed the approval yet, so a connection request can't go to it through "
+                "that machine. It can as soon as the machine confirms it.")
+    for p in pending:
+        if p.get("approval") != "refused":
+            return "pending", (
+                f"{machine(p)} reports that host's pairing as waiting for approval, so a "
+                "connection request can't go to it through that machine yet. Once the Host "
+                "that anchors the machine approves it, the machine reports it active on its "
+                "next check-in.")
+    for p in pending:
+        return "approval_refused", (
+            f"{machine(p)} refused your approval of that host's pairing, so a connection "
+            "request can't go to it through that machine. Approving it again sends the "
+            "machine a new grant.")
+    for p in live:
+        if p.get("withdrawn_at"):
+            return "withdrawn", (
+                f"you revoked that host's pairing on {machine(p)}, so a connection "
+                "request can't go to it through that machine.")
+    for p in live:
+        if p.get("state") == "revoked":
+            return "revoked", (
+                f"{machine(p)} reports that host's pairing as removed, so a connection "
+                "request can't go to it through that machine.")
+    if live:
+        return "no_state", (
+            f"{machine(live[0])} names that host but doesn't report its pairing as active, "
+            "so a connection request can't go to it through that machine.")
+    if mine:
+        return "dormant", (
+            f"that host is no longer on a machine you share — {machine(mine[0])} stopped "
+            "reporting it.")
+    return "not_shared", (
+        "that host is not on a machine you share — a connection request may only be sent "
+        "to a host one of your machines currently reports serving")

@@ -1244,34 +1244,42 @@ def scenario_book(page, base):
     print("B. the book: the page, the right side, seven tabs, the seen mark, the fonts")
     reset()
     open_book(page, base)
+    # The window the checks that something does NOT happen get (no rail header,
+    # the other tabs dark, a lit tab not read out). Whatever the page has
+    # still to read and draw is waited for by condition below, never by this.
     page.wait_for_timeout(600)
     check("B: the book is on (data-page=book) in the desktop's colours: dark, on the stock tokens (scenario_colours "
           "takes a light design too)",
-          page.evaluate("document.documentElement.dataset.page") == "book"
-          and page.evaluate("document.documentElement.classList.contains('dark')"))
-    head = page.locator(f"{SHEET} [data-page-head]").text_content() or ""
-    check("B: the head names the kind and the Code Repository", "Project" in head and "alex/storefront" in head, head)
-    check("B: the head carries the not-a-person disclosure", "an AI, not a person" in head, head)
+          wait_for(lambda: page.evaluate("document.documentElement.dataset.page") == "book"
+                   and page.evaluate("document.documentElement.classList.contains('dark')"), SLOW_S))
+    head_l = page.locator(f"{SHEET} [data-page-head]")
+    head = lambda: head_l.text_content() or ""  # noqa: E731
+    check("B: the head names the kind and the Code Repository",
+          wait_for(lambda: "Project" in head() and "alex/storefront" in head(), SLOW_S), head())
+    check("B: the head carries the not-a-person disclosure", "an AI, not a person" in head(), head())
     # "Where this stands" is one line until it is opened
     # (workbench-web/src/book/page-top.tsx Stands): its label and
     # the first line the open box shows. Opened, it is the kit's box in full.
     toggle = page.locator(f"{SHEET} [data-stands-toggle]")
-    tl = toggle.text_content() or ""
+    tl = lambda: toggle.text_content() or ""  # noqa: E731
     check("B: 'Where this stands' starts as one line: its label and the goal, closed",
-          toggle.get_attribute("aria-expanded") == "false" and "Where this stands" in tl
-          and "Goal: Checkout usable on phones in under 2 s" in tl
-          and page.locator(f"{SHEET} [data-stands]").count() == 0, tl[:200])
+          wait_for(lambda: "Goal: Checkout usable on phones in under 2 s" in tl(), SLOW_S)
+          and toggle.get_attribute("aria-expanded") == "false" and "Where this stands" in tl()
+          and page.locator(f"{SHEET} [data-stands]").count() == 0, tl()[:200])
     toggle.click()
     stands = page.locator(f"{SHEET} [data-stands]")
-    st = stands.text_content() or ""
+    st = lambda: stands.text_content() or ""  # noqa: E731
     check("B: 'Where this stands' shows the goal, the next step and the open work (GET /page)",
-          "Checkout usable on phones in under 2 s" in st and "Pick which engine" in st and "15 of 20" in st, st[:200])
+          wait_for(lambda: "Checkout usable on phones in under 2 s" in st() and "Pick which engine" in st()
+                   and "15 of 20" in st(), SLOW_S), st()[:200])
     check("B: what was written since the person last looked is tinted (the handoff), the older goal is not",
-          stands.locator("[data-line='next'][data-tinted]").count() == 1
+          wait_for(lambda: stands.locator("[data-line='next'][data-tinted]").count() == 1, SLOW_S)
           and stands.locator("[data-line='goal'][data-tinted]").count() == 0)
-    convo = page.locator(f"{SHEET} [data-chrome='page']").text_content() or ""
+    convo_l = page.locator(f"{SHEET} [data-chrome='page']")
+    convo = lambda: convo_l.text_content() or ""  # noqa: E731
     check("B: the conversation is on the page (the rail layout's chat, in page chrome)",
-          "Checkout feels slow on phones" in convo and "usable in" in convo, convo[:160])
+          wait_for(lambda: "Checkout feels slow on phones" in convo() and "usable in" in convo(), SLOW_S),
+          convo()[:160])
     check("B: the composer is the page's ('Write on this page…')",
           page.locator(f"{SHEET} textarea").get_attribute("placeholder") == "Write on this page…")
     check("B: no rail-layout chat header on the page",
@@ -1281,10 +1289,12 @@ def scenario_book(page, base):
     check("B: 'This page' shows the model, never a picker", right.locator("[data-ctl='model'] .book-pill")
           .text_content() == "claude-opus-5-5")
     check("B: 'This page' has the effort pick", right.locator("[data-ctl='effort'] select").count() == 1)
-    blank = right.locator("[data-ctl='effort'] select option[value='']").text_content()
+    blank_l = right.locator("[data-ctl='effort'] select option[value='']")
     check(f"B: the effort pick's blank reads the level the model runs at by default "
           f"({HOST_MODEL}: {HOST_MODEL_DEFAULT_EFFORT}, inference_config)",
-          HOST_MODEL_DEFAULT_EFFORT is not None and blank == f"Default · {HOST_MODEL_DEFAULT_EFFORT}", repr(blank))
+          HOST_MODEL_DEFAULT_EFFORT is not None
+          and wait_for(lambda: blank_l.text_content() == f"Default · {HOST_MODEL_DEFAULT_EFFORT}", SLOW_S),
+          repr(blank_l.text_content() if blank_l.count() else None))
     keys = page.locator(".book-keys").text_content() or ""
     check("B: the hint line names the keys and nothing else (no typeface credit)",
           "turn the page" in keys and all(w not in keys for w in ("OFL", "Newsreader", "Inter", "JetBrains", "type:")),
@@ -1297,9 +1307,11 @@ def scenario_book(page, base):
           repr([p.name for p in lic]))
     check("B: 'This page' has the context and budget panel",
           right.locator("[data-ctl='context'] button[aria-label='Context settings']").count() == 1)
+    sections = ("Modules", "Plan", "Runs", "Code Approvals", "Ship this project")
+    wait_for(lambda: all(s in (right.text_content() or "") for s in sections), SLOW_S)
     rt = right.text_content() or ""
     check("B: the bench's sections follow, in the rail layout's order",
-          all(s in rt for s in ("Modules", "Plan", "Runs", "Code Approvals", "Ship this project"))
+          all(s in rt for s in sections)
           and rt.index("Modules") < rt.index("Plan") < rt.index("Runs") < rt.index("Code Approvals")
           < rt.index("Ship this project"), rt[:300])
     check("B: Runs is closed by default",
@@ -1323,11 +1335,16 @@ def scenario_book(page, base):
     check("B: a tab lit when the book opens is not read out: its name carries it",
           page.locator("[data-tabs-said]").count() == 1
           and (page.locator("[data-tabs-said]").text_content() or "") == "")
-    check("B: opening the page marked it seen (PUT /api/projects/21/seen)", len(puts_for(21)) == 1,
-          repr(STATE["seen_puts"]))
+    check("B: opening the page marked it seen (PUT /api/projects/21/seen)",
+          wait_for(lambda: len(puts_for(21)) >= 1, SLOW_S) and len(puts_for(21)) == 1, repr(STATE["seen_puts"]))
     check("B: the open page is remembered (PUT last-open)", STATE["last_open"] == "21", STATE["last_open"])
-    fonts = page.evaluate("""() => performance.getEntriesByType('resource')
-        .map(e => e.name).filter(n => /\\.(woff2?|ttf|otf)(\\?|$)/.test(n) || /fonts\\.(googleapis|gstatic)/.test(n))""")
+    fonts_js = """() => performance.getEntriesByType('resource')
+        .map(e => e.name).filter(n => /\\.(woff2?|ttf|otf)(\\?|$)/.test(n) || /fonts\\.(googleapis|gstatic)/.test(n))"""
+    # The fonts load as the page first draws text in them, so they are read
+    # once all three are in, never at a fixed time after the load.
+    wait_for(lambda: len(page.evaluate(fonts_js)) >= 3
+             and page.evaluate("document.fonts.check('40px \"Book Newsreader\"')"), SLOW_S)
+    fonts = page.evaluate(fonts_js)
     check("B: fonts load from the bundle only: Newsreader, Inter, JetBrains Mono",
           len(fonts) >= 3 and all("/system-apps/workbench/assets/" in f for f in fonts)
           and any("newsreader" in f for f in fonts) and any("inter-" in f for f in fonts), repr(fonts))
@@ -1433,7 +1450,12 @@ def scenario_lit(page, base):
           repr(said.text_content() if said.count() else None))
     check("L: the dots are gone", tab.locator(".book-dots").count() == 0)
     page.screenshot(path=str(SHOTS / "L-lit.png"))
-    tab.click()
+    # The page adopts the mark its PUT answers (book-app.tsx markSeen), so
+    # once that answer is in, the tab has no reason to light when the person
+    # turns away: the check after the turn back reads every light it shows.
+    with page.expect_response(lambda r: r.request.method == "PUT" and "/api/projects/22/seen" in r.url,
+                              timeout=SLOW_S * 1000):
+        tab.click()
     expect(page.locator(TITLE)).to_have_text("Newsletter signup", timeout=5_000)
     deadline = time.time() + 5
     while time.time() < deadline and not puts_for(22):
@@ -1443,8 +1465,17 @@ def scenario_lit(page, base):
     page.wait_for_timeout(900)
     page.locator(".book-tabs [data-tab='21']").click()
     expect(page.locator(TITLE)).to_have_text("Storefront", timeout=5_000)
-    page.wait_for_timeout(500)
-    check("L: turned back, its tab is dark", tab.get_attribute("data-light") is None, tab.get_attribute("data-light"))
+    # The page in front's tab is always dark (app-web-kit/book/rules.ts
+    # tabLight), so this tab is dark the moment the book turns back and a poll
+    # for dark would pass on its first read. What is checked is that it stays
+    # dark: every light it shows over the window, none of them green.
+    lights = []
+    deadline = time.time() + 1.5
+    while time.time() < deadline:
+        lights.append(tab.get_attribute("data-light"))
+        page.wait_for_timeout(100)
+    lights.append(tab.get_attribute("data-light"))
+    check("L: turned back, its tab is dark", set(lights) == {None}, repr(lights))
 
 
 def scenario_amber(page, base):
@@ -1466,16 +1497,14 @@ def scenario_seen_on_landing(page, base):
     print("S. a turn landing on the page in front marks it seen")
     reset()
     open_book(page, base)
-    page.wait_for_timeout(500)
+    need("opening the page marked it seen (PUT /api/projects/21/seen), before the turn", lambda: puts_for(21))
     n0 = len(puts_for(21))
     box = page.locator(f"{SHEET} textarea")
     box.fill("Make the button say Pay now.")
     box.press("Enter")
     expect(page.locator(f"{SHEET} [data-chrome='page']")).to_contain_text("I will look at it now",
                                                                                      timeout=5_000)
-    deadline = time.time() + 5
-    while time.time() < deadline and len(puts_for(21)) == n0:
-        time.sleep(0.1)
+    wait_for(lambda: len(puts_for(21)) > n0, SLOW_S)
     check("S: the page's own turn ending marks it seen", len(puts_for(21)) == n0 + 1, repr(STATE["seen_puts"]))
     turn = next(t for t in TURNS.values() if t.pid == 21)
     check("S: ...and that mark names the turn (its token, off the stream's session frame)",
@@ -1511,7 +1540,7 @@ def scenario_reply_written(page, base):
     # ~92 s), so the row lands after the turn away and after list reads.
     STATE["reply_write_s"] = 6.0
     open_book(page, base)
-    page.wait_for_timeout(500)
+    need("opening the page marked it seen (PUT /api/projects/21/seen), before the turn", lambda: puts_for(21))
     box = page.locator(f"{SHEET} textarea")
     box.fill("Make the button say Pay now.")
     box.press("Enter")
@@ -1543,7 +1572,7 @@ def scenario_reply_with_build(page, base):
     reset()
     STATE["reply_write_s"] = 6.0
     open_book(page, base)
-    page.wait_for_timeout(500)
+    need("opening the page marked it seen (PUT /api/projects/21/seen), before the turn", lambda: puts_for(21))
     box = page.locator(f"{SHEET} textarea")
     box.fill("Start the build.")
     box.press("Enter")
@@ -1578,11 +1607,15 @@ def scenario_report_while_written(page, base):
     print("W. a report that lands while the read reply is still being written lights the tab")
     reset()
     open_book(page, base)
-    page.wait_for_timeout(500)
+    need("opening the page marked it seen (PUT /api/projects/21/seen), before the turn", lambda: puts_for(21))
     box = page.locator(f"{SHEET} textarea")
     box.fill("Start the build.")
     box.press("Enter")
     expect(page.locator(f"{SHEET} [data-chrome='page']")).to_contain_text("I will look at it now", timeout=5_000)
+    # The mark the stream's end sends, naming its turn, is in before the
+    # report is stamped: the check below compares the two.
+    need("the turn's end marked the page seen, naming the turn (PUT /seen with its token)",
+         lambda: any(p["token"] for p in puts_for(21)))
     page.locator(".book-tabs [data-tab='22']").click()
     expect(page.locator(TITLE)).to_have_text("Newsletter signup", timeout=5_000)
     # An agent's report lands on Storefront before the reply's row is written
@@ -1661,24 +1694,68 @@ def scenario_keyboard(page, base):
           tabs.evaluate_all("els => els.filter(e => e.tabIndex === 0).map(e => e.dataset.tab)") == ["22"])
     page.locator(".book-tabs [data-tab='24']").click()
     expect(page.locator(TITLE)).to_have_text("Recipe site", timeout=3_000)
+    # The focus is waited for, then the page settles (the turn over, the
+    # conversation read) and it is read again: a focus the page hands the
+    # composer and then takes back still fails.
+    got = wait_for(lambda: focused() == "textarea", SLOW_S)
     settle()
     check("K: a tab clicked hands the composer its focus, so the person can write at once",
-          focused() == "textarea", focused())
+          got and focused() == "textarea", focused())
+
+
+# How long a check waits for something the page or the mock will do. Every
+# one of these is a poll that returns the moment the thing is true; the time
+# is only how long a loaded CI box gets (a full gate run beside this one
+# once failed a 600 ms sleep), never a pause.
+SLOW_S = 20.0
+
+
+def _holds(cond) -> bool:
+    # A condition that reads the newest of a list the mock has not filled yet
+    # (STATE["nudges"][-1] before the page's POST is in) has simply not come
+    # true yet. It is not an error: a CI run stopped scenario_kept_words
+    # with an IndexError on exactly that read.
+    try:
+        return bool(cond())
+    except LookupError:
+        return False
 
 
 def wait_for(cond, secs=10.0, step=0.1):
-    """Poll a condition on the mock's side until it holds or time runs out."""
+    """Poll a condition (the mock's side or the page's) until it holds or
+    time runs out."""
     deadline = time.time() + secs
     while time.time() < deadline:
-        if cond():
+        if _holds(cond):
             return True
         time.sleep(step)
-    return bool(cond())
+    return _holds(cond)
+
+
+def need(what, cond, secs=SLOW_S):
+    """A step's precondition: wait until it holds, or stop the scenario
+    saying what never became true (the scenario's 'completed' check fails
+    with this message)."""
+    if not wait_for(cond, secs):
+        raise AssertionError(f"never became true within {secs:.0f}s: {what}")
 
 
 def turn_over(page, secs=15_000):
     """The page's turn has ended: the press is back in the box."""
     expect(page.locator(f"{SHEET} [data-press]")).to_be_visible(timeout=secs)
+
+
+def turns_all_over(page, pid=21, secs=SLOW_S):
+    """Every turn on the page has ended on the server, a turn it started with
+    words the last one never read (requeue) among them, and the press is back.
+    turn_over alone can see the press in the moment between a turn's end and
+    the page following the requeued turn, and the next step would then type
+    into that turn as a nudge."""
+    need(f"every turn on page {pid} has ended on the server",
+         # list(): the server's thread adds the requeued turn to TURNS while
+         # this one reads it, and a dict changed mid-iteration raises.
+         lambda: not any(t.pid == pid and not t.done for t in list(TURNS.values())), secs)
+    turn_over(page, int(secs * 1000))
 
 
 def scenario_count(page, base):
@@ -1823,7 +1900,10 @@ def scenario_nudge(page, base):
     box.press("Enter")
     skip = page.locator(f"{SHEET} [data-nudge-line]:has-text('Skip the images.')")
     expect(skip).to_have_count(1, timeout=3_000)
-    page.wait_for_timeout(400)
+    # The reload comes once the turn has the words, as a person's would after
+    # seeing the line: before that the reload would only test a lost POST.
+    need("the nudge 'Skip the images.' reached the turn (POST /nudge answered 200)",
+         lambda: any(n["text"] == "Skip the images." and n["status"] == 200 for n in STATE["nudges"]))
     page.reload(wait_until="domcontentloaded")
     expect(page.locator(TITLE)).to_have_text("Storefront", timeout=10_000)
     expect(skip).to_have_count(1, timeout=10_000)
@@ -1854,12 +1934,15 @@ def scenario_nudge(page, base):
     ok = wait_for(lambda: len(STATE["sent"]) == sent0 + 2 and STATE["sent"][-1].get("message") == "Then deploy it.", 15)
     check("N: when the turn ended, the words went as the next message (POST /api/brain/messages)", ok,
           [b.get("message") for b in STATE["sent"][sent0:]])
-    page.wait_for_timeout(600)
+    gone = page.locator(f"{SHEET} [data-nudge-line]:has-text('Then deploy it.')")
+    msg = page.locator(f"{SHEET} .is-user:has-text('Then deploy it.')")
     check("N: ...and their nudge line gave way to that message",
-          page.locator(f"{SHEET} [data-nudge-line]:has-text('Then deploy it.')").count() == 0
-          and page.locator(f"{SHEET} .is-user:has-text('Then deploy it.')").count() == 1)
+          wait_for(lambda: gone.count() == 0 and msg.count() == 1, SLOW_S), (gone.count(), msg.count()))
     STATE["nudge_409"] = False
     turn_over(page)
+    # The poll above passes the moment the message is drawn once; a second
+    # copy drawn after that (the turn's own row read back) fails here.
+    check("N: ...drawn once, still, when that turn is over", msg.count() == 1, msg.count())
 
     # Stop ends the turn for real.
     STATE["turn_secs"] = 8
@@ -1884,7 +1967,7 @@ def scenario_nudge_held(page, base):
     # in between, or without one.
     for reload_mid_turn, words in ((False, "Somewhere quiet."), (True, "And a high chair.")):
         tag = "after a reload" if reload_mid_turn else "no reload"
-        turn_over(page, 20_000)
+        turns_all_over(page)
         STATE["read_nudges"] = False
         STATE["turn_secs"] = 7
         requeued0 = len(STATE["requeued"])
@@ -1912,8 +1995,8 @@ def scenario_nudge_held(page, base):
                        and STATE["requeued"][-1]["text"] == words, 20), STATE["requeued"][-2:])
         mine = page.locator(f"{SHEET} .is-user:has-text('{words}')")
         check(f"W ({tag}): the page follows that turn, and its nudge line gave way to the message",
-              wait_for(lambda: line.count() == 0 and mine.count() == 1, 15), (line.count(), mine.count()))
-        turn_over(page, 20_000)
+              wait_for(lambda: line.count() == 0 and mine.count() == 1, SLOW_S), (line.count(), mine.count()))
+        turns_all_over(page)
         page.wait_for_timeout(1_500)
         check(f"W ({tag}): the page never sends the words again (one turn carries them)",
               not any(b.get("message") == words for b in STATE["sent"])
@@ -1990,7 +2073,9 @@ def scenario_kept_words(page, base):
           STATE["nudges"][-1:])
     check(f"K ({size}): ...and sessionStorage is untouched",
           page.evaluate("() => sessionStorage.getItem('workbench.keptWords')") is None and kept() == [], kept())
-    turn_over(page, 20_000)
+    # The turn ends without reading the words, so the server starts the next
+    # turn with them: both are over before PII mode begins.
+    turns_all_over(page)
     page.wait_for_timeout(1_500)
     check(f"K ({size}): ...still untouched after the turn", page.evaluate(
         "() => sessionStorage.getItem('workbench.keptWords')") is None)
@@ -2011,10 +2096,11 @@ def scenario_kept_words(page, base):
     check(f"K ({size}, PII): the turn ended without reading them, so the reloaded page sends the copy as the "
           "next message", wait_for(lambda: any(b.get("message") == "Avoid tolls." for b in STATE["sent"]), 25),
           [b.get("message") for b in STATE["sent"][-3:]])
-    turn_over(page, 20_000)
+    turns_all_over(page)
     page.wait_for_timeout(1_500)
     check(f"K ({size}, PII): ...exactly once, and the tab's copy is gone",
-          sum(1 for b in STATE["sent"] if b.get("message") == "Avoid tolls.") == 1 and kept() == [],
+          sum(1 for b in STATE["sent"] if b.get("message") == "Avoid tolls.") == 1
+          and wait_for(lambda: kept() == [], SLOW_S),
           ([b.get("message") for b in STATE["sent"][-3:]], kept()))
     # The copy goes under the id it was nudged with: the server answers a second
     # send under it (a reload before the answer, a duplicated tab) from the turn
@@ -2715,17 +2801,23 @@ def scenario_bench(page, base):
     # stability wait; the click still lands on the strand at that point.
     bench.locator("[data-lane='codex'] .book-strand-hit").click(force=True)
     expect(card(page, "codex")).to_have_attribute("data-flash", "", timeout=2_000)
-    page.wait_for_timeout(900)
     check("T: clicking Codex's strand scrolls its card into the page's view, and it glows once",
-          in_view(page, card(page, "codex")))
+          wait_for(lambda: in_view(page, card(page, "codex")), SLOW_S))
+    # The card is in view part way through the scroll, so the head is read
+    # over the time the scroll had before (900 ms), every read where it was.
+    head_ys = []
+    deadline = time.time() + 0.9
+    while time.time() < deadline:
+        head_ys.append(page.locator(TITLE).bounding_box()["y"])
+        page.wait_for_timeout(100)
+    head_ys.append(page.locator(TITLE).bounding_box()["y"])
     check("T: only the conversation scrolls: the page's head stays where it was",
-          abs(page.locator(TITLE).bounding_box()["y"] - title_y) < 1)
+          all(abs(y - title_y) < 1 for y in head_ys), (title_y, head_ys))
     scroll_convo(page, "top")
     bench.locator("[data-strand='claude-code']").click()
     expect(card(page, "claude-code")).to_have_attribute("data-flash", "", timeout=2_000)
-    page.wait_for_timeout(900)
     check("T: the name beside a strand does the same, from the keyboard too (a button)",
-          in_view(page, card(page, "claude-code"))
+          wait_for(lambda: in_view(page, card(page, "claude-code")), SLOW_S)
           and bench.locator("[data-strand='claude-code']").evaluate("e => e.tagName") == "BUTTON")
     check("T: the card wears its strand's colour",
           card(page, "codex").evaluate("e => getComputedStyle(e).getPropertyValue('--engine-color').trim()")
@@ -2782,9 +2874,15 @@ def scenario_bench(page, base):
           == ["checkout.js", "checkout.test.js", "pay-later.js", "pay.css"]
           and (files.nth(0).text_content() or "").endswith("+8−2"), repr(files.nth(0).text_content()))
     files.nth(1).click()
-    page.wait_for_timeout(900)
-    part = view.locator("[data-diff-part='checkout.test.js']").bounding_box()
-    body = view.locator(".book-diff-body").bounding_box()
+    part_l, body_l = view.locator("[data-diff-part='checkout.test.js']"), view.locator(".book-diff-body")
+
+    def scrolled_to_part():
+        p, b = part_l.bounding_box(), body_l.bounding_box()
+        return p is not None and b is not None and abs(p["y"] - b["y"]) < 40
+
+    wait_for(scrolled_to_part, SLOW_S)
+    part = part_l.bounding_box()
+    body = body_l.bounding_box()
     check("T: a file in the list scrolls to its part of the diff",
           part is not None and body is not None and abs(part["y"] - body["y"]) < 40, (part, body))
     page.screenshot(path=str(SHOTS / "S-changes-by-file.png"))
@@ -2835,8 +2933,8 @@ def scenario_bench_phone(page, base):
     bench.locator("[data-strand='codex']").tap()
     expect(page.locator("aside.book-right")).to_be_hidden(timeout=2_000)
     expect(card(page, "codex")).to_have_attribute("data-flash", "", timeout=2_000)
-    page.wait_for_timeout(900)
-    check("T: tapping a strand closes the sheet and brings its card into view", in_view(page, card(page, "codex")))
+    check("T: tapping a strand closes the sheet and brings its card into view",
+          wait_for(lambda: in_view(page, card(page, "codex")), SLOW_S))
     cc = card(page, "claude-code")
     cc.get_by_role("button", name="Show activity").tap()
     table = cc.locator("[data-md-table]")

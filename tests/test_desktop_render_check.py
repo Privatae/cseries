@@ -172,7 +172,11 @@ CATCH_AND_RELOAD = _with("<script>try{null.init()}catch(e){setTimeout(function()
 RELOAD_ONCE_THEN_ERROR = _with(
     "<script>if(window.name!=='r1'){window.name='r1';setTimeout(function(){location.reload()},1500)}"
     "else{setTimeout(function(){throw new Error('second copy broke')},1800)}</script>")
-# A one-time reload at 1.5 s whose new copy is fine.
+# A one-time reload at 1.5 s whose new copy is fine. A timer places it, so on a
+# slow machine the reload can come before the check's first look: that is fine
+# here, because this document must PASS either way (it is a case of
+# test_what_the_shell_accepts_passes). A test that needs the reload to be SEEN
+# uses RELOAD_ONCE_ON_MARK.
 RELOAD_ONCE_LATE = _with("<script>if(window.name!=='r2'){window.name='r2';"
                          "setTimeout(function(){location.reload()},1500)}</script>")
 # A hash change, then ONE reload: the same rule as a plain reload.
@@ -198,6 +202,13 @@ def _on_mark(js: str) -> str:
 REMOVES_TILES = _on_mark("document.querySelectorAll('[data-cseries-app]').forEach(function(e){e.remove()})")
 HIDES_TILES = _on_mark("document.querySelectorAll('[data-cseries-app]')"
                        ".forEach(function(e){e.style.visibility='hidden'})")
+# Reloads itself ONCE, when the check has made its first look (armed through
+# the DOM the worlds share, as REMOVES_TILES is) and not at a fixed time after
+# the script ran: a fixed 1.5 s lands before the check has opened its world
+# whenever the machine is slow enough to take longer than that to get from the
+# document's `load` to the first look, and a reload that came before the first
+# look is not a reload the check sees at all (see _reloads_after_its_first_look).
+RELOAD_ONCE_ON_MARK = _on_mark("if(window.name!=='r5'){window.name='r5';location.reload()}")
 # A tab kept in the address's fragment, and history.replaceState: the SAME
 # document — not a navigation away. A reload after a fragment change is.
 SAME_DOCUMENT = _with("<script>setTimeout(function(){location.hash='tab-2';"
@@ -699,15 +710,70 @@ async def _solo(html: str, **patch) -> tuple[dict, dict]:
             await browser.close()
 
 
+# The limits for a test that is about something other than how long a busy
+# machine may take to answer: a healthy page then cannot read as a lock-up
+# under load, as it can at the production 10 s step.
+_ROOMY = dict(LOAD_TIMEOUT_MS=60_000, STEP_TIMEOUT_S=30.0)
+
+
+async def _reloads_after_its_first_look(html: str, *, on_reloaded=None, **patch) -> tuple[dict, dict]:
+    """_solo(html, **patch), where the document reloads itself the moment the
+    check has made its first look, and the check goes on only once the reload
+    has COMMITTED (its first copy's isolated world is gone). `on_reloaded`, if
+    given, is called then, once: a limit that must be short only for what comes
+    next (the reloaded copy's load) is shortened there, not for the first
+    look, which waits for the reload under the same step limit.
+
+    A document that reloads on a timer of its own cannot be placed relative to
+    the check: the check is the later of the two on a slow machine, and a
+    reload that came before its first look is a copy the check simply opens
+    as its first, so there is no reload for it to count (the deadline test
+    read "no deadline" there). Here the reload is armed by the check itself
+    and awaited, so every run is the same sequence: first look, reload, the
+    settle, the end-of-settle look sees the new copy. The settle, the deadline
+    and the reattach are the shipped code, unchanged."""
+    real_call = DV._IsolatedWorld.call
+    armed = [False]                  # once per check: the reloaded copy is not told to reload
+
+    async def call(self, fn_js, arg=None):
+        got = await real_call(self, fn_js, arg)
+        if fn_js == DV._PROBE_JS and not armed[0]:
+            armed[0] = True
+            await real_call(self, f"() => document.documentElement.setAttribute('{_ACT_MARK}', '')")
+            # The document's own poll (50 ms) reloads it; the world goes with
+            # the old copy. Bounded by the step limit the check's wait_for
+            # puts on this call, so a reload that never comes fails the test
+            # instead of hanging it.
+            while not await self.gone():
+                await asyncio.sleep(0.05)
+            if on_reloaded:
+                on_reloaded()
+        return got
+
+    DV._IsolatedWorld.call = call
+    try:
+        return await _solo(html, **patch)
+    finally:
+        DV._IsolatedWorld.call = real_call
+
+
 def test_no_new_round_starts_after_the_deadline():
-    # One reload at 1.5 s: its new copy would need a round of its own, which
-    # the (shortened) deadline no longer allows.
-    report, verdict = asyncio.run(_solo(RELOAD_ONCE_LATE, ROUND_DEADLINE_S=1.0))
-    assert report["deadline"] and "ran out of" in report["deadline"], report["deadline"]
+    # This test is about the round deadline, not about how long a busy machine
+    # may take to answer, so the page is held to the roomy limits.
+    roomy = _ROOMY
+    # One reload, after the check's first look: its new copy would need a round
+    # of its own, which the (shortened) deadline no longer allows. The settle
+    # alone is 2 s, so the deadline (1 s) has passed by the time the reload is
+    # seen, on any machine.
+    report, verdict = asyncio.run(_reloads_after_its_first_look(
+        RELOAD_ONCE_ON_MARK, ROUND_DEADLINE_S=1.0, **roomy))
+    assert report["deadline"] and "ran out of" in report["deadline"], report
+    assert report["timings"]["settled_ms"] > 1_000 and report["reload_loop"] is False, report
     assert verdict["checked"] is True and verdict["ok"] is False
     assert "ran out of" in verdict["why"]
-    # The same limit does not touch a document that never reloads.
-    report, verdict = asyncio.run(_solo(TEMPLATE_HTML, ROUND_DEADLINE_S=1.0))
+    # The limit does not touch a document that never reloads: even a deadline
+    # that is over before the first look (0 s) is only for a reloaded copy's round.
+    report, verdict = asyncio.run(_solo(TEMPLATE_HTML, ROUND_DEADLINE_S=0.0, **roomy))
     assert report["deadline"] is None and verdict["ok"], verdict["failures"]
 
 
@@ -716,6 +782,10 @@ def test_a_reloaded_copy_has_the_first_copys_load_allowance():
     # here), well inside the load allowance (8 s here) the first copy had. The
     # delay is put on the wait for the copy's `load` itself (a renderer held
     # at parse answers the check differently, as a lock-up), so it is exact.
+    # The document reloads once the check has made its first look; the step
+    # is 1.5 s only from the moment that reload has committed, which is all
+    # the load wait needs (the first look waits for the reload under the
+    # roomy step, so a busy machine cannot time it out).
     Frame = async_api.Frame
     real_wait = Frame.wait_for_load_state
     calls = [0]
@@ -734,8 +804,9 @@ def test_a_reloaded_copy_has_the_first_copys_load_allowance():
 
     Frame.wait_for_load_state = slow_wait
     try:
-        report, verdict = asyncio.run(_solo(RELOAD_ONCE_LATE, LOAD_TIMEOUT_MS=8_000,
-                                            STEP_TIMEOUT_S=1.5))
+        report, verdict = asyncio.run(_reloads_after_its_first_look(
+            RELOAD_ONCE_ON_MARK, LOAD_TIMEOUT_MS=8_000, STEP_TIMEOUT_S=_ROOMY["STEP_TIMEOUT_S"],
+            on_reloaded=lambda: setattr(DV, "STEP_TIMEOUT_S", 1.5)))
     finally:
         Frame.wait_for_load_state = real_wait
     assert calls[0] >= 2, calls
@@ -747,7 +818,8 @@ def test_a_reload_that_never_finishes_loading_is_a_slow_load_not_a_navigation():
     # Its new copy never becomes readable (the second look at the frame times
     # out, as a copy stuck loading does). A renderer genuinely held at parse
     # answers as a lock-up instead, so the timeout is injected at the world
-    # the check opens on the new copy.
+    # the check opens on the new copy. The document reloads once the check has
+    # made its first look, at the roomy limits.
     real_open = DV._IsolatedWorld.open.__func__
     calls = [0]
 
@@ -759,7 +831,7 @@ def test_a_reload_that_never_finishes_loading_is_a_slow_load_not_a_navigation():
 
     DV._IsolatedWorld.open = classmethod(slow_open)
     try:
-        report, verdict = asyncio.run(_solo(RELOAD_ONCE_LATE))
+        report, verdict = asyncio.run(_reloads_after_its_first_look(RELOAD_ONCE_ON_MARK, **_ROOMY))
     finally:
         DV._IsolatedWorld.open = classmethod(real_open)
     assert report["navigated"] is None, report["navigated"]
@@ -773,7 +845,8 @@ def test_a_copy_that_leaves_again_while_it_is_read_is_named_a_loop():
     # The second copy reloads again while the check is still reading it: the
     # read fails with a destroyed context (what CPU contention produces
     # intermittently; injected here so it is certain). The failure must still
-    # say "reload loop", not only "navigated itself away".
+    # say "reload loop", not only "navigated itself away". The document
+    # reloads once the check has made its first look, at the roomy limits.
     real_open = DV._IsolatedWorld.open.__func__
     calls = [0]
 
@@ -785,7 +858,7 @@ def test_a_copy_that_leaves_again_while_it_is_read_is_named_a_loop():
 
     DV._IsolatedWorld.open = classmethod(gone_open)
     try:
-        report, verdict = asyncio.run(_solo(RELOAD_ONCE_LATE))
+        report, verdict = asyncio.run(_reloads_after_its_first_look(RELOAD_ONCE_ON_MARK, **_ROOMY))
     finally:
         DV._IsolatedWorld.open = classmethod(real_open)
     assert report["reload_loop"] is True, report

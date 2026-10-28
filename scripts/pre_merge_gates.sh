@@ -510,6 +510,28 @@ if [[ -n "${PRE_MERGE_AFFECTED_ONLY:-}" && -z "${PRE_MERGE_FULL:-}" && -z "$STOR
     fi
 fi
 
+# ── tests/ too runs when the change can reach it (PRE_MERGE_AFFECTED_ONLY) ────
+# Measured: tests/ was 363 s of a 364 s gates job for a change of two
+# docs/wiki files, which nothing in tests/ reads. scripts/ci_plan.py says what
+# the lane reads (tests/, pytest's config, the image's files, the scripts/
+# modules tests/ imports, every repo path those name) and whether this change
+# touched any of it. Only an affected-only run asks, so a release or a ship
+# (PRE_MERGE_FULL, or no PRE_MERGE_AFFECTED_ONLY) always runs tests/; a plan
+# that fails or answers anything but "not needed" runs it too.
+TESTS_SKIP_WHY=""
+if [[ -n "$AFFECTED_ONLY" && -f "$REPO/scripts/ci_plan.py" ]]; then
+    printf '%s\0' "${CHANGED[@]}" >"$TMPD/changed"
+    _why="$(python3 "$REPO/scripts/ci_plan.py" --repo "$REPO" --lane tests --changed-list "$TMPD/changed" 2>&1)"
+    _rc=$?
+    if (( _rc == 1 )) && [[ -n "$_why" ]]; then
+        TESTS_SKIP_WHY="$_why"
+        echo "affected-only: tests/ not run: $TESTS_SKIP_WHY (scripts/ci_plan.py)"
+        echo
+    elif (( _rc != 0 )); then
+        red "affected-only: scripts/ci_plan.py could not say what tests/ reads (exit $_rc); running tests/" >&2
+    fi
+fi
+
 # PRE_MERGE_SELECT_ONLY=1: say which gates this run would run, one
 # `would run: <gate>` line each, and run nothing (scripts/test_whole_tree_gates.py
 # reads the real tree's selection this way). Exit 2, as every other run that
@@ -669,7 +691,7 @@ run_started="$EPOCHREALTIME"
 # TERM on to it and waits, which keeps the orderly stop described above.
 TESTS_DIR="$REPO/tests"
 TESTS_PID=""
-if [[ -z "$STORE_MODE" && -d "$TESTS_DIR" ]] && [[ -n "$(find "$TESTS_DIR" -name 'test_*.py' -print -quit 2>/dev/null)" ]]; then
+if [[ -z "$STORE_MODE" && -z "$TESTS_SKIP_WHY" && -d "$TESTS_DIR" ]] && [[ -n "$(find "$TESTS_DIR" -name 'test_*.py' -print -quit 2>/dev/null)" ]]; then
     TESTS_BACKSTOP="$(timeout_for tests/)"
     _t_start="$EPOCHREALTIME"
     ( cd "$REPO" || exit 1
@@ -777,6 +799,9 @@ if [[ -n "$TESTS_PID" ]]; then
         printf '%s\n' "$out" | tail -5 | sed 's/^/      /'
         failed=$((failed + 1)); failed_names+=("tests/")
     fi
+elif [[ -n "$TESTS_SKIP_WHY" ]]; then
+    echo
+    dim "SKIP  tests/ — not needed by this change: $TESTS_SKIP_WHY"
 fi
 
 # ── undefined names — the NameError no other gate reads for ──────────────────
@@ -875,6 +900,7 @@ fi
 if [[ $failed -eq 0 ]]; then
     green "PRE-MERGE GATES PASSED — ${#GATES[@]} gates${suffix} in ${elapsed}s"
     [[ -n "$AFFECTED_ONLY" ]] && dim "  affected-only: the gates that cover this change; the full suite runs at ship"
+    [[ -n "$TESTS_SKIP_WHY" ]] && dim "  tests/ not run: $TESTS_SKIP_WHY"
     (( ${#retried_names[@]} )) && dim "  passed alone after failing in the pool: ${retried_names[*]}"
     echo
     dim "This is the container-free half only. scripts/smoke_test.sh still has to"

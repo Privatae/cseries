@@ -1,0 +1,4 @@
+# A pull request runs the CI jobs its change can affect, and no others:
+# scripts/ci_plan.py, its wiring in .gitea/workflows/check.yml and the
+# tests/ lane of pre_merge_gates.sh, on invented changes and a stub tree.
+test_ci_plan.py

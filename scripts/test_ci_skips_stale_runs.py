@@ -48,7 +48,10 @@ def check(name, ok, detail=""):
 wf = yaml.safe_load(open(os.path.join(ROOT, ".gitea", "workflows", "check.yml"), encoding="utf-8"))
 jobs = wf["jobs"]
 cur = jobs.get("current") or {}
-script = "\n".join(st.get("run", "") for st in cur.get("steps", []))
+# The decision is the `pr` step (its outputs.skip below); the job's later plan
+# step (scripts/ci_plan.py, pinned by scripts/test_ci_plan.py) runs only after it.
+PR_STEPS = [st for st in cur.get("steps", []) if st.get("id") == "pr"] or cur.get("steps", [])
+script = "\n".join(st.get("run", "") for st in PR_STEPS)
 m = re.search(r"python3 -c '\n(.*?)\n\s*' \"\$\{\{ gitea\.event\.pull_request\.head\.sha \}\}\"", script, re.S)
 check("there is a `current` job whose decision code can be read", bool(m), script[:200])
 code = m.group(1) if m else "raise SystemExit(1)"
@@ -174,7 +177,7 @@ case "$url" in
   *) exit 22 ;;
 esac
 '''
-step = "\n".join(st.get("run", "") for st in cur.get("steps", []))
+step = "\n".join(st.get("run", "") for st in PR_STEPS)
 step = (step.replace("${{ gitea.server_url }}", "https://forge.invalid")
             .replace("${{ gitea.repository }}", "privatae/cseries")
             .replace("${{ gitea.event.pull_request.number }}", "7")

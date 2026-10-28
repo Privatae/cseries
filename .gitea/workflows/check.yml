@@ -34,10 +34,30 @@ jobs:
   # merged, closed or moved on, every other job skips in seconds. Fails OPEN: if
   # the forge cannot be asked, `skip` stays empty and the checks run, so this can
   # never turn a PR falsely green.
+  #
+  # Then what the change needs (the plan step): build, scan, smoke, installer
+  # and the gates job's tests/ lane run only when the change touches what they
+  # read (scripts/ci_plan.py derives that from Dockerfile.linux's COPY lines,
+  # smoke_test.sh and each lane's own sources). A job not needed still runs and
+  # passes in seconds, its log saying why, so every check still reports. The
+  # gates and store-apps jobs pick their own gates. Fails OPEN too: a plan that
+  # cannot be made leaves its outputs empty, and every job runs.
+  # A FULL RUN, for a release: put the `ci-full` label on the PR, or `[ci-full]`
+  # in its title, then push or re-run the run. Every job runs, and the gates job
+  # runs every gate (PRE_MERGE_FULL=1).
   current:
     runs-on: platform
     outputs:
       skip: ${{ steps.pr.outputs.skip }}
+      full: ${{ steps.plan.outputs.full }}
+      build: ${{ steps.plan.outputs.build }}
+      build_why: ${{ steps.plan.outputs.build_why }}
+      scan: ${{ steps.plan.outputs.scan }}
+      scan_why: ${{ steps.plan.outputs.scan_why }}
+      smoke: ${{ steps.plan.outputs.smoke }}
+      smoke_why: ${{ steps.plan.outputs.smoke_why }}
+      installer: ${{ steps.plan.outputs.installer }}
+      installer_why: ${{ steps.plan.outputs.installer_why }}
     steps:
       - id: pr
         run: |
@@ -92,6 +112,39 @@ jobs:
           else
             echo "this commit is the PR's open head: running the checks"
           fi
+      - id: plan
+        if: steps.pr.outputs.skip != 'true'
+        # Whole history and main, for the merge base the change is read from.
+        run: |
+          set -uo pipefail
+          { git init -q . && git -c http.extraHeader="Authorization: token ${{ gitea.token }}" \
+              fetch -q "${{ gitea.server_url }}/${{ gitea.repository }}.git" \
+              "refs/pull/${{ gitea.event.pull_request.number }}/head" \
+            && git checkout -q --detach FETCH_HEAD \
+            && test "$(git rev-parse HEAD)" = "${{ gitea.event.pull_request.head.sha }}" \
+            && git -c http.extraHeader="Authorization: token ${{ gitea.token }}" \
+              fetch -q "${{ gitea.server_url }}/${{ gitea.repository }}.git" \
+              "refs/heads/main:refs/remotes/origin/main"; } || {
+              echo "could not fetch the PR to plan the run; every job runs"; exit 0; }
+          # A full run? Read now, not from the event: a re-run after the label
+          # or title changed sees the change. Any failure here plans as usual.
+          full="$(curl -fsS --max-time 20 -H "Authorization: token ${{ gitea.token }}" \
+              "${{ gitea.server_url }}/api/v1/repos/${{ gitea.repository }}/pulls/${{ gitea.event.pull_request.number }}" \
+              2>/dev/null | python3 -c '
+          import json, sys
+          p = json.load(sys.stdin)
+          labels = [l.get("name") for l in (p.get("labels") or []) if isinstance(l, dict)]
+          if "ci-full" in labels:
+              print("the PR has the ci-full label")
+          elif "[ci-full]" in (p.get("title") or ""):
+              print("the PR title asks for [ci-full]")
+          ' 2>/dev/null)" || full=""
+          if [ -n "$full" ]; then
+            echo "full run: $full"
+            echo "full=$full" >> "$GITHUB_OUTPUT"
+          fi
+          python3 scripts/ci_plan.py --changed-from origin/main ${full:+--full "$full"} \
+            --github-output "$GITHUB_OUTPUT" || echo "the plan failed; every job runs"
 
   gates:
     needs: current
@@ -137,8 +190,12 @@ jobs:
         # without cgroups and applies no memory limit, so the connector pods'
         # memory verdict is reported NOT RUN here (scripts/connector_gate_kit.py,
         # limit_held); a pre_merge_gates.sh run without it still requires it.
+        # A full run (the current job's `full`) runs every gate here.
         run: |
           mkdir -p ../tmp
+          if [ -n "${{ needs.current.outputs.full }}" ]; then
+            echo "full run (${{ needs.current.outputs.full }}): every gate runs"; export PRE_MERGE_FULL=1
+          fi
           TMPDIR="$(cd ../tmp && pwd)" CSERIES_GATEWAY_DIR="$PWD/../bastion-source" \
             CSERIES_GATE_DOCKER_NO_CGROUP_LIMITS=1 PRE_MERGE_AFFECTED_ONLY=1 \
             rootlesskit --net=host --disable-host-loopback=false scripts/pre_merge_gates.sh
@@ -180,7 +237,14 @@ jobs:
     if: needs.current.outputs.skip != 'true'
     runs-on: platform
     steps:
+      - name: does this change need the image?
+        if: needs.current.outputs.build == 'false'
+        env:
+          WHY: ${{ needs.current.outputs.build_why }}
+        run: |
+          echo "not needed: $WHY (scripts/ci_plan.py)"
       - name: fetch the PR
+        if: needs.current.outputs.build != 'false'
         run: |
           set -euo pipefail
           git init -q .
@@ -190,12 +254,14 @@ jobs:
           git checkout -q --detach FETCH_HEAD
           test "$(git rev-parse HEAD)" = "${{ gitea.event.pull_request.head.sha }}"
       - name: drop this PR's earlier images
+        if: needs.current.outputs.build != 'false'
         # Their runs were cancelled by this one (concurrency), before their own
         # cleanup could run. Never -f: an image a container still uses stays.
         run: |
           docker image ls -q --filter "label=cseries.ci.pr=${{ gitea.event.pull_request.number }}" \
             | sort -u | xargs -r docker image rm >/dev/null 2>&1 || true
       - name: build the image (not pushed)
+        if: needs.current.outputs.build != 'false'
         run: |
           docker build -q -f Dockerfile.linux \
             --build-arg PC_TAG="ci-${{ gitea.sha }}" \
@@ -212,7 +278,14 @@ jobs:
     if: needs.current.outputs.skip != 'true'
     runs-on: platform
     steps:
+      - name: does this change need smoke?
+        if: needs.current.outputs.smoke == 'false'
+        env:
+          WHY: ${{ needs.current.outputs.smoke_why }}
+        run: |
+          echo "not needed: $WHY (scripts/ci_plan.py)"
       - name: fetch the PR, with its history
+        if: needs.current.outputs.smoke != 'false'
         # Whole history: smoke re-runs the gates, the kernel_schema upto=N ones
         # among them (see the gates job).
         run: |
@@ -224,6 +297,7 @@ jobs:
           git checkout -q --detach FETCH_HEAD
           test "$(git rev-parse HEAD)" = "${{ gitea.event.pull_request.head.sha }}"
       - name: fetch the bastion source the contract gates read
+        if: needs.current.outputs.smoke != 'false'
         run: |
           set -euo pipefail
           rm -rf ../bastion-source
@@ -231,6 +305,7 @@ jobs:
             clone -q --depth=1 "${{ gitea.server_url }}/privatae/privatae-bastion.git" ../bastion-source
           echo "contract gates read privatae/privatae-bastion @ $(git -C ../bastion-source rev-parse --short HEAD)"
       - name: smoke test
+        if: needs.current.outputs.smoke != 'false'
         # Smoke re-runs the tree's gates, so it needs the bastion source,
         # rootlesskit and a TMPDIR the runner's Docker sees, as the gates job does.
         run: |
@@ -244,7 +319,14 @@ jobs:
     if: needs.current.outputs.skip != 'true'
     runs-on: platform
     steps:
+      - name: does this change need the CVE scan?
+        if: needs.current.outputs.scan == 'false'
+        env:
+          WHY: ${{ needs.current.outputs.scan_why }}
+        run: |
+          echo "not needed: $WHY (scripts/ci_plan.py)"
       - name: fetch the PR
+        if: needs.current.outputs.scan != 'false'
         run: |
           set -euo pipefail
           git init -q .
@@ -254,6 +336,7 @@ jobs:
           git checkout -q --detach FETCH_HEAD
           test "$(git rev-parse HEAD)" = "${{ gitea.event.pull_request.head.sha }}"
       - name: CVE gate (fixable criticals fail)
+        if: needs.current.outputs.scan != 'false'
         # From the checkout: trivy.yaml there loads the accepted findings in
         # .trivyignore.yaml.
         run: trivy image --quiet --exit-code 1 --severity CRITICAL --ignore-unfixed "$CI_IMAGE"
@@ -306,7 +389,14 @@ jobs:
     if: needs.current.outputs.skip != 'true'
     runs-on: platform
     steps:
+      - name: does this change need the installer's tests?
+        if: needs.current.outputs.installer == 'false'
+        env:
+          WHY: ${{ needs.current.outputs.installer_why }}
+        run: |
+          echo "not needed: $WHY (scripts/ci_plan.py)"
       - name: fetch the PR
+        if: needs.current.outputs.installer != 'false'
         run: |
           set -euo pipefail
           git init -q .
@@ -316,6 +406,7 @@ jobs:
           git checkout -q --detach FETCH_HEAD
           test "$(git rev-parse HEAD)" = "${{ gitea.event.pull_request.head.sha }}"
       - name: npm test
+        if: needs.current.outputs.installer != 'false'
         run: |
           set -euo pipefail
           mkdir -p ../tmp

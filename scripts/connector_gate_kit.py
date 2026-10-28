@@ -141,7 +141,8 @@ async def serve(handler, *, ssl_context=None, max_size=40 * 1024 * 1024):
 # ── the fake model provider (as test_connector_route.py) ─────────────────
 MODEL = "claude-opus-5-5"
 REQUESTS: list[dict] = []
-PICKS: list = []
+# The model calls the turns make, in order. A step is a list of SSE events, a
+# (status, body) error, or ("hold", event, step).
 TURNS: list = []
 
 
@@ -171,12 +172,17 @@ def sse_tool(tool_id: str, name: str, args: dict) -> list[dict]:
 
 
 def _is_pick(body) -> bool:
+    # A model call whose only tool is pick_thread: the separate call that once
+    # picked a message's thread before the turn. A message is placed in
+    # software now (thread_pick.place_connector) and the Host picks inside its
+    # own turn (runtime/thread_choice), so the gates count these and expect none.
     names = [t.get("name") or (t.get("function") or {}).get("name")
              for t in (body or {}).get("tools") or []]
     return names == ["pick_thread"]
 
 
 def picks_made() -> int:
+    """Separate pick calls made before a turn: none is expected."""
     return sum(1 for r in REQUESTS if r["pick"])
 
 
@@ -190,10 +196,11 @@ async def provider(request):
         return web.Response(status=404, text="not served by the gate's provider")
     pick = _is_pick(body)
     REQUESTS.append({"pick": pick, "body": body})
-    queue = PICKS if pick else TURNS
-    step = queue.pop(0) if queue else (
-        (500, '{"type":"error","error":{"type":"api_error","message":"no pick scripted"}}')
-        if pick else sse_text("(an unscripted turn call)"))
+    if pick:
+        step = (500, '{"type":"error","error":{"type":"api_error",'
+                     '"message":"a separate pick call: a message is placed in software"}}')
+    else:
+        step = TURNS.pop(0) if TURNS else sse_text("(an unscripted turn call)")
     if isinstance(step, tuple) and step and step[0] == "hold":
         await step[1].wait()
         step = step[2]
@@ -209,16 +216,6 @@ async def provider(request):
     except ConnectionResetError:
         pass        # the turn was stopped (a revoke) while this call was held
     return resp
-
-
-def pick_thread(key: str) -> list[dict]:
-    return sse_tool(f"toolu_pick_{time.monotonic_ns()}", "pick_thread",
-                    {"thread": key, "reason": "it continues that conversation"})
-
-
-def pick_new(title: str) -> list[dict]:
-    return sse_tool(f"toolu_pick_{time.monotonic_ns()}", "pick_thread",
-                    {"new": True, "title": title, "reason": f"a new subject: {title}"})
 
 
 # ── a test CA, and the kernel's seam to a fake platform ──────────────────

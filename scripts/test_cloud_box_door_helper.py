@@ -106,6 +106,14 @@ with tempfile.TemporaryDirectory() as tmp:
         check(r["ok"] is False, f"pairing.open refuses {addr[:24]!r}", r)
     for bad in [None, 5, ["203.0.113.5"], {"addr": "8.8.8.8"}]:
         check(ask({"op": "pairing.open", "addr": bad})["ok"] is False, f"pairing.open refuses addr={bad!r}")
+    # Python's ipaddress takes any text after "%" as an IPv6 scope ID and still
+    # calls the address global, and str() gives that text back, which
+    # open_script would write into the nft script the helper runs as root.
+    for scoped in ["2606:4700::1111%eth0", "2606:4700::1111%x}\nflush ruleset\n#", "::ffff:8.8.8.8%x"]:
+        n = Nft()
+        r = ask({"op": "pairing.open", "addr": scoped}, nft=n)
+        check(r["ok"] is False and not n.scripts,
+              f"pairing.open refuses a scope ID and runs no nft: {scoped[:24]!r}", (r, n.scripts))
     check(h.outside_address("8.8.8.8") == ipaddress.ip_address("8.8.8.8"), "a global IPv4 address is accepted")
     check(h.outside_address("2606:4700::1111") == ipaddress.ip_address("2606:4700::1111"),
           "a global IPv6 address is accepted")
@@ -153,6 +161,45 @@ with tempfile.TemporaryDirectory() as tmp:
     clock.t += 3601
     check(ask({"op": "pairing.open", "addr": "8.8.8.8"})["ok"], "an hour later an open goes through again")
 
+    # 4b. closing a window (the Host replaced the token it was for)
+    nft = Nft()
+    r = ask({"op": "pairing.close", "addr": "8.8.8.8"}, nft=nft)
+    check(r == {"ok": True} and nft.scripts == ["add element inet cseries_door pairing_v4 { 8.8.8.8 }\n"
+                                                "delete element inet cseries_door pairing_v4 { 8.8.8.8 }\n"],
+          "pairing.close removes that one address from pairing_v4 and touches nothing else", (r, nft.scripts))
+    nft = Nft()
+    ask({"op": "pairing.close", "addr": "2606:4700::1111"}, nft=nft)
+    check(len(nft.scripts) == 1 and nft.scripts[0].count("pairing_v6 { 2606:4700::1111 }") == 2
+          and "pairing_v4" not in nft.scripts[0] and "timeout" not in nft.scripts[0],
+          "an IPv6 close removes it from pairing_v6 only, and adds no window", nft.scripts)
+    check(ask({"op": "pairing.close", "addr": "8.8.8.8"}, nft=Nft(fail=True))["ok"] is False,
+          "a failed nft on a close is a refusal")
+    for i in range(9):
+        ask({"op": "pairing.open", "addr": "8.8.8.8"})
+    check(ask({"op": "pairing.open", "addr": "8.8.4.4"})["ok"] is False, "the cap is full again: 10 opens this hour")
+    with open(state, encoding="utf-8") as f:
+        stamps_before = f.read()
+    for i in range(12):
+        ask({"op": "pairing.close", "addr": "8.8.8.8"})
+    with open(state, encoding="utf-8") as f:
+        stamps_after = f.read()
+    check(stamps_after == stamps_before, "closes leave the count of opens as it was")
+    check(ask({"op": "pairing.open", "addr": "8.8.4.4"})["ok"] is False,
+          "closing windows gives no opening back: the next open is still refused")
+    for bad in ["2606:4700::1111%eth0", "2606:4700::1111%x}\nflush ruleset\n#", "::ffff:8.8.8.8%x",
+                "10.0.0.1", "127.0.0.1", "fe80::1", "192.0.2.1", "203.0.113.5/32", "not-an-ip", "", None, 5,
+                ["8.8.8.8"], "1" * 70]:
+        n = Nft()
+        r = ask({"op": "pairing.close", "addr": bad}, nft=n)
+        check(r["ok"] is False and not n.scripts, f"pairing.close refuses {str(bad)[:24]!r} and runs no nft", r)
+    n = Nft()
+    check(ask({"op": "pairing.close", "addr": "8.8.8.8", "x": 1}, nft=n)["ok"] is False and not n.scripts,
+          "pairing.close takes op and addr only")
+    for uid in (0, 999, 1001):
+        n = Nft()
+        check(ask({"op": "pairing.close", "addr": "8.8.8.8"}, uid=uid, nft=n)["ok"] is False and not n.scripts,
+              f"pairing.close from uid {uid} is refused")
+
     # 5. status and everything else
     listing = {"pairing_v4": [{"elem": {"val": "8.8.8.8", "timeout": 900, "expires": 512}}],
                "pairing_v6": [{"elem": {"val": "2606:4700::1111", "timeout": 900, "expires": 7}}]}
@@ -161,7 +208,7 @@ with tempfile.TemporaryDirectory() as tmp:
                                      {"addr": "2606:4700::1111", "expires_in": 7}]},
           "pairing.status lists both sets with their time left", r)
     check(ask({"op": "pairing.status"})["open"] == [], "pairing.status with no window open is an empty list")
-    for req in [{"op": "pairing.close", "addr": "8.8.8.8"}, {"op": "exec", "cmd": "id"}, {},
+    for req in [{"op": "pairing.flush"}, {"op": "exec", "cmd": "id"}, {},
                 {"op": "pairing.status", "x": 1}, {"op": "pairing.open", "addr": "8.8.8.8", "timeout": 99999},
                 "[]", "not json", "null"]:
         r = ask(req)

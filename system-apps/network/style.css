@@ -207,6 +207,25 @@
 .net-a11y { font-size: var(--text-sm); }
 .net-a11y summary { cursor: pointer; padding: var(--space-2) 0; }
 
+/* The bastion setup card: another network's address, and the folded steps. */
+.net-pair-other summary, .net-pair-steps summary { cursor: pointer; padding: var(--space-1) 0; }
+.net-pair-other p { margin: var(--space-1) 0; }
+.net-pair-other .cseries-input { width: 100%; margin: var(--space-1) 0; }
+.net-pair-steps .net-field { margin-top: var(--space-2); }
+.net-pair-error { display: block; margin-top: var(--space-1); }
+/* A command on the card: each line as the server wrote it. A word too long
+   for a line breaks at the box edge; a short one with a hyphen in it is never
+   split there (app.js codeHTML has why). */
+.net-field-val.net-code { white-space: pre-wrap; overflow-wrap: anywhere; }
+.net-code-long { word-break: break-all; line-break: anywhere; }
+.net-code-word { white-space: nowrap; }
+/* Beside "Set up a bastion": a machine on another network, before setup. Its
+   form opens beneath the toolbar, so the choice does not move. */
+.net-pair-elsewhere summary { cursor: pointer; padding: var(--space-1) 0; }
+.net-pair-elsewhere-form { max-width: 40em; margin-top: var(--space-1); }
+.net-pair-elsewhere-form p { margin: var(--space-1) 0; }
+.net-pair-elsewhere-form .cseries-input { width: 100%; margin: var(--space-1) 0; }
+
 /* ── Blocks (reused across lenses) ─────────────────────── */
 .net-block { display: flex; flex-direction: column; gap: var(--space-2); }
 .net-block-head {

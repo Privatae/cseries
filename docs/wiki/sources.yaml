@@ -70,7 +70,7 @@ approvals:
   - external:bastion/client-go/modelswap.go
   verified:
     date: '2026-10-28'
-    digest: sha256:32ca015585895a5a16ca1c43dc4fe5438c15b113cc13f73a638b18b4f405de0f
+    digest: sha256:70cd881f12ea9713ea6040e4edc9171edcca37b7850bf9eee302fbc7b35d3fe7
 apps-overview:
   sources:
   - scripts/image_baked_apps.txt
@@ -384,7 +384,7 @@ how-your-host-is-protected:
   - compose.remote.yaml
   verified:
     date: '2026-10-28'
-    digest: sha256:3bc5b8ebfc7da19c8d2b075cc5ce5cc28115c731e2443d62db4eab745815b8f8
+    digest: sha256:cd22149c32b9ba0c92d3204bad9c9579f8f60f1ccd834dd156a0254169a75443
 keys-app:
   sources:
   - system-apps/keys/app.yaml
@@ -475,6 +475,7 @@ network-app:
   - system-apps/network/index.html
   - system-apps/network/app.js
   - server/network/bastion_enroll.py::mint_pairing_token
+  - server/network/bastion_enroll.py::add_tcp_pairing
   - server/network/nac_commit.py::approve_egress
   - server/mcp_oauth.py::begin
   - server/mcp_oauth.py::finish
@@ -600,6 +601,10 @@ skills-app:
 the-bastion:
   sources:
   - server/network/bastion_enroll.py::mint_pairing_token
+  - server/network/bastion_enroll.py::add_tcp_pairing
+  - server/network/bastion_enroll.py::pairing_code
+  - server/network/bastion_enroll.py::one_line
+  - server/routes/network.py::_open_pairing_window
   verified:
     date: '2026-10-20'
     digest: sha256:ba0d978672a8193c7de7fd305227800b88d940ef259b43a67775605103d20dec
@@ -661,7 +666,7 @@ what-a-host-cannot-do:
   - external:bastion/client-go/stepup.go
   verified:
     date: '2026-10-28'
-    digest: sha256:d886225c7daf83696ea9bf4844b22804496891ea65a7ce6d826488e340c4fab1
+    digest: sha256:dad94a60777da7c558cf5bae6358ce0c611cf44708585c382acb70807eb37a68
 what-a-host-is:
   sources:
   - compose.yaml
@@ -673,7 +678,7 @@ what-a-host-is:
   - vm/cloud/overlay/usr/local/lib/cseries-cloud/cseries_vault.py
   verified:
     date: '2026-10-28'
-    digest: sha256:ee7779d98f6f31bb7dc4bfb62c694c1d7b29fd73809ed53897f22410cc8e5317
+    digest: sha256:788babac631400e45d30951ec188bc975335fddcaaa4f68f43c17d1e9b1f974b
 what-is-privatae:
   sources:
   - compose.yaml
@@ -784,5 +789,5 @@ your-private-network:
   - server/mcp_connections.py::verify
   - server/network/session_lane.py::run_root_exec
   verified:
-    date: '2026-10-22'
-    digest: sha256:7672b8817568f5c6a56abe9ad5720633ac78bc3e51bb2be908944dc7e43248cc
+    date: '2026-10-23'
+    digest: sha256:9b3155112a9d12927621bf3a3d88e42053cf1de6b5c1be26e668fa13488f5aa3

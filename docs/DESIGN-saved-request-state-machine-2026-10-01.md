@@ -110,3 +110,4 @@ fails on any computed-table writer that is not in this table.
 | `server/applications/subject_import.py::_upsert_sql` | no | a site's rows of the tables its manifest names; none is `calendar_events` |
 | `server/network/nac_approval.py::clear_refused_request` | no | one of the two nac request tables, named by the caller |
 | `scripts/host_ops_stubs.py::execute` | no | a test stub for host ops, not run on a Host |
+| `scripts/e2e_network_remote_pairing.py::execute` | no | the e2e's in-memory `bastion_pairing_tokens`, not run on a Host; the computed string is the `UPDATE n` status it returns, and any statement but the pairing-token ones fails the run |

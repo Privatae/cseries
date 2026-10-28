@@ -15,7 +15,10 @@ Each machine joins by running a [bastion](wiki:the-bastion). You run the rules f
 
 ## How does the bastion reach the Host?
 
-With a Host installed by `npx cseries`, the bastion runs on the same machine as the Host. A Host on its own has no tunnel and no relay. It publishes two ports on the machine's own loopback address: one where the bastion pairs and one where it connects in over mutual TLS, under a certificate authority the Host made for itself. Nothing on another machine can reach those ports. Pairing uses a one-time token that expires after 15 minutes.
+With a Host installed by `npx cseries`, the bastion runs on the same machine as the Host. A Host on its own has no tunnel and no relay. It has two ports: one where a bastion pairs and one where it connects in over mutual TLS, under a certificate authority the Host made for itself. Pairing uses a one-time token that expires after 15 minutes.
+
+- **On your own computer,** both ports are on the machine's own loopback address, so nothing on another machine can reach them.
+- **On a C-Series Cloud machine,** both are on its public address. Anyone can reach the port a bastion connects in on, but it lets in only a machine holding a certificate your Host gave it when it paired, and none your Host has revoked. The pairing port stays shut. Each time you set up a bastion, it opens for 15 minutes to one address: the one your browser came from, or the one you give for a machine on another network.
 
 When you revoke a machine, its credential is revoked at once and its connection is refused from then on.
 

@@ -604,11 +604,13 @@ def _renew_wait(not_after: datetime.datetime) -> float:
 
 
 async def _renew_due(pool, certs: list, names: list[str], what: str) -> None:
-    """Renew each [ctx, not_after] in `certs` that is within the renewal window."""
+    """Renew each [ctx, not_after, chain_ca] in `certs` that is within the
+    renewal window. chain_ca is true for the enroll port, whose chain carries
+    the Host CA after the leaf (host_ca.enroll_server_ssl_context)."""
     from server.network import host_ca
     for c in certs:
         if c[1] - datetime.datetime.now(datetime.timezone.utc) <= host_ca.LANE_RENEW_BEFORE:
-            c[1] = await host_ca.renew_lane_cert(pool, c[0], names)
+            c[1] = await host_ca.renew_lane_cert(pool, c[0], names, chain_ca=c[2])
             log.info("%s certificate renewed until %s", what, c[1].isoformat())
 
 
@@ -626,7 +628,7 @@ async def _serve_once(pool, entity_id: int) -> None:
     STATE = "listening"
     log.info("local bastion sockets up: %s (redeem), %s (lane, Host CA)",
              enroll_socket(), lane_socket())
-    certs = [[ctx, not_after]]
+    certs = [[ctx, not_after, False]]
     try:
         while True:
             await asyncio.sleep(_renew_wait(certs[0][1]))
@@ -657,7 +659,7 @@ async def _serve_tcp_once(pool, entity_id: int) -> None:
     log.info("local bastion ports up: %s:%d (redeem on %s), %s:%d (lane, Host CA), "
              "certificate name %s", TCP_BIND, ENROLL_PORT, TCP_REDEEM_PATH, TCP_BIND, LANE_PORT,
              TCP_SERVER_NAME)
-    certs = [[enroll_ctx, enroll_until], [lane_ctx, lane_until]]
+    certs = [[enroll_ctx, enroll_until, True], [lane_ctx, lane_until, False]]
     try:
         while True:
             await asyncio.sleep(_renew_wait(min(c[1] for c in certs)))

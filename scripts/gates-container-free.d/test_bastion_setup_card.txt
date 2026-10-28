@@ -1,1 +1,2 @@
+# 2026-10-23 (one-line pairing): also drives the real setupBastion headless (test_network_one_line_card.js) with a payload from the real pairing_code and one_line: the first line shown decodes to the redeem URL, CA SHA-256 and token minted, Copy copies each line exactly, the window's address is text and never markup, the countdown starts at 15:00, "Open the window to this address" sets up again with pair_from alone, and an answer with no one line shows the old card. Needs node.
 test_bastion_setup_card.py

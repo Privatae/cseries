@@ -28,6 +28,7 @@ chains on every version, and so does the OpenSSL behind Python's ssl.
 from __future__ import annotations
 
 import datetime
+import hashlib
 import os
 import re
 import secrets
@@ -141,6 +142,14 @@ async def ca_cert_pem(pool) -> str:
     """The CA certificate, PEM: what a bastion pins and what the lane trusts."""
     _, cert = await _load(pool)
     return cert.public_bytes(serialization.Encoding.PEM).decode()
+
+
+def ca_sha256(ca_pem: str) -> str:
+    """The SHA-256 of a CA certificate's DER, in lowercase hex: what a pairing
+    code carries (bastion_enroll.pairing_code), so a bastion can take the CA
+    from the enroll port's chain and refuse any other."""
+    der = x509.load_pem_x509_certificate(ca_pem.encode()).public_bytes(serialization.Encoding.DER)
+    return hashlib.sha256(der).hexdigest()
 
 
 def checked_operator_csr(csr_pem: str) -> tuple[x509.CertificateSigningRequest, Optional[str]]:
@@ -267,7 +276,8 @@ async def issue_lane_server_cert(pool, names: list[str]) -> tuple[bytes, bytes, 
 
 
 def load_server_chain(ctx: ssl.SSLContext, cert_pem: bytes, key_pem: bytes) -> None:
-    """Put a server cert and key into `ctx`.
+    """Put a server cert and key into `ctx`. `cert_pem` is the leaf, followed
+    by any certificates the chain carries after it.
 
     Python's ssl reads a key only from a file, and the container's seccomp
     profile refuses memfd_create, so the pair goes through a 0600 file in a
@@ -307,17 +317,27 @@ async def enroll_server_ssl_context(pool, names: list[str]) -> tuple[ssl.SSLCont
     """(server context, when its certificate ends) for the enroll port: a
     certificate from this CA, which the bastion verifies against the CA it was
     handed with the token. No client certificate: the bastion has none yet,
-    and the pairing token is what authenticates the redeem."""
+    and the pairing token is what authenticates the redeem.
+
+    The chain carries the CA after the leaf. A bastion paired with a pairing
+    code holds only the CA's SHA-256 (bastion_enroll.pairing_code), takes the
+    CA from this chain and refuses one whose SHA-256 differs, so the person
+    has no certificate file to save. The lanes send the leaf alone: by then
+    the bastion has the CA pinned."""
     cert_pem, key_pem, not_after = await issue_lane_server_cert(pool, names)
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-    load_server_chain(ctx, cert_pem, key_pem)
+    load_server_chain(ctx, cert_pem + (await ca_cert_pem(pool)).encode(), key_pem)
     return ctx, not_after
 
 
-async def renew_lane_cert(pool, ctx: ssl.SSLContext, names: list[str]) -> datetime.datetime:
+async def renew_lane_cert(pool, ctx: ssl.SSLContext, names: list[str], *,
+                          chain_ca: bool = False) -> datetime.datetime:
     """Replace the lane certificate in a live context. New handshakes get the
-    new one; connections already open keep theirs."""
+    new one; connections already open keep theirs. `chain_ca` is the enroll
+    port's: its chain carries the CA after the leaf (enroll_server_ssl_context)."""
     cert_pem, key_pem, not_after = await issue_lane_server_cert(pool, names)
+    if chain_ca:
+        cert_pem += (await ca_cert_pem(pool)).encode()
     load_server_chain(ctx, cert_pem, key_pem)
     return not_after

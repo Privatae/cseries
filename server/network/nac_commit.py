@@ -1756,7 +1756,13 @@ async def unquarantine_bastion(pool, eid: int, server: str, token_id, stepup_cod
 _bastion_latest = {"version": None, "at": 0.0}
 
 
-async def setup_bastion(pool, eid: int, name: str, *, window: Optional[dict] = None) -> dict:
+# The setup card asked to replace its token, and that token can no longer be redeemed.
+REPLACED_TOKEN_GONE = ("The line on this card was already used, replaced or has expired, so no "
+                       "new one was made. Choose Set up a bastion again.")
+
+
+async def setup_bastion(pool, eid: int, name: str, *, window: Optional[dict] = None,
+                        replaces: Optional[bytes] = None) -> dict:
     """Mint a short-lived single-use PAIRING TOKEN for a new bastion. The user installs the
     cseries-bastion binary and runs `cseries-bastion pair <token>`, which generates its own keys
     and redeems the token for its cert + routing.
@@ -1764,13 +1770,30 @@ async def setup_bastion(pool, eid: int, name: str, *, window: Optional[dict] = N
     A standalone Host also answers how to pair over TCP, and its pair command is that one
     wherever the bastion cannot reach the enroll socket (bastion_enroll.add_tcp_pairing), so the
     Network app and the manage_bastion tool show the same command. `window` is the pairing
-    port's opening, when the route opened one."""
+    port's opening, when the route opened one.
+
+    `replaces` is the secret hash of a token the setup card was given and has not been
+    redeemed (bastion_enroll.pairing_token_secret_hash): it is ended and the new one minted
+    in one transaction, so the card never leaves two live tokens, and an insert that fails
+    leaves the old one working. When it is no longer live (redeemed, expired or already
+    replaced) nothing is minted: a second click on the same card cannot leave a token nobody
+    is shown. The route checks that first (bastion_enroll.pairing_token_live), before any
+    window opens; this catches a redeem that lands in between."""
     from server.network import bastion_enroll, local_bastion
     name = (name or "").strip() or "bastion"
     if len(name) > 80:
         raise CommitError(400, "name too long")
     handle = await bastion_enroll.resolve_self_handle(eid)
-    minted = await bastion_enroll.mint_pairing_token(pool, entity_id=eid, handle=handle, name=name)
+    if replaces is None:
+        minted = await bastion_enroll.mint_pairing_token(pool, entity_id=eid, handle=handle, name=name)
+    else:
+        async with pool.acquire() as conn:
+            async with conn.transaction():
+                if not await bastion_enroll.revoke_pairing_token(conn, replaces):
+                    raise CommitError(409, REPLACED_TOKEN_GONE)
+                minted = await bastion_enroll.mint_pairing_token(conn, entity_id=eid, handle=handle,
+                                                                 name=name)
+        minted["replaced"] = True
     if local_bastion.standalone():
         await bastion_enroll.add_tcp_pairing(pool, minted, window)
     return minted

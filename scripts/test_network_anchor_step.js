@@ -231,11 +231,22 @@ if (payloadPath) {
     const body = doc.getElementById('inspector-body');
     body.innerHTML = '';
     App.setupBastion().then(() => {
-        const card = body.innerHTML;
+        // Read the card as a person reads it: its text. A command row is markup
+        // (codeHTML puts each hyphenated or long word in a span of its own so a
+        // line never breaks after a hyphen), so "privatae-bastion pair" is not a
+        // run of the raw HTML even though it is exactly what the card shows.
+        const unesc = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+            .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
+        const card = unesc(body.innerHTML.replace(/<[^>]*>/g, ''));
+        const run = payload.run || {};
         check(card.includes('skb_'), 'the setup card must still show the token');
         check(card.includes('privatae-bastion pair'), 'the setup card must still show step 2');
+        check(run.pair && card.includes('2 · pair' + run.pair),
+              'step 2 must be the server\'s pair command, under its "2 · pair" label');
         check(card.includes('set-mode networked'),
               'the setup card must carry the share step from the server payload');
+        check(run.share && card.includes('3 · share it (optional)' + run.share),
+              'the share step must be the server\'s text, under its "3 · share it (optional)" label');
         check(card.includes('claim-anchor'),
               'the setup card must name claim-anchor');
         check(/Administrator/.test(card) && /sudo -H/.test(card),

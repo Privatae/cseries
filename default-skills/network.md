@@ -828,7 +828,9 @@ same for every person:
    line has a hostname and `online`, and its card (`server=`) has
    `enforcing.mgmt_ops`. If it is not listed,
    `manage_bastion op='enroll'` mints the one-time token they install on it;
-   wait for its first check-in. An allow cannot be drafted for a machine that
+   when its answer has `run.one_line`, give them the line for their kind of
+   machine (`windows` or `unix`): pasted there, it installs the bastion,
+   pairs it and starts it. Wait for its first check-in. An allow cannot be drafted for a machine that
    has never checked in (a deny can: it is enforced by name once it arrives).
 2. **What do they want you to do there?** Ask in plain words and map each
    answer to a purpose:

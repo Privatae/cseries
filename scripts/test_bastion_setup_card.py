@@ -61,6 +61,64 @@ def _fn_body(src: str, name: str) -> str:
     return ""
 
 
+def _invented_ca_pem() -> str:
+    import datetime
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Host CA invented")])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name)
+            .public_key(key.public_key()).serial_number(x509.random_serial_number())
+            .not_valid_before(now).not_valid_after(now + datetime.timedelta(days=1))
+            .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+            .sign(key, hashes.SHA256()))
+    return cert.public_bytes(serialization.Encoding.PEM).decode()
+
+
+def one_line_card() -> None:
+    """The one-line card, driven headless (test_network_one_line_card.js) with
+    a payload from the real pairing_code and one_line: the card's first line
+    decodes to the redeem URL, CA SHA-256 and token the server minted."""
+    import base64
+    import hashlib
+    import json
+    import subprocess
+    import tempfile
+    sys.path.insert(0, _ROOT)
+    from server.network import bastion_enroll as BE
+    ca = _invented_ca_pem()
+    der = base64.b64decode("".join(l for l in ca.splitlines() if "-----" not in l))
+    enroll = "https://joey.example-id.cloud.example:8810/v1/local/redeem"
+    token = "skb_" + "inventedTokenForThisTestOnly0123"
+    code = BE.pairing_code(enroll, ca, token)
+    payload = {
+        "token": token, "expires_in_s": 900, "enroll": enroll, "pairing_code": code,
+        # Never sent by the server (public_address); the card must show it as text anyway.
+        "pairing_window": {"address": "<img src=x onerror=alert(1)>", "expires_in_s": 900, "browser": True},
+        "run": {"install": "macOS / Linux:  curl -fsSL https://privatae.ai/bastion/install.sh | sh",
+                "pair": f"privatae-bastion pair --redeem-url {enroll} --host-ca host-ca.pem {token}",
+                "note": "Run the pair command on the machine you want as a bastion.",
+                "one_line": BE.one_line(code)},
+    }
+    given = {"payload": payload, "elsewhere": "203.0.113.7",
+             "expect": {"u": enroll, "ca": hashlib.sha256(der).hexdigest(), "t": token}}
+    with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as fh:
+        json.dump(given, fh)
+        path = fh.name
+    try:
+        proc = subprocess.run(["node", os.path.join(_ROOT, "scripts", "test_network_one_line_card.js"), path],
+                              capture_output=True, text=True, timeout=60,
+                              env={**os.environ, "NETWORK_APP_JS": _APP_JS})
+        sys.stdout.write(proc.stdout)
+        check(proc.returncode == 0, "the one-line card holds, driven headless with the real pairing code"
+              + ("" if proc.returncode == 0 else ": " + proc.stderr.strip()[-400:]))
+    finally:
+        os.unlink(path)
+
+
 def main() -> int:
     src = open(_APP_JS, encoding="utf-8").read()
 
@@ -89,6 +147,8 @@ def main() -> int:
           "nothing after the card closes the inspector")
     check("await loadBastions" not in setup,
           "the card does not wait on the reload (a hung request would hide the token again)")
+
+    one_line_card()
 
     if failures:
         print(f"\nFAIL — {len(failures)} problem(s):")

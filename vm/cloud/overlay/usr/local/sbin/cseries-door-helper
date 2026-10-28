@@ -10,6 +10,7 @@ the Host's user, is answered.
 One JSON line in, one JSON line out, then the connection closes:
 
   {"op":"pairing.open","addr":"<ip>"}  ->  {"ok":true,"expires_in":900}
+  {"op":"pairing.close","addr":"<ip>"} ->  {"ok":true}
   {"op":"pairing.status"}              ->  {"ok":true,"open":[{"addr":"<ip>","expires_in":<s>}]}
   {"op":"machine.restart"}             ->  {"ok":true,"in_seconds":5}
   anything else                        ->  {"ok":false,"error":"..."}
@@ -23,7 +24,10 @@ signed-in owner.
 pairing.open accepts only a global unicast address (an IPv4-mapped IPv6
 address counts as its IPv4 address), adds it to door.nft's pairing_v4 or
 pairing_v6 set with a 15-minute timeout, and refuses past 10 opens in an hour.
-It can do nothing else: it opens the window for one address, and the window
+pairing.close takes the same kind of address and removes it from its set
+before its window ends, when the Host replaced the token that window was
+for. The cap counts opens, so a close never gives one back. Neither can do
+anything else: one address's window opens or shuts, and an open window
 closes by itself.
 
 Standard library only.
@@ -81,6 +85,10 @@ def outside_address(text, extra=()):
         ip = ipaddress.ip_address(text.strip())
     except ValueError:
         raise Refused("addr is not an IP address") from None
+    # ipaddress keeps any text after "%" as a scope ID and still calls the
+    # address global; str(ip) gives it back into the nft script.
+    if ip.version == 6 and ip.scope_id is not None:
+        raise Refused("addr must be one address with no scope ID")
     if ip.version == 6 and ip.ipv4_mapped is not None:
         ip = ip.ipv4_mapped
     if any(ip.version == n.version and ip in n for n in extra):
@@ -110,6 +118,15 @@ def open_script(ip, seconds=WINDOW_S):
     return (f"add element {TABLE} {s} {{ {ip} }}\n"
             f"delete element {TABLE} {s} {{ {ip} }}\n"
             f"add element {TABLE} {s} {{ {ip} timeout {seconds}s }}\n")
+
+
+def close_script(ip):
+    """The nft transaction that shuts the window for ip: adding then deleting
+    the element removes it whether or not it was there (a delete alone fails
+    on a missing element), in one atomic transaction."""
+    s = set_name(ip)
+    return (f"add element {TABLE} {s} {{ {ip} }}\n"
+            f"delete element {TABLE} {s} {{ {ip} }}\n")
 
 
 class Limiter:
@@ -216,6 +233,14 @@ def handle(line, peer_uid, limiter, runner=nft, extra=None, restarter=restart_ma
             limiter.record(stamps)
             print(f"pairing window open for {ip} ({seconds}s)", file=sys.stderr, flush=True)
             return {"ok": True, "expires_in": seconds}
+        if op == "pairing.close":
+            if set(req) != {"op", "addr"}:
+                raise Refused("pairing.close takes op and addr only")
+            ip = outside_address(req["addr"], test_nets() if extra is None else extra)
+            # No limiter here: the cap counts opens, and a close is not one.
+            runner(close_script(ip))
+            print(f"pairing window closed for {ip}", file=sys.stderr, flush=True)
+            return {"ok": True}
         if op == "pairing.status":
             if set(req) != {"op"}:
                 raise Refused("pairing.status takes op only")

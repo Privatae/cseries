@@ -28,6 +28,10 @@ To install the bastion on its own, open the Network app, go to Bastions and choo
 
 The installer pairs the bastion for you. To pair by hand, the Bastions card in the Network app gives you a pairing token. It works once and expires after 15 minutes, and the card shows the `privatae-bastion pair` command to run on the machine.
 
+When the bastion pairs with your Host over the network, as it does with a C-Series Cloud machine, **Set up a bastion** shows one line for each kind of machine instead. Paste it on the machine you want as a bastion. It installs the bastion, or uses the one already there, pairs it with your Host and starts it, and the bastion then starts again when the machine does. The line carries a pairing code: the token, the address to pair with, and the fingerprint of your Host's certificate authority. The bastion trusts that authority and no other, so there is no certificate file to save. If the machine's bastion already serves another Host, it asks on that machine before adding this one. The steps the line replaces are still on the card, under **Do it step by step**.
+
+Your Host's pairing port opens for 15 minutes, and only to the address your browser came from. So run the line from the same network, with any VPN on or off just as it was when you opened the card. To pair a machine on another network, choose **Pairing a machine on another network?** beside **Set up a bastion** and give that machine's public address: the port then opens to it instead. The same choice is on the card, for when you notice only once it is open. There it ends the card's line before giving a new one, and it uses one more of the hour's pairing openings.
+
 During pairing the bastion makes its own keys and sends your Host only their public halves. It gets back a certificate signed by a certificate authority the Host made for itself, and trusts that authority alone. The private keys never leave the machine.
 
 ## Does it open a port on my machine?

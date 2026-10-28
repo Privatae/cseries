@@ -25,6 +25,13 @@
      127.0.0.1 too, since the socket path names nothing on the machine; a
      Host whose sockets are served keeps the socket command. The Host's own
      manage_bastion tool answers the same command as the Network app.
+  5. Wherever the TCP command is shown, the answer also carries the pairing
+     code (skp_: exactly v, u, ca, t, the CA's SHA-256 over its DER) and one
+     line per kind of machine that runs the installer with it; the steps stay.
+     `pair_from` opens the window to that address only, after the same passkey
+     check; anything but one public unicast address is refused, unasked.
+  6. The certificate renewal loop chains the Host CA for the enroll port, as
+     its first certificate was made, and not for the lane.
 
 No database; the pairing helper is a stand-in on a unix socket.
 
@@ -114,7 +121,30 @@ def lane_host():
 
 # A public address the tests may use: the network's own documented edge.
 PUBLIC = "40.160.88.174"
-FAKE_CA = "-----BEGIN CERTIFICATE-----\nMIIBinventedCAforthistestonly\n-----END CERTIFICATE-----\n"
+# Another public address, for a machine on another network than the browser's.
+ELSEWHERE = "1.1.1.1"
+
+
+def _invented_ca() -> str:
+    """A CA certificate made here, so the pairing code's fingerprint is taken
+    over real DER."""
+    import datetime
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "Host CA invented")])
+    now = datetime.datetime.now(datetime.timezone.utc)
+    cert = (x509.CertificateBuilder().subject_name(name).issuer_name(name)
+            .public_key(key.public_key()).serial_number(x509.random_serial_number())
+            .not_valid_before(now).not_valid_after(now + datetime.timedelta(days=1))
+            .add_extension(x509.BasicConstraints(ca=True, path_length=0), critical=True)
+            .sign(key, hashes.SHA256()))
+    return cert.public_bytes(serialization.Encoding.PEM).decode()
+
+
+FAKE_CA = _invented_ca()
 
 
 class Helper:
@@ -153,7 +183,10 @@ async def helper_protocol(d):
     check(DH.public_address(PUBLIC) == PUBLIC and DH.public_address("::ffff:" + PUBLIC) == PUBLIC,
           "a public address passes, an IPv4-mapped one as its IPv4 form")
     for bad in ("10.88.0.9", "192.168.1.5", "127.0.0.1", "169.254.1.1", "100.64.0.1", "::1",
-                "fd12:3456:789a::5", "fe80::1", "198.51.100.20", "2001:db8::5", "224.0.0.1", "?", "", None):
+                "fd12:3456:789a::5", "fe80::1", "198.51.100.20", "2001:db8::5", "224.0.0.1", "?", "", None,
+                # A scope ID: ipaddress keeps any text after "%" and still calls
+                # the address global, and the helper writes str() into nft.
+                "2606:4700::1111%eth0", "2606:4700::1111%x}\nflush ruleset\n#", "::ffff:" + PUBLIC + "%x"):
         check(DH.public_address(bad) is None, f"not a public unicast address: {bad!r}")
     h = Helper(os.path.join(d, "h.sock"))
     await h.start()
@@ -177,6 +210,18 @@ async def helper_protocol(d):
         check(await _raises(DH.open_pairing(PUBLIC, path=h.path, timeout=0.3), DH.HelperError) is not None,
               "a helper that does not answer in time is an error")
         h.silent = False
+        h.lines.clear()
+        h.answer = {"ok": True}
+        await DH.close_pairing(PUBLIC, path=h.path)
+        check([json.loads(x) for x in h.lines] == [{"op": "pairing.close", "addr": PUBLIC}],
+              "a close asks the helper in one JSON line, op and addr only", h.lines)
+        h.answer = {"ok": False, "error": "addr must be a global unicast address"}
+        err = await _raises(DH.close_pairing(PUBLIC, path=h.path), DH.HelperError)
+        check(err is not None and "global unicast" in str(err), "a refused close carries the helper's reason", err)
+        h.raw = b"not json\n"
+        check(await _raises(DH.close_pairing(PUBLIC, path=h.path), DH.HelperError) is not None,
+              "a close answered with something that is not JSON is an error")
+        h.raw, h.answer = None, {"ok": True, "expires_in": 900}
     finally:
         await h.stop()
     check(await _raises(DH.open_pairing(PUBLIC, path=os.path.join(d, "none.sock")), DH.HelperError)
@@ -191,9 +236,9 @@ async def _raises(coro, exc_type):
     return None
 
 
-def _request(peer, headers=(), host="home.box.example"):
+def _request(peer, headers=(), body_obj=None, host="home.box.example"):
     from starlette.requests import Request
-    body = b"{}"
+    body = json.dumps(body_obj or {}).encode()
     sent = [False]
 
     async def receive():
@@ -269,8 +314,8 @@ async def setup_route(d):
             check([json.loads(x) for x in h.lines] == [{"op": "pairing.open", "addr": PUBLIC}],
                   "with the check, the port is opened to the address the trusted proxy forwarded for",
                   h.lines)
-            check(ans.get("pairing_window") == {"address": PUBLIC, "expires_in_s": 900},
-                  "the answer names the window", ans.get("pairing_window"))
+            check(ans.get("pairing_window") == {"address": PUBLIC, "expires_in_s": 900, "browser": True},
+                  "the answer names the window, opened to this browser", ans.get("pairing_window"))
             check(ans.get("host_ca_pem") == FAKE_CA
                   and ans.get("enroll") == "https://home.box.example:8810/v1/local/redeem"
                   and ans.get("lane_address") == "home.box.example:8811",
@@ -287,6 +332,43 @@ async def setup_route(d):
                   and PUBLIC in ans["run"]["note"] and "15 minutes" in ans["run"]["note"],
                   "the install step carries the CA as one command per kind of machine, the note the window",
                   ans["run"])
+
+            pairing_code_checks(ans)
+
+            # pair_from: a machine on another network than the browser's.
+            h.lines.clear()
+            ans = await NR.setup_bastion(_request("10.88.0.1", [("x-forwarded-for", PUBLIC)],
+                                                  {"pair_from": " " + ELSEWHERE + " "}))
+            check([json.loads(x) for x in h.lines] == [{"op": "pairing.open", "addr": ELSEWHERE}],
+                  "pair_from: the port is opened to that address only, not the browser's", h.lines)
+            check(ans.get("pairing_window") == {"address": ELSEWHERE, "expires_in_s": 900, "browser": False}
+                  and ELSEWHERE in ans["run"]["note"],
+                  "pair_from: the answer names that address, not this browser", ans.get("pairing_window"))
+            h.lines.clear()
+            ans = await NR.setup_bastion(_request("10.88.0.1", [("x-forwarded-for", PUBLIC)],
+                                                  {"pair_from": "::ffff:" + ELSEWHERE}))
+            check([json.loads(x)["addr"] for x in h.lines] == [ELSEWHERE],
+                  "pair_from: an IPv4-mapped address opens to its IPv4 form", h.lines)
+            for bad in ("192.168.1.5", "127.0.0.1", "fd12:3456:789a::5", "198.51.100.20", "1.1.1.0/24",
+                        "not an address", "1" * 70, 123, ["1.1.1.1"],
+                        "2606:4700::1111%x}\nflush ruleset\n#"):
+                h.lines.clear()
+                minted.clear()
+                err = await _raises(NR.setup_bastion(_request("10.88.0.1", [("x-forwarded-for", PUBLIC)],
+                                                              {"pair_from": bad})), HTTPException)
+                check(err is not None and err.status_code == 400 and not h.lines and not minted,
+                      f"pair_from {bad!r}: 400, the helper is not asked, nothing minted", err and err.detail)
+            owner_passkeys._step_ups.clear()
+            h.lines.clear()
+            minted.clear()
+            err = await _raises(NR.setup_bastion(_request("10.88.0.1", [("x-forwarded-for", PUBLIC)],
+                                                          {"pair_from": ELSEWHERE})), HTTPException)
+            check(err is not None and err.status_code == 403 and not h.lines and not minted,
+                  "pair_from without a fresh passkey check: 403, the port stays shut, nothing minted",
+                  err and err.detail)
+            owner_passkeys._note_step_up("tok-owner", owner_passkeys.PASSKEY)
+
+            await replaces_checks(h, minted, NR, HTTPException)
 
             h.lines.clear()
             minted.clear()
@@ -350,9 +432,10 @@ async def setup_route(d):
             ans = await NR.setup_bastion(_request("127.0.0.1"))
             check(ans.get("host_ca_pem") == FAKE_CA
                   and ans.get("enroll") == "https://127.0.0.1:8810/v1/local/redeem"
-                  and ans["run"]["pair"].startswith("privatae-bastion pair --redeem-url unix://"),
+                  and ans["run"]["pair"].startswith("privatae-bastion pair --redeem-url unix://")
+                  and "one_line" not in ans["run"] and "pairing_code" not in ans,
                   "a Host serving its sockets on this machine: CA and loopback redeem URL, the socket "
-                  "pair command kept", ans["run"])
+                  "pair command kept, and no one line", ans["run"])
 
             LB.STATE = "no-shared-dir"
             local = ("privatae-bastion pair --redeem-url https://127.0.0.1:8810/v1/local/redeem "
@@ -366,6 +449,9 @@ async def setup_route(d):
             tool = await nac_commit.manage_bastion(object(), 1, "enroll", name="bastion")
             check(tool["run"]["pair"] == local,
                   "the Host's manage_bastion tool answers the same command", tool["run"]["pair"])
+            code = pairing_code_checks(ans)
+            check(code is not None and decode_code(code)["u"] == "https://127.0.0.1:8810/v1/local/redeem",
+                  "a Host in a VM: the one line pairs on 127.0.0.1 too", code)
 
         LB.standalone = lambda: False
         with Env(CSERIES_LANE_HOST="home.box.example", CSERIES_DOOR_HELPER=h.path):
@@ -379,14 +465,331 @@ async def setup_route(d):
          host_ca.ensure, host_ca.ca_cert_pem, LB.standalone, owner_session.live_session, LB.STATE) = saved
 
 
+async def replaces_checks(h, minted, NR, HTTPException):
+    """`replaces` (the card's own token, asked from the card): its shape and
+    that it is still live are checked before the helper is asked, so neither
+    spends an opening; it is ended, in the mint's transaction, only after the
+    window opened, so every refusal leaves the card's line working; and when
+    the new window goes to another address, the old one is shut. The revoke
+    and its transaction are test_host_owns_bastion.py's part 11, on the real
+    SQL."""
+    import base64
+    import hashlib
+    from server import brain_service, owner_passkeys
+    from server.network import bastion_enroll, door_helper
+    card = "skb_" + base64.urlsafe_b64encode(b"home.inventedCardSecret").decode().rstrip("=")
+    card_hash = hashlib.sha256(b"inventedCardSecret").digest()
+    revoked = []
+    live = {"ok": True, "check": True}
+    dead = set()  # secret hashes of tokens redeemed or ended since their mint
+    count = [0]
+
+    async def fake_revoke(conn, secret_hash):
+        revoked.append(secret_hash)
+        return live["ok"]
+
+    async def fake_live(pool, secret_hash):
+        return live["check"] and secret_hash not in dead
+
+    async def shaped_mint(pool, *, entity_id, handle, name):
+        count[0] += 1
+        minted.append(name)
+        token = "skb_" + base64.urlsafe_b64encode(f"home.inventedSecret{count[0]}".encode()).decode().rstrip("=")
+        return {"token": token, "expires_in_s": 900, "name": name or "bastion",
+                "run": {"install": "macOS / Linux:  curl -fsSL https://privatae.ai/bastion/install.sh | sh",
+                        "pair": "privatae-bastion pair " + token, "note": "the note"}}
+
+    class _Tx:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *a):
+            return False
+
+    class _Conn:
+        def transaction(self):
+            return _Tx()
+
+    class _Acquire:
+        async def __aenter__(self):
+            return _Conn()
+
+        async def __aexit__(self, *a):
+            return False
+
+    class _Pool:
+        def acquire(self):
+            return _Acquire()
+
+    saved = (bastion_enroll.revoke_pairing_token, bastion_enroll.pairing_token_live,
+             bastion_enroll.mint_pairing_token, brain_service.get_pool, door_helper.close_pairing)
+    bastion_enroll.revoke_pairing_token = fake_revoke
+    bastion_enroll.pairing_token_live = fake_live
+    bastion_enroll.mint_pairing_token = shaped_mint
+    brain_service.get_pool = lambda: _Pool()
+    NR._WINDOW_OF.clear()
+    via = [("x-forwarded-for", PUBLIC)]
+
+    def clear():
+        h.lines.clear()
+        minted.clear()
+        revoked.clear()
+
+    async def refused(body):
+        return await _raises(NR.setup_bastion(_request("10.88.0.1", via, body)), HTTPException)
+
+    try:
+        clear()
+        ans = await NR.setup_bastion(_request("10.88.0.1", via, {"pair_from": ELSEWHERE, "replaces": card}))
+        check([json.loads(x) for x in h.lines] == [{"op": "pairing.open", "addr": ELSEWHERE}]
+              and revoked == [card_hash] and len(minted) == 1 and ans.get("replaced") is True,
+              "from the card: one window, to that address; the card's token ended; one new token",
+              (h.lines, len(revoked), len(minted), ans.get("replaced")))
+        for bad in ("skb_!!", "not-a-token", 123, ["skb_x"]):
+            clear()
+            err = await refused({"pair_from": ELSEWHERE, "replaces": bad})
+            check(err is not None and err.status_code == 400 and not h.lines and not revoked and not minted,
+                  f"replaces {bad!r}: 400 before anything opens, nothing ended or minted", err and err.detail)
+        for label, body in (("a mistyped address", {"pair_from": "192.168.1.5", "replaces": card}),
+                            ("an address with a scope ID", {"pair_from": "2606:4700::1111%x", "replaces": card})):
+            clear()
+            err = await refused(body)
+            check(err is not None and err.status_code == 400 and not revoked and not minted,
+                  f"from the card, {label}: 400, the card's token is not ended", err and err.detail)
+        owner_passkeys._step_ups.clear()
+        clear()
+        err = await refused({"pair_from": ELSEWHERE, "replaces": card})
+        check(err is not None and err.status_code == 403 and not h.lines and not revoked and not minted,
+              "from the card without a fresh passkey: 403, the card's token is not ended", err and err.detail)
+        owner_passkeys._note_step_up("tok-owner", owner_passkeys.PASSKEY)
+        clear()
+        h.answer = {"ok": False, "error": "10 pairing windows were opened in the last hour"}
+        err = await refused({"pair_from": ELSEWHERE, "replaces": card})
+        check(err is not None and err.status_code == 502 and not revoked and not minted,
+              "from the card when the helper refuses: 502, the card's token is not ended", err and err.detail)
+        h.answer = {"ok": True, "expires_in": 900}
+
+        # A token already used, expired or replaced (a second click): 409
+        # before the helper is asked, so no opening is spent.
+        live["check"] = False
+        clear()
+        err = await refused({"pair_from": ELSEWHERE, "replaces": card})
+        check(err is not None and err.status_code == 409 and not h.lines and not revoked and not minted,
+              "the card's token no longer live: 409, the helper is never asked, nothing ended or minted",
+              (err and err.detail, h.lines))
+        live["check"] = True
+        # Redeemed in the moment between that check and the transaction: the
+        # revoke finds nothing, and still nothing is minted.
+        live["ok"] = False
+        clear()
+        err = await refused({"pair_from": ELSEWHERE, "replaces": card})
+        check(err is not None and err.status_code == 409 and revoked == [card_hash] and not minted,
+              "a token redeemed between the check and its end: 409, nothing minted", err and err.detail)
+        live["ok"] = True
+
+        # The first window: shut when the new one goes to another address.
+        NR._WINDOW_OF.clear()
+        clear()
+        first = await NR.setup_bastion(_request("10.88.0.1", via))
+        check([json.loads(x) for x in h.lines] == [{"op": "pairing.open", "addr": PUBLIC}],
+              "the card's first window opens to this browser", h.lines)
+        clear()
+        second = await NR.setup_bastion(_request("10.88.0.1", via, {"pair_from": ELSEWHERE,
+                                                                     "replaces": first["token"]}))
+        check([json.loads(x) for x in h.lines] == [{"op": "pairing.open", "addr": ELSEWHERE},
+                                                   {"op": "pairing.close", "addr": PUBLIC}],
+              "replaced from the card to another address: the new window opens, then the first is shut",
+              h.lines)
+        clear()
+        await NR.setup_bastion(_request("10.88.0.1", via, {"pair_from": ELSEWHERE, "replaces": second["token"]}))
+        check([json.loads(x) for x in h.lines] == [{"op": "pairing.open", "addr": ELSEWHERE}],
+              "replaced to the same address: nothing is shut (the open gave it a fresh window)", h.lines)
+        clear()
+        await NR.setup_bastion(_request("10.88.0.1", via, {"pair_from": ELSEWHERE, "replaces": card}))
+        check([json.loads(x)["op"] for x in h.lines] == ["pairing.open"],
+              "a token whose window this Host does not remember: nothing is shut", h.lines)
+
+        # Two setups from this browser: both windows go to its address, and
+        # the helper holds that address once. Replacing the second card's
+        # token to another address must not shut the window the first line,
+        # still unredeemed, needs; once that one is redeemed it is shut.
+        NR._WINDOW_OF.clear()
+        clear()
+        other = await NR.setup_bastion(_request("10.88.0.1", via))
+        card2 = await NR.setup_bastion(_request("10.88.0.1", via))
+        clear()
+        await NR.setup_bastion(_request("10.88.0.1", via, {"pair_from": ELSEWHERE, "replaces": card2["token"]}))
+        check([json.loads(x) for x in h.lines] == [{"op": "pairing.open", "addr": ELSEWHERE}],
+              "replaced to another address while another live line's window is at the old one: "
+              "that window is left open", h.lines)
+        NR._WINDOW_OF.clear()
+        clear()
+        other = await NR.setup_bastion(_request("10.88.0.1", via))
+        card2 = await NR.setup_bastion(_request("10.88.0.1", via))
+        dead.add(bastion_enroll.pairing_token_secret_hash(other["token"]))
+        clear()
+        await NR.setup_bastion(_request("10.88.0.1", via, {"pair_from": ELSEWHERE, "replaces": card2["token"]}))
+        check([json.loads(x) for x in h.lines] == [{"op": "pairing.open", "addr": ELSEWHERE},
+                                                   {"op": "pairing.close", "addr": PUBLIC}],
+              "the other line at that address already redeemed: the old window is shut", h.lines)
+        dead.clear()
+
+        async def failing_live(pool, secret_hash):
+            if secret_hash == bastion_enroll.pairing_token_secret_hash(other["token"]):
+                raise OSError("the database did not answer")
+            return True
+        NR._WINDOW_OF.clear()
+        clear()
+        other = await NR.setup_bastion(_request("10.88.0.1", via))
+        card2 = await NR.setup_bastion(_request("10.88.0.1", via))
+        bastion_enroll.pairing_token_live = failing_live
+        clear()
+        ans = await _raises(NR.setup_bastion(_request("10.88.0.1", via, {"pair_from": ELSEWHERE,
+                                                                        "replaces": card2["token"]})),
+                            HTTPException)
+        bastion_enroll.pairing_token_live = fake_live
+        check(ans is None and [json.loads(x)["op"] for x in h.lines] == ["pairing.open"],
+              "the other line's state unreadable: the setup still answers, and the old window is "
+              "left to end by itself", (ans and ans.detail, h.lines))
+
+        async def failing_close(addr, path=None, timeout=None):
+            raise door_helper.HelperError("the pairing helper did not answer (TimeoutError)")
+        door_helper.close_pairing = failing_close
+        NR._WINDOW_OF.clear()
+        clear()
+        first = await NR.setup_bastion(_request("10.88.0.1", via))
+        ans = await _raises(NR.setup_bastion(_request("10.88.0.1", via, {"pair_from": ELSEWHERE,
+                                                                        "replaces": first["token"]})),
+                            HTTPException)
+        check(ans is None, "a close that fails is not the setup's failure: the window ends by itself", ans)
+    finally:
+        (bastion_enroll.revoke_pairing_token, bastion_enroll.pairing_token_live,
+         bastion_enroll.mint_pairing_token, brain_service.get_pool, door_helper.close_pairing) = saved
+        h.answer = {"ok": True, "expires_in": 900}
+        NR._WINDOW_OF.clear()
+
+
+async def bastions_list_says_window():
+    """GET /bastions answers pairing_window, so the app offers another
+    network's address before setup only where setup opens the port."""
+    from server.network import nac_commit
+    from server.routes import network as NR
+    real_list, real_sa = nac_commit.bastions_list, LB.standalone
+
+    async def fake_list(pool, eid):
+        return {"bastions": []}
+
+    nac_commit.bastions_list = fake_list
+    try:
+        LB.standalone = lambda: True
+        with Env(CSERIES_DOOR_HELPER="/run/cseries-door/helper.sock"):
+            on = await NR.get_bastions()
+        with Env(CSERIES_DOOR_HELPER=None):
+            off = await NR.get_bastions()
+        LB.standalone = lambda: False
+        with Env(CSERIES_DOOR_HELPER="/run/cseries-door/helper.sock"):
+            platform = await NR.get_bastions()
+        check(on == {"bastions": [], "pairing_window": True} and off.get("pairing_window") is False
+              and platform.get("pairing_window") is False,
+              "GET /bastions says whether setup opens a pairing window", (on, off, platform))
+    finally:
+        nac_commit.bastions_list, LB.standalone = real_list, real_sa
+
+
+def decode_code(code):
+    import base64
+    body = code[len("skp_"):]
+    return json.loads(base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)))
+
+
+def pairing_code_checks(ans):
+    """The pairing code and the one line in a setup answer, checked against
+    what the server minted. Returns the code, or None."""
+    import base64
+    import hashlib
+    import re
+    code = ans.get("pairing_code")
+    if not (isinstance(code, str) and code.startswith("skp_")):
+        check(False, "the answer carries an skp_ pairing code", code)
+        return None
+    check(re.fullmatch(r"skp_[A-Za-z0-9_-]+", code) is not None and not code.endswith("="),
+          "the code is base64url with no padding, so it needs no quoting in either shell", code)
+    d = decode_code(code)
+    der = base64.b64decode("".join(l for l in FAKE_CA.splitlines() if "-----" not in l))
+    check(list(d) == ["v", "u", "ca", "t"] and d["v"] == 1 and d["u"] == ans["enroll"]
+          and d["ca"] == hashlib.sha256(der).hexdigest() and d["t"] == ans["token"],
+          "the code decodes to exactly v, u, ca, t: version 1, the redeem URL, the CA's "
+          "SHA-256 over its DER and the token the server minted", d)
+    raw = base64.urlsafe_b64decode(code[4:] + "=" * (-len(code[4:]) % 4)).decode()
+    check(raw == json.dumps(d, separators=(",", ":")), "the code's JSON is compact", raw)
+    one = ans["run"].get("one_line") or {}
+    check(one.get("windows") == ("& ([scriptblock]::Create((irm https://privatae.ai/bastion/install.ps1))) "
+                                 f"-Pair '{code}'")
+          and one.get("unix") == f"curl -fsSL https://privatae.ai/bastion/install.sh | PRIVATAE_PAIR_CODE='{code}' sh",
+          "the one line per kind of machine runs the installer with the code", one)
+    unix_line_keeps_the_code_out_of_argv(one.get("unix") or "", code)
+    check(ans["run"]["pair"].startswith("privatae-bastion pair --redeem-url https://")
+          and "base64 -d > host-ca.pem" in ans["run"]["install"],
+          "the step-by-step fields stay as they were", ans["run"])
+    return code
+
+
+def unix_line_keeps_the_code_out_of_argv(line: str, code: str) -> None:
+    """The macOS / Linux line, run by a real sh with the download swapped for
+    a stand-in installer that reports what it was given: the code reaches the
+    installer in PRIVATAE_PAIR_CODE, and is not in the argv of the sh that
+    runs it, which any local user can read with ps."""
+    import shlex
+    import subprocess
+    fetch = "curl -fsSL https://privatae.ai/bastion/install.sh"
+    if not line.startswith(fetch + " | "):
+        check(False, "the macOS / Linux line pipes the installer from privatae.ai into sh", line)
+        return
+    stand_in = ('printf "env=%s\\n" "$PRIVATAE_PAIR_CODE"; '
+                'printf "argv=%s\\n" "$(tr "\\000" " " < /proc/$$/cmdline)"')
+    run = subprocess.run(["sh", "-c", "printf '%s\\n' " + shlex.quote(stand_in) + line[len(fetch):]],
+                         capture_output=True, text=True, timeout=10, env={"PATH": os.environ.get("PATH", "")})
+    said = dict(l.split("=", 1) for l in run.stdout.splitlines() if "=" in l)
+    check(run.returncode == 0 and said.get("env") == code and "argv" in said and code not in said["argv"],
+          "run by sh, the macOS / Linux line gives the installer the code in PRIVATAE_PAIR_CODE "
+          "and keeps it out of sh's argv", (run.returncode, run.stdout[-300:], run.stderr[-300:]))
+
+
 def via_proxy_again():
     return _request("10.88.0.1", [("x-forwarded-for", PUBLIC)])
+
+
+async def renewal_keeps_the_chain():
+    """The enroll port's chain carries the Host CA, and so must its renewal:
+    the loop renews each certificate the way it was first made."""
+    import datetime
+    import inspect
+    from server.network import host_ca
+    seen = []
+
+    async def fake_renew(pool, ctx, names, *, chain_ca=False):
+        seen.append((ctx, chain_ca))
+        return datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=30)
+    saved = host_ca.renew_lane_cert
+    host_ca.renew_lane_cert = fake_renew
+    try:
+        past = datetime.datetime.now(datetime.timezone.utc)
+        await LB._renew_due(object(), [["enroll", past, True], ["lane", past, False]], ["n"], "test")
+    finally:
+        host_ca.renew_lane_cert = saved
+    check(seen == [("enroll", True), ("lane", False)],
+          "a due renewal chains the CA for the enroll port and not for the lane", seen)
+    src = inspect.getsource(LB._serve_tcp_once)
+    check("[[enroll_ctx, enroll_until, True], [lane_ctx, lane_until, False]]" in src,
+          "the ports' loop marks the enroll certificate as the one whose chain carries the CA")
 
 
 async def async_main():
     with tempfile.TemporaryDirectory(prefix="pair") as d:
         await helper_protocol(d)
         await setup_route(d)
+    await renewal_keeps_the_chain()
+    await bastions_list_says_window()
 
 
 def main():

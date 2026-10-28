@@ -165,9 +165,22 @@ def check(label, cond, detail=""):
 class _Conn:
     def __init__(self, pool):
         self.pool = pool
+        # While a transaction is open: each pairing token written through this
+        # connection, as it was, so an exception puts it back. Writes made on
+        # the pool itself are not undone, as in Postgres, so code that writes
+        # outside its transaction is caught.
+        self.undo = None
+
+    def transaction(self):
+        return _Tx(self)
 
     async def execute(self, sql, *args):
         await asyncio.sleep(0)
+        if "bastion_pairing_tokens" in sql:
+            if self.undo is not None:
+                prev = self.pool.tokens.get(args[0])
+                self.undo.append((args[0], None if prev is None else dict(prev)))
+            return await self.pool.execute(sql, *args)
         self.pool.writes.append((sql, args))
         if sql.lstrip().startswith("INSERT INTO kernel_secrets"):
             self.pool.secrets.setdefault(args[0], args[1])
@@ -178,6 +191,25 @@ class _Conn:
             v = self.pool.secrets.get(args[0])
             return None if v is None else {"secret": v}
         raise AssertionError(sql)
+
+
+class _Tx:
+    def __init__(self, conn):
+        self.conn = conn
+
+    async def __aenter__(self):
+        self.conn.undo = []
+        return self
+
+    async def __aexit__(self, exc_type, *a):
+        undo, self.conn.undo = self.conn.undo, None
+        if exc_type is not None:
+            for key, prev in reversed(undo):
+                if prev is None:
+                    self.conn.pool.tokens.pop(key, None)
+                else:
+                    self.conn.pool.tokens[key] = prev
+        return False
 
 
 class _Acquire:
@@ -200,6 +232,7 @@ class FakePool:
         self.bearers = []      # INSERTed mcp_client_tokens rows
         self.revoked = set()   # ids of revoked mcp_client_tokens rows
         self.writes = []       # every (sql, args) that writes
+        self.fail_insert = False  # the next pairing-token INSERT raises, as a refused write would
 
     def acquire(self):
         return _Acquire(self)
@@ -210,6 +243,9 @@ class FakePool:
     async def execute(self, sql, *args):
         self.writes.append((sql, args))
         if sql.lstrip().startswith("INSERT INTO bastion_pairing_tokens"):
+            if self.fail_insert:
+                self.fail_insert = False
+                raise RuntimeError("the pairing-token insert was refused (test)")
             self.tokens[args[0]] = {"name": args[1], "used": False, "expired": False}
             return "INSERT 0 1"
         if "SET used_at = NULL" in sql:
@@ -218,9 +254,23 @@ class FakePool:
                 t["used"] = False
                 return "UPDATE 1"
             return "UPDATE 0"
+        if "UPDATE bastion_pairing_tokens SET expires_at = now()" in sql:
+            # Each guard only when the query says so, as in fetchrow's redeem.
+            t = self.tokens.get(args[0])
+            if (t is None or (t["used"] and "used_at IS NULL" in sql)
+                    or (t["expired"] and "expires_at > now()" in sql)):
+                return "UPDATE 0"
+            t["expired"] = True
+            return "UPDATE 1"
         raise AssertionError(sql)
 
     async def fetchrow(self, sql, *args):
+        if "SELECT 1 AS live FROM bastion_pairing_tokens" in sql:
+            t = self.tokens.get(args[0])
+            if (t is None or (t["used"] and "used_at IS NULL" in sql)
+                    or (t["expired"] and "expires_at > now()" in sql)):
+                return None
+            return {"live": 1}
         if "UPDATE bastion_pairing_tokens SET used_at = now()" in sql:
             self.writes.append((sql, args))
             # Each refusal only when the query says so, so the SQL is what is tested.
@@ -1095,6 +1145,33 @@ async def part_tcp():
         sans = leaf.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
         check(f"the enroll port's certificate verifies against the Host CA alone under {name}",
               issued is True and sans.get_values_for_type(x509.DNSName) == [name], (issued, sans))
+        # The chain carries the CA after the leaf, so a bastion holding only the
+        # pairing code's fingerprint can take the CA from it (bastion_enroll.pairing_code).
+        async def chain_of(port):
+            r, w = await asyncio.open_connection("127.0.0.1", port, ssl=client_ctx(ca_pem),
+                                                 server_hostname=name)
+            chain = list(w.get_extra_info("ssl_object").get_unverified_chain())  # DER, leaf first
+            w.close()
+            return chain
+        chain = await chain_of(enroll_port)
+        ca_der = ca.public_bytes(serialization.Encoding.DER)
+        check("the enroll port's chain is the leaf, then the Host CA",
+              len(chain) == 2 and chain[0] == der and chain[1] == ca_der, [len(c) for c in chain])
+        check("...and the CA in it has the SHA-256 a pairing code carries",
+              hashlib.sha256(chain[-1]).hexdigest() == host_ca.ca_sha256(ca_pem) if chain else False)
+        await host_ca.renew_lane_cert(pool, enroll_ctx, [name], chain_ca=True)
+        renewed = await chain_of(enroll_port)
+        check("a renewed enroll certificate keeps the CA after a new leaf",
+              len(renewed) == 2 and renewed[0] != der and renewed[1] == ca_der, [len(c) for c in renewed])
+        plain = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        await host_ca.renew_lane_cert(pool, plain, [name])
+        srv = await asyncio.start_server(lambda r, w: w.close(), "127.0.0.1", 0, ssl=plain)
+        try:
+            alone = await chain_of(srv.sockets[0].getsockname()[1])
+        finally:
+            srv.close()
+        check("a lane certificate is renewed as the leaf alone", len(alone) == 1, [len(c) for c in alone])
+
         for label, ctx, sni in (("under another name", client_ctx(ca_pem), "home.cseries.localhost"),
                                 ("against another CA", client_ctx(other_ca_operator_cert_ca()), name)):
             try:
@@ -1292,6 +1369,76 @@ async def part_pair_token():
         asyncpg.create_pool = real
 
 
+async def part_replace():
+    print("== 11. setup asked from the card for another address: the card's token ends, one new one")
+    from fastapi import HTTPException
+    from server.network import nac_commit
+    as_standalone()
+    bastion_enroll._self_handle_cache.clear()
+    pool = FakePool()
+
+    def inserts():
+        return sum(1 for s, _a in pool.writes if s.lstrip().startswith("INSERT INTO bastion_pairing_tokens"))
+
+    def secret_of(token):
+        raw = token[len("skb_"):]
+        return base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)).decode().rpartition(".")[2]
+
+    async def redeem_status(secret):
+        try:
+            await bastion_enroll.redeem_local(pool, entity_id=1, handle=HOME.handle, secret=secret,
+                                              operator_csr=make_csr()[1], transport="unix")
+        except HTTPException as e:
+            return e.status_code
+        return 200
+
+    first, first_out = await mint(pool)
+    check("the card's token hashes as the Host stored it",
+          bastion_enroll.pairing_token_secret_hash(first_out["token"]) == hashlib.sha256(first.encode()).digest())
+    old = bastion_enroll.pairing_token_secret_hash(first_out["token"])
+    n = inserts()
+    out = await nac_commit.setup_bastion(pool, 1, "", replaces=old)
+    second = secret_of(out["token"])
+    check("replacing the card's token mints exactly one new one, and says so",
+          inserts() == n + 1 and out.get("replaced") is True and second != first, (inserts() - n, out.get("replaced")))
+    check("the replaced token can no longer be redeemed", await redeem_status(first) == 401)
+    await bastion_enroll._rearm_pairing_token(pool, old)
+    check("...and a re-arm cannot bring it back", await redeem_status(first) == 401)
+    n = inserts()
+    try:
+        await nac_commit.setup_bastion(pool, 1, "", replaces=old)
+        refused = None
+    except nac_commit.CommitError as e:
+        refused = e.status
+    check("replacing it again (a second click on the same card) is a 409 and mints nothing",
+          refused == 409 and inserts() == n, (refused, inserts() - n))
+    check("the new token redeems", await redeem_status(second) == 200)
+
+    # The end of the old token and the new one's insert are one transaction.
+    third, third_out = await mint(pool)
+    third_hash = bastion_enroll.pairing_token_secret_hash(third_out["token"])
+    before = dict(pool.tokens)
+    pool.fail_insert = True
+    try:
+        await nac_commit.setup_bastion(pool, 1, "", replaces=third_hash)
+        insert_failed = False
+    except RuntimeError:
+        insert_failed = True
+    pool.fail_insert = False
+    check("an insert that fails after the revoke fails the setup, and adds no token",
+          insert_failed and set(pool.tokens) == set(before), (insert_failed, len(pool.tokens) - len(before)))
+    check("...and leaves the card's old token redeemable: its end was rolled back with the insert",
+          await redeem_status(third) == 200)
+    fourth, fourth_out = await mint(pool)
+    check("a live token reads live; a replaced, a redeemed and an unknown one do not",
+          await bastion_enroll.pairing_token_live(pool, hashlib.sha256(fourth.encode()).digest())
+          and not await bastion_enroll.pairing_token_live(pool, old)
+          and not await bastion_enroll.pairing_token_live(pool, third_hash)
+          and not await bastion_enroll.pairing_token_live(pool, hashlib.sha256(b"never minted").digest()))
+    for bad in ("skb_", "skb_!!", "not-a-token", "skb_" + base64.urlsafe_b64encode(b"nodot").decode(), 7, None):
+        check(f"not a pairing token: {bad!r}", bastion_enroll.pairing_token_secret_hash(bad) is None)
+
+
 async def main():
     # A part that raises is one failed check, and the parts after it still run.
     async def guarded(fn, *a):
@@ -1306,7 +1453,8 @@ async def main():
     if got:
         pool, out, _bkey, lane_head = got
         await guarded(part_kernel, pool, out, lane_head)
-    for fn in (part_platform, part_member, part_supervisor, part_runs, part_tcp, part_pair_token):
+    for fn in (part_platform, part_member, part_supervisor, part_runs, part_tcp, part_pair_token,
+               part_replace):
         await guarded(fn)
 
 

@@ -415,7 +415,25 @@ system: true
 #   delegation_tag_present. GET /api/network/agents no longer returns the tag's
 #   value (a bearer value every read:topology app could read), only whether
 #   one was carried; `requested` still says whether it is valid.
-version: "1.20.4"
+# 1.21.0 (2026-10-28): pairing a machine is one line. On a Host whose bastions
+#   pair over its enroll port, "Set up a bastion" shows at its top the pairing
+#   window's address with a live countdown, then one line per kind of machine
+#   (the setup answer's run.one_line): it installs the bastion or uses the one
+#   there, pairs it with a pairing code that carries the Host CA's
+#   fingerprint, and starts it, so there is no certificate file to save. A
+#   command keeps its lines, and wraps at a space or, inside a long word, at
+#   the box edge, never after the hyphen of a short word. Where setup opens a
+#   pairing window (GET /bastions answers pairing_window), "Pairing a machine
+#   on another network?" sits beside "Set up a bastion", opens its form beneath
+#   the toolbar, and makes one setup request with pair_from, so one window
+#   opens, to that address; it then closes, its address cleared. The
+#   card offers it too: there it sends the card's own token as `replaces`, the
+#   server ends that token once the new window is open, and the card says this
+#   uses one more of the hour's openings; a refusal is shown beside the address
+#   field, as an error, and leaves the card, its line, Copy buttons and countdown as they
+#   were. The earlier steps stay, folded, under "Do it step by step". A Host
+#   whose answer has no one line shows the card as before.
+version: "1.21.0"
 # Network is NOT a conversational surface — the user operates it directly and
 # talks to the host in Circles/the Workbench. So this is the code-true source for
 # the ENVIRONMENT CATALOG (topology block + describe_app), NOT a surface_role

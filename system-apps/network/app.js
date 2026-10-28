@@ -958,7 +958,12 @@
         const list = $('gw-list');
         if (!state.bastions.length || !state.loaded.topology) list.innerHTML = skeletonRows(3);
         try {
-            state.bastions = (await fetchJSON('/api/network/bastions')).bastions || [];
+            const listed = await fetchJSON('/api/network/bastions');
+            state.bastions = listed.bastions || [];
+            // Offered before setup only where setup opens the pairing port.
+            const elsewhere = $('gw-add-elsewhere');
+            if (elsewhere) elsewhere.hidden = listed.pairing_window !== true;
+            syncElsewhereForm();
             state.loaded.topology = true;
             // Fresh rows arrived, so the session set has done its job — drop it and let
             // SERVER TRUTH rebuild it below (renderBastions re-adds from
@@ -4330,10 +4335,33 @@
     // ════════════════════ INSPECTOR ════════════════════
     // fields: [label, val, mono?] OR [label, rawHTML, mono?, true] — the 4th element,
     // when truthy, marks `val` as pre-built, trusted HTML (chips/links) and skips esc().
+    // mono 'code' is a command to copy: its lines kept as written (codeHTML).
+    function fieldValClass(mono) {
+        return 'net-field-val' + (mono === 'code' ? ' mono net-code' : mono ? ' mono' : '');
+    }
+    // A command's text, escaped, for a box narrower than its lines. Words wrap
+    // at spaces, as prose does; a word too long for a line of its own (a URL,
+    // a code, base64) breaks at the box edge; and a short word with a hyphen
+    // in it (host-ca.pem, -Pair) is never split. Wrapped where a word allows,
+    // a line ended after such a hyphen, which reads as a continuation or a
+    // different file name, and a code's own "-" did the same. The text itself
+    // is unchanged, so a copy of it is too.
+    const CODE_WORD_MAX = 20;
+    function codeHTML(text) {
+        return String(text == null ? '' : text).split(/(\s+)/).map((w) => {
+            if (!w || /^\s+$/.test(w)) return w;
+            if (w.length > CODE_WORD_MAX) return '<span class="net-code-long">' + esc(w) + '</span>';
+            if (w.includes('-')) return '<span class="net-code-word">' + esc(w) + '</span>';
+            return esc(w);
+        }).join('');
+    }
+    function fieldValHTML(val, mono, raw) {
+        return raw ? val : mono === 'code' ? codeHTML(val) : esc(val);
+    }
     function openInspector(title, fields, actions) {
         $('inspector-title').textContent = title;
         $('inspector-body').innerHTML = (fields || []).map(([label, val, mono, raw]) =>
-            `<div class="net-field"><span class="net-field-label">${esc(label)}</span><span class="net-field-val ${mono ? 'mono' : ''}">${raw ? val : esc(val)}</span></div>`
+            `<div class="net-field"><span class="net-field-label">${esc(label)}</span><span class="${fieldValClass(mono)}">${fieldValHTML(val, mono, raw)}</span></div>`
         ).join('');
         const actEl = $('inspector-actions');
         actEl.innerHTML = '';
@@ -4388,21 +4416,67 @@
         return ok;
     }
 
-    async function setupBastion() {
+    // The pairing window's countdown on the setup card. One at a time: a new
+    // card replaces the old one's.
+    let pairCountdown = 0;
+    function startPairCountdown(seconds) {
+        clearInterval(pairCountdown);
+        const until = Date.now() + seconds * 1000;
+        const tick = () => {
+            const el = $('pair-countdown');
+            if (!el) { clearInterval(pairCountdown); return; }
+            const left = Math.max(0, Math.round((until - Date.now()) / 1000));
+            el.textContent = left > 0
+                ? 'for ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0') + ' more'
+                : 'no longer: the window has closed, so set up the bastion again';
+            if (left <= 0) clearInterval(pairCountdown);
+        };
+        tick();
+        pairCountdown = setInterval(tick, 1000);
+    }
+
+    // `opts.pairFrom` asks for the pairing window to open to that address
+    // instead of this browser's (a machine on another network). A click handler
+    // passes its event here, which has no pairFrom.
+    // `opts.replaces` is the open card's own token, asked from that card: the
+    // server ends it once the new window is open, and nothing is minted if it
+    // is no longer live. Asked from the card, the card stays until the answer
+    // comes: a refusal (a mistyped address, the hour's openings used up) is
+    // shown beside its address field and the line above keeps working.
+    async function setupBastion(opts) {
+        const pairFrom = (opts && typeof opts.pairFrom === 'string') ? opts.pairFrom.trim() : '';
+        const replaces = (opts && typeof opts.replaces === 'string') ? opts.replaces : '';
+        const errEl = replaces ? $('pair-from-error') : null;
+        const goEl = replaces ? $('pair-from-go') : null;
         // No name prompt — the bastion reports its own hostname on first check-in,
         // which is the authoritative, more-correct label. Until then it shows as
         // "bastion" (server default).
-        openInspector('Setting up bastion…', [['status', 'Generating WireGuard config + identity…']], []);
+        if (replaces) {
+            if (goEl) goEl.disabled = true;
+            if (errEl) { errEl.classList.remove('error'); errEl.textContent = 'Opening the window…'; }
+        } else {
+            openInspector('Setting up bastion…', [['status', 'Generating WireGuard config + identity…']], []);
+        }
+        const ask = {};
+        if (pairFrom) ask.pair_from = pairFrom;
+        if (replaces) ask.replaces = replaces;
         let res;
         try {
             res = await fetchJSON('/api/network/bastions/setup', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({}),
+                body: JSON.stringify(ask),
             });
         } catch (e) {
+            if (replaces) {
+                if (errEl) { errEl.classList.add('error'); errEl.textContent = e.message; }
+                if (goEl) goEl.disabled = false;
+                return;
+            }
             openInspector('Set up a bastion', [['could not issue', e.message]], []);
             return;
         }
+        // Set up from the toolbar: its other-network choice has done its job.
+        if (!replaces) closeElsewhere();
         const run = res.run || {};
         const mins = Math.max(1, Math.round((res.expires_in_s || 900) / 60));
         const pairCmd = run.pair || ('privatae-bastion pair ' + (res.token || ''));
@@ -4412,19 +4486,63 @@
         // word "anchor" appears in this app only as a state to DISPLAY. The server
         // owns the wording (bastion_enroll.mint_pairing_token) so the agent that
         // explains this and the card that shows it cannot drift apart.
-        const rows = [
+        const steps = [
             ['⚠ one time', 'This pairing token is single-use and expires in ' + mins + ' min. It enrolls exactly one machine into your network.'],
-            ['token', res.token || '—', true],
-            ['1 · install', run.install || 'macOS / Linux:  curl -fsSL https://privatae.ai/bastion/install.sh | sh', true],
-            ['2 · pair', pairCmd, true],
+            ['token', res.token || '—', 'code'],
+            ['1 · install', run.install || 'macOS / Linux:  curl -fsSL https://privatae.ai/bastion/install.sh | sh', 'code'],
+            ['2 · pair', pairCmd, 'code'],
             ['then', run.note || 'It brings up the tunnel and opens the lanes this host uses to reach that machine.'],
         ];
-        if (run.share) rows.push(['3 · share it (optional)', run.share, true]);
-        if (run.elevate) rows.push(['as administrator', run.elevate]);
-        openInspector('Bastion ready — token shown once', rows, [
-            { label: 'Copy token', cls: 'primary', onClick: (e) => _copyBtn(e, res.token || '') },
-            { label: 'Copy pair command', onClick: (e) => _copyBtn(e, pairCmd) },
-        ]);
+        if (run.share) steps.push(['3 · share it (optional)', run.share, 'code']);
+        if (run.elevate) steps.push(['as administrator', run.elevate]);
+        const one = run.one_line;
+        if (!one || !one.windows || !one.unix) {
+            openInspector('Bastion ready — token shown once', steps, [
+                { label: 'Copy token', cls: 'primary', onClick: (e) => _copyBtn(e, res.token || '') },
+                { label: 'Copy pair command', onClick: (e) => _copyBtn(e, pairCmd) },
+            ]);
+        } else {
+            // One line per kind of machine first: it installs the bastion (or
+            // uses the one there), pairs it and starts it. The steps it replaces
+            // stay below, folded, for anyone who wants to run each one.
+            // The window's address and countdown sit at the top, beside the
+            // line, before the lines themselves: a line run from anywhere
+            // else gets no answer.
+            const win = res.pairing_window;
+            const rows = [
+                ['⚠ one time', 'Paste one line on the machine you want as a bastion. It installs the bastion, or uses the one already there, pairs it with this Host and starts it. The line works once and expires in ' + mins + ' min.'],
+            ];
+            if (win && win.address) {
+                const from = win.browser === false
+                    ? 'Run it on the machine at ' + esc(win.address) + ', the address you gave.'
+                    : 'Run it from the network this browser is on (' + esc(win.address) + '), with any VPN on or off just as it is now.';
+                rows.push(['pairing window', from + ' This Host\'s pairing port is open to that address only, <span id="pair-countdown">for ' + Math.floor((win.expires_in_s || 900) / 60) + ':00 more</span>.', false, true]);
+            }
+            rows.push(['Windows (PowerShell)', one.windows, 'code'], ['macOS / Linux', one.unix, 'code']);
+            if (win && win.address) {
+                rows.push(['another network', '<details class="net-pair-other"><summary>Pairing a machine on another network?</summary>' +
+                    '<p>Give that machine\'s public address, as a site that shows your IP address reports it on that machine. The window then opens to it instead, with a new line to paste there. The line above stops working, and this uses one more of the hour\'s pairing openings.</p>' +
+                    '<input id="pair-from-addr" class="cseries-input" autocomplete="off" spellcheck="false" placeholder="its public address, like 203.0.113.7"> ' +
+                    '<button id="pair-from-go" class="cseries-btn">Open the window to this address</button> ' +
+                    '<span id="pair-from-error" class="net-pair-error net-inline-status" role="alert"></span></details>', false, true]);
+            }
+            rows.push(['step by step', '<details class="net-pair-steps"><summary>Do it step by step</summary>' +
+                steps.map(([label, val, mono]) =>
+                    `<div class="net-field"><span class="net-field-label">${esc(label)}</span><span class="${fieldValClass(mono)}">${fieldValHTML(val, mono)}</span></div>`).join('') +
+                '</details>', false, true]);
+            openInspector('Bastion ready — token shown once', rows, [
+                { label: 'Copy Windows line', cls: 'primary', onClick: (e) => _copyBtn(e, one.windows) },
+                { label: 'Copy macOS / Linux line', onClick: (e) => _copyBtn(e, one.unix) },
+            ]);
+            if (win && win.address) {
+                startPairCountdown(win.expires_in_s || 900);
+                const go = $('pair-from-go');
+                if (go) go.addEventListener('click', () => {
+                    const addr = ($('pair-from-addr') || {}).value || '';
+                    if (addr.trim() && !go.disabled) setupBastion({ pairFrom: addr, replaces: res.token || '' });
+                });
+            }
+        }
         // The new bastion (offline until it checks in) appears in the list now.
         // The card is shown once and must not wait on the reload (fetchJSON has no
         // timeout; a hung /api/network/bastion-latest would hide the token exactly
@@ -4433,6 +4551,27 @@
         state.loaded.topology = false;
         loadBastions({ keepInspector: true });
         loadOverview();
+    }
+
+    // Before setup, for a machine on another network than this browser's: one
+    // setup request with pair_from, so one window opens, to that address only.
+    // Its form sits beneath the toolbar, not inside the choice: opened inside,
+    // it widened the choice past the row and the choice jumped to a line of its
+    // own. The form shows while the choice is open and offered.
+    function syncElsewhereForm() {
+        const choice = $('gw-add-elsewhere'), form = $('gw-add-elsewhere-form');
+        if (form) form.hidden = !(choice && choice.open && !choice.hidden);
+    }
+    // After a setup from the toolbar: closed, and its address cleared.
+    function closeElsewhere() {
+        const choice = $('gw-add-elsewhere'), addr = $('gw-add-elsewhere-addr');
+        if (choice) choice.open = false;
+        if (addr) addr.value = '';
+        syncElsewhereForm();
+    }
+    function setupFromElsewhere() {
+        const addr = (($('gw-add-elsewhere-addr') || {}).value || '').trim();
+        if (addr) setupBastion({ pairFrom: addr });
     }
 
     document.addEventListener('DOMContentLoaded', () => {
@@ -4466,6 +4605,10 @@
         $('gw-update-all').addEventListener('click', updateAllBastions);
         $('autoupdate-toggle').addEventListener('click', toggleAutoUpdate);
         $('gw-add').addEventListener('click', setupBastion);
+        const elsewhereGo = $('gw-add-elsewhere-go');
+        if (elsewhereGo) elsewhereGo.addEventListener('click', setupFromElsewhere);
+        const elsewhere = $('gw-add-elsewhere');
+        if (elsewhere) elsewhere.addEventListener('toggle', syncElsewhereForm);
         $('gw-list').addEventListener('click', (e) => {
             // A machine's other Hosts: their card, Request connection, Message.
             const hr = e.target.closest('[data-host-request]');
@@ -4619,7 +4762,7 @@
     // call the real builders rather than re-implement them.
     window.NetworkApp = {
         state, showLens, enrollStepup, buildGraph, VIEWS, registerView,
-        openBastionInspector, setupBastion, bastionFromView, applyView,
+        openBastionInspector, setupBastion, setupFromElsewhere, loadBastions, bastionFromView, applyView,
         // Pure helpers, exported so scripts/test_network_contain_pending.js
         // can pin their words without a browser.
         containPendingPill, findingContainPendingPill, containPendingSince, schedulerScanNote, versionBefore,

@@ -38,6 +38,12 @@ logger = logging.getLogger("privatae.network.bastion_enroll")
 
 BASTION_BINARY = "privatae-bastion"
 PAIRING_TTL_SECONDS = 900  # 15 min — short single-use window for the pairing token
+INSTALL_PS1_URL = "https://privatae.ai/bastion/install.ps1"
+INSTALL_SH_URL = "https://privatae.ai/bastion/install.sh"
+# A pairing code is what the one-line pairing hands the installer: the redeem
+# URL, the Host CA's SHA-256 and the token, in one string (pairing_code).
+PAIRING_CODE_PREFIX = "skp_"
+PAIRING_CODE_VERSION = 1
 BASTION_SCOPES = ["shape", "recall", "signal"]
 
 # Fork 4 (2026-06-20): the device fingerprint travels as a URI SAN in the
@@ -217,8 +223,8 @@ async def mint_pairing_token(pool, *, entity_id: int, handle: Optional[str], nam
         "expires_in_s": PAIRING_TTL_SECONDS,
         "name": name,
         "run": {
-            "install": ("Windows (PowerShell):  irm https://privatae.ai/bastion/install.ps1 | iex\n"
-                        "macOS / Linux:  curl -fsSL https://privatae.ai/bastion/install.sh | sh"),
+            "install": (f"Windows (PowerShell):  irm {INSTALL_PS1_URL} | iex\n"
+                        f"macOS / Linux:  curl -fsSL {INSTALL_SH_URL} | sh"),
             "pair": pair,
             # THE THIRD STEP, which this payload never mentioned and so neither did
             # the dashboard — the word "anchor" appeared in the Network app only as
@@ -253,6 +259,79 @@ async def mint_pairing_token(pool, *, entity_id: int, handle: Optional[str], nam
     }
 
 
+def pairing_token_secret_hash(token) -> Optional[bytes]:
+    """The stored SHA-256 (bastion_pairing_tokens.secret_hash) of a pairing
+    token mint_pairing_token gave out, or None when `token` is not shaped
+    like one: "skb_" and base64url of "<handle>.<secret>"."""
+    if not isinstance(token, str) or not token.startswith("skb_") or len(token) > 512:
+        return None
+    raw = token[len("skb_"):]
+    try:
+        text = base64.urlsafe_b64decode(raw + "=" * (-len(raw) % 4)).decode()
+    except (ValueError, UnicodeDecodeError):
+        return None
+    handle, dot, secret = text.rpartition(".")
+    if not dot or not handle or not secret:
+        return None
+    return hashlib.sha256(secret.encode()).digest()
+
+
+async def pairing_token_live(pool, secret_hash: bytes) -> bool:
+    """Whether a pairing token could still be redeemed: unspent and
+    unexpired, the same test redeem's consume makes."""
+    row = await pool.fetchrow(
+        "SELECT 1 AS live FROM bastion_pairing_tokens "
+        "WHERE secret_hash = $1 AND used_at IS NULL AND expires_at > now()",
+        secret_hash,
+    )
+    return row is not None
+
+
+async def revoke_pairing_token(pool, secret_hash: bytes) -> bool:
+    """End an unredeemed pairing token now; True when one was live. It is
+    expired rather than marked used, so neither redeem (used_at IS NULL AND
+    expires_at > now()) nor _rearm_pairing_token (expires_at > now()) can
+    bring it back."""
+    status = await pool.execute(
+        "UPDATE bastion_pairing_tokens SET expires_at = now() "
+        "WHERE secret_hash = $1 AND used_at IS NULL AND expires_at > now()",
+        secret_hash,
+    )
+    return isinstance(status, str) and status.rsplit(" ", 1)[-1] != "0"
+
+
+def pairing_code(redeem_url: str, ca_pem: str, token: str) -> str:
+    """One string with everything a pairing over TCP needs: the redeem URL, the
+    SHA-256 of the Host CA's DER and the token, as compact JSON in base64url
+    without padding, after "skp_". The bastion takes the CA from the enroll
+    port's chain (host_ca.enroll_server_ssl_context) and refuses one whose
+    SHA-256 differs, so nothing else has to be copied. It decodes exactly the
+    keys v, u, ca and t, and refuses any other version."""
+    from server.network import host_ca
+    body = json.dumps({"v": PAIRING_CODE_VERSION, "u": redeem_url,
+                       "ca": host_ca.ca_sha256(ca_pem), "t": token},
+                      separators=(",", ":"))
+    return PAIRING_CODE_PREFIX + base64.urlsafe_b64encode(body.encode()).decode().rstrip("=")
+
+
+def one_line(code: str) -> dict:
+    """The one command per kind of machine that installs the bastion (or uses
+    the one there), pairs it with `code` and starts it. The installers hand
+    the code to `pair -` on standard input. A code is base64url, so it needs
+    no quoting beyond the single quotes either shell gives it.
+
+    The macOS / Linux line gives the code to `sh` in its environment
+    (PRIVATAE_PAIR_CODE), never as an argument: `sh -s -- --pair <code>` kept
+    it in sh's argv for the whole install, where any local user reads it with
+    `ps`, and a user on the same machine shares its address, so could redeem
+    it first. A process's environment is readable only by its owner and root.
+    The Windows line runs inside the person's own PowerShell process."""
+    return {
+        "windows": f"& ([scriptblock]::Create((irm {INSTALL_PS1_URL}))) -Pair '{code}'",
+        "unix": f"curl -fsSL {INSTALL_SH_URL} | PRIVATAE_PAIR_CODE='{code}' sh",
+    }
+
+
 async def add_tcp_pairing(pool, minted: dict, window: Optional[dict] = None) -> None:
     """Add what a bastion pairing over TCP needs to a standalone Host's
     `minted`: the Host CA, the redeem URL and the lane's address. Where the
@@ -281,6 +360,10 @@ async def add_tcp_pairing(pool, minted: dict, window: Optional[dict] = None) -> 
     minted["pair_command"] = command
     run = minted.setdefault("run", {})
     run["pair"] = command
+    # The one line the card shows first. The steps below stay for anyone who
+    # wants to run each one, and for a bastion older than pairing codes.
+    minted["pairing_code"] = pairing_code(minted["enroll"], ca, minted["token"])
+    run["one_line"] = one_line(minted["pairing_code"])
     # The Network app shows install, pair and note as they come, so the CA
     # the pair command names is saved in the install step. The card runs a
     # value's lines together, which would break a PEM copied from it, so the

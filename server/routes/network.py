@@ -124,11 +124,15 @@ async def get_overview():
 
 @router.get("/bastions", dependencies=[Depends(requires_permission("read:topology"))])
 async def get_bastions():
-    """The host's bastion machines (operator_kind='bastion' tokens + heartbeat)."""
+    """The host's bastion machines (operator_kind='bastion' tokens + heartbeat).
+    `pairing_window` says whether setup opens the pairing port to one address,
+    so the Network app can offer a machine on another network before setup."""
     pool = brain_service.get_pool()
     eid = brain_service._entity_id
     from server.network import nac_commit
-    return await nac_commit.bastions_list(pool, eid)
+    out = await nac_commit.bastions_list(pool, eid)
+    out["pairing_window"] = _opens_pairing_window()
+    return out
 
 
 @router.get("/bastions/directory", dependencies=[Depends(requires_permission("read:topology"))])
@@ -352,19 +356,37 @@ async def setup_bastion(request: Request):
     the pair command shown is that TCP pairing; and where the server's firewall
     keeps the enroll port closed (CSERIES_DOOR_HELPER), a fresh passkey check is
     needed first, and the port is opened to the requester's address for the
-    pairing window, which the answer gives (pairing_window)."""
+    pairing window, which the answer gives (pairing_window). `pair_from` in
+    the body opens it to that address instead, for a machine on another
+    network than the browser's."""
     pool = brain_service.get_pool()
     if not pool:
         raise HTTPException(503, "brain pool not ready")
     eid = brain_service._entity_id
     body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
-    from server.network import door_helper, local_bastion, nac_commit
-    standalone = local_bastion.standalone()
-    window = await _open_pairing_window(request) if standalone and door_helper.helper_path() else None
+    from server.network import bastion_enroll, nac_commit
+    # `replaces`: the card's own unredeemed token, when the owner asks from the
+    # card for a window to another address. Checked before anything opens; it
+    # is ended only once the new window is open, so a refusal here or there
+    # leaves the card's line working (nac_commit.setup_bastion).
+    replaces = None
+    if body.get("replaces") not in (None, ""):
+        replaces = bastion_enroll.pairing_token_secret_hash(body.get("replaces"))
+        if replaces is None:
+            raise HTTPException(400, "replaces must be the pairing token this card was given.")
+        # Before the helper is asked, so a token already used, expired or
+        # replaced (a second click) spends none of the hour's openings.
+        if not await bastion_enroll.pairing_token_live(pool, replaces):
+            raise HTTPException(409, nac_commit.REPLACED_TOKEN_GONE)
+    window = (await _open_pairing_window(request, body.get("pair_from"))
+              if _opens_pairing_window() else None)
     try:
-        minted = await nac_commit.setup_bastion(pool, eid, (body.get("name") or ""), window=window)
+        minted = await nac_commit.setup_bastion(pool, eid, (body.get("name") or ""), window=window,
+                                                replaces=replaces)
     except nac_commit.CommitError as e:
         raise HTTPException(e.status, e.detail)
+    if window:
+        await _after_window(pool, minted, window, replaces)
     return minted
 
 
@@ -377,10 +399,70 @@ def _from_remote_address(request: Request) -> bool:
     return trusted_proxies.from_remote_address(request)
 
 
-async def _open_pairing_window(request: Request) -> dict:
-    """Open the enroll port to the requester for the pairing window, after
-    the owner's passkey check in the last five minutes. The requester is the
-    socket peer, or behind a trusted proxy the address it forwarded for."""
+# The address each pairing window this process opened was for, by its token's
+# secret hash, so replacing a card's token can shut the window it no longer
+# needs. Kept for a token's lifetime and no longer; a restart forgets them,
+# and those windows then close at the end of their own 15 minutes.
+_WINDOW_OF: dict[bytes, tuple[str, float]] = {}
+_WINDOW_OF_MAX = 256
+
+
+async def _after_window(pool, minted: dict, window: dict, replaces: Optional[bytes]) -> None:
+    """Remember which address this token's window opened to; and when it
+    replaced a card's token whose window went to another address, ask the
+    helper to shut that one (door_helper.close_pairing). The same address
+    is left alone: the open just gave it a fresh window. So is an address
+    another unredeemed token's window went to (a second setup from the same
+    browser): the helper holds an address once, and shutting it would leave
+    that token's line no way in. A close that fails, or a token's state that
+    can't be read, is logged, never the request's failure: the window ends
+    by itself."""
+    import time
+    from server.network import bastion_enroll, door_helper
+    now = time.monotonic()
+    for k in [k for k, (_a, at) in _WINDOW_OF.items() if now - at > bastion_enroll.PAIRING_TTL_SECONDS]:
+        del _WINDOW_OF[k]
+    old = _WINDOW_OF.pop(replaces, None) if replaces is not None else None
+    new = bastion_enroll.pairing_token_secret_hash(minted.get("token"))
+    if new is not None:
+        while len(_WINDOW_OF) >= _WINDOW_OF_MAX:
+            del _WINDOW_OF[next(iter(_WINDOW_OF))]
+        _WINDOW_OF[new] = (window["address"], now)
+    if old and old[0] != window["address"]:
+        others = [k for k, (a, _at) in _WINDOW_OF.items() if a == old[0] and k != new]
+        try:
+            for k in others:
+                if await bastion_enroll.pairing_token_live(pool, k):
+                    logger.info("pairing port to %s left open: another unredeemed token's window "
+                                "is there", old[0])
+                    return
+        except Exception as e:
+            logger.warning("pairing port to %s left open: whether another token still needs it "
+                           "could not be read (%s); it closes when its window ends", old[0], e)
+            return
+        try:
+            await door_helper.close_pairing(old[0])
+            logger.info("pairing port closed to %s: its token was replaced", old[0])
+        except door_helper.HelperError as e:
+            logger.warning("pairing port to %s did not close (%s); it closes when its window ends",
+                           old[0], e)
+
+
+def _opens_pairing_window() -> bool:
+    """Whether setup opens a pairing window here: a standalone Host whose
+    server's firewall keeps the enroll port shut (CSERIES_DOOR_HELPER)."""
+    from server.network import door_helper, local_bastion
+    return bool(local_bastion.standalone() and door_helper.helper_path())
+
+
+async def _open_pairing_window(request: Request, pair_from=None) -> dict:
+    """Open the enroll port for the pairing window, after the owner's passkey
+    check in the last five minutes. It opens to the requester, the socket peer
+    or behind a trusted proxy the address it forwarded for; or, when the owner
+    named one (`pair_from`), to that address instead: a machine on another
+    network than the browser's, which could never pair otherwise. Either way
+    it is one public unicast address, and the helper's own cap on openings
+    applies (cseries-door-helper)."""
     from server import owner_passkeys, trusted_proxies
     from server.home_origin import HOME
     from server.middleware.owner_session import live_session
@@ -399,18 +481,30 @@ async def _open_pairing_window(request: Request) -> dict:
         raise HTTPException(403, "Pairing a machine needs your passkey in the last five minutes: "
                                  f"open {HOME.origin}/passkey, confirm there with your passkey, then "
                                  "set up the bastion again.")
-    seen = trusted_proxies.visitor(request.client.host if request.client else None,
-                                   request.headers.get("x-forwarded-for"))
-    addr = door_helper.public_address(seen)
-    if not addr:
-        raise HTTPException(400, "The pairing port opens only to a public address, and this "
-                                 f"request came from {seen}.")
+    if pair_from not in (None, ""):
+        if not isinstance(pair_from, str) or len(pair_from) > 64:
+            raise HTTPException(400, "pair_from must be one IP address.")
+        addr = door_helper.public_address(pair_from)
+        if not addr:
+            raise HTTPException(400, f"{pair_from.strip()} is not a public address. Give the public "
+                                     "address of the machine you are pairing, as a site that shows "
+                                     "your IP address reports it on that machine.")
+        browser = False
+    else:
+        seen = trusted_proxies.visitor(request.client.host if request.client else None,
+                                       request.headers.get("x-forwarded-for"))
+        addr = door_helper.public_address(seen)
+        if not addr:
+            raise HTTPException(400, "The pairing port opens only to a public address, and this "
+                                     f"request came from {seen}.")
+        browser = True
     try:
         expires = await door_helper.open_pairing(addr)
     except door_helper.HelperError as e:
         raise HTTPException(502, f"The pairing port did not open: {e}")
-    logger.info("pairing port opened to %s for %ds", addr, expires)
-    return {"address": addr, "expires_in_s": expires}
+    logger.info("pairing port opened to %s for %ds (%s)", addr, expires,
+                "this browser" if browser else "an address the owner gave")
+    return {"address": addr, "expires_in_s": expires, "browser": browser}
 
 
 @router.post("/bastions/redeem")

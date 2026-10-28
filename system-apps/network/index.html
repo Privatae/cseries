@@ -137,6 +137,20 @@
                              names the count so the button says what it will do. -->
                         <button class="cseries-btn" id="gw-update-all" hidden></button>
                         <button class="cseries-btn primary" id="gw-add">Set up a bastion</button>
+                        <!-- Shown only where setup opens the pairing port to one
+                             address (GET /api/network/bastions answers
+                             pairing_window), so a machine on another network
+                             gets one setup and one window, to its address. -->
+                        <details class="net-pair-elsewhere" id="gw-add-elsewhere" hidden>
+                            <summary aria-controls="gw-add-elsewhere-form">Pairing a machine on another network?</summary>
+                        </details>
+                    </div>
+                    <!-- The choice's form opens here, beneath the toolbar, so the
+                         choice stays where it is (app.js syncElsewhereForm). -->
+                    <div class="net-pair-elsewhere-form" id="gw-add-elsewhere-form" hidden>
+                        <p>Give that machine's public address, as a site that shows your IP address reports it on that machine. Its line then pairs from there, and this Host's pairing port opens to that address only.</p>
+                        <input id="gw-add-elsewhere-addr" class="cseries-input" autocomplete="off" spellcheck="false" placeholder="its public address, like 203.0.113.7">
+                        <button class="cseries-btn" id="gw-add-elsewhere-go">Set up a bastion for this address</button>
                     </div>
                 </div>
                 <div class="net-block" id="egress-status-block">

@@ -494,7 +494,7 @@ async def part_m(pool, *, cap: str, proxy_port: int, state_dir: str, first_bot: 
         held, why = await asyncio.to_thread(pod.limit_applied, limit_mi)
         if not K.limit_held(held, why, limit_mi):
             return None
-        probers.append(asyncio.create_task(pod.probe_forever()))
+        probers.append(pod.probing())
         return pod
 
     async def verdict(case: str, pod: K.Pod, n0: int, ordered: bool, done_texts: list) -> None:
@@ -532,7 +532,7 @@ async def part_m(pool, *, cap: str, proxy_port: int, state_dir: str, first_bot: 
                                    for i in range(3)), 240)
         await verdict("three replies at once, one picture each", pod, n0, False,
                       [f"Reply a{i} done." for i in range(3)])
-        await asyncio.to_thread(pod.stop)
+        await pod.kill()
 
         forget_replies()
         pod = await start_pod()
@@ -545,7 +545,7 @@ async def part_m(pool, *, cap: str, proxy_port: int, state_dir: str, first_bot: 
         await dc_push(PERSON, "Send me three", reply_to=first_bot)
         await wait_for(lambda: "Sent three." in texts(dc_sends(n0, DM[PERSON])), 240)
         await verdict("one reply with three pictures", pod, n0, True, ["Sent three."])
-        await asyncio.to_thread(pod.stop)
+        await pod.kill()
 
         for case, m in MEMORY.items():
             print(f"  MEMORY  pod, {case}: now {(m.get('current_kib') or 0) / 1024:.1f} MiB "

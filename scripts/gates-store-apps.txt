@@ -49,6 +49,12 @@ test_connector_slack_example.py      slack                   scripts/connector_g
 test_connector_discord_example.py    discord                 scripts/connector_gate_kit.py
 test_connector_permanent_failures.py telegram,slack,discord
 test_connector_runtime_image_race.py telegram,slack,discord  scripts/connector_gate_kit.py
+# A gate's own kill of a pod lets the kubelet probe on its way come back before
+# the container goes, so check M still finds a probe in every pod; a stand-in
+# docker on PATH, no container, no database, no network. It loads the
+# Telegram gate's Pod and reads check M in all three gates by path, not by
+# import, so the three gate files are named here: a change to one selects it.
+test_connector_pod_probe_kill.py     telegram,slack,discord  scripts/connector_gate_kit.py scripts/test_connector_telegram_example.py scripts/test_connector_slack_example.py scripts/test_connector_discord_example.py
 
 # The creative apps (kind: process, image: creative): their MCP bridge and the
 # toolchain image they run in.

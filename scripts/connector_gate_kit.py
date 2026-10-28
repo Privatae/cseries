@@ -1119,6 +1119,13 @@ def passed_line() -> str:
     return "ALL GATES PASSED" + (" — NOT RUN: " + "; ".join(NOT_RUN) if NOT_RUN else "")
 
 
+# The kubelet's readiness probe runs every PROBE_PERIOD_S in a gate's pod. A
+# kill waits up to PROBE_SETTLE_S for the probe on its way, the time the
+# gates' cleanup already gives their probers.
+PROBE_PERIOD_S = 5
+PROBE_SETTLE_S = 30
+
+
 class Pod:
     """A connector app's pod as the operator renders it: the app's container
     from the runtime image, uid 1000, the app's files at /app-src (the init
@@ -1139,6 +1146,8 @@ class Pod:
         self.port = free_port()
         self.name = f"{kind}-{os.getpid()}-{self.port}"
         self._stop = asyncio.Event()
+        self._killed = False
+        self._prober: asyncio.Task | None = None
         self._logs: str | None = None
         self.probes: list[int] = []
         labels = maker_labels(kind)
@@ -1172,19 +1181,39 @@ class Pod:
     def limit_applied(self, limit_mi: int) -> tuple[bool, str]:
         return limit_applied(self.name, limit_mi)
 
-    async def probe_forever(self) -> None:
+    def probing(self) -> asyncio.Task:
+        """Start the kubelet's probe in it, every PROBE_PERIOD_S; kill() waits
+        for this task."""
+        self._prober = asyncio.create_task(self._probe_forever())
+        return self._prober
+
+    async def _probe_forever(self) -> None:
         # The operator's probe command, verbatim but for the port and path.
         cmd = ('case "$POD_IP" in *:*) H="[$POD_IP]";; *) H="$POD_IP";; esac; '
                f'curl --noproxy "*" -gfsS -m 3 "http://$H:{self.port}/health"')
-        while not self._stop.is_set():
+        while True:                              # at least one probe, however soon the kill
             p = await asyncio.create_subprocess_exec(
                 "docker", "exec", self.name, "sh", "-c", cmd,
                 stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
             rc = await p.wait()
-            if not self._stop.is_set():          # a probe cut short by the stop is not one
+            if not self._killed:                 # a probe the container's removal cut short is not one
                 self.probes.append(rc)
             with contextlib.suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(self._stop.wait(), 5)
+                await asyncio.wait_for(self._stop.wait(), PROBE_PERIOD_S)
+            if self._stop.is_set():
+                return
+
+    async def kill(self) -> None:
+        """The gate's own kill of the pod: no new probe starts, the probe on
+        its way comes back from the live container, then stop(). A kill that
+        cut the only probe short left the pod with none, and check M read that
+        as a pod whose probe never answered. A probe still out after
+        PROBE_SETTLE_S is a failed one: the kill goes ahead and the pod shows
+        no answer for it."""
+        self._stop.set()
+        if self._prober is not None:
+            await asyncio.wait({self._prober}, timeout=PROBE_SETTLE_S)
+        await asyncio.to_thread(self.stop)
 
     def read(self, path: str) -> str:
         r = docker("exec", self.name, "cat", path)
@@ -1221,10 +1250,12 @@ class Pod:
         return (r.stdout or "") + (r.stderr or "")
 
     def stop(self) -> None:
-        """Kill it (SIGKILL, as a pod is killed), keeping what it printed."""
+        """Kill it (SIGKILL, as a pod is killed), keeping what it printed.
+        The gate's cases kill through kill(); this is the cleanup's."""
         if self._logs is None:
             self._stop.set()
             self._logs = self.logs()
+            self._killed = True
             docker("rm", "-f", self.name, timeout=120)
             PODS.discard(self.name)
             self.net.close(PODS)

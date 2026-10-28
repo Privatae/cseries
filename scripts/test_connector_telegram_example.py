@@ -1076,6 +1076,8 @@ class Pod:
         self.port = free_port()
         self.name = f"telegram-pod-{os.getpid()}-{self.port}"
         self._stop = asyncio.Event()
+        self._killed = False
+        self._prober: asyncio.Task | None = None
         self._logs: str | None = None
         self.probes: list[int] = []
         labels = maker_labels(POD_KIND)
@@ -1106,19 +1108,38 @@ class Pod:
         import connector_gate_kit as kit
         return kit.limit_applied(self.name, limit_mi)
 
-    async def probe_forever(self) -> None:
+    def probing(self) -> asyncio.Task:
+        """Start the kubelet's probe in it, as connector_gate_kit.Pod does;
+        kill() waits for this task."""
+        self._prober = asyncio.create_task(self._probe_forever())
+        return self._prober
+
+    async def _probe_forever(self) -> None:
+        import connector_gate_kit as kit
         # The operator's probe command, verbatim but for the port and path.
         cmd = ('case "$POD_IP" in *:*) H="[$POD_IP]";; *) H="$POD_IP";; esac; '
                f'curl --noproxy "*" -gfsS -m 3 "http://$H:{self.port}/health"')
-        while not self._stop.is_set():
+        while True:                              # at least one probe, however soon the kill
             p = await asyncio.create_subprocess_exec(
                 "docker", "exec", self.name, "sh", "-c", cmd,
                 stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
             rc = await p.wait()
-            if not self._stop.is_set():          # a probe cut short by the stop is not one
+            if not self._killed:                 # a probe the container's removal cut short is not one
                 self.probes.append(rc)
             with contextlib.suppress(asyncio.TimeoutError):
-                await asyncio.wait_for(self._stop.wait(), 5)
+                await asyncio.wait_for(self._stop.wait(), kit.PROBE_PERIOD_S)
+            if self._stop.is_set():
+                return
+
+    async def kill(self) -> None:
+        """The gate's own kill, as connector_gate_kit.Pod.kill: the probe on
+        its way comes back from the live container first, so case 3's kill
+        of a pod seconds old does not leave it with no probe."""
+        import connector_gate_kit as kit
+        self._stop.set()
+        if self._prober is not None:
+            await asyncio.wait({self._prober}, timeout=kit.PROBE_SETTLE_S)
+        await asyncio.to_thread(self.stop)
 
     def read(self, path: str) -> str:
         r = _docker("exec", self.name, "cat", path)
@@ -1148,10 +1169,12 @@ class Pod:
         return (r.stdout or "") + (r.stderr or "")
 
     def stop(self) -> None:
-        """Kill it (SIGKILL, as a pod is killed), keeping what it printed."""
+        """Kill it (SIGKILL, as a pod is killed), keeping what it printed.
+        The gate's cases kill through kill(); this is the cleanup's."""
         if self._logs is None:
             self._stop.set()
             self._logs = self.logs()
+            self._killed = True
             _docker("rm", "-f", self.name, timeout=120)
             PODS.discard(self.name)
             self.net.close(PODS)
@@ -1231,7 +1254,7 @@ async def part_m(pool, *, cap: str, proxy_port: int, state_dir: str, first_bot: 
         import connector_gate_kit as kit
         if not kit.limit_held(held, why, limit_mi, check):
             return None
-        probers.append(asyncio.create_task(pod.probe_forever()))
+        probers.append(pod.probing())
         return pod
 
     async def three_held(go: asyncio.Event, tag: str) -> list:
@@ -1270,7 +1293,7 @@ async def part_m(pool, *, cap: str, proxy_port: int, state_dir: str, first_bot: 
                                    for i in range(3)), 240)
         await verdict("three replies at once, one picture each", pod, n0, False,
                       [f"Reply a{i} done." for i in range(3)])
-        await asyncio.to_thread(pod.stop)
+        await pod.kill()
 
         # 2. One reply with three pictures.
         forget_replies()
@@ -1284,7 +1307,7 @@ async def part_m(pool, *, cap: str, proxy_port: int, state_dir: str, first_bot: 
         tg_push(PERSON, "Send me three", reply_to=first_bot)
         await wait_for(lambda: "Sent three." in texts(tg_sends(n0, PERSON)), 240)
         await verdict("one reply with three pictures", pod, n0, True, ["Sent three."])
-        await asyncio.to_thread(pod.stop)
+        await pod.kill()
 
         # 3. A restart: three replies on their way are saved, the pod is
         #    killed, and the next one picks all three up at once.
@@ -1301,7 +1324,7 @@ async def part_m(pool, *, cap: str, proxy_port: int, state_dir: str, first_bot: 
             return 0
         check("M the three replies on their way are in the pod's state file",
               await wait_for(lambda: _saved() == 3, 30), _saved())
-        await asyncio.to_thread(pod.stop)            # killed, SIGKILL, mid-reply
+        await pod.kill()            # killed, SIGKILL, mid-reply
         pod = await start_pod()
         if pod is None:
             return
@@ -1312,6 +1335,9 @@ async def part_m(pool, *, cap: str, proxy_port: int, state_dir: str, first_bot: 
                       [f"Reply c{i} done." for i in range(3)])
         check("M ...from the state file, after the restart",
               pod.logs().count("after a restart") == 3, pod.logs()[-1500:])
+        # The last pod too: check M reads every pod's probes once its kill
+        # let the probe on its way come back, as the other gates' last case.
+        await pod.kill()
 
         for case, m in MEMORY.items():
             print(f"  MEMORY  pod, {case}: peak {(m.get('peak_kib') or 0) / 1024:.1f} MiB of "

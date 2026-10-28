@@ -16,7 +16,7 @@ Your Host reads your message and decides what kind of work it is. It can answer 
 
 ## What happens before the model sees my message?
 
-Plain code runs first, with no model involved:
+Plain code runs first, and no model decides anything in it:
 
 1. **Secrets are cut out.** Text that has the shape of a known secret, such as a provider API key, a private key, an access token or a password inside a link, is removed from your message before it can reach the model or memory. Keys belong in the Keys app.
 2. **Tricks are screened.** Text that tries to fake a boundary in the conversation, or tells the Host to ignore its rules, is stripped out and the turn is flagged.
@@ -33,10 +33,10 @@ No. There is no separate model sorting your message before the Host sees it, and
 
 - **An answer.** Conversation needs nothing more.
 - **A read.** The Host can read your projects, apps, network, calendar, memory and files directly to answer you. Reading changes nothing.
-- **One known operation.** When the Host already knows the exact action and its arguments, such as revoking a network rule, restarting an app, installing one from the store, switching a model or scheduling a task, it makes that one call itself, with no agent and no model between the decision and the action. The list of operations allowed to run this way is closed, and every tool inside your Host is on it or is a read; a tool nobody has classified fails a check before it ships, rather than being handed to an agent. The one addition is a tool on an MCP server you have connected and approved in the Network app, which runs this way too, behind the same checks. Everything inside your Host, including your projects and repositories, its own code, your apps, settings and network, the Host does itself.
+- **One known operation.** When the Host already knows the exact action and its arguments, such as revoking a network rule, restarting an app, installing one from the store, switching a model or scheduling a task, it makes that one call itself, with no agent and no model between the decision and the action. The list of operations allowed to run this way is closed, and every tool inside your Host is on it or is a read; a tool nobody has classified fails a check before it ships, rather than being handed to an agent. Two additions run this way too, behind the same checks: a tool on an MCP server you have connected and approved in the Network app, and a function your Host wrote in its own database. Everything inside your Host, including your projects and repositories, its own code, your apps, settings and network, the Host does itself.
 - **A command on your machine.** On a machine it anchors, if you allowed it at the machine itself, the Host can run commands there as root, one at a time, in a separate thread called Root that reads nothing untrusted: no web, no messages from others, no memory and no agents.
 - **A dispatched agent.** For untrusted work outside your Host: reading the open web, someone else's code, or a message from another Host or person. The Host writes the agent a brief, picks its tools, and grants it only the capabilities the task needs, so nothing it reads can act on your Host. Work inside your Host, however many steps it takes, the Host does itself. The agent starts with nothing, works in the background while you keep talking, and hands its result back to the Host. [Agents](wiki:agents) covers this.
-- **Code.** Building or changing software goes to a coding engine you chose, in a disposable sandbox beside the Host, on your own key or sign-in, through the Host's own build tools. Neither an agent nor a known operation can run code. [Coding agents](wiki:coding-agents) covers the engines.
+- **Code.** Building or changing software goes to a coding engine you chose, in a disposable sandbox beside the Host, on your own key or sign-in, through the Host's own build tools. No agent can run code. [Coding agents](wiki:coding-agents) covers the engines.
 
 When the Host sends an agent off, its reply tells you what each agent is doing, so you can see at once if it misread you.
 

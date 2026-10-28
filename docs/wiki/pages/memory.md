@@ -17,7 +17,7 @@ Your Host remembers by writing things down. Every turn is stored in its own data
 
 ## What gets written down?
 
-Every turn: what was said, who said it, and the moment it was said. No language model runs to record a turn. It is stored, and turned into a vector for search by meaning if you have set that up, and that is all. Each turn belongs to the place it happened, whether a project, an app or a conversation with another Host, so your Host reads back the thread it is standing in rather than everything you have ever said. A reply that waits for work your Host started is stored before it waits, as it stands then, and completed in place when the turn ends. Once a turn has ended, it is never rewritten.
+Every turn: what was said, who said it, and the moment it was said. No language model runs to record a turn. A key, a token or a password in a link that you paste into a message is replaced by a marker first; the rest is stored, and turned into a vector for search by meaning if you have set that up, and that is all. Each turn belongs to the place it happened, whether a project, an app or a conversation with another Host, so your Host reads back the thread it is standing in rather than everything you have ever said. A reply that waits for work your Host started is stored before it waits, as it stands then, and completed in place when the turn ends. Once a turn has ended, it is never rewritten.
 
 ## How does it decide what to keep?
 

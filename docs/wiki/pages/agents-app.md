@@ -21,7 +21,7 @@ Four kinds of work, on the tabs **All**, **Dispatched**, **On the pool** and **S
 
 - **Dispatched**: an [agent](wiki:agents) your Host sent off to do one task. A model runs.
 - **On the pool**: a build or a comparison running on your [coding engines](wiki:coding-agents). A model runs there too.
-- **Scheduled**, which holds two kinds. A scheduled turn is work your Host does on a clock by thinking it through each time, so a model runs on every run; one that repeats is set only after you approve it (see [Approvals](wiki:approvals)). A standing job is one fixed operation repeated on a schedule, and no model runs at all.
+- **Scheduled**, which holds two kinds. A scheduled turn is work your Host does on a clock by thinking it through each time, so a model runs on every run; one that repeats is set only after you approve it (see [Approvals](wiki:approvals)). A standing job is one fixed operation run on a schedule, and no model runs at all.
 
 A strip at the top counts how many scheduled runs needed a model and how many did not.
 

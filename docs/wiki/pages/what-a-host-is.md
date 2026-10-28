@@ -1,6 +1,6 @@
 ---
 title: What a Host is
-summary: A Host is one AI that runs on your own machine, in a Linux virtual machine, as two containers, the Host and its PostgreSQL database. Its memory, apps and files live on volumes that survive an update, and its dashboard answers only on your own machine.
+summary: A Host is one AI that runs on your own machine, in a Linux virtual machine, as two containers, the Host and its PostgreSQL database. Its memory, apps and files live on volumes that survive an update, and its dashboard is published only on your own machine.
 section: host
 order: 10
 questions:
@@ -31,7 +31,7 @@ Beside them are volumes that survive when the containers are replaced. One holds
 
 ## What does the network see of it?
 
-The dashboard is published on 127.0.0.1 only, so only your own machine can reach it, and it serves plain HTTP. Two more ports are published the same way for the bastion on your machine: one where the bastion pairs and one where it connects in. Nothing is open to the public internet. To use the Host from another machine you put your own reverse proxy in front of it, one that ends TLS; the README says how.
+The dashboard is published on 127.0.0.1 only, so only your own machine can reach it, and it serves plain HTTP. Two more ports are published the same way for the bastion on your machine: one where the bastion pairs and one where it connects in. Nothing is open to the public internet. To use the Host from another machine you put your own reverse proxy in front of it, one that ends TLS; the README points to the steps. A Host that has joined the [Privatae network](wiki:the-privatae-network) can use remote access instead, through a connection it makes out to the network.
 
 ## Where does the model run?
 
@@ -39,4 +39,4 @@ Outside the Host. For each of its roles the Host uses the provider and model you
 
 ## Can Privatae get into my Host?
 
-Privatae does not run your Host, and a Host on its own accepts nothing from Privatae: it has no platform connection to receive anything on. If you join the Privatae network, your Host makes one outbound connection to it and refuses any request the network sends it to run; [joining the Privatae network](wiki:the-privatae-network) says what that connection carries. [How your Host is protected](wiki:how-your-host-is-protected) covers the walls around it.
+Privatae does not run a Host on your own machine, and a Host on its own accepts nothing from Privatae: it has no platform connection to receive anything on. If you join the Privatae network, your Host connects out to it and refuses any request the network sends it to run; [joining the Privatae network](wiki:the-privatae-network) says what that carries. On a C-Series Cloud machine, which is not on sale yet, Privatae runs the machine, and the Host's data is on an encrypted disk that only your passkey or your recovery key opens. [How your Host is protected](wiki:how-your-host-is-protected) covers the walls around it.

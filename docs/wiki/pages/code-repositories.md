@@ -25,7 +25,7 @@ A Workbench project keeps one Code Approval open and adds each landed phase to i
 
 ## How do I approve a change?
 
-Open the Code Approval in the Workbench and choose Approve, Ask for changes, or Not now. Approve opens a separate approval page, which by default is the Privatae site, that shows you the change as your own forge account sees it; confirming there merges it as you, pinned to the exact version you were shown. On a git server you connected, Approve opens the change's own page on that server instead, and you merge it there signed in as yourself; your Host sees the merge the next time it reads the server, and the chat says whether you or your Host approved it. Approval happens in that page, outside your Host's own pages, so your Host cannot press Approve for you.
+Open the Code Approval in the Workbench and choose Approve, Ask for changes, or Not now. When your Host's install names Privatae's git server, Approve opens a separate approval page on the Privatae site that shows you the change as your own forge account sees it; confirming there merges it as you, pinned to the exact version you were shown. On a git server you connected, Approve opens the change's own page on that server instead, and you merge it there signed in as yourself; your Host sees the merge the next time it reads the server, and the chat says whether you or your Host approved it. Approval happens in that page, outside your Host's own pages, so your Host cannot press Approve for you.
 
 Ask for changes sends your words to the Host, and the Code Approval shows that changes were asked for until the Host saves a new version. The Host merges on its own only when you turn on Auto-Approve for that project, and only where it is allowed to merge.
 

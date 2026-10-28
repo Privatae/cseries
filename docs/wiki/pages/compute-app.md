@@ -20,13 +20,13 @@ No. Model calls run on your own keys or sign-ins, and your providers bill you fo
 
 ## Why are some amounts labelled as estimates?
 
-Your providers bill you under your own key, and the Host never sees that bill, so Compute works the figure out from token counts and the provider's published rates, and says so. When a coding engine reported a cost for only some of its runs, the figure says how many of them it covers. Usage, such as seconds, tokens or bytes, is counted separately from estimates and is never added to them.
+Your providers bill you under your own key, and the Host never sees that bill, so Compute works the figure out from token counts and the provider's published rates, or takes the cost a coding engine reported, and says so. When a coding engine reported a cost for only some of its runs, the figure says how many of them it covers. Usage, such as seconds, tokens or bytes, is counted separately from estimates and is never added to them.
 
 ## What are the views?
 
 - **Projects**: what each project has used, its tokens, and how much of its context was served from a provider's cache.
 - **Billing**: the meters Compute knows about, one row each, with how each is measured. Billing is not part of this release, so nothing on this tab is charged. A meter that is not measured on your Host says so instead of showing a guessed number.
-- **Harnesses**: each coding engine, and each engine-and-model pair, with runs that succeeded and failed, median and 95th-percentile run times, and cost per accepted run. A run counts as accepted when you shipped it, never because a model judged it good.
+- **Harnesses**: each coding engine, and each engine-and-model pair, with runs that succeeded and failed, median and 95th-percentile run times, and cost per accepted run. A run counts as accepted when you picked it or its work landed in your project, never because a model judged it good.
 - **Runs**: one project, one engine, one run, down to the tail of its transcript.
 - **Inference**: estimated model spend by background job and by model, including tokens read from and written to a provider's cache.
 

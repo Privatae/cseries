@@ -1,6 +1,6 @@
 ---
 title: Workbench
-summary: The Workbench is where you build with your Host. Each project is a conversation on one Code Repository, its builds run live beside the chat, and every change comes to you as a Code Approval. It comes with every Host.
+summary: The Workbench is where you build with your Host. Each project is a conversation with your Host, its builds run live beside the chat, and, once you connect a git server, every change comes to you as a Code Approval. It comes with every Host.
 section: apps
 order: 10
 questions:
@@ -13,11 +13,11 @@ questions:
 app: workbench
 ---
 
-The Workbench is the window where you build things with your Host. Each project is a conversation with your Host plus the work itself, on one Code Repository, and everything it builds runs where you can watch it. It comes with every Host. [The Workbench](wiki:workbench) explains how a build is planned and carried out.
+The Workbench is the window where you build things with your Host. Each project is a conversation with your Host plus the work itself, and everything it builds runs where you can watch it. It comes with every Host. [The Workbench](wiki:workbench) explains how a build is planned and carried out.
 
 ## How do I start a project?
 
-Write what you want in the Index, the tab under the book's tabs, and press Enter: your Host gives your message to the page it belongs on, or starts a new project when none fits. If it picks the wrong page, choose “starts a new page” under the box and Enter makes a page of its own for your words instead. A book with no pages yet offers Start instead. A new project gets a new Code Repository by default; in Start you can also pick one your Host can already reach. A repository that already belongs to another project, or that your Host can only read, is offered as a fork instead. [Code repositories](wiki:code-repositories) covers them in full.
+Write what you want in the Index, the tab under the book's tabs, and press Enter: your Host gives your message to the page it belongs on, or, when none clearly fits, to the page you have open. If it picks the wrong page, choose “starts a new page” under the box and Enter makes a page of its own for your words instead. A book with no pages yet offers Start instead. Once a git server is connected, a new project gets a new Code Repository by default; in Start you can also pick one your Host can already reach. A repository that already belongs to another project, or that your Host can only read, is offered as a fork instead. [Code repositories](wiki:code-repositories) covers them in full.
 
 In the chat you talk the work through with your Host. You can attach files to a message, and they become documents your Host can read. While your Host is working, Send becomes Nudge: your words reach it before its next step, without stopping it. Holding Send, or Enter, asks your Host to think harder about that one message, where its model offers that. The plan appears as phases, and a phase that needs your say shows "awaiting your approval" with an Approve button.
 

@@ -22,7 +22,7 @@ Seven: Claude Code, Codex, Cursor, Grok, Kimi Code and Antigravity CLI each run 
 
 Not in your Host. Each engine has its own container beside your Host, which is started when a build needs it and stopped when the build releases it or it sits idle. The container's working files go with it when it stops. Your Host holds the conversation, the plan and the memory; the engine does the coding.
 
-A build has no time limit. By default an engine is stopped only when it shows no sign of life: no output, no processor use and no data moving for ten minutes, or one call to its model with nothing coming back for an hour. A quiet test suite or a long download is work, and is never stopped. Whatever the engine had written is kept.
+A build has no time limit. By default an engine is stopped only when it looks stuck: no output, no processor use and no data moving for ten minutes, one call to its model with nothing coming back for an hour, two hours without a model or tool step, or one step still running after two hours when it asked for no time of its own. A quiet test suite or a long download is work, not silence. Whatever the engine had written is kept.
 
 ## Whose account pays for it?
 
@@ -32,7 +32,7 @@ The others use an API key you keep in the [Keys app](wiki:keys-app). Either way,
 
 ## What if the engine I asked for is not connected?
 
-The build is refused before any container starts, and the refusal names the engines that are connected. Your Host never swaps in a different engine. A build is also refused before any container starts when the project holds a link that points outside the project, and the refusal names each such link so you can remove it or replace it with a copy. If you have several engines connected and none ticked as default, the build asks which one rather than guessing.
+The build is refused before any container starts, and the refusal names the engines that are connected. Your Host never swaps in a different engine. A build is also refused before any container starts when the project holds a link that points outside the project, and the refusal names those links, up to ten, so you can remove each one or replace it with a copy. If you have several engines connected and none ticked as default, the build asks which one rather than guessing.
 
 ## Can I run several engines on the same task?
 

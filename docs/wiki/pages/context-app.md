@@ -26,7 +26,7 @@ No. Collections are labels. One file can sit in several collections whichever ma
 
 ## What can I add, and what becomes searchable?
 
-Any file: drop it on the window or use Add files. Text, Markdown, JSON (including chat exports) and CSV files are split into pieces and embedded so they can be found by meaning. Pictures, PDFs and other files are stored exactly as they are and found by name or collection. A preview is fetched only when you open the file.
+Any file: drop it on the window or use Add files. Text, Markdown, JSON (including chat exports) and CSV files are split into pieces and embedded so they can be found by meaning. Pictures, PDFs and other files are stored exactly as they are. A PDF, an Office document, an email, a web page or an archive is also read, and its text is embedded the same way; a file your Host cannot read is found by name or collection. A preview is fetched only when you open the file.
 
 ## What does the search box search?
 

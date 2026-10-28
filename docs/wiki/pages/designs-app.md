@@ -1,6 +1,6 @@
 ---
 title: The Designs app
-summary: Designs is a shelf of complete desktops you can look at, try on with one click and take off again, including every desktop your Host has made. It comes with every Host.
+summary: Designs is a shelf of complete desktops you can look at, try on with one click and take off again, including the desktops your Host has made. It comes with every Host.
 section: apps
 order: 10
 questions:
@@ -19,7 +19,7 @@ Designs is a shelf of complete desktops, the whole look of your Host's screen, t
 Two shelves:
 
 - **Ours** holds the house designs. Two come with every Host, **First Light** and **Garnet Silk**, and are there with no connection to anything. A Host with a platform connection also sees the desktops published to the shared design library for everyone.
-- **Yours** holds the designs you have published, plus every desktop made on this Host, published or not.
+- **Yours** holds the desktops made on this Host.
 
 The shared library is a Privatae service that a Host reaches through a platform connection. A Host on its own has none, and the Privatae network does not offer it, so on such a Host **Ours** shows the two built-in designs and **Yours** shows the desktops made on this Host.
 

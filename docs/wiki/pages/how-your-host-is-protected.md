@@ -15,7 +15,7 @@ A Host runs in a Linux virtual machine on your machine and publishes its ports o
 
 ## Is my Host exposed to the internet?
 
-Not by default. The dashboard and the two bastion ports are published on 127.0.0.1 inside the virtual machine and forwarded only to 127.0.0.1 on your machine, so only programs on your own machine can connect to them. The installer's virtual machine mounts none of your folders. The database container has no network port at all: it listens on a Unix socket shared with the Host. To reach the dashboard from other machines you put a reverse proxy that ends TLS in front of it, as the README describes; that is your choice and your proxy's configuration.
+Not by default. The dashboard and the two bastion ports are published on 127.0.0.1 inside the virtual machine and forwarded only to 127.0.0.1 on your machine, so only programs on your own machine can connect to them. The installer's virtual machine mounts none of your folders. The database container has no network port at all: it listens on a Unix socket shared with the Host. To reach the dashboard from other machines you put a reverse proxy that ends TLS in front of it, as the project's guide describes, or, with network membership, turn on remote access; either is your choice.
 
 ## What makes a Host contained?
 

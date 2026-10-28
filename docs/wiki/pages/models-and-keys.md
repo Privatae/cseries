@@ -1,6 +1,6 @@
 ---
 title: Models and keys
-summary: Your Host runs on models you choose, from providers you hold keys for, and its memory search can run on a model on your own machine. You set them per role in the Orchestrator app, your keys are sealed in the Keys app, and Privatae does not sell, proxy or bill model usage.
+summary: Your Host runs on models you choose, from providers you hold keys for or from a model server on a machine of your own. You set them per role in the Orchestrator app, your keys are sealed in the Keys app, and Privatae does not sell, proxy or bill model usage.
 section: host
 order: 50
 questions:
@@ -13,11 +13,11 @@ questions:
   - Where are my API keys kept?
 ---
 
-You bring the models. In the Orchestrator app you choose, for each role your Host has, a provider you hold a key for and one of its models. Your keys are sealed in the Keys app. Privatae is not an inference provider: it does not sell, proxy or bill model usage, and a request goes from your Host straight to the provider you chose.
+You bring the models. In the Orchestrator app you choose, for each role your Host has, a provider you hold a key for, or a model server on a machine of your own, and one of its models. Your keys are sealed in the Keys app. Privatae is not an inference provider: it does not sell, proxy or bill model usage, and a request goes from your Host straight to the provider you chose.
 
 ## Which providers can I use?
 
-The Keys app has slots for OpenRouter, Anthropic, OpenAI, xAI, Google, Kimi, DeepInfra, Together, Fireworks and Groq. Your Host's memory search can also run on an embedding model on your own machine, through the bastion. [Local models](wiki:local-models) explains how.
+The Keys app has slots for OpenRouter, Anthropic, OpenAI, xAI, Google, Kimi, DeepInfra, Together, Fireworks and Groq. A model server on a machine of your own can also serve your Host through the bastion, for its memory search or as its Host model. [Local models](wiki:local-models) explains how.
 
 There is no model built into your Host and none supplied by Privatae. Until you choose one, the Host tells you it has no model. The Getting Started app walks you through adding a key and applying the recommended setup in the Orchestrator.
 
@@ -25,7 +25,7 @@ There is no model built into your Host and none supplied by Privatae. Until you 
 
 One text role:
 
-- **Host model**: the Host itself, in conversation and in its work, including what it keeps in memory as it answers, and the agents it dispatches, which run on the same model unless the Host picks another for a particular task.
+- **Host model**: the Host itself, in conversation and in its work, including what it keeps in memory as it answers, and the agents it dispatches, which run on the same model unless another is named for the task or preferred for that kind of work.
 
 There is no separate review or research model. For a second opinion on a build, ask your Host to have a coding engine review it. When the Host model cannot search the web, a connected coding engine that can (Antigravity or Claude Code) runs the search instead, on that engine's own key or sign-in.
 
@@ -37,7 +37,7 @@ For the text role you pick a provider and a model, and you can add a **fallback 
 
 For coding, yes. Coding engines that have a sign-in of their own, such as Claude Code or Codex, connect by running that vendor's own login inside the engine's container. The vendor's program does the whole exchange, and your Host keeps the resulting sign-in so the engine stays connected. Privatae does not create that sign-in or go through a login page of its own. Other engines run on a key you add in the Keys app. [Coding agents](wiki:coding-agents) covers the engines.
 
-The Host model and its agents run on API keys from the providers above, with one exception: a sign-in with xAI. In the Keys app, press **Sign in with xAI** on the xAI row and finish on xAI's own page; your Host can also start the same sign-in if you ask it to connect Grok. A Host routed to xAI then runs on that sign-in, so it uses the plan you already pay for. If your Host had no model yet, signing in also sets one from xAI that meets the Host model standard, and the Keys app tells you which. While you are signed in, your xAI API key, which bills per token, is not used at all. If the sign-in has expired or xAI turns it away, the Host tells you so rather than switching to the key; press **Reconnect with xAI** on the same row to sign in again. To use the key instead, press **Deactivate** on `harness:grok:auth` in the Vault section of the Keys app. The Orchestrator shows which one your Host is using.
+On the providers above, the Host model and its agents run on API keys, with one exception: a sign-in with xAI. In the Keys app, press **Sign in with xAI** on the xAI row and finish on xAI's own page; your Host can also start the same sign-in if you ask it to connect Grok. A Host routed to xAI then runs on that sign-in, so it uses the plan you already pay for. If your Host had no model yet, signing in also sets one from xAI that meets the Host model standard, and the Keys app tells you which. While you are signed in, your xAI API key, which bills per token, is not used at all. If the sign-in has expired or xAI turns it away, the Host tells you so rather than switching to the key; press **Reconnect with xAI** on the same row to sign in again. To use the key instead, press **Deactivate** on `harness:grok:auth` in the Vault section of the Keys app. The Orchestrator shows which one your Host is using.
 
 ## Where are my keys kept?
 

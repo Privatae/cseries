@@ -32,7 +32,7 @@ When your Host makes several variants of a design, they appear as tabs. **Use th
 
 ## Can I undo a change?
 
-Yes. **History** lists the revisions: every change your Host makes and every edit you make is kept as one. Click a revision to see how the page looked then, and **Restore** to bring it back. A restore is itself a revision, so it can be undone too. Every revision of each artifact is kept, with every file in it; the oldest are removed only when your Host's disk cannot take a new one.
+Yes. **History** lists the revisions: every change your Host makes and every edit you make is kept as one. Click a revision to see how the page looked then, and **Restore** to bring it back. A restore is itself a revision, so it can be undone too. Every revision of each artifact is kept, with every file in it; the oldest are removed only when your Host's disk is too full to take a new one.
 
 ## Can an artifact become my desktop?
 

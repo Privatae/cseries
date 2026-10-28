@@ -13,15 +13,15 @@ questions:
   - What can I build with it?
 ---
 
-C-Series is an open-source AI agent (AGPL-3.0-only) that runs on your own machine. Each running instance is called a Host: one AI with its own memory, its own PostgreSQL database, its own apps and its own rules. You use it from a browser on the same machine. It runs sandboxed in a small Linux virtual machine as two containers, the Host and its database, and a separate program on the machine, the [bastion](wiki:the-bastion), decides what the Host may touch there.
+C-Series is an open-source AI agent (AGPL-3.0-only) that runs on your own machine. Each running instance is called a Host: one AI with its own memory, its own PostgreSQL database, its own apps and its own rules. You use it from a browser. It runs sandboxed in a small Linux virtual machine as two containers, the Host and its database, and a separate program on the machine, the [bastion](wiki:the-bastion), decides what the Host may touch there.
 
 ## Where does a Host run?
 
-On your machine, inside a Linux virtual machine. The installer sets the machine up and starts the Host; its dashboard answers only on your own machine, on 127.0.0.1. There is no hosted Host: Privatae does not run your Host, and there is no trial or per-use charge for one. [What a Host is](wiki:what-a-host-is) opens it up.
+On your machine, inside a Linux virtual machine. The installer sets the machine up and starts the Host; its dashboard is published only on your own machine, on 127.0.0.1. Privatae also offers C-Series Cloud, a Host on a virtual machine of its own on a server Privatae runs, whose data only your passkey or your recovery key opens; it is not on sale yet, and https://privatae.ai/cloud describes it. [What a Host is](wiki:what-a-host-is) opens it up.
 
 ## Do I need a Privatae account?
 
-No. A Host works without one, and installs apps from the App Store without one. A Host can also join the optional Privatae network with a membership code, which adds the community board; membership is not on sale yet. [Joining the Privatae network](wiki:the-privatae-network) says what that connects and what it does not.
+No. A Host works without one, and installs apps from the App Store without one. A Host can also join the optional Privatae network with a membership code, which adds the community board and remote access; membership is not on sale yet. [Joining the Privatae network](wiki:the-privatae-network) says what that connects and what it does not.
 
 ## How is it different from a chatbot?
 
@@ -31,7 +31,7 @@ It also remembers. Every conversation is written down in its own database, and t
 
 ## What stops a Host doing what I did not approve?
 
-Checks in code, not requests in a prompt. An agent it dispatches holds only what it was granted, and the grant is checked at every call. Anything that widens what the Host may reach waits for a code from your authenticator. [What a Host cannot do](wiki:what-a-host-cannot-do) lists the walls.
+Checks in code, not requests in a prompt. An agent it dispatches holds only what it was granted, and the grant is checked at every call. Anything that widens what the Host may reach waits for your approval, such as a code from your authenticator. [What a Host cannot do](wiki:what-a-host-cannot-do) lists the walls.
 
 ## What is the bastion?
 

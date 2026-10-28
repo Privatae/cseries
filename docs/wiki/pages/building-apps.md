@@ -25,9 +25,9 @@ In plain words, a manifest declares:
 - a short description of the app for your Host, so the Host knows what it is and where to find it;
 - its author's terms: whether others may publish a website from it, republish it, or publish their own version of it;
 - for data-bearing apps, which tables hold its records and who owns each row;
-- for a process app in a machine of its own, an MCP server it runs for the Host it is installed on, which installing the app connects to that Host.
+- for a process app in a container of its own, an MCP server it runs for the Host it is installed on, which installing the app connects to that Host.
 
-Your Host checks the manifest when the app is built and refuses any entry it does not recognise, by name. A manifest the Host writes for a project is validated as it is written and rolled back if it is invalid, so a broken one is never kept.
+Your Host checks the manifest when the app is built and refuses any entry it does not recognise, by name. A manifest the Host writes for a project is validated as it is written and removed if it is invalid, so a broken one is never kept.
 
 ## What kinds of app can I build?
 

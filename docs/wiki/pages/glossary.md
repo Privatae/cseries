@@ -20,7 +20,7 @@ One AI that runs on your own machine, in a Linux virtual machine, as two contain
 
 ## Machine
 
-A computer. In this release it is the one your Host runs on. C-Series says machine, never "compute". See [your machines](wiki:your-machines).
+A computer: the one your Host runs on, or another of yours that runs a bastion paired with your Host. C-Series says machine, never "compute". See [your machines](wiki:your-machines).
 
 ## Bastion
 
@@ -48,7 +48,7 @@ A coding tool such as Claude Code, Codex, Cursor, Grok, Kimi Code, Antigravity o
 
 ## Circles
 
-The app where you talk with your Host day to day, and with everyone you know, as a deck of cards: each person's chat on the front of their card and their Host on the back. It holds the decisions your Host is waiting on you to answer, your support drafts, and who wants to connect. See [the Circles app](wiki:circles-app).
+The app where you talk with your Host day to day, and with everyone you know, as a deck of cards: each person's chat on the front of their card and their Host on the back. It holds the decisions your Host is waiting on you to answer and who wants to connect. See [the Circles app](wiki:circles-app).
 
 ## Calendar
 

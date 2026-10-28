@@ -39,7 +39,7 @@ Response Shaping has two settings. **How much your Host explains** has three pos
 
 ## What are Limits?
 
-The Limits tab lists every limit that can stop work you asked for: what one reply or one scheduled turn may spend, how many turns a scheduled task may run in a day, how many repairs a build starts by itself, how long a build, a browser agent or a query on your Host's own data may run, and the rest. Each starts at a default and is yours to change; 0 means no limit, and you can put the default back at any time. Each one says what happens when it is reached and when it last stopped something.
+The Limits tab lists every limit that can stop work you asked for: what one reply or one scheduled turn may spend, how many turns a scheduled task may run in a day, how many repairs a build starts by itself, how long a build, a browser agent or a query on your Host's own data may run, and the rest. Each starts at a default and is yours to change, and you can put the default back at any time. 0 means no limit, except for how long a build may show no activity, which always has one. Each one says what happens when it is reached and when it last stopped something.
 
 When a limit stops work, your Host is told which one and its value, and what was kept. If the work needed more, your Host can ask you to raise it: a card shows the value it recommends and why, and nothing changes unless you choose it. Your Host can read every limit but can never change one.
 

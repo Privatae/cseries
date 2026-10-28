@@ -1,6 +1,6 @@
 ---
 title: Building with the Workbench
-summary: You build by talking to your Host in the Workbench. The Host plans the work in phases, coding engines build it outside the Host, and every change comes back to you as one plain-English Code Approval that you approve.
+summary: You build by talking to your Host in the Workbench. The Host plans the work in phases, coding engines build it outside the Host, and, once you connect a git server, every change comes back to you as one plain-English Code Approval that you approve.
 section: building
 order: 10
 questions:
@@ -13,11 +13,11 @@ questions:
   - What does the bench in the Workbench show?
 ---
 
-The Workbench is where you build things by talking to your Host. Each project is a conversation and the work itself: you say what you want, the Host plans it, coding engines build it, and every change comes back to you as a Code Approval that you approve. The Host does not merge your code unless you turn on Auto-Approve for that project.
+The Workbench is where you build things by talking to your Host. Each project is a conversation and the work itself: you say what you want, the Host plans it, coding engines build it, and, once you connect a git server, every change comes back to you as a Code Approval that you approve. The Host does not merge your code unless you turn on Auto-Approve for that project.
 
 ## What is a project?
 
-A project is one conversation with your Host plus the code it produces. You start one by typing what you want to work on; the Workbench shows any existing projects that match, so you can pick one of those instead. Each project is attached to one Code Repository: a new one made for it, which is the default, or one your Host can already reach. A repository that another project is using, or that your Host can only read, is offered as a copy (a fork) into the new project. See [Code repositories and approvals](wiki:code-repositories).
+A project is one conversation with your Host plus the code it produces. You start one by typing what you want to work on; the Workbench shows any existing projects that match, so you can pick one of those instead. Once a git server is connected, each project is attached to one Code Repository: a new one made for it, which is the default, or one your Host can already reach. A repository that another project is using, or that your Host can only read, is offered as a copy (a fork) into the new project. See [Code repositories and approvals](wiki:code-repositories).
 
 Each project is a page of the Workbench's book, newest first. Tabs on the book's edge turn to the newest seven and light up when something lands on a page you are not reading. The Index, the tab under them, finds any page, open or archived, by its words and its conversation. Writing a message there and pressing Enter gives it to the page your Host picks, which says why it chose that page, or you can have it start a new page instead. Archived pages sit in chapters you name.
 
@@ -41,7 +41,7 @@ You do. Every phase that lands is saved as a commit on one rolling Code Approval
 
 Auto-Approve is your standing permission for the Host to approve its own Code Approvals in one project. It is off by default, sits beside the chat box, and is only offered where the Host is allowed to merge in that repository.
 
-With it on, the Host merges when the last phase of the plan lands, or when a follow-up build lands. It holds off, and tells you why, when the build checks found problems, when git reports a conflict, when the repository's own automated checks have not passed that exact version, or when a review of the change blocked it. Every merge it makes is recorded as the Host's and announced in the project's chat. With Auto-Approve on, a finished app is also installed on your Host, started, and checked that it actually runs.
+With it on, the Host merges when the last phase of the plan lands, or when a follow-up build lands. It holds off, and tells you why, when the build checks found problems, when git reports a conflict, or when the repository's own automated checks have not passed that exact version. Every merge it makes is recorded as the Host's and announced in the project's chat. With Auto-Approve on, a finished app is also installed on your Host, started, and checked that it actually runs.
 
 ## What happens if a phase fails?
 
@@ -51,7 +51,7 @@ When the plan is advancing on its own and a phase fails, it gets one retry on th
 
 Yes, in two ways. Say stop and nothing further starts; work that is already running finishes and is reported.
 
-To end a run now, press **kill** on its run in the conversation, or tell your Host to kill it. That is for a run that keeps working and gets nowhere, which the automatic stop for idle runs never catches. The run ends on its coding engine, what it wrote so far is kept, and the project's plan stops advancing on its own until it is built again. Any other run on the same coding engine at that moment stops with it, and you are told which.
+To end a run now, press **kill** on its run in the conversation, or tell your Host to kill it. That is for a run that keeps working and gets nowhere, which the automatic stop for idle runs never catches. The run ends on its coding engine, what it wrote so far is kept, and the project's plan stops advancing on its own until it is built again. Any other run on the same coding engine at that moment stops with it, and you are told.
 
 ## What is the bench?
 

@@ -16,7 +16,7 @@ Oversight is the list of problems your machines have reported to your Host: one 
 
 ## Where do the findings come from?
 
-From the machines you have connected with the [bastion](wiki:the-bastion). Every five minutes your Host folds what each machine reports into the list: its alert source, what its detection found, checks on how the machine is set up, whether it has stopped checking in, and the findings record the machine keeps for itself. No AI model takes part in this pass. When a machine goes from no critical problems to at least one, the pass runs straight away.
+From the machines you have connected with the [bastion](wiki:the-bastion). Every five minutes your Host folds what each machine reports into the list: its alert source, what its detection found, checks on how the machine is set up, and whether it has stopped checking in; about every fifteen minutes it also reads the findings record the machine keeps for itself. No AI model takes part in this pass. When a machine's alerts or detection go from nothing critical to at least one critical problem, the pass runs straight away.
 
 The pass is a standing job, listed in the [Agents app](wiki:agents-app) with a Stop button. If you stop it, a restart of your Host does not turn it back on.
 

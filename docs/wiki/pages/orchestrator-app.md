@@ -21,7 +21,7 @@ It opens in **Simple** mode, a checklist of four things:
 
 - **Thinking**: pick a provider you hold a key or sign-in for, and one click routes the Host model to a recommended model on it, with an optional backup provider. Recommendations are checked against the provider's live model list when applied, and every route stays visible and editable.
 - **Memory**: an embeddings model, so your Host can recall by meaning. Run it free on a machine of your own, or use a provider.
-- **Seeing**: a model for making images, offered only where the model catalog says the model can make one. Your Host looks at pictures you share with its own Host model, so pick a Host model that reads images.
+- **Seeing**: a model for making images. Where a provider's catalog says which of its models can make one, only those are offered. Your Host looks at pictures you share with its own Host model, so pick a Host model that reads images.
 - **Hearing**: the provider for live voice.
 
 Below the checklist, **What answers when** says which provider and model handles each job and, for a provider you can sign in to, whether your sign-in or your API key answers. If a model fails, you see the error; your Host never quietly swaps in a different one. The only switch to another provider is a backup provider you set yourself, and the answer is marked when the backup gave it.
@@ -32,6 +32,6 @@ Below the checklist, **What answers when** says which provider and model handles
 - **Coding Engines**: Claude Code, Codex, Cursor, Grok, Kimi Code and Antigravity CLI each run on their own vendor's key or sign-in, and show as not connected without it; none is ever substituted for another. opencode, which has no vendor of its own, runs on your OpenRouter key. A build that names no engine runs on the one you tick as Default; with several connected and none ticked, it stops and asks.
 - **Multi-Agent Coding**: protocol files, plain instructions naming which engines run, in turn or at once, and what to do on pass or fail. Your Host can write one; you can edit, check, export and import them. A protocol cannot carry a credential.
 - **Embedding**: switching models never re-embeds or deletes what is stored, but entries embedded by the old model are not found by the new one until embedded again.
-- **Balances**: what each provider account holds, read live under your own key. Privatae never bills for model use.
+- **Balances**: what each provider account holds, for a provider that lets it be read, read live under your own key. Privatae never bills for model use.
 
 More in [Models and keys](wiki:models-and-keys) and [Coding agents](wiki:coding-agents).

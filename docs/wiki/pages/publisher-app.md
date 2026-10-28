@@ -30,7 +30,7 @@ You also choose whether other people may publish their own versions of your app,
 
 ## Can I take a version back?
 
-Not from your Host in this release. My Apps lists everything you have published and shows a Yank button, but the Privatae network does not yet carry that request, so it is refused.
+Not from your Host in this release. My Apps lists everything you have published and shows a Yank button, but the Privatae network does not carry that request, so it is refused.
 
 ## Is Publisher on every Host?
 

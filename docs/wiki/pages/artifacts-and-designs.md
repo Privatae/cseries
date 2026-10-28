@@ -27,7 +27,7 @@ A visual is a small page your Host draws right in its reply when a picture of th
 
 ## Can I undo a change?
 
-Yes. Every create, write and in-place edit is saved as a revision, and the History strip in the viewer lists them. Click one to see that older version, and Restore to bring it back. The restore is itself a new revision, so going back can always be undone too. Every revision keeps every file, images and fonts included, and every revision is kept; a file that did not change is stored once however many revisions hold it. The oldest revisions are removed only when your Host's disk cannot take the next one, and the History strip says which went.
+Yes. Every create, write and in-place edit is saved as a revision, and the History strip in the viewer lists them. Click one to see that older version, and Restore to bring it back. The restore is itself a new revision, so going back can always be undone too. Every revision keeps every file, images and fonts included, and every revision is kept; a file that did not change is stored once however many revisions hold it. The oldest revisions are removed only when your Host's disk is too full to take the next one.
 
 ## Can my Host design my desktop?
 
@@ -41,7 +41,7 @@ Yes. When your Host puts a new desktop on, your phone wears it too. Your Host gi
 
 ## What is the Designs app?
 
-The [Designs app](wiki:designs-app) is a shelf of complete desktops, each shown live. Yours holds every desktop made on this Host. Ours is a shared library of published designs, which a C-Series Host cannot reach in this release, on its own or on the Privatae network.
+The [Designs app](wiki:designs-app) is a shelf of complete desktops, each shown live. Yours holds every desktop made on this Host. Ours holds the designs that come with every Host; the shared library of published designs cannot be reached from a C-Series Host in this release, on its own or on the Privatae network.
 
 "Wear it" puts one of your desktops on your screen at once. "Go back" restores the desktop you had before, and what your phone showed before.
 

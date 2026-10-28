@@ -1,6 +1,6 @@
 id: browser
 name: Browser
-description: A real browser inside your own machine, live on screen — type an address, click, type and sign in as you would on your desk. Record a task once and it becomes an agent that repeats it on a schedule, with no AI involved. Point it at a project and sites that ask for a local folder see your real files. Starts when you open it, sleeps when you're done.
+description: A real browser inside your own machine, live on screen — type an address, click, type and sign in as you would on your desk. Record a task once and it becomes an agent that repeats it on a schedule, with no AI involved. A website that asks for a local folder gets none of your files yet. Starts when you open it, sleeps when you're done.
 icon: icon.png
 icon_small: icon-64.png
 entrypoint: index.html
@@ -15,7 +15,17 @@ system: false
 # 0.5.8 (2026-10-20): when this machine refuses to start the browser (a short
 #   disk, no room), the viewport shows the reason the kernel sends, as one line
 #   of text, instead of retrying with "disconnected" and no reason.
-version: "0.5.8"
+# 0.5.9 (2026-10-28): the "Grant to project" control and its hint are gone.
+#   The browser container never has the Host's projects mounted, so a grant
+#   could only name a folder in its own empty workspace and a site got none of
+#   the person's files. The description, the hint and prompt_behavior now say
+#   a website gets none of your files yet. The sidecar's grant checks
+#   (sidecars/browser/control/fs_api.py) are unchanged. The app no longer
+#   asks for read:projects or write:projects: they open the kernel's project
+#   and artifact routes, nothing in the app ever called one, and the registry
+#   copies this list onto the install at upgrade, so a Host that takes 0.5.9
+#   stops holding them. Bundle repacked.
+version: "0.5.9"
 # 0.5.2 (2026-09-05): prompt_behavior only — the card no longer tells the host
 # it cannot look at a page. It used to end "you have no tool that reads the
 # viewport", which was TRUE and was the block: on one Host a user reported a
@@ -150,8 +160,8 @@ price_usd: 0
 billing: free
 
 permissions:
-  - read:projects
-  - write:projects
+  # No read:projects / write:projects since 0.5.9: they open the kernel's
+  # project and artifact routes, and nothing in this app calls one.
   # "Save these entries" seals the form fields the user ticked into the
   # identity-scoped vault (POST /api/browser/forms/save), and lists what is
   # already saved for a site. Same gate the Keys app holds — this writes
@@ -175,8 +185,8 @@ prompt_behavior:
     when the app is opened and shuts down when nobody is looking, so it uses no
     memory while idle and remembers nothing between sessions. A whole browser needs
     a real slice of the plan's memory: on a small plan starting it can be refused,
-    and the refusal names the plan that fits. It can be pointed at a project, so a
-    site that asks for a local folder sees that project's files. It is a plain
+    and the refusal names the plan that fits. It cannot reach the user's files
+    yet: a website that asks for a local folder gets none of them. It is a plain
     browser with an address bar, tied to no site or vendor. It also records browser
     agents: "Create agent", do a task once by hand, and "Save agent" writes it down
     as steps a real browser replays exactly, with no AI. Sign-ins are sealed in

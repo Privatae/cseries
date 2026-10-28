@@ -123,8 +123,10 @@ check("EXECUTED: ...and is a no-op (False, no raise) when nothing is there",
       _bc.scrub_legacy() is False)
 
 # ── 4. the browser still works as a browser ──────────────────────────────
-check("the viewport, project grant, navigate and form capture all survive",
-      all(x in js for x in ("CSeriesViewport.init", "grant-fs", '"navigate"',
+# The project grant is not on this list: the app has had no "Grant to project"
+# control since 0.5.9 (tests/test_browser_no_folder_grant_control.py holds that).
+check("the viewport, navigate and form capture all survive",
+      all(x in js for x in ("CSeriesViewport.init", '"navigate"',
                             "/api/browser/forms/capture")))
 check("the sessions lane (the login-keeping surface) is untouched",
       "app.include_router(sessions.router)" in sidecar)

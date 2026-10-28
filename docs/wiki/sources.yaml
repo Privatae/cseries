@@ -119,7 +119,7 @@ browser-app:
   - vm/runtime/lib/cseries_runtime/argv.py::harness
   verified:
     date: '2026-10-28'
-    digest: sha256:e1c8422fd5ee46982b1fd14c0afc77bc44f4729994686ee5e981e5058c070e1b
+    digest: sha256:da855305c84a03bf670d9bf22fdd5fe3c07f1f86c9ce89afd46e27b83cc3767c
 building-apps:
   sources:
   - server/applications/manifest.py::AppManifest

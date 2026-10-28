@@ -15,12 +15,6 @@
         <input id="url" type="url" placeholder="https://…" aria-label="Address"
                autocomplete="off" spellcheck="false" />
 
-        <label for="project">Grant to project</label>
-        <select id="project">
-          <option value="">(none — read-only browsing)</option>
-        </select>
-        <input id="project-path" type="text" placeholder="/var/lib/cseries/projects/…" aria-label="Project path" hidden />
-
         <button id="btn-open" type="button">Open</button>
       </div>
       <div id="bar-right">
@@ -144,9 +138,9 @@
 
     <footer id="hint">
       <span id="hint-text" aria-live="polite">
-        Type an address and click <b>Open</b>. Grant a project if the
-        site asks for a local folder. The viewport is live — click +
-        type inside it just like a normal browser tab.
+        Type an address and click <b>Open</b>. The viewport is live —
+        click + type inside it just like a normal browser tab. A website
+        that asks for a local folder gets none of your files yet.
       </span>
     </footer>
   </div>

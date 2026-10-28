@@ -1,5 +1,5 @@
 /* Browser app — minimal shell around the live viewport.
-   Top bar = surface picker + project picker + Anthropic session.
+   Top bar = address bar + Open; agents and saved entries on the right.
    Viewport = canvas painted from the sidecar's CDP screencast
    (viewport.js ↔ control/viewport.py over one WebSocket). */
 

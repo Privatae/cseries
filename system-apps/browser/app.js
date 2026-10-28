@@ -47,24 +47,12 @@
         ));
     }
 
-    // ── Projects (FS grant target) ─────────────────────────────
-    async function loadProjects() {
-        const sel = $("project");
-        try {
-            // We don't have a projects-list endpoint yet on the sidecar
-            // (Ship 6 lands one that reads /var/lib/cseries/projects/).
-            // For now, list directly via the polyfill grant API: ask the
-            // sidecar for the current granted root, but read the parent.
-            const grantRes = await apiGet("current-grant");
-            // grant returns {granted, path?, name?} — we don't have a
-            // projects-enumeration. Fall back to user-typed override.
-            // Placeholder: keep "(none)" + an "Other path…" option.
-            sel.innerHTML = '<option value="">(none — read-only)</option>'
-                + '<option value="__custom__">Enter project path…</option>';
-        } catch (e) {
-            sel.disabled = true;
-        }
-    }
+    // ── No folder grant (0.5.9) ────────────────────────────────
+    // There is no "Grant to project" control. The browser container never
+    // has the Host's projects mounted, so a grant could only name a folder
+    // in its own empty workspace and a site would get none of the person's
+    // files. The sidecar's grant checks (control/fs_api.py) stay as the
+    // boundary; nothing in this app calls its grant routes.
 
     // ── Buttons ────────────────────────────────────────────────
     // A browser. An address bar, nothing preset. (0.4.0 — the presets that
@@ -80,41 +68,18 @@
 
     function wireBar() {
         const urlBox = $("url");
-        const project = $("project");
-        const projectPath = $("project-path");
 
         urlBox.addEventListener("keydown", (e) => {
             if (e.key === "Enter") { e.preventDefault(); $("btn-open").click(); }
-        });
-
-        project.addEventListener("change", () => {
-            projectPath.hidden = project.value !== "__custom__";
-            if (!projectPath.hidden) projectPath.focus();
         });
 
         $("btn-open").addEventListener("click", async () => {
             const btnOpen = $("btn-open");
             const url = normalizeUrl(urlBox.value);
             if (!url) { urlBox.focus(); return; }
-            const pVal = project.value;
-            const typedPath = projectPath.value.trim();
-            if (pVal === "__custom__" && !typedPath) { projectPath.focus(); return; }
 
             btnOpen.disabled = true;
             try {
-                // Set the FS grant if a project is selected
-                if (pVal === "__custom__") {
-                    setHint("Granting project access…");
-                    try {
-                        await apiPost("grant-fs", { path: typedPath, name: typedPath.split("/").pop() });
-                    } catch (e) {
-                        setHint("Grant failed: " + escapeHtml(e.message));
-                        return;
-                    }
-                } else {
-                    // Revoke the FS grant on no-project (keeps polyfill calls failing safely).
-                    try { await apiPost("revoke-fs"); } catch (_) {}
-                }
                 // Navigate the sidecar page
                 setHint("Opening " + escapeHtml(url) + "…");
                 try {
@@ -661,7 +626,6 @@
             pagebar: $("pagebar"),
             onStatus: (s) => { $("vp-status").textContent = s; },
         });
-        await loadProjects();
         // A recording left on (the window was reloaded mid-task) is picked
         // back up rather than silently continuing unseen.
         try {

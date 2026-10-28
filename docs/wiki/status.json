@@ -14,7 +14,7 @@
   },
   "approvals": {
    "checked": "2026-10-28",
-   "status": "unchecked"
+   "status": "changed"
   },
   "apps-overview": {
    "checked": "2026-10-28",
@@ -94,7 +94,7 @@
   },
   "how-a-host-handles-a-request": {
    "checked": "2026-10-28",
-   "status": "current"
+   "status": "changed"
   },
   "how-your-host-is-protected": {
    "checked": "2026-10-28",
@@ -166,7 +166,7 @@
   },
   "what-a-host-cannot-do": {
    "checked": "2026-10-28",
-   "status": "unchecked"
+   "status": "changed"
   },
   "what-a-host-is": {
    "checked": "2026-10-28",
@@ -178,7 +178,7 @@
   },
   "where-your-data-lives": {
    "checked": "2026-10-28",
-   "status": "unchecked"
+   "status": "changed"
   },
   "workbench": {
    "checked": "2026-10-28",

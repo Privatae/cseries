@@ -23,7 +23,8 @@
  * PROVIDER → MODEL PER ROLE: every
  * text role independently picks a PROVIDER, then a MODEL from the user's
  * favorites for that provider, plus an optional FALLBACK PROVIDER (answers when
- * the primary provider errors or doesn't host the model). Providers come from
+ * the primary provider errors, doesn't host the model, or its safety filter
+ * declines the request). Providers come from
  * the backend registry via the routing payload (never hardcoded here); API keys
  * live in the Keys app — this widget never touches credentials. 'local' is
  * always available: models the user's machines advertise over their mesh.
@@ -368,7 +369,7 @@
                     ${this.opts.showRoutingTab ? `
                     <section class="mp-view" data-mp-view="routing" ${startTab === 'routing' ? '' : 'hidden'}>
                         <div class="mp-section-head card-label label-sys">Text roles</div>
-                        <div class="label-sys mp-help">Pick a provider, then a model, per role. The fallback answers when the primary fails.
+                        <div class="label-sys mp-help">Pick a provider, then a model, per role. The fallback answers when the primary fails or its safety filter declines a request.
                             <button class="cseries-btn ghost mp-keys-link" data-mp-open-keys>Open Keys</button></div>
                         <div class="mp-routing" data-mp-routing></div>
                         <div class="mp-local-lane" data-mp-local></div>
@@ -2049,7 +2050,7 @@
                                 <label class="mp-role-field">model
                                     ${modelCtl}
                                 </label>
-                                <label class="mp-role-field" title="Answers when the primary provider errors or doesn't host the model">fallback provider
+                                <label class="mp-role-field" title="Answers when the primary provider errors, doesn't host the model, or its safety filter declines the request">fallback provider
                                     <select class="cseries-select mp-role-fb-provider" data-role="${esc(role)}" aria-label="${esc(role)} fallback provider" ${fbDisabled}>${this._providerOptionsHtml(fbProv, { none: 'none' })}</select>
                                 </label>
                                 ${fbModelCtl}

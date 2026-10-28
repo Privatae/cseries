@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { historyKeys, isLocalEcho, mergeHistory, stampTurnToken } from "../src/lib/history-merge.ts";
+import { historyKeys, isLocalEcho, mergeHistory, retagTurn, stampTurnToken } from "../src/lib/history-merge.ts";
+import { topicTag } from "../src/lib/turn-types.ts";
 import { isOwnHostTurn } from "../../app-web-kit/visuals/visual.ts";
 import type { ChatMessage } from "../src/lib/types.ts";
 
@@ -330,4 +331,47 @@ test("the saved row that replaces a streamed echo keeps the own-Host mark", () =
   const reply = out.filter((m) => m.role === "assistant");
   assert.deepEqual(reply.map((m) => m.id), ["3"]);
   assert.equal(isOwnHostTurn(reply[0]), true);
+});
+
+// Your Host's back shows one topic at a time: what says
+// which topic a message is in has to follow it when it moves.
+const T1 = { id: "aaaaaaaa-0000-4000-8000-0000000000a1", title: "Garden" };
+const T2 = { id: "aaaaaaaa-0000-4000-8000-0000000000a2", title: "Timer" };
+
+test("a row the Host re-filed in another topic takes the new topic on the next read", () => {
+  const a = row("7", "user", "check the timer", "2026-10-20T10:00:00Z", { topic: T1 });
+  const b = row("8", "assistant", "on it", "2026-10-20T10:00:01Z", { topic: T1 });
+  const out = mergeHistory([a, b], [
+    row("7", "user", "check the timer", "2026-10-20T10:00:00Z", { topic: T2 }),
+    row("8", "assistant", "on it", "2026-10-20T10:00:01Z", { topic: T1 }),
+  ]);
+  assert.equal(out[0].topic?.id, T2.id);
+  assert.notEqual(out[0], a);
+  assert.equal(out[1], b); // unchanged, same object
+});
+
+test("retagTurn moves one turn's echoes, and nothing else", () => {
+  const saved = row("5", "assistant", "earlier reply", "2026-10-20T09:00:00Z", { topic: T1, turnToken: "t0" });
+  const other = row("u-1754870000000-1", "user", "another turn", "2026-10-20T09:30:00Z", { topic: T1, turnToken: "t9" });
+  const you = row("u-1754870000000-2", "user", "check the timer", "2026-10-20T10:00:00Z", { topic: T1, turnToken: "t1" });
+  const nudge = row("u-1754870000000-3", "user", "and the west bed", "2026-10-20T10:00:02Z", {
+    topic: T1, turnToken: "t1", nudge: true });
+  const reply = row("a-1754870000000-4", "assistant", "on it", "2026-10-20T10:00:01Z", { topic: T1, turnToken: "t1" });
+  const out = retagTurn([saved, other, you, nudge, reply], reply.id, T2);
+  assert.deepEqual(out.map((m) => m.topic?.id), [T1.id, T1.id, T2.id, T2.id, T2.id]);
+  assert.equal(out[0], saved);
+  assert.equal(out[1], other);
+  // A reply with no token yet: its own words just before it go with it.
+  const bare = row("a-1754870000000-6", "assistant", "", "2026-10-20T10:05:01Z", { topic: T1 });
+  const words = row("u-1754870000000-5", "user", "order one", "2026-10-20T10:05:00Z", { topic: T1 });
+  const out2 = retagTurn([saved, words, bare], bare.id, T2);
+  assert.deepEqual(out2.map((m) => m.topic?.id), [T1.id, T2.id, T2.id]);
+  assert.equal(retagTurn([saved], "a-0-0", T2)[0], saved);
+});
+
+test("topicTag: a thread id is a topic; the original conversation is none", () => {
+  assert.deepEqual(topicTag(T1.id, "Garden"), { id: T1.id, title: "Garden" });
+  assert.equal(topicTag("original"), undefined);
+  assert.equal(topicTag(null), undefined);
+  assert.equal(topicTag(""), undefined);
 });

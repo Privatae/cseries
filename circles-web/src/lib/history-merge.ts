@@ -1,4 +1,4 @@
-import type { ChatMessage } from "./types";
+import type { ChatMessage, FeedTopic } from "./types";
 
 /** True when the id was minted by localId() (an optimistic echo no server row
  * backs yet). Server-backed ids — numeric turn-row ids, UUIDs — never match
@@ -59,9 +59,12 @@ export function mergeHistory(
       m.createdAt <= firstServer.createdAt,
   );
 
+  // A row the Host re-filed in another topic (pick_thread from_turn=) comes
+  // back with that topic: the screen takes the new one, since your Host's
+  // back shows one topic at a time.
   const merged = server.map((s) => {
     const l = byId.get(s.id);
-    return l && l.text === s.text && l.tools.length === s.tools.length ? l : s;
+    return l && l.text === s.text && l.tools.length === s.tools.length && l.topic?.id === s.topic?.id ? l : s;
   });
 
   // The echoes on screen: the trailing run (a send or reattach echo) plus any
@@ -177,4 +180,24 @@ export function historyKeys(
     seen.set(base, n + 1);
     return n === 0 ? base : `${base}#${n}`;
   });
+}
+
+/** A turn's echoes moved to topic `to` (the Host's pick_thread filed the
+ * exchange there: the thread_moved frame): the reply, and the person's
+ * words and nudge lines of the same turn (its token, else the run of local
+ * words just before the reply). Saved rows carry their topic from the
+ * server and are left as they are. */
+export function retagTurn(prev: ChatMessage[], asstId: string, to: FeedTopic): ChatMessage[] {
+  const i = prev.findIndex((m) => m.id === asstId);
+  if (i < 0) return prev;
+  const token = prev[i].turnToken;
+  const mine = new Set<number>([i]);
+  for (let k = i - 1; k >= 0 && prev[k].role === "user" && isLocalEcho(prev[k].id); k--) {
+    mine.add(k);
+    if (!prev[k].nudge) break;
+  }
+  prev.forEach((m, k) => {
+    if (token && m.turnToken === token && isLocalEcho(m.id)) mine.add(k);
+  });
+  return prev.map((m, k) => (mine.has(k) ? { ...m, topic: to } : m));
 }

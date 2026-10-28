@@ -16,6 +16,7 @@ log = logging.getLogger("cseries.mastercode.entity_runtime")
 async def _host_route_write(*, role: str, provider: str, model: str,
                             effort: str | None = None,
                             fallback_provider: str | None = None,
+                            fallback_model: str | None = None,
                             reason: str | None = None) -> dict:
     """THE door for every route write the HOST makes (model_routing op='set',
     model_route op='switch'). The user's own Orchestrator write does not pass
@@ -42,6 +43,7 @@ async def _host_route_write(*, role: str, provider: str, model: str,
     from mastercode.inference_config import normalize_provider
     from mastercode.runtime.route_change import (
         classify as _rc_classify, proposal_prompt as _rc_prompt,
+        proposal_options as _rc_options, carry_unchanged as _rc_carry,
         APPLY_UNROUTED, UNCHANGED, APPLY_REVERT,
     )
     pool = brain_service.get_pool()
@@ -72,10 +74,18 @@ async def _host_route_write(*, role: str, provider: str, model: str,
     if not isinstance(current, dict):
         current = {}
     requested = {"provider": n_provider, "model": n_model,
-                 "effort": effort, "fallback_provider": fallback_provider}
+                 "effort": effort, "fallback_provider": fallback_provider,
+                 "fallback_model": fallback_model}
     prev = await inf.previous_approved_route(pool, eid, role, current.get("provider"),
                                              current.get("model") or current.get("model_id"))
     verb = _rc_classify(current, requested, previous_approved=prev)
+    # The same route keeps what the request leaves out (its effort, its
+    # fallback): the write replaces the whole entry.
+    requested = _rc_carry(current, requested)
+    effort = requested.get("effort") or None
+    fallback_provider = requested.get("fallback_provider") or None
+    fallback_model = requested.get("fallback_model") or None
+    reasoning_inline = True if requested.get("reasoning_inline") is True else None
 
     if verb == UNCHANGED:
         return {"status": "ok", "result": {
@@ -88,6 +98,13 @@ async def _host_route_write(*, role: str, provider: str, model: str,
         body.effort = effort
     if fallback_provider:
         body.fallback_provider = fallback_provider
+    if fallback_model:
+        # The model the fallback provider answers with; none = the primary's
+        # id there. A Claude route needs one to fail over to another Claude
+        # model (a request its safety filter declined, say).
+        body.fallback_model = fallback_model
+    if reasoning_inline:
+        body.reasoning_inline = True
 
     if verb in (APPLY_UNROUTED, APPLY_REVERT):
         try:
@@ -113,21 +130,18 @@ async def _host_route_write(*, role: str, provider: str, model: str,
         proposal = {
             "role": role,
             "route": {"role": role, "provider": provider, "model": model,
-                      "effort": effort, "fallback_provider": fallback_provider},
+                      "effort": effort, "fallback_provider": fallback_provider,
+                      **({"fallback_model": fallback_model} if fallback_model else {}),
+                      **({"reasoning_inline": True} if reasoning_inline else {})},
             "current": {"provider": cur_p, "model": cur_m, "effort": current.get("effort")},
             "reason": reason,
         }
         ticket = await _tk.create_ticket_service(
             pool, eid, source="runtime",
-            sitrep=_rc_prompt(role, {"provider": cur_p, "model": cur_m}, requested, reason),
-            options=[
-                {"id": "apply", "label": f"Move {role} to {n_provider} / {n_model}",
-                 "consequence": ("The route changes now and the host may revert to the "
-                                 "previous one for free later. This changes which provider bills you."),
-                 "recommend": False},
-                {"id": "keep", "label": f"Keep {cur_p} / {cur_m}",
-                 "consequence": "Nothing changes.", "recommend": True},
-            ],
+            sitrep=_rc_prompt(role, {**current, "provider": cur_p, "model": cur_m}, requested, reason),
+            # Each button says what it does: a request that keeps the route
+            # and adds a fallback is "Set chat fallback to …", not a move.
+            options=_rc_options(role, {**current, "provider": cur_p, "model": cur_m}, requested),
             context={"reason": reason} if reason else {},
             # Above the default 50: the pane sorts priority DESC, and a
             # question the host is waiting on should not sit under routine
@@ -145,8 +159,8 @@ async def _host_route_write(*, role: str, provider: str, model: str,
         "to": {"provider": n_provider, "model": n_model},
         "note": ("moving a role that already works is the user's call: a ticket is waiting "
                  "on the Decisions rail in Circles, and the route lands only when they "
-                 "choose 'apply'. Say that, and end your turn — do not set it again, and "
-                 "do not decide the ticket yourself (it is locked to the user)."),
+                 "choose 'apply'; the ticket is locked to them. Work that does not wait on it "
+                 "goes on meanwhile."),
     }}
                           # past it the file is streamed raw (_read_window)
 

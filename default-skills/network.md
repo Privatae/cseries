@@ -567,9 +567,11 @@ Then, through `mgmt_run` (the grant must name the op ids below):
    platform's words — the op, the machine, root or user, the summary, the
    diff folded under it, undo or not — with the choice **Do it once** /
    **Let me do this from now on (until <day>)** / **Don't run it**. The result
-   is `state: 'asked'` with the ticket id: say in ONE line what you asked and
-   END YOUR TURN. Never decide the ticket yourself (it is locked to them) and
-   never call again until they answer. Their click files the ask on their
+   is `state: 'asked'` with the ticket id: say in ONE line what you asked, then
+   carry on with the rest of the request that does not wait on this answer;
+   END YOUR TURN only when everything left waits on it.
+   Never decide the ticket yourself (it is locked to them) and never call
+   again until they answer. Their click files the ask on their
    own approval device at once, bound to the machine, the op's exact bytes,
    the params and the change list they saw; when they say they answered,
    call `op_apply` again with the same args: it waits for their tap
@@ -716,8 +718,10 @@ or at the machine's console, bound to exactly the arguments you sent. Pass
 arguments, never your note. The ask is a CARD: the result reads
 `state: 'asked'` with the ticket id (an overlay over the chat, also in
 Tickets, in the platform's words: what runs, on which machine, with which
-arguments — Do it once / Don't run it). Say in one line what you asked and
-END YOUR TURN; never decide the ticket yourself. Their click files the ask on
+arguments — Do it once / Don't run it). Say in one line what you asked, then
+carry on with the rest of the request that does not wait on it; END YOUR TURN
+only when everything left waits on the answer. Never decide the ticket
+yourself. Their click files the ask on
 their device; call the same op with the same arguments again after they say
 they answered: it then reads `state: 'pending_approval'` with `next` until
 their tap lands (tell them, stop, call again), and their one tap runs it

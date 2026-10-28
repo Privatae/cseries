@@ -625,6 +625,17 @@ async def drop_dcn_grant(pool, eid: int, store_id: int, server: str) -> dict:
 PLAN_MODES = ("dry_run", "apply")
 
 
+def plan_apply_payload(terms: dict, signature: str, mode: str) -> str:
+    """The dcn_plan_apply argument for an approved plan: its signed terms, base64'd,
+    with the signature and mode, base64'd again. Both go to the box in ONE command
+    frame (nac_mgmt.job_frame), so the terms grow by 16/9 on the way;
+    nac_propose.validate_moves measures a plan with this before it is filed."""
+    from server.network.nac_stepup import _canonical
+    return base64.b64encode(json.dumps({
+        "terms_canonical": base64.b64encode(_canonical(terms)).decode(),
+        "signature": signature, "mode": mode}).encode()).decode()
+
+
 async def run_move_plan(pool, eid: int, plan_id: int, mode: str) -> dict:
     """Execute an APPROVED, signed move plan on its box — dry_run (check only) or
     apply (check → rename in order with rollback → verify → report). The gate:
@@ -673,10 +684,7 @@ async def run_move_plan(pool, eid: int, plan_id: int, mode: str) -> dict:
                          exit_code=126, decision="denied-pod")
         return _typed("refused", store_id, op, plan_id=plan_id, reason=reason)
     server = (grant.get("terms") or {}).get("server") or terms.get("server")
-    from server.network.nac_stepup import _canonical
-    payload = base64.b64encode(json.dumps({
-        "terms_canonical": base64.b64encode(_canonical(terms)).decode(),
-        "signature": row["signature"], "mode": mode}).encode()).decode()
+    payload = plan_apply_payload(terms, row["signature"], mode)
     res = await _dispatch_box(pool, eid, server, "dcn_plan_apply", [str(store_id), payload])
     await audit_mgmt(pool, eid, server, f"dcn:{op}",
                      exit_code=res.get("exit"), decision="ran")

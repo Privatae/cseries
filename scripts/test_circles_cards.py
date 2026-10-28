@@ -62,6 +62,11 @@ Scenarios, each at both sizes:
      mid-turn too, with its panel; a background agent keeps it up; "Where did
      everything go?" is gone; no ribbon, a background failure on the line;
      "Where this stands" one line until opened, remembered per page.
+  Z: your Host's back shows the thread a message went
+     to, at its newest message, and never moves up on its own; its earlier
+     messages come only with Earlier messages, the reader kept in place; a
+     reload mid-turn the same; the Host's pick moving the exchange is
+     followed.
   A8, A9: a failure followed by more than a hundred calls that went well
      still shows amber and is listed; a reload in a silence after words is
      never "Writing" until words arrive after it.
@@ -90,6 +95,7 @@ import sys
 import tempfile
 import threading
 import time
+import traceback
 import types
 import uuid
 from datetime import datetime, timedelta
@@ -307,7 +313,7 @@ def reset():
              "summary": "Northwind pays invoice 1042", "status": "scheduled"}],
         # what the cards sent, for the checks
         "sent": [], "nudges": [], "cancels": [], "requeued": [], "pending_reads": [], "seen_puts": [], "reading_puts": [], "contact_patches": [],
-        "door_calls": [], "support_calls": [], "decides": [], "urls": [],
+        "door_calls": [], "support_calls": [], "decides": [], "urls": [], "feed_reads": [],
         # what the rail did, on the cards
         "turn_types": [{"id": "tt-research", "name": "Research", "thread_id": None, "skill": None,
                         "tool_groups": [], "keyword_count": 3}],
@@ -604,6 +610,14 @@ class CirclesTurns(TurnHost):
 
     def live(self, turn) -> bool:
         return TURNS.get(turn.id) is turn
+
+    def move(self, turn, to) -> None:
+        """thread_choice.move_exchange: the turn's rows so far go to topic
+        `to`, and what it writes from now on lands there."""
+        rows = STATE["turns"].get(turn.page, [])
+        mine = [r for r in rows if r["metadata"].get("turn_token") == turn.token]
+        STATE["turns"][turn.page] = [r for r in rows if r not in mine]
+        STATE["turns"].setdefault(to, []).extend(mine)
 
     def requeue(self, turn, words):
         """turn_registry._requeue_undelivered: the Circles nudge route's words
@@ -975,13 +989,14 @@ def _new_topic(text):
 
 
 @app.get("/api/circles/feed")
-def feed(before: str | None = None, before_id: int | None = None):
+def feed(before: str | None = None, before_id: int | None = None, thread: str | None = None):
     """routes/circles.read_feed over the mock's pages: every topic as one
     conversation, a page at a time, newest page first, oldest first in it,
-    each row naming its topic."""
+    each row naming its topic; `thread`, one topic's rows only."""
+    STATE["feed_reads"].append(thread)
     # Topics only: a row in no live thread is shown nowhere (read_feed).
     rows = [(r, _topic_of_page(tid)) for tid, rs in STATE["turns"].items() if tid in STATE["threads"]
-            for r in rs]
+            and (thread is None or tid == thread) for r in rs]
     rows.sort(key=lambda x: (x[0]["created_at"], x[0]["id"]))
     if before:
         cut = (datetime.fromisoformat(before), before_id if before_id is not None else 2**62)
@@ -1549,6 +1564,45 @@ def wait_for(cond, secs=10.0, step=0.1):
         return bool(cond())
     except Exception:  # noqa: BLE001
         return False
+
+
+def reply_text(page, said):
+    """The words of the reply to the person's message `said`, or None: the
+    message right after the last of theirs whose words are exactly `said`,
+    when it is the Host's. A count of the Host's messages is no sign of a new
+    one: the conversation merges again while a turn runs, and after a reload
+    mid-turn the reattached turn's reply echo can leave the screen then
+    (circles-web lib/history-merge.ts drops it on the text of a later saved
+    reply), so one appearing and one leaving read as no change (seen under the
+    full gate's load, scenario_nudge PII mode). Nor is the first Host message
+    anywhere after theirs: that turn's echoes are loose at the bottom, and a
+    send's saved row read before its session frame stamps its streaming echo
+    sorts ahead of them (history-merge.ts `[...out, ...loose]`), so an older
+    turn's reply would pass for this one's."""
+    return page.evaluate(
+        """([sel, said]) => {
+            const ms = [...document.querySelectorAll(sel)];
+            const words = (m) => (m.querySelector('.tx')?.innerText ?? '').trim();
+            let at = -1;
+            ms.forEach((m, i) => { if (m.dataset.msg === 'you' && words(m) === said) at = i; });
+            const reply = at < 0 ? null : ms[at + 1];
+            return reply && reply.dataset.msg === 'host' ? reply.innerText : null;
+        }""", [f"{CONV} [data-msg]", said])
+
+
+def reply_shows(page, said, words="Noted."):
+    """Whether the reply to the person's message `said` shows `words` (see
+    reply_text)."""
+    return words in (reply_text(page, said) or "")
+
+
+def streaming_reply(page, said):
+    """The turn `said` started is streaming here, and words typed now go into
+    it: its reply shows its first words (so its session frame, sent before
+    them, has arrived), the composer holds for it, and the turn still runs."""
+    return (reply_shows(page, said)
+            and page.locator(f"{BACK} [data-nudge-btn]").is_visible()
+            and any(t.message == said and not t.done for t in TURNS.values()))
 
 
 def shot(page, name, size):
@@ -2251,7 +2305,9 @@ def scenario_nudge(page, base, size):
     box(page).fill("And tell Ana.")
     box(page).press("Enter")
     line = page.locator(f"{BACK} [data-nudge-line]")
-    expect(line).to_have_count(1, timeout=3_000)
+    # Waited for as long as a loaded runner needs: the line appears once the page
+    # has posted the words, and in a pool of browser gates that took over 3 s.
+    expect(line).to_have_count(1, timeout=15_000)
     check(f"N ({size}): the nudge goes into the turn with its id",
           wait_for(lambda: STATE["nudges"][-1]["text"] == "And tell Ana." and bool(STATE["nudges"][-1]["client_id"])),
           repr(STATE["nudges"]))
@@ -2275,8 +2331,6 @@ def scenario_nudge(page, base, size):
     # Long enough that the nudge is typed while it runs, on a loaded box too.
     STATE["settings"]["turn_secs"] = 6
     STATE["nudge_409"] = True
-    hosts = page.locator(f"{CONV} [data-msg='host']")
-    before = hosts.count()
     box(page).fill("One more thing.")
     page.locator(f"{BACK} [data-press]").click()
     expect(page.locator(f"{BACK} [data-nudge-btn]")).to_be_visible(timeout=5_000)
@@ -2284,7 +2338,7 @@ def scenario_nudge(page, base, size):
     # them) has too: a nudge typed earlier has no session to go into yet and is
     # held for the next message, which is right but is not the 409 this tests.
     check(f"N ({size}): the new turn is streaming before the nudge is typed",
-          wait_for(lambda: hosts.count() > before and "Noted." in hosts.last.inner_text(), secs=15))
+          wait_for(lambda: streaming_reply(page, "One more thing."), secs=15))
     box(page).fill("Ask about parking.")
     box(page).press("Enter")
     check(f"N ({size}): the nudge is refused (409)", wait_for(lambda: STATE["nudges"][-1]["status"] == 409))
@@ -2304,11 +2358,10 @@ def scenario_nudge(page, base, size):
         STATE["settings"]["read_nudges"] = False
         STATE["settings"]["turn_secs"] = 7
         requeued0 = len(STATE["requeued"])
-        before = hosts.count()
         box(page).fill(f"Find a table ({tag}).")
         page.locator(f"{BACK} [data-press]").click()
         check(f"N ({size}, {tag}): the turn is streaming before the words are typed",
-              wait_for(lambda: hosts.count() > before and "Noted." in hosts.last.inner_text(), secs=15))
+              wait_for(lambda: streaming_reply(page, f"Find a table ({tag})."), secs=15))
         box(page).fill(words)
         box(page).press("Enter")
         check(f"N ({size}, {tag}): the route takes the words (200, the server holds them)",
@@ -2357,12 +2410,13 @@ def scenario_nudge(page, base, size):
     STATE["settings"]["read_nudges"] = False
     STATE["settings"]["turn_secs"] = 6
     requeued0 = len(STATE["requeued"])
-    before = hosts.count()
     words = "Avoid the tolls."
     box(page).fill("Plan the drive.")
     page.locator(f"{BACK} [data-press]").click()
     check(f"N ({size}, PII mode): the turn is streaming before the words are typed",
-          wait_for(lambda: hosts.count() > before and "Noted." in hosts.last.inner_text(), secs=15))
+          wait_for(lambda: streaming_reply(page, "Plan the drive."), secs=15),
+          f"turns {[(t.message[:20], t.done) for t in TURNS.values()][-2:]}; on screen "
+          f"{[(m.get_attribute('data-msg'), m.inner_text()[:40]) for m in page.locator(f'{CONV} [data-msg]').all()[-5:]]}")
     box(page).fill(words)
     box(page).press("Enter")
     check(f"N ({size}, PII mode): the route takes the words but says it did not hold them (held: false)",
@@ -2380,6 +2434,35 @@ def scenario_nudge(page, base, size):
     STATE["settings"]["read_nudges"] = True
 
 
+def scenario_reply_wait(page, base, size):
+    """The reply wait finds the person's own turn, never an older one's.
+    Static pages, the shapes circles-web draws: after a
+    reload mid-turn the reattached turn's echoes are loose at the bottom
+    (lib/history-merge.ts `[...out, ...loose]`), and the next send's saved
+    row, read before its session frame stamps the streaming echo, sorts
+    ahead of them, so the first Host message after it is the older turn's."""
+    def at(rows):
+        msgs = "".join(
+            f"<div class='hm{' you' if who == 'you' else ''}' data-msg='{who}'>"
+            f"<div class='lb'><span class='w'>{'You' if who == 'you' else 'Ivy'}</span></div>"
+            + (f"<div class='tx'>{text}</div>" if who == "you" else f"<div class='body'>{text}</div>")
+            + "</div>" for who, text in rows)
+        page.set_content(f"<div data-face-side='back'><div class='cbody' data-book-nudges>{msgs}</div></div>")
+
+    said, done = "Plan the drive.", "Noted. I will look at it now."
+    at([("you", said), ("you", "Find a table (after a reload)."), ("host", done), ("host", "")])
+    check(f"W ({size}): an older turn's reply sorted after the person's message is not theirs",
+          not reply_shows(page, said))
+    at([("you", "Plan the drive. And the stops."), ("host", done)])
+    check(f"W ({size}): a longer earlier message is not the person's (it only contains their words)",
+          not reply_shows(page, said))
+    at([("you", said), ("host", "Noted. "), ("you", "Find a table (after a reload)."), ("host", done)])
+    check(f"W ({size}): the reply right after the person's message is theirs", reply_shows(page, said))
+    at([("you", said), ("host", "Noted. 988 " + REPLY_TAIL), ("host", "Noted. " + REPLY_TAIL)])
+    check(f"W ({size}): the reply's own words are read, not the last message's",
+          "988" in (reply_text(page, said) or ""), repr(reply_text(page, said)))
+
+
 def scenario_crisis(page, base, size):
     """U. The platform's crisis check flags the words: the
     platform's own notice comes up over the page, dismissable and not modal,
@@ -2395,7 +2478,6 @@ def scenario_crisis(page, base, size):
     STATE["settings"]["turn_secs"] = 2
     thread = page.locator(CONV)
     hosts = thread.locator("[data-msg='host']")
-    before = hosts.count()
     box(page).fill("I don't want to be here anymore.")
     page.locator(f"{BACK} [data-press]").click()
     notice = page.locator("[data-crisis-notice]")
@@ -2408,8 +2490,10 @@ def scenario_crisis(page, base, size):
           notice.get_attribute("role") == "dialog" and notice.get_attribute("aria-modal") == "false"
           and thread.locator("[data-crisis-notice]").count() == 0)
     check(f"U ({size}): the Host's reply streams and lands while it is up, in the Host's words only",
-          wait_for(lambda: hosts.count() > before and REPLY_TAIL in hosts.last.inner_text(), secs=12)
-          and notice.is_visible() and "988" not in hosts.last.inner_text(), hosts.last.inner_text()[:200])
+          wait_for(lambda: reply_shows(page, "I don't want to be here anymore.", REPLY_TAIL), secs=12)
+          and notice.is_visible() and "988" not in reply_text(page, "I don't want to be here anymore.")
+          and reply_text(page, "I don't want to be here anymore.") == hosts.last.inner_text(),
+          hosts.last.inner_text()[:200])
     vh = page.viewport_size["height"]
     nb, rb = notice.bounding_box(), hosts.last.bounding_box()
     check(f"U ({size}): the reply is not under the notice, and the notice takes under half the screen",
@@ -2449,15 +2533,13 @@ def scenario_kept_words(page, base, size):
     own_back(page, phone)
     kept = lambda: page.evaluate("() => JSON.parse(sessionStorage.getItem('circles.keptWords') || '[]')")  # noqa: E731
     raw = lambda: page.evaluate("() => sessionStorage.getItem('circles.keptWords')")  # noqa: E731
-    hosts = page.locator(f"{CONV} [data-msg='host']")
 
     def start(first, words):
         expect(page.locator(f"{BACK} [data-host-working]")).to_have_count(0, timeout=20_000)
-        before = hosts.count()
         box(page).fill(first)
         page.locator(f"{BACK} [data-press]").click()
         check(f"K ({size}): the turn is streaming before the words are typed",
-              wait_for(lambda: hosts.count() > before and "Noted." in hosts.last.inner_text(), secs=15))
+              wait_for(lambda: streaming_reply(page, first), secs=15))
         box(page).fill(words)
         box(page).press("Enter")
 
@@ -2701,7 +2783,8 @@ def scenario_links(page, base, size):
           window.addEventListener('message', e => {
             if (e.data && e.data.type === 'cseries:open-app') window.__opens.push(e.data); }); })()""")
         page.goto(f"{base}/system-apps/circles/index.html#view={view}", wait_until="domcontentloaded")
-        expect(page.locator("[data-card='you']")).to_be_visible(timeout=10_000)
+        # 15 s: the budget this file gives a page load (open_cards' page.goto).
+        expect(page.locator("[data-card='you']")).to_be_visible(timeout=15_000)
 
     def holding(key, want_side=None):
         return wait_for(lambda: page.locator("[data-hold]").get_attribute("data-hold") == key
@@ -2726,7 +2809,7 @@ def scenario_links(page, base, size):
     expect(page.locator("[data-support-draft='62']")).to_be_in_viewport(timeout=8_000)
     # The notices above the tickets are read apart from them, and late.
     go("support%3A62", slow_inbox=1.5)
-    expect(page.locator("[data-notices]")).to_be_visible(timeout=8_000)
+    expect(page.locator("[data-notices]")).to_be_visible(timeout=15_000)
     expect(page.locator("[data-support-draft='62']")).to_be_in_viewport(timeout=8_000)
     go("decision%3A77")
     expect(page.locator("[data-sheet='note']")).to_contain_text("fix the dock", timeout=8_000)
@@ -2749,7 +2832,7 @@ def scenario_links(page, base, size):
     if phone:
         check("V (phone): inbox shows the deck, at the door", page.locator(".cards").get_attribute("data-screen") == "deck")
     go("tickets")
-    expect(page.locator("[data-wait='decision:501']").first).to_be_visible(timeout=8_000)
+    expect(page.locator("[data-wait='decision:501']").first).to_be_visible(timeout=15_000)
     if phone:
         check("V (phone): tickets shows the deck, Waiting on you", page.locator(".cards").get_attribute("data-screen") == "deck")
     go("bastions")
@@ -2784,24 +2867,22 @@ def scenario_page_actions(page, base, size):
     tabs, no "This thread" menu, and no Split here: the person never manages
     threads, the Host picks the topic of every message. Each of those checks
     is now a check that its control is gone (there is no equivalent to drive);
-    the topic marker is now the line where the conversation turns to another
+    the back shows one thread, so no line turns to another
     topic; the turn-type pick is unchanged."""
     phone = size == "phone"
     open_cards(page, base)
     STATE["tickets"][501]["status"] = "decided"  # its ask card would cover the page
     own_back(page, phone)
     conv = page.locator(CONV)
-    # The marker: the conversation draws a line where it turns to Gift for
-    # Dad, just before that topic's first message (Split here sat on it).
-    line = conv.locator("[data-topic-line]", has_text="Gift for Dad")
-    expect(line).to_have_count(1, timeout=8_000)
-    check(f"P ({size}): a topic line sits just before the first message of its topic",
-          page.evaluate("""([sel]) => {
-            const m = [...document.querySelectorAll(sel)].find(e => e.textContent.includes('Gift for Dad'));
-            const next = m && m.nextElementSibling;
-            return !!next && next.getAttribute('data-msg') === 'you'
-              && next.textContent.includes("Ideas for Dad's birthday");
-          }""", [f"{CONV} [data-topic-line]"]))
+    # One thread on screen: the back shows Thursday
+    # dinner, the thread the person last wrote in, and nothing of Gift for
+    # Dad, so there is no line where the talk turns to it (Split here sat on
+    # that line in the every-topic feed).
+    expect(conv).to_contain_text("Booked: Corvo", timeout=8_000)
+    check(f"P ({size}): one thread on screen: no other topic's messages and no line turning to one",
+          conv.locator("[data-topic-line]", has_text="Gift for Dad").count() == 0
+          and "Ideas for Dad" not in conv.inner_text()
+          and conv.get_attribute("data-view-topic") == DINNER, conv.get_attribute("data-view-topic"))
     page.wait_for_timeout(300)
     shot(page, "marker", size)
     # Rename, Close and reopen, Clear, Delete and Split here were the thread
@@ -2870,11 +2951,13 @@ def scenario_earlier(page, base, size):
     check(f"E ({size}): a room's oldest lines are not read yet", "Ana is free" not in roomb.inner_text())
     page.locator(f"{BACK} [data-earlier]").click()
     expect(roomb).to_contain_text("Ana is free Oct 24–26.", timeout=5_000)
-    # Your Host's back, one conversation: the feed over every topic,
-    # read a page at a time (GET /api/circles/feed, 50 rows a page), each
-    # message once, across the topics.
-    STATE["turns"][TODAY] = [turn_row("user" if i % 2 == 0 else "assistant", f"feed note {i:03d}", 9000 - i)
-                             for i in range(120)] + STATE["turns"][TODAY]
+    # Your Host's back (one conversation) opens blank; Earlier
+    # messages reads the thread the person last wrote in (Thursday dinner,
+    # the one "Where this stands" names), a page at a time (GET
+    # /api/circles/feed?thread=, 50 rows a page), each message once, and
+    # nothing of any other topic.
+    STATE["turns"][DINNER] = [turn_row("user" if i % 2 == 0 else "assistant", f"feed note {i:03d}", 9000 - i)
+                              for i in range(120)] + STATE["turns"][DINNER]
     page.reload(wait_until="domcontentloaded")
     expect(page.locator("[data-card='you']")).to_be_visible(timeout=10_000)
     set_aside_asks(page)
@@ -2895,12 +2978,353 @@ def scenario_earlier(page, base, size):
         page.wait_for_timeout(600)
     expect(conv).to_contain_text("feed note 000", timeout=5_000)
     said = conv.inner_text()
-    check(f"E ({size}): your Host's conversation, every topic, each message once",
-          all(said.count(f"feed note {i:03d}") == 1 for i in range(120))
-          and said.count("Booked: Corvo") == 1 and said.count("Nightly backup done") == 1,
+    check(f"E ({size}): your Host's back reads the thread in view back to its start, each message once",
+          all(said.count(f"feed note {i:03d}") == 1 for i in range(120)) and said.count("Booked: Corvo") == 1,
           repr([i for i in range(120) if said.count(f"feed note {i:03d}") != 1][:5]))
+    check(f"E ({size}): ... and nothing of another topic", not any(w in said for w in others_words(DINNER)),
+          repr([w for w in others_words(DINNER) if w in said]))
+    check(f"E ({size}): ... it read only that thread's pages",
+          bool(STATE["feed_reads"]) and set(STATE["feed_reads"]) <= {None, DINNER}
+          and STATE["feed_reads"].count(DINNER) >= 3, repr(STATE["feed_reads"]))
     check(f"E ({size}): ... and nothing more to load", wait_for(lambda: page.locator(f"{CONV} [data-earlier]").count() == 0,
                                                               secs=4))
+
+
+# ── one thread on screen ───────────────────────────────────────────────────
+# Invented rows: a long thread from a week ago that a message is placed in,
+# and the seed's topics, each known by words only it holds.
+GARDEN = "cccccccc-0000-4000-8000-000000000001"
+GARDEN_NEXT = "cccccccc-0000-4000-8000-000000000002"
+CORVO_BOOKING = "cccccccc-0000-4000-8000-000000000003"
+TOPIC_WORDS = {DINNER: "Booked: Corvo", BACKUPS: "Nightly backup done", GIFT: "Ideas for Dad",
+               TODAY: "Morning. What"}
+
+
+def others_words(tid):
+    """Words only the seed's OTHER topics hold."""
+    return [w for t, w in TOPIC_WORDS.items() if t != tid]
+
+
+# Every frame the back draws, from when it is put in: how far the page is
+# from its bottom, whether it overflows the box, and the first message in
+# sight (the one the reader is reading).
+FRAMES_JS = r"""(sel) => { const b = document.querySelector(sel); window.__frames = [];
+  const tick = () => {
+    const top = b.getBoundingClientRect().top;
+    const first = [...b.querySelectorAll('[data-msg]')].find((m) => m.getBoundingClientRect().bottom > top + 1);
+    window.__frames.push({fromBottom: Math.round(b.scrollHeight - b.scrollTop - b.clientHeight),
+      overflow: b.scrollHeight > b.clientHeight + 1,
+      first: first ? (first.innerText || '').replace(/\s+/g, ' ').slice(0, 90) : '',
+      top: Math.round(b.scrollTop), h: b.scrollHeight,
+      aoff: (() => { const a = b.querySelector('[data-z-anchor]'); return a ? Math.round(a.getBoundingClientRect().top - top) : null; })()});
+    if (window.__frames.length < 20000) requestAnimationFrame(tick); };
+  requestAnimationFrame(tick); }"""
+
+
+def _view(page):
+    """What your Host's back shows: each message's topic and words."""
+    return page.evaluate("""(sel) => [...document.querySelectorAll(sel + ' [data-msg]')].map((m) =>
+        ({topic: m.dataset.msgTopic || null, text: (m.innerText || '').trim()}))""", CONV)
+
+
+def _growing_reply(n=200, before=()):
+    """A reply that grows a few words at a time, as a Host's does, past the
+    box on both sizes: through the band just past the box's height where
+    the back used to read old history on its own."""
+    words = "the drip line on the east bed runs twelve minutes at dawn and the timer".split() * 2
+    steps = list(before)
+    for i in range(n):
+        k = (i * 3) % 15
+        steps += [("text", " ".join(words[k:k + 3]) + " "), ("wait", 0.03)]
+    return steps
+
+
+def _turns_over(secs=40):
+    return wait_for(lambda: bool(TURNS) and all(t.done for t in TURNS.values()), secs=secs)
+
+
+def _check_followed(page, size, tag, said):
+    """The frames since FRAMES_JS went in, read once the turn is over: the
+    page stayed at its bottom, never showed older history, and shows only
+    the thread the message went to."""
+    f = page.evaluate("window.__frames || []")
+    check(f"Z ({size}): {tag}: the reply grew past the box (the scene's premise)",
+          sum(1 for x in f if x["overflow"]) > 10, f"{len(f)} frames")
+    away = [x for x in f if x["fromBottom"] > 48]
+    check(f"Z ({size}): {tag}: the page never moved up on its own, every frame has the newest words in sight",
+          not away, f"{len(away)} of {len(f)} frames above the bottom, up to "
+          f"{max([x['fromBottom'] for x in away], default=0)}px; first: {away[:1]}")
+    old = [x for x in f if "irrigation note" in x["first"] or any(w in x["first"] for w in others_words(GARDEN))]
+    check(f"Z ({size}): {tag}: no frame showed older history or another topic", not old,
+          f"{len(old)} frames; first: {old[:1]}")
+    said_now = page.locator(CONV).inner_text()
+    check(f"Z ({size}): {tag}: none of the thread's earlier messages read in unasked",
+          "irrigation note" not in said_now)
+    check(f"Z ({size}): {tag}: nothing of another topic on screen", not any(w in said_now for w in others_words(GARDEN)),
+          repr([w for w in others_words(GARDEN) if w in said_now]))
+    v = _view(page)
+    check(f"Z ({size}): {tag}: the back shows only the thread the message went to",
+          bool(v) and all(x["topic"] == GARDEN for x in v) and sum(x["text"].endswith(said) for x in v) == 1,
+          repr([(x["topic"], x["text"][:40]) for x in v][:6]))
+
+
+def scenario_thread_view(page, base, size):
+    """Z: the conversation never scrolls up on its own into old chat history,
+    and the history shown is only the thread the message was placed in. A message the platform places in a long thread from a week
+    ago: the back shows that thread, at its newest message, the reply being
+    written at the bottom, and stays there while it grows past the box; the
+    thread's earlier messages come only with Earlier messages, a page at a
+    time, with the reader kept on the message they were reading; a reload
+    mid-turn the same; and when the Host's pick files the exchange in
+    another thread, the back follows it there.
+
+    The cause this pins (main 719eba60c = v0.16.147): own-back.tsx read the
+    next 50 rows of the every-topic feed on any scroll near the top, the
+    reply growing past the box was one, and the place it put back ran a
+    frame before the rows were drawn, so the page sat at their top."""
+    phone = size == "phone"
+    open_cards(page, base)
+    STATE["threads"][GARDEN] = {"title": "Garden irrigation plan", "created_at": at(12000), "closed_at": None}
+    STATE["turns"][GARDEN] = [turn_row("user" if i % 2 == 0 else "assistant", f"irrigation note {i:03d}", 11000 - i)
+                              for i in range(140)]
+    page.reload(wait_until="domcontentloaded")
+    expect(page.locator("[data-card='you']")).to_be_visible(timeout=10_000)
+    set_aside_asks(page)
+    STATE["pick"] = GARDEN
+    hold(page, "you", phone)
+    if phone:
+        set_aside_asks(page)
+    expect(page.locator(f"{BACK} [data-greeting]")).to_be_visible(timeout=8_000)
+
+    # Z1: a message placed in the week-old thread.
+    page.evaluate(FRAMES_JS, CONV)
+    STATE["settings"]["steps"] = _growing_reply()
+    said = "can you check the drip timer"
+    box(page).fill(said)
+    page.locator(f"{BACK} [data-press]").click()
+    check(f"Z ({size}): the turn runs on the week-old thread",
+          wait_for(lambda: any(t.message == said and t.page == GARDEN for t in TURNS.values()), secs=5))
+    _turns_over()
+    wait_for(lambda: any(r["content"] == "Noted. " + REPLY_TAIL for r in STATE["turns"][GARDEN]), secs=10)
+    page.wait_for_timeout(2500)  # the send's re-reads of the conversation
+    _check_followed(page, size, "a message placed in a week-old thread", said)
+    shot(page, "thread-view", size)
+
+    # Z2: Earlier messages, that thread's only, the reader kept in place.
+    btn = page.locator(f"{CONV} [data-earlier]")
+    check(f"Z ({size}): Earlier messages is offered for the thread's older messages",
+          wait_for(lambda: btn.count() == 1 and btn.is_visible(), secs=5))
+    mark = """(sel) => { const b = document.querySelector(sel), top = b.getBoundingClientRect().top;
+        b.querySelectorAll('[data-z-anchor]').forEach((x) => delete x.dataset.zAnchor);
+        const m = [...b.querySelectorAll('[data-msg]')].find((x) => x.getBoundingClientRect().bottom > top + 1);
+        m.dataset.zAnchor = '1';
+        return {off: m.getBoundingClientRect().top - top, text: m.innerText.slice(0, 60), box: b.clientHeight}; }"""
+    where = """(sel) => { const b = document.querySelector(sel), m = b.querySelector('[data-z-anchor]');
+        return m ? m.getBoundingClientRect().top - b.getBoundingClientRect().top : null; }"""
+    # The exchange is shorter than the box: the page read fills the box above
+    # it, and the reader's message stays in sight.
+    page.evaluate("(sel) => { document.querySelector(sel).scrollTop = 0; }", CONV)
+    page.wait_for_timeout(300)
+    before = page.evaluate(mark, CONV)
+    btn.click()
+    expect(page.locator(CONV)).to_contain_text("irrigation note 139", timeout=5_000)
+    page.wait_for_timeout(600)
+    after = page.evaluate(where, CONV)
+    check(f"Z ({size}): Earlier leaves the message the reader was reading in sight",
+          after is not None and 0 <= after <= before["box"] - 20, f"{before} -> {after}")
+    v = _view(page)
+    said_now = page.locator(CONV).inner_text()
+    check(f"Z ({size}): Earlier puts up that thread's page before, each message once, nothing of another topic",
+          all(x["topic"] == GARDEN for x in v)
+          and all(said_now.count(f"irrigation note {i:03d}") == 1 for i in range(90, 140))
+          and "irrigation note 089" not in said_now and not any(w in said_now for w in others_words(GARDEN)),
+          repr([i for i in range(90, 140) if said_now.count(f"irrigation note {i:03d}") != 1][:5]))
+    # Now the thread overflows the box: scrolled up to Earlier, the message
+    # at the top stays exactly where it is, in every frame.
+    more = page.locator(f"{CONV} [data-earlier]")
+    check(f"Z ({size}): Earlier is offered again for the page before that",
+          wait_for(lambda: more.count() == 1, secs=5))
+    if more.count() == 1:
+        page.evaluate("(sel) => { document.querySelector(sel).scrollTop = 0; }", CONV)
+        page.wait_for_timeout(300)
+        before = page.evaluate(mark, CONV)
+        page.evaluate(FRAMES_JS, CONV)
+        more.click()
+        expect(page.locator(CONV)).to_contain_text("irrigation note 040", timeout=5_000)
+        page.wait_for_timeout(600)
+        after = page.evaluate(where, CONV)
+        check(f"Z ({size}): Earlier keeps the reader on the message they were reading",
+              after is not None and abs(after - before["off"]) <= 2, f"{before} -> {after}")
+        f = page.evaluate("window.__frames || []")
+        moved = [x for x in f if x["aoff"] is None or abs(x["aoff"] - before["off"]) > 2]
+        check(f"Z ({size}): ... in every frame: the page read never shows at the top in its place",
+              bool(f) and not moved, f"{len(moved)} of {len(f)} frames off by more than 2px; first: {moved[:1]}")
+        said_now = page.locator(CONV).inner_text()
+        check(f"Z ({size}): ... the page before that, each message once",
+              all(said_now.count(f"irrigation note {i:03d}") == 1 for i in range(40, 140))
+              and "irrigation note 039" not in said_now)
+
+    # Z3: a reload mid-turn on that thread.
+    STATE["settings"]["steps"] = _growing_reply(before=[
+        ("tool", "z3", "web_search", {"query": "drip timer schedule"}), ("wait", 3.5),
+        ("result", "z3", {"ok": True})])
+    said2 = "and the west bed?"
+    box(page).fill(said2)
+    page.locator(f"{BACK} [data-press]").click()
+    check(f"Z ({size}): the second turn runs on the same thread",
+          wait_for(lambda: any(t.message == said2 and t.page == GARDEN for t in TURNS.values()), secs=5))
+    page.wait_for_timeout(1200)
+    page.reload(wait_until="domcontentloaded")
+    expect(page.locator("[data-card='you']")).to_be_visible(timeout=10_000)
+    hold(page, "you", phone)
+    expect(page.locator(CONV)).to_be_visible(timeout=8_000)
+    page.evaluate(FRAMES_JS, CONV)
+    _turns_over()
+    page.wait_for_timeout(2500)
+    _check_followed(page, size, "after a reload mid-turn", said2)
+
+    # Z4: the Host's pick files the exchange in another thread: the back
+    # follows it there, with the person's words and the reply.
+    STATE["threads"][GARDEN_NEXT] = {"title": "Drip timer replacement", "created_at": at(13000), "closed_at": None}
+    STATE["turns"][GARDEN_NEXT] = [turn_row("user", "replacement note from last month", 12900)]
+    STATE["settings"]["steps"] = [("text", "Looking at timers. "), ("wait", 0.6),
+                                  ("move", GARDEN_NEXT, "Drip timer replacement"), ("wait", 0.6),
+                                  ("text", "Filed with the replacement plan. ")]
+    said3 = "order a new timer"
+    box(page).fill(said3)
+    page.locator(f"{BACK} [data-press]").click()
+    _turns_over()
+    check(f"Z ({size}): the Host's pick files the exchange in another thread: the back goes there",
+          wait_for(lambda: page.locator(CONV).get_attribute("data-view-topic") == GARDEN_NEXT, secs=8),
+          repr(page.locator(CONV).get_attribute("data-view-topic")))
+    expect(page.locator(CONV)).to_contain_text("Filed with the replacement plan.", timeout=5_000)
+    page.wait_for_timeout(2500)
+    v = _view(page)
+    check(f"Z ({size}): ... showing that thread only, the person's words once, and the reply",
+          bool(v) and all(x["topic"] == GARDEN_NEXT for x in v) and sum(x["text"].endswith(said3) for x in v) == 1
+          and "replacement note from last month" not in page.locator(CONV).inner_text(),
+          repr([(x["topic"], x["text"][:40]) for x in v][:6]))
+    STATE["settings"]["steps"] = None
+
+
+def scenario_thread_view_beside(page, base, size):
+    """Z6. A message sent while a turn streams beside on another topic, after
+    the followed turn has ended: the Host's pick (whileRunning) names its
+    topic and it goes as an ordinary send there, with no pick of its own. The
+    back shows that topic, with the person's words and the reply on screen.
+
+    Found in review: the send named its topic, so it landed where it was
+    sent, the landing was not a move, and nothing put the screen on that
+    topic. The back stayed on the beside turn's topic, and the echoes, tagged
+    with the topic they went to, were filtered out: the person's message and
+    its reply were on no screen."""
+    phone = size == "phone"
+    open_cards(page, base)
+    own_back(page, phone)
+    STATE["pick"] = DINNER
+    STATE["settings"]["steps"] = _steps(3)
+    box(page).fill("Is Corvo open on Thursday?")
+    page.locator(f"{BACK} [data-press]").click()
+    check(f"Z6 ({size}): the first turn runs on Thursday dinner",
+          wait_for(lambda: any(t.page == DINNER and not t.done for t in TURNS.values()), secs=6))
+    # Words for another topic while it runs: their own turn, beside it, long.
+    STATE["pick"] = BACKUPS
+    STATE["settings"]["steps"] = _steps(20)
+    box(page).fill("Did last night's backup finish?")
+    box(page).press("Enter")
+    check(f"Z6 ({size}): a turn starts beside it on Backups",
+          wait_for(lambda: any(t.page == BACKUPS and not t.done for t in TURNS.values()), secs=6))
+    check(f"Z6 ({size}): the first turn ends while the beside one still runs (the scene's premise)",
+          wait_for(lambda: all(t.done for t in TURNS.values() if t.page == DINNER)
+                   and any(t.page == BACKUPS and not t.done for t in TURNS.values()), secs=15))
+    page.wait_for_timeout(800)
+    # The person writes again; the Host puts it on Thursday dinner.
+    STATE["pick"] = DINNER
+    STATE["settings"]["steps"] = None
+    said = "Book the table for eight then"
+    box(page).fill(said)
+    box(page).press("Enter")
+    check(f"Z6 ({size}): the words start a turn on Thursday dinner",
+          wait_for(lambda: any(t.message == said and t.page == DINNER for t in TURNS.values()), secs=8),
+          repr([(t.message, t.page) for t in TURNS.values()][-3:]))
+    check(f"Z6 ({size}): the back goes to Thursday dinner with them",
+          wait_for(lambda: page.locator(CONV).get_attribute("data-view-topic") == DINNER, secs=6),
+          repr(page.locator(CONV).get_attribute("data-view-topic")))
+    check(f"Z6 ({size}): ... and the person's words are on screen",
+          wait_for(lambda: said in page.locator(CONV).inner_text(), secs=6),
+          repr([(x["topic"], x["text"][:40]) for x in _view(page)][-4:]))
+    _turns_over()
+    STATE["settings"]["steps"] = None
+
+
+# Every topic the back has on screen, once a frame, from when it is put in.
+VIEW_TOPICS_JS = r"""(sel) => { window.__viewTopics = [];
+  const tick = () => {
+    const b = document.querySelector(sel), t = b ? b.getAttribute('data-view-topic') : null;
+    if (window.__viewTopics[window.__viewTopics.length - 1] !== t) window.__viewTopics.push(t);
+    if (window.__viewTopics.length < 200) requestAnimationFrame(tick); };
+  requestAnimationFrame(tick); }"""
+
+
+def scenario_thread_view_moved_away(page, base, size):
+    """Z7. The Host's pick files the followed turn's exchange in another
+    thread (thread_moved) while the person reads another topic, the one
+    their last message went to (a turn they started beside): the back stays
+    on that topic, with their words, and does not jump to the moved
+    exchange's new thread.
+
+    Found in review: thread_moved took the screen unconditionally for the
+    followed turn, so the back left the Backups thread the person had just
+    written in for a thread they were not reading."""
+    phone = size == "phone"
+    open_cards(page, base)
+    STATE["threads"][CORVO_BOOKING] = {"title": "Corvo booking", "created_at": at(4500), "closed_at": None}
+    own_back(page, phone)
+    STATE["pick"] = DINNER
+    STATE["settings"]["steps"] = [("text", "Checking the booking page. "), ("wait", 4.0),
+                                  ("move", CORVO_BOOKING, "Corvo booking"), ("wait", 3.0),
+                                  ("text", "Filed with the booking. ")]
+    first = "Is Corvo open on Thursday?"
+    box(page).fill(first)
+    page.locator(f"{BACK} [data-press]").click()
+    check(f"Z7 ({size}): the first turn runs on Thursday dinner",
+          wait_for(lambda: any(t.message == first and t.page == DINNER and not t.done for t in TURNS.values()),
+                   secs=6))
+    expect(page.locator(CONV)).to_contain_text("Checking the booking page.", timeout=6_000)
+    main = next(t for t in TURNS.values() if t.message == first)
+    # Words for another topic while it runs: their own turn, beside it, and
+    # the screen goes to Backups with them.
+    STATE["pick"] = BACKUPS
+    STATE["settings"]["steps"] = _steps(10)
+    said = "Did last night's backup finish?"
+    box(page).fill(said)
+    box(page).press("Enter")
+    check(f"Z7 ({size}): a turn starts beside it on Backups",
+          wait_for(lambda: any(t.page == BACKUPS and not t.done for t in TURNS.values()), secs=6))
+    check(f"Z7 ({size}): the back goes to Backups with the words",
+          wait_for(lambda: page.locator(CONV).get_attribute("data-view-topic") == BACKUPS, secs=6),
+          repr(page.locator(CONV).get_attribute("data-view-topic")))
+    check(f"Z7 ({size}): ... before the Host moves the first exchange (the scene's premise)",
+          main.page == DINNER and not main.done, repr(main.page))
+    page.evaluate(VIEW_TOPICS_JS, CONV)
+    # The Host's pick files the first exchange in Corvo booking.
+    check(f"Z7 ({size}): the Host's pick moves the first exchange to Corvo booking",
+          wait_for(lambda: main.page == CORVO_BOOKING, secs=10), repr(main.page))
+    page.wait_for_timeout(2000)
+    seen = page.evaluate("window.__viewTopics || []")
+    check(f"Z7 ({size}): the back stays on Backups, where the person's last message went",
+          page.locator(CONV).get_attribute("data-view-topic") == BACKUPS and seen == [BACKUPS], repr(seen))
+    check(f"Z7 ({size}): ... with the person's words on screen",
+          said in page.locator(CONV).inner_text(),
+          repr([(x["topic"], x["text"][:40]) for x in _view(page)][-4:]))
+    _turns_over()
+    page.wait_for_timeout(1500)
+    v = _view(page)
+    check(f"Z7 ({size}): once both turns end, the back still shows Backups only",
+          page.locator(CONV).get_attribute("data-view-topic") == BACKUPS and bool(v)
+          and all(x["topic"] == BACKUPS for x in v) and sum(x["text"].endswith(said) for x in v) == 1,
+          repr([(x["topic"], x["text"][:40]) for x in v][-6:]))
+    STATE["settings"]["steps"] = None
 
 
 def scenario_contacts(page, base, size):
@@ -3794,10 +4218,11 @@ def scenario_activity_tool_after_words(page, base, size):
 
 SCENARIOS = (scenario_deck, scenario_turn, scenario_blank, scenario_back_only, scenario_landing, scenario_waiting,
              scenario_ask, scenario_reading, scenario_block, scenario_unblock_through, scenario_door, scenario_coming, scenario_nudge,
-             scenario_crisis,
+             scenario_reply_wait, scenario_crisis,
              scenario_kept_words,
              scenario_count, scenario_support, scenario_support_elsewhere, scenario_reduced, scenario_search, scenario_links,
-             scenario_page_actions, scenario_earlier, scenario_contacts, scenario_clear_leave, scenario_decisions,
+             scenario_page_actions, scenario_earlier, scenario_thread_view, scenario_thread_view_beside,
+             scenario_thread_view_moved_away, scenario_contacts, scenario_clear_leave, scenario_decisions,
              scenario_support_full, scenario_older_asks, scenario_composer, scenario_compose_held, scenario_rail_audit, scenario_host_chrome,
              scenario_interests, scenario_activity, scenario_activity_reload, scenario_activity_agents, scenario_no_gone,
              scenario_no_ribbon, scenario_stands, scenario_activity_elsewhere, scenario_activity_buried,
@@ -3834,6 +4259,12 @@ def main() -> int:
                     msg = str(e)
                     if len(msg) > 1600:
                         msg = msg[:600] + " … " + msg[-1000:]
+                    # Which line of this file raised: Playwright's own message
+                    # ("Locator expected to be visible") does not say which wait.
+                    tb = [f for f in traceback.extract_tb(e.__traceback__)
+                          if f.filename.endswith("test_circles_cards.py")]
+                    if tb:
+                        msg = f"line {tb[-1].lineno}: " + msg
                     check(f"{fn.__name__} ({size}): completed", False, f"{type(e).__name__}: {msg}")
                     page.screenshot(path=str(SHOTS / f"{fn.__name__}-{size}-error.png"))
                 check(f"{fn.__name__} ({size}): no uncaught page errors", not errors, "; ".join(errors)[:300])

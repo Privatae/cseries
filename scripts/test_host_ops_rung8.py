@@ -582,7 +582,7 @@ check("this gate is registered (its own file in gates-container-free.d/)",
       and "test_host_ops_rung8.py" in src("scripts/gates-container-free.d/test_host_ops_rung8.txt"))
 skill = src("default-skills/network.md")
 check("the skill says the card comes first for a built-in write", "The ask is a CARD" in skill and "END YOUR TURN" in skill)
-check("the registry says asked then pending", "puts their card up ('asked': end the turn)" in src("brain/mastercode/public_tool_registry.py"))
+check("the registry says asked then pending", "puts their card up ('asked': carry on)" in src("brain/mastercode/public_tool_registry.py"))
 node = shutil.which("node")
 if node:
     r = subprocess.run([node, "--test", "test/ask.test.ts"], cwd=ROOT / "circles-web", capture_output=True, text=True, timeout=120)

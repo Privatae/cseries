@@ -6,7 +6,8 @@ import {
 import { TriangleAlertIcon } from "lucide-react";
 import { memo, useEffect, useRef, useState } from "react";
 import { ErrorBoundary } from "@/components/error-boundary";
-import { ToolCard } from "./tool-card";
+import { ToolGroupCard } from "./tool-card";
+import { groupTools } from "@/lib/tool-groups";
 import { ArtifactCard, artifactIdOf, artifactsOfTurn, isOwnHostTurn, VisualsAllowed } from "@kit/visuals";
 import type { ChatMessage } from "@/lib/types";
 import { failedOverNote as failedOverNoteFor, metricsBits } from "@/lib/metrics-format";
@@ -217,13 +218,11 @@ export const ChatMessageView = memo(function ChatMessageView({
         )}
         {message.tools.length > 0 && (
           <div className="flex flex-col">
-            {message.tools.map((t) => (
+            {/* One line per kind of call, counting up (lib/tool-groups.ts). */}
+            {groupTools(message.tools).map((g) => (
               // One malformed tool payload must cost one card, not the app.
-              <ErrorBoundary key={t.id} label={`tool:${t.name}`}>
-                <ToolCard
-                  defaultOpen={t.state === "output-error"}
-                  tool={t}
-                />
+              <ErrorBoundary key={g.key} label={`tools:${g.key}`}>
+                <ToolGroupCard group={g} />
               </ErrorBoundary>
             ))}
           </div>

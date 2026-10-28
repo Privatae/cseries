@@ -9,8 +9,9 @@ without it.
 
 A result over STORE_OVER_CHARS is written once, whole, to the Host's own pod
 Postgres (turn_tool_results, v223), keyed by the turn and the call. The turn's
-message list carries its first PREVIEW_CHARS, the handle, the total size and
-how to read on: read(handle, offset, length) pages it, exact characters. A
+message list carries, within PREVIEW_CHARS, its outline (a JSON object or
+list) or its first part (anything else), the handle, the total size and how
+to read on: read(handle, offset, length) pages it, exact characters. A
 result the cut takes out after it was used leaves the same handle behind
 (context_budget.dropped_result_stub). A stored row never changes, so a
 preview or a stub sent once is sent the same way on every later call and the
@@ -37,7 +38,7 @@ log = logging.getLogger("cseries.mastercode.result_store")
 # Over this many characters (the result as serialized for the transcript) a
 # result is stored and previewed. The measured p75 is 7,685 (module docstring).
 STORE_OVER_CHARS = 8_000
-# The first part the message list carries.
+# What the message list carries of it: the outline, or the first part.
 PREVIEW_CHARS = 2_000
 HANDLE_PREFIX = "res-"
 STORED_KEY = "stored_result"
@@ -140,10 +141,161 @@ def read_more_line(handle: str, offset: int) -> str:
             f"add length for less.")
 
 
+# A JSON result previews as its outline, not its first characters. Measured on
+# a Host: get_network returned 11-17k of JSON, the first 2,000
+# characters stopped mid-object, and the Host wrote fleet numbers from them
+# before paging the rest. The outline names every key (a wide object's first
+# ones, the rest counted), the length of every
+# list, scalars whole, the first item of a list, and where each part sits in
+# the stored text (`at N, M chars`: read(handle, offset=N, length=M) is that
+# part, exactly). The richest outline that fits the preview's budget is sent.
+# Order of the tries: depth first (what is there), then how many keys of a
+# wide object are named (the rest are counted: one map by id of thousands of
+# keys must not cost every other part its shape), then how much of a long
+# string, then a list's second item.
+_OUTLINE_TRIES = tuple((d, k, s, n) for d in (6, 4, 3, 2) for k in (24, 8) for n in (2, 1)
+                       for s in (1_200, 400, 160, 60))
+# A container whose JSON is this short is shown whole, on one line.
+_OUTLINE_INLINE = 100
+_INDENT = "  "
+
+
+class _Full(Exception):
+    pass
+
+
+def _outline(obj, at_ok: bool, budget: int, depth: int, keys: int, str_chars: int, items: int,
+             sized: dict) -> str:
+    """One try at the outline of `obj` under `budget` characters; raises
+    _Full past it. `at_ok`: the stored text is exactly json.dumps(obj), so
+    offsets into it can be given. `sized` caches json.dumps by object across
+    tries."""
+    out: list = []
+    used = [0]
+
+    def dumped(v) -> str:
+        k = id(v)
+        if k not in sized:
+            sized[k] = json.dumps(v)
+        return sized[k]
+
+    def emit(line: str) -> None:
+        used[0] += len(line) + 1
+        if used[0] > budget:
+            raise _Full
+        out.append(line)
+
+    def where(v, at) -> str:
+        n = len(dumped(v))
+        return f"{n:,} chars at {at}" if at_ok and at is not None else f"{n:,} chars"
+
+    def walk(label: str, v, at, level: int) -> None:
+        pad = _INDENT * level
+        if isinstance(v, str):
+            # Shown as written (ensure_ascii off); sizes and offsets stay the
+            # stored text's own.
+            if len(v) <= str_chars:
+                emit(f"{pad}{label}: {json.dumps(v, ensure_ascii=False)}")
+            else:
+                emit(f"{pad}{label}: {json.dumps(v[:str_chars], ensure_ascii=False)[:-1]}…\""
+                     f" ({where(v, at)})")
+            return
+        if not isinstance(v, (dict, list)) or len(dumped(v)) <= _OUTLINE_INLINE:
+            emit(f"{pad}{label}: {dumped(v)}")
+            return
+        if isinstance(v, dict):
+            emit(f"{pad}{label}: object, {len(v):,} key{'' if len(v) == 1 else 's'}, {where(v, at)}")
+            if level + 1 >= depth:
+                names = [str(k) for k in list(v)[:keys]]
+                emit(f"{pad}{_INDENT}keys: " + ", ".join(names)
+                     + (f", … {len(v) - keys:,} more" if len(v) > keys else ""))
+                return
+            pos = None if at is None else at + 1
+            for n_key, (k, child) in enumerate(v.items()):
+                if n_key >= keys:
+                    emit(f"{pad}{_INDENT}… {len(v) - keys:,} more keys")
+                    break
+                kj = json.dumps(str(k))
+                cpos = None if pos is None else pos + len(kj) + 2
+                walk(str(k), child, cpos, level + 1)
+                if pos is not None:
+                    pos = cpos + len(dumped(child)) + 2
+            return
+        emit(f"{pad}{label}: list of {len(v):,}, {where(v, at)}")
+        if level + 1 >= depth:
+            return
+        pos = None if at is None else at + 1
+        for i, child in enumerate(v[:items]):
+            walk(f"[{i}]", child, pos, level + 1)
+            if pos is not None:
+                pos += len(dumped(child)) + 2
+
+    if isinstance(obj, dict):
+        pos = 1
+        for n_key, (k, child) in enumerate(obj.items()):
+            if n_key >= keys:
+                emit(f"… {len(obj) - keys:,} more keys")
+                break
+            kj = json.dumps(str(k))
+            walk(str(k), child, pos + len(kj) + 2, 0)
+            pos += len(kj) + 2 + len(dumped(child)) + 2
+    else:
+        walk("list", obj, 0, 0)
+    return "\n".join(out)
+
+
+def outline(text: str, budget: int = PREVIEW_CHARS) -> str | None:
+    """The outline of a stored result that is a JSON object or list, the
+    richest of _OUTLINE_TRIES that fits `budget`; None for anything else
+    (a string, a number, text that is not JSON). When even the sparsest try
+    does not fit, its lines up to the budget and how many more there are."""
+    try:
+        obj = json.loads(text)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(obj, (dict, list)) or not obj:
+        return None
+    # serialize() wrote it with json.dumps' defaults, so this holds for every
+    # stored result; offsets are left out for any text where it does not.
+    at_ok = json.dumps(obj) == text
+    sized: dict = {}
+    for depth, keys, str_chars, items in _OUTLINE_TRIES:
+        try:
+            return _outline(obj, at_ok, budget, depth, keys, str_chars, items, sized)
+        except _Full:
+            continue
+    whole = _outline(obj, at_ok, 10 ** 9, 2, 8, 60, 1, sized).split("\n")
+    kept: list = []
+    for line in whole:
+        if sum(len(x) + 1 for x in kept) + len(line) + 1 > budget - 60:
+            break
+        kept.append(line)
+    kept.append(f"… {len(whole) - len(kept):,} more lines: read from offset 0 for all of it")
+    return "\n".join(kept)
+
+
+def _line_cut(text: str, limit: int) -> int:
+    """Where a text preview of at most `limit` characters ends: after the last
+    line break in its second half (a raw newline, or the \\n escape of a
+    result that is one JSON string), else at `limit`."""
+    if len(text) <= limit:
+        return len(text)
+    head = text[:limit]
+    best = max(head.rfind("\n") + 1, head.rfind("\\n") + 2 if head.rfind("\\n") >= 0 else 0)
+    return best if best > limit // 2 else limit
+
+
 def preview(tool: str, handle: str, text: str, preview_chars: int = PREVIEW_CHARS) -> str:
-    """What the message list carries for a stored result: its first part,
-    the handle, its size and how to read on. JSON, like every tool result."""
-    part = text[:preview_chars]
+    """What the message list carries for a stored result: the handle, its
+    size, how to read on, and either its outline (a JSON object or list;
+    nothing of it was sent verbatim, so reading starts at 0) or its first
+    part, cut on a line boundary. JSON, like every tool result."""
+    shape = outline(text, preview_chars)
+    if shape is not None:
+        body = {"handle": handle, "tool": tool, "chars": len(text), "outline": shape,
+                "next_offset": 0, "read_more": read_more_line(handle, 0)}
+        return json.dumps({STORED_KEY: body}, default=str)
+    part = text[:_line_cut(text, preview_chars)]
     body = {"handle": handle, "tool": tool, "chars": len(text),
             "preview": part, "next_offset": len(part),
             "read_more": read_more_line(handle, len(part))}

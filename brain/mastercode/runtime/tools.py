@@ -149,9 +149,9 @@ from mastercode.runtime.tools_memory import (  # noqa: E402,F401
     _exec_chat_threads, _exec_context, _exec_context_backend, _exec_context_ingest,
     _exec_embed_jobs, _exec_embedding_route, _exec_inference_catalog, _exec_links,
     _exec_media_embedding_route, _exec_memory_alias, _exec_memory_curate, _exec_memory_key,
-    _exec_memory_scope, _exec_model_route, _exec_preference, _exec_training_memory, _json,
-    _learned_in, _memory_scope_list, _memory_scope_names, _memory_scope_ref, _replace_problem,
-    _scope_label, _taught_places, _with_taught_places, apply_memory_scope,
+    _exec_memory_scope, _exec_model_route, _exec_preference, _exec_training_memory, _gone_memory,
+    _json, _learned_in, _memory_scope_list, _memory_scope_names, _memory_scope_ref,
+    _replace_problem, _scope_label, _taught_places, _with_taught_places, apply_memory_scope,
 )
 from mastercode.runtime.tools_network import (  # noqa: E402,F401
     AGENT_OBSERVATION_CAP, ALERTS_STALE_AFTER_S, ALERTS_STATES, DETECT_COMPARED_STATES,

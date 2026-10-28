@@ -6,8 +6,9 @@
     //   1. Text roles — one now (chat, shown as Host model; review went
     //      2026-10-20 with the diff reviewer) — picks PROVIDER → MODEL from
     //      the user's per-provider favorites, plus an optional FALLBACK
-    //      PROVIDER that answers when the primary provider errors or doesn't
-    //      host the model. Down from eight: plan, research,
+    //      PROVIDER that answers when the primary provider errors, doesn't
+    //      host the model, or its safety filter declines the request. Down
+    //      from eight: plan, research,
     //      agents, tutor and journal were seats the user had to fill for
     //      lanes that mostly never fired, and each of those lanes now runs
     //      on chat, named at its own call site. The Memory role

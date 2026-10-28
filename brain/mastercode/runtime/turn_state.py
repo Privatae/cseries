@@ -48,4 +48,7 @@ class TurnState:
         "_empty_retried",
         # The loop left because the turn was closed.
         "_ct_left_closed",
+        # The Host's mid-turn steering is switched off (runtime/steering.py):
+        # no go-ahead repair, no per-failure advice.
+        "_steering_off",
     )

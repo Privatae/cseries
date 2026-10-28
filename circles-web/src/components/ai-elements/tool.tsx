@@ -36,7 +36,8 @@ export const Tool = ({ className, ...props }: ToolProps) => (
 export type ToolPart = ToolUIPart | DynamicToolUIPart;
 
 export type ToolHeaderProps = {
-  title?: string;
+  /** A node, so a grouped line can mark its "·" aria-hidden (ToolGroupCard). */
+  title?: ReactNode;
   /** The call's subject — muted after the title so an argument never reads
    * as the card's headline. The caller decides whether it is quoted (an
    * argument is; a stage sentence like the build card's is not). */

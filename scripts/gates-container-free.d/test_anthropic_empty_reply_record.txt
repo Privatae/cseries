@@ -1,0 +1,7 @@
+# An Anthropic reply with no text and no tool call says what it
+# was: the stream's stop_details, the type of every content block it opened
+# and any error event ride _call_anthropic's empty result with the provider's
+# request id, and _log_call_failure puts them on the inference_error row; a
+# reply that wrote text is unchanged. Stand-in HTTP session, credential and
+# ledger writer; no pod, no DB, no network.
+test_anthropic_empty_reply_record.py

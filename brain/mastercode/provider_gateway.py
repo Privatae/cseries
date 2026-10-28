@@ -14,8 +14,9 @@ Every call runs on the USER's OWN provider account, dispatched by PROVIDER
     injection + streaming).
 
 A route may carry {fallback_provider, fallback_model}: when the primary call
-errors (provider outage, model unavailable), call_model retries once on the
-fallback and annotates the result — surfacing the failover, never hiding it.
+errors (provider outage, model unavailable, or the provider's safety filter
+declined the request), call_model retries once on the fallback and annotates
+the result — surfacing the failover, never hiding it.
 
 There is no platform inference lane and no Claude-SDK dispatch: the SDK is
 not a production option; its engine module stays in the
@@ -385,12 +386,43 @@ async def _log_call_failure(result, *, source, model, provider, entity_id,
         meta = {"error": err, "error_class": _error_class(result)}
         if result.get("picture_refused"):
             meta["picture_refused"] = True
+        # Why the model stopped, in the provider's own word: an answered call
+        # with nothing in it (Anthropic's "refusal", "end_turn", "pause_turn")
+        # is told apart only by this, and the error text alone never said it.
+        if result.get("stop_reason"):
+            meta["stop_reason"] = str(result["stop_reason"])[:64]
+        if result.get("refusal"):
+            # A safety-filter decline (_anthropic_refusal). The category is
+            # kept even when null: the docs call null a real value, not a gap.
+            meta["refusal"] = True
+            meta["refusal_category"] = result.get("refusal_category")
+            if result.get("refusal_explanation"):
+                meta["refusal_explanation"] = str(result["refusal_explanation"])[:300]
+            if result.get("refusal_partial"):
+                meta["refusal_partial"] = True
+            # No fallback set for the route in the Orchestrator (call_model):
+            # what diagnose tells the Host, so it can offer to set one.
+            if result.get("no_fallback"):
+                meta["no_fallback"] = True
+            # A category no fallback is tried for (_REFUSAL_NOT_RETRIED): the
+            # fix is the request, so diagnose offers no fallback for it.
+            if result.get("refusal_not_retried"):
+                meta["refusal_not_retried"] = True
+        if result.get("empty_reply"):
+            # An answered call with no text and no tool call: its own account
+            # of itself (_call_anthropic), so the row says which kind of empty.
+            for _k in ("stop_details", "block_types", "stream_error", "request_id"):
+                if result.get(_k) not in (None, [], ""):
+                    meta[_k] = result[_k]
         fo = result.get("failed_over")
         if isinstance(fo, dict):
             # The retry is logged on its own row; this records that the
-            # PRIMARY fell over, which is the thing worth alerting on.
+            # PRIMARY fell over, which is the thing worth alerting on — and
+            # whether the fallback answered.
             meta["failed_over_to"] = (f"{fo.get('to_provider')}/"
                                       f"{fo.get('to_model')}")
+            if isinstance(fo.get("answered"), bool):
+                meta["fallback_answered"] = fo["answered"]
         await _log_inference(
             source=source, model=model, provider=provider,
             total_tokens=0, prompt_tokens=0, completion_tokens=0,
@@ -1488,17 +1520,24 @@ async def _consume_anthropic_stream(resp, stream_cb, name_map=None, on_alive=Non
     """Accumulate a Messages SSE stream into the OpenAI-shaped relay dict the
     remote path produces: text deltas stream via stream_cb; thinking deltas
     accumulate into `reasoning` (never streamed); tool_use blocks assemble
-    from input_json_delta partials."""
+    from input_json_delta partials. The relay carries the message_delta's
+    `stop_details` beside its stop_reason: on a refusal it names the category."""
     content_parts: list[str] = []
     reasoning_parts: list[str] = []
     tool_blocks: dict[int, dict] = {}
     usage: dict = {}
     model_id = ""
     stop_reason = None
+    stop_details = None
     # Blocks in the shape a buffered response carries them, for the citation
     # reader (_anthropic_citations) — a non-streamed call that the gateway
     # streams for its length (_STREAM_ABOVE) keeps its sources.
     blocks: dict[int, dict] = {}
+    # What a reply with no text and no tool call actually carried: "empty
+    # response from anthropic" kept nothing else, so a safety decline, an
+    # error event mid-stream and a thinking-only end_turn read the same.
+    block_types: list[str] = []
+    stream_error = None
     buf = b""
     async for chunk in resp.content.iter_any():
         buf += chunk
@@ -1521,6 +1560,7 @@ async def _consume_anthropic_stream(resp, stream_cb, name_map=None, on_alive=Non
             elif etype == "content_block_start":
                 cb = obj.get("content_block") or {}
                 idx = obj.get("index", 0)
+                block_types.append(str(cb.get("type") or "?"))
                 if cb.get("type") == "tool_use":
                     tool_blocks[idx] = {
                         "id": cb.get("id") or "",
@@ -1557,6 +1597,14 @@ async def _consume_anthropic_stream(resp, stream_cb, name_map=None, on_alive=Non
             elif etype == "message_delta":
                 usage.update(obj.get("usage") or {})
                 stop_reason = (obj.get("delta") or {}).get("stop_reason") or stop_reason
+                # Where stop_reason is (the stop-reasons page names only
+                # message_delta for it on a stream); read at the event's top
+                # level too, as no page shows the streamed stop_details.
+                _sd = (obj.get("delta") or {}).get("stop_details") or obj.get("stop_details")
+                if isinstance(_sd, dict):
+                    stop_details = _sd
+            elif etype == "error":
+                stream_error = obj.get("error") or obj
     msg: dict = {"content": "".join(content_parts)}
     if reasoning_parts:
         msg["reasoning"] = "".join(reasoning_parts)
@@ -1573,8 +1621,10 @@ async def _consume_anthropic_stream(resp, stream_cb, name_map=None, on_alive=Non
             if not b["complete"]:
                 incomplete.append(tid)
     return {"choices": [{"message": msg}], "usage": usage, "model": model_id,
-            "stop_reason": stop_reason, "incomplete_tool_ids": incomplete,
-            "content": [blocks[i] for i in sorted(blocks)]}
+            "stop_reason": stop_reason, "stop_details": stop_details,
+            "incomplete_tool_ids": incomplete,
+            "content": [blocks[i] for i in sorted(blocks)],
+            "block_types": block_types, "stream_error": stream_error}
 
 
 # ── vendor-reported quota, read from the response itself ─────────────────────
@@ -1655,6 +1705,45 @@ def _drop_effort(payload: dict) -> None:
         payload.pop("output_config", None)
 
 
+# ── Safety-filter declines (stop_reason "refusal") ──────────────────────────
+# Claude Fable 5.1, Fable 5, Opus 5.5, Opus 5, Sonnet 5.5 and Haiku 5.5 run
+# safety classifiers that can decline a request: "a normal response, not an
+# error, with stop_reason: "refusal"", before any output or part-way through
+# it, with an informational stop_details {category, explanation}
+# (platform.claude.com/docs/en/build-with-claude/refusals-and-fallback).
+# _call_anthropic turns one into an error a person can read, never
+# the reply; call_model then answers it on the route's own fallback, the one
+# set in the Orchestrator, exactly as for any other failed call — one
+# mechanism, no second fallback list here.
+#
+# What a decline costs: one that comes after output began bills the input and
+# the output so far at normal rates; whether one before any output is billed
+# "depends on its refusal category", and Anthropic's refusals page keeps the
+# list (Anthropic's model migration guide: the Fable 5.1 refusal section and
+# the Sonnet 5.5 "Safeguards and fallback" section). The gateway
+# does not carry that list, so a decline's row is priced like any other call
+# (the price table's estimate, never a $0 it cannot show) and says which case
+# it is: refusal_billing "normal" (output began) or "by_category".
+#
+# A "reasoning_extraction" decline is not sent to the fallback: the request
+# asked the model to write out its internal reasoning, the same guide's Opus
+# 5.5 safeguards section says such declines "are not retried on a fallback
+# model", and the fix it gives is the request (ask for a short explanation of
+# the answer or a summary of what was done).
+_REFUSAL_NOT_RETRIED = frozenset({"reasoning_extraction"})
+
+
+def _anthropic_refusal(category, *, partial: bool) -> str:
+    """The sentence a person reads when Anthropic's safety filter declined
+    the request: what happened, in plain words, never "empty response".
+    call_model adds what the route's fallback did about it."""
+    cat = f" (category: {category})" if category else ""
+    if partial:
+        return (f"Anthropic's safety filter stopped this reply part-way{cat}; "
+                "the part already shown was discarded.")
+    return f"Anthropic's safety filter declined this request{cat}."
+
+
 async def _call_anthropic(
     messages: list[dict],
     model: str,
@@ -1688,6 +1777,13 @@ async def _call_anthropic(
     the model's own default applies, exactly as before effort was wired. A
     400 that refuses the effort anyway is re-sent once without it. The result
     says what was sent under `effort` (inference_config.describe_effort).
+
+    Refusals: a model's safety filter can decline a request with an HTTP 200
+    and stop_reason "refusal", before any output or part-way through it. That
+    is an error the person can read — the category when the API names one —
+    with `refusal`, `refusal_category`, and `refusal_partial` when text had
+    already streamed; it is never returned as the reply. call_model answers
+    it on the route's Orchestrator fallback, as any other failed call.
     """
     from server.vault.providers import PROVIDERS, resolve
     from mastercode.inference_config import (
@@ -1845,6 +1941,87 @@ async def _call_anthropic(
             content = content.strip()
             _incomplete = None
         _stop = _stop_fields(relay.get("stop_reason"), tool_calls, _incomplete, max_tokens)
+        _stop_reason = relay.get("stop_reason")
+        # A safety-filter decline (stop_reason "refusal", an HTTP 200).
+        # stop_details is informational and may be null or hold nulls; the
+        # branch is on stop_reason alone (refusals-and-fallback, "Common
+        # pitfalls").
+        _refused = _stop_reason == "refusal"
+        _sd = relay.get("stop_details") if isinstance(relay.get("stop_details"), dict) else {}
+        _cat = _sd.get("category") if _refused else None
+
+        # Usage: the Messages wire reports input_tokens EXCLUDING cached
+        # tokens (cache_read/cache_creation are separate fields) — the true
+        # input total is the sum, matching what input_total_tokens means on
+        # the OpenAI wire (where prompt_tokens already includes the subset).
+        # Read and logged BEFORE the decline and empty-reply checks below, so
+        # the row of a declined or empty call says why the model stopped.
+        u = relay.get("usage") or {}
+        cache_read = int(u.get("cache_read_input_tokens") or 0)
+        cache_write = int(u.get("cache_creation_input_tokens") or 0)
+        prompt_tokens = int(u.get("input_tokens") or 0) + cache_read + cache_write
+        completion_tokens = int(u.get("output_tokens") or 0)
+        tokens_used = prompt_tokens + completion_tokens
+        elapsed = (_time.time() - call_start) * 1000
+
+        # The vendor's own quota numbers, verbatim, on the row. Rides the
+        # metadata JSONB — no schema change, same lane the cache split uses.
+        # Absent when the vendor sent none. A refusal, or a reply with nothing
+        # in it, also says why the model stopped, so the row alone tells them
+        # apart.
+        _row_meta: dict = {"quota": _quota} if _quota else {}
+        if _refused or (not content and not tool_calls):
+            _row_meta["stop_reason"] = _stop_reason
+        if _refused:
+            # Priced as usual; which billing case it is rides beside it (the
+            # note above _REFUSAL_NOT_RETRIED).
+            _row_meta.update(refusal=True, refusal_category=_cat,
+                             refusal_billing=("normal" if completion_tokens > 0
+                                              else "by_category"))
+        await _log_inference(
+            source=_source, model=model, provider="anthropic",
+            total_tokens=tokens_used,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            elapsed_ms=elapsed, entity_id=_entity_id,
+            cache_read_tokens=cache_read, cache_write_tokens=cache_write,
+            metadata=_row_meta or None,
+        )
+        if _refused:
+            # Never the reply: a decline part-way leaves a partial answer the
+            # docs say to discard, and a tool call it was writing is not run.
+            _partial = bool(content or tool_calls)
+            if _partial and stream_cb is not None:
+                # What already streamed is withdrawn from the turn's reply
+                # (turn_replies._discard): the fallback's answer, or the
+                # error, is what the turn keeps. A callback without the hook
+                # keeps what it has.
+                _drop = getattr(stream_cb, "discard_streamed", None)
+                if callable(_drop):
+                    try:
+                        _dr = _drop()
+                        if asyncio.iscoroutine(_dr):
+                            await _dr
+                    except Exception as _de:  # noqa: BLE001 — the decline still reaches the person
+                        log.debug("discarding a declined partial failed: %s", _de)
+            _err = _anthropic_refusal(_cat, partial=_partial)
+            log.warning("anthropic %s refused (stop_reason=refusal category=%s partial=%s "
+                        "out=%s source=%s)", model, _cat, _partial, completion_tokens, _source)
+            if _prompt_console and entry_id:
+                _prompt_console.log_response(entry_id, "", tokens_used, elapsed, error=_err)
+            out = {"error": _err, "content": "", "stop_reason": _stop_reason,
+                   "refusal": True, "refusal_category": _cat,
+                   "tokens_used": tokens_used, "prompt_tokens": prompt_tokens,
+                   "completion_tokens": completion_tokens,
+                   "cache_read_tokens": cache_read, "cache_write_tokens": cache_write,
+                   "input_total_tokens": prompt_tokens,
+                   "model": relay.get("model") or model, "effort": dict(_effort)}
+            if _sd.get("explanation"):
+                # "The text is not stable, so display it rather than parse it."
+                out["refusal_explanation"] = str(_sd["explanation"])[:500]
+            if _partial:
+                out["refusal_partial"] = True
+            return out
 
         if not content and not tool_calls:
             if _stop.get("truncated"):
@@ -1854,33 +2031,33 @@ async def _call_anthropic(
                         "content": "", **_stop}
             # The stop reason rides the error too: a search turn the API
             # paused before any text (pause_turn) is not an empty answer.
-            return {"error": "empty response from anthropic", "content": "",
-                    "stop_reason": relay.get("stop_reason")}
+            # Said as what happened. An end_turn with nothing in it is the
+            # model deciding it was done; the stop-reasons page ("Empty
+            # responses with end_turn") says re-sending it unchanged does not
+            # help, so it is not re-sent here.
+            _what = {"end_turn": "ended its turn without writing anything",
+                     "pause_turn": "paused its turn before writing anything",
+                     }.get(str(_stop_reason or ""), "returned no text and no tool call")
+            _err = f"{model} {_what} (stop_reason: {_stop_reason})"
+            log.warning("anthropic %s: no text and no tool call (stop_reason=%s out=%s "
+                        "source=%s)", model, _stop_reason, completion_tokens, _source)
+            # The rest of its account rides the result and the failure row:
+            # the stop details, the block types the reply carried, any error
+            # event the stream sent and the provider's request id.
+            _blk = (relay.get("block_types") if _streamed else
+                    [b.get("type") for b in (relay.get("content") or [])
+                     if isinstance(b, dict)])
+            try:
+                _rid = resp.headers.get("request-id")
+            except Exception:
+                _rid = None
+            return {"error": _err, "content": "", "stop_reason": _stop_reason,
+                    "model": relay.get("model") or model, "empty_reply": True,
+                    "stop_details": relay.get("stop_details"),
+                    "block_types": _blk or [],
+                    "stream_error": relay.get("stream_error"),
+                    "request_id": _rid}
 
-        # Usage: the Messages wire reports input_tokens EXCLUDING cached
-        # tokens (cache_read/cache_creation are separate fields) — the true
-        # input total is the sum, matching what input_total_tokens means on
-        # the OpenAI wire (where prompt_tokens already includes the subset).
-        u = relay.get("usage") or {}
-        cache_read = int(u.get("cache_read_input_tokens") or 0)
-        cache_write = int(u.get("cache_creation_input_tokens") or 0)
-        prompt_tokens = int(u.get("input_tokens") or 0) + cache_read + cache_write
-        completion_tokens = int(u.get("output_tokens") or 0)
-        tokens_used = prompt_tokens + completion_tokens
-        elapsed = (_time.time() - call_start) * 1000
-
-        await _log_inference(
-            source=_source, model=model, provider="anthropic",
-            total_tokens=tokens_used,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            elapsed_ms=elapsed, entity_id=_entity_id,
-            cache_read_tokens=cache_read, cache_write_tokens=cache_write,
-            # The vendor's own quota numbers, verbatim, on the row. Rides the
-            # metadata JSONB — no schema change, same lane the cache split
-            # uses. Absent when the vendor sent none.
-            metadata={"quota": _quota} if _quota else None,
-        )
         if _prompt_console and entry_id:
             _prompt_console.log_response(entry_id, content, tokens_used, elapsed)
 
@@ -2971,9 +3148,18 @@ async def _call_model(
     # Failover: an errored primary (provider outage OR the model unavailable
     # there — any error with no content) retries once on the route's
     # fallback provider. Annotated on the result — a silent downgrade is a
-    # billing/trust bug.
+    # billing/trust bug. A request the provider's safety filter declined
+    # (`refusal`, _call_anthropic) is such an error: the same request is run
+    # again on the fallback the person set in the Orchestrator — the refusals
+    # page's own advice is to retry a declined request on another model — and
+    # with none set, nothing is re-run and the error says so.
     fb_raw = (kwargs.get("fallback_provider") or "").strip()
-    if (fb_raw and isinstance(result, dict)
+    _refused = isinstance(result, dict) and bool(result.get("refusal"))
+    _fb_skipped = None     # why a configured fallback was not tried
+    # A decline whose fix is the request, not another model
+    # (_REFUSAL_NOT_RETRIED): never sent to the fallback, set or not.
+    _not_retried = _refused and result.get("refusal_category") in _REFUSAL_NOT_RETRIED
+    if (fb_raw and isinstance(result, dict) and not _not_retried
             and result.get("error") and not result.get("content")
             and not result.get("killed") and not result.get("unconfigured")):
         fb_provider, fb_model = normalize_provider(
@@ -2988,7 +3174,10 @@ async def _call_model(
             _fstd = _standard.refusal(fb_provider, fb_model, judge_effort=False)
             if _fstd:
                 log.warning("provider failover skipped: %s", _fstd)
+                _fb_skipped = f"{fb_provider}/{fb_model} is not an approved model"
                 fb_provider = ""
+        if fb_provider and (fb_provider, fb_model) == (prov, model):
+            _fb_skipped = f"{fb_provider}/{fb_model} is the same model"
         if fb_provider and (fb_provider, fb_model) != (prov, model):
             fb_base = (kwargs.get("fallback_base_url") or "").strip() or None
             if fb_provider == "local" and not fb_base:
@@ -3015,7 +3204,16 @@ async def _call_model(
                     "from_provider": prov, "from_model": model,
                     "to_provider": fb_provider, "to_model": fb_model,
                     "primary_error": str(result.get("error"))[:200],
+                    # Whether the fallback answered: the primary's failure
+                    # row carries it, so diagnose can say "X answered".
+                    "answered": not (retry.get("error") and not retry.get("content")),
                 }
+                if _refused:
+                    # The primary was declined by its safety filter, not
+                    # down: the Host and diagnose read the category here.
+                    _fo["primary_refusal"] = {
+                        "category": result.get("refusal_category"),
+                        **({"partial": True} if result.get("refusal_partial") else {})}
                 retry["failed_over"] = _fo
             if isinstance(retry, dict) and retry.get("error") \
                     and not retry.get("content"):
@@ -3038,6 +3236,23 @@ async def _call_model(
                 model=model, provider=prov,
                 entity_id=kwargs.get("_entity_id"), call_start=call_start)
             return retry
+    if _refused:
+        # A decline nothing re-ran: the sentence says why, in the person's
+        # terms — what to ask instead, there is no fallback to answer it, or
+        # the one set was not tried.
+        if _not_retried:
+            result["refusal_not_retried"] = True
+            result["error"] = (f"{result.get('error')} The request asked the model to write "
+                               "out its internal reasoning, so another model is not tried; "
+                               "asking for a short explanation of the answer, or a summary "
+                               "of what was done, is fine.")
+        elif not fb_raw:
+            result["no_fallback"] = True
+            result["error"] = (f"{result.get('error')} No fallback model is set for this "
+                               "in the Orchestrator.")
+        elif _fb_skipped:
+            result["error"] = (f"{result.get('error')} The fallback set for this in the "
+                               f"Orchestrator was not tried: {_fb_skipped}.")
     if isinstance(result, dict) and result.get("error") \
             and not result.get("content"):
         # Every remaining failed call — provider 4xx/5xx, transport loss,

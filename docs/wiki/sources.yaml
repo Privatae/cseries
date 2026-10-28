@@ -165,7 +165,7 @@ circles-app:
   - scripts/image_baked_apps.txt
   verified:
     date: '2026-10-28'
-    digest: sha256:9d8ee6b1bb79069ed60242a708ceab16fa907aad56205ca8e355b4cf4d6979b6
+    digest: sha256:b8590997819efea60b5bd480625a5eb09c5f346ceedaba2edf9c82fbbd3989d7
 claude-code-app:
   sources:
   - system-apps/claude-code/app.yaml
@@ -220,7 +220,7 @@ coding-agents:
   - system-apps/_harness_runtime/harness_core.py
   verified:
     date: '2026-10-28'
-    digest: sha256:65af60941aa34c8a1d97b7c758e7718fe9a566980702e80dc2fe7294cf222ba6
+    digest: sha256:72c5c4bc69ae6f2a28d95fe179d2121666cb507605ea2924c0479187ce0089eb
 community-app:
   sources:
   - system-apps/community/app.yaml
@@ -354,7 +354,7 @@ glossary:
   - brain/mastercode/runtime/tools_apps.py::_exec_publish_site
   verified:
     date: '2026-10-28'
-    digest: sha256:cb718ffb15673e5b853e69816599d50ca039a00d88358e11efc071f2177adce6
+    digest: sha256:7d7de539d435785d9194bb1e8f9a3493718b730f1ddea286ab4267d5708ae278
 how-a-host-handles-a-request:
   sources:
   - brain/mastercode/runtime/session.py::EntityRuntime
@@ -370,7 +370,7 @@ how-a-host-handles-a-request:
   - brain/mastercode/runtime/root_turn.py
   verified:
     date: '2026-10-28'
-    digest: sha256:1a7406e364d3465fc4c4432795b003e29903f727373c870930b0635b9873c029
+    digest: sha256:f8dfa593e89f21165d949c8d9e165f7d3059bed537951b4e8c831d6009a7ce8b
 how-your-host-is-protected:
   sources:
   - compose.yaml
@@ -403,7 +403,7 @@ keys-app:
   - server/vault/providers.py::signin_harness
   verified:
     date: '2026-10-28'
-    digest: sha256:f66576ef63f6826403123ce4155aa39aea4f0428cf3ce059f399175e0ef224b1
+    digest: sha256:b8626903a2724567ff5c54de0abc68cbf05e75628c17aef2d334e25d73cc00db
 local-models:
   sources:
   - server/routes/embedding.py
@@ -456,6 +456,7 @@ models-and-keys:
   - brain/mastercode/inference_config.py::normalize_provider
   - brain/mastercode/inference_config.py::provider_allowed_for_role
   - brain/mastercode/provider_gateway.py::call_model
+  - brain/mastercode/provider_gateway.py::_call_anthropic
   - server/routes/inference.py::SetRoleModel
   - server/vault/providers.py
   - server/routes/vault.py::reveal_secret
@@ -468,7 +469,7 @@ models-and-keys:
   - brain/mastercode/attachment_parts.py::model_reads_images
   verified:
     date: '2026-10-28'
-    digest: sha256:e75712e8fcdae6199a7f760547e950f90e98f8bf58d78fbcc99ef5bfd229bc07
+    digest: sha256:d0ba0affa7bc306b66e4e7e838058551de2d21e8de731f93ce8ae932a4a3147c
 network-app:
   sources:
   - system-apps/network/app.yaml
@@ -509,7 +510,7 @@ orchestrator-app:
   - brain/mastercode/attachment_parts.py::model_reads_images
   verified:
     date: '2026-10-28'
-    digest: sha256:3bb6dc07730bf11a9d8fd30625b8dbb4c111b0afc8398ca1620efb2f7ba834f5
+    digest: sha256:cc66a40f504cd1e3492682bf4dd27d5c269401d9f9add534f2c4b81f92493d80
 oversight-app:
   sources:
   - system-apps/oversight/app.yaml
@@ -692,7 +693,7 @@ what-is-privatae:
   - vm/cloud/overlay/usr/local/lib/cseries-cloud/cseries_vault.py
   verified:
     date: '2026-10-28'
-    digest: sha256:ae5821964d20c682d452b9eb09ad778a7bdb6ba79d4c1d624b5df361fe153f81
+    digest: sha256:835721a00bc5b22fec5290b28512767fa9caae140c6cdbf58529baf5a93bab50
 where-your-data-lives:
   sources:
   - compose.yaml

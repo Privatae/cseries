@@ -193,15 +193,26 @@ def self_thread(tid: str):
     return circles_self_rows()
 
 
+# The topic the rows are in: read_feed names live threads only (there is no
+# original conversation).
+VIS_TOPIC = "dddddddd-0000-4000-8000-000000000001"
+
+
 @app.get("/api/circles/feed")
-def feed(before: str | None = None, before_id: int | None = None):
+def feed(before: str | None = None, before_id: int | None = None, thread: str | None = None):
     """The one conversation (routes/circles.py read_feed): every row with its
-    topic, oldest first, and no page before this one."""
-    if before:
+    topic, oldest first, and no page before this one. `thread`: that topic's
+    rows before the cursor (your Host's back reads the thread on screen's
+    earlier messages so)."""
+    if before and thread is None:
+        return {"messages": [], "next": None}
+    if thread is not None and thread != VIS_TOPIC:
         return {"messages": [], "next": None}
     rows = circles_self_rows()["messages"]
+    if before:
+        rows = [r for r in rows if (r["created_at"], r["id"]) < (before, before_id if before_id is not None else 2**62)]
     for r in rows:
-        r["feed_topic"] = {"id": "original", "title": "The original conversation", "root": False}
+        r["feed_topic"] = {"id": VIS_TOPIC, "title": "Visuals", "root": False}
     return {"messages": rows, "next": None}
 
 

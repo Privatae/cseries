@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   answerText,
   type AskCredentialRequest,
@@ -36,7 +36,7 @@ import { fetchHostThreads } from "@/lib/cards-api";
 import { ORIGINAL, type ThreadRow } from "@/lib/cards";
 import { isHolding } from "@/lib/holding";
 import { isLocalEcho } from "@/lib/history-merge";
-import { type Landing, normalizeThreadId } from "@/lib/turn-types";
+import { type Landing, normalizeThreadId, topicTag } from "@/lib/turn-types";
 import type { AttachmentBlock, CarryRef, ChatMessage, FeedTopic, Marker, ModelPick, Target, TurnType } from "@/lib/types";
 
 const SELF: Target = { kind: "self", id: "self", label: "Your Host" };
@@ -78,10 +78,21 @@ export function conversationPairing(list: unknown): PairingAsk | null {
  *
  * ONE CONVERSATION. The back opens on a
  * blank page with a greeting at every login, never on the page last open
- * (last-open is for links only, openOn). Earlier messages load by scrolling
- * up: one feed over every topic, newest at the bottom (GET /api/circles/feed).
- * The person never picks a thread: each send asks the Host for the topic
- * (pick_topic), and `threadId` is only the topic their last message went to.
+ * (last-open is for links only, openOn). The person never picks a thread:
+ * each send asks the Host for the topic (pick_topic), and `threadId` is only
+ * the topic their last message went to.
+ *
+ * ONE THREAD ON SCREEN: circles chat history shows only the thread the
+ * message was placed in. The back shows the thread the person's last
+ * message went to (`viewTopic`: threadId, else on a blank page the one they last wrote in,
+ * which "Where this stands" names): this visit's messages of that thread
+ * (`shown`), and its earlier ones only when the person asks for them
+ * (Earlier messages, that thread's own pages of GET /api/circles/feed?thread=).
+ * When the platform lands a message in another thread, the screen follows
+ * the words to that thread; when the Host's pick files an exchange there
+ * (thread_moved), it follows only from the thread the exchange left. The
+ * back once showed one feed over every topic, and scrolling near its top
+ * read the next 50 rows of it on its own: a reply growing past the box did that, and the page jumped into old history.
  * While a turn runs, the Host is asked first (POST /api/circles/topic): words
  * for the running topic go into it as a nudge, words for another topic start
  * their own turn at once, side by side. The root thread is written to only
@@ -89,7 +100,13 @@ export function conversationPairing(list: unknown): PairingAsk | null {
  * picked into or out of.
  */
 export function useHostThread() {
-  const chat = useCirclesChat({ echoNudges: true });
+  // The Host's pick filed a turn's exchange elsewhere: what to do is set
+  // once the page's own callbacks exist (below).
+  const movedRef = useRef<(to: FeedTopic, from: string | null, side: boolean) => void>(() => {});
+  const chat = useCirclesChat({
+    echoNudges: true,
+    onThreadMoved: (to, from, side) => movedRef.current(to, from, side),
+  });
   const {
     messages,
     messagesRef,
@@ -157,10 +174,11 @@ export function useHostThread() {
     },
     [setThreadId, openBlank],
   );
+  // The newest row of the conversation when the page opened (its time and
+  // id): everything after it is this visit's and comes with the feed's
+  // re-reads; a thread's earlier messages are read from it back.
   const floorRef = useRef<string>("");
-  const cursorRef = useRef<FeedCursor | null>(null);
-  const heldPageRef = useRef<ChatMessage[]>([]);
-  const [hasEarlier, setHasEarlier] = useState(false);
+  const floorIdRef = useRef<number | null>(null);
   const [booted, setBooted] = useState(false);
   // The root thread's id, once a feed row names it, and whether the person
   // chose to write there (the only way words reach it from this page).
@@ -180,8 +198,9 @@ export function useHostThread() {
       if (r.ok) {
         const rows = mapThreadMessages(r.data.messages, true);
         noteRoot(rows);
-        heldPageRef.current = rows;
-        floorRef.current = rows.length ? rows[rows.length - 1].createdAt : "";
+        const newest = rows.length ? rows[rows.length - 1] : null;
+        floorRef.current = newest ? newest.createdAt : "";
+        floorIdRef.current = newest && /^\d+$/.test(newest.id) ? Number(newest.id) : null;
         const mine = [...rows].reverse().find((m) => m.role === "user" && !m.topicMarker && m.topic?.id);
         setLastWritten(mine?.topic?.id ?? null);
         // A turn still running on that topic (a reload mid-turn): followed
@@ -189,8 +208,6 @@ export function useHostThread() {
         const last = mine?.topic?.id ?? ORIGINAL;
         chat.adoptThread(`self:${normalizeThreadId(last)}`);
         void reattachRef.current(last);
-        cursorRef.current = r.data.next;
-        setHasEarlier(rows.length > 0);
       }
       setBooted(true);
       // The conversation's cards, at once: a blank page names no topic.
@@ -201,36 +218,113 @@ export function useHostThread() {
     };
   }, [noteRoot]);
 
-  /** Show the page before what is on screen (scrolling up). True when
+  // The thread on screen (see the head of this hook): the one the person's
+  // last message went to, else the one they last wrote in before this visit.
+  const viewTopic = (() => {
+    const t = normalizeThreadId(threadId ?? lastWritten);
+    return t === ORIGINAL ? null : t;
+  })();
+  const viewTopicRef = useRef(viewTopic);
+  viewTopicRef.current = viewTopic;
+  /** What the back shows: the messages of the thread on screen. An echo
+   * that names no topic yet (a send whose landing has not come back) is the
+   * person's words of now, and shows wherever they are. */
+  const shown = useMemo(
+    () => (viewTopic ? messages.filter((m) => !m.topic || normalizeThreadId(m.topic.id) === viewTopic) : messages),
+    [messages, viewTopic],
+  );
+
+  // Each thread's earlier messages: the page before what of it is on screen,
+  // read ahead when the thread comes on screen and held (so Earlier messages
+  // shows only when there is something, and puts it up at once), and the
+  // cursor to the page before that (null: nothing before).
+  type Earlier = { held: ChatMessage[]; next: FeedCursor | null };
+  const earlierRef = useRef<Map<string, Earlier>>(new Map());
+  const earlierGenRef = useRef<Map<string, number>>(new Map());
+  const [earlierTick, setEarlierTick] = useState(0);
+  /** Where a thread's earlier messages start: before its oldest saved row on
+   * screen, else before this visit (the floor), else its newest page. */
+  const earlierCursor = useCallback((topic: string): FeedCursor | null => {
+    for (const m of messagesRef.current) {
+      if (isLocalEcho(m.id) || !/^\d+$/.test(m.id) || !m.topic || normalizeThreadId(m.topic.id) !== topic) continue;
+      return { before: m.createdAt, before_id: Number(m.id) };
+    }
+    if (floorRef.current && floorIdRef.current != null) {
+      return { before: floorRef.current, before_id: floorIdRef.current + 1 };
+    }
+    return null;
+  }, [messagesRef]);
+  /** Read the page before `cursor` of thread `topic` (mapped, its topic on
+   * every row); null when the read failed or a newer read of the thread
+   * started meanwhile. */
+  const readEarlier = useCallback(async (topic: string, cursor: FeedCursor | null, gen: number) => {
+    const r = await fetchFeed(cursor, topic);
+    if (!r.ok || earlierGenRef.current.get(topic) !== gen) return null;
+    const rows = mapThreadMessages(r.data.messages, true).filter(
+      (m) => !m.topic || normalizeThreadId(m.topic.id) === topic,
+    );
+    noteRoot(rows);
+    return { rows, next: r.data.next };
+  }, [noteRoot]);
+  /** Forget what was read of thread `topic`'s earlier messages (its rows on
+   * screen changed under it: a link read the thread again), so it is read
+   * again from what is on screen now. */
+  const forgetEarlier = useCallback((topic: string) => {
+    earlierRef.current.delete(topic);
+    earlierGenRef.current.set(topic, (earlierGenRef.current.get(topic) ?? 0) + 1);
+    setEarlierTick((t) => t + 1);
+  }, []);
+  useEffect(() => {
+    if (!booted || !viewTopic || earlierRef.current.has(viewTopic)) return;
+    const gen = (earlierGenRef.current.get(viewTopic) ?? 0) + 1;
+    earlierGenRef.current.set(viewTopic, gen);
+    const topic = viewTopic;
+    void readEarlier(topic, earlierCursor(topic), gen).then((got) => {
+      if (!got) return;
+      earlierRef.current.set(topic, { held: got.rows, next: got.next });
+      setEarlierTick((t) => t + 1);
+    });
+  }, [booted, viewTopic, earlierTick, readEarlier, earlierCursor]);
+  const earlierOfView = viewTopic ? earlierRef.current.get(viewTopic) : undefined;
+  const hasEarlier = !!earlierOfView && (earlierOfView.held.length > 0 || earlierOfView.next != null);
+
+  /** Put the page before what is on screen of the thread in view above it.
+   * `put` makes the change: it is handed the change, so the caller can make
+   * it in one commit and keep the reader's place (own-back.tsx). True when
    * something was added. */
   const earlierBusyRef = useRef(false);
-  const loadEarlier = useCallback(async (): Promise<boolean> => {
-    if (earlierBusyRef.current) return false;
-    earlierBusyRef.current = true;
-    try {
-      if (heldPageRef.current.length) {
-        const rows = heldPageRef.current;
-        heldPageRef.current = [];
-        chat.prependOlder(rows);
-        setHasEarlier(!!cursorRef.current);
+  const loadEarlier = useCallback(
+    async (put: (apply: () => void) => void = (apply) => apply()): Promise<boolean> => {
+      const topic = viewTopicRef.current;
+      if (!topic || earlierBusyRef.current) return false;
+      const st = earlierRef.current.get(topic);
+      if (!st) return false;
+      earlierBusyRef.current = true;
+      try {
+        let rows = st.held;
+        let next = st.next;
+        if (!rows.length) {
+          if (!next) return false;
+          const gen = earlierGenRef.current.get(topic) ?? 0;
+          const got = await readEarlier(topic, next, gen);
+          if (!got) return false;
+          rows = got.rows;
+          next = got.next;
+        }
+        // Another thread came on screen while the page was read: it waits,
+        // held, for this thread's next Earlier.
+        const away = viewTopicRef.current !== topic;
+        earlierRef.current.set(topic, { held: away ? rows : [], next });
+        setEarlierTick((t) => t + 1);
+        if (!rows.length || away) return false;
+        put(() => chat.prependOlder(rows));
         return true;
+      } finally {
+        earlierBusyRef.current = false;
       }
-      if (!cursorRef.current) {
-        setHasEarlier(false);
-        return false;
-      }
-      const r = await fetchFeed(cursorRef.current);
-      if (!r.ok) return false;
-      const rows = mapThreadMessages(r.data.messages, true);
-      noteRoot(rows);
-      cursorRef.current = r.data.next;
-      chat.prependOlder(rows);
-      setHasEarlier(!!r.data.next);
-      return rows.length > 0;
-    } finally {
-      earlierBusyRef.current = false;
-    }
-  }, [chat.prependOlder, noteRoot]);
+    },
+    [chat.prependOlder, readEarlier],
+  );
 
   /** This visit's part of the feed read again and merged in place: what the
    * Host wrote in any topic since the page opened, a turn's saved rows, a
@@ -291,9 +385,15 @@ export function useHostThread() {
       const rows: ThreadMessageRaw[] | null = r.ok ? r.data.messages : null;
       if (!r.ok && !isRefresh) setError(`${r.status || ""} ${r.message}`.trim());
       if (rows) {
-        const mapped = mapThreadMessages(rows, true);
+        // The page's own read names no topic on its rows: they are this
+        // page's, and the back shows them as its.
+        const topic = topicTag(id);
+        const mapped = mapThreadMessages(rows, true).map((m) => (m.topic || !topic ? m : { ...m, topic }));
         if (isRefresh) reconcile(mapped);
-        else reset(mapped, key);
+        else {
+          reset(mapped, key);
+          if (topic) forgetEarlier(topic.id);
+        }
         loadedKeyRef.current = key;
       } else if (!isRefresh) {
         reset([]);
@@ -301,7 +401,7 @@ export function useHostThread() {
       }
       if (!isRefresh) setLoading(false);
     },
-    [reset, reconcile],
+    [reset, reconcile, forgetEarlier],
   );
 
   // The topic each card's question was asked on (its ticket's asked_in): an
@@ -424,8 +524,10 @@ export function useHostThread() {
 
   const handleLanded = useCallback(
     (landing: Landing) => {
-      // One conversation: the feed stays; the topic the message went to is
-      // the person's topic now. Nothing is read in its place.
+      // The topic the message went to is the person's topic now, and the
+      // thread on screen: its messages of this visit with this send's own
+      // words and the reply being written, at the bottom. Nothing older is
+      // read in: that thread's earlier messages are an Earlier away.
       landedThreadRef.current = landing.threadId;
       runningTopicRef.current = landing.threadId;
       setThreadId(landing.threadId);
@@ -433,6 +535,26 @@ export function useHostThread() {
     },
     [loadThreads, setThreadId],
   );
+
+  // The Host's pick filed a turn's exchange in another topic (thread_moved):
+  // the followed turn's words go there. The screen goes with them only when
+  // it shows the thread the exchange left (the frame's `from`; for the
+  // followed turn with no `from`, the topic it ran on), for the followed
+  // turn and a turn beside alike. A person reading another topic, where
+  // their last message went (a turn they started beside), stays there: the
+  // screen never moves on its own. The blank page, with no
+  // thread on it, follows the followed turn: its words are the only ones there.
+  movedRef.current = (to, from, side) => {
+    const left = normalizeThreadId(from ?? (side ? null : runningTopicRef.current));
+    if (!side) {
+      runningTopicRef.current = to.id;
+      landedThreadRef.current = to.id;
+    }
+    const view = viewTopicRef.current;
+    const onLeft = view ? left !== ORIGINAL && left === view : !side;
+    if (onLeft || normalizeThreadId(to.id) === view) setThreadId(to.id);
+    void loadThreads();
+  };
 
   /** A message for another topic while a turn runs: its own turn, started
    * now beside the running one, streaming live into the conversation with
@@ -478,12 +600,19 @@ export function useHostThread() {
       const running = runningTopicRef.current;
       let topic: FeedTopic | null = rootPin ? { id: rootPin, title: "Root", root: true } : null;
       let picked = false;
+      // Words that go into the running turn: the screen is on its thread, so
+      // their line is seen going in (the person may be on another thread
+      // since, with a turn beside it).
+      const intoRunning = async () => {
+        if (normalizeThreadId(running) !== ORIGINAL) setThreadId(running);
+        await nudgeRunningTurn(SELF, words, running, true);
+      };
       if (!topic) {
         const last = threadId && threadId !== rootIdRef.current ? threadId : undefined;
         const t = await pickTopic(words, last);
         if (!t.ok) {
           if (!fallbackNudge) return { send: null };
-          await nudgeRunningTurn(SELF, words, running, true);
+          await intoRunning();
           return null;
         }
         topic = { id: t.data.thread_id, title: t.data.title || "", root: t.data.root };
@@ -491,7 +620,7 @@ export function useHostThread() {
       }
       const dest = normalizeThreadId(topic.id);
       if (fallbackNudge && dest === normalizeThreadId(running)) {
-        await nudgeRunningTurn(SELF, words, running, true);
+        await intoRunning();
         return null;
       }
       if (chat.besideTopics().some((b) => normalizeThreadId(b) === dest)) {
@@ -572,6 +701,14 @@ export function useHostThread() {
         const typeId = opts.carry ? null : turnTypeId || null;
         setTurnTypeId("");
         runningTopicRef.current = normalizeThreadId(given ? given.id : id);
+        // A send that names its topic (the pick just made beside a running
+        // turn, the root thread chosen) lands where it was sent, which is no
+        // move, so the landing does not take the screen there: it goes now,
+        // with the words, as a turn started beside does (sendBeside).
+        // Otherwise the back stayed on the other topic and the words, tagged
+        // with theirs, were on no screen.
+        const named = given ? given.id : pinned;
+        if (named && normalizeThreadId(named) !== ORIGINAL && named !== threadId) setThreadId(named);
         await send(SELF, text, {
           attachments: opts.attachments ?? [],
           model: opts.model ?? null,
@@ -612,7 +749,7 @@ export function useHostThread() {
       return null;
     },
     [threadId, threads, rootPin, whileRunning, chat.besideTopics, messagesRef, send, handleLanded, reloadFeed,
-      loadThreads, turnTypeId],
+      loadThreads, turnTypeId, setThreadId],
   );
 
   /** Ask Ivy: give one message of a person's chat to page `id`. The back
@@ -770,16 +907,22 @@ export function useHostThread() {
 
   /** Say `text` to the Host on `topic`: into its running turn when the turn
    * this window follows is that topic's, as its own turn beside it when
-   * another topic's turn runs, else as a message there. */
+   * another topic's turn runs, else as a message there. The screen goes to
+   * `topic` with the words, so the answer and its reply are seen. */
   const tellHost = useCallback(
     async (text: string, topic: string, fallback = true): Promise<void> => {
       const st = statusRef.current;
+      const follow = () => {
+        if (normalizeThreadId(topic) !== ORIGINAL) setThreadId(topic);
+      };
       if (st === "submitted" || st === "streaming") {
         if (normalizeThreadId(topic) === normalizeThreadId(runningTopicRef.current)) {
+          if (fallback) follow();
           await nudgeRunningTurn(SELF, text, topic, fallback);
           return;
         }
         if (!fallback) return;
+        follow();
         await chat.sendBeside(SELF, text, {
           threadId: topic,
           topicPicked: true,
@@ -788,9 +931,13 @@ export function useHostThread() {
         });
         return;
       }
-      if (fallback) await send(SELF, text, { threadId: topic });
+      if (fallback) {
+        follow();
+        runningTopicRef.current = normalizeThreadId(topic);
+      }
+      if (fallback) await send(SELF, text, { threadId: topic, onLanded: handleLanded });
     },
-    [send, nudgeRunningTurn, chat.sendBeside, reloadFeed],
+    [send, nudgeRunningTurn, chat.sendBeside, reloadFeed, setThreadId, handleLanded],
   );
 
   const answerAsk = useCallback(
@@ -809,7 +956,9 @@ export function useHostThread() {
       settleAsk(ask.ticketId);
       if (r.data.answer_turn_started) {
         // The turn that asked had ended: the kernel started the answer's turn
-        // on this page itself. Follow it live; never send the answer again.
+        // on this page itself. Follow it live, on screen; never send the
+        // answer again.
+        if (normalizeThreadId(topic) !== ORIGINAL) setThreadId(topic);
         void reattachRef.current(topic);
       } else if (r.data.answered_into_turn) {
         // The decide put the answer into the turn that asked; from there it
@@ -821,7 +970,7 @@ export function useHostThread() {
       setAskBusy(false);
       void loadThreads();
     },
-    [asks, topicOfAsk, settleAsk, tellHost, loadThreads],
+    [asks, topicOfAsk, settleAsk, tellHost, loadThreads, setThreadId],
   );
 
   const notNowAsk = useCallback(
@@ -843,12 +992,17 @@ export function useHostThread() {
 
   return {
     chat,
+    // Every message this window holds, every topic (the turn machinery's).
     messages,
+    // What the back shows: the thread on screen's (viewTopic).
+    shown,
+    viewTopic,
     status,
     holding,
     booted,
     // "Where this stands": the topic the person last wrote to.
     standsTopicId: threadId ?? lastWritten,
+    // The thread on screen has earlier messages, read by loadEarlier.
     hasEarlier,
     loadEarlier,
     rootPin,

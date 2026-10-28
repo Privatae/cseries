@@ -965,8 +965,8 @@ class _BearerPool:
 class _BeatReq:
     headers = {"content-type": "application/json"}
 
-    async def json(self):
-        return {"hostname": "box1"}
+    async def stream(self):         # the route reads through the bounded reader
+        yield b'{"hostname": "box1"}'
 
 
 _beats = []
@@ -1252,13 +1252,16 @@ from server.routes import network as RN  # noqa: E402
 
 
 class _Req:
+    """A request as the route reads it now: its body arrives through stream() (the
+    bounded reader, server/harness_input.py::read_request), not request.json()."""
     headers = {"content-type": "application/json"}
 
     def __init__(self, body):
         self._b = body
 
-    async def json(self):
-        return self._b
+    async def stream(self):
+        import json as _json
+        yield _json.dumps(self._b).encode()
 
 
 _lp2 = locked_pool()

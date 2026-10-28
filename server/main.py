@@ -1361,7 +1361,7 @@ app = FastAPI(
 
 # --- Middleware stack (order matters: the LAST added is the outermost) ---
 # From outside in: HostHeaderGuard, AppOriginGuard, FrontDoorProof,
-# security_headers, backup_activity, OwnerSessionGate, the localhost gate's
+# RequestBodyCap, security_headers, backup_activity, OwnerSessionGate, the localhost gate's
 # WebSocket half, LocalhostOnlyMiddleware, CEIGAS, ApplicationToken.
 # Application-token middleware reads the per-window token and attaches
 # it to request.state for permission-aware routes to inspect.
@@ -1428,6 +1428,17 @@ async def security_headers(request, call_next):
             response.headers["Content-Security-Policy"] = shell_csp.shell_policy(origin)
     return response
 
+
+# Every request body is read under a cap (server/middleware/body_cap.py): a declared
+# length over the route's cap is refused before a byte is read, a chunked body as it
+# arrives. Outside every middleware and route that reads a body (the two middlewares
+# above, the owner session gate, the localhost gate, the CEIGAS gate's small read,
+# the token middleware, the routes and FastAPI's own body parameters). Inside the
+# front-door proof, the app-origin guard and the Host header gate, which read headers
+# and the path, never the body; it reads no identity header, so the proof's place is
+# unchanged.
+from server.middleware.body_cap import RequestBodyCap  # noqa: E402
+app.add_middleware(RequestBodyCap)
 
 # Who a request may say sent it: X-Client-Cert-CN only on what the mTLS
 # front door forwarded, X-Authentik-* only on what it forwarded under the

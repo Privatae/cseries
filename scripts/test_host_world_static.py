@@ -26,7 +26,10 @@ from tools_source import tools_source  # tools.py and the modules split out of i
 
 ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1])
 EXECUTOR = ROOT / "brain" / "mastercode" / "world_db.py"
-OBJECT_IN_WORLD = re.compile(r"(?<![\w.])world\.[A-Za-z_\"]")
+# `routes/world.py` is a file name (cited in descriptions such as
+# server/middleware/body_cap.py's caps), not an object in the schema. Only the
+# path form is passed over: a bare `world.py` can be a table named `py`.
+OBJECT_IN_WORLD = re.compile(r"(?<![\w.])(?!(?<=/)world\.py\b)world\.[A-Za-z_\"]")
 
 failed = 0
 
@@ -36,6 +39,15 @@ def check(label, cond, detail=""):
     print(("  ok   " if cond else "  FAIL ") + label + ("" if cond else f"  <- {detail}"))
     if not cond:
         failed += 1
+
+
+_names = ["SELECT * FROM world.tbl", 'world."Quoted"', "FROM world.py WHERE", "(world.py)"]
+_paths = ["(routes/world.py)", "server/routes/world.py:12"]
+check("1 the pattern names world objects and passes over the routes/world.py path",
+      all(OBJECT_IN_WORLD.search(s) for s in _names)
+      and not any(OBJECT_IN_WORLD.search(s) for s in _paths),
+      str([s for s in _names if not OBJECT_IN_WORLD.search(s)]
+          + [s for s in _paths if OBJECT_IN_WORLD.search(s)]))
 
 
 def literals(tree):

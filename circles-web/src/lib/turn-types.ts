@@ -7,6 +7,8 @@
 // the pane moves there — no click, no "answered in X" chip. This file is the
 // pure reading of those headers so `node --test` pins it without a DOM.
 
+import type { FeedTopic } from "./types";
+
 export const ORIGINAL_THREAD = "original";
 
 export interface Landing {
@@ -91,4 +93,13 @@ export function thisTurnStart(
  * its live stream on. */
 export function selfThreadKey(threadId: string | null | undefined): string {
   return `self:${normalizeThreadId(threadId)}`;
+}
+
+/** The topic a local echo belongs to, for your Host's one conversation: a
+ * thread id as a FeedTopic, none for the original conversation (it has no
+ * rows) or an id not known yet. Your Host's back shows one topic at a time,
+ * so every echo says which one it is in. */
+export function topicTag(id: string | null | undefined, title = ""): FeedTopic | undefined {
+  const t = normalizeThreadId(id);
+  return t === ORIGINAL_THREAD ? undefined : { id: t, title };
 }

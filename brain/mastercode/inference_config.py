@@ -17,7 +17,8 @@ is a {provider, model} pair where
              default).
 
 plus an optional {fallback_provider, fallback_model} the gateway fails over to
-when the primary provider errors or the model is unavailable there.
+when the primary provider errors, the model is unavailable there, or the
+provider's safety filter declines the request.
 
 Stored in behavioral_params.model_routing[role]. THE RULES:
 

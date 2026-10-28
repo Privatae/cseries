@@ -309,7 +309,54 @@ def test_door_proposes_a_user_only_no_pattern_ticket_for_a_working_role(door):
                              "effort": None, "fallback_provider": None}
     assert prop["current"]["model"] == "k3" and prop["reason"].startswith("review invented")
     assert "Your host's reason" in tk["sitrep"]
-    assert "do not decide the ticket yourself" in r["note"]
+    # The note states the fact the ticket's user_only lock enforces, and that
+    # work which does not wait on the card goes on: not a script.
+    assert "locked to them" in r["note"] and "apply" in r["note"]
+    assert "goes on meanwhile" in r["note"] and "end your turn" not in r["note"]
+
+
+def test_door_fallback_only_card_says_it_sets_a_fallback_and_keeps_the_effort(door):
+    # The Host offering a fallback after a safety-filter decline (skill
+    # 'routing'): the same route plus a fallback. The card's button says
+    # what 'apply' does, and the applied route keeps the effort in force —
+    # the writer replaces the whole entry.
+    T, calls, state = door
+    state["effective"] = {"provider": "anthropic", "model": "claude-opus-5-5", "effort": "high"}
+    out = _set(T, role="chat", provider="anthropic", model="claude-opus-5-5",
+               fallback_provider="anthropic", fallback_model="claude-opus-4-8",
+               reason="declined twice today (category cyber)")
+    assert out["result"]["proposed"] is True and calls["applied"] == []
+    tk = calls["tickets"][0]
+    apply_opt, keep_opt = tk["options"]
+    assert apply_opt["label"] == "Set chat fallback to anthropic / claude-opus-4-8", apply_opt
+    assert "Move" not in apply_opt["label"] and "stays on anthropic / claude-opus-5-5" in apply_opt["consequence"]
+    assert keep_opt["label"] == "Keep chat as it is"
+    assert tk["sitrep"].startswith("Keep the chat role on anthropic / claude-opus-5-5 and set its "
+                                   "fallback to anthropic / claude-opus-4-8?"), tk["sitrep"]
+    route = tk["metadata"]["route_change_proposal"]["route"]
+    assert route["effort"] == "high" and route["fallback_model"] == "claude-opus-4-8", route
+
+
+def test_carry_unchanged_is_for_the_same_route_only():
+    cur = {"provider": "kimi", "model": "k3", "effort": "high", "reasoning_inline": True,
+           "fallback_provider": "openrouter", "fallback_model": "k3-mini"}
+    # An effort change keeps the fallback and the inline flag.
+    got = RC.carry_unchanged(cur, {"provider": "kimi", "model": "k3", "effort": "low"})
+    assert got["effort"] == "low" and got["fallback_provider"] == "openrouter"
+    assert got["fallback_model"] == "k3-mini" and got["reasoning_inline"] is True
+    # A new fallback provider does not inherit the old fallback model.
+    got = RC.carry_unchanged(cur, {"provider": "kimi", "model": "k3", "fallback_provider": "openai"})
+    assert got["fallback_provider"] == "openai" and not got.get("fallback_model")
+    # Another route keeps nothing of this one.
+    got = RC.carry_unchanged(cur, {"provider": "openai", "model": "gpt-x"})
+    assert got == {"provider": "openai", "model": "gpt-x"}
+
+
+def test_a_move_card_still_says_move():
+    opts = RC.proposal_options("chat", {"provider": "kimi", "model": "k3"},
+                               {"provider": "anthropic", "model": "claude-opus-5",
+                                "fallback_provider": "openrouter"})
+    assert opts[0]["label"] == "Move chat to anthropic / claude-opus-5" and opts[1]["label"] == "Keep kimi / k3"
 
 
 def test_door_fails_closed_when_the_table_cannot_be_read(door):
@@ -396,6 +443,23 @@ def test_user_apply_writes_the_route_as_decision(decide_env):
     assert res["route_apply"] == {"applied": True}
     assert applied == [("chat", "anthropic", "claude-opus-5", "high", "decision", 41)]
     assert any("UPDATE entity_tickets" in s for s, _ in pool.executed)
+
+
+def test_user_apply_keeps_a_carried_reasoning_inline(monkeypatch):
+    from server.routes import inference as inf
+    from server.routes import tickets as tk
+    bodies = []
+
+    async def _apply_role_route(body, *, set_by="user", decision_id=None):
+        bodies.append(body)
+        return {"set": True}
+    monkeypatch.setattr(inf, "apply_role_route", _apply_role_route)
+    md = {"user_only": True, "no_pattern": True, "route_change_proposal": {"role": "chat", "route": {
+        "role": "chat", "provider": "kimi", "model": "k3", "effort": None,
+        "fallback_provider": "openrouter", "fallback_model": "k3-mini", "reasoning_inline": True}}}
+    res = asyncio.run(tk.decide_ticket_service(_TicketPool(md), 7, 41, option_id="apply", actor="user"))
+    assert res["route_apply"] == {"applied": True}
+    assert bodies[0].reasoning_inline is True and bodies[0].fallback_model == "k3-mini"
 
 
 def test_user_keep_writes_nothing(decide_env):

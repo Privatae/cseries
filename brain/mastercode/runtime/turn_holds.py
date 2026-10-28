@@ -92,8 +92,10 @@ RESEARCH_ROUNDS_MAX = _backstop_env("CSERIES_RESEARCH_ROUNDS_MAX", 15)
 # The consecutive all-failed-rounds breaker in the tool loop. At 3, with a
 # message calling the tools "currently unavailable" whatever the errors
 # were, it was a 3-round workflow stop.
-# tool_failures.py already feeds each failure back per tool (dead after the
-# same error twice); this is only the runaway stop behind it: 25 rounds in a
+# Each failed call's own words are in its tool result (tool_failures.py's
+# per-tool advice runs only on a Host whose steering is on, runtime/
+# steering.py, off by default); this is the runaway stop behind them: 25
+# rounds in a
 # row where every call failed is over 3x the longest run of back-to-back
 # failing calls observed (7), and it stops well before the 200-round
 # backstop. env CSERIES_ALL_FAIL_ROUNDS_MAX, <= 0 disables it.

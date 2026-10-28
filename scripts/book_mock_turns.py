@@ -77,6 +77,11 @@ class TurnHost:
         """Still the turn the mock keeps (a reset drops it)."""
         return True
 
+    def move(self, turn: "MockTurn", to: str) -> None:
+        """The Host's pick filed the exchange in thread `to` (a `move`
+        step): the host moves the turn's rows so far there."""
+        raise NotImplementedError
+
     def requeue(self, turn: "MockTurn", words: list) -> "MockTurn | None":
         """The turn ends without reading `words` [(text, at, cid)]: a host
         whose server owns them starts the thread's next turn with them and
@@ -183,10 +188,21 @@ class MockTurn:
                 self.emit("a:" + json.dumps({"toolCallId": step[1], "result": step[2]}) + "\n")
             elif kind == "text":
                 self.emit("0:" + json.dumps(step[1]) + "\n")
+            elif kind == "move":
+                # The Host's pick_thread filed the exchange in thread step[1]
+                # (titled step[2]): its rows go there, and the stream says so
+                # as brain_service.py's thread_moved frame does.
+                frm = self.page
+                self.host.move(self, step[1])
+                self.page = step[1]
+                self.emit("2:" + json.dumps([{
+                    "type": "thread_moved", "from_project_id": None, "to_project_id": None,
+                    "to_project_name": None, "from": {"kind": "thread", "ref": frm},
+                    "to": {"kind": "thread", "ref": step[1]}, "to_title": step[2]}]) + "\n")
             elif kind == "wait":
                 until = loop.time() + step[1]
                 while loop.time() < until and not self.done:
-                    await asyncio.sleep(0.25)
+                    await asyncio.sleep(min(0.25, max(0.0, until - loop.time())))
         end = loop.time() + (0 if cfg.get("steps") else self.host.settings()["turn_secs"])
         while loop.time() < end and not self.done:
             await asyncio.sleep(0.25)

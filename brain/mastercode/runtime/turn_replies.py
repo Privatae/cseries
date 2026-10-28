@@ -196,8 +196,8 @@ class TurnReplies:
         if piece.get("capture") is not None:
             piece["capture"].append(text)
             return
-        out = (REPLY_SEP + text) if (not piece["text"] and not piece.get("glue") and any(
-            p["text"] for p in self._pieces if p is not piece)) else text
+        out = (REPLY_SEP + text) if (not piece["text"] and (piece.pop("after_discard", False) or (
+            not piece.get("glue") and any(p["text"] for p in self._pieces if p is not piece)))) else text
         piece["text"] += text
         piece["order"] = send_order()
         self._mark_sent(text)
@@ -286,7 +286,25 @@ class TurnReplies:
                 return
             buf, piece["held"] = piece["held"], ""
             await self._emit(piece, buf)
+        # The provider withdrew what this call streamed (a safety filter
+        # that stopped the reply part-way, provider_gateway._call_anthropic).
+        _cb.discard_streamed = lambda: self._discard(piece)
         return _cb
+
+
+    def _discard(self, piece: dict) -> None:
+        """Drop what `piece` has received so far: it is not the reply, so it
+        is not stored and the go-ahead guard never reads it; what comes next
+        on the same callback (the route's fallback answering the same
+        request) starts the piece afresh. The chat stream only appends, so
+        text the person already saw stays in front of them until the
+        conversation is reloaded from the stored reply; the next text sent
+        starts a new paragraph."""
+        shown = bool(piece["text"])
+        piece.update(text="", held="", got=False, decided=False, suppress=False,
+                     se_hold="", se_in=None, se_raw="", se_lead=True)
+        if shown:
+            piece["after_discard"] = True
 
 
     def _repair_checked(self, piece: dict, seen: str) -> str:

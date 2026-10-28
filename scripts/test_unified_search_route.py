@@ -24,9 +24,12 @@ What this ratchets:
   5. NO VISIBILITY FILTER — unified_search never calls mastercode.visibility
      (no filter; the pre-fire's per-model filter is the model's, not
      the owner's).
-  6. THE CODE STORE EMBEDS ONCE AND RERANKS ONCE across every indexed project
-     (per-project searcher.search made N identical embeds
-     and N reranks per keystroke pause).
+  6. THE CODE STORE IS search_my_code'S SEARCH: the real codesearch.searcher
+     over everything, ONE vector query and ONE lexical query whatever the
+     number of projects, embedded once and reranked once (a query pair per
+     project put a 75-project Host past the store's timeout on every
+     recall). The same file in a fork and its upstream comes back as ONE hit
+     naming both, and a keyword-only search says so.
   7. THE CALLS MATCH THE REAL SERVICES — the stubs below are checked against
      the real functions' signatures (read from source, container-free), so a
      renamed parameter in projects.py/brain.py/codesearch cannot leave the
@@ -53,6 +56,7 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import importlib.util
 import os
 import re
 import sys
@@ -85,7 +89,7 @@ calls: dict[str, list] = {}
 
 def _install_stubs(*, projects_raise=False, projects_hang=False, fed_raise=False,
                    code_projects=("alpha", "beta"), embed_none=False, rerank_none=False,
-                   projects_raise_words=False):
+                   projects_raise_words=False, lexical_raise=False):
     calls.clear()
     calls.update({"fed": [], "projects": [], "embed": [], "rerank": [],
                   "vector": [], "lexical": []})
@@ -149,34 +153,39 @@ def _install_stubs(*, projects_raise=False, projects_hang=False, fed_raise=False
     sys.modules["server.routes.codesearch"] = cs_route
     cs_pkg = types.ModuleType("codesearch")
     store = types.ModuleType("codesearch.store")
-    async def stats(db):
-        return [{"project": p, "chunks": 3} for p in code_projects] + [{"project": "empty", "chunks": 0}]
-    store.stats = stats
 
+    async def projects(db):
+        return list(code_projects)
+
+    async def stats(db):   # the per-project GROUP BY the code store must not need
+        calls.setdefault("stats", []).append(db)
+        return [{"project": p, "chunks": 3} for p in code_projects]
+    store.projects, store.stats = projects, stats
+
+    def _hit(p, path, idx, content, **kw):
+        return dict({"project": p, "file_path": path, "chunk_index": idx, "content": content,
+                     "start_line": 1 + 10 * idx, "end_line": 9 + 10 * idx}, **kw)
+
+    # Over everything (project None) the arms answer for every project at once,
+    # as the real store does. `shared.py` is the same file in alpha and beta,
+    # a fork and its upstream: same path, same lines, same text.
     async def search_vector(db, *, project, query_embedding, space, limit=30):
         calls["vector"].append((project, limit))
-        if project == "beta":
-            raise RuntimeError("beta index locked (gate)")
-        return [{"file_path": f"{project}/v.py", "chunk_index": 0, "content": f"def {project}_vec(): ...", "relevance": 0.8}]
+        return ([_hit(p, f"{p}/v.py", 0, f"def {p}_vec(): ...", relevance=0.8) for p in code_projects]
+                + [_hit(p, "shared.py", 2, "def shared(): ...", relevance=0.7) for p in code_projects])
 
     async def search_lexical(db, *, project, query, limit=30):
         calls["lexical"].append((project, limit))
-        return [{"file_path": f"{project}/l.py", "chunk_index": 1, "content": f"# {query} in {project}", "lex_rank": 2.0},
-                {"file_path": f"{project}/v.py", "chunk_index": 0, "content": f"def {project}_vec(): ...", "lex_rank": 1.0}]
+        if lexical_raise:
+            raise RuntimeError("code index locked (gate)")
+        return ([_hit(p, f"{p}/l.py", 1, f"# {query} in {p}", lex_rank=2.0) for p in code_projects]
+                + [_hit(p, f"{p}/v.py", 0, f"def {p}_vec(): ...", lex_rank=1.0) for p in code_projects])
+
+    async def vector_coverage(db, *, project, space):
+        calls.setdefault("coverage", []).append(project)
+        return 0, 3 * len(code_projects)
     store.search_vector, store.search_lexical = search_vector, search_lexical
-
-    searcher = types.ModuleType("codesearch.searcher")
-    searcher.RERANK_CANDIDATES = 30
-
-    def rrf_fuse(vector_hits, lexical_hits, k=60):
-        scores, rows = {}, {}
-        for arm in (vector_hits, lexical_hits):
-            for rank, hit in enumerate(arm):
-                key = (hit["file_path"], hit["chunk_index"])
-                scores[key] = scores.get(key, 0.0) + 1.0 / (k + rank + 1)
-                rows.setdefault(key, hit)
-        return [dict(rows[key], rrf_score=sc) for key, sc in sorted(scores.items(), key=lambda kv: -kv[1])]
-    searcher.rrf_fuse = rrf_fuse
+    store.vector_coverage = vector_coverage
 
     bridge = types.ModuleType("codesearch.bridge_embed")
 
@@ -185,7 +194,8 @@ def _install_stubs(*, projects_raise=False, projects_hang=False, fed_raise=False
         return None if embed_none else [0.1, 0.2]
 
     async def active_space():
-        return "SPACE", ""     # the configured model's space; opaque to the stub store
+        # the configured model's space; opaque to the stub store
+        return types.SimpleNamespace(model="gate-embed"), ""
 
     async def rerank(query, docs):
         calls["rerank"].append((query, list(docs)))
@@ -194,10 +204,17 @@ def _install_stubs(*, projects_raise=False, projects_hang=False, fed_raise=False
         # favour the lexical-only "l.py" chunks so rerank visibly reorders
         return [0.9 if "# " in d else 0.1 for d in docs]
     bridge.embed, bridge.rerank, bridge.active_space = embed, rerank, active_space
-    cs_pkg.store, cs_pkg.searcher, cs_pkg.bridge_embed = store, searcher, bridge
+    cs_pkg.store, cs_pkg.bridge_embed = store, bridge
     for name, mod in (("codesearch", cs_pkg), ("codesearch.store", store),
-                      ("codesearch.searcher", searcher), ("codesearch.bridge_embed", bridge)):
+                      ("codesearch.bridge_embed", bridge)):
         sys.modules[name] = mod
+    # The REAL searcher, over the stub store and lane: the code store must be
+    # search_my_code's search, so a stub of it could not tell.
+    spec = importlib.util.spec_from_file_location(
+        "codesearch.searcher", ROOT / "brain/codesearch/searcher.py")
+    searcher = importlib.util.module_from_spec(spec)
+    sys.modules["codesearch.searcher"] = cs_pkg.searcher = searcher
+    spec.loader.exec_module(searcher)
 
 
 async def _run():
@@ -219,18 +236,28 @@ async def _run():
     check("projects: {results, semantic}, entity-scoped, the engine's order kept (no re-ranking)",
           [p["id"] for p in r["projects"]["results"]] == [42, 43] and r["projects"]["semantic"] is False
           and calls["projects"] == [(9003, "trading", 5)], repr((r["projects"], calls["projects"])))
-    check("the journal store is gone with its table (2026-10-17)", "journal" not in r and "journal" not in mr.SEARCH_STORES, repr(r.keys()))
+    check("the journal store is gone with its table", "journal" not in r and "journal" not in mr.SEARCH_STORES, repr(r.keys()))
     # 6: the code store.
-    check("code: the query is embedded ONCE for every indexed project, and reranked ONCE",
+    check("code: the query is embedded ONCE and reranked ONCE",
           calls["embed"] == ["trading"] and len(calls["rerank"]) == 1, repr((calls["embed"], len(calls["rerank"]))))
-    check("code: both sqlite arms run per INDEXED project (chunks>0), never the empty one",
-          sorted(p for p, _ in calls["vector"]) == ["alpha", "beta"] and sorted(p for p, _ in calls["lexical"]) == ["alpha"]
-          and r["code"]["projects"] == ["alpha", "beta"], repr((calls["vector"], calls["lexical"])))
-    check("code: a project whose index fails is named in `failed`; the others still answer",
-          r["code"]["failed"] == ["beta: beta index locked (gate)"] and r["code"]["results"], repr(r["code"]))
+    check("code: ONE vector query and ONE lexical query over everything (project None), never one per project",
+          [p for p, _ in calls["vector"]] == [None] and [p for p, _ in calls["lexical"]] == [None],
+          repr((calls["vector"], calls["lexical"])))
+    check("code: `projects` names what is indexed, without the per-project GROUP BY (store.stats)",
+          r["code"]["projects"] == ["alpha", "beta"] and not calls.get("stats"), repr((r["code"].get("projects"), calls.get("stats"))))
+    shared = [h for h in r["code"]["results"] if h["file_path"] == "shared.py"]
+    check("code: the same file in a fork and its upstream is ONE hit naming both projects",
+          len(shared) == 1 and shared[0]["projects"] == ["alpha", "beta"], repr(shared))
+    pooled = calls["rerank"][0][1] if calls["rerank"] else []
+    check("...collapsed BEFORE the rerank: the reranker sees that text once",
+          pooled.count("def shared(): ...") == 1, repr(pooled))
+    text = mr.format_unified_text(r)
+    check("code: recall's text names every project a collapsed hit is in",
+          "alpha, beta · shared.py" in text, text)
     check("code: reranked order wins, each hit stamped with its project, semantic:true when the embed answered",
-          r["code"]["results"][0]["file_path"] == "alpha/l.py" and r["code"]["results"][0]["project"] == "alpha"
-          and r["code"]["semantic"] is True, repr(r["code"]["results"]))
+          r["code"]["results"][0]["file_path"] in ("alpha/l.py", "beta/l.py")
+          and r["code"]["results"][0]["project"] in ("alpha", "beta")
+          and r["code"]["semantic"] is True and "degraded" not in r["code"], repr(r["code"]["results"]))
     check("nothing was unavailable", r["unavailable"] == [], repr(r["unavailable"]))
 
     _install_stubs(embed_none=True, rerank_none=True)
@@ -239,30 +266,35 @@ async def _run():
           calls["vector"] == [] and r["code"]["semantic"] is False and r["code"]["results"]
           and r["code"]["results"][0]["file_path"] == "alpha/l.py" and "rerank_score" not in r["code"]["results"][0],
           repr(r["code"]))
+    text = mr.format_unified_text(r)
+    check("code: a keyword-only search says so, in the section and in recall's text, as search_my_code does",
+          "keyword only" in str(r["code"].get("degraded")) and "keyword only" in text
+          and r["code"].get("reranked") is False, repr((r["code"].get("degraded"), text)))
 
-    # The reranker's candidate pool is drawn round-robin
-    # across projects, so with MORE indexed projects than RERANK_CANDIDATES
-    # the best match in the last project still reaches the reranker.
-    many = tuple(f"proj{i:02d}" for i in range(40))
-    _install_stubs(code_projects=many)
-    bridge = sys.modules["codesearch.bridge_embed"]
+    # Fork-heavy: every place is in two projects, and both arms rank the same
+    # places (they mostly agree). The arms' rows halve once copies collapse,
+    # so each arm is asked for enough rows that the reranker still gets
+    # RERANK_CANDIDATES distinct places.
+    _install_stubs()
 
-    async def rerank_last_wins(query, docs):
-        calls["rerank"].append((query, list(docs)))
-        return [0.99 if "proj39" in d else 0.1 for d in docs]
-    bridge.rerank = rerank_last_wins
-    # every project returns the same two hits at the same ranks → identical rrf scores everywhere
-    async def same_hit(db, *, project, query_embedding, space, limit=30):
-        return [{"file_path": f"{project}/v.py", "chunk_index": 0, "content": f"def {project}_vec(): ...", "relevance": 0.8}]
-    sys.modules["codesearch.store"].search_vector = same_hit
+    async def forked(db, *, limit=30, **kw):
+        calls["vector" if "query_embedding" in kw else "lexical"].append((kw.get("project"), limit))
+        rows = [dict(project=p, file_path=f"f{i:03d}.py", chunk_index=0, content=f"def f{i:03d}(): ...",
+                     start_line=1, end_line=9) for i in range(200) for p in ("alpha", "beta")]
+        return rows[:limit]
+    sys.modules["codesearch.store"].search_vector = forked
+    sys.modules["codesearch.store"].search_lexical = forked
     r = await mr.unified_search("POOL", 9003, "trading", stores=["code"], limit=5)
-    pooled_docs = calls["rerank"][0][1]
-    pooled_projects = {m for d in pooled_docs for m in re.findall(r"proj\d\d", d)}
-    check("code: with 40 indexed projects (> RERANK_CANDIDATES) the reranker sees EVERY project's top hit, one rerank",
-          len(calls["rerank"]) == 1 and len(pooled_docs) == 40 and len(pooled_projects) == 40,
-          repr((len(pooled_docs), sorted(pooled_projects)[:3], sorted(pooled_projects)[-1:])))
-    check("code: the best rerank match in the LAST project surfaces first (it was cut before the reranker in the flat sort)",
-          r["code"]["results"][0]["project"] == "proj39", repr([h["project"] for h in r["code"]["results"]]))
+    pooled = calls["rerank"][0][1] if calls["rerank"] else []
+    n_cand = sys.modules["codesearch.searcher"].RERANK_CANDIDATES
+    check(f"code: fork copies collapsed, the reranker still gets RERANK_CANDIDATES ({n_cand}) distinct candidates",
+          len(pooled) == n_cand and len(set(pooled)) == n_cand,
+          repr((len(pooled), len(set(pooled)), calls["vector"], calls["lexical"])))
+
+    _install_stubs(lexical_raise=True)
+    r = await mr.unified_search("POOL", 9003, "trading", stores=["code"], limit=5)
+    check("code: an index that fails makes the store UNAVAILABLE (named), never an empty answer",
+          r["unavailable"] == ["code"] and "code index locked" in r["code"]["unavailable"], repr(r["code"]))
 
     # A subset of stores: only those run; the host half narrows its scope.
     _install_stubs()
@@ -372,8 +404,8 @@ for path, mod, func in (
     (ROOT / "server/routes/projects.py", "server.routes.projects", "search_projects_service"),
     (ROOT / "brain/codesearch/store.py", "codesearch.store", "search_vector"),
     (ROOT / "brain/codesearch/store.py", "codesearch.store", "search_lexical"),
-    (ROOT / "brain/codesearch/store.py", "codesearch.store", "stats"),
-    (ROOT / "brain/codesearch/searcher.py", "codesearch.searcher", "rrf_fuse"),
+    (ROOT / "brain/codesearch/store.py", "codesearch.store", "projects"),
+    (ROOT / "brain/codesearch/store.py", "codesearch.store", "vector_coverage"),
     (ROOT / "brain/codesearch/bridge_embed.py", "codesearch.bridge_embed", "embed"),
     (ROOT / "brain/codesearch/bridge_embed.py", "codesearch.bridge_embed", "rerank"),
 ):
@@ -385,8 +417,6 @@ for path, mod, func in (
           f"stub for an awaited call, would pass here and fail in the pod",
           _real_is_async(path, func) == _inspect.iscoroutinefunction(getattr(sys.modules[mod], func)),
           f"real async={_real_is_async(path, func)}")
-check("the real codesearch searcher still exports RERANK_CANDIDATES (the candidate pool size this reuses)",
-      re.search(r"^RERANK_CANDIDATES\s*=", (ROOT / "brain/codesearch/searcher.py").read_text(), re.M) is not None)
 check("the real codesearch route still exposes _get_db (the store's handle: the pod's Postgres pool)",
       re.search(r"^def _get_db\(", (ROOT / "server/routes/codesearch.py").read_text(), re.M) is not None)
 

@@ -353,15 +353,100 @@ def _names_harness_route(fwd: str, query: str = "") -> bool:
 # keep the forwarders' behaviour.
 _VERIFY_BODY_MAX = 16 * 1024 * 1024
 
+# The user's own requests have no size of their own (a person may upload any file
+# to their own app), so the Host must never hold one whole. A body this size or
+# smaller, declared, is read as before; a larger one, or one sent chunked, is
+# handed to the app AS IT ARRIVES (aiohttp sends an async iterator as it reads it),
+# so the Host holds one chunk of it at a time. This is why the request body cap
+# (server/middleware/body_cap.py STREAMED) leaves this route alone.
+_HELD_BODY_MAX = 1024 * 1024
 
-async def _request_body(request: Request) -> bytes:
-    if request.headers.get("x-cseries-verify-cap") is None:
-        return await request.body()
-    from server import harness_input as _hin
-    try:
-        return bytes(await _hin.read_request(request, _VERIFY_BODY_MAX, "verify request"))
-    except _hin.HarnessInputRefused as e:
-        raise HTTPException(413, str(e))
+
+class _StreamedBody:
+    """A request body forwarded as it arrives. serve_app replays a request whose
+    dial failed (a 502 before the upstream received anything); a stream the first
+    attempt never started reading can be sent then, one it started cannot, so that
+    attempt is refused rather than sent with its start missing."""
+
+    def __init__(self, request: Request):
+        self.request = request
+        self.started = False
+        # Set once the whole body has gone on to the app (or its sending ended):
+        # the head clock starts there (_request_head).
+        self.sent = asyncio.Event()
+
+    def chunks(self):
+        if self.started:
+            raise HTTPException(
+                status.HTTP_502_BAD_GATEWAY,
+                "the app went away while this request's body was being sent to it; "
+                "send the request again")
+
+        async def gen():
+            self.started = True
+            try:
+                async for chunk in self.request.stream():
+                    if chunk:
+                        yield chunk
+            finally:
+                self.sent.set()
+        return gen()
+
+
+async def _request_head(session, request: Request, url: str, headers: dict, body):
+    """session.request(...) waited on for its head for at most _HEAD_TIMEOUT_S,
+    counted from when the body has gone. A held body goes at once, so that is the
+    dial, as it always was. A streamed body is still arriving from the person while
+    the app reads it, and an app that answers once it has the whole body sends no
+    head until then: a clock started at the dial would end every upload that takes
+    longer than the clock to send with a 504. So the clock waits for the body, and
+    until then the app may still answer early (a refusal before the body ends)."""
+    call = asyncio.ensure_future(session.request(
+        request.method, url, headers=headers,
+        data=body if body else None, allow_redirects=False))
+    streamed = (None if isinstance(body, (bytes, bytearray))
+                else getattr(request.state, "proxy_streamed_body", None))
+    if streamed is not None:
+        sent = asyncio.ensure_future(streamed.sent.wait())
+        try:
+            await asyncio.wait({call, sent}, return_when=asyncio.FIRST_COMPLETED)
+        except BaseException:
+            call.cancel()
+            raise
+        finally:
+            sent.cancel()
+    return await asyncio.wait_for(call, _HEAD_TIMEOUT_S)
+
+
+def _keep_declared_length(headers: dict, request: Request, body) -> None:
+    """A streamed body goes on with the length the client declared, so the app
+    reads it as it would have read the held one (a backend that reads only
+    Content-Length never sees a chunked body it did not ask for). aiohttp sends an
+    iterator with a Content-Length header as is, and chunked without one."""
+    declared = (request.headers.get("content-length") or "").strip()
+    if not isinstance(body, (bytes, bytearray)) and declared.isdigit():
+        headers["Content-Length"] = declared
+
+
+async def _request_body(request: Request):
+    """The body to forward: bytes, or an async iterator of its chunks (see
+    _HELD_BODY_MAX). Called again for the same request when serve_app replays it."""
+    if request.headers.get("x-cseries-verify-cap") is not None:
+        from server import harness_input as _hin
+        try:
+            return bytes(await _hin.read_request(request, _VERIFY_BODY_MAX, "verify request"))
+        except _hin.HarnessInputRefused as e:
+            raise HTTPException(413, str(e))
+    declared = (request.headers.get("content-length") or "").strip()
+    chunked = not declared and request.headers.get("transfer-encoding") is not None
+    if not chunked and not (declared.isdigit() and int(declared) > _HELD_BODY_MAX):
+        return await request.body()      # Starlette caches it: a replay reads it again
+    streamed = getattr(request.state, "proxy_streamed_body", None)
+    if streamed is not None:             # the replay of a streamed request
+        return streamed.chunks()
+    streamed = _StreamedBody(request)
+    request.state.proxy_streamed_body = streamed
+    return streamed.chunks()
 
 
 def _read_harness(install_dir: Path) -> str | None:
@@ -1062,6 +1147,7 @@ async def _serve_external(
 
     body = await _request_body(request)
     headers = _filter_headers(request.headers.items())
+    _keep_declared_length(headers, request, body)
     headers.update(_upstream_auth(app_id))
     if upstream_host is not None and port:
         # Harness-backed app: present a localhost Host. Added for the VS Code
@@ -1092,13 +1178,7 @@ async def _serve_external(
         timeout = aiohttp.ClientTimeout(total=None, sock_connect=5)
         session = _upstream_session(timeout)
         try:
-            upstream = await asyncio.wait_for(session.request(
-                request.method,
-                upstream_url,
-                headers=headers,
-                data=body if body else None,
-                allow_redirects=False,
-            ), _HEAD_TIMEOUT_S)
+            upstream = await _request_head(session, request, upstream_url, headers, body)
         # ORDER MATTERS, and the split is about REPLAY SAFETY, not tidiness.
         # serve_app treats 502 as "dead upstream" and REPLAYS the request
         # (:263-270 Form-2 lane, :301-310 helper lane) — correct ONLY when the
@@ -1241,6 +1321,7 @@ async def _serve_process(app_id: str, path: str, request: Request) -> Response:
 
     body = await _request_body(request)
     headers = _filter_headers(request.headers.items())
+    _keep_declared_length(headers, request, body)
 
     try:
         # Same two-clause split as _serve_external above, same reasons — and
@@ -1248,13 +1329,7 @@ async def _serve_process(app_id: str, path: str, request: Request) -> Response:
         timeout = aiohttp.ClientTimeout(total=None, sock_connect=5)
         session = _upstream_session(timeout)
         try:
-            upstream = await asyncio.wait_for(session.request(
-                request.method,
-                upstream_url,
-                headers=headers,
-                data=body if body else None,
-                allow_redirects=False,
-            ), _HEAD_TIMEOUT_S)
+            upstream = await _request_head(session, request, upstream_url, headers, body)
         except aiohttp.ClientError as e:
             await session.close()
             raise HTTPException(

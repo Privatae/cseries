@@ -9,6 +9,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { type AgentRow, cancelAgent, fetchAgents } from "@/lib/api";
 import type { ToolInvocation } from "@/lib/types";
+import { groupState, type ToolGroup } from "@/lib/tool-groups";
+import { ErrorBoundary } from "@/components/error-boundary";
 import { cn } from "@/lib/utils";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -35,9 +37,12 @@ function errorTextFor(tool: ToolInvocation): string | undefined {
 export function ToolCard({
   tool,
   defaultOpen,
+  onOpenChange,
 }: {
   tool: ToolInvocation;
   defaultOpen?: boolean;
+  /** The person opened or shut it (ToolGroupCard carries it into the group). */
+  onOpenChange?: (open: boolean) => void;
 }) {
   if (tool.kind === "agent") return <AgentToolCard tool={tool} />;
 
@@ -63,7 +68,7 @@ export function ToolCard({
   const hasOutput = errorText !== undefined || tool.result !== undefined;
 
   return (
-    <Tool className="mb-2" defaultOpen={defaultOpen}>
+    <Tool className="mb-2" defaultOpen={defaultOpen} onOpenChange={onOpenChange}>
       <ToolHeader
         state={tool.state}
         subtitle={subtitle}
@@ -79,6 +84,63 @@ export function ToolCard({
             output={errorText ? undefined : tool.result}
           />
         )}
+      </ToolContent>
+    </Tool>
+  );
+}
+
+/**
+ * Every call of one kind in a turn, as ONE line that counts up ("Read · 40"),
+ * opening onto each call's own card (lib/tool-groups.ts). A lone call is its
+ * own card.
+ *
+ * A failure does NOT open the group: the line says it ("2 failed", the Error
+ * badge) and the failed call's card is open inside. Opening it would put the
+ * forty-card stack back on every reload of a turn where one read failed, and
+ * a live turn could not do it anyway (`defaultOpen` counts only when the group
+ * first mounts, at its second call, before any failure has arrived).
+ *
+ * The lone card becomes the group at the kind's second call, and that swap
+ * remounts it; this component is not remounted (chat-message.tsx keys it by
+ * the group), so it carries the person's own choice across: a card they
+ * opened mid-turn stays open as the group, never snaps shut under them.
+ */
+export function ToolGroupCard({ group }: { group: ToolGroup }) {
+  const { label, name, tools } = group;
+  const [opened, setOpened] = useState(false);
+  if (tools.length === 1) {
+    const t = tools[0];
+    // Its own boundary, keyed by the call: the one around this component is
+    // keyed by the group, and a throw caught there would hide every later
+    // call of the kind behind one notice.
+    return (
+      <ErrorBoundary key={t.id} label={`tool:${t.name}`}>
+        <ToolCard defaultOpen={t.state === "output-error"} onOpenChange={setOpened} tool={t} />
+      </ErrorBoundary>
+    );
+  }
+  const failed = tools.filter((t) => t.state === "output-error").length;
+  return (
+    <Tool className="mb-2" defaultOpen={opened}>
+      <ToolHeader
+        state={groupState(tools)}
+        subtitle={failed ? `${failed} failed` : undefined}
+        // Read aloud as "Read 40 calls", not "Read middle dot 40".
+        title={
+          <>
+            {label} <span aria-hidden="true">·</span> {tools.length}
+            <span className="sr-only"> calls</span>
+          </>
+        }
+        toolName={name}
+        type="dynamic-tool"
+      />
+      <ToolContent className="space-y-0 p-2">
+        {tools.map((t) => (
+          <ErrorBoundary key={t.id} label={`tool:${t.name}`}>
+            <ToolCard defaultOpen={t.state === "output-error"} tool={t} />
+          </ErrorBoundary>
+        ))}
       </ToolContent>
     </Tool>
   );

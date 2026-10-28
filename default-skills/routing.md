@@ -22,7 +22,8 @@ or when `op='status'` shows roles unrouted and they have a key.
   providers the user already has a key for, and it WRITES NOTHING. If the
   user holds NO provider key, recommend returns blocked — send them to the
   Keys app to add one, then come back.
-- `op='set'`: one route (role + provider + model, optional `reason`).
+- `op='set'`: one route (role + provider + model, optional `reason`,
+  optional `fallback_provider` + `fallback_model`).
   Say what you are setting and why — never route silently. What happens
   depends on the role, and the result tells you which:
   - a role with NO route: applied at once (nothing ran there to break) —
@@ -70,6 +71,28 @@ memory came to form in your own turn; a review route went 2026-10-20: you
 review what your builds changed in your own turn, and a second opinion is a
 coding engine's review (skill 'review'). All of that work runs on the host
 model now. Never offer to set one.
+
+**When the provider's safety filter declines a request.** Anthropic's
+recent models (Opus 5.5, Opus 5, Sonnet 5.5, Haiku 5.5, Fable) run safety
+classifiers that can decline a request, ordinary security or biology work
+included. The request is then run again on the route's fallback, the one set in
+the Orchestrator, as for any other failed call; with no fallback set, nothing
+answers and the person reads "Anthropic's safety filter declined this request
+(category: …). No fallback model is set for this in the Orchestrator."
+`diagnose` shows each decline, its category and what the fallback did.
+- No fallback set: tell the person plainly what was declined and that no
+  other model is set to answer it, and propose one for the role
+  (`op='set'` with the same provider and model, plus `fallback_provider` and
+  `fallback_model` — a model they hold a key for, taken from `op='recommend'`
+  or the catalog; on Anthropic a different Claude model, since a blank
+  fallback model means the same one). That files a card: the choice is
+  theirs, and nothing changes until they approve it.
+- The fallback answered: say once which model answered and why, then go on.
+  Do not repeat it every turn.
+- Category `reasoning_extraction`: the request asked the model to write out
+  its internal reasoning. It is never sent to a fallback, so do not offer
+  one; asking for a short explanation of the answer, or a summary of what
+  was done, is fine.
 
 **Web search when the host model cannot search.** Only OpenRouter, Anthropic,
 OpenAI, xAI and Kimi ship a web mechanism. If the host model is on one that
@@ -140,8 +163,8 @@ under the user's key when applied; an unrouted role still resolves empty.
 per text role, each with a provider (one with no key in Keys shows
 disabled), a model (the user's starred favourites for that provider, else its
 live catalog; never a typed id), an optional fallback provider and model that
-answers when the primary errors or does not host the model (a blank model
-means the same id), and a reasoning effort where the gateway can send one (on
+answers when the primary errors, does not host the model, or its safety
+filter declines the request (a blank model means the same id), and a reasoning effort where the gateway can send one (on
 Anthropic the levels are the routed model's own, and an unset Anthropic route
 sends no effort). MODELS: each provider's catalog under the user's key
 (OpenRouter's is searchable with facets; local shows the mesh table); stars

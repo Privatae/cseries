@@ -125,6 +125,20 @@ CONTAIN_OP = "contain"
 # from, and a change that moves one has to move this in the same commit.
 MGMT_DISPATCH_TIMEOUT_S = 30.0
 
+# The most of ONE command frame the box reads (client-go/mgmt.go mgmtFrameMaxBytes,
+# its SetReadLimit): a larger frame is dropped by the box unread, so a job whose
+# frame is larger can never run. job_frame is the frame exactly as MgmtWorker._run
+# sends it, so a caller can measure a job before it is filed.
+MGMT_FRAME_MAX_BYTES = 12 << 20
+
+
+def job_frame(op: str, args: list, approval: str = "") -> bytes:
+    """The command frame for one job: C + json({"op", "args"[, "approval"]})."""
+    job = {"op": op, "args": args}
+    if approval:
+        job["approval"] = approval
+    return b"C" + json.dumps(job).encode()
+
 # The box's own bounds for a pull, named so a drift is a visible edit rather
 # than a silent re-break. If any of these move in the gateway, move them here
 # in the same change.
@@ -547,10 +561,7 @@ class MgmtWorker:
         # `approval` (bastion 0.33.0, mgmt.go mgmtJob.Approval): the person's
         # approval for THIS run of a write on an anchored box. Carried only when
         # there is one, so the frame an older box reads is unchanged.
-        job = {"op": op, "args": args}
-        if approval:
-            job["approval"] = approval
-        await self.ws.send_bytes(b"C" + json.dumps(job).encode())
+        await self.ws.send_bytes(job_frame(op, args, approval))
         out, err, code = bytearray(), bytearray(), None
         while True:
             frame = await self.ws.receive_bytes()

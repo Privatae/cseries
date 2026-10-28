@@ -516,8 +516,25 @@ def failure_groups(provider_rows, tool_rows, task_rows) -> dict:
     def p_merge(g, r):
         # provider_gateway stamps picture_refused when it re-sent the call
         # with notes in place of the pictures: the pictures never arrived.
-        if _md(r.get("metadata")).get("picture_refused"):
+        md = _md(r.get("metadata"))
+        if md.get("picture_refused"):
             g["pictures_dropped"] = True
+        # A safety-filter decline (provider_gateway `refusal`): its category,
+        # and what the route's Orchestrator fallback did — answered (which
+        # model), failed too, or there is none. From the group's NEWEST row
+        # (rows are newest first): what happens now, not a week ago.
+        if md.get("refusal") and not g.get("refusal"):
+            g["refusal"] = True
+            g["refusal_category"] = md.get("refusal_category")
+            if md.get("failed_over_to"):
+                g["fallback"] = md["failed_over_to"]
+                if isinstance(md.get("fallback_answered"), bool):
+                    g["fallback_answered"] = md["fallback_answered"]
+            elif md.get("refusal_not_retried"):
+                # A category no fallback is tried for: the fix is the request.
+                g["not_retried"] = True
+            elif md.get("no_fallback"):
+                g["no_fallback"] = True
 
     provider = _group(provider_rows, p_key, p_base, p_msg, when="created_at", merge=p_merge)
 
@@ -608,7 +625,25 @@ def _failure_line(g: dict) -> str:
     status = f" {g['status']}" if g.get("status") else ""
     dropped = " · pictures were dropped" if g.get("pictures_dropped") else ""
     return (f"{who}{status} · {g['count']}× (first {g.get('first_seen')}, last "
-            f"{g.get('last_seen')}){dropped}: {g['message']}")
+            f"{g.get('last_seen')}){dropped}{_decline_note(g)}: {g['message']}")
+
+
+def _decline_note(g: dict) -> str:
+    """' · safety-filter decline (category cyber) · fallback X answered' for a
+    group of declines; '' for any other failure."""
+    if not g.get("refusal"):
+        return ""
+    cat = g.get("refusal_category")
+    out = " · safety-filter decline" + (f" (category {cat})" if cat else "")
+    if g.get("fallback"):
+        out += (f" · fallback {g['fallback']} answered" if g.get("fallback_answered")
+                else f" · fallback {g['fallback']} did not answer either"
+                if g.get("fallback_answered") is False else f" · fallback {g['fallback']} tried")
+    elif g.get("not_retried"):
+        out += " · not sent to a fallback (the request asked for the model's internal reasoning)"
+    elif g.get("no_fallback"):
+        out += " · no fallback is set in the Orchestrator"
+    return out
 
 
 def render_failures_text(failures: dict, sources=("provider", "tool", "task")) -> str:
@@ -639,6 +674,12 @@ async def _probe_failures(pool, entity_id, probes) -> list[dict]:
     out: list[dict] = []
     hours = f.get("since_hours") or FAILURE_WINDOW_H
     for g in f.get("provider") or []:
+        if g.get("refusal"):
+            # A safety-filter decline is shown from the first one: the person
+            # either got no answer or got one from another model, and the
+            # Host is the one to tell them (skill 'diagnostic').
+            out.append(_decline_fault(g, hours))
+            continue
         if int(g.get("count") or 0) < FAILURE_REPEAT:
             continue
         what = (f"{g.get('provider')} refused {g['count']} calls to {g.get('model')} in the last "
@@ -661,6 +702,43 @@ async def _probe_failures(pool, entity_id, probes) -> list[dict]:
             detail="The tool ran and failed on the platform's side. Read diagnose(area='failures').",
             evidence={k: g.get(k) for k in ("tool", "kind", "count", "first_seen", "last_seen")}))
     return out
+
+
+def _decline_fault(g: dict, hours) -> dict:
+    """The block's fault for a group of safety-filter declines: what was
+    declined, which model answered, and the door to a fallback (set only by
+    the person's approval of a card)."""
+    cat = g.get("refusal_category")
+    what = (f"{g.get('provider')}'s safety filter declined {g['count']} request(s) to "
+            f"{g.get('model')} in the last {hours} h"
+            f"{(' (category ' + str(cat) + ')') if cat else ''}, the last at "
+            f"{g.get('last_seen')}")
+    if g.get("fallback") and g.get("fallback_answered"):
+        what += f"; the Orchestrator's fallback {g['fallback']} answered instead"
+        detail = (f"Their message was answered by {g['fallback']}, not {g.get('model')}, "
+                  "because of this decline.")
+    elif g.get("fallback"):
+        what += f"; the Orchestrator's fallback {g['fallback']} did not answer either"
+        detail = ("Neither model answered. A different fallback is the person's choice: "
+                  "model_routing op='set' files it as a card they approve; nothing changes "
+                  "until they do.")
+    elif g.get("not_retried"):
+        what += "; it asked the model to write out its internal reasoning, so no fallback was tried"
+        detail = ("A short explanation of the answer, or a summary of what was done, is "
+                  "fine to ask for. No fallback helps with this one: such a decline is not "
+                  "retried on another model.")
+    else:
+        what += "; no fallback is set in the Orchestrator, so nothing answered"
+        detail = ("No other model is set to answer it. model_routing op='set' "
+                  "(fallback_provider, fallback_model) files a fallback for this role as a "
+                  "card the person approves; nothing changes until they do.")
+    return _fault(
+        f"failures.provider.{g.get('provider')}.refusal.{_short_id(g['message'])}",
+        "failures", "review", what,
+        detail=detail + " diagnose(area='failures') has each decline.",
+        evidence={k: g.get(k) for k in ("provider", "model", "count", "first_seen", "last_seen",
+                                        "refusal_category", "fallback", "fallback_answered",
+                                        "no_fallback", "not_retried")})
 
 
 PROBES = (

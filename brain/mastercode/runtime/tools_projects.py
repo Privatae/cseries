@@ -638,6 +638,8 @@ def _search_locator(hit: dict, snippet_chars: int) -> dict:
             snippet = snippet[:cut + 1]
     row = {k: hit.get(k) for k in ("project", "file_path", "start_line", "end_line",
                                    "symbol", "chunk_kind", "chunk_index")}
+    if len(hit.get("projects") or ()) > 1:   # the same file in more than one project
+        row["projects"] = hit["projects"]
     row["snippet"] = snippet
     row["truncated"] = len(snippet) < len(content)
     for k in ("relevance", "rerank_score", "rrf_score", "lex_rank"):
@@ -669,18 +671,24 @@ async def _own_repo_hits(results: list) -> tuple[list, list[str]]:
     """(the hits whose project is a forge repo of this Host's or its user's,
     the names of the other projects). Judged by _forge_repo_foreign, the
     forge's own list read once per turn; a Workbench project, a name that is
-    not owner/name, or a list that cannot be read is not kept."""
+    not owner/name, or a list that cannot be read is not kept. A hit found
+    in several projects (searcher.collapse_copies) is kept when one of them
+    is the Host's or its user's, and named by those alone."""
     keep: list = []
     dropped: set[str] = set()
     own: dict[str, bool] = {}
     for h in results:
-        p = str(h.get("project") or "").strip() if isinstance(h, dict) else ""
-        if p not in own:
-            own[p] = bool(p) and (await _forge_repo_foreign(p)) is None
-        if own[p]:
-            keep.append(h)
-        else:
-            dropped.add(p or "(unnamed)")
+        if not isinstance(h, dict):
+            dropped.add("(unnamed)")
+            continue
+        names = [str(p or "").strip() for p in (h.get("projects") or [h.get("project")])]
+        for p in names:
+            if p not in own:
+                own[p] = bool(p) and (await _forge_repo_foreign(p)) is None
+        mine = [p for p in names if own[p]]
+        dropped.update(p or "(unnamed)" for p in names if not own[p])
+        if mine:
+            keep.append(dict(h, project=mine[0], projects=mine) if mine != names else h)
     return keep, sorted(dropped)
 
 
@@ -738,27 +746,7 @@ async def _exec_search_my_code(args):
             }
         # A search the embedding lane did not answer matched words only; it
         # says so, so a thin keyword answer is not taken for a semantic one.
-        # With no embedding model set up the search is keyword-only too, and
-        # says that instead: a setup step, never an outage (meta.embeddings,
-        # codesearch.searcher).
-        if meta.get("embeddings"):
-            out["degraded"] = (f"keyword only: {meta['embeddings']}. These hits match the "
-                               "query's words, not its meaning")
-        elif meta.get("semantic") is False:
-            out["degraded"] = ("keyword only: your embedding lane did not answer, so these "
-                               "hits match the query's words, not its meaning")
-        elif meta.get("without_vectors"):
-            # The vector arm ran, but over part of the index: chunks indexed
-            # before this model was set up or switched to (a switch keeps the
-            # old model's vectors in their own column), or while no embedder
-            # answered, have no vector of this model yet.
-            out["partly_by_meaning"] = (
-                f"{meta['without_vectors']} of the {meta.get('chunks')} chunks searched have no "
-                f"vector from {meta.get('embedding_model')} yet, so the search by meaning did "
-                "not see them; they match by their words only. A repo gets them on its next "
-                "sync pass; a Workbench project when index_my_code runs on it")
-        if results and meta.get("reranked") is False:
-            out["reranked"] = False
+        out.update(searcher.how_it_ran(meta, results))
         # Readable repos the index does not hold whole (too big for the
         # disk, a clone that failed, no embedder yet), so an empty or thin
         # answer is not read as "the code is not there".
@@ -3929,9 +3917,9 @@ async def _exec_pipeline(args: dict, entity_id: int, pool) -> dict:
                 # The option the card takes the authenticator code for.
                 **({"stepup_option": "apply"} if wide else {})},
         "note": ("the pipeline changes only when the user picks 'apply' on the card (it is "
-                 "also in Circles, under Waiting on you). Say what you proposed in one line and end your turn — do "
-                 "not propose again and do not decide the ticket yourself (it is locked to "
-                 "the user)."),
+                 "also in Circles, under Waiting on you). Work that does not wait on it "
+                 "carries on. The proposal is open; a second one is refused while it is, "
+                 "and the ticket is locked to the user."),
     }}
 
 

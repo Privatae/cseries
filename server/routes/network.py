@@ -22,11 +22,71 @@ from fastapi import APIRouter, HTTPException, Query, Request, Depends, Header, W
 from server.applications.middleware import requires_permission
 
 from server import brain_service
+from server import harness_input as _hin
 from server.network import bastion_enroll, topology
 
 logger = logging.getLogger("privatae.network.routes")
 
 router = APIRouter(prefix="/api/network", tags=["network"])
+
+
+# ── Request bodies are read under a cap ───────────────────────────────────────
+# Every route here used to read its body with `await request.json()`, which holds the
+# whole body in memory before anything looks at it. A body sent chunked has no
+# Content-Length to check first, so any caller that could reach a route (an installed
+# app with one scope, a paired bastion, and for /bastions/redeem anyone) could make the
+# Host buffer as much as it cared to send. _json_in reads through
+# server/harness_input.py::read_request, the bounded reader mcp.py, context.py and
+# applications.py already use: a declared Content-Length over the cap is refused before a
+# byte is read, and a chunked body is stopped as it arrives, so at most one chunk past
+# the cap is ever held. The cap is a ceiling on what the route can use, picked per route:
+_BODY_MAX = 1 << 20            # a control message: ids, names, a code, a short list
+_PUBLIC_BODY_MAX = 64 << 10    # /bastions/redeem, before the pairing secret is checked: a
+                               # handle, the secret, a WireGuard key and a CSR (a few KiB)
+_LARGE_BODY_MAX = 8 << 20      # a heartbeat report (the bastion cuts each agent's command
+                               # line to 200 characters and caps its tool servers; a real one
+                               # is tens of KiB) and a DCN plan. A plan's paths have no length
+                               # bound here, so its ceiling is where it is applied: the plan's
+                               # signed terms go to the box base64'd twice (16/9 of their size,
+                               # nac_dcn.run_move_plan) inside ONE management frame of at most
+                               # mgmtFrameMaxBytes (12 MiB), so terms past ~6.75 MiB can never
+                               # run. 8 MiB is above that and refuses no plan that could.
+_MGMT_BODY_MAX = 12 << 20      # /mgmt/run: the most one management frame carries to a bastion
+                               # (client-go/mgmt.go mgmtFrameMaxBytes), ctx_put's payload included
+_HARNESS_BODY_MAX = 32 << 20   # /harness/run: the most the bastion reads of a harness spec
+                               # (client-go/lane_bounds.go harnessSpecMaxBytes, 2 x the 16 MiB
+                               # websocket message), which holds the worktree as base64 and so
+                               # is the one body that is big
+
+
+def _size_word(n: int) -> str:
+    return f"{n >> 20} MiB" if n >= 1 << 20 else f"{n >> 10} KiB"
+
+
+async def _json_in(request: Request, cap: int = _BODY_MAX, *, only_json: bool = False):
+    """The request's JSON body, read under `cap` bytes. A body over the cap is refused
+    with 413, and one that is not a JSON object with 400. `only_json`: a request whose
+    Content-Type is not application/json has no body this route reads, so {} (it is
+    left unread), as these routes always treated one."""
+    if only_json and not request.headers.get("content-type", "").startswith("application/json"):
+        return {}
+    try:
+        raw = await _hin.read_request(request, cap, "request")
+    except _hin.HarnessInputRefused:
+        raise HTTPException(
+            413, f"This request is larger than the {_size_word(cap)} this route accepts, "
+                 "so it was refused. Send a smaller one.") from None
+    if not raw:
+        raise HTTPException(400, "This route needs a JSON body and the request had none.")
+    try:
+        body = await _hin.parse_json(raw, "request")
+    except _hin.HarnessInputRefused as e:
+        raise HTTPException(400, str(e)) from None
+    # Every route here reads its body as an object (body.get, body[...]): valid JSON
+    # that is not one ([], null, a number) is the caller's mistake, said as one.
+    if not isinstance(body, dict):
+        raise HTTPException(400, "This route needs a JSON object as its body.")
+    return body
 
 # The NAC posture query, hoisted to module scope so its GATE can import the real
 # thing. scripts/test_nac_endpoints_dedupe.py used to copy-paste it,
@@ -184,7 +244,7 @@ async def mint_agent_delegation(request: Request):
         raise HTTPException(503, "brain pool not ready")
     from server.network import nac_agents
     await nac_agents.ensure_delegation_acl(pool)
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     server = (body.get("server") or "*").strip() or "*"
     note = (body.get("note") or "").strip() or None
     ttl_hours = int(body.get("ttl_hours") or 24)
@@ -252,7 +312,7 @@ async def contain_agent(request: Request):
     pool = brain_service.get_pool()
     if not pool:
         raise HTTPException(503, "brain pool not ready")
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     token_id, pid = body.get("token_id"), body.get("pid")
     if not isinstance(token_id, int) or not isinstance(pid, int):
         raise HTTPException(400, "token_id and pid (ints) required")
@@ -289,7 +349,7 @@ async def contain_finding(request: Request):
     pool = brain_service.get_pool()
     if not pool:
         raise HTTPException(503, "brain pool not ready")
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     token_id, fp = body.get("token_id"), body.get("fp")
     if not isinstance(token_id, int) or not isinstance(fp, str):
         raise HTTPException(400, "token_id (int) and fp (the finding's fingerprint) required")
@@ -331,7 +391,7 @@ async def acknowledge_agent(request: Request):
     pool = brain_service.get_pool()
     if not pool:
         raise HTTPException(503, "brain pool not ready")
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     token_id, pid = body.get("token_id"), body.get("pid")
     if not isinstance(token_id, int) or not isinstance(pid, int):
         raise HTTPException(400, "token_id and pid (ints) required")
@@ -363,7 +423,7 @@ async def setup_bastion(request: Request):
     if not pool:
         raise HTTPException(503, "brain pool not ready")
     eid = brain_service._entity_id
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     from server.network import bastion_enroll, nac_commit
     # `replaces`: the card's own unredeemed token, when the owner asks from the
     # card for a window to another address. Checked before anything opens; it
@@ -520,7 +580,7 @@ async def redeem_bastion(request: Request):
     if not pool:
         raise HTTPException(503, "brain pool not ready")
     eid = brain_service._entity_id
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, _PUBLIC_BODY_MAX, only_json=True)
     # The bastion knows its target handle (decoded from the pairing token) and sends
     # it in the body; the URL-path handle was consumed by the edge enrollment route.
     # Prefer the body handle, fall back to resolving the host's own handle. The bearer
@@ -568,7 +628,7 @@ async def bastion_heartbeat(
     )
     if row is None:
         raise HTTPException(401, "invalid or revoked bastion bearer")
-    body = dict(await request.json() if request.headers.get("content-type", "").startswith("application/json") else {})
+    body = dict(await _json_in(request, _LARGE_BODY_MAX, only_json=True))
     body["token_id"] = row["id"]   # bearer-derived — never trust a body-supplied id
     rec = await topology.upsert_heartbeat(pool, row["entity_id"], body)
     if rec is None:
@@ -767,7 +827,7 @@ async def bastion_dcn_propose(
         "SELECT hostname FROM network_bastion_heartbeat WHERE token_id = $1", row["id"])
     if not hostname:
         raise HTTPException(409, "bastion has no heartbeat yet — start it and retry")
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     from server.network import nac_propose
     try:
         return await nac_propose.propose_dcn_store(
@@ -810,7 +870,7 @@ async def update_bastion(token_id: int, request: Request):
     pool = brain_service.get_pool()
     if not pool:
         raise HTTPException(503, "brain pool not ready")
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     from server.network import nac_commit
     try:
         return await nac_commit.update_bastion(pool, brain_service._entity_id, token_id,
@@ -836,7 +896,7 @@ async def update_bastions(request: Request):
     pool = brain_service.get_pool()
     if not pool:
         raise HTTPException(503, "brain pool not ready")
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     from server.network import nac_commit
     try:
         return await nac_commit.update_bastions(pool, brain_service._entity_id,
@@ -866,7 +926,7 @@ async def set_bastion_auto_update(request: Request):
     pool = brain_service.get_pool()
     if not pool:
         raise HTTPException(503, "brain pool not ready")
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     if not isinstance(body.get("enabled"), bool):
         raise HTTPException(400, "enabled (true or false) required")
     from server.network import bastion_autoupdate
@@ -1006,7 +1066,7 @@ async def nac_stepup_confirm(request: Request):
     if not pool:
         raise HTTPException(503, "brain pool not ready")
     from server.network import nac_stepup
-    body = await request.json()
+    body = await _json_in(request)
     if not nac_stepup.verify_totp(await nac_stepup.ensure_stepup_secret(pool), str(body.get("code", ""))):
         raise HTTPException(401, "invalid code")
     await nac_stepup.mark_enrolled(pool)
@@ -1021,7 +1081,7 @@ async def nac_policy_propose(request: Request):
     if not pool:
         raise HTTPException(503, "brain pool not ready")
     from server.network import nac_propose
-    body = await request.json()
+    body = await _json_in(request)
     try:
         return await nac_propose.propose_policy(
             pool, name=body.get("name"), enforcement=body.get("enforcement") or "allow",
@@ -1040,7 +1100,7 @@ async def nac_policy_approve(policy_id: int, request: Request,
     key (tamper-evidence) and the PDP picks them up. Deterministic — no LLM in this path."""
     pool = brain_service.get_pool()
     eid = brain_service._entity_id
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     from server.network import nac_commit
     try:
         # via="ui": this route is the Network app's approve button, so the approval is
@@ -1062,7 +1122,7 @@ async def nac_policy_revoke(policy_id: int, request: Request):
     declining a draft, only tightens — free."""
     pool = brain_service.get_pool()
     eid = brain_service._entity_id
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     from server.network import nac_commit
     try:
         return await nac_commit.revoke_policy(pool, eid, policy_id, stepup_code=body.get("stepup_code"))
@@ -1103,7 +1163,7 @@ async def nac_egress_propose(request: Request):
     if not pool:
         raise HTTPException(503, "brain pool not ready")
     from server.network import nac_propose
-    body = await request.json()
+    body = await _json_in(request)
     try:
         return await nac_propose.propose_egress(
             pool, pattern=body.get("pattern"), action=body.get("action") or "deny",
@@ -1122,7 +1182,7 @@ async def nac_egress_approve(rule_id: int, request: Request,
     key; the egress proxy verifies that signature and enforces the SIGNED terms."""
     pool = brain_service.get_pool()
     eid = brain_service._entity_id
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     from server.network import nac_commit
     try:
         # via="ui": this route IS the Network app's approve button, and the card next to
@@ -1143,7 +1203,7 @@ async def nac_egress_revoke(rule_id: int, request: Request):
     Removing an allow (or a draft) only tightens — free. The proxy re-reads within seconds."""
     pool = brain_service.get_pool()
     eid = brain_service._entity_id
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     from server.network import nac_commit
     try:
         return await nac_commit.revoke_egress(pool, eid, rule_id, stepup_code=body.get("stepup_code"))
@@ -1182,8 +1242,10 @@ async def _json_body(request: Request) -> dict:
     if not request.headers.get("content-type", "").startswith("application/json"):
         return {}
     try:
-        body = await request.json()
-    except Exception:
+        body = await _json_in(request)
+    except HTTPException as e:
+        if e.status_code == 413:
+            raise            # too large is a refusal; a body that is not JSON is still {}
         return {}
     return body if isinstance(body, dict) else {}
 
@@ -1289,7 +1351,7 @@ async def nac_dcn_propose(request: Request):
         raise HTTPException(503, "brain pool not ready")
     eid = brain_service._entity_id
     from server.network import nac_propose
-    body = await request.json()
+    body = await _json_in(request)
     try:
         return await nac_propose.propose_dcn_store(
             pool, eid, store_class=body.get("class") or body.get("store_class"),
@@ -1315,7 +1377,7 @@ async def nac_dcn_approve(store_id: int, request: Request,
     signed grant is synced to its box so the Go handlers enforce it locally."""
     pool = brain_service.get_pool()
     eid = brain_service._entity_id
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     from server.network import nac_commit, nac_dcn
     try:
         result = await nac_commit.approve_dcn_store(
@@ -1347,7 +1409,7 @@ async def nac_reach_propose(request: Request):
     """Draft a reach grant for THIS Host to one server on one machine. Inert until
     the person approves it. Body: {server, slot, note?}."""
     pool = brain_service.get_pool()
-    body = await request.json()
+    body = await _json_in(request)
     from server.network import service_reach
     try:
         return await service_reach.propose_reach(
@@ -1365,7 +1427,7 @@ async def nac_reach_approve(grant_id: int, request: Request,
     second factor, else with the step-up code. Then it is pushed to the box."""
     pool = brain_service.get_pool()
     eid = brain_service._entity_id
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     from server.network import service_reach
     try:
         result = await service_reach.approve_reach(
@@ -1449,7 +1511,7 @@ async def nac_dcn_plan_propose(request: Request):
         raise HTTPException(503, "brain pool not ready")
     eid = brain_service._entity_id
     from server.network import nac_propose
-    body = await request.json()
+    body = await _json_in(request, _LARGE_BODY_MAX)
     try:
         return await nac_propose.propose_dcn_move_plan(
             pool, eid, store_id=body.get("store_id"), moves=body.get("moves"),
@@ -1465,7 +1527,7 @@ async def nac_dcn_plan_approve(plan_id: int, request: Request,
     """User approves a move plan — ALWAYS the step-up code (it changes files on their machine)."""
     pool = brain_service.get_pool()
     eid = brain_service._entity_id
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     from server.network import nac_commit
     try:
         return await nac_commit.approve_dcn_move_plan(
@@ -1495,7 +1557,7 @@ async def nac_dcn_plan_run(plan_id: int, request: Request):
     if not pool:
         raise HTTPException(503, "brain pool not ready")
     eid = brain_service._entity_id
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     from server.network import nac_dcn
     try:
         return await nac_dcn.run_move_plan(pool, eid, plan_id, body.get("mode") or "dry_run")
@@ -1554,7 +1616,7 @@ async def mgmt_run(request: Request):
     if not pool:
         raise HTTPException(503, "brain pool not ready")
     eid = brain_service._entity_id
-    body = await request.json()
+    body = await _json_in(request, _MGMT_BODY_MAX)
     # Thin adapter: the OPERATE logic (signed-grant default-deny gate + dispatch + audit) lives in
     # the service so the mgmt_run host tool shares it without faking an HTTP Request. (2026-06-24)
     from server.network import nac_mgmt
@@ -1601,6 +1663,9 @@ async def harness_run(request: Request):
     Not internal-auth gated: this is the caller-side dispatch (bastions connect inbound over their
     own bearer-authed reverse workers).
 
+    The body is read under _HARNESS_BODY_MAX (32 MiB, the most the bastion reads of a spec): a
+    larger one is refused with 413 before it is read whole, a chunked one as it arrives.
+
     Thin adapter: the H4 logic (signed-grant + image-allowlist default-deny gate + dispatch + audit)
     lives in the service (server/network/nac_harness.py::run_harness_op) so the mesh_harness_run host
     tool shares it without faking an HTTP Request. (2026-06-24)"""
@@ -1608,7 +1673,7 @@ async def harness_run(request: Request):
     if not pool:
         raise HTTPException(503, "brain pool not ready")
     eid = brain_service._entity_id
-    body = await request.json()
+    body = await _json_in(request, _HARNESS_BODY_MAX)
     from server.network import nac_harness, nac_mgmt
     try:
         return await nac_harness.run_harness_op(
@@ -1932,7 +1997,7 @@ async def nac_mgmt_grant_propose(request: Request):
     if not pool:
         raise HTTPException(503, "brain pool not ready")
     from server.network import nac_propose
-    body = await request.json()
+    body = await _json_in(request)
     try:
         return await nac_propose.propose_mgmt_grant(
             pool, server=body.get("server"), ops=body.get("ops"), deny=body.get("deny"),
@@ -1951,7 +2016,7 @@ async def nac_mgmt_grant_approve(grant_id: int, request: Request,
     terms. The agent can't reach here: it can't produce the user's step-up code."""
     pool = brain_service.get_pool()
     eid = brain_service._entity_id
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     from server.network import nac_commit
     try:
         return await nac_commit.approve_mgmt_grant(
@@ -1969,7 +2034,7 @@ async def nac_mgmt_grant_revoke(grant_id: int, request: Request):
     {stepup_code}), like removing an approved egress deny. The gate re-reads per dispatch."""
     pool = brain_service.get_pool()
     eid = brain_service._entity_id
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     from server.network import nac_commit
     try:
         return await nac_commit.revoke_mgmt_grant(pool, eid, grant_id, stepup_code=body.get("stepup_code"))
@@ -2002,7 +2067,7 @@ async def pairing_approve(request: Request, x_authentik_email: Optional[str] = H
     to the box over the anchor's own mgmt lane."""
     pool = brain_service.get_pool()
     eid = brain_service._entity_id
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     from server.network import pairing_grants
     try:
         return await pairing_grants.approve_pairing(
@@ -2019,7 +2084,7 @@ async def pairing_deny(request: Request, x_authentik_email: Optional[str] = Head
     """User refuses a pending pairing. Recorded here only; the box keeps reporting it."""
     pool = brain_service.get_pool()
     eid = brain_service._entity_id
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     from server.network import pairing_grants
     try:
         return await pairing_grants.deny_pairing(
@@ -2036,7 +2101,7 @@ async def pairing_revoke(request: Request):
     to the box, which tears its lanes down at once. Tightens — no code."""
     pool = brain_service.get_pool()
     eid = brain_service._entity_id
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     from server.network import pairing_grants
     try:
         return await pairing_grants.revoke_pairing(pool, eid, body.get("server"), body.get("subject"))
@@ -2071,7 +2136,7 @@ async def machine_offer_accept(request: Request, x_authentik_email: Optional[str
     grant scoped to those models. Nobody types anything on the machine."""
     pool = brain_service.get_pool()
     eid = brain_service._entity_id
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     from server.network import machine_offers, pairing_grants
     try:
         return await machine_offers.accept_inbound(
@@ -2096,7 +2161,7 @@ async def machine_offer_decline(request: Request, x_authentik_email: Optional[st
     """Refuse an incoming ask. Nothing is written on the machine — the box is
     never asked — which is the sentence to show the user."""
     pool = brain_service.get_pool()
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     from server.network import machine_offers
     try:
         return await machine_offers.decline_inbound(
@@ -2112,7 +2177,7 @@ async def machine_offer_ask(request: Request):
     {peer_entity_id, purpose, models?}. Carries no credential and no reach."""
     pool = brain_service.get_pool()
     eid = brain_service._entity_id
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     from server.network import machine_offers
     try:
         return await machine_offers.send_offer(
@@ -2128,7 +2193,7 @@ async def machine_offer_withdraw(request: Request):
     """Take back an ask we sent. This also closes the standing permission it
     gave that host to make this one mint an enrolment token."""
     pool = brain_service.get_pool()
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     from server.network import machine_offers
     try:
         return await machine_offers.withdraw_offer(pool, body.get("offer_id"))
@@ -2199,7 +2264,7 @@ async def nac_mgmt_suspend(request: Request, x_authentik_email: Optional[str] = 
     if not pool:
         raise HTTPException(503, "brain pool not ready")
     eid = brain_service._entity_id
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     from server.network import nac_commit
     try:
         return await nac_commit.suspend_bastion(pool, eid, body.get("server"), x_authentik_email)
@@ -2217,7 +2282,7 @@ async def nac_mgmt_resume(request: Request, x_authentik_email: Optional[str] = H
     if not pool:
         raise HTTPException(503, "brain pool not ready")
     eid = brain_service._entity_id
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     from server.network import nac_commit
     try:
         return await nac_commit.resume_bastion(pool, eid, body.get("server"),
@@ -2300,7 +2365,7 @@ async def nac_quarantine(request: Request, x_authentik_email: Optional[str] = He
     if not pool:
         raise HTTPException(503, "brain pool not ready")
     eid = brain_service._entity_id
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     from server.network import nac_commit
     try:
         return await nac_commit.quarantine_bastion(pool, eid, body.get("server"),
@@ -2320,7 +2385,7 @@ async def nac_unquarantine(request: Request, x_authentik_email: Optional[str] = 
     if not pool:
         raise HTTPException(503, "brain pool not ready")
     eid = brain_service._entity_id
-    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    body = await _json_in(request, only_json=True)
     from server.network import nac_commit
     try:
         return await nac_commit.unquarantine_bastion(pool, eid, body.get("server"), body.get("token_id"),

@@ -1,7 +1,7 @@
 id: orchestrator
 name: Orchestrator
 provenance: native
-description: Route the right models for the right task. Every decision independent — each text role picks its provider and its model (plus a fallback provider for when the primary errors), coding picks harnesses and models for the Workbench, and embeddings run where you choose. Provider API keys live in the Keys app.
+description: Route the right models for the right task. Every decision independent — each text role picks its provider and its model (plus a fallback provider for when the primary errors or its safety filter declines a request), coding picks harnesses and models for the Workbench, and embeddings run where you choose. Provider API keys live in the Keys app.
 icon: icon.png
 icon_small: icon-64.png
 entrypoint: index.html
@@ -240,7 +240,10 @@ system: true
 # 0.13.0 (2026-10-21): one text role. There is no review role: the Host
 #   reviews a build in its own turn, or has a coding engine review it. The
 #   recommended routes and the picker list chat alone.
-version: "0.13.0"
+# 0.13.1: the description says the fallback provider also answers when the
+#   primary's safety filter declines a request; nothing the app does changes.
+#   Bundle repacked.
+version: "0.13.1"
 # Host-facing catalog facts (code-true). Control panel, not a conversational
 # surface: what_it_is / user_path only.
 prompt_behavior:

@@ -565,7 +565,10 @@ async def _apply_route_change_proposal(proposal, *, option_id: str, ticket_id: i
             role=str(route["role"]), provider=str(route["provider"]), model=str(route["model"]),
             effort=(route.get("effort") or None),
             fallback_provider=(route.get("fallback_provider") or None),
-            fallback_model=(route.get("fallback_model") or None))
+            fallback_model=(route.get("fallback_model") or None),
+            # Carried from the route in force when the proposal kept it
+            # (route_change.carry_unchanged): the write replaces the entry.
+            reasoning_inline=(True if route.get("reasoning_inline") is True else None))
         await inf.apply_role_route(body, set_by="decision", decision_id=int(ticket_id))
         log.info("ticket %d: route applied on the user's apply — %s -> %s/%s",
                  ticket_id, route["role"], route["provider"], route["model"])

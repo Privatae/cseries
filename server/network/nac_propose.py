@@ -12,6 +12,7 @@ create the draft; the approve/sign path stays in the routes, user-gated.
 
 Validation raises ValueError; callers translate to their own error shape
 (HTTPException for routes, {"status":"error"} for tools)."""
+import base64
 import json
 import logging
 from typing import Optional
@@ -543,6 +544,45 @@ async def propose_mgmt_grant(pool, *, server, ops=None, deny=None, want=None, do
 
 DCN_PLAN_MAX_MOVES = 5000
 
+# A plan must fit the ONE command frame that carries it to the box. At apply, its
+# signed terms (every move, plus store, root, archive, expiry and a box approval)
+# go base64'd twice (nac_dcn.plan_apply_payload) inside a frame of at most
+# nac_mgmt.MGMT_FRAME_MAX_BYTES; when the box holds its own factor, the moves also
+# ride the confirmation ask (nac_stepup.box_confirmation: stepup_request). A plan
+# whose frame is larger is dropped by the box unread, so it could be approved and
+# never run: validate_moves measures both frames as they will be built and refuses
+# the plan at propose time instead. The parts not known until approval are sized
+# at their largest:
+_PLAN_ID_MAX = (1 << 63) - 1                      # dcn_move_plans.id is a BIGSERIAL (v120)
+_PLAN_EXPIRES_SHAPE = "2026-01-01T00:00:00+00:00"  # nac_commit: expiry isoformat, no microseconds
+_PLAN_SIGNATURE_SHAPE = "A" * 88                  # base64 of a 64-byte Ed25519 signature
+# A box approval (client-go/device.go deviceSign) is a JSON deviceApproval: a version,
+# the purpose, a 32-hex nonce, an RFC 3339 expiry, a count, a 44-char key and an
+# 88-char signature, about 280 bytes beside the purpose. Signed into the terms, one
+# character of the purpose costs at most 12 bytes (an astral character Go writes raw
+# becomes 😀 in the terms), so 512 + 12 per character of the purpose holds it.
+_APPROVAL_FIXED_MAX = 512
+_APPROVAL_PER_CHAR_MAX = 12
+
+
+def _plan_frame_bytes(clean: list, archive: str, *, entity_id: int, store_id: int,
+                      server: str, root: str, title: str) -> int:
+    """The larger of the two command frames this plan's moves ride to the box."""
+    from server.network import nac_dcn, nac_mgmt, nac_stepup
+    terms = {"kind": "dcn_move_plan", "entity": int(entity_id), "store_id": int(store_id),
+             "plan_id": _PLAN_ID_MAX, "server": server, "root": root, "archive": archive,
+             "moves": clean, "expires": _PLAN_EXPIRES_SHAPE}
+    purpose = nac_stepup.purpose_for_plan_terms(terms)
+    signed = dict(terms, approval_where="box",
+                  approval="A" * (_APPROVAL_FIXED_MAX + _APPROVAL_PER_CHAR_MAX * len(purpose)))
+    payload = nac_dcn.plan_apply_payload(signed, _PLAN_SIGNATURE_SHAPE,
+                                         max(nac_dcn.PLAN_MODES, key=len))
+    apply_frame = nac_mgmt.job_frame("dcn_plan_apply", [str(store_id), payload])
+    details = nac_stepup.plan_request_details(terms, title=title)
+    ask = base64.b64encode(json.dumps(details).encode()).decode()
+    ask_frame = nac_mgmt.job_frame("stepup_request", [purpose, ask])
+    return max(len(apply_frame), len(ask_frame))
+
 
 def _plan_rel_ok(p) -> bool:
     """A plan path: relative, slash-separated, no NUL, no '..' segment, no drive
@@ -556,11 +596,14 @@ def _plan_rel_ok(p) -> bool:
     return all(s not in ("", ".", "..") for s in segs)
 
 
-def validate_moves(moves, archive: str) -> list:
+def validate_moves(moves, archive: str, *, entity_id: int = 0, store_id: int = 0,
+                   server: str = "", root: str = "", title: str = "") -> list:
     """Normalize + validate a plan's moves. Raises ValueError with the FIRST problem
     in plain words; returns the cleaned list [{from, to, size_bytes?}]. The box
     re-checks everything against the live filesystem — this is the host-side
-    shape wall (paths, duplicates, count), not the sandbox."""
+    shape wall (paths, duplicates, count, and whether the plan fits the frame
+    that carries it to the box, measured with the store it is for), not the
+    sandbox."""
     if not isinstance(moves, list) or not moves:
         raise ValueError("moves must be a non-empty list of {from, to}")
     if len(moves) > DCN_PLAN_MAX_MOVES:
@@ -590,6 +633,15 @@ def validate_moves(moves, archive: str) -> list:
         if isinstance(sb, int) and sb >= 0:
             entry["size_bytes"] = sb
         out.append(entry)
+    from server.network.nac_mgmt import MGMT_FRAME_MAX_BYTES
+    size = _plan_frame_bytes(out, archive, entity_id=entity_id, store_id=store_id,
+                             server=server, root=root, title=title)
+    if size > MGMT_FRAME_MAX_BYTES:
+        raise ValueError(
+            f"this plan is too large to run: packed for the machine it comes to "
+            f"{size / (1 << 20):.1f} MiB, and one message to the machine holds at most "
+            f"{MGMT_FRAME_MAX_BYTES >> 20} MiB. Split it into smaller plans, with fewer "
+            f"moves or shorter paths.")
     return out
 
 
@@ -607,7 +659,6 @@ async def propose_dcn_move_plan(pool, entity_id, *, store_id, moves, archive="Ar
         raise ValueError("archive must be a relative folder inside the store (e.g. 'Archive')")
     title = (title or "").strip() or "Reorganize"
     note = (note or "").strip() or None
-    clean = validate_moves(moves, archive)
     row = await pool.fetchrow(
         "SELECT id, class, server, root, status FROM dcn_stores "
         "WHERE id=$1 AND entity_id=$2 AND revoked_at IS NULL", store_id, entity_id)
@@ -617,6 +668,10 @@ async def propose_dcn_move_plan(pool, entity_id, *, store_id, moves, archive="Ar
         raise ValueError("a move plan needs a machine store (a folder on a box); cabinets have no plan lane")
     if row["status"] != "granted":
         raise ValueError(f"store {store_id} is {row['status']!r}; the user must approve the store before a plan")
+    # After the store is read: whether the plan fits its frame depends on the
+    # store's server and root, which ride in the same signed terms.
+    clean = validate_moves(moves, archive, entity_id=entity_id, store_id=store_id,
+                           server=row["server"], root=row["root"], title=title[:200])
     into_archive = sum(1 for m in clean if m["to"] == archive or m["to"].startswith(archive + "/"))
     pid = await pool.fetchval(
         "INSERT INTO dcn_move_plans (entity_id, store_id, title, note, archive, moves, move_count, proposed_by) "

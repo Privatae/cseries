@@ -577,6 +577,11 @@ class Pool:
 
     def __init__(self, ticket_open_count=None):
         self.ticket_open_count = ticket_open_count
+        # The guards run only on a Host whose steering is on (runtime/
+        # steering.py, off by default); these tests drive the guard
+        # machinery, so the harness Host has it on unless a test says
+        # otherwise.
+        self.steering = "on"
 
     async def fetch(self, q, *a):
         return []
@@ -585,6 +590,9 @@ class Pool:
         return None
 
     async def fetchval(self, q, *a):
+        if "FROM app_config" in q:
+            # the steering switch (runtime/steering.py): "on" when set
+            return getattr(self, "steering", None)
         if "entity_tickets" in q:
             return self.ticket_open_count
         return None
@@ -6171,6 +6179,143 @@ S._nudge_times.clear()
 getattr(S, "_nudge_orders", {}).clear()
 
 S.HOLD_S = 240.0
+
+# ── 7. a reply that stops on its own announced work ────────────────────────
+# It asks nothing, so the rule lets it out; it still ends the turn on work the
+# Host has not done. Invented endings throughout.
+DEFERS = [
+    "Item 1 is done.\n\nNext, I'll draft the read-only permission for the build box and put it "
+    "to you as a pop-up here. Then I'll go on to items 2, 3 and 5.",
+    "The listener is confirmed.\n\nNext turn I'll open the warning finding and propose the fix.",
+    "Two of five are done; then I'll run the network rule check.",
+    "I'll next tighten the rule on the test box.",
+    "Item 3 needs a rule picked.\n\nAfter that, I'm going to recount the findings.",
+    # the same deferral in other words
+    "Item 1 is done. I'll draft the permission for the build box next.",
+    "Item 1 is done. My next step is to draft the permission for the build box.",
+    "Item 1 is done. I'll pick up items 2-5 in the next turn.",
+    "Item 1 is done. Next: I'll draft the permission for the build box.",
+    # verbs that report only with "back"/"you" after them name work here
+    "Item 1 is done. Next, I'll come back to items 2 and 3.",
+    "Item 1 is done. Next, I'll update the firewall rule on the test box.",
+    "Item 1 is done. Next, I'll check the remaining three boxes and fix them.",
+]
+NOT_DEFERS = [
+    "Phase 4 is running and I'll report back when it finishes.",
+    "I'll check again at 3 pm.",
+    "The card is in front of you; once you approve it, I'll run the op.",
+    "Next, the build runs its four checks.",
+    "I drafted the permission and it is in front of you now.",
+    "All five items are done. The list is above.",
+    "> Next, I'll draft the permission.\n\nThat was the old plan; it is done now.",
+    "Then I'll come back to you with the numbers when the scan finishes.",
+    "Next, I'll draft the fix after the scan finishes.",
+    # endings that hand back or close, not work put off
+    "All three fixes are in. Then I'll hand it to you for the release.",
+    "The migration is done. Then I'll be done here.",
+    "The scan found nothing new. Then we'll see.",
+    # the reply saying what it says, with the words right there
+    "Next, I'll explain how the cache works: it keeps the last ten results.",
+    "The report is ready. Next, I'll show you the diff below.",
+    # a plan written for the person to read: its steps are list items
+    "Here is the plan you asked for:\n\n1. First I'll snapshot the store.\n"
+    "2. Then I'll run the migration on the test box.",
+    "The rollout plan is ready. Next, we'll move the pilot group over next week.",
+    "Check back on the run later. I'll tell you what comes next.",
+]
+for t in DEFERS:
+    _d = G.find_deferred_work(t)
+    check(f"7a: deferred work caught: {t[-60:]!r}", bool(_d) and _d[0] == G.DEFER_RULE, _d)
+    check(f"7a: and the ask rule alone lets it out: {t[-60:]!r}", G.find_go_ahead_hit(t) is None,
+          G.find_go_ahead_hit(t))
+for t in NOT_DEFERS:
+    check(f"7b: not deferred work: {t[-60:]!r}", G.find_deferred_work(t) is None,
+          G.find_deferred_work(t))
+check("7c: total on junk", G.find_deferred_work(None) is None and G.find_deferred_work("") is None)
+
+h = Harness([{"content": DEFERS[0], "tool_calls": [_tc("close_turn", CLOSE)]},
+             {"content": "Drafting the permission now, and item 2 is under way."}])
+out = asyncio.run(_with_rows(h))
+_rec, _row = _ga(out, h)
+_fired = _rec.get("fired") or []
+check("7d: a turn that stops on its announced work gets the one repair round, judged",
+      len(h.calls) == 2 and len(_fired) == 1 and _fired[0].get("level") == "judged"
+      and G.DEFER_RULE[:40] in str(_fired[0].get("rule") or ""), (len(h.calls), _fired))
+_corr = [str(m.get("content") or "") for m in h.calls[1] if m.get("role") == "user"][-1:]
+check("7d: and its correction quotes the sentence and offers the work first",
+      bool(_corr) and "Next, I'll draft the read-only permission" in _corr[0]
+      and "DO THE WORK" in _corr[0], _corr[0][:300] if _corr else None)
+# The deferral asks the user for nothing, so the go-ahead correction's third
+# answer ("if that sentence does not in fact ask the user for anything … end
+# the turn") would let out the very ending it fired on.
+check("7d: the correction's way out is about the STEP, never 'it asks nothing'",
+      bool(_corr) and "does not in fact ask the user" not in _corr[0]
+      and "not yours to take now" in _corr[0] and "a plan to read" in _corr[0]
+      and "their request is the go-ahead" not in _corr[0],
+      _corr[0][-900:] if _corr else None)
+# (A finished report: "Phase 4 is running…" would wake the claim guard, which
+# asks for the run's id; that is its own round, not this guard's.)
+h = Harness([{"content": NOT_DEFERS[5], "tool_calls": [_tc("close_turn", CLOSE)]}])
+out = asyncio.run(_with_rows(h))
+_rec, _row = _ga(out, h)
+check("7e: a turn that ends on a finished report gets no repair",
+      len(h.calls) == 1 and not (_rec.get("fired") or []), (len(h.calls), _rec.get("fired")))
+
+# Past a dispatch the turn holds for the agent, and its result wakes a turn of
+# its own if the hold runs out: the next step does not wait on the person, so
+# a deferral beside a dispatch is not repaired.
+_t_defer = "I've sent an agent to check the dock. Next, I'll tidy the clock settings."
+
+
+def _t_first_defer(h):
+    r = _t_first(h)
+    return {**r, "content": _t_defer, "raw_message": {"content": _t_defer}}
+
+
+S.HOLD_S = 0.3
+h = Harness([_t_first_defer, {"content": None, "tool_calls": [_tc("close_turn", CLOSE, 2)]}], **WB)
+out = asyncio.run(_with_rows(h))
+_rec, _row = _ga(out, h)
+check("7f: a deferral beside a dispatch (agent out) gets no repair at the dispatch exit",
+      G.find_deferred_work(_t_defer) is not None and len(h.calls) == 1
+      and not (_rec.get("fired") or []), (len(h.calls), _rec.get("fired")))
+S.HOLD_S = 240.0
+
+# ── 8. the steering switch ────────────────────────────────────────────────
+# With the Host's steering switched off (the default), a turn ending on an
+# ask is not sent round again, a failed call gets no per-failure advice, and
+# nothing else of the turn changes. Invented endings.
+for steering, calls, why in ((None, 1, "off (no row, the default): the turn ends on its own words"),
+                             ("on", 2, "on: the ask still gets its repair round"),
+                             ("off", 1, "off: the turn ends on its own words, one call")):
+    h = Harness([{"content": "I wrote the draft. Say go and I'll commit it.",
+                  "tool_calls": [_tc("close_turn", CLOSE)]},
+                 {"content": "Committed the draft."}])
+    h.pool.steering = steering
+    out = asyncio.run(_with_rows(h))
+    _rec, _row = _ga(out, h)
+    check(f"8a: steering {why}", len(h.calls) == calls, (len(h.calls), _rec.get("fired")))
+for steering, calls, why in ((None, 1, "off (the default): a deferral ends the turn on its words"),
+                             ("on", 2, "on: a deferral gets its repair round")):
+    h = Harness([{"content": "Item 1 is done.\n\nNext, I'll draft the permission for the build box.",
+                  "tool_calls": [_tc("close_turn", CLOSE)]},
+                 {"content": "Drafted the permission."}])
+    h.pool.steering = steering
+    out = asyncio.run(_with_rows(h))
+    _rec, _row = _ga(out, h)
+    check(f"8b: steering {why}", len(h.calls) == calls, (len(h.calls), _rec.get("fired")))
+from mastercode.runtime import tool_failures as _TF  # noqa: E402
+for steering, want in (("on", True), (None, False), ("off", False)):
+    h = Harness([{"content": "", "tool_calls": [_tc("read", {"tool": "no_such_read_tool", "args": {}})]},
+                 {"content": "I could not read that.", "tool_calls": [_tc("close_turn", CLOSE, i=2)]},
+                 {"content": "(spare)"}])
+    h.pool.steering = steering
+    asyncio.run(_with_rows(h))
+    _advice = [m for c in h.calls[1:] for m in c
+               if m.get("role") == "user" and _TF.FAILED_HEAD.strip()[:30] in str(m.get("content"))]
+    check(f"8c: steering {'on' if want else 'off'}: per-failure advice "
+          f"{'is' if want else 'is not'} injected after a failed call",
+          bool(_advice) == want, (len(h.calls), [str(m.get('content'))[:80] for m in _advice]))
 
 print()
 if FAILS:

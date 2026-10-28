@@ -85,8 +85,8 @@ function forgetSetAside(key: string): void {
     /* private mode */
   }
 }
-import { isLocalEcho, mergeHistory, stampTurnToken } from "@/lib/history-merge";
-import { type Landing, landingFrom, selfThreadKey, thisTurnStart } from "@/lib/turn-types";
+import { isLocalEcho, mergeHistory, retagTurn, stampTurnToken } from "@/lib/history-merge";
+import { type Landing, landingFrom, selfThreadKey, thisTurnStart, topicTag } from "@/lib/turn-types";
 import type {
   ActiveTurn,
   AttachmentBlock,
@@ -156,10 +156,30 @@ function selfThreadOf(key: string | null): string | undefined {
   return key && key.startsWith("self:") ? key.slice(5) : undefined;
 }
 
+/** A URL-quoted header (x-topic-title), read back; "" when it is absent or
+ * not quoted right. */
+function headerText(v: string | null): string {
+  if (!v) return "";
+  try {
+    return decodeURIComponent(v);
+  } catch {
+    return "";
+  }
+}
+
+/** The topic of the reply `asstId` (where lines drawn for its turn go). */
+function replyTopic(prev: ChatMessage[], asstId: string): FeedTopic | undefined {
+  return prev.find((m) => m.id === asstId)?.topic;
+}
+
 /** Lines for words the server holds (GET /api/circles/pending) that are not
  * on screen yet: each a nudge line, unread, just before the reply streaming
  * now (else at the end). Matched by the id the words were sent with. */
-function withHeldLines(prev: ChatMessage[], words: Array<{ id: string; text: string; createdAt: string }>): ChatMessage[] {
+function withHeldLines(
+  prev: ChatMessage[],
+  words: Array<{ id: string; text: string; createdAt: string }>,
+  topic?: FeedTopic,
+): ChatMessage[] {
   const missing = words.filter((w) => !prev.some((m) => m.nudge === true && m.nudgeId === w.id));
   if (!missing.length) return prev;
   const lines: ChatMessage[] = missing.map((w) => ({
@@ -170,6 +190,7 @@ function withHeldLines(prev: ChatMessage[], words: Array<{ id: string; text: str
     createdAt: w.createdAt,
     nudge: true,
     nudgeId: w.id,
+    ...(topic ? { topic } : {}),
   }));
   let i = -1;
   for (let k = prev.length - 1; k >= 0; k--) {
@@ -192,8 +213,14 @@ export function useCirclesChat(opts: {
    * words go as the next message instead (the cards' back, as the
    * Workbench's page does). Off for the rail, which draws a nudge once read. */
   echoNudges?: boolean;
+  /** The Host's pick filed a turn's exchange in another topic (its
+   * thread_moved frame): `to` is where, `from` the thread it left, `side`
+   * whether it was a turn streaming beside the followed one. */
+  onThreadMoved?: (to: FeedTopic, from: string | null, side: boolean) => void;
 } = {}) {
   const echoNudges = !!opts.echoNudges;
+  const onThreadMovedRef = useRef(opts.onThreadMoved);
+  onThreadMovedRef.current = opts.onThreadMoved;
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   // Mirror messages into a ref so async continuations (the post-send thread
   // refresh) can read the CURRENT thread length, not a stale closure value.
@@ -283,7 +310,7 @@ export function useCirclesChat(opts: {
     for (const w of readKept(kept(), KEPT)) {
       if (w.key === threadKey) words.push({ id: w.clientId, text: w.text, createdAt: w.at });
     }
-    if (words.length) setMessages((prev) => withHeldLines(prev, words));
+    if (words.length) setMessages((prev) => withHeldLines(prev, words, topicTag(id)));
   }, [echoNudges]);
 
   // Re-run the ready edge below (its entries are read from the ref).
@@ -384,11 +411,17 @@ export function useCirclesChat(opts: {
   /** Put an OLDER page of the thread above what's on screen (Peers and
    * People threads are read a page at a time). Rows already shown are kept as
    * they are; a later refresh keeps them too (mergeHistory never shrinks the
-   * top). */
+   * top). A saved row of a turn whose echo is on screen (a turn reattached
+   * after a reload, whose rows are dated before the page opened) is that
+   * echo's twin and is left out: the merge swaps the echo for it. */
   const prependOlder = useCallback((older: ChatMessage[]) => {
     setMessages((prev) => {
       const ids = new Set(prev.map((m) => m.id));
-      return [...older.filter((m) => !ids.has(m.id)), ...prev];
+      const turns = new Set(prev.filter((m) => m.turnToken && !m.nudge).map((m) => `${m.role}:${m.turnToken}`));
+      const fresh = older.filter(
+        (m) => !ids.has(m.id) && !(m.turnToken && !m.nudge && turns.has(`${m.role}:${m.turnToken}`)),
+      );
+      return fresh.length ? [...fresh, ...prev] : prev;
     });
   }, []);
 
@@ -638,6 +671,7 @@ export function useCirclesChat(opts: {
                     i === at ? { ...m, text: seen, nudgeRead: true, ...(turnToken ? { turnToken } : {}) } : m,
                   );
                 }
+                const topic = replyTopic(prev, asstId);
                 const line: ChatMessage = {
                   id: localId("u"),
                   role: "user",
@@ -648,12 +682,14 @@ export function useCirclesChat(opts: {
                   nudgeRead: true,
                   ...(id ? { nudgeId: id } : {}),
                   ...(turnToken ? { turnToken } : {}),
+                  ...(topic ? { topic } : {}),
                 };
                 const i = prev.findIndex((m) => m.id === asstId);
                 return i < 0 ? [...prev, line] : [...prev.slice(0, i), line, ...prev.slice(i)];
               });
             } else if (held) {
               setMessages((prev) => {
+                const topic = replyTopic(prev, asstId);
                 const bubble: ChatMessage = {
                   id: localId("u"),
                   role: "user",
@@ -662,6 +698,7 @@ export function useCirclesChat(opts: {
                   createdAt: new Date().toISOString(),
                   nudge: true,
                   ...(turnToken ? { turnToken } : {}),
+                  ...(topic ? { topic } : {}),
                 };
                 const i = prev.findIndex((m) => m.id === asstId);
                 if (i < 0) return [...prev, bubble];
@@ -696,6 +733,7 @@ export function useCirclesChat(opts: {
               // echoNudges: a line already drawn for these words (sent from
               // here) is not drawn twice.
               if (echoNudges && frameId && prev.some((m) => m.nudge === true && m.nudgeId === frameId)) return prev;
+              const topic = replyTopic(prev, asstId);
               const bubble: ChatMessage = {
                 id: localId("u"),
                 role: "user",
@@ -705,11 +743,28 @@ export function useCirclesChat(opts: {
                 nudge: true,
                 ...(echoNudges && frameId ? { nudgeId: frameId } : {}),
                 ...(turnToken ? { turnToken } : {}),
+                ...(topic ? { topic } : {}),
               };
               const idx = prev.findIndex((m) => m.id === asstId);
               if (idx < 0) return [...prev, bubble];
               return [...prev.slice(0, idx), bubble, ...prev.slice(idx)];
             });
+          }
+          // The Host's pick filed this exchange in another topic (its
+          // pick_thread; brain_service.py's thread_moved frame, sent once the
+          // move is made): the turn's echoes go with it, and the window is
+          // told, so the thread on screen follows the words.
+          if (it && it.type === "thread_moved") {
+            const mv = it as { to?: { kind?: unknown; ref?: unknown }; from?: { kind?: unknown; ref?: unknown };
+              to_title?: unknown };
+            const to = mv.to && mv.to.kind === "thread" && mv.to.ref ? topicTag(String(mv.to.ref),
+              typeof mv.to_title === "string" ? mv.to_title : "") : undefined;
+            if (to) {
+              setMessages((prev) => retagTurn(prev, asstId, to));
+              const from = mv.from && mv.from.kind === "thread" && mv.from.ref ? String(mv.from.ref) : null;
+              if (!side) threadKeyRef.current = selfThreadKey(to.id);
+              onThreadMovedRef.current?.(to, from, side);
+            }
           }
           // The platform's crisis check flagged the person's words this turn
           // (2:[{type:"governance",kind:"crisis"}]): the platform's own notice,
@@ -809,6 +864,8 @@ export function useCirclesChat(opts: {
       // send whose connection died) — the replay re-renders it completely.
       const asstId = localId("a");
       const now = new Date().toISOString();
+      // The topic the turn was asked for: its echoes show on that topic.
+      const topic = topicTag(threadId);
       setMessages((prev) => {
         const trimmed = [...prev];
         while (
@@ -830,6 +887,7 @@ export function useCirclesChat(opts: {
             text: turn.user_message,
             tools: [],
             createdAt: now,
+            ...(topic ? { topic } : {}),
           },
           {
             id: asstId,
@@ -842,6 +900,7 @@ export function useCirclesChat(opts: {
             ownHost: true,
             // What the stream carries first is the turn's past (makeHandlers).
             replaying: true,
+            ...(topic ? { topic } : {}),
           },
         ];
       });
@@ -891,6 +950,10 @@ export function useCirclesChat(opts: {
         (attachments.length === 1
           ? "(sent an attachment)"
           : `(sent ${attachments.length} attachments)`);
+      // The topic the words go to, when the send names it (no pick): they
+      // show on it at once. A picked send's echoes take their topic from the
+      // landing below, and until then show on whatever topic is on screen.
+      const sentTopic = target.kind === "self" && !opts?.pickTopic ? topicTag(opts?.threadId) : undefined;
       const userMsg: ChatMessage = {
         id: localId("u"),
         role: "user",
@@ -898,6 +961,7 @@ export function useCirclesChat(opts: {
         tools: [],
         createdAt: now,
         ...(carry ? { carry } : {}),
+        ...(sentTopic ? { topic: sentTopic } : {}),
       };
       const asstId = localId("a");
       const asstMsg: ChatMessage = {
@@ -909,6 +973,7 @@ export function useCirclesChat(opts: {
         streaming: true,
         // Only the self thread streams a model turn (Peers/People send plain).
         ownHost: target.kind === "self",
+        ...(sentTopic ? { topic: sentTopic } : {}),
       };
       setMessages((prev) => [...prev, userMsg, asstMsg]);
       setStatus("submitted");
@@ -977,6 +1042,13 @@ export function useCirclesChat(opts: {
           if (landing) {
             landedThreadId = landing.threadId;
             threadKeyRef.current = selfThreadKey(landing.threadId);
+            // This send's echoes are on the topic it landed on.
+            const tag = topicTag(landing.threadId, headerText(res.headers.get("x-topic-title")));
+            if (tag) {
+              setMessages((prev) =>
+                prev.map((m) => (m.id === asstId || m.id === userMsg.id ? { ...m, topic: tag } : m)),
+              );
+            }
             if (landing.moved) opts?.onLanded?.(landing);
           }
         }
@@ -1161,6 +1233,7 @@ export function useCirclesChat(opts: {
       if (echoNudges && fallback) {
         // Its line, at once, just before the reply it went into.
         setMessages((prev) => {
+          const topic = topicTag(threadId);
           const line: ChatMessage = {
             id: localId("u"),
             role: "user",
@@ -1169,6 +1242,7 @@ export function useCirclesChat(opts: {
             createdAt: new Date().toISOString(),
             nudge: true,
             nudgeId: entry.clientId,
+            ...(topic ? { topic } : {}),
           };
           let i = -1;
           for (let k = prev.length - 1; k >= 0; k--) {

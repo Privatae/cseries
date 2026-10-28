@@ -13,15 +13,18 @@ results were cut that way and none was ever called again.
      returns it; the two floors are one number.
   T  through the real EntityRuntime.send_message loop (search mode, a scripted
      model, the store in memory with Postgres' substr semantics):
-       - a 23k result is stored whole and the next call carries its first
-         part, the handle, the size and how to read on;
+       - a 23k result is stored whole and the next call carries its outline
+         (JSON; text keeps its first part, cut on a line), the handle, the
+         size and how to read on;
        - read(handle, offset, length) returns exact slices, and the preview
          and the pages put together are the result, character for character;
        - a page over the floor the model has answered after leaves with its
          handle, and reading that handle again returns exactly what was cut;
          the ledger records the drop with its handle and the re-read as
          recalled;
-       - a page is whole on the call right after it arrives.
+       - a page is whole on the call right after it arrives, stays while the
+         Host reads on in the same handle, and a handle read again after a
+         cut stays for the rest of the turn.
   P  on the kernel's own schema (kernel_schema, cseries-postgres in docker):
      v223 applies; put/read_page round-trip exact slices from a real row; a
      second put for the same call keeps the first row; sweep removes the rows
@@ -122,6 +125,127 @@ def part_units():
           and f"read(handle='res-9', offset={rs.PREVIEW_CHARS})" in p["read_more"], p.keys())
     check("U8 handles: res-<n> only", rs.row_id_of("res-12") == 12 and rs.row_id_of("12") is None
           and rs.row_id_of("res-x") is None and rs.row_id_of(None) is None)
+
+    # U9: a JSON result previews as its outline, not a character prefix.
+    # Measured on a Host: get_network returned 11-17k of JSON and
+    # the model saw the first 2,000 characters, cut mid-object, and wrote fleet
+    # numbers from them before paging the rest. Invented values.
+    net = {"status": "ok", "result": {
+        "generated_at": "2030-01-02T03:04:05Z",
+        "hosts": [{"name": f"host-{i}", "role": "worker", "cpu": 8, "mem_gb": 32,
+                   "labels": {"zone": "z1", "pool": "p2"}} for i in range(40)],
+        "links": [{"a": f"host-{i}", "b": f"host-{i + 1}", "ms": 0.4} for i in range(60)],
+        "totals": {"hosts": 40, "cpu": 320, "mem_gb": 1280},
+        "note": "n" * 900}}
+    whole = json.dumps(net, default=str)
+    ob = json.loads(rs.preview("get_network", "res-21", whole))[rs.STORED_KEY]
+    outline = ob.get("outline") or ""
+    res_keys = list(net["result"])
+    hosts_at = whole.index('"hosts": ') + len('"hosts": ')
+    hosts_len = len(json.dumps(net["result"]["hosts"]))
+    check("U9 a JSON result previews as an outline: every key named, list lengths, scalars whole, "
+          "within the preview's budget",
+          isinstance(outline, str) and all(f"{k}:" in outline for k in ["status", "result", *res_keys])
+          and "list of 40" in outline and "list of 60" in outline and '"ok"' in outline
+          and '"2030-01-02T03:04:05Z"' in outline and len(outline) <= rs.PREVIEW_CHARS
+          and "preview" not in ob, outline)
+    check("U10 the outline says where each part is: `at N, M chars` reads back that value exactly; "
+          "nothing was sent verbatim, so reading starts at 0 (handle, size and read_more unchanged)",
+          f"{hosts_len:,} chars at {hosts_at}" in outline
+          and whole[hosts_at:hosts_at + hosts_len] == json.dumps(net["result"]["hosts"])
+          and ob.get("next_offset") == 0 and ob.get("chars") == len(whole)
+          and ob.get("handle") == "res-21" and "read(handle='res-21', offset=0)" in ob.get("read_more", ""),
+          (ob.get("next_offset"), outline[:400]))
+    lines = "".join(f"line {i:04d} " + "w" * 60 + "\n" for i in range(400))
+    tb = json.loads(rs.preview("shell", "res-22", lines))[rs.STORED_KEY]
+    cut = tb.get("next_offset") or 0
+    check("U11 text that is not JSON keeps a prefix, cut on a line boundary; preview + pages from "
+          "next_offset are the text",
+          tb.get("preview") == lines[:cut] and tb.get("preview", "").endswith("\n")
+          and rs.PREVIEW_CHARS // 2 < cut <= rs.PREVIEW_CHARS, (cut, tb.get("preview", "")[-80:]))
+    as_json = json.dumps(lines)
+    sb = json.loads(rs.preview("shell", "res-23", as_json))[rs.STORED_KEY]
+    scut = sb.get("next_offset") or 0
+    check("U12 a result that is one JSON string is cut after an escaped newline the same way",
+          sb.get("preview") == as_json[:scut] and sb.get("preview", "").endswith("\\n")
+          and rs.PREVIEW_CHARS // 2 < scut <= rs.PREVIEW_CHARS, (scut, sb.get("preview", "")[-80:]))
+
+    # U12b: one wide object (thousands of keys, a map by id) does not cost the
+    # rest of the outline its shape: its keys are named up to a count and
+    # the rest counted, and the list beside it still shows its first item.
+    wide = {"status": "ok", "result": {
+        "nodes": [{"id": i, "name": f"node-{i}", "pods": [{"n": j} for j in range(15)]}
+                  for i in range(300)],
+        "by_id": {f"n{i}": i for i in range(3000)}}}
+    wtext = json.dumps(wide)
+    wo = json.loads(rs.preview("get_network", "res-24", wtext))[rs.STORED_KEY].get("outline") or ""
+    nodes_at = wtext.index('"nodes": ') + len('"nodes": ')
+    check("U12b a wide object is named in part and counted; the list beside it still shows its "
+          "first item, and the offsets still read back exactly",
+          "[0]: object" in wo and "name: \"node-0\"" in wo and "more keys" in wo
+          and f"{len(json.dumps(wide['result']['nodes'])):,} chars at {nodes_at}" in wo
+          and len(wo) <= rs.PREVIEW_CHARS, wo[:600])
+
+    # U13/U14: a page the Host is still reading stays. Measured on a Host:
+    # a 66k stored context file was paged in 8-14.5k pieces and
+    # each page was cut the call after it was read, while the Host was still
+    # reading that file; it read pages back five times in one turn.
+    def _read_call(i, handle, offset):
+        return {"role": "assistant", "content": None,
+                "tool_calls": [{"id": f"c{i}", "type": "function",
+                                "function": {"name": "read", "arguments": json.dumps(
+                                    {"handle": handle, "offset": offset})}}]}
+    pmsgs = [{"role": "system", "content": "s"}, {"role": "user", "content": "u"},
+             _read_call(1, "res-7", 0), {"role": "tool", "tool_call_id": "c1", "content": big},
+             _read_call(2, "res-7", 12_000), {"role": "tool", "tool_call_id": "c2", "content": big}]
+    preg = {"c1": {"tool": "read", "msg": pmsgs[3], "handle": "res-7", "offset": 0, "length": 12_000}}
+    _o4, gone4 = cb.drop_used_tool_results(pmsgs, 4, preg)   # the previous call sent through c1
+    check("U13 a page stays while the round just answered reads the same handle", not gone4, gone4)
+    omsgs = pmsgs[:4] + [_call(2), {"role": "tool", "tool_call_id": "c2", "content": "small"}]
+    oreg = {"c1": {**preg["c1"], "msg": omsgs[3]}}
+    try:
+        _o5, gone5 = cb.drop_used_tool_results(omsgs, len(omsgs), oreg, keep_handles={"res-7"})
+    except TypeError as e:
+        gone5 = [str(e)]
+    check("U14 a handle the Host came back to after a cut (keep_handles) is not cut again",
+          not gone5, gone5)
+
+    # U15/U16: what a page being read keeps is bounded. Its pages are kept
+    # whole while the Host reads on, but a page read twice is in the list
+    # twice, character for character (a stored row never changes), and a long
+    # file read page by page would otherwise ride whole in every call.
+    def _page(i, handle, offset):
+        return {"role": "tool", "tool_call_id": f"c{i}", "content": f"{i:02d}" + "p" * 11_998}
+
+    def _paged(reads):
+        msgs = [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}]
+        reg = {}
+        for i, (h, off) in enumerate(reads, 1):
+            msgs.append(_read_call(i, h, off))
+            msgs.append(_page(i, h, off))
+            reg[f"c{i}"] = {"tool": "read", "msg": msgs[-1], "handle": h, "offset": off,
+                            "length": 12_000}
+        msgs.append(_read_call(len(reads) + 1, reads[-1][0], reads[-1][1] + 12_000))
+        return msgs, reg
+    dmsgs, dreg = _paged([("res-7", 0), ("res-7", 12_000), ("res-7", 0)])
+    _o6, gone6 = cb.drop_used_tool_results(dmsgs, 4, dreg)
+    check("U15 a page read again leaves its older copy (the same characters are in the list "
+          "once); the newest copy and the other pages stay",
+          [g["tool_call_id"] for g in gone6] == ["c1"], gone6)
+    lmsgs, lreg = _paged([("res-7", 12_000 * k) for k in range(10)])
+    _o7, gone7 = cb.drop_used_tool_results(lmsgs, 4, lreg)
+    kept = [m for m in _o7 if m.get("role") == "tool" and not cb.is_dropped_stub(m.get("content"))]
+    check("U16 a long read keeps its newest pages up to READING_KEEP_CHARS; the oldest leave",
+          gone7 and [g["tool_call_id"] for g in gone7] == [f"c{i}" for i in range(1, len(gone7) + 1)]
+          and sum(len(m["content"]) for m in kept) <= getattr(cb, "READING_KEEP_CHARS", 0)
+          and kept and kept[-1]["tool_call_id"] == "c10",
+          ([g["tool_call_id"] for g in gone7], len(kept)))
+    try:
+        _o8, gone8 = cb.drop_used_tool_results(lmsgs, 4, lreg, keep_chars=30_000)
+    except TypeError as e:
+        gone8 = [{"tool_call_id": str(e)}]
+    check("U16b the caller's bound (a quarter of the turn's context target) is the one kept to",
+          [g["tool_call_id"] for g in gone8] == [f"c{i}" for i in range(1, 9)], gone8)
 
 
 # ── An in-memory store with Postgres' substr semantics ──────────────────────
@@ -325,10 +449,13 @@ def part_turn():
           and row.get("tool_call_id") == "call_1" and row.get("chars") == len(WHOLE)
           and row.get("session_id") == "sess-store",
           ({k: v for k, v in row.items() if k != "content"}, len(h.calls), h.runs))
-    check("T2 the next call carries the preview, the handle, the whole size and how to read on — "
-          "not the 23k",
+    rep_at = WHOLE.index('"report": ') + len('"report": ')
+    check("T2 the next call carries the outline (a JSON result), the handle, the whole size and how "
+          "to read on — not the 23k",
           body.get("handle") == "res-1" and body.get("chars") == len(WHOLE)
-          and body.get("preview") == WHOLE[:P0] and "read(handle='res-1'" in body.get("read_more", "")
+          and "report: \"abc" in body.get("outline", "")
+          and f"{len(json.dumps(REPORT['result']['report'])):,} chars at {rep_at}" in body.get("outline", "")
+          and body.get("next_offset") == 0 and "read(handle='res-1', offset=0)" in body.get("read_more", "")
           and m2 is not None and len(m2["content"]) < P0 + 1_000, str(m2)[:300])
     pg1, pg2 = h.tool(2, "call_2"), h.tool(3, "call_3")
     r1 = _json(pg1).get("result", {}) if pg1 else {}
@@ -387,6 +514,31 @@ def part_turn():
           and "UNTRUSTED-PAGE" not in xa["content"] and "OTHER-SESSION" not in xb["content"]
           and "not_found" in xa["content"] and "not_found" in xb["content"],
           (str(xa)[:200], str(xb)[:200]))
+
+    # T11-T13: paging a stored result through the loop. A page stays while
+    # the Host is still reading that handle (the round just answered read it);
+    # once a round passes without it, its pages may go; a handle read again
+    # after a cut stays for the rest of the turn.
+    hp = run(Harness([
+        {"content": "", "tool_calls": [_tc("read", {"tool": "coding_bench", "args": {}}, 1)]},
+        lambda hh: page(hh, 2, 0, 10_000),
+        lambda hh: page(hh, 3, 10_000, 6_000),
+        {"content": "", "tool_calls": [_tc("read", {"tool": "get_network", "args": {}}, 4)]},
+        lambda hh: page(hh, 5, 0, 10_000),
+        {"content": "", "tool_calls": [_tc("read", {"tool": "get_network", "args": {"x": 1}}, 6)]},
+        {"content": "", "tool_calls": [_tc("read", {"tool": "get_network", "args": {"x": 2}}, 7)]},
+        {"content": "The report is the alphabet, repeated."},
+    ]).go())
+    p2 = hp.tool(3, "call_2")
+    check("T11 a 10k page is whole on the call after the Host read the NEXT page of the same handle",
+          p2 is not None and "result_dropped" not in p2["content"], str(p2)[:200])
+    p2_later = hp.tool(4, "call_2")
+    check("T12 once a round passes without that handle, its pages may leave (with the handle)",
+          p2_later is not None and "result_dropped" in p2_later["content"], str(p2_later)[:200])
+    p5 = [hp.tool(i, "call_5") for i in (6, 7)]
+    check("T13 a handle read again after a cut stays for the rest of the turn",
+          all(m is not None and "result_dropped" not in m["content"] for m in p5),
+          [str(m)[:120] for m in p5])
 
 
 # ── P: on the kernel's own schema ───────────────────────────────────────────
@@ -533,8 +685,9 @@ def part_agent():
         body = json.loads(m1["content"]).get(rs.STORED_KEY, {}) if m1 else {}
     except (TypeError, ValueError):
         pass
-    check("A2 the agent's next call carries the preview and the handle, not the 23k",
-          body.get("handle") == "res-1" and body.get("preview") == WHOLE[:P0]
+    check("A2 the agent's next call carries the outline and the handle, not the 23k",
+          body.get("handle") == "res-1" and "page: \"ABC" in body.get("outline", "")
+          and body.get("next_offset") == 0
           and body.get("chars") == len(WHOLE) and m1 is not None and len(m1["content"]) < P0 + 1_000,
           str(m1)[:300])
     check("A3 `read` is offered from the round after the first stored result, not before",

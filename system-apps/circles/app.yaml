@@ -472,7 +472,13 @@ system: false
 #   contract, and its how-to lines live in skills and tool descriptions the
 #   Host reads on demand. Bundle rebuilt, repacked and re-signed.
 # 0.16.11 (2026-10-18): rebuilt from sources whose comments were rewritten as plain rationale; no behaviour change.
-version: "0.16.12"
+# 0.16.13: your Host's back shows the thread the message went to and never
+#   scrolls into old history on its own; earlier messages come only from
+#   Earlier messages, that thread's own pages (GET /api/circles/feed?thread=),
+#   with the reader kept on the message they were reading. A turn's tool
+#   calls show as one line per kind that counts up ("Read · 40"), each line
+#   opening onto its calls. Bundle rebuilt, repacked and re-signed.
+version: "0.16.13"
 # 0.15.0 (2026-10-10): the
 #   cards, on their own address. cards.html, beside index.html in this
 #   bundle, draws Circles as a deck of cards: each contact one card, the

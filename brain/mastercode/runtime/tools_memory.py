@@ -720,6 +720,15 @@ async def _exec_memory_curate(args, *, session_id=None):
         held = None
         if target is not None:
             held = await pool.fetchrow(_HELD_FOR_REPLACE, target, entity_id)
+            if held is None and op == "drop":
+                # Already out of the live set (archived, replaced, dropped):
+                # the person's "drop it" is already true, so it is done, not
+                # refused, and the answer says when it left. Only an id this
+                # Host never held is refused.
+                gone = await _gone_memory(pool, target, entity_id)
+                if gone:
+                    return {"status": "ok", "result": {"action": "drop", "memory_id": target,
+                                                       "dropped": False, "already": gone}}
             if held is None:
                 return _refused(f"#{target} is not a live memory on this Host")
             if held["memory_type"] == "skill_memory":
@@ -1007,6 +1016,31 @@ _HELD_FOR_REPLACE = (
     "metadata ? 'about' AS has_about, metadata ? 'source_context' AS has_sc, "
     "COALESCE(metadata ? 'rule_kind', false) AS is_rule "
     "FROM entity_memory WHERE id = $1 AND entity_id = $2 AND status = 'active' AND t_valid_until IS NULL")
+
+
+async def _gone_memory(pool, target: int, entity_id: int) -> str | None:
+    """How a row this Host holds left the live set, in one sentence for the
+    Host to repeat ("#12 was already archived on <date>; nothing to
+    drop"), or None when the Host holds no row #target at all, or holds it
+    still live: a row dated to leave later (t_valid_until ahead) has not
+    left, so it is refused as before, never "already dropped on <tomorrow>".
+    Live here is the stale_rules audit's test (runtime/diagnostics.py)."""
+    row = await pool.fetchrow(
+        "SELECT status, resolution_pointer, "
+        "(status = 'active' AND (t_valid_until IS NULL OR t_valid_until > NOW())) AS live, "
+        "COALESCE(CASE WHEN status IS DISTINCT FROM 'active' THEN status_changed_at END, "
+        "         t_valid_until, updated_at) AS at "
+        "FROM entity_memory WHERE id = $1 AND entity_id = $2", target, entity_id)
+    if row is None or row["live"]:
+        return None
+    if row["status"] != "active":
+        how = f"already {row['status'] or 'archived'}"
+    elif row["resolution_pointer"] is not None:
+        how = f"already replaced by #{row['resolution_pointer']}"
+    else:
+        how = "already dropped"
+    when = f" on {row['at'].date().isoformat()}" if row["at"] else ""
+    return f"#{target} was {how}{when}; nothing to drop"
 
 
 async def _curate_replace(pool, cons, entity_id, target, content, asked_type, sctx,

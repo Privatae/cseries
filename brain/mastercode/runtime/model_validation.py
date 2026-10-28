@@ -226,5 +226,5 @@ def refusal(name: str, provider: str | None, model: str | None) -> dict:
         "result": (f"`{name}` is not available on this route: {provider} / {model} is not a "
                    "validated model for tool use, so this host can talk and read but not act. "
                    "Say so plainly. The user can route the role to a validated model in the "
-                   "Orchestrator; the platform validates models with the admission bench."),
+                   "Orchestrator; models are validated for tool use with the admission bench."),
     }

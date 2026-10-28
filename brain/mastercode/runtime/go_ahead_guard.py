@@ -2100,6 +2100,142 @@ def find_go_ahead_wait(handoff, *, asked_in_box: bool = False) -> str | None:
         return None
 
 
+# ── a reply that stops on its own announced work ────────────────────────────
+# A Host ended a rehearsal turn with "Next, I'll draft the permission… Then
+# I'll go on to items 2, 3 and 5" and stopped, when it should not have. The
+# rule above counts what a reply ASKS, and that reply asks nothing, so it
+# passed. It still ends the turn on work the Host has
+# not done, and the next turn starts only when the person writes again: the
+# same cost as a go-ahead. A guard addition, outside the ported rule (the ship
+# gate reads asks; this reads deferral), and only where no card is open (a
+# Host whose next step waits on a card's answer is waiting on the person).
+_DEFER_LEAD = (r"(?:next(?:\s+up)?(?:\s+turn)?|then|after\s+(?:that|this)|afterwards|from\s+there"
+               r"|in\s+(?:my|the)\s+next\s+turn|on\s+the\s+next\s+turn)")
+_FUTURE_I = r"(?:I|we)(?:['’]ll|\s+will|\s+am\s+going\s+to|['’]m\s+going\s+to|\s+are\s+going\s+to)"
+_DEFER = re.compile(
+    rf"(?:^|(?<=[,;:(—–-])\s*|\band\s+)(?:{_DEFER_LEAD})\s*[,:]?\s+{_FUTURE_I}\s+(?:also\s+|then\s+)?"
+    rf"(?P<verb>[a-z]+)"
+    rf"|^{_FUTURE_I}\s+(?:next|then)\s+(?P<verb2>[a-z]+)"
+    # "My next step is to draft…"
+    rf"|^(?:my|our)\s+next\s+(?:step|move|job|task)\s+(?:is|will\s+be)\s+(?:to\s+)?(?P<verb3>[a-z]+)"
+    # "I'll draft it next.", "I'll pick up items 2-5 in the next turn."
+    rf"|^{_FUTURE_I}\s+(?P<verb4>[a-z]+)\b(?=[^.!?]*?(?:\snext\s*[.!]?$"
+    rf"|\b(?:in|on)\s+(?:the|my)\s+next\s+(?:turn|reply|message)\b))", re.I)
+# "I'll show you what comes next": the word names something else, not when.
+_WHAT_NEXT = re.compile(r"\b(?:what|which|who|where|how)\b[^.!?]*\bnext\b", re.I)
+# Steps that report back or watch (they wait on something running), and words
+# that end the reply rather than name work ("Then I'll be done", "Then I'll
+# hand it back to you", "Then we'll see").
+_DEFER_REPORTS = frozenset({"report", "tell", "let", "watch", "wait", "monitor", "ping",
+                            "notify", "remind", "be", "stop", "leave", "hand", "see", "know",
+                            "hear"})
+# Verbs that report only with these words after them: "check back", "get back
+# to you", "update you", "post the results"; "check the other boxes", "come back
+# to items 2 and 3" and "update the rule" are the Host's own work.
+_DEFER_REPORT_PHRASE = re.compile(
+    r"^(?:check|follow|get|come|circle)\s+(?:back|in)\b(?!\s+to\s+(?!(?:you|me)\b))"
+    r"|^(?:check|follow)\s+(?:up\s+)?(?:on|with)\s+(?:you|it|them|that|this|progress|how"
+    r"|the\s+(?:run|build|scan|job|task|agents?|results?))\b"
+    r"|^(?:update|keep)\s+you\b"
+    r"|^keep\s+(?:an\s+eye|watch|track|watching|monitoring)\b"
+    r"|^post\s+(?:an?\s+|the\s+|my\s+)?(?:update|results?|summary|report|findings|progress)\b",
+    re.I)
+# The reply saying what it says next, with the words right there: "Next, I'll
+# explain how it works: …", "Then I'll show you the diff below."
+_DEFER_SAYS = re.compile(
+    r"^(?:show|walk|explain|summari[sz]e|answer|describe|outline|recap|go\s+over|lay\s+out"
+    r"|break\s+down|list)\b[^.!?]*?(?::\s*\S|\b(?:below|above|here)\b)", re.I)
+# A step tied to a time or to something else finishing is scheduled, not put off.
+_DEFER_SCHEDULED = re.compile(
+    r"\b(?:when|once|as\s+soon\s+as|until|whenever)\b"
+    r"|\bafter\s+(?:it|they|the|your|you)\b"
+    r"|\b(?:tomorrow|tonight|later\s+today|this\s+(?:evening|afternoon|morning)"
+    r"|at\s+\d|in\s+(?:an?|\d+)\s+(?:minute|hour|day)s?|on\s+(?:mon|tue|wed|thu|fri|sat|sun)\w*"
+    r"|next\s+(?:week|month|year|(?:mon|tues|wednes|thurs|fri|satur|sun)day)"
+    r"|in\s+(?:january|february|march|april|may|june|july|august|september|october|november"
+    r"|december))\b",
+    re.I)
+DEFER_RULE = "puts off its own next step to a later turn, which starts only when the user writes again"
+
+
+def find_deferred_work(text: str) -> tuple[str, str] | None:
+    """(DEFER_RULE, the sentence) when the reply's closing part puts off the
+    Host's own next step to a later turn ("Next, I'll draft…", "Then I'll go on
+    to items 2, 3 and 5", "Next turn I'll open the finding"), or None. A step
+    that reports back or watches, or that is tied to a time or to something
+    else finishing, is not put off. Quoted words are not the Host's, and a list
+    item is a plan's step, which the person may have asked to read rather than
+    to have run. Pure and total."""
+    if not isinstance(text, str) or not text.strip():
+        return None
+    try:
+        for u in closing_units(text):
+            if u.get("quote") or u.get("item"):
+                continue
+            for s in u["sentences"]:
+                m = _DEFER.search(s)
+                if not m:
+                    continue
+                g = next(n for n in ("verb", "verb2", "verb3", "verb4") if m.group(n))
+                verb = m.group(g).lower()
+                if (verb in _DEFER_REPORTS or _DEFER_REPORT_PHRASE.match(s[m.start(g):])
+                        or _DEFER_SAYS.match(s[m.start(g):]) or _DEFER_SCHEDULED.search(s)
+                        or (g == "verb4" and _WHAT_NEXT.search(s))):
+                    continue
+                return DEFER_RULE, _unmask(u, s)
+        return None
+    except Exception:  # noqa: BLE001 — a broken guard never takes a turn down
+        return None
+
+
+def _defer_correction(seen: str, fired: str, *, close_turn_recorded: bool,
+                      box_only: bool) -> str:
+    """correction() for find_deferred_work. Its sentence asks the user for
+    nothing, so the go-ahead correction's third answer ("if that sentence does
+    not in fact ask the user for anything … end the turn") would let out the
+    very ending it fired on; and "their request is the go-ahead" would send a
+    Host that wrote a plan the person asked to read off to run it. Here the
+    third answer is about the STEP: not the Host's to take now, or not asked
+    for."""
+    ct_line = ("\nYour close_turn is recorded. If you end with close_turn again, "
+               "carry only the handoff — what YOU do next; only its handoff is kept.\n"
+               if close_turn_recorded else "")
+    if box_only:
+        options = (
+            "Now do one of these — `escalate` is the one call that runs now:\n"
+            "1. If a real choice remains that only the user can make before the "
+            "step, call `escalate` with the options (each with its consequence).\n"
+            "2. Otherwise end the turn now, adding nothing: reply with no text at all.\n")
+    else:
+        options = (
+            "Now, in this turn, do one of these:\n"
+            "1. DO THE WORK — make the calls the step needs this round, then say "
+            "what you started and its id.\n"
+            "2. If a real choice remains that only the user can make before the "
+            "step, call `escalate` with the options (each with its consequence). "
+            "That is the question box: the user answers there and the answer "
+            "comes back into this turn.\n"
+            "3. If the step is not yours to take now — it waits on something still "
+            "running, on an answer the user has not given, or on a set time; or "
+            "the user asked for a plan to read, not for the work; or the sentence "
+            "describes work already done — end the turn now, adding nothing: "
+            "reply with no text at all (or with close_turn alone).\n")
+    return (
+        "[SYSTEM — do not mention this message to the user]\n"
+        "You just wrote, and THE USER HAS ALREADY SEEN, this:\n\n"
+        f"---\n{seen}\n---\n\n"
+        "This sentence in it was flagged as putting off a step of your own to a "
+        f"later turn:\n\n> {fired or seen[-300:]}\n\n"
+        "If it does, the turn ends with that step not done, and the next turn "
+        "starts only when the user writes again. If they asked you to do this "
+        "work, their request already covers the step.\n\n"
+        "That text is already on their screen and cannot be unsent, so whatever "
+        "you write next is APPENDED to it. Do not repeat it — continue from it.\n\n"
+        + options + ct_line +
+        "\nNever end a turn on a step you could take now."
+    )
+
+
 # ── what the model is told ──────────────────────────────────────────────────
 
 # ── cards: a question already in front of the person ────────────────────────
@@ -2320,6 +2456,9 @@ def correction(text: str, phrase: str, *, sentence: str | None = None,
             "you write next is APPENDED to it. Do not repeat it — continue from it.\n\n"
             "Never end a turn asking for a go-ahead."
         )
+    if str(phrase or "") == DEFER_RULE and not in_handoff:
+        return _defer_correction(seen, fired, close_turn_recorded=close_turn_recorded,
+                                 box_only=box_only)
     judged = level == "judged" and not in_handoff
     what = (f"Your close_turn handoff records the work as waiting on the user's "
             f"go:\n\n> {phrase}\n"

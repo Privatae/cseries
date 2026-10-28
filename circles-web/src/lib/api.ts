@@ -509,10 +509,12 @@ export interface FeedPage {
   next: FeedCursor | null;
 }
 
-/** One page of the one conversation, oldest first; no cursor = the newest. */
-export function fetchFeed(cursor?: FeedCursor | null): Promise<ApiResult<FeedPage>> {
+/** One page of the one conversation, oldest first; no cursor = the newest.
+ * `thread`: one topic's rows only (what your Host's back shows: the thread
+ * the person's message went to). */
+export function fetchFeed(cursor?: FeedCursor | null, thread?: string | null): Promise<ApiResult<FeedPage>> {
   return getJSON<FeedPage>(
-    `/api/circles/feed${qs({ before: cursor?.before, before_id: cursor?.before_id })}`,
+    `/api/circles/feed${qs({ before: cursor?.before, before_id: cursor?.before_id, thread: thread || undefined })}`,
   );
 }
 

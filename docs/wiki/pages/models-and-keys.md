@@ -31,7 +31,7 @@ There is no separate review or research model. For a second opinion on a build, 
 
 Alongside those you choose where embeddings come from (for search by meaning) and which model makes images. Pictures you share are read by the Host model itself, so choose one that reads images; if it does not, it is told a picture was there that it cannot see, and the turn goes on without it.
 
-For the text role you pick a provider and a model, and you can add a **fallback provider** that answers when the first one returns an error or does not offer that model. Where the provider accepts it, you can also set a reasoning effort. When a fallback answers, the result is marked as failed over. With no fallback set, a failure reaches you as an error rather than as a silent switch to some other model.
+For the text role you pick a provider and a model, and you can add a **fallback provider** that answers when the first one returns an error or does not offer that model. It also answers when Anthropic's safety filter declines the request, unless the request asked the model to write out its own reasoning; that is fixed by rewording the request. Where the provider accepts it, you can also set a reasoning effort. When a fallback answers, the result is marked as failed over. With no fallback set, a failure reaches you as an error rather than as a silent switch to some other model.
 
 ## Can I use a subscription I already pay for?
 

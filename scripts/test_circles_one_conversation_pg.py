@@ -138,14 +138,14 @@ E = 1
 ROUTE = {"provider": "anthropic", "model": "claude-opus-5-5"}
 
 
-async def turn(pool, content, role, *, mins=0, days=0, thread=None, app_id="circles", extra=None):
+async def turn(pool, content, role, *, mins=0, days=0, thread=None, app_id="circles", extra=None, eid=E):
     md = {"role": role, "source_context": ct.descriptor_for(thread), "app_id": app_id}
     md.update(extra or {})
     return await pool.fetchval(
         "INSERT INTO entity_memory (entity_id, content, memory_type, status, metadata, created_at)"
         " VALUES ($1, $2, 'turn', 'active', $3::jsonb,"
         " now() - make_interval(days => $4, mins => $5)) RETURNING id",
-        E, content, json.dumps(md), days, mins)
+        eid, content, json.dumps(md), days, mins)
 
 
 def offered(landing):
@@ -293,6 +293,61 @@ async def main(dsn):
         check("F a topic marker is flagged as one", any(m_.get("topic_marker") for m_ in everything))
         check("F the root thread's rows are in the feed, named as root",
               any(m_["feed_topic"].get("root") for m_ in everything))
+        # F2: one topic's pages (the back shows the thread
+        # the message went to, and its earlier messages only).
+        from datetime import datetime
+        for _ in range(12):
+            await turn(pool, "another greenhouse note", "assistant", days=15, thread=old)
+        one = await rc.read_feed(pool, E, thread=old, limit=5)
+        mine = list(one["messages"])
+        cur = one["next"]
+        while cur:
+            one = await rc.read_feed(pool, E, before=datetime.fromisoformat(cur["before"]),
+                                     before_id=cur["before_id"], limit=5, thread=old)
+            mine = one["messages"] + mine
+            cur = one["next"]
+        whole, cur = [], {"before": None}
+        while cur:
+            pg = await rc.read_feed(pool, E, before=datetime.fromisoformat(cur["before"]) if cur["before"] else None,
+                                    before_id=cur.get("before_id"), limit=50)
+            whole = pg["messages"] + whole
+            cur = pg["next"]
+        theirs = [m_["id"] for m_ in whole if m_["feed_topic"]["id"] == old]
+        check("F2 a topic's own pages are the feed's rows of that topic: each once, oldest first, no other",
+              [m_["id"] for m_ in mine] == theirs and len(theirs) >= 14
+              and all(m_["feed_topic"]["id"] == old for m_ in mine)
+              and all(a["created_at"] <= b["created_at"] for a, b in zip(mine, mine[1:])),
+              (len(mine), len(theirs), [m_["body"][:30] for m_ in mine][-3:]))
+        check("F2 ...and a topic with no rows has none",
+              (await rc.read_feed(pool, E, thread="99999999-9999-9999-9999-999999999999"))["messages"] == [])
+        # Another Host's thread is not this Host's (both entity conditions of
+        # _feed_where): a real second Host, a live thread of its own with rows.
+        # Seeded here, after F2, so no check above reads them.
+        E2 = E + 1
+        await pool.execute("INSERT INTO entity_registry (id, display_name) VALUES ($1, 'Neighbour Host')"
+                           " ON CONFLICT (id) DO NOTHING", E2)
+        theirs_t = str((await ct.create_thread(pool, E2, title="Greenhouse heater"))["id"])
+        for i in range(3):
+            await turn(pool, f"neighbour greenhouse note {i}", "user", mins=30 - i, thread=theirs_t, eid=E2)
+        check("F2 a second Host's thread is real: its own feed reads its rows",
+              len((await rc.read_feed(pool, E2, thread=theirs_t))["messages"]) == 3)
+        check("F2 ...and this Host's feed, asked for that thread, has none",
+              (await rc.read_feed(pool, E, thread=theirs_t))["messages"] == [])
+        # Each condition alone. The second Host's rows naming THIS Host's
+        # thread are not this Host's (entity_memory.entity_id = $1) ...
+        for i in range(2):
+            await turn(pool, f"neighbour note filed under ours {i}", "user", mins=20 - i, thread=old, eid=E2)
+        ours = (await rc.read_feed(pool, E, thread=old))["messages"] + (await rc.read_feed(pool, E))["messages"]
+        check("F2 ...nor are the second Host's rows that name this Host's thread, in its pages or the feed",
+              ours and not any("neighbour" in m_["body"] for m_ in ours),
+              [m_["body"][:40] for m_ in ours if "neighbour" in m_["body"]])
+        # ... and this Host's rows naming a thread that is not its own are on
+        # no page (circles_threads.entity_id = $1).
+        await turn(pool, "our note naming the neighbour thread", "user", mins=10, thread=theirs_t)
+        mine2 = (await rc.read_feed(pool, E, thread=theirs_t))["messages"] + (await rc.read_feed(pool, E))["messages"]
+        check("F2 ...and this Host's rows that name another Host's thread are on no page",
+              not any(m_["body"] == "our note naming the neighbour thread" for m_ in mine2),
+              [m_["body"][:40] for m_ in mine2][-3:])
 
         # S: no summary writer; what fell out rides as the topic's own notes.
         await record_not_summary(pool, root)

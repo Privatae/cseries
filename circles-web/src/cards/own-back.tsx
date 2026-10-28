@@ -1,4 +1,5 @@
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { flushSync } from "react-dom";
 import { AskOverlay } from "@kit/ui/ask-overlay";
 import { PairingCodeOverlay } from "@kit/ui/pairing-code-overlay";
 import { climbLevels, pageEffort } from "@kit/book/hold-to-think";
@@ -53,7 +54,7 @@ const HostMessage = memo(function HostMessage({ m, hostName }: { m: ChatMessage;
     const from = parts?.who ?? echo?.who ?? null;
     const words = parts ? parts.words : m.text;
     return (
-      <div className="hm you" data-msg="you">
+      <div className="hm you" data-msg="you" data-msg-topic={m.topic?.id}>
         <div className="lb">
           <span className="w">You</span>
           <span className="t">{whenOf(m.createdAt)}</span>
@@ -69,7 +70,7 @@ const HostMessage = memo(function HostMessage({ m, hostName }: { m: ChatMessage;
     );
   }
   return (
-    <div className="hm" data-msg="host">
+    <div className="hm" data-msg="host" data-msg-topic={m.topic?.id}>
       <div className="lb">
         <span className="w">{hostName}</span>
         <span className="t">{whenOf(m.createdAt)}</span>
@@ -89,7 +90,8 @@ const HostMessage = memo(function HostMessage({ m, hostName }: { m: ChatMessage;
 });
 
 /** The blank page every login opens on (one conversation, slice 5): a
- * greeting, and what came before is above, a scroll away. */
+ * greeting, and the earlier messages of the thread the person last wrote in
+ * (the one "Where this stands" names) one click away. */
 function HostGreeting({ hostName, hasEarlier, onEarlier }: { hostName: string; hasEarlier: boolean; onEarlier: () => void }) {
   const h = new Date().getHours();
   const hello = h < 5 ? "Hello" : h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
@@ -105,6 +107,17 @@ function HostGreeting({ hostName, hasEarlier, onEarlier }: { hostName: string; h
       )}
     </div>
   );
+}
+
+/** The message the reader is reading in scroller `b`: the first one whose
+ * bottom is below the scroller's top, and how far below the top it starts. */
+function readingAt(b: HTMLElement): { el: HTMLElement; off: number } | null {
+  const top = b.getBoundingClientRect().top;
+  for (const el of b.querySelectorAll<HTMLElement>("[data-msg], [data-nudge-line], [data-topic-line]")) {
+    const r = el.getBoundingClientRect();
+    if (r.bottom > top + 1) return { el, off: r.top - top };
+  }
+  return null;
 }
 
 /** Where the conversation turns to another topic: one line. The Host's own
@@ -251,11 +264,18 @@ export function OwnBack({
 
   const [sendErr, setSendErr] = useState<string | null>(null);
   const bodyRef = useRef<HTMLDivElement | null>(null);
-  const lastId = ht.messages[ht.messages.length - 1]?.id;
-  const lastText = ht.messages[ht.messages.length - 1]?.text.length ?? 0;
+  const innerRef = useRef<HTMLDivElement | null>(null);
+  // The thread on screen (ht.viewTopic): only its messages are drawn.
+  const shown = ht.shown;
   // Follow the newest words only while the reader is at the bottom (the
   // rail's chat view, ai-elements/conversation.tsx): scrolled up to read,
   // a streaming reply does not pull the page away, and a button goes back.
+  // Nothing else moves the page: earlier messages come only from Earlier
+  // messages, and when they do the reader stays on what they were reading.
+  // (A scroll that ended near the top once read the next 50 rows of every
+  // topic on its own, and the reply growing past the box was
+  // such a scroll; its place was put back a frame before the rows were
+  // drawn, so the page sat at the top of them.)
   const [atBottom, setAtBottom] = useState(true);
   const atBottomRef = useRef(true);
   const toBottom = useCallback(() => {
@@ -264,32 +284,63 @@ export function OwnBack({
     atBottomRef.current = true;
     setAtBottom(true);
   }, []);
-  useEffect(() => {
-    // A new page, or a page read again from the start: from its end.
+  // Before the frame is drawn, so no frame shows the page anywhere else.
+  useLayoutEffect(() => {
+    // Another thread on screen (the words went there), or a page read again
+    // from the start: from its end, the newest message.
     atBottomRef.current = true;
     toBottom();
-  }, [threadId, ht.loading, toBottom]);
-  useEffect(() => {
+  }, [ht.viewTopic, ht.loading, toBottom]);
+  // Any change to what is drawn (new words, a tool card, a row swapped for
+  // its echo), in the same commit.
+  useLayoutEffect(() => {
     if (atBottomRef.current) toBottom();
-  }, [lastId, lastText, toBottom]);
-  // Scrolling up past the top reads the page before (the feed): the view
-  // stays on the message it was on.
-  const loadEarlier = useCallback(async () => {
-    const b = bodyRef.current;
-    const before = b ? b.scrollHeight - b.scrollTop : 0;
-    if (!(await ht.loadEarlier())) return;
-    window.requestAnimationFrame(() => {
-      const c = bodyRef.current;
-      if (c) c.scrollTop = c.scrollHeight - before;
+  }, [shown, toBottom]);
+  // What grows without new words (a tool card opening, a picture or a code
+  // block drawn late) keeps the newest message in sight too.
+  useEffect(() => {
+    const inner = innerRef.current;
+    if (!inner || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      if (atBottomRef.current) {
+        const b = bodyRef.current;
+        if (b) b.scrollTop = b.scrollHeight;
+      }
     });
-  }, [ht.loadEarlier]);
+    ro.observe(inner);
+    return () => ro.disconnect();
+  }, []);
+  /** Earlier messages: the thread's page before what is on screen goes above
+   * it in one commit, and the message the reader was reading stays where it
+   * was on the screen. With nothing on screen (the greeting), the page opens
+   * on its newest message. */
+  const loadEarlier = useCallback(async () => {
+    let kept = false;
+    const added = await ht.loadEarlier((apply) => {
+      const b = bodyRef.current;
+      const at = b ? readingAt(b) : null;
+      // Reading back, not following the newest words: the commit below must
+      // not take the page to its end (a short thread fits the box, so it
+      // reads as "at the bottom" until the page before goes in above it).
+      if (at) atBottomRef.current = false;
+      flushSync(apply);
+      if (b && at && at.el.isConnected) {
+        b.scrollTop += at.el.getBoundingClientRect().top - b.getBoundingClientRect().top - at.off;
+        kept = true;
+        // Read now, not at the scroll event: the page grew above the reader,
+        // and nothing may take that for "at the bottom" in between.
+        atBottomRef.current = b.scrollHeight - b.scrollTop - b.clientHeight < 48;
+        setAtBottom(atBottomRef.current);
+      }
+    });
+    if (added && !kept) toBottom();
+  }, [ht.loadEarlier, toBottom]);
   const onBodyScroll = () => {
     const b = bodyRef.current;
     if (!b) return;
     const at = b.scrollHeight - b.scrollTop - b.clientHeight < 48;
     atBottomRef.current = at;
     setAtBottom(at);
-    if (b.scrollTop < 24 && ht.hasEarlier) void loadEarlier();
   };
 
   const pick = (id: string) => {
@@ -345,7 +396,7 @@ export function OwnBack({
                 <ConversationDepth
                   currentModel={currentModel}
                   frame={ht.chat.contextFrame}
-                  messages={ht.messages}
+                  messages={shown}
                   models={models}
                   target={depthTarget}
                 />
@@ -372,8 +423,8 @@ export function OwnBack({
         </div>
       </div>
       {/* One conversation (slice 5): no thread tabs and no "new thread".
-          The Host picks the topic of every message; the feed shows where
-          the talk turns, a line at each switch. */}
+          The Host picks the topic of every message, and the back shows that
+          thread, named in "Where this stands" below. */}
       {ht.rootPin && (
         <div className="err" data-root-pin style={{ padding: "6px 14px" }}>
           Writing in Root: only your own words go there.{" "}
@@ -413,7 +464,15 @@ export function OwnBack({
           />
         )}
       </div>
-      <div className="cbody" data-book-nudges data-host-thread={threadId} onScroll={onBodyScroll} ref={bodyRef}>
+      <div
+        className="cbody"
+        data-book-nudges
+        data-host-thread={threadId}
+        data-view-topic={ht.viewTopic ?? undefined}
+        onScroll={onBodyScroll}
+        ref={bodyRef}
+      >
+        <div data-cbody-in ref={innerRef}>
         <ErrorBoundary
           fallback={(reset) => (
             <div className="blank" role="alert">
@@ -423,7 +482,7 @@ export function OwnBack({
               </button>
             </div>
           )}
-          key={threadId}
+          key={ht.viewTopic ?? ""}
           label="host-thread"
         >
         {ht.error ? (
@@ -435,20 +494,21 @@ export function OwnBack({
           </div>
         ) : ht.loading ? (
           <div className="blank">Reading…</div>
-        ) : ht.messages.length === 0 ? (
+        ) : shown.length === 0 ? (
           <HostGreeting hasEarlier={ht.hasEarlier} hostName={hostName} onEarlier={() => void loadEarlier()} />
         ) : (
           <>
             {ht.hasEarlier && (
-              <div className="blank" style={{ padding: "6px 0" }}>
+              // Never the scroll anchor: the page read goes in below it.
+              <div className="blank earlier-bar" style={{ padding: "6px 0" }}>
                 <button className="link" data-earlier onClick={() => void loadEarlier()} type="button">
                   Earlier messages ↑
                 </button>
               </div>
             )}
-            {ht.messages.map((m, i) => {
+            {shown.map((m, i) => {
               if (m.topicMarker) return <TopicLine key={m.id} text={m.text} />;
-              const prev = i > 0 ? ht.messages[i - 1] : undefined;
+              const prev = i > 0 ? shown[i - 1] : undefined;
               const switched = !!m.topic && !!prev?.topic && prev.topic.id !== m.topic.id;
               return (
                 <Fragment key={m.id}>
@@ -466,6 +526,7 @@ export function OwnBack({
           </>
         )}
         </ErrorBoundary>
+        </div>
       </div>
       {!atBottom && (
         <button

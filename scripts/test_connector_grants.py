@@ -92,8 +92,10 @@ class _Req:
         self.headers = {"content-type": "application/json"}
         self.scope = {"path": "/api/network/nac/connector"}
 
-    async def json(self):
-        return self._body
+    async def stream(self):
+        # The routes read a body through the bounded reader (network.py _json_in ->
+        # server/harness_input.py::read_request), which takes it from stream().
+        yield json.dumps(self._body).encode()
 
 
 class _Bridge:

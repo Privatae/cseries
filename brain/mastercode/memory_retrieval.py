@@ -977,73 +977,32 @@ async def _search_world_store(pool, entity_id: int, query: str, limit: int) -> d
 
 
 async def _search_code_store(query: str, limit: int) -> dict:
-    """Every project the in-pod code index holds, searched at once. The
-    codesearch route takes ONE project per call (its tab has a picker); a
-    person typing into the one box has no picker, so this fans out over the
-    indexed projects. `projects` names what was searched so an empty answer
-    can say 'nothing is indexed' rather than 'nothing matched'.
+    """Every project the in-pod code index holds, searched at once: the
+    search search_my_code runs (codesearch.searcher.search, project None),
+    so recall and the tool answer the same question the same way. `projects`
+    names what is indexed so an empty answer can say 'nothing is indexed'
+    rather than 'nothing matched'; the section says how the search ran
+    (searcher.how_it_ran), as search_my_code does.
 
-    ONE embed, ONE rerank. searcher.search embeds the
-    query and reranks 30 candidates per call, so calling it per project made
-    N identical embeds of the same string and N reranks of raw chunk content
-    for every keystroke pause — enough projects and the store's timeout fires
-    while the lane is healthy. This does what searcher.search does, but with
-    the remote arms hoisted: embed once, run the two store arms per project
-    (the pod's Postgres), RRF-fuse per project exactly as the searcher
-    does, pool the top candidates ACROSS projects, rerank that pool once.
-    Same arms, same fusion, same degradation (no vector → lexical-only; rerank
-    refused on a BYO/bastion lane → RRF order stands)."""
+    This used to be a second implementation: one vector query and one
+    lexical query PER PROJECT, RRF-fused per project, then drawn round-robin
+    so every project's top hit reached the reranker (per-project RRF gives
+    every project's best hit the same score, and a flat sort tied on the
+    project's name). One search over everything ranks each arm globally, so
+    that tie cannot arise; and the per-project queries put a Host with 75
+    indexed projects (131,940 chunks) past SEARCH_STORE_TIMEOUT_S on every
+    recall. An index that fails fails the store, named
+    `unavailable`, never an empty answer."""
     from server.routes.codesearch import _get_db
-    from codesearch import bridge_embed, searcher, store
+    from codesearch import searcher, store
     db = _get_db()
-    projects = sorted(s["project"] for s in await store.stats(db) if s.get("chunks"))
+    projects = await store.projects(db)
     if not projects:
         return {"results": [], "projects": []}
-    # The Host's configured embedding model and the column of its size, once
-    # for every project; none set up → lexical-only, as searcher.search.
-    space, _no_space = await bridge_embed.active_space()
-    qvec = await bridge_embed.embed(query, space=space) if space is not None else None
-    per_project = searcher.RERANK_CANDIDATES
-    ranked: list[list[dict]] = []   # one RRF-ordered list per project
-    failed: list[str] = []
-    for p in projects:
-        try:
-            vector_hits = (await store.search_vector(db, project=p, query_embedding=qvec, space=space,
-                                                     limit=per_project)
-                           if qvec else [])
-            lexical_hits = await store.search_lexical(db, project=p, query=query, limit=per_project)
-        except Exception as e:  # one project's index failing is that project's, not the search's
-            failed.append(f"{p}: {e}")
-            continue
-        ranked.append([dict(h, project=p) for h in searcher.rrf_fuse(vector_hits, lexical_hits)[:per_project]])
-    # The candidate pool the reranker sees is drawn ROUND-ROBIN across projects
-    # — every project's best hit, then every project's second — not a flat
-    # sort by rrf_score. RRF scores are rank-based, so a both-arms rank-0 hit
-    # scores the same 2/61 in every project; a flat sort + cut tied on project
-    # NAME and, past RERANK_CANDIDATES projects, dropped the later ones before
-    # the reranker ever saw them (measured with 40
-    # projects: the best rerank match in proj39 never surfaced). The pool is
-    # RERANK_CANDIDATES or one-per-project, whichever is larger, so every
-    # project's top hit is in front of the reranker however many there are;
-    # the rerank payload grows with the project count and nothing else.
-    pool_cap = max(per_project, len(ranked))
-    pool_: list[dict] = []
-    for depth in range(per_project):
-        for lst in ranked:
-            if depth < len(lst):
-                pool_.append(lst[depth])
-        if len(pool_) >= pool_cap:
-            break
-    pool_ = pool_[:pool_cap]
-    if pool_:
-        scores = await bridge_embed.rerank(query, [h["content"] for h in pool_])
-        if scores is not None:
-            for h, s in zip(pool_, scores):
-                h["rerank_score"] = s
-            pool_.sort(key=lambda h: -(h["rerank_score"] if h.get("rerank_score") is not None else -1.0))
-    out = {"results": pool_[:limit], "projects": projects, "semantic": bool(qvec)}
-    if failed:
-        out["failed"] = failed
+    meta: dict = {}
+    results = await searcher.search(db, project=None, query=query, limit=limit, meta=meta)
+    out = {"results": results, "projects": projects, "semantic": bool(meta.get("semantic"))}
+    out.update(searcher.how_it_ran(meta, results))
     return out
 
 
@@ -1301,7 +1260,8 @@ async def unified_search(pool, entity_id: int, query: str, *,
 
 
 def _hit_line(h: dict, keys: tuple[str, ...], body_keys: tuple[str, ...], cap: int = 240) -> str:
-    head = " · ".join(str(h[k]) for k in keys if h.get(k) not in (None, "", []))
+    head = " · ".join(", ".join(map(str, h[k])) if isinstance(h[k], list) else str(h[k])
+                      for k in keys if h.get(k) not in (None, "", []))
     body = next((str(h[k]) for k in body_keys if h.get(k)), "")
     body = " ".join(body.split())
     if len(body) > cap:
@@ -1407,7 +1367,9 @@ def format_unified_text(out: dict) -> str:
     for store, title, keys, body_keys, how in (
             ("projects", "Projects", ("id", "name", "status"), ("description",),
              "get_project(project_id) opens one"),
-            ("code", "Indexed code", ("project", "file", "path", "symbol", "start_line"),
+            # `projects`: a hit names every project holding that file
+            # (codesearch.searcher.collapse_copies).
+            ("code", "Indexed code", ("projects", "file_path", "symbol", "start_line"),
              ("content", "text", "snippet"), "code_read or search_my_code opens it"),
             ("skills", "Skills", ("name",), ("description",),
              "each opens with the call shown"),
@@ -1425,6 +1387,12 @@ def format_unified_text(out: dict) -> str:
         # shorter list is never taken for the whole one.
         note = ("\nNot searched: " + "; ".join(str(f) for f in sec["failed"])
                 if store == "skills" and sec.get("failed") else "")
+        # How the code search ran, said as search_my_code says it, so a
+        # keyword-only answer is not read as one by meaning.
+        if store == "code":
+            note += "".join(f"\n{sec[k]}" for k in ("degraded", "partly_by_meaning") if sec.get(k))
+            if sec.get("reranked") is False:
+                note += "\nnot reranked: hits are in fusion order"
         # Skills this turn could not open are left out, as find_tools leaves
         # them out, and the count is said.
         _lo = int(sec.get("left_out") or 0) if store == "skills" else 0

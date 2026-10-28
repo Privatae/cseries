@@ -556,8 +556,66 @@ check("session.py calls the guard", "find_unbacked_start" in sess_src)
 check("the repair budget is declared", "_claim_repairs = 0" in sess_src)
 check("the guard only runs while the budget is unspent",
       "if not _claim_repairs:" in sess_src)
+check("...and whatever the Host's steering switch says: a claim held against the rows is a "
+      "fact check, not steering",
+      "if not _claim_repairs and" not in sess_src)
 check("...and spends it, so the guard can never loop",
       "_claim_repairs += 1" in sess_src)
+
+# ── 3b. the steering switch reads as OFF unless the row says "on" ───────────
+# runtime/steering.is_off, off for every Host by default: a Host with no row,
+# an unreadable table or no pool runs without the guards; only the jsonb string
+# "on" puts them back, in the shape asyncpg returns it (text '"on"') or
+# decoded. Invented values.
+import asyncio as _aio  # noqa: E402
+from mastercode.runtime import steering as _steer  # noqa: E402
+
+
+class _SteerPool:
+    def __init__(self, v=None, boom=False):
+        self.v, self.boom, self.q = v, boom, None
+
+    async def fetchval(self, q, *a):
+        self.q = (q, a)
+        if self.boom:
+            raise RuntimeError('relation "app_config" does not exist')
+        return self.v
+
+
+for _v, _boom, _want, _why in ((None, False, True, "no row"),
+                               (None, True, True, "table unreadable"),
+                               ('"off"', False, True, "jsonb \"off\""),
+                               ('"ON"', False, True, "any other word"),
+                               ('{"steering": "on"}', False, True, "an object"),
+                               ('"on"', False, False, "jsonb \"on\" as asyncpg returns it"),
+                               ("on", False, False, "\"on\" already decoded")):
+    _p = _SteerPool(_v, _boom)
+    check(f"3b: steering switch, {_why}: {'off' if _want else 'on'}",
+          _aio.run(_steer.is_off(_p)) is _want and _p.q[1] == ("host", "steering"), str(_p.q))
+check("3b: steering switch with no pool: off", _aio.run(_steer.is_off(None)) is True)
+
+# ── 3c. the Host cannot write the switch ────────────────────────────────────
+# The only writer of app_config is PUT /api/applications/{app_id}/config/{key},
+# which takes an app token for that same app_id (_require_self). 'host' is a
+# reserved id no manifest may carry, and the one token that carries it is
+# kernel_op's, which reaches only its exposed prefixes.
+if str(_ROOT) not in sys.path:
+    sys.path.append(str(_ROOT))
+from server.applications.manifest import RESERVED_APP_IDS as _RES  # noqa: E402
+check("3c: 'host' is an app id no installed app can carry", "host" in _RES)
+_ko_src = (_ROOT / "brain/mastercode/runtime/kernel_ops.py").read_text()
+import re as _re  # noqa: E402
+_prefixes = _re.findall(r'^\s*"(/api[^"]*)",', _ko_src.split("_EXPOSED_PREFIXES", 1)[1].split("\n)\n", 1)[0],
+                        _re.M)
+_sw_path = "/api/applications/host/config/steering"
+check("3c: kernel_op exposes no prefix that reaches the Host's app_config row",
+      len(_prefixes) > 5 and not any(_sw_path == p or _sw_path.startswith(p + "/") for p in _prefixes),
+      str([p for p in _prefixes if p.startswith("/api/applications")]))
+_apps_src = (_ROOT / "server/routes/applications.py").read_text()
+_put = _apps_src.split('@router.put("/{app_id}/config/{key}")', 1)
+check("3c: the config write route checks the token is the app's own first",
+      len(_put) == 2 and _put[1].split("\n@router", 1)[0].count("_require_self(request, app_id)") == 1
+      and "if tok.app_id != app_id:" in _apps_src)
 
 # The repair must CONTINUE the loop rather than fall through to the break: a
 # repair that produces a tool call needs the loop to execute it.

@@ -1356,9 +1356,79 @@ def is_dropped_stub(content) -> bool:
     return isinstance(content, str) and content.startswith('{"' + DROPPED_RESULT_KEY + '"')
 
 
+# A stored result the Host is still paging stays. Measured on a Host: a 66k
+# stored file was read in 8-14.5k pages, each page was cut the call after it
+# was read while the Host read on in the same file,
+# and pages of it were read back five times in one turn, each cut moving the
+# cached prefix. Two signals that the Host is still reading a handle, both
+# from what it did: the round it just ran read that handle, or it read the
+# handle again after a page of it was cut (the caller's keep_handles).
+#
+# What a handle being read keeps is bounded. Its pages are
+# kept newest first up to READING_KEEP_CHARS (or the caller's keep_chars, a
+# quarter of the turn's context target, when that is smaller); older pages of
+# it leave as before. A page read twice (the same handle, offset and length:
+# a stored row never changes, so the same characters) is kept once, its newest
+# copy. Without the bound a file read page by page rode whole in every call
+# until the window trim cut whole rounds. 96,000 holds the measured 66k file
+# whole with two of its largest pages (14.5k) read again.
+READING_KEEP_CHARS = 96_000
+
+
+def _reading_kept(messages: list, last_reply: int, droppable: dict, reading: set,
+                  keep_chars: int) -> set:
+    """Indices of the pages of `reading` handles that stay: newest first, one
+    copy per (handle, offset, length), up to keep_chars (the newest is kept
+    whatever its size)."""
+    kept: set = set()
+    seen: set = set()
+    used = 0
+    full = False
+    for i in range(last_reply - 1, 0, -1):
+        m = messages[i]
+        if not isinstance(m, dict) or m.get("role") != "tool":
+            continue
+        meta = droppable.get(str(m.get("tool_call_id") or ""))
+        c = m.get("content")
+        if meta is None or meta.get("handle") not in reading or not isinstance(c, str) \
+                or is_dropped_stub(c):
+            continue
+        page = (meta["handle"], meta.get("offset"), meta.get("length"))
+        if page in seen:
+            continue
+        seen.add(page)
+        if full or (kept and used + len(c) > keep_chars):
+            # Past the bound everything older leaves, so what stays is the
+            # newest run of pages, never a gap filled by a smaller old one.
+            full = True
+            continue
+        used += len(c)
+        kept.add(i)
+    return kept
+
+
+def _handles_read_in(message) -> set:
+    """Handles a model message's tool calls page (read(handle=...))."""
+    from mastercode.runtime.result_store import is_result_read
+    out: set = set()
+    for tc in (message or {}).get("tool_calls") or []:
+        fn = (tc or {}).get("function") or {}
+        args = fn.get("arguments")
+        if isinstance(args, str):
+            try:
+                args = json.loads(args or "{}")
+            except (TypeError, ValueError):
+                continue
+        if is_result_read(fn.get("name"), args):
+            out.add(args["handle"].strip())
+    return out
+
+
 def drop_used_tool_results(messages: list[dict], mark: int, droppable: dict,
                            protect: list | None = None,
-                           floor: int = DROP_FLOOR_CHARS) -> tuple[list[dict], list[dict]]:
+                           floor: int = DROP_FLOOR_CHARS,
+                           keep_handles=None,
+                           keep_chars: int | None = None) -> tuple[list[dict], list[dict]]:
     """Replace the content of every tool result the model has already answered
     after with a stub, when that pays. Returns (messages, dropped): the SAME
     list and [] when nothing is dropped, else a new list and one entry per
@@ -1370,7 +1440,11 @@ def drop_used_tool_results(messages: list[dict], mark: int, droppable: dict,
     message as `msg` matches that object only), with an assistant message
     after it (the model has seen it and responded), content over `floor`
     characters (HANDLE_DROP_FLOOR_CHARS when it names a handle), not already
-    a stub, and not in `protect`.
+    a stub, and not in `protect`. A registration whose handle the Host is
+    still reading is not eligible: the last model message pages that handle,
+    or it is in `keep_handles`. Of those pages, the newest copy of each stays
+    up to READING_KEEP_CHARS (or `keep_chars` when smaller); the rest are
+    eligible (_reading_kept).
 
     Only the CONTENT changes: role, tool_call_id and name stay, so the
     call/result pairing holds on both wires (provider_gateway translates a
@@ -1391,6 +1465,11 @@ def drop_used_tool_results(messages: list[dict], mark: int, droppable: dict,
         last_reply = max((i for i, m in enumerate(messages)
                           if isinstance(m, dict) and m.get("role") == "assistant"), default=-1)
         keep = _protect_indices(messages, protect) | {0}
+        reading = set(keep_handles or ()) | (
+            _handles_read_in(messages[last_reply]) if last_reply >= 0 else set())
+        cap = READING_KEEP_CHARS if not keep_chars or keep_chars <= 0 \
+            else min(int(keep_chars), READING_KEEP_CHARS)
+        still_read = _reading_kept(messages, last_reply, droppable, reading, cap) if reading else set()
         picks: list = []
         for i in range(1, last_reply):
             m = messages[i]
@@ -1399,6 +1478,8 @@ def drop_used_tool_results(messages: list[dict], mark: int, droppable: dict,
             meta = droppable.get(str(m.get("tool_call_id") or ""))
             c = m.get("content")
             if meta is None or not isinstance(c, str) or is_dropped_stub(c):
+                continue
+            if i in still_read:
                 continue
             # A stored result (its registration names a handle) leaves at the
             # store's floor; one with no handle at the caller's.

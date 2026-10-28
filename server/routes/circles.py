@@ -1492,13 +1492,20 @@ def _feed_where(args: list) -> list[str]:
 
 
 async def read_feed(pool, eid: int, *, before=None, before_id: int | None = None,
-                    limit: int = _FEED_PAGE) -> dict:
+                    limit: int = _FEED_PAGE, thread: str | None = None) -> dict:
     """One page of the feed, oldest first, each message with its topic
     ({id: thread id, title, root}) and a topic marker flagged.
-    `next` is the cursor for the page before it, None at the start."""
+    `next` is the cursor for the page before it, None at the start.
+
+    `thread`: one topic's rows only, the same rows its own transcript shows,
+    paged the same way. Your Host's back shows the thread the person's
+    message went to and reads only that thread's earlier messages."""
     from server.connectors import thread_pick as _tp
     args: list = [eid]
     where = _feed_where(args)
+    if thread is not None:
+        args.append(str(thread))
+        where.append(f"metadata->'source_context'->>'ref' = ${len(args)}")
     if before is not None:
         args.append(before)
         b = len(args)
@@ -1533,16 +1540,26 @@ async def read_feed(pool, eid: int, *, before=None, before_id: int | None = None
 
 
 @router.get("/feed", dependencies=_READ)
-async def circles_feed(before: str | None = None, before_id: int | None = None) -> dict:
+async def circles_feed(before: str | None = None, before_id: int | None = None,
+                       thread: str | None = None) -> dict:
     """The one conversation, a page at a time, newest page first (read_feed).
-    `before`/`before_id`: the cursor a page answered as `next`."""
+    `before`/`before_id`: the cursor a page answered as `next`. `thread`: one
+    topic only (a thread id; the original conversation has no rows)."""
     when = None
     if before:
         try:
             when = _dt.datetime.fromisoformat(before)
         except ValueError:
             raise HTTPException(status.HTTP_400_BAD_REQUEST, "before: an ISO time") from None
-    return await read_feed(_threads_pool(), _entity_id() or 0, before=when, before_id=before_id)
+    ref = None
+    if thread is not None:
+        if _ct.is_legacy(thread):
+            return {"messages": [], "next": None}
+        try:
+            ref = str(uuid.UUID(thread))
+        except ValueError:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "thread: a thread id") from None
+    return await read_feed(_threads_pool(), _entity_id() or 0, before=when, before_id=before_id, thread=ref)
 
 
 # ---- Parallel work from the chat ----

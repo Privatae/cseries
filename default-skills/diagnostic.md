@@ -16,6 +16,17 @@ BEFORE you form a theory. Its `failures` are your own records, grouped:
   provider's exact words, the status, how many times, first and last seen.
   `pictures_dropped: true` means each refused call was sent again with a
   note in place of every picture: the pictures never reached the model.
+  `refusal: true` is the provider's safety filter declining the request
+  (an answer, not an outage), with `refusal_category` (cyber, bio, … or
+  null) and what the route's Orchestrator fallback did: `fallback` +
+  `fallback_answered`, `no_fallback: true`, or `not_retried: true` (a
+  `reasoning_extraction` decline, never sent to a fallback: the fix is the
+  request, so no fallback is proposed for it). A decline is in your block
+  from the first one. With no fallback, tell the person plainly and propose
+  one (skill 'routing': `model_routing` op='set' with `fallback_provider`
+  and `fallback_model` files a card they approve; nothing changes until
+  they do);
+  when the fallback answered, say once which model answered.
 - `tool` — tool calls that failed, with the tool's words. `fault: model` is
   your own call's mistake (arguments, the wrong door); `fault: platform` is
   the tool failing on the platform's side.

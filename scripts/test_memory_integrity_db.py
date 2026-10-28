@@ -1967,8 +1967,33 @@ async def main() -> int:
                   (c4.get("result") or {}).get("dropped") is True
                   and not (await _live_row(m3))["live"], f"{c4}")
             c6 = await _tools._exec_memory_curate({"op": "drop", "memory_id": m3})
-            check("memory_curate: a row no longer live is refused by id",
-                  c6.get("status") == "error" and "not a live memory" in c6.get("result", ""), f"{c6}")
+            check("memory_curate drop: a row already dropped is done, not refused, and says so",
+                  c6.get("status") == "ok" and (c6.get("result") or {}).get("dropped") is False
+                  and (c6["result"].get("already") or "").startswith(f"#{m3} was already dropped on "),
+                  f"{c6}")
+            arch = await _row(pool, "prefers the quarterly report on paper", "preference",
+                              meta={"rule_kind": "taught"})
+            await pool.execute("UPDATE entity_memory SET status = 'archived', status_changed_at = "
+                               "'2026-03-04 12:00+00', status_reason = 'a bulk pass' WHERE id = $1", arch)
+            c7 = await _tools._exec_memory_curate({"op": "drop", "memory_id": arch})
+            check("memory_curate drop: an archived row is done, not refused: 'already archived on <date>'",
+                  c7.get("status") == "ok" and (c7.get("result") or {}).get("already")
+                  == f"#{arch} was already archived on 2026-03-04; nothing to drop", f"{c7}")
+            c8 = await _tools._exec_memory_curate({"op": "drop", "memory_id": 987654321})
+            check("memory_curate drop: an id this Host never held is still refused",
+                  c8.get("status") == "error" and "not a live memory" in c8.get("result", ""), f"{c8}")
+            # A row dated to leave later has not left (t_valid_until ahead), so
+            # its drop is refused as before, never "already dropped on <tomorrow>".
+            ahead = await _row(pool, "prefers the minutes by noon", "preference")
+            await pool.execute("UPDATE entity_memory SET t_valid_until = now() + interval '1 day' "
+                               "WHERE id = $1", ahead)
+            c8b = await _tools._exec_memory_curate({"op": "drop", "memory_id": ahead})
+            check("memory_curate drop: a row dated to leave later is refused, not called already dropped",
+                  c8b.get("status") == "error" and "already" not in json.dumps(c8b), f"{c8b}")
+            c9 = await _tools._exec_memory_curate({"op": "replace", "memory_id": arch, "about": "person",
+                                                   "content": "prefers the quarterly report by email"})
+            check("memory_curate replace: an archived row is still refused (nothing to correct)",
+                  c9.get("status") == "error" and "not a live memory" in c9.get("result", ""), f"{c9}")
             await _clean(pool)
 
             # A correction keeps every place the corrected row was read, from

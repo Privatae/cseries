@@ -218,7 +218,29 @@ check("the card names its run and carries the terms' fields for the click",
       and ask1["expires"] == dry1["expires"].strftime("%Y-%m-%dT%H:%M:%SZ") and ask1["grant"] is None
       and ask1["binding"] == "one tap on your device (phone)")
 check("the run awaits the person; the audit says card-filed", dry1["state"] == "awaiting" and audits[-1][3] == "card-filed")
-check("the Host is told to say what it asked and end the turn", "end your turn" in out["next"] and "Never decide" in out["next"])
+check("the result states the card, the door once they answer, and that only they decide it — no reply script",
+      "ticket #1" in out["next"] and "op_apply' with the same args" in out["next"]
+      and "only they decide it" in out["next"]
+      and "Say in one line" not in out["next"] and "end your turn" not in out["next"])
+check("...and a card does not end the turn: work that does not wait on it goes on",
+      "Work that does not wait on it goes on meanwhile" in out["next"])
+# Every note a card or an approval leaves the Host states that work which does
+# not wait on it goes on, never a script for its reply or for when to end the
+# turn (the mgmt_run ask, the pipeline proposal, a route change, a typed turn's
+# ask).
+for _rel in ("server/network/nac_ops.py", "brain/mastercode/runtime/tools_projects.py",
+             "brain/mastercode/runtime/tools_shared.py",
+             "brain/mastercode/runtime/turn_type_approval.py"):
+    _src = (ROOT / _rel).read_text()
+    check(f"{_rel}: a card's note carries no reply script",
+          not any(w in _src for w in ("end your turn only when everything left does",
+                                      "Say in one line what you asked",
+                                      "Say what you proposed in one line", "Say that, then carry on")))
+from mastercode.runtime import turn_type_approval as _tta  # noqa: E402
+_tnote = _tta._ask_result({"id": 7}, "invented sitrep", [])["result"]["note"]
+check("a typed turn's card note: work that does not wait on it goes on, no reply script",
+      "goes on meanwhile" in _tnote and "end your turn" not in _tnote.lower()
+      and "locked to them" in _tnote, _tnote)
 res2 = door("op_apply", ["write-hello", '{"count": 2, "name": "x"}'])
 check("asked again before the answer: the same card, no second ticket",
       json.loads(res2["stdout"])["ticket_id"] == 1 and len(pool.tickets) == 1 and "already in front" in json.loads(res2["stdout"])["next"]
@@ -673,10 +695,11 @@ check("the decide hands an op card to nac_ops after the flip, records the outcom
       and tsrc.index("nac_ops.card_decided(") > tsrc.index("SET status = 'decided'")
       and "OP_ASK_KIND, PIPELINE_PROPOSAL_KIND," in tsrc)
 skill = src("default-skills/network.md")
-check("the skill says the flow: the card, end the turn, never decide it, apply again after the tap",
-      "puts THE CARD in" in skill and "END YOUR TURN" in skill and "Never decide the ticket yourself" in skill
+check("the skill says the flow: the card, carry on, never decide it, apply again after the tap",
+      "puts THE CARD in" in skill and "END YOUR TURN only when everything left waits" in skill
+      and "Never decide the ticket yourself" in skill
       and "Don't run it" in skill and "a card never appears without a dry run" in skill)
-check("the registry names the asked state", "puts their card up ('asked': end the turn)" in src("brain/mastercode/public_tool_registry.py"))
+check("the registry names the asked state", "puts their card up ('asked': carry on)" in src("brain/mastercode/public_tool_registry.py"))
 node = shutil.which("node")
 if node:
     r = subprocess.run([node, "--test", "test/ask.test.ts"], cwd=ROOT / "circles-web", capture_output=True, text=True, timeout=120)

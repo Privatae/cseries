@@ -167,9 +167,11 @@ async def _copy_chunked(reader: asyncio.StreamReader, writer: asyncio.StreamWrit
                     break
             await writer.drain()
             return
-        body = await reader.readexactly(size)
+        # Copied as it arrives, never read whole: the size is whatever the sender
+        # declares, so readexactly(size) held up to that much of a chunk before
+        # any cap behind this door could count a byte of it.
+        await _copy_n(reader, writer, size)
         crlf = await reader.readexactly(2)
-        writer.write(body)
         writer.write(crlf)
         await writer.drain()
 

@@ -1426,9 +1426,9 @@ def _asked_words(m: dict, server: str, t: dict, again: bool = False) -> str:
     head = (f"The card for {m['name']} on '{server}' is already in front of the person (ticket #{t['id']}, also in "
             f"Circles, under Waiting on you) and they have not answered it. " if again else
             f"The card is in front of the person (ticket #{t['id']}; also in Circles, under Waiting on you). ")
-    return head + ("Say in one line what you asked and end your turn. When they answer, call mgmt_run op='op_apply' "
-                   "with the same args: it then waits for their tap on their device and applies exactly this. "
-                   "Never decide the ticket yourself — it is locked to them.")
+    return head + ("Work that does not wait on it goes on meanwhile. When they answer, mgmt_run op='op_apply' "
+                   "with the same args waits for their tap on their device and applies exactly this. "
+                   "The ticket is locked to them: only they decide it.")
 
 
 async def _note_run_on_card(pool, eid: int, g: dict, entry: dict) -> None:
@@ -1742,9 +1742,9 @@ async def mgmt_card(pool, eid: int, server: str, token_id, op: str, args, note: 
             f"The card is in front of the person (ticket #{t['id']}; also in Circles, under Waiting on you). ")
     return {"state": "asked", "ticket_id": t["id"],
             "ask": {"ticket_id": t["id"], "sitrep": t.get("sitrep") or "", "options": t.get("options") or []},
-            "next": head + "Say in one line what you asked and end your turn. When they answer, call the same op with "
-                           "the same arguments again: it then waits for their tap on their device and runs once. "
-                           "Never decide the ticket yourself — it is locked to them."}
+            "next": head + "Work that does not wait on it goes on meanwhile. When they answer, the same op with "
+                           "the same arguments waits for their tap on their device and runs once. "
+                           "The ticket is locked to them: only they decide it."}
 
 
 async def _mgmt_card_decided(pool, eid: int, *, ticket_id: int, ask: dict, option_id: str, note: str) -> dict:

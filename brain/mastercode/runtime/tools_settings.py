@@ -130,6 +130,8 @@ async def _exec_model_routing(args: dict) -> dict:
                 effort=(str(a["effort"]).strip() if a.get("effort") else None),
                 fallback_provider=(str(a["fallback_provider"]).strip().lower()
                                    if a.get("fallback_provider") else None),
+                fallback_model=(str(a["fallback_model"]).strip()
+                                if a.get("fallback_model") else None),
                 reason=(a.get("reason") or "").strip() or None)
 
 

@@ -383,8 +383,8 @@ def _ask_result(ticket: dict, sitrep: str, options: list, **extra) -> dict:
     return {"status": "ok", "result": {
         **extra, "ticket_id": tid,
         "ask": {"ticket_id": tid, "sitrep": sitrep, "options": options},
-        "note": ("The card is up. End your turn — only the person's click decides it; "
-                 "you cannot decide the ticket (it is locked to the user)."),
+        "note": ("The card is up; only the person's click decides it (the ticket is locked "
+                 "to them). Work that does not wait on it goes on meanwhile."),
     }}
 
 

@@ -3188,7 +3188,7 @@ class EntityRuntime:
                              _drop_used_results, _droppable, _dropped_by_fp, _dropped_by_handle,
                              _empty_shapes, _end_on_error, _escalate, _fail_ledger, _ga_firings,
                              _go_ahead_round, _hold_at_exit, _inference_model, _inference_provider,
-                             _input_at, _msgs_mark, _next_stream_cb, _nudge_resets,
+                             _input_at, _kept_handles, _msgs_mark, _next_stream_cb, _nudge_resets,
                              _nudge_row_tasks, _person_in_turn, _person_spoke, _pieces,
                              _protect_msgs, _reply_all, _reply_reserve, _reply_written, _root_mod,
                              _root_turn, _row_project_id, _search_mode, _search_seen,
@@ -4248,6 +4248,10 @@ class EntityRuntime:
                 if _was_dropped is not None:
                     # The replay rig's churn count: a dropped result read again.
                     _was_dropped["recalled"] = True
+                    if _result_read:
+                        # Still reading it: its pages stay for the rest of the
+                        # turn (context_budget.drop_used_tool_results).
+                        _kept_handles.add(str(func_args.get("handle")).strip())
                 if _dedup_entry is not None and _dedup_read:
                     _dedup_entry["count"] += 1
                 elif _dedup_entry is not None:
@@ -5441,8 +5445,7 @@ class EntityRuntime:
                     "content": (
                         f"[platform] Tool calls are stopped for this turn: in each of the "
                         f"last {_consecutive_all_fail} rounds every call failed. The latest "
-                        f"failures: {_failed_desc}. Tell the person what failed, quoting "
-                        f"these errors, and answer with what you already have. "
+                        f"failures: {_failed_desc}. "
                         + _limit_line("turn.all_fail_rounds", None,
                                       "a turn whose tool calls all kept failing")
                     ),
@@ -5502,7 +5505,7 @@ class EntityRuntime:
             for _dt in _fail.get("dead_tools") or []:
                 if _dt not in _dead_tools:
                     _dead_tools.append(_dt)
-            if _fail.get("message"):
+            if _fail.get("message") and not getattr(turn, "_steering_off", False):
                 grok_messages.append({"role": "user", "content": _fail["message"]})
 
             # ── THE SPEND DECISION ──
@@ -7427,6 +7430,9 @@ class EntityRuntime:
         # A stored result's stub carries its handle (runtime/result_store):
         # a read(handle) of a dropped one is its re-call.
         _dropped_by_handle: dict = {}
+        # Handles read again after a page of them was cut: never cut again
+        # this turn.
+        _kept_handles: set = set()
         _drop_hook: list = [None]
 
         # Set just before the continuation of a cut reply, which is still
@@ -7733,7 +7739,12 @@ class EntityRuntime:
             above; the ledger records the drop and any re-call."""
             if not _droppable:
                 return
-            new, gone = _cb.drop_used_tool_results(msgs, _msgs_mark[0], _droppable, _protect_msgs)
+            # Pages being read keep at most a quarter of the turn's context
+            # target (and never over READING_KEEP_CHARS), so a small window
+            # is not filled by one file.
+            new, gone = _cb.drop_used_tool_results(
+                msgs, _msgs_mark[0], _droppable, _protect_msgs, keep_handles=_kept_handles,
+                keep_chars=(_ctx_target * _cb.CHARS_PER_TOKEN // 4) if _ctx_target else None)
             if not gone:
                 return
             msgs[:] = new
@@ -7759,6 +7770,14 @@ class EntityRuntime:
         _drop_hook[0] = _drop_used_results
 
         turn.tool_round = 0
+        # Mid-turn steering switched off for this Host (runtime/steering.py):
+        # no go-ahead repair, no per-failure advice. The false-claim check is
+        # a fact check against the rows, not steering, and runs either way.
+        # Read once, at the turn's start.
+        from mastercode.runtime import steering as _steering
+        turn._steering_off = await _steering.is_off(self.pool)
+        if turn._steering_off:
+            log.info("steering off: no mid-turn advice this turn (session %s)", sess.session_id)
         # Claim-vs-row repairs spent this turn. The guard gets exactly one: it
         # must be able to fix a false start-claim, and it must never be able to
         # argue with the model about it.
@@ -7898,7 +7917,7 @@ class EntityRuntime:
             was sent before them (_person_spoke; the caller has settled)."""
             nonlocal _go_ahead_repairs
             _open_card = _cards_open[-1] if _cards_open else None
-            if (_go_ahead_repairs or not tools
+            if (_go_ahead_repairs or not tools or getattr(turn, "_steering_off", False)
                     or getattr(sess, "unseen_lane", False)):
                 return False
             if has_pending_input(sess.session_id):
@@ -7920,6 +7939,22 @@ class EntityRuntime:
                 _ga_in_handoff = bool(_ga_phrase)
                 _ga_sentence = _ga_phrase
                 _ga_level = None        # no rule level: a recorded wait, an ask by its shape
+            if (not _ga_phrase and _open_card is None and not _asked_in_box
+                    and exit_name == "text" and not held_tasks(sess.session_id)):
+                # A reply that asks nothing but stops on its own announced
+                # work ("Next, I'll draft… Then I'll go on to items 2 and 3"):
+                # the next turn starts only when the person writes again
+                # (go_ahead_guard.find_deferred_work).
+                # Judged: the Host may answer that the step is not its own.
+                # Only at the text exit with nothing the turn started still
+                # running: past a dispatch, or with an agent or build out, the
+                # turn holds for it or its result wakes a turn of its own, so
+                # the next step does not wait on the person; at the backstop
+                # and the exits past the loop no step can be taken anyway.
+                _ga_def = _gag.find_deferred_work(_ga_draft)
+                if _ga_def:
+                    _ga_phrase, _ga_sentence = _ga_def
+                    _ga_level = "judged"
             if not _ga_phrase:
                 for _p in _ga_read:
                     _p["judged"] = "clean"
@@ -8274,7 +8309,8 @@ class EntityRuntime:
             _empty_shapes=_empty_shapes, _end_on_error=_end_on_error, _escalate=_escalate,
             _fail_ledger=_fail_ledger, _ga_firings=_ga_firings, _go_ahead_round=_go_ahead_round,
             _hold_at_exit=_hold_at_exit, _inference_model=_inference_model,
-            _inference_provider=_inference_provider, _input_at=_input_at, _msgs_mark=_msgs_mark,
+            _inference_provider=_inference_provider, _input_at=_input_at,
+            _kept_handles=_kept_handles, _msgs_mark=_msgs_mark,
             _next_stream_cb=_next_stream_cb, _nudge_resets=_nudge_resets,
             _nudge_row_tasks=_nudge_row_tasks, _person_in_turn=_person_in_turn,
             _person_spoke=_person_spoke, _pieces=_pieces, _protect_msgs=_protect_msgs,

@@ -1717,6 +1717,13 @@
 .cards .earlier:disabled {
   opacity: 0.6;
 }
+/* Your Host's "Earlier messages ↑" bar: never the browser's scroll anchor.
+   The page read goes in below it, so anchored to it the view would stay at
+   the top of what was read; own-back.tsx keeps the reader on the message
+   they were reading instead. */
+.cards .earlier-bar {
+  overflow-anchor: none;
+}
 .cards .tobottom {
   position: relative;
   align-self: center;

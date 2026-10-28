@@ -112,14 +112,16 @@ check("circles: the road is chosen AFTER the decide, from the turn's status now 
 # topic the card was asked on. Its running turn is nudged through the hook,
 # which holds a refused nudge and sends it as that topic's next message when the
 # turn ends (the hold is pinned below); a caller's own send() would be refused
-# while the turn streams, so tellHost must not fall back to one there.
+# while the turn streams, so tellHost must not fall back to one there. An
+# ended turn gets the answer as a message to that topic, and the screen
+# follows it there (onLanded; your Host's back shows one thread).
 tell = circ.split("const tellHost")[1].split("const answerAsk")[0]
 _tell_run = tell.split('if (st === "submitted" || st === "streaming") {')[1].split("\n      if (fallback) await send(")[0]
 check("circles: a running turn is nudged through the hook; a refused nudge falls through to a message",
       "await nudgeRunningTurn(SELF, text, topic, fallback);\n          return;" in _tell_run
       and "send(SELF" not in _tell_run
       and "if (fallback) pendingNudgesRef.current.push(entry);" in ch0_pre
-      and "if (fallback) await send(SELF, text, { threadId: topic });" in tell)
+      and "if (fallback) await send(SELF, text, { threadId: topic, onLanded: handleLanded });" in tell)
 ch0 = src("circles-web/src/hooks/use-circles-chat.ts")
 # The words the nudge route TOOK are the server's (pending_words:
 # written before it answers, read by the turn or sent on as the thread's next
@@ -172,7 +174,7 @@ check("circles: Not now carries the note; a running turn is nudged; an ended tur
       # tellHost's `fallback` is "has a note": a bare Not now only nudges the
       # asking topic's running turn, starts no turn beside, sends no message.
       and "if (!fallback) return;" in _tell_run.split("await nudgeRunningTurn")[1]
-      and "if (fallback) await send(SELF, text, { threadId: topic });" in tell)
+      and "if (fallback) await send(SELF, text, { threadId: topic, onLanded: handleLanded });" in tell)
 ch = src("circles-web/src/hooks/use-circles-chat.ts")
 check("circles: a ticket read that resolves after a thread switch lands nowhere; one whose thread is not yet known (reload) is kept",
       "threadKeyRef.current = threadKey;" in ch and "if (raisedOn && now && raisedOn !== now) return;" in ch

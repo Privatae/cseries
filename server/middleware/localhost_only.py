@@ -316,6 +316,58 @@ def is_oauth_callback(path: str) -> bool:
     return path.startswith(_INTEGRATION_CALLBACK_PREFIX) and bool(
         _PROVIDER_KEY_RE.fullmatch(path[len(_INTEGRATION_CALLBACK_PREFIX):]))
 
+# An outside agent's MCP lane (server/agent_access): /mcp itself and the six
+# sign-in paths its client reaches with no session of the person's. Each
+# answers for itself: /mcp checks its token for every caller (loopback
+# included), the metadata is public, registration grants nothing until the
+# person connects the agent, and the token and revoke endpoints check the code,
+# its PKCE verifier or the token. So they pass to their handler from any peer
+# (the front door's question about them too: owner_session.door_decision, which
+# asks this same function with no peer). The two confined lanes on /mcp stay
+# confined, each to where it lives: a request bringing the internal secret only
+# from this container's loopback naming this machine, one bringing the harness
+# capability from there or from the runtime's network. From anywhere else the
+# request is not an agent's and meets the gate below as any other does.
+AGENT_PATHS = frozenset({
+    "/mcp",
+    "/.well-known/oauth-protected-resource",
+    "/.well-known/oauth-protected-resource/mcp",
+    "/.well-known/oauth-authorization-server",
+    "/oauth/register", "/oauth/token", "/oauth/revoke",
+})
+_INTERNAL_AUTH_HEADER = "x-cseries-internal-auth"
+
+
+def _confined_lane_ok(headers, client: str | None) -> bool:
+    """Whether the confined /mcp lane a request brings, if any, may come from
+    `client`. Loopback counts only when it names this machine
+    (loopback_host_ok): a loopback peer naming anything else is something on
+    the machine relaying another caller, as OwnerSessionGate reads it too.
+    No peer (the front door's question) is neither lane's. From the runtime's
+    network the harness capability must be one this Host holds now
+    (harness_cap_current), as runtime_exempt requires."""
+    loopback = _is_allowed(client) and loopback_host_ok(headers.get("host"))
+    if headers.get(_INTERNAL_AUTH_HEADER) and not loopback:
+        return False
+    if headers.get(_HARNESS_CAP_HEADER) and not (
+            loopback or (runtime_peer(client) and harness_cap_current(headers))):
+        return False
+    return True
+
+
+def agent_path_ok(path: str, method: str, headers, client: str | None) -> bool:
+    """Whether a request for one of AGENT_PATHS may go on to its handler
+    without the owner's session: each path for the methods its handler serves
+    and nothing else."""
+    if path not in AGENT_PATHS:
+        return False
+    if path == "/mcp":
+        return method in ("POST", "GET") and _confined_lane_ok(headers, client)
+    if path.startswith("/.well-known/"):
+        return method in ("GET", "HEAD")
+    return method == "POST"
+
+
 _MCP_CLIENT_PATHS = {"/mcp", "/api/network/bastions/heartbeat",
                      "/api/network/bastions/dcn-propose",
                      "/api/network/bastions/context-source",
@@ -343,8 +395,11 @@ _SELF_AUTH_PREFIXES = ("/api/connector/",)
 #     GET /api/applications/<id>/source and POST .../runtime-log, with the
 #     per-app source token (routes/applications.py, constant-time);
 #   * a coding engine reaches this Host's /mcp with the control capability
-#     the Host minted at its wake, in X-CSeries-Harness-Cap (routes/mcp.py,
-#     review.control_cap_is_current); a bare /mcp is still refused here;
+#     the Host minted at its wake, in X-CSeries-Harness-Cap, checked here
+#     against the ones this Host holds now (harness_cap_current) as well as in
+#     the handler, and never alongside the internal secret, whose lane is this
+#     container's loopback (routes/mcp.py refuses it from anywhere else too).
+#     A bare /mcp is an outside agent's lane (agent_path_ok), not this one;
 #   * the ship proof's browser loads the app under proof with the one-shot
 #     capability for THAT app in X-CSeries-Verify-Cap (proxy.serve_app checks
 #     it against the app id), and the App SDK the page loads first, which is
@@ -384,12 +439,39 @@ def _one_segment(path: str, prefix: str, suffix: str) -> bool:
     return bool(mid) and "/" not in mid
 
 
+def in_container(request) -> bool:
+    """Whether the request's peer is this container's own loopback and not the
+    mTLS front door forwarding someone else's call over it: the front door
+    (server/mtls_frontdoor.py) forwards over loopback too, and FrontDoorProof
+    leaves X-Client-Cert-CN only on what the front door forwarded
+    (middleware/router_identity.py). A container on the runtime's network, a
+    door's proxy, a peer on the bridge, or anything the front door carried is
+    never in it. The one test every INTERNAL_API_SECRET check asks before it
+    compares (routes/mcp.py, applications/middleware.py, routes/synaptive.py)."""
+    peer = _unmap_v4(request.client.host if request.client else None)
+    return peer in LOOPBACK_HOSTS and request.headers.get(_CLIENT_CN_HEADER) is None
+
+
+def harness_cap_current(headers) -> bool:
+    """Whether the request carries the control capability of a harness this
+    Host woke and still holds (review.control_cap_is_current: memory only,
+    constant-time). Any other value, or none, is no capability."""
+    cap = headers.get(_HARNESS_CAP_HEADER)
+    if not cap:
+        return False
+    try:
+        from server.routes.review import control_cap_is_current
+        return bool(control_cap_is_current(cap))
+    except Exception:  # noqa: BLE001 — no store to check against, no pass
+        return False
+
+
 def runtime_exempt(path: str, method: str, headers) -> bool:
     """Whether a request from the runtime's network may pass to its handler."""
     if any(_one_segment(path, p, s) for p, s in _RUNTIME_SHAPES):
         return True
-    if path == "/mcp" and method == "POST" and headers.get(_HARNESS_CAP_HEADER):
-        return True
+    if path == "/mcp" and method == "POST":
+        return not headers.get(_INTERNAL_AUTH_HEADER) and harness_cap_current(headers)
     cap = headers.get(_VERIFY_CAP_HEADER)
     if cap and method in ("GET", "HEAD"):
         if path.startswith(_VERIFY_CAP_PREFIX):
@@ -455,6 +537,15 @@ class LocalhostOnlyMiddleware(BaseHTTPMiddleware):
         # The OAuth callbacks authenticate themselves by their state (above).
         # GET only: each is a browser navigation and nothing else.
         if is_oauth_callback(path) and request.method == "GET":
+            return await call_next(request)
+
+        # An outside agent's MCP lane answers for itself (AGENT_PATHS above).
+        # Its clients are programs, not pages: a browser's Origin from another
+        # site is still refused below.
+        if agent_path_ok(path, request.method, request.headers, client_host):
+            origin = request.headers.get("origin")
+            if origin and not origin_allowed(origin, request.headers.get("host"), own_origin=True):
+                return JSONResponse(status_code=403, content={"error": "access denied: invalid origin"})
             return await call_next(request)
 
         # The loopback lane needs no session, so a page whose DNS name was

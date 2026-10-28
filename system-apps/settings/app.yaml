@@ -177,7 +177,13 @@ system: true
 #   result; Disconnect removes it (GET/POST/DELETE /api/git-server,
 #   read:git_server / write:git_server, the owner's sign-in;
 #   server/routes/git_server.py).
-version: "3.16.0"
+# 3.17.0: the old connected-chats tab is gone, and Connected agents takes its
+#   place: the outside agents signed in to this Host over MCP
+#   (server/agent_access), what each may do without asking, its last calls,
+#   and Disconnect / Take back (GET /api/agent-access/connections, POST
+#   .../revoke; read:session / write:session, both already declared). An
+#   agent connects itself, so there is nothing to mint here.
+version: "3.17.0"
 # Environment-catalog facts (host-facing, code-true). Source for the L1
 # topology block + describe_app — NOT a surface_role body (this is a control
 # panel, not a conversational surface): what_it_is/user_path only.

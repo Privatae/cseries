@@ -927,9 +927,26 @@ _unreached = _callers - _from(_edges, list(_route_nodes) + [t for _, ts, _ in _d
 check(f"  and every one of the {len(_callers)} functions in server/ and brain/ that calls or names it is reached "
       f"from a route the scan connects or from a named path", len(_callers) >= 15 and not _unreached,
       sorted(_unreached))
+# The owner's own pages for an outside agent (server/agent_access): the
+# connect page's answer and the approval page's answer. A link the agent hands
+# the person opens them in a browser, which carries no app token. Each refuses
+# a request without the identity the front door vouched for
+# (person.person_email) before it reads a code, so a code it checks is the
+# owner's own and counts on the owner's record, which is the record it
+# belongs on. Checked below: each handler asks person_email before confirm.
+_PERSON_PAGES = {"server.agent_access.oauth:authorize_answer": "server/agent_access/oauth.py",
+                 "server.agent_access.asks:ask_answer": "server/agent_access/asks.py"}
+for _q, _file in _PERSON_PAGES.items():
+    _fn = _q.split(":")[1]
+    _src = open(os.path.join(ROOT, _file)).read()
+    _body = _src[_src.index(f"async def {_fn}("):]
+    _body = _body[:_body.index("\n@router", 1)] if "\n@router" in _body[1:] else _body
+    _who = _body.find("person_email(") if "person_email(" in _body else _body.find("_load(request")
+    check(f"  {_q} asks who the person is before it checks a code",
+          0 <= _who < _body.find("person.confirm(") if "person.confirm(" in _body else False)
 _open, _shell_scoped = [], []
 for q, mod, path in _code_routes:
-    if q in _BEARER_ROUTES:
+    if q in _BEARER_ROUTES or q in _PERSON_PAGES:
         continue
     built = _built(q, mod, path)
     scopes = [s for r in built for s in _scopes(r)]
@@ -937,8 +954,8 @@ for q, mod, path in _code_routes:
         _open.append(q)
     elif any(s in _RA.SHELL_SCOPES for s in scopes):
         _shell_scoped.append(q)
-check("each route the scan connects, other than the bastion heartbeat, requires an app token with a "
-      "permission (so no app token gets a 401)", not _open, _open)
+check("each route the scan connects, other than the bastion heartbeat and the owner's agent pages, "
+      "requires an app token with a permission (so no app token gets a 401)", not _open, _open)
 check("  and none of those permissions is one of the shell's own (so its token gets a 403)",
       not _shell_scoped, _shell_scoped)
 

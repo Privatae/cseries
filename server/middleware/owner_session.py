@@ -36,13 +36,15 @@ import os
 import re
 from urllib.parse import urlencode
 
+from starlette.datastructures import Headers
+
 from server import owner_login, trusted_proxies
 from server.applications import app_origin
 from server import home_origin
 from server.home_origin import HOME
 from server.middleware.localhost_only import (
-    DOOR_PATH, LOOPBACK_HOSTS, OWNER_PUBLIC_PATHS, REMOTE_REFUSED_PATHS, _PROBE_EXEMPT_PATHS, _unmap_v4,
-    door_question_path, is_oauth_callback, runtime_peer,
+    AGENT_PATHS, DOOR_PATH, LOOPBACK_HOSTS, OWNER_PUBLIC_PATHS, REMOTE_REFUSED_PATHS, _PROBE_EXEMPT_PATHS,
+    _unmap_v4, agent_path_ok, door_question_path, is_oauth_callback, runtime_peer,
 )
 
 log = logging.getLogger("cseries.owner_session")
@@ -281,6 +283,16 @@ async def door_decision(scope) -> tuple[int, str | None]:
         return 200, None
     if is_oauth_callback(path) and method == "GET":
         return 200, None        # the localhost gate lets a callback through for GET only
+    if agent_path_ok(path, method, Headers(raw=list(scope.get("headers") or ())), None):
+        # An outside agent's MCP lane and its sign-in answer for themselves:
+        # a client gets /mcp's own 401 naming the sign-in, never a redirect to
+        # a page it cannot use. Asked as the localhost gate asks it
+        # (agent_path_ok), with no peer: a request the proxy passes on comes
+        # from the proxy's address, which is neither confined lane's, so the
+        # door lets through exactly what the gate behind it would, and an
+        # agent path asked with another method or a confined header is
+        # decided below like any other request.
+        return 200, None
     email, _token = await live_session(scope)
     if email:
         return 200, None
@@ -317,7 +329,7 @@ class OwnerSessionGate:
             scope.setdefault("state", {})["owner_session"] = True
             return await self.app(scope, receive, send)
 
-        if scope["type"] == "http" and _wants_page(scope):
+        if scope["type"] == "http" and _wants_page(scope) and path not in AGENT_PATHS:
             qs = (scope.get("query_string") or b"").decode("latin-1")
             target = _page_redirect(scope, path, qs)
             await send({"type": "http.response.start", "status": 303,

@@ -1,0 +1,13 @@
+# An outside agent's MCP lane through the door and the gates (its paths are the
+# sign-in's own self-answering paths and /mcp, nothing else): the front door's
+# question about POST /mcp, the three metadata GETs and POST /oauth/register,
+# token and revoke answers 200, never a sign-in redirect, and only for those
+# paths and methods (another method, a path beside one, or /mcp carrying the
+# harness or internal header is refused at the door without a session); passed
+# on from the door's address each reaches its handler; the harness capability
+# or the internal secret on /mcp from that address, or from a loopback peer
+# naming another machine, is refused; the real /mcp handler answers a call
+# with no token 401 from loopback as from the door; another site's Origin is
+# refused; the connect and approval pages and Settings' revoke stay the
+# owner's. In-process; no database, no network. Fails on main's gates.
+test_agent_access_door.py

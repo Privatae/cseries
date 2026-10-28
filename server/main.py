@@ -1945,6 +1945,11 @@ app.include_router(_world_route.router)      # the Host's own database for apps 
 app.include_router(privatae_status.router)
 app.include_router(synaptive.router)
 app.include_router(mcp.router)
+# Outside agents connected over MCP: this Host's own OAuth sign-in for them,
+# the page their approval link opens, and Settings' Connected agents.
+from server.agent_access import oauth as _agent_oauth, asks as _agent_asks
+app.include_router(_agent_oauth.router)
+app.include_router(_agent_asks.router)
 from server.routes import mcp_oauth as _mcp_oauth_route
 app.include_router(_mcp_oauth_route.router)   # signing in to an MCP server (OAuth, migrations/v239)
 # The design library — complete host-authored desktops shared across the hosts

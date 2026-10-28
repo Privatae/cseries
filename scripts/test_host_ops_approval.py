@@ -405,7 +405,8 @@ except nac_mgmt.MgmtError as e:
 check("run_mgmt_op knows who is asking (origin); the tool and the route say so",
       'origin: str = "service"' in src("server/network/nac_mgmt.py") and 'origin="tool"' in tools_source()
       and 'origin="route"' in src("server/routes/network.py")
-      and 'origin in ("tool", "route")' in src("server/network/nac_mgmt.py"))
+      and 'origin in _ASKING_ORIGINS' in src("server/network/nac_mgmt.py")
+      and '_ASKING_ORIGINS = ("tool", "route", ORIGIN_AGENT)' in src("server/network/nac_mgmt.py"))
 # A contain whose order already RAN is reported, never placed again.
 
 

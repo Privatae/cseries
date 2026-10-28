@@ -232,9 +232,14 @@ class ApplicationTokenMiddleware(BaseHTTPMiddleware):
             if path.startswith("/api/") and not path.startswith(_ALLOWLIST_PREFIXES):
                 # The in-container loopback bypass (INTERNAL_API_SECRET) is trusted —
                 # never count or block it (mirrors requires_permission).
+                # Inside this container only (localhost_only.in_container), and
+                # compared in constant time, as _admit compares it.
+                import hmac as _hmac
+                from server.middleware.localhost_only import in_container
                 internal = request.headers.get("x-cseries-internal-auth")
                 internal_secret = os.environ.get("INTERNAL_API_SECRET", "")
-                if not (internal and internal_secret and internal == internal_secret):
+                if not (internal and internal_secret and in_container(request)
+                        and _hmac.compare_digest(internal, internal_secret)):
                     npath = _normalize_path(path)
                     log.warning("APP_TOKEN %s would-deny %s %s (%s)", _MODE, request.method, npath, reason)
                     await _record_would_deny(request.method, npath, reason)
@@ -331,10 +336,19 @@ async def _admit(request: Request, perms: tuple[str, ...]) -> None:
     # full permission on every /api route. The secret on any non-allowlisted
     # route does NOT bypass (falls through to normal app-token auth) and is
     # logged CRITICAL, so a missed legitimate loopback surfaces loudly instead
-    # of silently regaining full power. Not exposed outside the container.
+    # of silently regaining full power. Compared only for a caller inside this
+    # container (localhost_only.in_container: loopback, not carried by the mTLS
+    # front door); from anywhere else a request bringing it is refused before
+    # any compare, so no caller outside can test a guess against it.
     import os as _os, hmac as _hmac
+    from server.middleware.localhost_only import in_container
     internal_hdr = request.headers.get("x-cseries-internal-auth")
     internal_secret = _os.environ.get("INTERNAL_API_SECRET", "")
+    if internal_hdr and not in_container(request):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="the internal secret is accepted only from inside this container",
+        )
     if internal_hdr and internal_secret and _hmac.compare_digest(internal_hdr, internal_secret):
         if request.scope["path"] in _INTERNAL_LOOPBACK_PATHS:
             return

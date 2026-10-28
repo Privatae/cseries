@@ -11,11 +11,17 @@ load the page it proves. Each route still checks its own capability; the gate
 only stops refusing on the caller's address.
 
   * from inside the runtime network: /api/applications/<id>/source and
-    /runtime-log, /mcp carrying the harness capability header, /system-apps/
-    carrying the verify header, and /js/app-sdk.js with a LIVE verify cap
-    reach their handlers;
+    /runtime-log, /mcp carrying a harness capability this Host holds now,
+    /system-apps/ carrying the verify header, and /js/app-sdk.js with a LIVE
+    verify cap reach their handlers;
   * the same paths from any other address, or with the variable unset, are
-    403, as before; every other path from inside is 403;
+    403, as before; every other path from inside is 403, and so is /mcp
+    carrying a harness value this Host does not hold (or no longer holds) or
+    the internal secret, whose lane is this container's loopback;
+  * /mcp's handler, with no gate in front, compares the internal secret only
+    for a caller on this container's loopback: the right secret from the
+    runtime network, over the mTLS front door's loopback hop, or from a door's
+    proxy is refused before any compare;
   * a page request from inside is not sent to the sign-in page (it has no
     browser session to make), and from outside it still is.
 
@@ -58,7 +64,7 @@ app = Starlette(routes=[
     Route("/api/applications/{app_id}/runtime-log", reached, methods=["POST"]),
     Route("/api/applications/{app_id}/other", reached, methods=["GET"]),
     Route("/api/applications/{a}/{b}/source", reached, methods=["GET"]),
-    Route("/mcp", reached, methods=["POST"]),
+    Route("/mcp", reached, methods=["POST", "GET"]),
     Route("/system-apps/{rest:path}", reached, methods=["GET"]),
     Route("/js/app-sdk.js", reached, methods=["GET"]),
     Route("/api/brain/x", reached, methods=["POST"]),
@@ -73,6 +79,12 @@ INSIDE = "10.89.78.20"
 # it is a container.
 OUTSIDE = ("10.89.77.5", "192.0.2.10", "fd00::5", "10.89.79.20", "10.89.78.1")
 CAP = AV._mint_verify_cap("tradebot")
+# A coding engine's control capability, as the Host holds it after the wake
+# (review._remember_control_cap). Only a value held now opens /mcp from the
+# runtime's network; any other is no capability.
+from server.routes import review as RV  # noqa: E402
+HARNESS_CAP = "cap-from-wake-0123456789abcdef"
+RV._remember_control_cap("kimi", "http://10.89.78.30:8847", HARNESS_CAP)
 
 
 def req(ip, method, path, headers=None):
@@ -83,12 +95,26 @@ def req(ip, method, path, headers=None):
 EXEMPT = [
     ("GET", "/api/applications/telegram/source", {}),
     ("POST", "/api/applications/telegram/runtime-log", {}),
-    ("POST", "/mcp", {"X-CSeries-Harness-Cap": "cap-from-wake"}),
+    ("POST", "/mcp", {"X-CSeries-Harness-Cap": HARNESS_CAP}),
     ("GET", "/system-apps/tradebot/index.html", {"X-CSeries-Verify-Cap": "any-value"}),
     ("GET", "/js/app-sdk.js", {"X-CSeries-Verify-Cap": CAP}),
 ]
+# A bare POST /mcp is not here: it is an outside agent's lane and reaches its
+# own token check from any address (localhost_only.agent_path_ok); only the
+# harness capability on it is confined to the runtime's network. The internal
+# secret's lane is this container's loopback, not the runtime's network: a
+# container there bringing it is refused, as a bare /mcp from there was before
+# the agent lane opened.
+# Nor is the harness header with a value this Host does not hold: that is no
+# capability, and it once let a container's guess at the internal secret reach
+# the handler, which compared the secret first.
 REFUSED_INSIDE = [
-    ("POST", "/mcp", {}),
+    ("POST", "/mcp", {"X-CSeries-Internal-Auth": "a-guess"}),
+    ("GET", "/mcp", {"X-CSeries-Internal-Auth": "a-guess"}),
+    ("POST", "/mcp", {"X-CSeries-Harness-Cap": "not-a-held-cap"}),
+    ("GET", "/mcp", {"X-CSeries-Harness-Cap": "not-a-held-cap"}),
+    ("POST", "/mcp", {"X-CSeries-Harness-Cap": "not-a-held-cap", "X-CSeries-Internal-Auth": "a-guess"}),
+    ("POST", "/mcp", {"X-CSeries-Harness-Cap": HARNESS_CAP, "X-CSeries-Internal-Auth": "a-guess"}),
     ("GET", "/system-apps/tradebot/index.html", {}),
     ("GET", "/js/app-sdk.js", {"X-CSeries-Verify-Cap": "not-a-live-cap"}),
     ("GET", "/api/applications/telegram/other", {}),
@@ -108,6 +134,61 @@ for method, path, h in REFUSED_INSIDE:
     r = req(INSIDE, method, path, h)
     check(r.status_code == 403, f"from the runtime network {method} {path} {sorted(h)} is still 403",
           f"{r.status_code} {r.text[:80]}")
+RV._forget_control_cap("kimi")
+r = req(INSIDE, "POST", "/mcp", {"X-CSeries-Harness-Cap": HARNESS_CAP})
+check(r.status_code == 403, "a released harness's capability no longer opens /mcp from the runtime network",
+      f"{r.status_code}")
+RV._remember_control_cap("kimi", "http://10.89.78.30:8847", HARNESS_CAP)
+
+# The handler on its own, with no gate in front: the internal secret is
+# compared only for a caller inside this container (routes/mcp.in_container).
+# The RIGHT secret from the runtime's network, or over the mTLS front door's
+# loopback hop, is refused before any compare; only loopback itself gets in.
+from fastapi import FastAPI  # noqa: E402
+from server.routes import mcp as MCP  # noqa: E402
+_SECRET = "internal-secret-for-this-test-0123456789"
+os.environ["INTERNAL_API_SECRET"] = _SECRET
+bare = FastAPI()
+bare.include_router(MCP.router)
+_LIST = {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
+
+
+def handler(ip, headers):
+    c = TestClient(bare, client=(ip, 43210))
+    return c.post("/mcp", json=_LIST, headers=headers)
+
+
+r = handler("127.0.0.1", {"X-CSeries-Internal-Auth": _SECRET})
+check(r.status_code == 200 and "result" in r.json(), "handler: the internal secret from loopback is the internal caller",
+      f"{r.status_code} {r.text[:120]}")
+r = handler("::ffff:127.0.0.1", {"X-CSeries-Internal-Auth": _SECRET})
+check(r.status_code == 200 and "result" in r.json(), "handler: and over the dual-stack spelling of loopback",
+      f"{r.status_code} {r.text[:120]}")
+
+
+async def _direct():
+    try:
+        await MCP._auth_or_401(None, internal_auth=_SECRET)
+        return None
+    except Exception as e:  # noqa: BLE001
+        return getattr(e, "status_code", None)
+import asyncio  # noqa: E402
+check("handler: _auth_or_401 compares the secret only when told the caller is inside",
+      asyncio.run(_direct()) == 401
+      and asyncio.run(MCP._auth_or_401(None, internal_auth=_SECRET, internal_ok=True)).get("_internal") is True)
+for who, ip, extra in (("the runtime network", INSIDE, {}),
+                       ("the runtime network, with a held harness capability", INSIDE,
+                        {"X-CSeries-Harness-Cap": HARNESS_CAP}),
+                       ("loopback through the mTLS front door", "127.0.0.1", {"X-Client-Cert-CN": "operator"}),
+                       ("a door's proxy", "10.89.77.1", {})):
+    r = handler(ip, {"X-CSeries-Internal-Auth": _SECRET, **extra})
+    check(r.status_code == 401 and "inside this container" in r.text,
+          f"handler: the right internal secret from {who} is refused before any compare", f"{r.status_code} {r.text[:120]}")
+r = handler(INSIDE, {"X-CSeries-Harness-Cap": HARNESS_CAP})
+check(r.status_code == 200 and "result" in r.json(), "handler: a held harness capability alone still works from the runtime network",
+      f"{r.status_code} {r.text[:120]}")
+os.environ.pop("INTERNAL_API_SECRET")
+RV._forget_control_cap("kimi")
 
 r = req(INSIDE, "GET", "/system-apps/tradebot/index.html", {"Accept": "text/html", "X-CSeries-Verify-Cap": "x"})
 check(r.status_code == 200, "a page request from the runtime network is not sent to the sign-in page",

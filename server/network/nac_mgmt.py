@@ -983,6 +983,15 @@ def note_host_stepup(eid: int, token_id, stdout: str) -> None:
         _host_stepup_filed.setdefault((eid, token_id), set()).add(rid)
 
 
+# The callers whose words a model or an outside party wrote: the Host's own
+# mgmt_run tool ("tool"), POST /mgmt/run ("route"), and an outside agent
+# connected over MCP ("agent", server/agent_access/tools.py). Each gets the
+# per-run tap on the context store's writes (TOOL_ASKS_ANYWAY) and the step-up
+# checks below, which the Host's own standing work ("service") does not.
+ORIGIN_AGENT = "agent"
+_ASKING_ORIGINS = ("tool", "route", ORIGIN_AGENT)
+
+
 async def run_mgmt_op(pool, eid: int, server: str, op: str, args, *,
                       token_id: int | None = None, note: str = "",
                       approval_wait_s: float | None = None, origin: str = "service",
@@ -1086,7 +1095,7 @@ async def run_mgmt_op(pool, eid: int, server: str, op: str, args, *,
         try:
             appr = await nac_approval.obtain_via_card(pool, eid, server, op, a_args, note=note, wait_s=wait,
                                                       token_id=token_id,
-                                                      force=(origin in ("tool", "route") and op in nac_approval.TOOL_ASKS_ANYWAY))
+                                                      force=(origin in _ASKING_ORIGINS and op in nac_approval.TOOL_ASKS_ANYWAY))
         except nac_ops.OpError as e:
             # The card could not be filed (this side's own failure): the
             # lane's error, as the op door says it — never a bare 500.
@@ -1226,7 +1235,7 @@ async def run_mgmt_op(pool, eid: int, server: str, op: str, args, *,
         if appr["state"] in ("pending", "asked"):
             result = {**result, **nac_approval.pending_result(server, op, appr), "queued": True}
         return result
-    host_asks = origin in ("tool", "route") and op in _HOST_STEPUP_OPS
+    host_asks = origin in _ASKING_ORIGINS and op in _HOST_STEPUP_OPS
     if host_asks:
         why = host_stepup_refusal(eid, token_id, op, args)
         if why:

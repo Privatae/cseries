@@ -1147,6 +1147,9 @@ CARRIED_TABLES = (
     # the backup's sessions do not come back. owner_note says so when the
     # backup's owner had another email.
     "owner_account", "owner_sessions",
+    # outside agents connected over MCP (v255): a backup's would bring back a
+    # connection, a token or an "always" the person took back since
+    "agent_connections", "agent_grants", "agent_codes", "agent_tokens", "agent_asks",
 )
 # Carried as single rows: the second factor (server/network/nac_stepup.py:51,
 # 52, 147) and the app-token signing secret (server/applications/tokens.py:187;

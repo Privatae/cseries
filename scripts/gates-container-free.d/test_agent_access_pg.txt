@@ -1,0 +1,11 @@
+# 2026-10-28: an outside agent's whole path through this Host (server/agent_access,
+# migrations/v255_agent_access.sql): /mcp's 401 naming the sign-in, registration,
+# the connect page behind the person's identity and authenticator code, PKCE and
+# one-time codes, refresh rotation, revocation, and the agent's tools: a change
+# files an ask and answers -32042 with its link, nothing reaches the machine until
+# the person says once or always, a refusal stands, and a machine's own approval
+# card is answered from the page. Real routes on a fresh clone of the kernel's
+# schema (TEST_PG_DSN / PEER_TEST_DSN / TEST_DSN, else a throwaway server, like
+# the other _pg gates here); the machine side is stubbed. Fails on main, where
+# /mcp answers 401 with no WWW-Authenticate and no agent sign-in exists.
+test_agent_access_pg.py

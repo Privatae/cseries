@@ -27,7 +27,7 @@
                     <span class="cseries-pill warn" id="update-badge" hidden>new</span>
                 </button>
                 <button class="cseries-nav-btn" data-view="history" role="tab" aria-selected="false">History</button>
-                <button class="cseries-nav-btn" data-view="synaptive" role="tab" aria-selected="false">Synaptive</button>
+                <button class="cseries-nav-btn" data-view="agents" role="tab" aria-selected="false">Connected agents</button>
                 <button class="cseries-nav-btn" data-view="shaping" role="tab" aria-selected="false">Response Shaping</button>
                 <button class="cseries-nav-btn" data-view="limits" role="tab" aria-selected="false">Limits</button>
                 <button class="cseries-nav-btn" data-view="appearance" role="tab" aria-selected="false">Appearance</button>
@@ -116,30 +116,26 @@
                     </div>
                 </div>
             </section>
-            <!-- Synaptive -->
-            <section id="view-synaptive" class="app-view" hidden>
+            <!-- Connected agents: outside agents (Claude Code, Codex, an agent in
+                 T3 Code) signed in to this Host over MCP (server/agent_access).
+                 They connect themselves: the person adds this Host's /mcp address
+                 to the agent and approves the connect page it opens. -->
+            <section id="view-agents" class="app-view" hidden>
                 <div class="view-heading">
-                    <h2>Synaptive</h2>
+                    <h2>Connected agents</h2>
                     <p class="view-sub">
-                        Your Synaptive identity — your memory, your codebooks, the way you've taught your Host to respond — lives in this container. Synaptive lets that identity show up inside other chats.
+                        Agents you use elsewhere, like Claude Code or Codex, can ask your Host to work on your machines.
+                        Add your Host's address, ending in /mcp, to the agent; it opens a page on your Host where you approve the connection.
+                        Every change it asks for waits for you, unless you chose to always allow that change for that agent.
                     </p>
-                    <p class="view-sub">
-                        When something at work, on your phone, or anywhere else calls your Synaptive endpoint, it answers as the same Host. Same Host, different chat.
-                    </p>
+                    <p class="view-sub" id="agents-address"></p>
                 </div>
-
                 <div class="cseries-card">
-                    <div class="view-heading" style="margin-bottom: var(--space-3);">
-                        <h3 class="bundle-title">Connected chats</h3>
-                    </div>
-                    <div id="synaptive-list" class="stack">
+                    <div id="agents-list" class="stack">
                         <div class="cseries-empty">
-                            <span class="empty-title">No chats connected yet</span>
-                            Connect a chat to let it shape its responses with your Synaptive identity.
+                            <span class="empty-title">No agents connected</span>
+                            An agent appears here once you approve its connection.
                         </div>
-                    </div>
-                    <div class="bundle-actions" style="margin-top: var(--space-4);">
-                        <button id="btn-connect-chat" class="cseries-btn primary">Connect a chat</button>
                     </div>
                 </div>
             </section>
@@ -562,55 +558,6 @@
 
                 <p class="view-sub net-message" id="gs-message" role="alert" hidden></p>
             </section>
-
-            <!-- Connect-a-chat modal -->
-            <div id="syn-modal" class="syn-modal" hidden>
-                <div class="syn-modal-backdrop" data-syn-close></div>
-                <div class="syn-modal-card cseries-card" role="dialog" aria-modal="true" aria-label="Connect a chat">
-                    <div id="syn-modal-step-name">
-                        <h3 class="bundle-title">Connect a chat</h3>
-                        <p class="view-sub">Give this connection a name so you can recognize it later.</p>
-                        <input id="syn-name-input" type="text" class="cseries-input" placeholder="Claude Desktop on laptop" maxlength="80" />
-                        <div class="label-sys" style="margin-top: var(--space-3);">What this connection can do</div>
-                        <div class="syn-scope-picker" id="syn-scope-picker">
-                            <label class="syn-scope-opt">
-                                <input type="checkbox" data-scope="shape" checked>
-                                <span>Shape <span class="label-sys">— respond as your Host</span></span>
-                            </label>
-                            <label class="syn-scope-opt">
-                                <input type="checkbox" data-scope="signal" checked>
-                                <span>Signal <span class="label-sys">— send signals to your Host</span></span>
-                            </label>
-                        </div>
-                        <div class="bundle-actions" style="margin-top: var(--space-4);">
-                            <button class="cseries-btn ghost" data-syn-close>Cancel</button>
-                            <button id="syn-generate-btn" class="cseries-btn primary">Generate</button>
-                        </div>
-                    </div>
-                    <div id="syn-modal-step-show" hidden>
-                        <h3 class="bundle-title">Paste this into your chat client</h3>
-                        <p class="view-sub">The token is shown once and only the hash is kept. If you lose it, revoke this connection and create a new one.</p>
-                        <div class="label-sys" style="margin-top: var(--space-3);">URL</div>
-                        <div class="syn-snippet" id="syn-url"></div>
-                        <div class="label-sys" style="margin-top: var(--space-3);">Token</div>
-                        <div class="syn-snippet" id="syn-token"></div>
-                        <div class="label-sys" style="margin-top: var(--space-3);">Client</div>
-                        <div id="syn-client-picker" class="syn-client-picker">
-                            <button type="button" class="cseries-btn ghost syn-client-tab is-active" data-client="claude">Claude Desktop</button>
-                            <button type="button" class="cseries-btn ghost syn-client-tab" data-client="lmstudio">LM Studio</button>
-                            <button type="button" class="cseries-btn ghost syn-client-tab" data-client="cursor">Cursor</button>
-                            <button type="button" class="cseries-btn ghost syn-client-tab" data-client="generic">Other</button>
-                        </div>
-                        <div class="label-sys" style="margin-top: var(--space-3);" id="syn-config-label">Claude Desktop config</div>
-                        <p class="view-sub" id="syn-config-hint" style="margin-top: var(--space-1);"></p>
-                        <pre class="syn-snippet syn-snippet-pre" id="syn-config"></pre>
-                        <div class="bundle-actions" style="margin-top: var(--space-4);">
-                            <button id="syn-copy-config" class="cseries-btn ghost">Copy config</button>
-                            <button class="cseries-btn primary" data-syn-close>Done</button>
-                        </div>
-                    </div>
-                </div>
-            </div>
 
             <!-- Response Shaping: confirm a save, listing every change -->
             <div id="rs-modal" class="rs-modal" hidden>

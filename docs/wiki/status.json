@@ -142,7 +142,7 @@
   },
   "settings-app": {
    "checked": "2026-10-28",
-   "status": "current"
+   "status": "changed"
   },
   "sites-app": {
    "checked": "2026-10-28",
@@ -158,11 +158,11 @@
   },
   "the-privatae-network": {
    "checked": "2026-10-28",
-   "status": "current"
+   "status": "changed"
   },
   "updates-and-versions": {
    "checked": "2026-10-25",
-   "status": "current"
+   "status": "changed"
   },
   "what-a-host-cannot-do": {
    "checked": "2026-10-28",

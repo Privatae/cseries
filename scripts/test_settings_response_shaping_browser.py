@@ -287,10 +287,10 @@ def scenario_open(page, base):
     check("O the tab is its own button, selected", tab.get_attribute("aria-selected") == "true"
           and tab.text_content().strip() == "Response Shaping")
     order = page.locator(".cseries-nav-btn").evaluate_all("bs => bs.map(b => b.dataset.view)")
-    check("O ...beside Synaptive", order.index("shaping") == order.index("synaptive") + 1, order)
-    check("O ...and its section is not inside Synaptive's",
-          page.locator("#view-synaptive #view-shaping").count() == 0
-          and page.locator("#view-shaping").is_visible() and not page.locator("#view-synaptive").is_visible())
+    check("O ...beside Connected agents", order.index("shaping") == order.index("agents") + 1, order)
+    check("O ...and its section is not inside Connected agents'",
+          page.locator("#view-agents #view-shaping").count() == 0
+          and page.locator("#view-shaping").is_visible() and not page.locator("#view-agents").is_visible())
     check("O the three positions, the stored one current",
           page.locator('#rs-explain [role="radio"]').evaluate_all("bs => bs.map(b => b.dataset.level)")
           == ["full", "new", "terms"] and current_level(page) == "terms")

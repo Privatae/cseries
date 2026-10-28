@@ -1,34 +1,29 @@
 """
-Synaptive MCP-over-HTTP endpoint.
+This Host's MCP endpoint, POST /mcp (JSON-RPC 2.0, single or batch).
 
-Exposes one tool — `shape(message)` — over JSON-RPC 2.0 at POST /mcp. External
-chat clients (Claude Desktop, Claude Code, Cursor, Codex, OpenClaw plugins,
-etc.) register this URL + a bearer token; calls invoke the same in-container
-handler that the device-dispatch path uses, sharing observability writes
-(inference_cost_log).
+Four kinds of caller, told apart in _auth_or_401:
+  * an outside agent (Claude Code, Codex, an agent inside T3 Code) signed in
+    through this Host's own OAuth (server/agent_access). It sees the agent
+    tools (agent_access.tools): the person's machines and ops on them, each
+    checked against what the person approved for that agent, with an approval
+    link for anything new;
+  * a coding-harness container with its control capability: read_url only;
+  * a bearer from mcp_client_tokens (a bastion's): no tools since the
+    identity layer's were retired;
+  * the in-container internal secret: likewise.
 
-Protocol shape (JSON-RPC 2.0, single or batch):
+Protocol shape:
     Request   : {"jsonrpc":"2.0","id":N,"method":"...","params":{...}}
     Response  : {"jsonrpc":"2.0","id":N,"result":{...}}
     Error     : {"jsonrpc":"2.0","id":N,"error":{"code":N,"message":"..."}}
     Notif     : same as request but no `id` — no response is sent for it
 
-Methods implemented (locked v1 surface):
-    initialize, notifications/initialized, ping, tools/list, tools/call
+Methods: initialize, notifications/initialized, ping, tools/list,
+tools/call, prompts/list, prompts/get. A missing or bad token is answered 401
+with WWW-Authenticate naming this Host's protected-resource metadata, where a
+standard client starts its sign-in.
 
-Auth:
-    Authorization: Bearer mcp_<...>
-    Internal-subprocess bypass: if `X-CSeries-Internal-Auth` matches the
-    container's INTERNAL_API_SECRET, return a synthetic auth envelope
-    scoped to this entity's synaptive substrate (shape/recall/signal) — the
-    bypass is loopback-only and the entity already owns everything inside its
-    own container.
-
-    Validated against mcp_client_tokens via the same _validate_bearer used by
-    the device handler. Container is sole validator (per locked design).
-
-This implementation is hand-written JSON-RPC — no `mcp` Python SDK dependency.
-Switch to the SDK on the next container image rebuild.
+Hand-written JSON-RPC, no `mcp` SDK dependency.
 """
 from __future__ import annotations
 
@@ -40,24 +35,25 @@ from typing import Any
 from fastapi import APIRouter, Header, HTTPException, Request
 
 from server import brain_service
-from server.synaptive_handler import (
-    _validate_bearer,
-    handle_synaptive_shape,
-    handle_synaptive_signal,
-    handle_synaptive_identity,
-    handle_synaptive_recall,
-)
+from server.synaptive_handler import _validate_bearer
 
 router = APIRouter()
 logger = logging.getLogger("privatae.pc.mcp")
 
-# Protocol version we advertise. Stable mid-2025 spec; clients negotiate down
-# if they need older. Update when we adopt a newer baseline.
-PROTOCOL_VERSION = "2025-06-18"
+# The handshake-era protocol versions this endpoint speaks. The answer to
+# initialize is the client's own version when it is one of these, else the
+# newest (MCP 2025-11-25 lifecycle, version negotiation). 2025-11-25 is the
+# one an outside agent's approval link needs: URL-mode elicitation and its
+# -32042 error (agent_access.tools.NeedsApproval). The stateless 2026-07-28
+# revision is not served; a client probing it with server/discover gets
+# "unknown method" and falls back to this handshake.
+PROTOCOL_VERSIONS = ("2025-06-18", "2025-11-25")
+PROTOCOL_VERSION = PROTOCOL_VERSIONS[-1]
+URL_ELICITATION_REQUIRED = -32042
 
 SERVER_INFO = {
-    "name": "synaptive",
-    "version": "0.1.0",
+    "name": "host",
+    "version": "0.2.0",
 }
 
 # JSON-RPC 2.0 standard error codes
@@ -67,179 +63,14 @@ _METHOD_NOT_FOUND = -32601
 _INVALID_PARAMS = -32602
 _INTERNAL_ERROR = -32603
 
-PROMPTS = [
-    {
-        "name": "synaptive_identity",
-        "description": (
-            "The connected user's Host identity, as a session-init system "
-            "prompt. Attach this to the start of the conversation BEFORE the "
-            "first user message — every reply afterward should sound like the "
-            "Host behind this token, not the model's default voice. Per-turn "
-            "rules flow through the shape() tool and memory through recall(); "
-            "this prompt is the static identity layer that makes them feel "
-            "like the same person."
-        ),
-        # No arguments — the identity is bound to the token, not parametric.
-        "arguments": [],
-    },
-]
-
+# The old identity layer's prompt and its tools (shape, recall, signal,
+# open_app, close_app, list_apps) are retired from /mcp: an outside agent asks
+# the Host to act on the person's machines instead (server/agent_access).
+# Their only mint path for a person was the Settings app's old tab, retired
+# with them.
+PROMPTS: list[dict] = []
 
 TOOLS = [
-    {
-        "name": "shape",
-        "description": (
-            "Apply this user's Host identity to your next response. "
-            "Returns the Host's name, master directive and tendencies (from "
-            "the person's personality settings), plus the rules that apply to "
-            "this message. Fold them into how you respond: voice, depth, "
-            "directness, warmth, etc. The same Host, but speaking through you."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["message"],
-            "properties": {
-                "message": {
-                    "type": "string",
-                    "description": (
-                        "The user message you're about to respond to. The "
-                        "rules returned are the ones that match THIS message."
-                    ),
-                },
-            },
-        },
-    },
-    {
-        "name": "recall",
-        "description": (
-            "Active memory search. Use when something the user said rings "
-            "a bell, when you want to check what you know about a name / "
-            "topic / decision, or when continuity from a past conversation "
-            "would help. Embedding-similarity search across the Host's "
-            "personal memories — decisions, preferences, relationships, "
-            "facts, emotions, prior context. Returns ranked matches; pick "
-            "the ones that fit and fold them into your reply. Do not call "
-            "purely to fill silence; only when retrieval would actually "
-            "change what you say."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["query"],
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Natural-language query — what you're trying to remember.",
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Max memories returned (default 8, max 25).",
-                    "default": 8,
-                },
-                "include_knowledge": {
-                    "type": "boolean",
-                    "description": (
-                        "Default false. Personal memory (decisions, "
-                        "relationships, preferences, facts about people) "
-                        "is searched by default. Set true to ALSO include "
-                        "the Host's scraped knowledge feed (github "
-                        "releases, articles, world-tracking content) — "
-                        "useful when the user is asking about external "
-                        "topics the Host has been watching."
-                    ),
-                    "default": False,
-                },
-            },
-        },
-    },
-    {
-        "name": "signal",
-        "description": (
-            "Capture this turn back into the Host's memory. Send what the "
-            "user just said and what you (the model) replied; the Host's "
-            "memory pipeline judges, summarizes, and promotes interesting "
-            "turns into long-term memory the same way her primary chat does. "
-            "Call this AFTER you've produced the response. Cheap, fire-and-"
-            "forget — the Host learns across every chat surface."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {
-                "user_message": {
-                    "type": "string",
-                    "description": "What the user said this turn.",
-                },
-                "model_response": {
-                    "type": "string",
-                    "description": "The reply you produced (after applying shape()).",
-                },
-                "model": {
-                    "type": "string",
-                    "description": (
-                        "Optional — name of the local model that produced the "
-                        "reply (e.g. 'llama-3.1-8b-instruct'). Recorded in "
-                        "memory provenance so the Host can later see which "
-                        "surface a memory came from."
-                    ),
-                },
-            },
-        },
-    },
-    {
-        "name": "open_app",
-        "description": (
-            "Open an app window in the user's dashboard. Use when the "
-            "current conversation calls for a specific surface — coding "
-            "work → workbench, chat with circle members → circles, "
-            "publishing → publisher, etc. Side effect: a WebSocket "
-            "message tells every connected dashboard to surface that "
-            "app's window. The user sees it immediately. After this, "
-            "you can reference what the app is showing in your reply."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["app_id"],
-            "properties": {
-                "app_id": {
-                    "type": "string",
-                    "description": "Installed-app id (e.g. 'workbench', 'publisher', 'circles'). Use list_apps to discover.",
-                },
-                "reason": {
-                    "type": "string",
-                    "description": "Optional — one-line explanation surfaced in the dashboard toast.",
-                },
-            },
-        },
-    },
-    {
-        "name": "close_app",
-        "description": (
-            "Close an app's window in the user's dashboard. Use when "
-            "the current task no longer needs the surface (e.g. you "
-            "opened the workbench to scope a build, the user accepted "
-            "the plan, the orchestrator picked it up — you can close "
-            "the factory window now)."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "required": ["app_id"],
-            "properties": {
-                "app_id": {"type": "string"},
-            },
-        },
-    },
-    {
-        "name": "list_apps",
-        "description": (
-            "Catalog of installed apps on this user's dashboard, with "
-            "which ones are currently open. Call when you need to "
-            "discover what surfaces exist before deciding what to open. "
-            "Cheap; no side effects."
-        ),
-        "inputSchema": {
-            "type": "object",
-            "properties": {},
-        },
-    },
     {
         # The harness→host fetch channel. A coding harness pod
         # has NO public DNS (harness-pod resolvers serve cluster names only)
@@ -297,8 +128,16 @@ async def _auth_or_401(
     hardware_fingerprint: str | None = None,
     internal_auth: str | None = None,
     harness_cap: str | None = None,
+    internal_ok: bool = False,
 ) -> dict:
     """Resolve bearer to an mcp_client_tokens row. Raises HTTP 401/503 on failure.
+
+    `internal_ok` says the request came from inside this container
+    (in_container): the internal secret is compared only then. From anywhere
+    else (the runtime's network, the mTLS front door, a door's proxy) a
+    request bringing it is refused before any compare, so no caller outside
+    the container can test a guess against it, whatever the gates in front
+    let through.
 
     If the token row has `hardware_fingerprint` set (device-class tokens —
     bastion/gateway), the supplied `hardware_fingerprint` argument MUST match
@@ -316,6 +155,8 @@ async def _auth_or_401(
     """
     import hmac as _hmac
     internal_secret = os.environ.get("INTERNAL_API_SECRET", "")
+    if internal_auth and not internal_ok:
+        raise HTTPException(401, "the internal secret is accepted only from inside this container")
     if internal_auth and internal_secret and _hmac.compare_digest(internal_auth, internal_secret):
         entity_id = int(os.environ.get("ENTITY_ID", "0"))
         return {
@@ -359,6 +200,18 @@ async def _auth_or_401(
     if pool is None:
         raise HTTPException(503, "brain pool not ready")
     bearer = authorization[7:].strip()
+    # An outside agent connected through this Host's own sign-in
+    # (server/agent_access). Its token names a connection the person approved;
+    # what it may do is that connection's, checked per call
+    # (agent_access.tools), and the Host's own gates still run under it.
+    from server.agent_access import store as agent_store
+    if bearer.startswith(agent_store.ACCESS_PREFIX):
+        eid = int(getattr(brain_service, "_entity_id", 0) or 0)
+        conn = await agent_store.resolve_access(pool, eid, bearer)
+        if conn is None:
+            raise HTTPException(401, "invalid, expired or revoked token")
+        return {"id": 0, "entity_id": eid, "scopes": [], "hardware_fingerprint": None,
+                "_agent": conn}
     auth = await _validate_bearer(pool, bearer)
     if auth is None:
         raise HTTPException(401, "invalid or revoked token")
@@ -369,6 +222,12 @@ async def _auth_or_401(
             # Don't leak which side failed; just refuse.
             raise HTTPException(401, "hardware fingerprint mismatch")
     return auth
+
+
+def in_container(request) -> bool:
+    """middleware.localhost_only.in_container: the internal secret's one lane."""
+    from server.middleware.localhost_only import in_container as _in
+    return _in(request)
 
 
 async def _nac_gate(auth: dict, nac=None) -> dict | None:
@@ -476,161 +335,6 @@ async def tell_no_engine(*, notify=None) -> bool:
 
 # ── Tool dispatch ────────────────────────────────────────────────────
 
-def _format_directive(shape_result: dict) -> str:
-    """Render the shape() result as a single natural-language directive that
-    the calling model can fold into its system prompt or response framing:
-    who the Host is (name, master directive, tendencies), then the rules that
-    apply to this message."""
-    parts: list[str] = []
-
-    name = (shape_result.get("display_name") or "").strip() or "the Host"
-    parts.append(f"Respond as {name}, the Host behind this token.")
-
-    master = (shape_result.get("directive") or "").strip()
-    if master:
-        parts.append("Their master directive:\n" + master)
-
-    base = (shape_result.get("base_fragment") or "").strip()
-    if base:
-        parts.append("Their tendencies:\n" + base)
-
-    rules = (shape_result.get("turn_directive") or "").strip()
-    if rules:
-        parts.append("This turn specifically:\n" + rules)
-
-    return "\n\n".join(parts)
-
-
-async def _call_recall(authorization: str, args: dict) -> dict:
-    """Delegate to handle_synaptive_recall."""
-    query = args.get("query") or ""
-    if not isinstance(query, str) or not query.strip():
-        return {
-            "content": [{"type": "text", "text": "recall: query is required"}],
-            "isError": True,
-        }
-    limit = args.get("limit")
-    result = await handle_synaptive_recall({
-        "bearer": authorization,
-        "query": query,
-        "limit": limit,
-        "include_knowledge": bool(args.get("include_knowledge")),
-    })
-    if not result.get("ok"):
-        return {
-            "content": [{"type": "text", "text": json.dumps({
-                "status": result.get("status", "error"),
-                "error": result.get("error", "unknown"),
-            })}],
-            "isError": True,
-        }
-    return {
-        "content": [{"type": "text", "text": json.dumps({
-            "query": result.get("query"),
-            "count": result.get("count", 0),
-            "memories": result.get("memories", []),
-        }, indent=2)}],
-        "isError": False,
-    }
-
-
-async def _build_identity_prompt(authorization: str) -> dict:
-    """Resolve the synaptive_identity prompt — returns the MCP `prompts/get`
-    response shape (description + messages array)."""
-    result = await handle_synaptive_identity({"bearer": authorization})
-    if not result.get("ok"):
-        err_text = json.dumps({
-            "status": result.get("status", "error"),
-            "error": result.get("error", "unknown"),
-        })
-        # Surface as an MCP-level error rather than a "successful" prompt
-        # whose text is a JSON error blob — clients otherwise inject the
-        # error into the system prompt verbatim.
-        raise RuntimeError(err_text)
-    return {
-        "description": f"Host identity for {result.get('display_name', 'this Host')}",
-        "messages": [
-            {
-                "role": "user",
-                "content": {"type": "text", "text": result["identity"]},
-            }
-        ],
-    }
-
-
-async def _call_signal(authorization: str, args: dict) -> dict:
-    """Delegate to handle_synaptive_signal — runs extract_and_store on the turn."""
-    user_message = args.get("user_message") or ""
-    model_response = args.get("model_response") or ""
-    if not (isinstance(user_message, str) and isinstance(model_response, str)):
-        return {
-            "content": [{"type": "text", "text": "signal: messages must be strings"}],
-            "isError": True,
-        }
-    if not (user_message.strip() or model_response.strip()):
-        return {
-            "content": [{"type": "text", "text": "signal: user_message or model_response required"}],
-            "isError": True,
-        }
-    result = await handle_synaptive_signal({
-        "bearer": authorization,
-        "user_message": user_message,
-        "model_response": model_response,
-        "model": args.get("model") or "external",
-    })
-    if not result.get("ok"):
-        return {
-            "content": [{"type": "text", "text": json.dumps({
-                "status": result.get("status", "error"),
-                "error": result.get("error", "unknown"),
-            })}],
-            "isError": True,
-        }
-    return {
-        "content": [{"type": "text", "text": json.dumps({
-            "ok": True,
-            "memories_stored": result.get("memories_stored", 0),
-        })}],
-        "isError": False,
-    }
-
-
-# ── Synaptive identity tools (shape / recall / signal) ───────────────
-
-
-async def _call_shape(authorization: str, args: dict, is_internal: bool = False) -> dict:
-    """Delegate to the in-container handler. handle_synaptive_shape revalidates
-    the bearer (cheap, defense in depth) and runs the CEIGAS gate, the
-    identity + rules build, and the observability writes.
-
-    is_internal=True means the caller authed via X-CSeries-Internal-Auth
-    (loopback factory-run subprocess); skip the bearer revalidation
-    inside handle_synaptive_shape but keep the CEIGAS gate."""
-    message = args.get("message")
-    if not isinstance(message, str) or not message.strip():
-        return {
-            "content": [{"type": "text", "text": "shape: message is required"}],
-            "isError": True,
-        }
-    params = {"bearer": authorization, "message": message}
-    if is_internal:
-        params["_internal"] = True
-    result = await handle_synaptive_shape(params)
-    if not result.get("ok"):
-        err_text = json.dumps({
-            "status": result.get("status", "error"),
-            "error": result.get("error", "unknown"),
-        })
-        return {
-            "content": [{"type": "text", "text": err_text}],
-            "isError": True,
-        }
-    return {
-        "content": [{"type": "text", "text": _format_directive(result)}],
-        "isError": False,
-    }
-
-
 # ── Tool registry (single source of truth for dispatch + scope) ──────
 #
 # Each entry maps tool name → (handler, required_scope). Both `tools/list`
@@ -650,18 +354,6 @@ class ToolCtx:
         self.args = args
         self.is_internal = is_internal
         self.auth = auth
-
-
-async def _tool_shape(ctx: ToolCtx) -> dict:
-    return await _call_shape(ctx.authorization, ctx.args, is_internal=ctx.is_internal)
-
-
-async def _tool_recall(ctx: ToolCtx) -> dict:
-    return await _call_recall(ctx.authorization, ctx.args)
-
-
-async def _tool_signal(ctx: ToolCtx) -> dict:
-    return await _call_signal(ctx.authorization, ctx.args)
 
 
 async def _tool_read_url(ctx: ToolCtx) -> dict:
@@ -686,96 +378,13 @@ async def _tool_read_url(ctx: ToolCtx) -> dict:
             "isError": not ok}
 
 
-# ── App-orchestration meta tools ─────────────────────────────────────
-#
-# The kernel's view of "what apps are installed + open" lives in the
-# registry + supervisor. These handlers expose that view to the SDK as
-# MCP tools, and trigger the dashboard's WindowManager via the existing
-# /ws broadcast channel (see dashboard/base/js/ws-client.js).
-#
-# Note: open_app does NOT call /api/applications/<id>/launch directly.
-# The dashboard's WindowManager.open() handles that on receipt of the
-# WS message — so user click and SDK open_app converge on the same code
-# path. Single source of truth for "open an app window".
-
-async def _tool_open_app(ctx: ToolCtx) -> dict:
-    from server.applications import registry as app_registry
-    from server.main import broadcast as ws_broadcast
-    app_id = (ctx.args.get("app_id") or "").strip()
-    if not app_id:
-        return {"ok": False, "error": "app_id required"}
-    pool = brain_service.get_pool()
-    if pool is None:
-        return {"ok": False, "error": "brain pool not ready"}
-    app = await app_registry.get(pool, app_id)
-    if app is None:
-        return {"ok": False, "error": f"app not installed: {app_id}"}
-    if app.status != "active":
-        return {"ok": False, "error": f"app status: {app.status}"}
-    reason = (ctx.args.get("reason") or "").strip()[:200] or None
-    view = (ctx.args.get("view") or "").strip()[:128] or None
-    data = {"app_id": app_id, "reason": reason}
-    if view:
-        # Deep-link view (e.g. 'artifact:<id>' for the Artifacts window) —
-        # ws-client passes it to AppRunner.launch as opts.view.
-        data["view"] = view
-    await ws_broadcast({
-        "type": "open_app",
-        "module": "windows",
-        "data": data,
-    })
-    return {"ok": True, "app_id": app_id, "name": app.name}
-
-
-async def _tool_close_app(ctx: ToolCtx) -> dict:
-    from server.main import broadcast as ws_broadcast
-    app_id = (ctx.args.get("app_id") or "").strip()
-    if not app_id:
-        return {"ok": False, "error": "app_id required"}
-    await ws_broadcast({
-        "type": "close_app",
-        "module": "windows",
-        "data": {"app_id": app_id},
-    })
-    return {"ok": True, "app_id": app_id}
-
-
-async def _tool_list_apps(ctx: ToolCtx) -> dict:
-    from server.applications import registry as app_registry
-    from server.applications import supervisor as app_supervisor
-    pool = brain_service.get_pool()
-    if pool is None:
-        return {"ok": False, "error": "brain pool not ready"}
-    apps = await app_registry.list_active(pool)
-    sup = app_supervisor.get_supervisor()
-    open_ids: set[str] = set()
-    if sup is not None:
-        try:
-            open_ids = {r.app_id for r in sup.list_running()}
-        except Exception:
-            open_ids = set()
-    out = []
-    for a in apps:
-        out.append({
-            "id": a.id,
-            "name": a.name,
-            "version": a.version,
-            "tier": a.tier,
-            "is_open": a.id in open_ids,
-        })
-    return {"ok": True, "apps": out}
-
-
 # name → (handler, required_scope). `tools/list` filters by ctx.auth["scopes"];
 # `tools/call` rejects unknown names AND tools the caller's token lacks scope for.
 TOOL_HANDLERS: dict[str, tuple[Any, str]] = {
-    "shape":                (_tool_shape,                "shape"),
-    "recall":               (_tool_recall,               "shape"),
-    "signal":               (_tool_signal,               "shape"),
-    # App-orchestration meta tools (cell-phone model).
-    "open_app":             (_tool_open_app,             "apps"),
-    "close_app":            (_tool_close_app,            "apps"),
-    "list_apps":            (_tool_list_apps,            "apps"),
+    # shape / recall / signal and open_app / close_app / list_apps are
+    # retired (see PROMPTS above). An outside agent's tools are not in this
+    # table: they are server/agent_access/tools.py, behind its own sign-in
+    # (_agent_call below).
     # The `factory` scope's tools (order_software, list_projects,
     # project_status, reject_step, ship_project, code_read, code_grep,
     # code_tree, k8s_rollout_status, and before them the ship pipeline and
@@ -790,8 +399,9 @@ TOOL_HANDLERS: dict[str, tuple[Any, str]] = {
 }
 
 
-# Synaptive tool → (target_domain, operation) for
-# the route-level CEIGAS gate. read_url (the harness `fetch` scope) is not
+# Identity-layer tool → (target_domain, operation) for the route-level CEIGAS
+# gate. Its tools left /mcp; the map and _ceigas_gate_synaptive stay while the
+# gates that pin the kill-switch crossing through them still do. read_url (the harness `fetch` scope) is not
 # in this map: it runs the Host's own page reader, behind the entity's
 # egress proxy. The bridge-op tools this comment used to name went with the
 # `factory` scope.
@@ -963,14 +573,9 @@ async def _ceigas_gate_synaptive(
     return {"allowed": True, "reason": "authorized"}
 
 
-async def _prompt_synaptive_identity(authorization: str | None) -> dict:
-    return await _build_identity_prompt(authorization)
-
-
-# name → (handler, required_scope). Single source of truth for prompts/list + prompts/get.
-PROMPT_HANDLERS: dict[str, tuple[Any, str]] = {
-    "synaptive_identity": (_prompt_synaptive_identity, "shape"),
-}
+# name → (handler, required_scope). Empty since the identity prompt was
+# retired; prompts/list and prompts/get read it.
+PROMPT_HANDLERS: dict[str, tuple[Any, str]] = {}
 
 
 def _tools_for_scopes(scopes: list[str]) -> list[dict]:
@@ -1070,16 +675,71 @@ def _rate_key(auth: dict, harness_cap: str | None) -> str:
     if auth.get("_harness") and harness_cap:
         import hashlib
         return "harness:" + hashlib.sha256(harness_cap.encode()).hexdigest()[:16]
+    if auth.get("_agent"):
+        return f"agent:{auth['_agent']['id']}"
     return f"token:{auth.get('id')}"
 
 
 # ── Per-method routing ───────────────────────────────────────────────
+
+# Which connected agents declared URL-mode elicitation in their last
+# initialize (connection id -> True/False). Keyed on the connection, not a
+# session: every client of one connection is the same agent software. Bounded;
+# an agent missing from it is answered with the link in plain text, which
+# every client shows.
+_AGENT_URL_ELICITATION: dict[int, bool] = {}
+_AGENT_URL_ELICITATION_MAX = 1000
+
+
+def _negotiate(requested) -> str:
+    return requested if requested in PROTOCOL_VERSIONS else PROTOCOL_VERSION
+
+
+def _remember_elicitation(auth: dict | None, params: dict, version: str) -> None:
+    conn = (auth or {}).get("_agent")
+    if not conn:
+        return
+    caps = params.get("capabilities") if isinstance(params.get("capabilities"), dict) else {}
+    elicit = caps.get("elicitation")
+    url_ok = isinstance(elicit, dict) and isinstance(elicit.get("url"), dict) \
+        and version == "2025-11-25"
+    if len(_AGENT_URL_ELICITATION) >= _AGENT_URL_ELICITATION_MAX:
+        _AGENT_URL_ELICITATION.pop(next(iter(_AGENT_URL_ELICITATION)))
+    _AGENT_URL_ELICITATION[int(conn["id"])] = url_ok
+
+
+async def _agent_call(rid, auth: dict, name, args, origin: str) -> dict:
+    """tools/call from an outside agent (server/agent_access/tools.py). A call
+    the person has to approve first ends with -32042 and its link when the
+    client declared URL-mode elicitation, else with the link in the result's
+    text: nothing ran either way."""
+    from server.agent_access import tools as agent_tools
+    conn = auth["_agent"]
+    if not isinstance(args, dict):
+        return _err(rid, _INVALID_PARAMS, "arguments must be an object")
+    pool = brain_service.get_pool()
+    eid = int(auth.get("entity_id") or 0)
+    try:
+        return _ok(rid, await agent_tools.call(pool, eid, conn, name, args, origin))
+    except KeyError:
+        return _err(rid, _METHOD_NOT_FOUND, f"unknown tool: {name}")
+    except agent_tools.NeedsApproval as need:
+        if _AGENT_URL_ELICITATION.get(int(conn["id"])):
+            return {"jsonrpc": "2.0", "id": rid, "error": {
+                "code": URL_ELICITATION_REQUIRED, "message": need.message,
+                "data": {"elicitations": [{"mode": "url", "message": need.message,
+                                           "url": need.url, "elicitationId": need.ask_id}]}}}
+        return _ok(rid, {"content": [{"type": "text", "text": need.message}], "isError": True,
+                         "structuredContent": {"state": "needs_approval", "url": need.url,
+                                               "ask": need.ask_id}})
+
 
 async def _handle_one(
     req: dict,
     authorization: str,
     is_internal: bool = False,
     auth: dict | None = None,
+    origin: str = "",
 ) -> dict | None:
     """Handle a single JSON-RPC request. Returns the response dict, or None
     if the request was a notification (no id) and therefore takes no response."""
@@ -1102,8 +762,10 @@ async def _handle_one(
 
     try:
         if method == "initialize":
+            version = _negotiate(params.get("protocolVersion"))
+            _remember_elicitation(auth, params, version)
             return _ok(rid, {
-                "protocolVersion": PROTOCOL_VERSION,
+                "protocolVersion": version,
                 "capabilities": {
                     "tools": {"listChanged": False},
                     "prompts": {"listChanged": False},
@@ -1121,12 +783,17 @@ async def _handle_one(
         scopes: list[str] = list((auth or {}).get("scopes") or [])
 
         if method == "tools/list":
+            if (auth or {}).get("_agent"):
+                from server.agent_access import tools as agent_tools
+                return _ok(rid, {"tools": agent_tools.TOOLS})
             # Scope-filtered catalog: don't advertise tools the caller can't invoke.
             return _ok(rid, {"tools": _tools_for_scopes(scopes)})
 
         if method == "tools/call":
             name = params.get("name")
             args = params.get("arguments") or {}
+            if (auth or {}).get("_agent"):
+                return await _agent_call(rid, auth, name, args, origin)
             entry = TOOL_HANDLERS.get(name)
             if entry is None:
                 return _err(rid, _METHOD_NOT_FOUND, f"unknown tool: {name}")
@@ -1183,14 +850,7 @@ async def _handle_one(
             phandler, required_scope = entry
             if required_scope not in scopes:
                 return _err(rid, _METHOD_NOT_FOUND, f"unknown prompt: {name}")
-            try:
-                result = await phandler(authorization)
-            except RuntimeError as e:
-                # _build_identity_prompt re-raises auth/state errors as
-                # RuntimeError with a JSON body; surface those at the
-                # JSON-RPC layer rather than smuggling them into the prompt.
-                return _err(rid, _INTERNAL_ERROR, str(e))
-            return _ok(rid, result)
+            return _ok(rid, await phandler(authorization))
 
     except Exception as e:
         logger.exception("MCP method %s raised", method)
@@ -1206,30 +866,24 @@ async def _handle_one(
 # ── HTTP entry point ─────────────────────────────────────────────────
 
 @router.get("/mcp")
-async def mcp_info():
-    """Browser-friendly explainer. The real protocol surface is POST /mcp."""
+async def mcp_info(request: Request):
+    """POST /mcp is the protocol. A client asking for a server-sent event
+    stream here is told there is none (405, MCP streamable HTTP, listening);
+    a browser gets a short explainer."""
+    from fastapi.responses import JSONResponse
+    if "text/event-stream" in (request.headers.get("accept") or ""):
+        return JSONResponse({"error": "no event stream; POST JSON-RPC to /mcp"}, status_code=405,
+                            headers={"Allow": "POST"})
     return {
         "ok": True,
-        "endpoint": "synaptive MCP (JSON-RPC 2.0 over POST)",
-        "protocol_version": PROTOCOL_VERSION,
+        "endpoint": "this Host's MCP server (JSON-RPC 2.0 over POST)",
+        "protocol_versions": list(PROTOCOL_VERSIONS),
         "server": SERVER_INFO,
-        "tools": [t["name"] for t in TOOLS],
-        "auth": "Authorization: Bearer mcp_<token>",
         "note": (
-            "This URL is for MCP clients (Claude Desktop, Claude Code, Cursor, "
-            "Codex, OpenClaw) to POST JSON-RPC requests against. Opening it in "
-            "a browser shows this info page — not an error. To use, register "
-            "this URL + a bearer token in your client's MCP config."
+            "Add this address to Claude Code, Codex or any MCP client. It signs in "
+            "through this Host (OAuth): you approve the connection on a page of your "
+            "Host, and every change it asks for on your machines waits for your approval."
         ),
-        "example_config": {
-            "mcpServers": {
-                "synaptive": {
-                    "type": "streamable-http",
-                    "url": "http://127.0.0.1:8803/mcp",
-                    "headers": {"Authorization": "Bearer mcp_<your_token>"},
-                },
-            },
-        },
     }
 
 
@@ -1276,11 +930,21 @@ async def mcp_endpoint(
             hardware_fingerprint=x_cseries_hardware_fingerprint,
             internal_auth=x_cseries_internal_auth,
             harness_cap=x_cseries_harness_cap,
+            internal_ok=in_container(request),
         )
     except HTTPException as exc:
+        # A 401 names where to sign in (RFC 9728 §5.1, MCP authorization): a
+        # standard client starts its OAuth flow from this header, never from a
+        # redirect.
+        headers = {}
+        if exc.status_code == 401:
+            from server.agent_access import oauth as agent_oauth
+            from server.agent_access.origin import public_origin
+            headers["WWW-Authenticate"] = agent_oauth.challenge_header(await public_origin(request))
         return Response(
             content=json.dumps(_err(None, _INVALID_REQUEST, str(exc.detail))),
             status_code=exc.status_code,
+            headers=headers,
             media_type="application/json",
         )
     is_internal = bool(auth.get("_internal"))
@@ -1344,13 +1008,19 @@ async def mcp_endpoint(
     except Exception:
         raise HTTPException(400, "invalid JSON body")
 
+    origin = ""
+    if auth.get("_agent"):
+        from server.agent_access.origin import public_origin
+        origin = await public_origin(request)
+
     # JSON-RPC supports batch (array) and single (object). Honor both.
     if isinstance(body, list):
         if not body:
             raise HTTPException(400, "empty batch")
         responses: list[dict] = []
         for entry in body:
-            resp = await _handle_one(entry, authorization, is_internal=is_internal, auth=auth)
+            resp = await _handle_one(entry, authorization, is_internal=is_internal, auth=auth,
+                                     origin=origin)
             if resp is not None:
                 responses.append(resp)
         # Per spec: if all entries were notifications, return nothing.
@@ -1359,7 +1029,8 @@ async def mcp_endpoint(
         return responses
 
     if isinstance(body, dict):
-        resp = await _handle_one(body, authorization, is_internal=is_internal, auth=auth)
+        resp = await _handle_one(body, authorization, is_internal=is_internal, auth=auth,
+                                 origin=origin)
         if resp is None:
             return Response(status_code=204)
         return resp

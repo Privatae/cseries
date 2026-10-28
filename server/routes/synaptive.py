@@ -14,7 +14,7 @@ import os
 import secrets
 from typing import Optional
 
-from fastapi import APIRouter, Header, HTTPException, Depends
+from fastapi import APIRouter, Header, HTTPException, Depends, Request
 from server.applications.middleware import requires_permission
 from pydantic import BaseModel
 
@@ -149,6 +149,7 @@ async def list_tokens():
 @router.post("/tokens", dependencies=[Depends(requires_permission("write:session"))])
 async def create_token(
     body: CreateToken,
+    request: Request,
     x_cseries_internal_auth:        Optional[str] = Header(None),
     x_cseries_operator_kind:        Optional[str] = Header(None),
     x_cseries_hardware_fingerprint: Optional[str] = Header(None),
@@ -168,6 +169,11 @@ async def create_token(
     # active memory search). User-side dashboard calls keep the original
     # shape/signal allowlist.
     if x_cseries_internal_auth is not None:
+        # Compared only for a caller inside this container, as every
+        # INTERNAL_API_SECRET check is (middleware/localhost_only.in_container).
+        from server.middleware.localhost_only import in_container
+        if not in_container(request):
+            raise HTTPException(401, "the internal secret is accepted only from inside this container")
         if not _internal_auth_ok(x_cseries_internal_auth):
             raise HTTPException(401, "internal auth invalid")
         scopes = body.scopes or ["shape", "recall", "signal"]

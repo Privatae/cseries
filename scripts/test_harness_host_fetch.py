@@ -333,16 +333,18 @@ def _middleware_tests() -> None:
         return c.post(path, json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"},
                       headers=headers or {})
 
-    # A standalone Host has no harness pods: the cap header is no exemption,
-    # and /mcp from any address but loopback needs the owner's session.
+    # A standalone Host has no harness pods: the cap header is no exemption.
+    # /mcp itself is an outside agent's lane and answers for itself (its token
+    # check, routes/mcp.py), so a bare request reaches the handler; the cap
+    # header from such an address is refused before it.
     r = _post("/mcp", {"X-CSeries-Harness-Cap": "cap-from-wake"})
     check("middleware: /mcp from a non-loopback address WITH the harness cap header is 403",
           r.status_code == 403, f"{r.status_code} {r.text[:120]}")
     r = _post("/mcp", {"X-CSeries-Harness-Cap": "cap-from-wake"}, ip="10.244.1.7")
     check("middleware: same over IPv4", r.status_code == 403, f"{r.status_code}")
     r = _post("/mcp")
-    check("middleware: /mcp from a non-loopback address WITHOUT the header is 403",
-          r.status_code == 403, f"{r.status_code}")
+    check("middleware: /mcp from a non-loopback address WITHOUT the header reaches its own token check",
+          r.status_code == 200 and r.json().get("reached") is True, f"{r.status_code}")
     r = _post("/api/brain/x", {"X-CSeries-Harness-Cap": "cap-from-wake"})
     check("middleware: the cap header opens no other route either",
           r.status_code == 403, f"{r.status_code}")

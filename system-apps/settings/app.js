@@ -35,7 +35,7 @@
         if (view === 'overview') renderOverview();
         else if (view === 'updates') renderUpdates();
         else if (view === 'history') renderHistory();
-        else if (view === 'synaptive') loadSynaptive();
+        else if (view === 'agents') loadAgents();
         else if (view === 'shaping') loadShaping();
         else if (view === 'limits') loadLimits();
         else if (view === 'desktop') loadDesktopTab();
@@ -1657,196 +1657,58 @@
         }
     }
 
-    // ── Synaptive ────────────────────────────────────────
-    async function loadSynaptive() {
-        var listEl = document.getElementById('synaptive-list');
+    // ── Connected agents ─────────────────────────────────
+    // Outside agents signed in to this Host over MCP (server/agent_access).
+    // Each connection is listed with what it may do without asking and its
+    // last calls; the person revokes a connection, or one permission.
+    function agentGrantWords(g) {
+        if (g.kind === 'read') return 'See your machines and run read-only checks';
+        return 'Run ' + g.op + ' on ' + (g.server === '*' ? 'any machine' : g.server) + ' without asking';
+    }
+    async function loadAgents() {
+        var listEl = document.getElementById('agents-list');
+        var addrEl = document.getElementById('agents-address');
+        if (addrEl) addrEl.textContent = 'Your Host\'s address for agents: ' + location.origin + '/mcp';
         if (!listEl) return;
         try {
-            var data = await fetchJSON('/api/synaptive/tokens');
-            var tokens = (data && data.tokens) || [];
-            if (!tokens.length) {
-                listEl.innerHTML = '<div class="cseries-empty">' +
-                    '<span class="empty-title">No chats connected yet</span>' +
-                    'Connect a chat to let it shape its responses with your Synaptive identity.' +
-                    '</div>';
+            var data = await fetchJSON('/api/agent-access/connections');
+            var rows = (data && data.connections) || [];
+            if (!rows.length) {
+                listEl.innerHTML = '<div class="cseries-empty"><span class="empty-title">No agents connected</span>' +
+                    'An agent appears here once you approve its connection.</div>';
                 return;
             }
-            listEl.innerHTML = tokens.map(function (t) {
-                var lastUsed = t.last_used_at ? 'last shaped ' + formatDate(t.last_used_at) : 'not used yet';
-                var scopes = (t && t.scopes) || [];
-                var chips = scopes.length
-                    ? '<div class="syn-scopes">' + scopes.map(function (s) {
-                        return '<span class="syn-scope-chip">' + esc(s) + '</span>';
-                    }).join('') + '</div>'
-                    : '';
-                return '<div class="syn-row">' +
-                    '<div class="syn-row-text">' +
-                        '<div class="syn-row-name">' + esc(t.name) + '</div>' +
-                        '<div class="label-sys">added ' + formatDate(t.created_at) + ' · ' + esc(lastUsed) + '</div>' +
-                        '<div class="label-sys syn-row-url">' + esc(t.url) + '</div>' +
-                        chips +
-                    '</div>' +
-                    '<button class="cseries-btn ghost" data-syn-revoke="' + attr(t.id) + '">Revoke</button>' +
+            listEl.innerHTML = rows.map(function (c) {
+                var grants = (c.grants || []).map(function (g) {
+                    return '<div class="syn-row"><div class="syn-row-text label-sys">' + esc(agentGrantWords(g)) + '</div>' +
+                        '<button class="cseries-btn ghost" data-agent-grant-revoke="' + attr(g.id) + '">Take back</button></div>';
+                }).join('') || '<div class="label-sys">It may only ask. Nothing runs without your approval.</div>';
+                var calls = (c.calls || []).slice(0, 5).map(function (k) {
+                    return '<div class="label-sys">' + esc(formatDate(k.at)) + ' · ' + esc(k.tool) +
+                        (k.op ? ' ' + esc(k.op) : '') + (k.server ? ' on ' + esc(k.server) : '') + ' — ' + esc(k.outcome) + '</div>';
+                }).join('');
+                var used = c.last_used_at ? 'last used ' + formatDate(c.last_used_at) : 'not used yet';
+                return '<div class="cseries-card">' +
+                    '<div class="syn-row"><div class="syn-row-text">' +
+                        '<div class="syn-row-name">' + esc(c.client_name) + '</div>' +
+                        '<div class="label-sys">connected ' + esc(formatDate(c.connected_at)) + ' · ' + esc(used) +
+                        ((c.redirect_hosts || []).length ? ' · signs in through ' + esc(c.redirect_hosts.join(', ')) : '') + '</div>' +
+                    '</div><button class="cseries-btn ghost" data-agent-revoke="' + attr(c.id) + '">Disconnect</button></div>' +
+                    grants + (calls ? '<div style="margin-top: var(--space-2);">' + calls + '</div>' : '') +
                     '</div>';
             }).join('');
         } catch (err) {
-            console.error('synaptive load failed', err);
             listEl.innerHTML = '<div class="cseries-empty"><span class="empty-title">Could not load</span>' + esc(err.message || 'unknown error') + '</div>';
         }
     }
-
-    // Escape-to-close + focus-trap for the connect-a-chat dialog. Attached
-    // only while the modal is open so it doesn't intercept keys otherwise.
-    function _synModalKeydown(e) {
-        var m = document.getElementById('syn-modal');
-        if (!m || m.hidden) return;
-        if (e.key === 'Escape') {
-            e.preventDefault();
-            closeSynModal();
-            return;
-        }
-        if (e.key === 'Tab') {
-            var focusable = m.querySelectorAll(
-                'button:not([hidden]), [href], input:not([hidden]), [tabindex]:not([tabindex="-1"])'
-            );
-            var visible = Array.prototype.filter.call(focusable, function (el) {
-                return el.offsetParent !== null;
-            });
-            if (!visible.length) return;
-            var first = visible[0];
-            var last = visible[visible.length - 1];
-            if (e.shiftKey && document.activeElement === first) {
-                e.preventDefault();
-                last.focus();
-            } else if (!e.shiftKey && document.activeElement === last) {
-                e.preventDefault();
-                first.focus();
-            }
-        }
-    }
-
-    function openSynModal() {
-        var m = document.getElementById('syn-modal');
-        document.getElementById('syn-modal-step-name').hidden = false;
-        document.getElementById('syn-modal-step-show').hidden = true;
-        var input = document.getElementById('syn-name-input');
-        input.value = '';
-        m.hidden = false;
-        document.addEventListener('keydown', _synModalKeydown);
-        setTimeout(function () { input.focus(); }, 50);
-    }
-    function closeSynModal() {
-        document.getElementById('syn-modal').hidden = true;
-        document.removeEventListener('keydown', _synModalKeydown);
-    }
-    // Per-client config presets — every MCP-aware tool we know about uses the
-    // same {mcpServers: {<name>: {url, headers}}} shape, so the JSON body is
-    // identical; only the label, recommended server-name key, and where you
-    // paste it differ. Bumping this list = supporting a new client.
-    var SYN_CLIENTS = {
-        claude: {
-            label: 'Claude Desktop config',
-            serverKey: 'synaptive',
-            hint: 'Paste into ~/Library/Application Support/Claude/claude_desktop_config.json (macOS) or %APPDATA%/Claude/claude_desktop_config.json (Windows). Restart Claude Desktop.',
-        },
-        lmstudio: {
-            label: 'LM Studio mcp.json',
-            serverKey: 'synaptive',
-            hint: 'In LM Studio: Program panel → Install / Edit mcp.json → paste. Then load any tool-capable local model (Llama 3.1 instruct, Qwen 2.5 instruct) and start a chat.',
-        },
-        cursor: {
-            label: 'Cursor MCP config',
-            serverKey: 'synaptive',
-            hint: 'Cursor → Settings → MCP → Add new server → paste. Or edit ~/.cursor/mcp.json directly.',
-        },
-        generic: {
-            label: 'Generic MCP config',
-            serverKey: 'synaptive',
-            hint: 'Any MCP-aware client. Same {mcpServers: {...}} format. Paste into the client\'s MCP config; the server name "synaptive" is yours to rename.',
-        },
-    };
-
-    var _synLastResponse = null;
-    var _synActiveClient = 'claude';
-
-    function _renderSynConfig() {
-        if (!_synLastResponse) return;
-        var cfg = SYN_CLIENTS[_synActiveClient] || SYN_CLIENTS.generic;
-        var snippet = {mcpServers: {}};
-        // All MCP-aware clients use the same {url, headers} body. The
-        // 'type' field pins the transport — needed for LM Studio + Cursor
-        // because their default behavior is "try streamable-http, fall
-        // back to SSE on failure," and we don't implement SSE. Pinning
-        // skips the fallback and surfaces a clean error if streamable-http
-        // can't reach the endpoint. Always append /mcp to the URL so the
-        // client hits the actual JSON-RPC endpoint, not the info page on /.
-        var entry = {
-            type: 'streamable-http',
-            url: _synLastResponse.url.replace(/\/+$/, '') + '/mcp',
-            headers: {'Authorization': 'Bearer ' + _synLastResponse.token},
-        };
-        snippet.mcpServers[cfg.serverKey] = entry;
-        document.getElementById('syn-config-label').textContent = cfg.label;
-        document.getElementById('syn-config-hint').textContent = cfg.hint;
-        document.getElementById('syn-config').textContent = JSON.stringify(snippet, null, 2);
-        // tab styling
-        var tabs = document.querySelectorAll('#syn-client-picker .syn-client-tab');
-        tabs.forEach(function (t) {
-            if (t.getAttribute('data-client') === _synActiveClient) {
-                t.classList.add('is-active');
-            } else {
-                t.classList.remove('is-active');
-            }
-        });
-    }
-
-    async function generateSynToken() {
-        var name = (document.getElementById('syn-name-input').value || '').trim();
-        if (!name) {
-            document.getElementById('syn-name-input').focus();
-            return;
-        }
-        // Optional scope selection. Backend allows shape/signal on the
-        // user-dashboard path and defaults to both when none are sent, so
-        // only include the field when the user picked at least one.
-        var scopes = [];
-        document.querySelectorAll('#syn-scope-picker input[data-scope]:checked').forEach(function (cb) {
-            scopes.push(cb.getAttribute('data-scope'));
-        });
-        var payload = {name: name};
-        if (scopes.length) payload.scopes = scopes;
+    async function agentPost(url, ask) {
+        if (!confirm(ask)) return;
         try {
-            var r = await fetchJSON('/api/synaptive/tokens', {
-                method: 'POST',
-                headers: {'Content-Type': 'application/json'},
-                body: JSON.stringify(payload),
-            });
-            _synLastResponse = r;
-            _synActiveClient = 'claude';
-            document.getElementById('syn-url').textContent = r.url;
-            document.getElementById('syn-token').textContent = r.token;
-            _renderSynConfig();
-            document.getElementById('syn-modal-step-name').hidden = true;
-            document.getElementById('syn-modal-step-show').hidden = false;
-            loadSynaptive();
+            await fetchJSON(url, {method: 'POST'});
         } catch (err) {
-            alert('Could not create token: ' + (err.message || 'unknown error'));
+            alert('Could not do that: ' + (err.detail || err.message || 'unknown error'));
         }
-    }
-    async function revokeSynToken(id) {
-        if (!confirm('Revoke this connected chat? It will lose access immediately.')) return;
-        try {
-            await fetchJSON('/api/synaptive/tokens/' + encodeURIComponent(id), {method: 'DELETE'});
-            loadSynaptive();
-        } catch (err) {
-            alert('Could not revoke: ' + (err.message || 'unknown error'));
-        }
-    }
-    function copySynConfig() {
-        var text = document.getElementById('syn-config').textContent;
-        if (navigator.clipboard) {
-            navigator.clipboard.writeText(text).catch(function () {});
-        }
+        loadAgents();
     }
 
     // ── Fetch helper ─────────────────────────────────────
@@ -3318,26 +3180,13 @@
         var gsOff = document.getElementById('gs-disconnect-btn');
         if (gsOff) gsOff.addEventListener('click', disconnectGitServer);
 
-        var connectBtn = document.getElementById('btn-connect-chat');
-        if (connectBtn) connectBtn.addEventListener('click', openSynModal);
-        var genBtn = document.getElementById('syn-generate-btn');
-        if (genBtn) genBtn.addEventListener('click', generateSynToken);
-        var copyBtn = document.getElementById('syn-copy-config');
-        if (copyBtn) copyBtn.addEventListener('click', copySynConfig);
-        document.querySelectorAll('[data-syn-close]').forEach(function (el) {
-            el.addEventListener('click', closeSynModal);
-        });
         document.addEventListener('click', function (e) {
-            var btn = e.target.closest && e.target.closest('[data-syn-revoke]');
-            if (btn) revokeSynToken(btn.getAttribute('data-syn-revoke'));
-        });
-        document.querySelectorAll('#syn-client-picker .syn-client-tab').forEach(function (tab) {
-            tab.addEventListener('click', function () {
-                var which = tab.getAttribute('data-client');
-                if (!SYN_CLIENTS[which]) return;
-                _synActiveClient = which;
-                _renderSynConfig();
-            });
+            var c = e.target.closest && e.target.closest('[data-agent-revoke]');
+            if (c) agentPost('/api/agent-access/connections/' + encodeURIComponent(c.getAttribute('data-agent-revoke')) + '/revoke',
+                             'Disconnect this agent? It loses every permission and its sign-in ends now.');
+            var g = e.target.closest && e.target.closest('[data-agent-grant-revoke]');
+            if (g) agentPost('/api/agent-access/grants/' + encodeURIComponent(g.getAttribute('data-agent-grant-revoke')) + '/revoke',
+                             'Take this permission back? The agent will have to ask again.');
         });
 
         loadAll();

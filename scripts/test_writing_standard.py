@@ -195,10 +195,11 @@ check("Settings → Response Shaping renders the three positions as a radio grou
       'id="rs-explain" class="rs-explain" role="radiogroup"' in settings_html
       and "b.setAttribute('role', 'radio');" in settings_js
       and all(f"value: '{v}'" in settings_js for v in ("full", "new", "terms")))
-_syn = settings_html.split('<section id="view-synaptive"', 1)[-1].split("</section>", 1)[0]
-check("Response Shaping is its own Settings tab, not part of Synaptive",
+_agents = settings_html.split('<section id="view-agents"', 1)
+_agents = _agents[1].split("</section>", 1)[0] if len(_agents) == 2 else None
+check("Response Shaping is its own Settings tab, not part of the tab beside it",
       'data-view="shaping"' in settings_html and '<section id="view-shaping"' in settings_html
-      and "view-shaping" not in _syn and "rs-explain" not in _syn)
+      and _agents is not None and "view-shaping" not in _agents and "rs-explain" not in _agents)
 # The envelope and its PUT (write:brain_codebooks) left with the simulated
 # psyche; the explanation level and the sliders remain.
 check("Settings declares the scopes its controls take",

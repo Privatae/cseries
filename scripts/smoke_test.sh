@@ -451,6 +451,23 @@ for shell_path in / /js/ws-client.js /css/boot-screen.css /js/app-runner.js; do
     fi
 done
 
+# The shell's page carries its Content-Security-Policy from the real server
+# (server/shell_csp.py through main.py's security_headers): script in that
+# document reaches no other host from it. Its assets carry none.
+shell_csp_hdr() {
+    dcurl -sk -D - -o /dev/null --max-time 8 "$BASE$1" 2>/dev/null \
+        | tr -d '\r' | awk 'tolower($0) ~ /^content-security-policy:/ {sub(/^[^:]*: */, ""); print}'
+}
+_shell_csp="$(shell_csp_hdr /)"
+_asset_csp="$(shell_csp_hdr /js/ws-client.js)"
+if grep -q "default-src 'self'" <<<"$_shell_csp" && grep -q "connect-src 'self'" <<<"$_shell_csp" \
+        && grep -q "frame-ancestors 'self'" <<<"$_shell_csp" && [ -z "$_asset_csp" ]; then
+    green "OK    dashboard shell policy — / carries it, its assets do not"
+else
+    red "FAIL  dashboard shell policy — / CSP='$_shell_csp'; /js/ws-client.js CSP='$_asset_csp'"
+    failed=1
+fi
+
 # App-origin isolation: the kernel injects /js/app-sdk.js into MANAGED apps'
 # served HTML (settings) and must NOT inject it into others (ceigas). Guard the
 # asset + both directions so the cross-origin token channel can't silently

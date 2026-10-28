@@ -81,6 +81,7 @@ for _noisy in ("aiohttp", "httpx", "httpcore", "asyncio"):
     logging.getLogger(_noisy).setLevel(logging.WARNING)
 
 from server.applications import app_origin
+from server import shell_csp
 from server import static_paths
 from server.middleware.localhost_only import LocalhostOnlyMiddleware
 from server.middleware.ceigas_gate import CEIGASGateMiddleware
@@ -1417,6 +1418,14 @@ async def security_headers(request, call_next):
         pass
     else:
         response.headers["X-Frame-Options"] = "SAMEORIGIN"
+        # The desktop shell's own page carries its policy (server/shell_csp.py):
+        # script there reaches no other host from the shell's own document. On
+        # the Host's desktop names and on any address that is not an app's
+        # origin (an IP address, localhost).
+        if origin.kind in (app_origin.DESKTOP, app_origin.OTHER) and shell_csp.is_shell_document(
+                request.scope["path"], response.headers.get("content-type"),
+                response.status_code):
+            response.headers["Content-Security-Policy"] = shell_csp.shell_policy(origin)
     return response
 
 

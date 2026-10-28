@@ -570,10 +570,19 @@ _BARLESS = TEMPLATE_HTML.replace('<div id="dock"></div>', "").replace('<div id="
     .replace("S.dock.map", "[].map").replace("S.windows.filter", "[].filter")
 
 
+# Every hand-over the shell makes, in order (its cseries:design-bar event,
+# desktop-surface.js), recorded from before the design loads. The net takes
+# the bar back 2 s after a state post, so a one-off read of the class after
+# _shell can come too late on a loaded runner and see the net already done.
+_BAR_LOG = ("window.__bar = []; document.addEventListener('cseries:design-bar',"
+            " (e) => window.__bar.push(e.detail.owned))")
+
+
 def test_a_declared_bar_that_draws_nothing_gives_the_taskbar_back(browser):
-    pg, frame, errors = _shell(browser, _BARLESS)
-    assert pg.evaluate("document.body.classList.contains('design-bar')")
-    pg.wait_for_function("!document.body.classList.contains('design-bar')")
+    pg, frame, errors = _shell(browser, _BARLESS, before=_BAR_LOG)
+    pg.wait_for_function("window.__bar.includes(false)")
+    assert pg.evaluate("window.__bar") == [True, False]          # handed over, then taken back
+    assert not pg.evaluate("document.body.classList.contains('design-bar')")
     assert pg.evaluate("getComputedStyle(document.getElementById('taskbar')).display") != "none"
     _frame_until(frame, "CSeriesDesktop.ownsBar === false")      # re-told asynchronously
 
@@ -606,20 +615,26 @@ def test_a_patched_message_data_getter_cannot_steal_the_port(browser):
     assert pg.evaluate("WindowManager.getAll()[0].minimized") is False
 
 
-# Declares the bar and draws its dock from state — but only 3 s in, after the
-# safety net has already given the taskbar back. The shell keeps sending the
-# dock while the net holds, so the late bar is seen and the bar handed back.
+# Declares the bar and draws its dock from state — but only once the test says
+# so (__late), after the safety net has given the taskbar back. The shell keeps
+# sending the dock while the net holds, so the late bar is seen and the bar
+# handed back. (A fixed 3 s in raced the net, which fires 2 s after the first
+# state: a runner slow to post that state had the bar drawn before the net
+# fired, so the net never fired and the wait for it ran out.)
 _LATE = _BARLESS.replace("CSeriesDesktop.on(draw);", """CSeriesDesktop.on(draw);
-  setTimeout(function () { CSeriesDesktop.on(function (S) {
+  (function w() { if (!window.__late) return setTimeout(w, 20);
+    CSeriesDesktop.on(function (S) {
     var d = document.getElementById("late-dock") || document.body.appendChild(document.createElement("div"));
     d.id = "late-dock";
     d.innerHTML = S.dock.map(function (a) { return '<button data-cseries-activate="' + a.id + '">' + a.name + '</button>'; }).join("");
-  }); }, 3000);""", 1)
+  }); })();""", 1)
 
 
 def test_a_bar_drawn_late_is_handed_back(browser):
-    pg, frame, errors = _shell(browser, _LATE)
-    pg.wait_for_function("!document.body.classList.contains('design-bar')")
+    pg, frame, errors = _shell(browser, _LATE, before=_BAR_LOG)
+    pg.wait_for_function("window.__bar.join() === 'true,false'")    # the net took it back
+    frame.evaluate("window.__late = true")                           # only now is the dock drawn
     # No further state post is needed: the bridge re-checks while the net holds.
-    pg.wait_for_function("document.body.classList.contains('design-bar')")
+    pg.wait_for_function("window.__bar.join() === 'true,false,true'")
+    assert pg.evaluate("document.body.classList.contains('design-bar')")
 

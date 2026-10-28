@@ -949,6 +949,12 @@ async def _until(pred, wait_s: float = 10.0):
         await asyncio.sleep(0.02)
 
 
+async def _stopped(tid) -> bool:
+    """The watch's background task has ended (mcp_watch._ended has run)."""
+    from mastercode.runtime import mcp_watch as MW
+    return MW.running(tid) is None
+
+
 async def watch_checks(dsn: str):
     """W: a watched call (brain/mastercode/runtime/mcp_watch.py) on the
     connection S approved, against the scripted job_status."""
@@ -1068,7 +1074,8 @@ async def watch_checks(dsn: str):
         await asyncio.sleep(0.15)
         out = await T._execute_meta_tool("mcp_connections", {"op": "unwatch", "task_id": tid},
                                          entity_id=EID, pool=pool)
-        await asyncio.sleep(0.15)
+        await _until(lambda: _stopped(tid))
+        await asyncio.sleep(0.15)        # a call already on the wire lands, then none may follow
         n = len(MODERN_REQS)
         await asyncio.sleep(0.2)
         row, res = await _watch_row(pool, tid)
@@ -1091,7 +1098,7 @@ async def watch_checks(dsn: str):
         await asyncio.sleep(0.1)
         real = AD.AgentDispatch(pool)
         out = await real.cancel(EID, tid, actor="user_veto")
-        await asyncio.sleep(0.15)
+        await _until(lambda: _stopped(tid))
         row, res = await _watch_row(pool, tid)
         check("W8 the person's Kill (AgentDispatch.cancel) stops a watch too",
               row["status"] == "cancelled" and res.get("cancelled_by") == "user_veto"
@@ -1147,9 +1154,17 @@ async def watch_checks(dsn: str):
         disp = _Deliveries()
         out = await start(job, turn_type=tt, disp=disp)
         tid = out.get("task_id")
-        await asyncio.sleep(0.15)
-        _, res = await _watch_row(pool, tid) if tid else (None, {})
-        polling = (res.get("watch") or {}).get("polls", 0) > 1
+
+        # Waited for, not slept for: the watch's own second call, recorded by
+        # its heartbeat. A fixed 0.15 s read it too early on a loaded runner
+        # (CI: polls was still 1 then, 4 by the end).
+        async def _polled_again():
+            if not tid:
+                return False
+            _, r = await _watch_row(pool, tid)
+            return (r.get("watch") or {}).get("polls", 0) > 1
+        await _until(_polled_again)
+        polling = await _polled_again()
         await _type_card(pool, await TTA.request_change(pool, EID, type_id, {"keys": []}), TTA.OPT_CHANGE)
         await _until(lambda: _delivered(pool, tid, disp), wait_s=3.0)
         row, res = await _watch_row(pool, tid) if tid else (None, {})
@@ -1176,7 +1191,10 @@ async def watch_checks(dsn: str):
                                            entity_id=EID, pool=pool)
             else:
                 await AD.AgentDispatch(pool).cancel(EID, tid, actor="user_veto")
-            await asyncio.sleep(0.1)
+
+            async def _let_go(sid=f"s-hold-{how}"):
+                return S.held_tasks(sid) == []
+            await _until(_let_go)
             check(f"W14 a watch stopped by {how} releases the turn holding for it",
                   held and S.held_tasks(f"s-hold-{how}") == [], (held, S.held_tasks(f"s-hold-{how}")))
             S.release_holds(f"s-hold-{how}")

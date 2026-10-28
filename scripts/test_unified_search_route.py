@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every circles-web and workbench-web source file and the built Circles bundle, for /api/search callers
 """Gate: the one index — POST /api/search (memory_retrieval.unified_search).
 
 A single index surface for finding context, files and the rest.

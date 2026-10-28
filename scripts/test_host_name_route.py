@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every .py file under server/ (no capability bit maps to write:host_name)
 """The owner names the Host, and every place that shows the name shows it.
 
 POST /api/system/name (server/routes/host_name.py) writes the name into the

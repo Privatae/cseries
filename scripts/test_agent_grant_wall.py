@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every READ_SAFE_OPS and META_TOOL_CAPS entry
 """
 Lane-B agent GRANT wall gate (G-001, smoke).
 

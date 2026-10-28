@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every scripts/*.py
 """Gate: scripts/gate_loopback.py's ClientClosesFirst waits for the client only
 after a response the client can see the end of, and never carries that wait
 over to a request it did not answer.

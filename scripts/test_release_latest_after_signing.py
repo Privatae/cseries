@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every file under packages/cseries/src/ and server/
 """A release is not the latest release until both its signatures are on it.
 
 GitHub's latest release is what a C-Series Cloud server, the service that sets

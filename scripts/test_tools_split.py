@@ -1,3 +1,4 @@
+# gate-scope: whole-tree — every runtime/tools_*.py
 """runtime/tools.py and the tools_<category> modules split out of it (2026-10-23)
 stay one module to every caller.
 

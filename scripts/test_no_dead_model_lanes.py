@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — the whole tree, for every model lane
 """Ratchet: every module that can spend money on inference is reachable.
 
 WHAT THIS EXISTS FOR (measured on one Host, 2026-09-19). `inference_cost_log`

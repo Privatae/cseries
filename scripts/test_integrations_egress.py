@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every file under server/integrations/ and server/reachout/
 """Every integration leaves the pod through the egress proxy, or not at all.
 
 Entity pods run under a default-deny egress policy; the node's squid is the

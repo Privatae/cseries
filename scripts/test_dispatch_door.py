@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every public tool schema
 """
 Dispatch door: unknown tool names, a toolless agent, an attached file.
 

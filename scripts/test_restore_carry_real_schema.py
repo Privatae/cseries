@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every migration, applied to a real database
 """Gate: the restore's carry (server/host_restore.py carry_rows) on the REAL schema.
 
 The unit gate (scripts/test_host_restore.py) drives carry_rows over a fake

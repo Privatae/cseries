@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every /api route in server.main's built table
 """Gate: every /api route requires an app-token permission, or says why not.
 
 WHY. POST /api/agents/dispatch had no permission check — not on the

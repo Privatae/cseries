@@ -335,9 +335,9 @@ run_gate() {
 # counted; two of those runs failed on gates that read the changed files, and
 # their failures were only printed at the end. So: the gates whose source names
 # a changed file (its path, its file name, or its module path), the changed
-# gate files themselves, and the gates that failed on this tree last time run
-# first. If any of them fails the run stops there and lists every failure, in
-# a minute or two rather than fifteen. PRE_MERGE_FULL=1 runs everything
+# gate files themselves, the whole-tree gates (below) and the gates that failed
+# on this tree last time run first. If any of them fails the run stops there
+# and lists every failure, in a minute or two rather than fifteen. PRE_MERGE_FULL=1 runs everything
 # regardless. Results live in $GATE_RESULTS_DIR (last failures per tree, and a
 # pass per code tree hash, which scripts/gate_pass_recorded.sh reads so the
 # same code is not run twice); a directory that cannot be written is skipped.
@@ -365,9 +365,36 @@ if [[ -n "$first_base" ]]; then
     mapfile -d '' -t CHANGED < <({ git -C "$REPO" diff -z --name-only --no-renames "$first_base"
                                    git -C "$REPO" ls-files -z -o --exclude-standard; } 2>/dev/null | sort -zu)
 fi
+# ── A script that reads a path the change touched counts as changed ─────────
+# A helper the gates import can read a whole directory: scripts/kernel_schema.py
+# builds the schema from every migrations/v*.sql, and 75 gates build on it, so
+# a new migration turns them red while naming none of them. Such a script says
+# what it reads, one line each, at the start of the line:
+#     # gate-reads: migrations/ — what it reads there
+# (a path ending in / is everything under it; any other path is that one file),
+# and a change there counts as a change to the script itself: the gates that
+# import it, or name it, run first.
+READS_CHANGED=()
+while IFS= read -r _decl; do
+    _rf="${_decl%%:# gate-reads: *}"; _rp="${_decl#*:# gate-reads: }"; _rp="${_rp%%[[:space:]]*}"
+    [[ -n "$_rp" ]] || continue
+    for f in "${CHANGED[@]}"; do
+        if [[ "$f" == "$_rp" || ( "$_rp" == */ && "$f" == "$_rp"* ) ]]; then
+            _in "scripts/${_rf##*/}" "${CHANGED[@]}" "${READS_CHANGED[@]}" || READS_CHANGED+=("scripts/${_rf##*/}")
+            break
+        fi
+    done
+done < <(grep -H -E '^# gate-reads: [^[:space:]]' "$REPO"/scripts/*.py 2>/dev/null)
 FIRST_PATTERNS="$TMPD/first-patterns"
-: >"$FIRST_PATTERNS"
-for f in "${CHANGED[@]}"; do
+# How a gate imports a changed module, which names none of its path, file name
+# or dotted module: `from server.routes import vault` (one line, or inside
+# parentheses over several), `from kernel_schema import ...`, `import
+# kernel_schema as ks` (scripts/ is on a gate's path, as brain/ is). Extended
+# regexes, matched over the whole file (grep -z) so a parenthesised list
+# spanning lines is one match.
+IMPORT_PATTERNS="$TMPD/import-patterns"
+: >"$FIRST_PATTERNS"; : >"$IMPORT_PATTERNS"
+for f in "${CHANGED[@]}" "${READS_CHANGED[@]}"; do
     [[ -n "$f" && "$f" != *$'\n'* ]] || continue   # a pattern file is one per line
     printf '%s\n' "$f" >>"$FIRST_PATTERNS"
     b="$(basename "$f")"
@@ -378,16 +405,62 @@ for f in "${CHANGED[@]}"; do
     if [[ "$f" == *.py ]]; then
         mod="${f%.py}"; mod="${mod#brain/}"
         printf '%s\n' "${mod//\//.}" >>"$FIRST_PATTERNS"
+        imp="${mod#scripts/}"; imp="${imp//\//.}"; imp="${imp%.__init__}"
+        [[ "$imp" =~ ^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$ && "$imp" != __init__ ]] || continue
+        leaf="${imp##*.}"
+        if [[ "$imp" == *.* ]]; then
+            pkg="${imp%.*}"; pkg="${pkg//./\\.}"
+            printf '%s\n' \
+                "from[[:blank:]]+$pkg[[:blank:]]+import[[:blank:]]+([^)#[:cntrl:]]*[^[:alnum:]_[:cntrl:]])?$leaf([^[:alnum:]_]|\$)" \
+                "from[[:blank:]]+$pkg[[:blank:]]+import[[:blank:]]*\\([^)]*[^[:alnum:]_]$leaf[^[:alnum:]_]" >>"$IMPORT_PATTERNS"
+        else
+            printf '%s\n' "(^|[^[:alnum:]_.])(import|from)[[:blank:]]+$leaf([^[:alnum:]_.]|\$)" \
+                "import_module\\([\"']$leaf[\"']\\)" >>"$IMPORT_PATTERNS"
+        fi
     fi
 done
+covers() {   # gate — does its source name, or import, something this change touched?
+    _in "scripts/$1" "${CHANGED[@]}" "${READS_CHANGED[@]}" && return 0
+    [[ -s "$FIRST_PATTERNS" ]] && grep -qF -f "$FIRST_PATTERNS" "$REPO/scripts/$1" 2>/dev/null && return 0
+    [[ -s "$IMPORT_PATTERNS" ]] && grep -qzE -f "$IMPORT_PATTERNS" "$REPO/scripts/$1" 2>/dev/null && return 0
+    return 1
+}
 declare -A FIRST=()
-if [[ -s "$FIRST_PATTERNS" ]]; then
-    for g in "${POOL[@]}"; do
-        if _in "scripts/$g" "${CHANGED[@]}" || grep -qF -f "$FIRST_PATTERNS" "$REPO/scripts/$g" 2>/dev/null; then
-            FIRST["$g"]=1
-        fi
-    done
-fi
+for g in "${POOL[@]}"; do covers "$g" && FIRST["$g"]=1; done
+# ── Whole-tree gates cover every change ──────────────────────────────────────
+# A gate whose subject is the whole tree or a whole table (every tracked file,
+# every /api route in the built app, every tool in the registry, every
+# migration, every app manifest) finds what it checks by walking, globbing or
+# importing, so its source names none of the files that can turn it red, and
+# the match above never picks it. Measured: a PR added two /api routes with no
+# route_policy.py entry and merged green, because test_api_route_guards.py
+# names neither route file; a PR put a private document's name in a comment
+# and merged green, because test_public_source_clean.py (every tracked file)
+# names no file at all; each failed only later, at the full gate or the
+# publish. Such a gate says so on a line of its own source, at the start of the
+# line:
+#     # gate-scope: whole-tree — what it reads, in a few words
+# and then covers every change: it runs first, and on every pull request
+# (PRE_MERGE_AFFECTED_ONLY), whatever the change touched. Only a gate this run
+# would run anyway counts (a store app's gate stays on its own lane).
+# scripts/test_whole_tree_gates.py pins this on a planted change no gate names.
+# A line that is plainly meant as one but is not in that form (indented, a
+# different case or spacing, another dash, another scope) still selects its
+# gate, since a typo must never drop a gate, and is named here;
+# test_whole_tree_gates.py, which runs on every pull request, fails on it.
+WHOLE_TREE_RE='^# gate-scope: whole-tree([[:space:]]|$)'
+SCOPE_ANY_RE='^[[:space:]]*#+[[:space:]]*gate[-_[:space:]]*scope[[:space:]]*:'
+WHOLE_TREE=()
+for g in "${GATES[@]}"; do
+    if grep -qE "$WHOLE_TREE_RE" "$REPO/scripts/$g" 2>/dev/null; then
+        WHOLE_TREE+=("$g")
+    elif grep -qiE "$SCOPE_ANY_RE" "$REPO/scripts/$g" 2>/dev/null; then
+        WHOLE_TREE+=("$g")
+        red "pre_merge_gates: scripts/$g has a gate-scope line not in the form '# gate-scope: whole-tree — ...';" >&2
+        red "  it runs as whole-tree, and scripts/test_whole_tree_gates.py fails until the line is fixed" >&2
+    fi
+done
+for g in "${POOL[@]}"; do _in "$g" "${WHOLE_TREE[@]}" && FIRST["$g"]=1; done
 if [[ -n "$LAST_FAILED" && -f "$LAST_FAILED" ]]; then
     while read -r g; do _in "$g" "${POOL[@]}" && FIRST["$g"]=1; done <"$LAST_FAILED"
 fi
@@ -410,9 +483,9 @@ done
 # this repo: 613 test scripts (24 three months earlier); in one week, 272 runs,
 # median 12 min, p90 50 min, 68% failed, many on gates the PR never touched. With this set, a run keeps the
 # gates that cover the change (FIRST above: their source names a changed
-# path, file name or module, or they are a changed gate), the alone-gates that
-# do, the tests/ lane and the undefined-names lane, and drops the rest. The
-# ship still runs everything: its own run of this script has no such env, and
+# path, file name or module, they are a changed gate, or they are whole-tree),
+# the alone-gates that do, the tests/ lane and the undefined-names lane, and
+# drops the rest. The ship still runs everything: its own run of this script has no such env, and
 # no pass is recorded here, because a .pass names a FULL run and smoke's skip
 # (scripts/gate_pass_recorded.sh) relies on that. With no origin/main to diff
 # against, nothing is known to be unaffected, so everything runs.
@@ -422,12 +495,12 @@ if [[ -n "${PRE_MERGE_AFFECTED_ONLY:-}" && -z "${PRE_MERGE_FULL:-}" && -z "$STOR
         AFFECTED_ONLY=1
         _alone=()
         for g in "${ALONE[@]}"; do
-            if _in "scripts/$g" "${CHANGED[@]}" \
-               || { [[ -s "$FIRST_PATTERNS" ]] && grep -qF -f "$FIRST_PATTERNS" "$REPO/scripts/$g" 2>/dev/null; }; then
+            if _in "$g" "${WHOLE_TREE[@]}" || covers "$g"; then
                 _alone+=("$g")
             fi
         done
-        echo "affected-only: ${#STAGE1[@]} pooled + ${#_alone[@]} alone of ${#GATES[@]} gates cover this change;"
+        echo "affected-only: ${#STAGE1[@]} pooled + ${#_alone[@]} alone of ${#GATES[@]} gates cover this change"
+        echo "  (${#WHOLE_TREE[@]} of them whole-tree, which cover every change);"
         echo "  the other $(( ${#GATES[@]} - ${#STAGE1[@]} - ${#_alone[@]} )) run at ship (PRE_MERGE_FULL=1 runs them here)"
         echo
         STAGE2=(); ALONE=("${_alone[@]}")
@@ -435,6 +508,18 @@ if [[ -n "${PRE_MERGE_AFFECTED_ONLY:-}" && -z "${PRE_MERGE_FULL:-}" && -z "$STOR
     else
         red "affected-only asked for, but there is no origin/main to diff against: running every gate"
     fi
+fi
+
+# PRE_MERGE_SELECT_ONLY=1: say which gates this run would run, one
+# `would run: <gate>` line each, and run nothing (scripts/test_whole_tree_gates.py
+# reads the real tree's selection this way). Exit 2, as every other run that
+# tested nothing: a caller that reads the exit status (CI, store_app_gates.sh,
+# a release run in a shell where this was left exported) must never read a run
+# that ran no gate as a pass.
+if [[ -n "${PRE_MERGE_SELECT_ONLY:-}" ]]; then
+    printf 'would run: %s\n' "${STAGE1[@]}" "${STAGE2[@]}" "${ALONE[@]}" | grep -v '^would run: $'
+    echo "pre_merge_gates: PRE_MERGE_SELECT_ONLY is set: no gate ran, so this run is not a pass" >&2
+    exit 2
 fi
 
 run_pool() {

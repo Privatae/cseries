@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every .py file under brain/ and server/, every skill and app manifest
 """Gate: the retired build words never reach the host again.
 
 The host's words are build (one task, one engine), compare (the same

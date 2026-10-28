@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every skill, wiki page, app manifest and web source
 """Gate: what the Host reads sends what a person tells it about themselves to
 memory, and keeps its own database for data it builds for a task.
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every .py file under server/
 """Pairing grants (host side) — signer vector, heartbeat narrowing, and the
 approve / deny / revoke paths with a stubbed mgmt dispatch.
 

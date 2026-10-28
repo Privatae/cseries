@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every Dockerfile in the tree
 """Invariant: NO native content-extractor package is installed into a platform
 image without a reviewed decision.
 

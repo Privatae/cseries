@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every tool, in each of the registries it must be in
 """Invariant: every tool the host can be offered lands in ONE reachable lane.
 
 The host-tooling cleanup (2026-08-19) put the host's whole tool surface behind

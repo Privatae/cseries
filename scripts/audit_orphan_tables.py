@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every SQL table reference in the whole tree
 """
 Schema-vs-code table-hygiene ratchet. Four arms, three of them static.
 

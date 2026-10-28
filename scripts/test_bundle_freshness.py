@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every app's web sources against its built bundle, and every .cseries bundle
 """
 Bundle freshness ratchet. The .cseries bundles baked into the image are what
 entities actually INSTALL — system-apps/ source that never got re-packed

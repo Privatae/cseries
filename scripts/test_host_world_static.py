@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every .py file under brain/ and server/
 """Gate: the kernel reads the Host's own schema only through its executor.
 
 A view or function the Host wrote runs with the rights of whoever reads it. If

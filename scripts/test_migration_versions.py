@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every migration
 """Ratchet: no two migration files may map to the same version number.
 
 Run:  python3 scripts/test_migration_versions.py

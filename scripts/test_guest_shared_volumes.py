@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every Quadlet unit and drop-in of the guest and the cloud overlay
 """A volume that more than one of the guest's containers mounts is made once,
 before any of them starts.
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every direct-op tool name
 """Gate: what the Host reads at the moment of failure teaches the agent rule.
 
 The Host calls an agent ONLY for untrusted work outside

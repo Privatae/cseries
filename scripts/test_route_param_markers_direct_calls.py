@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every .py file in the tree, for direct calls to route handlers
 """
 A route's FastAPI parameter marker never reaches a direct Python caller.
 

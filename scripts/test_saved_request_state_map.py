@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every .py file and every migration
 """The saved request's state machine is pinned to the code.
 
 docs/DESIGN-saved-request-state-machine-2026-10-01.md maps every state a saved

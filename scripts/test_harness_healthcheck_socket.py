@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every sidecars/harness-*/Dockerfile
 """Each harness image's Docker HEALTHCHECK works in control-socket mode too.
 
 With CSERIES_SIDECAR_CONTROL_SOCK set (a coding run on a user's machine, `--network

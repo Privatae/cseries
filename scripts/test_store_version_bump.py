@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every system app with a store bundle, against its version in history
 """Store-lane version ratchet — changed payload must carry a version bump.
 
 THE DEFECT (measured).

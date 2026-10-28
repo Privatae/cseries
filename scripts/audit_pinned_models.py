@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every .py file under brain/, cli/ and server/
 """
 Pinned-model ratchet — no hardcoded model or provider names (the catalog is
 dynamic), and no pinned models: the orchestrator selects the model for every

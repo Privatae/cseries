@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every user-facing text in the tree: web sources, app manifests, skills
 """Gate: the word "entity" never reaches a user, or a Host that may repeat it.
 
 The AI a user owns is a Host, and only a Host. "entity" is the platform's internal name for the same row — it

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every .js file under dashboard/base/js/ and system-apps/
 """Gate: every HTML escape helper in the system apps and the shell escapes
 both quotes.
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every migration and every .py, .sh and .sql file under scripts/ and tests/
 """Gate: no gate builds, patches or loosens a KERNEL table by hand.
 
 The kernel's tables are declared in init-db.sql and migrations/ and nowhere

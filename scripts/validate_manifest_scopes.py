@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every system app manifest and native bundle
 """Ratchet: every permission an app manifest declares must exist in the
 server/applications/scopes.py PERMISSIONS catalog.
 

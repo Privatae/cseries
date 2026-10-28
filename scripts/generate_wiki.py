@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every wiki page against its sources
 """The public wiki: the repo check, the status file, and the image bundle.
 
 The pages live in docs/wiki/pages/*.md and hold only what is published; what

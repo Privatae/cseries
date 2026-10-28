@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every gate script, gate list and tests/ file
 """Gate-coverage ratchet — every gate script must run SOMEWHERE, or say why not.
 
 THE DEFECT THIS EXISTS FOR (measured on one ship).

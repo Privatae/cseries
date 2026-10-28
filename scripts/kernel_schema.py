@@ -1,3 +1,6 @@
+# gate-reads: migrations/ — every migrations/v*.sql, applied in version order (migrations() below)
+# gate-reads: init-db.sql — the base schema an empty database starts from
+# gate-reads: entrypoint.sh — the kernel schema section it cuts out and runs
 """Build the schema the kernel actually runs, in a throwaway database.
 
 The kernel owns the entity schema, and entrypoint.sh builds it on every boot,

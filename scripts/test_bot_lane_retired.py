@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every .py file under brain/ and scripts/, and every shell tool in META_TOOL_CAPS
 """Gate: the bot lane is retired and cannot come back by accident.
 
 WHAT WAS RETIRED (2026-08-22)

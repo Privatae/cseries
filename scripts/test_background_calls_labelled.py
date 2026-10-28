@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every .py file under brain/ and server/
 """Gate: every model call the Host makes outside its own turn names itself, so
 the activity feed shows it with its cost.
 

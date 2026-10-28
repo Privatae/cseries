@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every file of vm/runtime/lib/cseries_runtime/
 """The cloud box's bootstrap input and overlay (vm/cloud/).
 
   1. bootstrap.json is checked before anything runs: the name rules (3 to 20

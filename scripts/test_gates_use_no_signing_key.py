@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every file under scripts/ and tests/
 """Gate: no gate or test reads the app signing key.
 
 SIGN_KEY names the Ed25519 private key every Host trusts: it signs the

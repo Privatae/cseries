@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every default skill
 """Instructions the Host reads must name calls it can actually make.
 
 Some instructions told the Host to make calls it could not make. Measured in

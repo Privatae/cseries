@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every file under vm/lima/rootfs/
 """The machine side of the local runtime: what a WSL guest and a cloud box
 install so the runtime and the Host find each other.
 

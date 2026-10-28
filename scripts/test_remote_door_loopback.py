@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every drop-in of the Host's guest unit
 """Remote access: a browser on the internet reaches the Host only through the
 machine's door, from the door's own address, never from loopback.
 

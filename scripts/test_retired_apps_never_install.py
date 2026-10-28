@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every bundle in factory-bundles/ and native-bundles/
 """Retirement ratchet — a RETIRED app id can never be installed, from any lane.
 
 THE DEFECT (measured).

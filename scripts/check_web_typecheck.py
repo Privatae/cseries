@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every source file of the four React apps
 """Typecheck the four React apps. Nothing else in this repo does.
 
 WHY THIS EXISTS. The app-web-kit extraction moved

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every KNOWN_BOX_OPS entry
 """
 A Host drafts only grants that can authorize something.
 

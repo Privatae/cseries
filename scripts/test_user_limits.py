@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every .py file under brain/, server/ and system-apps/, for every limit
 """The person's limits (runtime/user_limits.py): every limit
 that can stop work the person asked for is their setting, with a coded
 default; the Host reads every one and asks to change one on a card only the

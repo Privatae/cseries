@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every web app's sources and the whole tree, for every capability
 """Every host-authored frame is mounted under the sandbox CSP — measured.
 
 These are the surfaces that render HTML the host (or a coding harness) wrote,

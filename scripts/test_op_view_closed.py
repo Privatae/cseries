@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every DOOR_OPS entry
 """test_op_view_closed.py — the pod's half of bastion 0.45.0 (ops_view.go): an
 op sees only the system base and the paths it declares, its effects and its
 `reads`, and an op that reaches a credential store is refused. This is what

@@ -1,0 +1,7 @@
+# A gate whose subject is the whole tree or a whole table declares itself
+# (`# gate-scope: whole-tree — ...` in its source) and pre_merge_gates.sh runs
+# it on every pull request, whatever the change touched: a planted change to a
+# file no gate names selects every such gate and nothing else, and the gates
+# that must be whole-tree say so. Builds stub and copied trees in a temporary
+# directory; runs no gate of the tree.
+test_whole_tree_gates.py

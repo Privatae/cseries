@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every reasoning_effort caller under brain/ and server/
 """Reasoning effort on the Anthropic wire.
 
 Container-free: APP_ROOT=<repo> python3 scripts/test_anthropic_effort.py.

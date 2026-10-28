@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every .py file under brain/
 """Tool results the host stashes for itself are never the user's documents.
 
 WHAT THIS PROTECTS.

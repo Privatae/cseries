@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every .py file under server/, for calls inside a try
 """The second factor's attempt limit (server/network/nac_stepup.py verify_stepup).
 
 A six-digit code is right about 3 times in a million, so whatever can submit

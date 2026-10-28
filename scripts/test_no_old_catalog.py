@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — the whole tree, for the retired catalog
 """Ratchet: the old asset catalog and the three coding-agent packs stay out.
 
 The design system was replaced, for the Host's own desktop UI and

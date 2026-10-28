@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every .py file under brain/ and server/, for every turn type
 """
 Turn types: the timeline block.
 

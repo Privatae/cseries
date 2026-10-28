@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every system app
 """Gate: one web origin per isolated app.
 
 Every isolated app used

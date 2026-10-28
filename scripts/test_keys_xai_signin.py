@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every system app manifest holding write:vault
 """Gate: "Sign in with xAI" from the Keys app (2026-10-05).
 
 A user whose only subscription is Grok has no model, so no Host to ask

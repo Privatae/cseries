@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every public tool schema
 """Gate: the host and the coding harness read ONE runtime truth.
 
 The defect: two hand-written descriptions of what a `runtime.kind: process`

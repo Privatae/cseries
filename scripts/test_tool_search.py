@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every public tool schema
 """The tool search (brain/mastercode/runtime/tool_search.py) finds a Host's
 tools by what they do.
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every default skill
 """The skill standard (brain/mastercode/runtime/skill_standard.py).
 
 Every rule refuses a fixture that breaks it, and passes one that keeps it:

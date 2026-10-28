@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every skill and system app manifest
 """
 Host-visible vocabulary ratchet. Everything a host can SEE — tool
 descriptions, meta-tool capability descs, default skills, app-manifest

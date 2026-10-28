@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every platform text: skills, wiki pages, app manifests, web sources, kernel strings
 """No platform text asks for a word, or teaches the Host to end on a go-ahead
 or an offer.
 

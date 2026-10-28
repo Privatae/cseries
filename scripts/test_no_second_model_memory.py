@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every .py file under brain/ and server/
 """Gate: no model outside the Host's own turn writes what the Host remembers.
 
 Two writers once ran as a separate model call after the turn: the rolling thread summary, which rewrote itself

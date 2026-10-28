@@ -1,3 +1,4 @@
+# gate-scope: whole-tree — every system app's assets
 """Gate: installed apps' content-hashed build assets are cached; nothing else is.
 
 Origin, 2026-09-23: every non-HTML file of an installed app was served with

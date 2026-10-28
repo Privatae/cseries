@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every dashboard/base/js/*.js
 """An installed app has to APPEAR. Three listeners, zero senders.
 
 A user installed Browser from the app store and it did not show up anywhere.

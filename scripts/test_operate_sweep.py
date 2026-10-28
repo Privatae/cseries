@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every DIRECT_OP_TOOLS entry
 """Invariant: the deterministic lane holds the clerical work, and dispatch
 refuses it.
 

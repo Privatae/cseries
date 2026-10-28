@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every tracked text file and every .cseries bundle member (git ls-files)
 """The published tree carries no private tracking references, internal names
 or contact details.
 

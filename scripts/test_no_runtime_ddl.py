@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every .py file in the tree
 """Invariant: the Host kernel does not create or alter its own schema at RUNTIME.
 
 THE RULE

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every default-skills/connectors*.md
 """Gate: every connectors skill rides a turn whole, with room to spare.
 
 A skill body rides the turn only up to prefire_tools.SKILL_INJECT_CHARS

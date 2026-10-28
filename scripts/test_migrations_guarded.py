@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every migration
 """Migration guard lint — the invariant ratchet for the v080 crashloop class.
 
 A migration that touches a table ONLY via `ALTER TABLE IF EXISTS <t>` is

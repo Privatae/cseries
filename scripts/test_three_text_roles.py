@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every .py file under brain/ and server/
 """
 ONE text role — the ratchet that keeps a second from growing back. (The file
 keeps the name it had when there were three; other files point at it.)

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every saved request's SQL under server/ and brain/, on every migration
 """The saved request's SQL, run against a REAL Postgres.
 
 Every other gate for the saved request (test_tools_before_first_turn.py) drives

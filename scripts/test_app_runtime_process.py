@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every system app manifest loads
 """Gate: a user's process app runs in its OWN runtime pod.
 
 Origin: project 1. The host built a trading bot as a

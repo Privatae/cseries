@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every public tool schema
 """Gate: the Host calls an agent ONLY for untrusted work.
 
 The Host calls an agent only for untrusted work outside

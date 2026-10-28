@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every .py file under server/ and brain/
 """A path check decides on the path the request is ROUTED on.
 
 Starlette before 1.0.1 rebuilt request.url from the Host header unchecked, so

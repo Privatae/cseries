@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every route of the built app, for the connector family
 """Gate: the connector route family gets past the HTTP layer to its own check,
 and every route in it HAS that check.
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every schema'd tool against docs/CAPABILITIES.md
 """Invariant: no schema'd, reachable tool is missing from the closed world.
 
 docs/CAPABILITIES.md (and its machine twin docs/capabilities.json) is the

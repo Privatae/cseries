@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every system app manifest
 """Gate: a data-bearing app's tables all carry the owner-subject column.
 
     APP_ROOT=<repo> python3 scripts/test_app_data_subject_contract.py

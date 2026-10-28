@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# gate-scope: whole-tree — every sidecars/harness-*/Dockerfile
 """Gate: an acceptance check that needs a tool the harness image does not ship
 is REFUSED at PLAN time (add_phase / set_phase_spec / plan) — never authored
 into a phase that can only say `command not found`. The BUILD door and the

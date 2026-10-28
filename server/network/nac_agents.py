@@ -384,11 +384,17 @@ async def observation_kind(pool, token_id: int, pid: int):
 async def list_observations(pool, entity_id: int, window_seconds: int = 300) -> list:
     """Agent/AI activity observed across THIS entity's bastions, most-recent first. `active` = seen
     within the window; `requested` = carries a valid delegation token for its server (P9.2);
-    `kind` / `family` / `ppid` per the module docstring (NULL kind reads as agent)."""
+    `delegation_tag_present` = carries a tag at all, valid or not; `kind` / `family` / `ppid` per
+    the module docstring (NULL kind reads as agent).
+
+    The tag's VALUE is never returned. It is a bearer value (mint_agent_delegation hands it out
+    once; v233 lists nac_agent_activity as SECRET for this column), and these rows go to every
+    app holding read:topology through GET /api/network/agents."""
     try:
         rows = await pool.fetch(
             "SELECT a.token_id, a.hostname, a.pid, a.ppid, a.agent_user, a.signature, a.cmdline, "
-            "a.llm_endpoints, a.delegation_token, a.first_seen, a.last_seen, "
+            "a.llm_endpoints, (a.delegation_token IS NOT NULL) AS delegation_tag_present, "
+            "a.first_seen, a.last_seen, "
             "COALESCE(a.kind, 'agent') AS kind, a.family, a.origin, a.evidence, "
             f"(a.last_seen > now() - INTERVAL '{int(window_seconds)} seconds') AS active, "
             "EXISTS(SELECT 1 FROM nac_agent_delegations d WHERE d.token = a.delegation_token "
@@ -412,6 +418,9 @@ async def list_observations(pool, entity_id: int, window_seconds: int = 300) -> 
     out = []
     for r in rows:
         d = dict(r)
+        # Not selected above; dropped here too, so a later SELECT that adds the
+        # column back still cannot hand the value out.
+        d.pop("delegation_token", None)
         for k in ("first_seen", "last_seen", "contain_pending_since"):
             if d.get(k) is not None and hasattr(d[k], "isoformat"):
                 d[k] = d[k].isoformat()

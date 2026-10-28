@@ -1,0 +1,8 @@
+# list_observations against a fresh clone of the kernel's schema
+# (TEST_PG_DSN / PEER_TEST_DSN / TEST_DSN, else a throwaway cseries-postgres
+# through docker, like the other _pg gates here). It computes requested and
+# delegation_tag_present in SQL and returns no delegation token value (a bearer
+# value; GET /api/network/agents hands these rows to every read:topology app).
+# Fails on the SELECT that projected a.delegation_token. Registered here rather
+# than in gates-infra-only.d, where nothing runs a gate: it needs no live Host.
+test_agents_hide_delegation_token_pg.py

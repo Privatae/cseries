@@ -254,8 +254,11 @@ def harness(hid, image, slot, ip, creds, cap, paths, *, vcpus=0, slots=1, browse
         # The browser prefers the gate whenever its token is set
         # (control/app.py _proxy_config), so the owner's signed egress rules
         # decide every page; it is given no plain proxy at all.
+        # A file grant is one folder under the projects path the workspace
+        # is mounted at, never the rest of the container (control/fs_api.py).
         env.update({"CONTROL_BIND": "0.0.0.0", "BROWSER_CONTROL_TOKEN": browser_token,
                     "BROWSER_MAX_SESSIONS": "2", "HOME": home,
+                    "CSERIES_PROJECTS_ROOT": WORKSPACE,
                     "NO_PROXY": no_proxy, "no_proxy": no_proxy})
     else:
         env.update({"PRIVATAE_SIDECAR_BIND": "0.0.0.0",

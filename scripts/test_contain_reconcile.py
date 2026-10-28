@@ -476,7 +476,7 @@ def test_list_observations_carries_when_the_order_was_placed():
         async def fetch(self, q, *a):
             self.q = q
             return [Row({"token_id": 7, "hostname": "box", "pid": PID, "ppid": 1, "agent_user": "u",
-                         "signature": SIG, "cmdline": "x", "llm_endpoints": "[]", "delegation_token": None,
+                         "signature": SIG, "cmdline": "x", "llm_endpoints": "[]", "delegation_tag_present": False,
                          "first_seen": None, "last_seen": None, "kind": "agent", "family": None,
                          "origin": None, "evidence": "[]", "active": True, "requested": False,
                          "acknowledged": False,

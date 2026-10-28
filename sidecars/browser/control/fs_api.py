@@ -54,13 +54,52 @@ class _Grant:
 grant_state = _Grant()
 
 
+def _projects_root(value: Optional[str]) -> Optional[Path]:
+    """The projects root a CSERIES_PROJECTS_ROOT value names, or None.
+
+    An empty or relative value would be read against the working directory,
+    which is the sidecar's home, and `/` holds everything; each of them
+    refuses every grant rather than opening one of those."""
+    if value is None:
+        value = "/var/lib/cseries/projects"
+    p = Path(value.strip())
+    if not value.strip() or not p.is_absolute() or p.resolve().parent == p.resolve():
+        return None
+    return p
+
+
+#: The only folder a grant may name, or name a folder inside: the Host's
+#: projects. A page holding a grant can read, write and delete inside it, and
+#: nothing else the sidecar can reach is the person's to hand to a site: its
+#: home, its credentials folder, its downloads and the filesystem above them.
+#: The local runtime mounts the browser's workspace at this path and names it
+#: in CSERIES_PROJECTS_ROOT (vm/runtime/lib/cseries_runtime/argv.py). None
+#: (the variable set but empty, relative or `/`) refuses every grant.
+PROJECTS_ROOT = _projects_root(os.environ.get("CSERIES_PROJECTS_ROOT"))
+
+
 def grant(path_str: str, name: Optional[str] = None) -> dict:
-    """Set the granted root. Path must exist and be a directory.
+    """Set the granted root: one project's folder under PROJECTS_ROOT.
 
     Called from control.app on POST /grant-fs. Subsequent polyfill
-    operations are scoped to this root.
+    operations are scoped to this root. The path is resolved first, so a
+    link or `..` that leads out of the projects folder is refused like any
+    other path outside it.
     """
-    p = Path(path_str).resolve()
+    if not isinstance(path_str, str) or not path_str.strip():
+        raise PolyfillFSError("NotAllowedError", "grant path is empty")
+    if PROJECTS_ROOT is None:
+        raise PolyfillFSError(
+            "SecurityError", "no projects folder is set (CSERIES_PROJECTS_ROOT), so nothing can be granted")
+    raw = Path(path_str.strip())
+    if not raw.is_absolute():
+        raw = PROJECTS_ROOT / raw
+    p = raw.resolve()
+    projects = PROJECTS_ROOT.resolve()
+    if projects not in p.parents:
+        raise PolyfillFSError(
+            "SecurityError",
+            f"only a project folder under {PROJECTS_ROOT} can be granted, not {p}")
     if not p.exists():
         raise PolyfillFSError("NotFoundError", f"grant path does not exist: {p}")
     if not p.is_dir():

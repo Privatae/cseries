@@ -895,7 +895,9 @@ def test_downloads_are_filed_per_session(dl_root, _fresh):
     ("../../etc/passwd", "passwd"),
     ("/etc/shadow", "shadow"),
     ("..", "download-"),           # falls back
-    ("state ment;rm -rf.csv", "state_ment_rm_-rf.csv"),
+    # a name that had to change keeps its stem and extension, with a tag
+    # between them (state_ment_rm_-rf-<tag>.csv)
+    ("state ment;rm -rf.csv", "state_ment_rm_-rf-"),
     ("", "download-"),
 ])
 def test_site_chosen_filenames_cannot_escape_the_directory(evil, expect, dl_root, _fresh):
@@ -906,6 +908,78 @@ def test_site_chosen_filenames_cannot_escape_the_directory(evil, expect, dl_root
     assert expect in d["filename"], d
     assert "/" not in d["filename"] and ".." not in d["filename"]
     assert Path(d["path"]).parent == dl_root / "acme"
+
+
+def _fetch(session, filename):
+    """GET /v1/sessions/<session>/downloads/<filename>: the status, and the
+    file served when it is one."""
+    try:
+        resp = run(sessions.fetch_download(session, filename))
+    except HTTPException as e:
+        return e.status_code, None
+    return 200, Path(resp.path)
+
+
+def test_different_site_names_never_become_one_file(dl_root, _fresh):
+    """Two names that reduce to the same plain characters (a bank naming its
+    statements in Japanese or Russian, or two long names that differ past
+    the cut) are two files: the second must not overwrite the first before
+    the kernel fetches it."""
+    _create()
+    groups = (("九月.pdf", "十月.pdf"),
+              ("Выписка.csv", "Счёт-ф.csv"),
+              ("r\u00e9sum\u00e9.pdf", "r_sum_.pdf"),
+              ("statement-" + "x" * 150 + "-2026-09.csv",
+               "statement-" + "x" * 150 + "-2026-10.csv"))
+    for names in groups:
+        sessions._sessions["acme"].downloads.clear()
+        sessions._sessions["acme"].download_names.clear()
+        for i, n in enumerate(names):
+            _fire_download("acme", StubDownload(name=n, body=f"file {i}".encode()))
+        got = [d["filename"] for d in sessions._sessions["acme"].downloads]
+        assert len(set(got)) == len(names), (names, got)
+        for i, fn in enumerate(got):
+            assert len(fn) <= 120 and not fn.startswith(".") and "/" not in fn, fn
+            assert fn.endswith(Path(names[i]).suffix), (names[i], fn)
+            st, path = _fetch("acme", fn)
+            assert st == 200 and path.read_bytes() == f"file {i}".encode(), (fn, st)
+    # the same site name is the same file name in a new session (a daily
+    # agent's statement lands on the same file every run)
+    assert sessions._safe_filename("九月.pdf", "x") == sessions._safe_filename("九月.pdf", "x")
+    assert sessions._safe_filename("ledger.csv", "x") == "ledger.csv"
+
+
+def test_the_same_name_twice_in_one_session_keeps_both(dl_root, _fresh):
+    _create()
+    _fire_download("acme", StubDownload(name="statement.csv", body=b"first"))
+    _fire_download("acme", StubDownload(name="statement.csv", body=b"second"))
+    got = [d["filename"] for d in sessions._sessions["acme"].downloads]
+    assert got == ["statement.csv", "statement-2.csv"], got
+    assert _fetch("acme", "statement.csv")[1].read_bytes() == b"first"
+    assert _fetch("acme", "statement-2.csv")[1].read_bytes() == b"second"
+    long = "y" * 120
+    _fire_download("acme", StubDownload(name=long))
+    _fire_download("acme", StubDownload(name=long))
+    assert all(len(d["filename"]) <= 120 for d in sessions._sessions["acme"].downloads)
+
+
+@pytest.mark.parametrize("crafted", [
+    "../bank-b/b.csv", "..%2Fbank-b%2Fb.csv", "%2e%2e", "..", ".", "/etc/passwd",
+    "..\\bank-b\\b.csv", "b.csv\x00", "b" * 4096, "", "b.csv/",
+])
+def test_the_download_endpoint_serves_only_this_sessions_own_files(crafted, dl_root, _fresh):
+    """The kernel puts the listed name into this URL. Whatever the name,
+    nothing outside the session's own folder is served, and nothing of
+    another session's (a regression lock: this held before the file-name
+    change, checked by sending each crafted name)."""
+    _create(name="bank-a", allow=["a.example.com"])
+    _create(name="bank-b", allow=["b.example.com"])
+    _fire_download("bank-a", StubDownload(name="a.csv"))
+    _fire_download("bank-b", StubDownload(name="b.csv"))
+    st, path = _fetch("bank-a", crafted)
+    assert st in (400, 404) and path is None, (crafted, st, path)
+    assert _fetch("bank-a", "b.csv")[0] == 404           # bank-b's file
+    assert _fetch("bank-a", "a.csv")[0] == 200
 
 
 def test_a_failed_download_is_recorded_not_raised(dl_root, _fresh):

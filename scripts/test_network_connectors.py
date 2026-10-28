@@ -122,9 +122,12 @@ READS = {"/nac/connector": CONNECTORS,
 print("1. the Ingress lane draws connectors from /nac/connector")
 view, err = _node({"reads": READS}, """
     await loadNAC();
+    // One clock reading for both sides: connectorLeft floors to the second,
+    // so a millisecond between two Date.now() calls read 61 s as "1:00 left".
+    const T0 = Date.now();
     console.log(JSON.stringify({ html: els['nac-connector-list'].innerHTML,
         open: els['nac-lane-ingress'].classList.contains('open'), pending: state.nac.pending,
-        left: connectorLeft(Date.now() + 61000), gone: connectorLeft(Date.now()) }));""")
+        left: connectorLeft(T0 + 61000, T0), gone: connectorLeft(T0, T0) }));""")
 check("the lane renders under node", view is not None, err)
 if view:
     h = view["html"]

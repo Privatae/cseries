@@ -105,6 +105,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import logging
 import os
 import re
@@ -273,6 +274,9 @@ class Session:
     refs: dict = field(default_factory=dict)
     # In-flight download captures, drained before the context closes.
     download_tasks: set = field(default_factory=set)
+    # Every file name a download of this session was given, taken BEFORE the
+    # first await so two downloads in flight never get one name.
+    download_names: set = field(default_factory=set)
     created_ms: int = 0
     last_used_ms: int = 0
     navigations: int = 0
@@ -557,11 +561,48 @@ def _ensure_capacity() -> None:
                    f"or wait for an idle reap ({IDLE_TTL_S}s)")
 
 
+_NAME_MAX = 120
+
+
+def _split_ext(clean: str) -> tuple[str, str]:
+    stem, dot, ext = clean.rpartition(".")
+    if not dot or not stem or not re.fullmatch(r"[A-Za-z0-9]{1,16}", ext):
+        return clean, ""
+    return stem, "." + ext
+
+
 def _safe_filename(raw: str, fallback: str) -> str:
-    """A filename the SITE chose, made safe to join onto a directory."""
-    base = os.path.basename(raw or "").strip() or fallback
-    base = _SAFE_NAME_RX.sub("_", base).lstrip(".") or fallback
-    return base[:120]
+    """A filename the SITE chose, made safe to join onto a directory.
+
+    Reducing it to plain characters must not make two different names one
+    file: 九月.pdf and 十月.pdf are both __.pdf, and the second would
+    overwrite the first here before the kernel fetched it. A name that had to
+    change carries a tag from the site's own name, so different names stay
+    apart and the same name is still the same file on the next run (a daily
+    agent's statement lands on the same file every time)."""
+    base = os.path.basename(raw or "").strip()
+    clean = _SAFE_NAME_RX.sub("_", base).lstrip(".")
+    if not clean:
+        return fallback
+    if clean == base and len(clean) <= _NAME_MAX:
+        return clean
+    tag = hashlib.sha256(base.encode("utf-8", "surrogatepass")).hexdigest()[:10]
+    stem, ext = _split_ext(clean)
+    stem = stem[:_NAME_MAX - len(tag) - 1 - len(ext)] or "download"
+    return f"{stem}-{tag}{ext}"
+
+
+def _unique_name(s: "Session", name: str) -> str:
+    """`name`, or name-2, name-3, ... when an earlier download of this
+    session already has it: a second statement.csv never replaces the first."""
+    out, k = name, 1
+    while out in s.download_names:
+        k += 1
+        stem, ext = _split_ext(name)
+        sfx = f"-{k}"
+        out = f"{stem[:_NAME_MAX - len(sfx) - len(ext)]}{sfx}{ext}"
+    s.download_names.add(out)
+    return out
 
 
 async def _capture_download(s: Session, download) -> None:
@@ -575,7 +616,8 @@ async def _capture_download(s: Session, download) -> None:
     entry: dict[str, Any] = {"ms": int(time.time() * 1000)}
     try:
         entry["url"] = download.url
-        name = _safe_filename(download.suggested_filename, f"download-{entry['ms']}")
+        name = _unique_name(s, _safe_filename(download.suggested_filename,
+                                              f"download-{entry['ms']}"))
         dest_dir = DOWNLOAD_ROOT / s.name
         dest_dir.mkdir(parents=True, exist_ok=True)
         dest = dest_dir / name

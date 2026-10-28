@@ -4015,7 +4015,7 @@
             rows.push(['evidence', f.evidence.map(e => `${e.tier}: ${e.signal}${e.value ? ' — ' + e.value : ''}`).join('\n'), true]);
         }
         if (f.kind !== 'app' && f.kind !== 'automation') {
-            rows.push(['delegation tag', a.delegation_token ? (f.requested ? 'valid' : 'present but invalid/expired') : 'none']);
+            rows.push(['delegation tag', a.delegation_tag_present ? (f.requested ? 'valid' : 'present but invalid/expired') : 'none']);
         }
         rows.push(['first seen', fmtRel(f.first_seen)], ['last seen', fmtRel(f.last_seen)]);
         const pending = containPendingSince(f);

@@ -411,7 +411,11 @@ system: true
 #   waiting for the anchor with no Request connection (the directory used to
 #   read a missing state as active), and the details' "also serves" line says
 #   "state not reported" instead of showing the name bare.
-version: "1.20.3"
+# 1.20.4 (2026-10-28): the agent inspector's "delegation tag" line reads
+#   delegation_tag_present. GET /api/network/agents no longer returns the tag's
+#   value (a bearer value every read:topology app could read), only whether
+#   one was carried; `requested` still says whether it is valid.
+version: "1.20.4"
 # Network is NOT a conversational surface — the user operates it directly and
 # talks to the host in Circles/the Workbench. So this is the code-true source for
 # the ENVIRONMENT CATALOG (topology block + describe_app), NOT a surface_role

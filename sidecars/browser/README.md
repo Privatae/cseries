@@ -11,10 +11,12 @@ network, with the `seccomp-browser.json` profile and a control token.
 The API's top-level routes (`/screenshot`, `/navigate`, `/profile`,
 `/grant-fs` and others in `control/app.py`) drive one shared page in one
 browser context. The File System Access polyfill (`polyfill/fsa-bridge.js`)
-is bound into that context, so page code can be handed a directory. The
-shared page starts signed out; `/profile` exports or restores its login as a
-Playwright `storage_state`, which the Host keeps sealed. Nothing of it is
-written to the container's disk.
+is bound into that context, so page code can be handed one project folder:
+a folder under `CSERIES_PROJECTS_ROOT` (default `/var/lib/cseries/projects`,
+which the local runtime sets to where it mounts the workspace), never
+anything above it. The shared page starts signed out; `/profile` exports or
+restores its login as a Playwright `storage_state`, which the Host keeps
+sealed. Nothing of it is written to the container's disk.
 
 ## Sessions — `/v1/sessions`
 

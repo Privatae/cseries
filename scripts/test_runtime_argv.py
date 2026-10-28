@@ -278,6 +278,9 @@ check(benv.get("CONTROL_BIND") == "0.0.0.0" and benv.get("BROWSER_CONTROL_TOKEN"
       benv.get("BROWSER_MAX_SESSIONS") == "2" and "HTTPS_PROXY" not in benv and
       benv.get("NAC_EGRESS_SUBJECT_TOKEN") == EGRESS,
       "browser env: its control token, the gate only (no plain proxy)", benv)
+check(benv.get("CSERIES_PROJECTS_ROOT") == "/var/lib/cseries/projects"
+      and "cseries-h-browser-ws:/var/lib/cseries/projects:rw" in G_BROWSER,
+      "browser env: a file grant's projects root is the path its workspace is mounted at", benv)
 
 G_HELPER = ["podman", "run", "--name", "cseries-app-weather",
             "--label", "cseries.runtime=app", "--label", "cseries.runtime.name=app-weather",

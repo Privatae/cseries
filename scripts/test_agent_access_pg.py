@@ -621,6 +621,129 @@ async def main(dsn: str) -> int:
             r = await rpc(c, t5.get("access_token", ""), "tools/list")
             check(r.status_code == 401, "and its token stops at once", r.status_code)
 
+            # ── the owner's passkey on both pages ──
+            # On the desktop's own address (home_origin.HOME): an owner passkey
+            # is for one address, and the page offers it only there.
+            from server import owner_login, owner_passkeys
+            from server.agent_access import pages as agent_pages
+            from server.home_origin import HOME
+            home = httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=HOME.origin)
+            r = await home.post("/oauth/register", json={"client_name": "pk agent", "redirect_uris": [REDIRECT]})
+            pk_client = r.json().get("client_id", "")
+            pk_verifier, pk_challenge = pkce()
+            pq = {"response_type": "code", "client_id": pk_client, "redirect_uri": REDIRECT,
+                  "code_challenge": pk_challenge, "code_challenge_method": "S256", "state": "pk"}
+            r = await home.get("/oauth/authorize", params=pq, headers=person)
+            csp = r.headers.get("content-security-policy", "")
+            check(r.status_code == 200 and "data-passkey" not in r.text and "<script" not in r.text
+                  and "script-src" not in csp and 'name="code"' in r.text,
+                  "with no owner passkey, the connect page takes the code and runs no script", csp)
+
+            made: list[bytes] = []  # the passkeys this section adds, and removes
+            made.append(os.urandom(16))
+            await pool.execute("INSERT INTO owner_passkeys (credential_id, public_key, rp_id) "
+                               "VALUES ($1, $2, $3)", made[-1], b"\x00", HOME.host)
+            r = await c.get("/oauth/authorize", params=pq, headers=person)
+            check(r.status_code == 200 and "data-passkey" not in r.text,
+                  "a passkey made for the desktop's address is not offered on another address")
+            r = await home.get("/oauth/authorize", params=pq, headers=person)
+            page, csp = r.text, r.headers.get("content-security-policy", "")
+            nonce = (re.search(r"script-src 'nonce-([^']+)'", csp) or [None, ""])[1]
+            check(bool(nonce) and f'<script nonce="{nonce}">' in page and page.count("<script") == 1
+                  and "connect-src 'self'" in csp and "default-src 'none'" in csp,
+                  "with an owner passkey, the page carries one script, allowed by its nonce alone", csp)
+            check("data-passkey" in page and "Use a code instead" in page
+                  and "/api/owner/passkey/stepup/options" in agent_pages.PASSKEY_SCRIPT
+                  and "/api/owner/passkey/stepup/verify" in agent_pages.PASSKEY_SCRIPT,
+                  "the passkey comes first (the owner's own step-up check); the code stands behind "
+                  "'Use a code instead'")
+            from server.middleware.localhost_only import origin_allowed
+            check('<meta name="referrer" content="same-origin">' in page and "no-referrer" not in page
+                  and not origin_allowed("null", urlsplit(HOME.origin).netloc, own_origin=True),
+                  "the page's own post carries its Origin (referrer policy same-origin): under "
+                  "no-referrer a browser posts the form with Origin: null, which the localhost gate "
+                  "refuses")
+            tok = form_token(page)
+
+            # A real owner and a live session on the desktop's address: the
+            # passkey check is recorded on the live session the request carries.
+            await owner_login.init()
+            await owner_login.create_owner(owner_login._setup_code, PERSON, "invented pass phrase 7731", "")
+            # (An owner passkey exists by now, so the password no longer signs in:
+            # the session is made as every way of signing in makes it.)
+            session = await owner_login._new_session(pool, HOME.host)
+            owner_passkeys._step_ups.clear()
+            cookie_name = owner_login.cookie_name(HOME.host)
+            jar = {cookie_name: session}
+            r = await home.post("/oauth/authorize", data={"form": tok, "decision": "approve", "read": "1"},
+                                headers=person, cookies=jar)
+            check(r.status_code == 403 and r.headers.get("location") is None,
+                  "no passkey check and no code: nothing is connected")
+            owner_passkeys._note_step_up(session, owner_passkeys.PASSKEY)
+            r = await home.post("/oauth/authorize", data={"form": tok, "decision": "approve", "read": "1"},
+                                headers=person, cookies={jar_name: "another-session" for jar_name in jar})
+            check(r.status_code == 403, "another session's passkey check confirms nothing here")
+            check("Approve with your passkey" in r.text and "That code was not right" not in r.text,
+                  "a yes with no code on a page that offers the passkey says the passkey is missing, "
+                  "never that a code was wrong", r.text[-300:])
+            r = await home.post("/oauth/authorize", data={"form": tok, "decision": "approve", "read": "1"},
+                                headers={**person, "Cookie": f"{cookie_name}=an-old-cookie; {cookie_name}={session}"})
+            check(r.status_code == 303 and r.headers.get("location", "").startswith(REDIRECT),
+                  "an old cookie of the same name sent ahead of the live session does not hide the "
+                  "passkey check that session made", (r.status_code, r.text[-300:]))
+            r = await home.post("/oauth/authorize", data={"form": tok, "decision": "approve", "read": "1"},
+                                headers=person, cookies=jar)
+            loc = r.headers.get("location", "")
+            check(r.status_code == 303 and loc.startswith(REDIRECT)
+                  and parse_qs(urlsplit(loc).query).get("code", [""])[0].startswith("agc_"),
+                  "this session's passkey check from the last five minutes connects the agent",
+                  (r.status_code, r.text[-300:]))
+
+            await pool.execute("DELETE FROM kernel_secrets WHERE id = $1", nac_stepup._TOTP_ENROLLED_ID)
+            owner_passkeys._step_ups.clear()
+            r = await home.get("/oauth/authorize", params=pq, headers=person)
+            page = r.text
+            check("data-passkey" in page and 'name="code"' not in page,
+                  "with an owner passkey and no code, the page asks for the passkey alone")
+            r = await home.post("/oauth/authorize", data={"form": form_token(page), "decision": "approve"},
+                                headers=person, cookies=jar)
+            check(r.status_code == 403 and "passkey" in r.text and "Network app" not in r.text,
+                  "and a yes without the check says to approve with the passkey", r.text[-300:])
+            await pool.execute("DELETE FROM owner_passkeys WHERE credential_id = ANY($1::bytea[])", made)
+            r = await home.get("/oauth/authorize", params=pq, headers=person)
+            check("/passkey page" in r.text and "data-passkey" not in r.text,
+                  "with neither, the page says where to add a passkey")
+
+            # On the remote address (home_origin.REMOTE): only its own passkeys,
+            # and no /passkey page there (that page is the desktop's).
+            from server import home_origin
+            os.environ.pop(home_origin.REMOTE_URL_ENV, None)
+            home_origin.set_remote(f"https://{HOME.handle}.k7x2m9.remote.example")
+            far = httpx.AsyncClient(transport=httpx.ASGITransport(app=app),
+                                    base_url=home_origin.REMOTE.origin)
+            r = await far.get("/oauth/authorize", params=pq, headers=person)
+            check(r.status_code == 200 and "/passkey" not in r.text and "Remote access" in r.text,
+                  "on the remote address with neither, the page names the way to a passkey there, "
+                  "never the desktop's /passkey page", r.text[-400:])
+            made.append(os.urandom(16))
+            await pool.execute("INSERT INTO owner_passkeys (credential_id, public_key, rp_id) "
+                               "VALUES ($1, $2, $3)", made[-1], b"\x00", HOME.host)
+            r = await far.get("/oauth/authorize", params=pq, headers=person)
+            check("data-passkey" not in r.text and "/passkey" not in r.text,
+                  "a passkey made for the desktop is not offered on the remote address")
+            made.append(os.urandom(16))
+            await pool.execute("INSERT INTO owner_passkeys (credential_id, public_key, rp_id) "
+                               "VALUES ($1, $2, $3)", made[-1], b"\x00", home_origin.REMOTE.host)
+            r = await far.get("/oauth/authorize", params=pq, headers=person)
+            check("data-passkey" in r.text
+                  and "script-src 'nonce-" in r.headers.get("content-security-policy", ""),
+                  "the remote address's own passkey is offered there")
+            await pool.execute("DELETE FROM owner_passkeys WHERE credential_id = ANY($1::bytea[])", made)
+            home_origin.set_remote(None)
+            await far.aclose()
+            await nac_stepup.mark_enrolled(pool)
+            await home.aclose()
+
             # ── the registration bound ──
             store.MAX_UNCONNECTED = 3
             codes_seen = []

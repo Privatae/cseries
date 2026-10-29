@@ -1064,28 +1064,35 @@ else
     failed=1
 fi
 
-# ── App-orchestration MCP tools registered ────────────────────────────
-# open_app / close_app / list_apps are the "cell phone" meta tools. If
-# they're missing from the MCP catalog the SDK loses its ability to
-# navigate the dashboard's app surface. Inspect TOOLS + TOOL_HANDLERS
-# inside the running container — INTERNAL_API_SECRET isn't seeded in
-# smoke (no provisioner), so an HTTP tools/list call would 401.
+# ── MCP tool table: the harness fetch channel, nothing retired ────────
+# The identity layer's tools (shape, recall, signal, open_app, close_app,
+# list_apps) are retired from /mcp. An outside agent's tools
+# (server/agent_access/tools.py) run behind its own sign-in, each call checked
+# against what the person approved; in this table any caller holding the
+# handler's scope would reach them without that check, so none may be here.
+# What stays is read_url, the coding harness's `fetch` scope. Read TOOLS +
+# TOOL_HANDLERS inside the running container: over HTTP the internal secret's
+# tools/list is empty by design (the narrowing check further down), and
+# read_url answers only a coding harness's capability.
 mcp_check="$(docker exec "$CNAME" python3 -c "
 import sys
 from server.routes.mcp import TOOLS, TOOL_HANDLERS
+from server.agent_access.tools import TOOLS as AGENT_TOOLS
 names = {t['name'] for t in TOOLS}
-required = {'open_app','close_app','list_apps'}
-missing = required - names
-handler_missing = required - set(TOOL_HANDLERS.keys())
-if missing or handler_missing:
-    print(f'MISSING tools={missing} handlers={handler_missing}')
+handlers = set(TOOL_HANDLERS.keys())
+retired = {'shape','recall','signal','open_app','close_app','list_apps'}
+agent = {t['name'] for t in AGENT_TOOLS}
+back = sorted((names | handlers) & retired)
+crossed = sorted((names | handlers) & agent)
+if back or crossed or not agent or 'read_url' not in names or 'read_url' not in handlers:
+    print(f'BAD retired back={back}; agent tools in the table={crossed}; agent tools={sorted(agent)}; read_url tool={\"read_url\" in names} handler={\"read_url\" in handlers}')
     sys.exit(1)
-print('OK',sorted(required & names))
+print('OK',sorted(names))
 " 2>&1)"
 if [[ "$mcp_check" == OK* ]]; then
-    green "OK    MCP tools registered — $mcp_check"
+    green "OK    MCP tool table: read_url there, no retired tool, no outside agent's tool — $mcp_check"
 else
-    red "FAIL  MCP tools registration: $mcp_check"
+    red "FAIL  MCP tool table: $mcp_check"
     failed=1
 fi
 
@@ -3372,22 +3379,23 @@ else
 fi
 
 # ── Internal-auth narrowing gate (2026-06-19 #2) ──────────────────────
-# (a) An /mcp internal-auth caller gets the synaptive SUBSTRATE ONLY — NOT
-# `factory` (the 13 powerful bridge-op tools) or `apps`, device-blind.
+# (a) An /mcp internal-auth caller gets a well-formed tools/list with NO
+# tools: the synaptive substrate it was narrowed to is retired from /mcp, and
+# it never gets `factory`, `apps`, read_url (the harness's `fetch` scope) or
+# an outside agent's tools.
 # (b) The middleware INTERNAL_API_SECRET bypass is path-restricted — the secret
 # on a non-allowlisted /api route does NOT grant permission.
 isec="smoke-internal-secret"
 if docker exec "$CNAME" sh -c "curl -s -X POST http://[::1]:8800/mcp -H 'Content-Type: application/json' -H 'X-CSeries-Internal-Auth: $isec' -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\"}'" 2>/dev/null | python3 -c "
 import sys,json
 d=json.load(sys.stdin)
-names=[t['name'] for t in (d.get('result',{}).get('tools') or [])]
-substrate=all(n in names for n in ['shape','recall','signal'])
-leak=[n for n in ['ship_cseries','order_software','docker_build','k8s_set_image','open_app'] if n in names]
-sys.exit(0 if (substrate and not leak) else 1)
+r=d.get('result')
+tools=r.get('tools') if isinstance(r,dict) else None
+sys.exit(0 if (isinstance(tools,list) and tools==[]) else 1)
 "; then
-    green "OK    internal-auth /mcp narrowed — substrate only (no factory/apps device-blind)"
+    green "OK    internal-auth /mcp narrowed — a tools/list with no tools (no factory/apps/fetch/agent tools)"
 else
-    red "FAIL  internal-auth /mcp scope NOT narrowed (factory/apps still device-blind reachable)"
+    red "FAIL  internal-auth /mcp: no well-formed empty tools/list (an error, or a tool reached the internal secret)"
     failed=1
 fi
 isec_code="$(docker exec "$CNAME" sh -c "curl -s -o /dev/null -w '%{http_code}' http://[::1]:8800/api/cseries-security/health -H 'X-CSeries-Internal-Auth: $isec'" 2>/dev/null)"

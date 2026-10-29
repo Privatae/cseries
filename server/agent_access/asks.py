@@ -78,7 +78,8 @@ async def _card(pool, eid: int, ask: dict) -> dict | None:
     return t if t.get("status") == "open" else None
 
 
-async def _render(pool, eid: int, ask: dict, error: str = "", status: int = 200) -> HTMLResponse:
+async def _render(request, pool, eid: int, ask: dict, error: str = "",
+                  status: int = 200) -> HTMLResponse:
     import datetime as _dt
     expired = ask["expires_at"] <= _dt.datetime.now(_dt.timezone.utc)
     if ask.get("connection_revoked_at") is not None or expired:
@@ -88,11 +89,14 @@ async def _render(pool, eid: int, ask: dict, error: str = "", status: int = 200)
             return _gone(_closed_words(ask))
         from server.network import nac_approval
         token = await person.sign_form(pool, {"k": "ask", "id": ask["id"]})
+        factors = await person.factors(pool, request)
+        nonce = pages.passkey_nonce(factors)
         return _html(pages.grant_ask_page(client_name=ask["client_name"], server=ask["server"],
                                           op=ask["op"], args=ask.get("args") or [],
                                           note=ask.get("note") or "", form_token=token,
-                                          error=error, reads=not nac_approval.op_writes(ask["op"])),
-                     status)
+                                          error=error, reads=not nac_approval.op_writes(ask["op"]),
+                                          factors=factors, nonce=nonce),
+                     status, nonce)
     card = await _card(pool, eid, ask)
     if card is not None:
         token = await person.sign_form(pool, {"k": "card", "id": ask["id"],
@@ -113,7 +117,7 @@ async def ask_page(ask_id: str, request: Request):
     pool, eid, ask, refusal = await _load(request, ask_id)
     if refusal is not None:
         return refusal
-    return await _render(pool, eid, ask)
+    return await _render(request, pool, eid, ask)
 
 
 @router.post("/agent-access/ask/{ask_id}")
@@ -134,7 +138,7 @@ async def ask_answer(ask_id: str, request: Request):
 
     if signed.get("k") == "ask":
         if decision not in (store.ONCE, store.ALWAYS, store.REFUSE):
-            return await _render(pool, eid, ask, "Choose one of the three answers.", 400)
+            return await _render(request, pool, eid, ask, "Choose one of the three answers.", 400)
         if decision != store.REFUSE:
             from server.network.nac_stepup import StepupLocked
             try:
@@ -142,7 +146,7 @@ async def ask_answer(ask_id: str, request: Request):
             except StepupLocked as locked:
                 ok, why = False, person.locked_words(locked)
             if not ok:
-                return await _render(pool, eid, ask, why, 403)
+                return await _render(request, pool, eid, ask, why, 403)
         try:
             await store.decide_ask(pool, eid, ask["id"], decision)
         except store.AgentAccessError as err:
@@ -155,7 +159,7 @@ async def ask_answer(ask_id: str, request: Request):
         from server.network import nac_ops
         from server.routes import tickets
         if decision not in (nac_ops.CHOICE_ONCE, nac_ops.CHOICE_NO):
-            return await _render(pool, eid, ask, "Choose one of the two answers.", 400)
+            return await _render(request, pool, eid, ask, "Choose one of the two answers.", 400)
         try:
             await tickets.decide_ticket_service(pool, eid, int(signed["ticket"]), option_id=decision,
                                                 actor="user")

@@ -24,7 +24,7 @@ import hmac
 import json
 import os
 import time
-from typing import Optional
+from typing import NamedTuple, Optional
 
 _FORM_KEY_ID = "agent_access_form_key"
 FORM_TTL_S = 1800
@@ -82,12 +82,17 @@ async def read_form(pool, token: str) -> Optional[dict]:
     return data
 
 
-def _fresh_passkey(request) -> bool:
-    """A passkey check this session made within STEP_UP_S."""
+async def _fresh_passkey(request) -> bool:
+    """A passkey check this session made within STEP_UP_S. The session is the
+    first live one the request carries (owner_session.live_session), the one
+    the step-up route records the check on: an older cookie of the same name
+    sent ahead of it (an app origin can set one for the whole zone) must not
+    hide the check the person just made."""
     try:
         from server import owner_passkeys
-        from server.middleware.owner_session import _cookie
-        return owner_passkeys.fresh_step_up(_cookie(request.scope))
+        from server.middleware.owner_session import live_session
+        _email, token = await live_session(request.scope)
+        return owner_passkeys.fresh_step_up(token)
     except Exception:  # noqa: BLE001 — no passkey state: the code decides
         return False
 
@@ -96,15 +101,67 @@ def locked_words(locked) -> str:
     return f"Too many wrong codes. Try again in {int(locked.wait_s)} seconds."
 
 
+NO_FACTOR_WORDS = ("Your Host has no passkey or authenticator code set up yet, so it cannot check "
+                   "that this is you. Add a passkey on your Host's /passkey page, then open this "
+                   "page again.")
+# On the remote address (home_origin.REMOTE) there is no /passkey page (it is
+# the desktop's: routes/owner.py passkey_page), and a passkey for this address
+# is added from the desktop's Remote access page, "Add a phone"
+# (routes/remote_access.py, server/remote_join.py).
+NO_FACTOR_REMOTE_WORDS = ("Your Host has no passkey for this address and no authenticator code set "
+                          "up, so it cannot check that this is you here. On your Host's own "
+                          "address, open Remote access and choose Add a phone for this device, "
+                          "then open this page again.")
+PASSKEY_WORDS = ("Approve with your passkey: choose your answer, then confirm on your device. This "
+                 "page needs its script turned on to use it.")
+
+
+class Factors(NamedTuple):
+    """What this Host can check the person with on these pages: the code
+    from their authenticator, and an owner passkey made for the address this
+    page is on (owner_passkeys: a passkey works only on the address it was
+    made on). `remote`: the page is on the remote address."""
+    code: bool
+    passkey: bool
+    remote: bool = False
+
+
+def no_factor_words(factors) -> str:
+    """What the page says when the person has neither factor here."""
+    return NO_FACTOR_REMOTE_WORDS if getattr(factors, "remote", False) else NO_FACTOR_WORDS
+
+
+async def factors(pool, request) -> Factors:
+    from server.network import nac_stepup
+    code = await nac_stepup.is_enrolled(pool)
+    remote = False
+    try:
+        from server import home_origin, owner_passkeys
+        from server.middleware.owner_session import request_host
+        origin = home_origin.desktop_origin(request_host(request.scope))
+        remote = origin is not None and origin is home_origin.REMOTE
+        passkey = origin is not None and await owner_passkeys.passkey_count(pool, origin) > 0
+    except Exception:  # noqa: BLE001 — no passkey state: the code decides
+        passkey = False
+    return Factors(code=bool(code), passkey=bool(passkey), remote=bool(remote))
+
+
 async def confirm(pool, request, code: str) -> tuple[bool, str]:
     """(confirmed, why not). A fresh passkey check, else the authenticator
     code, burned on success."""
     from server.network import nac_stepup
-    if _fresh_passkey(request) and not (code or "").strip():
+    typed = (code or "").strip()
+    if await _fresh_passkey(request) and not typed:
         return True, ""
-    if not await nac_stepup.is_enrolled(pool):
-        return False, ("Your Host has no authenticator set up yet, so it cannot confirm that this "
-                       "is you. Set one up in the Network app, then open this page again.")
+    enrolled = await nac_stepup.is_enrolled(pool)
+    if not typed or not enrolled:
+        # No code typed on a page that offers the passkey: the passkey is
+        # what is missing, never a wrong code.
+        have = await factors(pool, request)
+        if have.passkey:
+            return False, PASSKEY_WORDS
+        if not enrolled:
+            return False, no_factor_words(have)
     # A caller whose record is waiting gets StepupLocked from here, raised
     # as every code check raises it; the page says how long (locked_words).
     ok = await nac_stepup.verify_stepup(pool, (code or "").strip())

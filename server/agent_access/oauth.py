@@ -182,10 +182,13 @@ def _redirect_with(redirect_uri: str, params: dict) -> RedirectResponse:
                             headers={"Cache-Control": "no-store"})
 
 
-def _html(text: str, status: int = 200) -> HTMLResponse:
+def _html(text: str, status: int = 200, nonce: str = "") -> HTMLResponse:
+    # A page offering a passkey runs its one script (pages.PASSKEY_SCRIPT, by
+    # this nonce) and may fetch from this origin, for the passkey check; no other.
+    script = f"script-src 'nonce-{nonce}'; connect-src 'self'; " if nonce else ""
     return HTMLResponse(text, status_code=status, headers={
         "Cache-Control": "no-store",
-        "Content-Security-Policy": "default-src 'none'; style-src 'unsafe-inline'; "
+        "Content-Security-Policy": f"default-src 'none'; style-src 'unsafe-inline'; {script}"
                                    "form-action 'self' http: https:; frame-ancestors 'none'",
         "X-Frame-Options": "DENY"})
 
@@ -247,9 +250,11 @@ async def authorize_page(request: Request):
                                    "The agent's link names another server; this Host serves only "
                                    + origin + "/mcp.", error=True), 400)
     token = await person.sign_form(pool, {"k": "connect", **checked})
+    factors = await person.factors(pool, request)
+    nonce = pages.passkey_nonce(factors)
     return _html(pages.connect_page(client_name=client["client_name"],
                                     redirect_host=urlsplit(checked["redirect_uri"]).netloc,
-                                    form_token=token))
+                                    form_token=token, factors=factors, nonce=nonce), nonce=nonce)
 
 
 @router.post("/oauth/authorize")
@@ -282,9 +287,12 @@ async def authorize_answer(request: Request):
     except StepupLocked as locked:
         ok, why = False, person.locked_words(locked)
     if not ok:
+        factors = await person.factors(pool, request)
+        nonce = pages.passkey_nonce(factors)
         return _html(pages.connect_page(client_name=client["client_name"],
                                         redirect_host=urlsplit(checked["redirect_uri"]).netloc,
-                                        form_token=form["form"], error=why, read_checked=read), 403)
+                                        form_token=form["form"], error=why, read_checked=read,
+                                        factors=factors, nonce=nonce), 403, nonce)
     await store.connect(pool, eid, client["id"], read=read)
     code = await store.issue_code(pool, client["id"], checked["redirect_uri"],
                                   checked["code_challenge"], checked.get("resource") or "")

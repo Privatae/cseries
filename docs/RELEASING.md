@@ -64,9 +64,10 @@ github.com/Privatae/cseries. Pushing the tag runs
 - **The C-Series Cloud release**, on the same GitHub release:
   `cseries-cloud-overlay-X.Y.Z.tar.gz` (every file a cloud box installs, built
   by `vm/cloud/build-overlay.sh`) with its `.sha256`, and `cloud-release.json`,
-  which pins the overlay, the two images above, the four runtime images and
-  the harness source tarball. A cloud box takes it only once its signature
-  is beside it, which the maintainer adds by hand (section 3).
+  which pins the overlay, the Host, database and door images, the four
+  runtime images and the harness source tarball. A cloud box takes it only
+  once its signature is beside it, which the maintainer adds by hand
+  (section 3).
 - **The free App Store**, on the same GitHub release: `catalog.json`, which
   lists every store app with its bundle's URL on this release and sha256,
   the runtime images it needs pinned by digest, its licence and its source,
@@ -131,7 +132,8 @@ Then, from a clean checkout of the commit you will tag:
    docker build -f sidecars/app-runtime-creative/Dockerfile -t cseries-app-runtime-creative:release-check .
    docker build -f sidecars/remote-door/Dockerfile -t cseries-remote-door:release-check .
    vm/wsl/build-rootfs.sh --arch x64 --version X.Y.Z --out /var/tmp/guest-check
-   vm/wsl/test/boot-test.sh /var/tmp/guest-check/cseries-wsl-rootfs-X.Y.Z-x64.tar.gz \
+   RT_PY_IMAGE=cseries-app-runtime-python:release-check RT_BROWSER_IMAGE=cseries-browser:release-check \
+     vm/wsl/test/boot-test.sh /var/tmp/guest-check/cseries-wsl-rootfs-X.Y.Z-x64.tar.gz \
      cseries:release-check cseries-postgres:release-check cseries-remote-door:release-check
    ```
 
@@ -143,7 +145,8 @@ Then, from a clean checkout of the commit you will tag:
    certificate job must each start at the first attempt when started
    together, on fresh volumes and on volumes an earlier install made (their
    shared volumes are cseries-remote-*.volume units), and the Host must still
-   answer on the guest's 127.0.0.1:8800, before the tag.
+   answer on the guest's 127.0.0.1:8800, before the tag. With the two
+   runtime images it also starts the local runtime's containers in the guest.
 
 2. The release term check must exit 0:
 
@@ -170,8 +173,7 @@ git tag -a vX.Y.Z -m "C-Series X.Y.Z"
 git push origin vX.Y.Z
 ```
 
-The tag must be exactly `vX.Y.Z`; anything else stops the workflow at its
-first job.
+The tag must be exactly `vX.Y.Z`; any other tag releases nothing.
 
 ## 3. Sign the C-Series Cloud release and the App Store catalog
 
@@ -199,8 +201,8 @@ run after the release becomes the latest (the last step of this section).
 
 The workflow's `store` job uploads `catalog.json` and the bundles and stops
 there in the same way: until a signature for kind `cseries-store` sits beside
-the catalog, every Host refuses it. Its summary prints the commands with the
-version and sha256 filled in:
+the catalog, every Host refuses it. Its summary prints the sign and upload
+commands with the version and sha256 filled in; the full sequence is:
 
 ```sh
 gh release download vX.Y.Z --repo Privatae/cseries --pattern catalog.json
@@ -298,9 +300,9 @@ With the repository public:
 
 - **Turn on GitHub Pages.** In the repository's Settings, open Pages and set
   Source to "GitHub Actions". Without it `.github/workflows/pages.yml` never
-  deploys. It deploys from the default branch when `.github/pages` changes;
-  to publish the first time, run it from the Actions tab (pages, Run
-  workflow). It publishes C-Series's OAuth Client ID Metadata Document at
+  deploys. It runs only when started by hand: after a change to
+  `.github/pages`, and the first time, run it from the Actions tab (pages,
+  Run workflow). It publishes C-Series's OAuth Client ID Metadata Document at
   https://privatae.github.io/cseries/oauth/client-metadata.json.
 - **Never give the Privatae account's user site, privatae.github.io, a custom
   domain**, and give this site none either. That URL is itself the

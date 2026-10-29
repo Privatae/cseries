@@ -12,7 +12,9 @@ Two layers decide every call, and neither can widen the other:
      this once' approval for exactly these arguments;
   2. the Host's own: nac_mgmt.run_mgmt_op runs its signed-grant default-deny
      gate and the machine's write gate for this call as for the Host's own
-     work. An agent never gets what the Host itself is not approved for.
+     work. An agent never gets what the Host itself is not approved for. That
+     gate (nac_mgmt.gate_op) is asked before anything else is, so an op the
+     Host may not run is refused with its words, never turned into an ask.
 
 What the agent lacks becomes an ask (store.file_ask) and the call ends with
 NeedsApproval: the link to a page on this Host where the person answers. A
@@ -145,8 +147,22 @@ def host_only(op: str) -> bool:
             or op in ("stepup_request", "stepup_status", "device_request", "device_status"))
 
 
+HOST_REFUSED = "refused: the Host's own permissions"
+
+
+def _host_refusal(words: str) -> dict:
+    """The Host's own gate said no: its words, as an error. Nothing ran, and
+    the person's approval cannot change that, so no link is offered."""
+    return _text(f"{words}. This Host itself is not allowed to run it, so nothing ran and the "
+                 "person was not asked.", error=True)
+
+
 def ask_url(origin: str, ask_id: str) -> str:
-    return f"{origin}/agent-access/ask/{ask_id}"
+    """The person's approval page for an agent that reached this Host at
+    `origin`: on a loopback agent origin, the desktop's own address, where
+    the person is signed in (origin.authorization_origin), as the connect page."""
+    from server.agent_access.origin import authorization_origin
+    return f"{authorization_origin(origin)}/agent-access/ask/{ask_id}"
 
 
 def _text(payload: Any, *, error: bool = False) -> dict:
@@ -246,7 +262,24 @@ async def call(pool, eid: int, conn: dict, name: str, args: dict, origin: str) -
         await store.record_call(pool, cid, name, server, op, "refused: no such machine")
         return _text(f"'{server}' is not one of the person's machines. `machines` lists them.",
                      error=True)
+    # The Host's own permission first, by the pod gate's own check (the one
+    # run_mgmt_op runs): an op this Host may not run itself is refused here,
+    # before any ask is filed, so the person is never offered an approval
+    # for it and no 'just this once' is spent on it.
+    host_ok, host_why, _decision = await nac_mgmt.gate_op(pool, eid, server, op)
     free_read = read_grant_covers(op)
+    if not host_ok:
+        await store.record_call(pool, cid, name, server, op, HOST_REFUSED)
+        # Why, only to an agent the person already let run this op: the
+        # reason can be their own words in their grant, or that the machine
+        # is quarantined or suspended, and an agent without the op learned
+        # none of it before this check (it got the person's link). Every
+        # other agent is told only that the Host's own permissions refuse it.
+        if store.holds(held, store.READ if free_read else store.OP, server, op):
+            words = nac_mgmt.gate_refusal_words(server, op, host_why)
+        else:
+            words = f"op '{op}' on '{server}' not permitted by this Host's own permissions"
+        return _host_refusal(words)
     once_id = None
     if free_read:
         allowed = store.holds(held, store.READ, server, op)
@@ -280,10 +313,25 @@ async def call(pool, eid: int, conn: dict, name: str, args: dict, origin: str) -
         res = await nac_mgmt.run_mgmt_op(pool, eid, server, op, op_args, note="",
                                          approval_wait_s=0, origin=nac_mgmt.ORIGIN_AGENT)
     except nac_mgmt.MgmtError as e:
+        if e.reached:
+            # The machine took the job and did not answer in time: it may have
+            # run, or still be running. A 'once' stays spent, so the same
+            # approval can never run it a second time.
+            await store.record_call(pool, cid, name, server, op,
+                                    f"sent ({why}), no answer: error {e.status}")
+            return _text(f"{op} on {server}: {e.detail}", error=True)
         if once_id:
             await store.give_back_once(pool, once_id)
-        await store.record_call(pool, cid, name, server, op, f"error {e.status}")
+        await store.record_call(pool, cid, name, server, op, f"not run: error {e.status}")
         return _text(f"{op} on {server} could not run: {e.detail}", error=True)
+    if isinstance(res, dict) and res.get("refused_by") == nac_mgmt.REFUSED_BY_HOST:
+        # The Host's own gate refused it after the check above (a grant taken
+        # back in between): nothing reached the machine, so the person's
+        # 'once' is given back, not spent.
+        if once_id:
+            await store.give_back_once(pool, once_id)
+        await store.record_call(pool, cid, name, server, op, HOST_REFUSED)
+        return _host_refusal(str(res.get("stderr") or ""))
     if isinstance(res, dict) and res.get("state") in ("asked", "pending_approval"):
         if once_id:
             await store.give_back_once(pool, once_id)
@@ -296,6 +344,18 @@ async def call(pool, eid: int, conn: dict, name: str, args: dict, origin: str) -
             f"{words} Nothing ran yet. Ask them to open {url} on their Host, then call again "
             "with the same arguments."))
     exit_code = res.get("exit") if isinstance(res, dict) else None
+    not_run = res.get(nac_mgmt.NOT_RUN) if isinstance(res, dict) else None
+    if not_run:
+        # Nothing reached the machine (run_mgmt_op says so in NOT_RUN, a code,
+        # never its words): the approval's own state ended it (no way to take
+        # one, refused at the device, expired, the device offline), another
+        # refusal of this Host's, or the act was already done. The person's
+        # 'once' is given back, and the record says what happened.
+        if once_id:
+            await store.give_back_once(pool, once_id)
+        await store.record_call(pool, cid, name, server, op, f"not run: {not_run}")
+        out = {k: res.get(k) for k in ("server", "op", "exit", "stdout", "stderr", nac_mgmt.NOT_RUN)}
+        return _text(out, error=bool(exit_code))
     await store.record_call(pool, cid, name, server, op, f"ran ({why}), exit {exit_code}")
     out = {k: res.get(k) for k in ("server", "op", "exit", "stdout", "stderr")} \
         if isinstance(res, dict) else {"result": res}

@@ -229,6 +229,61 @@ async def main():
                             headers=rpc + [("x-cseries-harness-cap", "not-current")])
     check(st == 401, "real /mcp: a harness capability that is not current is 401 from loopback too", (st, body))
 
+    # The /mcp page answers anyone, the internet through the remote door
+    # included, with no token: it names the server and no version. The
+    # Host's version is in initialize's serverInfo, behind the token
+    # (test_agent_access_pg.py), as /api/system/version is behind the session.
+    # On an https desktop the address for agents is that address.
+    import json as _json
+    from server.routes import mcp as _mcp
+    from server.routes.system import _load_build_info
+    built = str(_load_build_info().get("tag") or "dev")
+    check(_mcp.SERVER_INFO.get("version") == built,
+          f"initialize's serverInfo carries the Host's own version ({built})", _mcp.SERVER_INFO)
+    for who, peer, host, hdrs in (("loopback", loop, "localhost:8800", []),
+                                  ("the door", PROXY, DESKTOP, [("x-forwarded-proto", "https")])):
+        st, _h, body = await run(real, "GET", "/mcp", peer=peer, host=host,
+                                 headers=hdrs + [("accept", "application/json")])
+        info = _json.loads(body or b"{}") if st == 200 else {}
+        check(st == 200 and info.get("server") == {"name": "host"}
+              and f'"{built}"' not in body.decode("utf-8", "replace"),
+              f"real GET /mcp from {who}, with no token: names the server and not its version",
+              (st, info.get("server")))
+    st, _h, body = await run(real, "GET", "/mcp", peer=PROXY, host=DESKTOP,
+                             headers=[("accept", "application/json"), ("x-forwarded-proto", "https")])
+    info = _json.loads(body or b"{}") if st == 200 else {}
+    check(info.get("address") == f"https://{DESKTOP}/mcp",
+          "real GET /mcp through the door: an https desktop gives its own address to agents", info)
+
+    # An agent on this computer (agent_access/origin.py), on a desktop whose
+    # plain-http port is the scheme's own: a client writes http://127.0.0.1/mcp
+    # (no :80, in its Host header and its resource), so that is the loopback
+    # agent origin, the one whose connect page is the desktop's.
+    from types import SimpleNamespace
+    from server import home_origin
+    from server.agent_access import origin as O
+    saved = home_origin.HOME
+    try:
+        for url, port in (("http://home.cseries.localhost", ""), ("http://home.cseries.localhost:8800", ":8800")):
+            home_origin.HOME = home_origin.parse(url)
+            seen = O.request_origin(SimpleNamespace(headers={"host": f"127.0.0.1{port}"},
+                                                    url=SimpleNamespace(scheme="http")))
+            check(O.loopback_agent_origins() == {f"http://127.0.0.1{port}", f"http://localhost{port}",
+                                                 f"http://[::1]{port}"}
+                  and seen in O.loopback_agent_origins()
+                  and O.authorization_origin(seen) == home_origin.HOME.origin
+                  and O.agent_address(home_origin.HOME.origin) == f"http://127.0.0.1{port}/mcp"
+                  and f"http://127.0.0.1{port}/mcp" in O.agent_resources(home_origin.HOME.origin),
+                  f"on {url} the loopback agent origin is the one a client writes (http://127.0.0.1{port})",
+                  (sorted(O.loopback_agent_origins()), seen, O.authorization_origin(seen)))
+        home_origin.HOME = home_origin.parse("https://home.box.example")
+        check(O.loopback_agent_origins() == frozenset() and O.authorization_origin("http://127.0.0.1:443")
+              == "http://127.0.0.1:443" and O.agent_resources(home_origin.HOME.origin)
+              == {home_origin.HOME.origin + "/mcp"},
+              "an https desktop has no loopback agent origin: its connect page takes only its own resource")
+    finally:
+        home_origin.HOME = saved
+
 
 asyncio.run(main())
 print(f"\n{CHECKS} checks; {'FAILED' if failed else 'all passed'}")

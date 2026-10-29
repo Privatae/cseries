@@ -1,8 +1,8 @@
 # The Host's orchestrator turn
 
-Code runs only on the **harness pool**, reached only through the host's own build tools
-(`build`, `ladder.run`); everything else the host delegates goes to a
-**dispatched agent** (`runtime/scoped_agent.py`).
+Code runs only through the host's own tools (`build`, `ladder.run`, `mesh_harness_run`,
+`lab_run`, `machine_exec`, and `mgmt_run` for an op it wrote); a **dispatched agent**
+(`runtime/scoped_agent.py`) only reads.
 
 > In this document "the platform" means the C-Series kernel inside the Host: the code outside
 > the Host's own `world` schema. It does not mean a hosted service; C-Series has no hosted Host.
@@ -12,8 +12,8 @@ The host is the **orchestrator** of its turn:
 > build context → think it through → pick tools → write the agent's prompt → dispatch a
 > scoped agent → monitor it → integrate the result.
 
-The host holds **only orchestration primitives**. Domain tools (calendar, inbox, files,
-network, code, …) live on the **agents it dispatches**, scoped per task.
+The host runs its own operations with `operate` (found with `find_tools`) and reads with
+`read`; it dispatches an agent only to read content it does not own.
 
 ## The turn
 
@@ -21,27 +21,28 @@ network, code, …) live on the **agents it dispatches**, scoped per task.
    turn to memory (async embed). No inference.
 2. **Build context** — deterministic: system prompt (host identity/surface) + a fixed recent
    recall window + relevant memory. The host gathers context itself.
-3. **Govern (structural, no LLM)** — the CEIGAS inference-crossing gate; permission slips scope
-   any dispatched agent. Replaces the per-turn LLM veto entirely. The crisis check (SB 243 floor,
-   `spike_classifier.detect_crisis`, on the person's words: the turn's message — not the brief of a
-   turn the platform started, unless it is a request the person saved — and each nudge) never gates the
-   model and never writes as the Host: on a hit the platform writes its
-   content-free governance row, sends the `governance` frame (Circles and the Workbench show the
+3. **Govern (structural, no LLM)** — the CEIGAS inference-crossing gate; each dispatched agent
+   holds only the read capabilities its grant names. Replaces the per-turn LLM veto entirely.
+   The crisis check (SB 243 floor, `runtime/crisis.py::detect_crisis`, on the person's words:
+   the turn's message — not the brief of a turn the platform started, unless it is a request the
+   person saved — and each nudge) never gates the model and never writes as the Host: on a hit
+   the platform writes its content-free governance row, sends the `governance` frame (Circles and the Workbench show the
    platform's own dismissable notice with the 988 resources), and puts a "## Crisis Check" fact in
    that turn's context; the model reads it and answers in its own words.
 4. **Orchestrate (the one host call + loop)** — the host model reasons and acts via its
    orchestration tools:
    - `recall(query)` — pull more context on demand.
-   - `dispatch(task, tools, model, prompt)` — spawn a **dispatched in-container scoped agent**
-     (see below); the host writes its prompt, picks its tools + model tier, monitors it,
-     integrates the return. Code/build work is the one exception → it goes to the harness pool.
+   - `dispatch(intent, task, tool_scope, grant, system_prompt, work)` — a background agent
+     that reads untrusted content and reports back (see below); the host writes its prompt,
+     picks its tools, monitors it, integrates the return.
    - `build(action, …)` — the **harness-pool handoff**: building/changing/continuing CODE on a
      coding harness (claude-code/codex/cursor/…). Code work goes here, NEVER through
      `dispatch` — a dispatched agent can never execute code.
    - `escalate(...)` — hand a decision to the user.
    Trivial conversational turns are answered directly, with no dispatch.
 5. **Stream + record** — existing AI-SDK frames; write the assistant turn (async).
-6. **Async post** — consolidation/memory derivation, fire-and-forget.
+6. **No post pass** — memory is written inside the turn; nothing re-reads the conversation
+   afterwards.
 
 ## Two kinds of delegation — DO NOT conflate
 - **The harness pool — external coding harnesses** (`build`, `ladder.run`;
@@ -49,23 +50,22 @@ network, code, …) live on the **agents it dispatches**, scoped per task.
   containers, for **code/build only**. Governed by the container/OCI boundary + signed grant. Only the
   host's OWN build tools reach them; the host hands off to them for code, nothing more.
 - **Dispatched agents — in-container scoped agents** (`runtime/scoped_agent.py`, live):
-  ephemeral agents that run **inside** the Host container,
-  doing the host's own domain work (calendar, inbox, network, memory) with a **scoped slice of
-  the host's tools + its identity/context/memory, under a slip**. This is what `dispatch`
-  spawns for the host's own work. Reuses the tool-loop **engine** (`_call_entity_model` + the
-  loop) with a scoped tool subset + task prompt; ephemeral; returns to the host.
+  ephemeral agents inside the Host container that read untrusted content (a foreign repo, the
+  web, a message) with only the read capabilities their grant names, and report back. This is
+  what `dispatch` spawns. Reuses the tool loop's parts (`provider_gateway.call_model` and its
+  own loop) with a scoped tool subset + task prompt; ephemeral; returns to the host.
 
-`dispatch` always spawns an in-container agent. The host stays light; the dispatched agent holds
-the domain tools for its one task. Latency note: a dispatched agent is in-process (no container
-cold-start), so "check my calendar" stays fast; the harness pool's container cost is paid only for
-code/build.
+`dispatch` always spawns an in-container agent, holding only the readers for its one task.
+Latency note: a dispatched agent is in-process (no container cold-start); the harness pool's
+container cost is paid only for code/build.
 
 ## Safety model — the pool/agent separation IS the security boundary
-Dispatched agents are **the host's hands inside its own container**: they operate the container +
-network (domain tools) but **CANNOT execute or build code**. A dispatched agent can make a mistake
-(misconfigure, send the wrong message) but cannot *break* anything — there is no code execution
-in its reach. **All executable code goes through the harness pool** (disposable harness container, OCI
-boundary + signed grant), via the host's own build tools. Enforcement: a dispatch `tool_scope`
+Dispatched agents are **the host's readers inside its own container**: they read untrusted
+content and **CANNOT execute or build code**. A dispatched agent reads and reports; it cannot
+change anything, and there is no code execution in its reach. **All executable code goes
+through the host's own tools**: the harness pool (disposable harness container, OCI boundary +
+signed grant), a mesh or lab server, or a machine: a root command its bastion granted, or an op
+the person approved there. Enforcement: a dispatch `tool_scope`
 may NEVER contain a code-exec/build tool (`build`, `ladder.run`,
 `review.compare`, `review.propose_commit`, `mesh_harness_run`, `bash`, …) — the runner
 hard-strips/refuses them. Capability-limited hands in-container +
@@ -93,7 +93,7 @@ tools and a warm cache:
    **waiting card** (a `waiting` tool card naming what it waits on) that completes when it stops.
    The hold never takes the person's composer: while the card is up, Send stays Send (Stop beside
    it) and what they type goes into the holding turn (`POST /api/brain/turns/{id}/nudge`, Circles'
-   nudge), held by the client to go as the next message if the turn ends first. Every word sent into
+   nudge), held by the server (`pending_words`) to go as the next message if the turn ends first. Every word sent into
    a running turn is written as a user row when the turn reads it, stamped when it was sent. A turn
    that has STOPPED READING — it released its holds at its exit (`session.release_holds`; going
    round its loop again reads again) — is never pushed into: a different message on its thread
@@ -108,7 +108,7 @@ tools and a warm cache:
 3. **What arrives enters the running turn.** A finished build or agent is handed to the turn that
    started it (`hand_result_to_turn`) as a platform brief with the run's facts; the person's answer
    to a ticket is spoken into the turn that asked it by the decide itself
-   (`tickets.decide_ticket_service` → `answer_into_turn`, capped at 2000 like a nudge), whichever
+   (`tickets.decide_ticket_service` → `answer_into_turn`, whole, like a nudge), whichever
    surface they answered on. Both go through the same drain as a nudge, and the Host carries on
    **with its tools and a warm cache** — the next phase, a retry, a report. A result that arrives
    while the model has a round pending waits for that round; the person's words do not. A turn
@@ -264,7 +264,7 @@ only ask was narration beside a tool call ("Should I check the logs first? Check
 guard never judges it, so it is never counted as a failure in the daily `still_*` columns) —
 unless the turn ends on that narration, nothing of the Host's after it.
 
-What the stored reply is, exactly — ONE recorder (`send_message._send`): every piece
+What the stored reply is, exactly — ONE recorder (`turn_replies.TurnReplies._send`): every piece
 of visible text the turn sends — each model completion's text, the dispatch narration, the stall
 notice — is recorded exactly once, at the one point where it is sent to the stream, and the
 stored reply is those pieces in order, joined with `session.REPLY_SEP` ("\n\n"). The stream sends
@@ -378,6 +378,6 @@ The rows live in each Host's own database. In PII mode the row's metadata keeps 
 keys only, so `go_ahead` (it quotes the Host's sentence) is not kept there.
 
 ## Governance after the veto
-Structural only: input_guard (screen) + CEIGAS (trust/math gate) + slips on dispatched agents,
+Structural only: input_guard (screen) + CEIGAS (trust/math gate) + read-only grants on dispatched agents,
 and the crisis check's notice beside the turn, never in it (step 3 above).
 No LLM judging an LLM. Matches "govern by math, not surveillance."

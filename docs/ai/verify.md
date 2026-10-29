@@ -35,12 +35,13 @@ workflow. With GitHub's CLI:
 ```sh
 gh attestation verify oci://ghcr.io/privatae/cseries@<digest> --repo Privatae/cseries
 gh attestation verify oci://ghcr.io/privatae/cseries-postgres@<digest> --repo Privatae/cseries
+gh attestation verify oci://ghcr.io/privatae/cseries-remote-door@<digest> --repo Privatae/cseries
 ```
 
-The runtime images (`cseries-app-runtime-python`, `cseries-browser`,
-`cseries-app-helper`, `cseries-app-runtime-creative`) are checked the same
-way. They also carry an SPDX SBOM attestation; docs/RELEASING.md gives the
-command to read it.
+The third is the remote-access door. The runtime images
+(`cseries-app-runtime-python`, `cseries-browser`, `cseries-app-helper`,
+`cseries-app-runtime-creative`) are checked the same way. They also carry an
+SPDX SBOM attestation; docs/RELEASING.md gives the command to read it.
 
 ## 3. The guest images
 

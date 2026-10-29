@@ -14,8 +14,8 @@ reach whatever that account can. A Host instead runs in its own Linux virtual
 machine on the person's machine (WSL 2 on Windows, Lima on macOS and Linux),
 and reaches the machine's files and programs only through the bastion, a
 separate program on the machine that checks each request there. The person
-brings the models: a key for a model provider, or a local model server.
-C-Series does not sell or proxy model usage.
+brings the models: a key or sign-in for a model provider, or a local model
+server. C-Series does not sell or proxy model usage.
 
 ## Who it is for
 
@@ -28,9 +28,9 @@ users, and engineers who want to read how the limits are enforced.
 - One Host on one machine. Installed with `npx cseries` on Windows 10 (build
   19041 or later) or 11, macOS 13.5 or later, or Linux with `/dev/kvm`, x64
   or Arm64, Node.js 18 or later, about 10 GB of free disk.
-- The dashboard listens on 127.0.0.1. Reaching it from other machines takes a
+- The dashboard listens on 127.0.0.1. Other machines reach it through a
   reverse proxy you configure ([docs/GUIDE.md](../GUIDE.md#reaching-it-from-other-machines)
-  describes it).
+  describes it), or, for a network member, Remote access.
 - Coding agents (Claude Code, Codex, Cursor and others) run in containers
   beside the Host, on the person's own key or sign-in.
 

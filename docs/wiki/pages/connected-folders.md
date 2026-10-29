@@ -15,7 +15,7 @@ A connected folder is a folder on one of your own machines that your Host can se
 
 ## How do I connect a folder?
 
-Use **Add a folder** under Your network in the Context app, have the machine's bastion propose the folder, or ask your Host. Your Host drafts a grant: the folder, the paths left out, and what may be done there. The default is read, search and index. The paths left out start from a list of secret patterns, such as SSH and GPG folders, cloud credential folders, `.env` files, private keys, tokens and shell histories. Ask your Host for a different list when it drafts the grant.
+Use **Add a folder** under Your network in the Context app, have the machine's bastion propose the folder, or ask your Host. Your Host drafts a grant: the folder, the paths left out, and what may be done there. The default is read, search and index. The paths left out start from a list of secret patterns, such as SSH and GPG folders, cloud credential folders, `.env` files, private keys, tokens and shell histories, plus the `.agent` folder where the bastion's own agent keeps its data. Ask your Host for a different list when it drafts the grant.
 
 Connecting a folder always widens access, so it always waits for you. You approve it with a tap on your approval device if you pinned one to that machine, with a code typed at the machine if it has a second factor of its own, and otherwise with your authenticator code. A machine anchored to a Host refuses the grant if it has neither a pinned device nor a second factor of its own. Once approved, the grant is signed with your Host's key and sent to the machine, which checks that signature again on every request.
 

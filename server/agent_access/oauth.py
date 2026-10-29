@@ -23,7 +23,7 @@ from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from server.agent_access import pages, person, store
-from server.agent_access.origin import public_origin
+from server.agent_access.origin import agent_resources, authorization_origin, issuer_for, public_origin
 
 router = APIRouter()
 log = logging.getLogger("cseries.agent_access")
@@ -117,7 +117,9 @@ async def authorization_server(request: Request):
     origin = await public_origin(request)
     return JSONResponse({
         "issuer": origin,
-        "authorization_endpoint": origin + "/oauth/authorize",
+        # On a loopback agent origin, the desktop's own connect page, where
+        # the person is signed in and their passkey works (origin.py).
+        "authorization_endpoint": authorization_origin(origin) + "/oauth/authorize",
         "token_endpoint": origin + "/oauth/token",
         "registration_endpoint": origin + "/oauth/register",
         "revocation_endpoint": origin + "/oauth/revoke",
@@ -210,6 +212,27 @@ async def _authorize_request(pool, eid: int, q: dict) -> tuple[dict, dict]:
     return client, checked
 
 
+NO_RESOURCE = ("the authorization request has no resource parameter (RFC 8707), which MCP clients "
+               "must send: the address of the MCP server this agent is for")
+
+
+def _no_resource(client: dict, checked: dict, origin: str):
+    """A request without `resource` is refused: MCP 2025-11-25 makes clients
+    send it, and a code issued without it would bind its tokens to no address.
+    To an agent the person connected before, whose redirect address they
+    approved then, as RFC 6749 §4.1.2.1 says: back to that address with
+    error=invalid_request naming the parameter. To one never connected, on
+    this page, as the other malformed requests are: anyone may register any
+    https address, and an automatic redirect would make this Host's address a
+    link to a stranger's site (RFC 9700 §4.11.2)."""
+    if client.get("connected_at") is not None:
+        return _redirect_error(checked, origin, "invalid_request", NO_RESOURCE)
+    return _html(pages.message("This link cannot connect an agent",
+                               "The agent's link has no resource parameter (RFC 8707), which MCP "
+                               "clients must send: the address of the MCP server it is for. Update "
+                               "the agent, then open its link again.", error=True), 400)
+
+
 def _redirect_error(checked: dict, iss: str, error: str, detail: str) -> RedirectResponse:
     params = {"error": error, "error_description": detail, "iss": iss}
     if checked.get("state"):
@@ -245,10 +268,13 @@ async def authorize_page(request: Request):
         return _html(pages.message("This link cannot connect an agent",
                                    "The agent's link has no PKCE code_challenge with method S256, "
                                    "which this Host requires.", error=True), 400)
-    if checked["resource"] and checked["resource"] != origin + "/mcp":
+    if not checked["resource"]:
+        return _no_resource(client, checked, origin)
+    if checked["resource"] not in agent_resources(origin):
         return _html(pages.message("This link cannot connect an agent",
                                    "The agent's link names another server; this Host serves only "
-                                   + origin + "/mcp.", error=True), 400)
+                                   + " and ".join(sorted(agent_resources(origin))) + ".",
+                                   error=True), 400)
     token = await person.sign_form(pool, {"k": "connect", **checked})
     factors = await person.factors(pool, request)
     nonce = pages.passkey_nonce(factors)
@@ -278,8 +304,18 @@ async def authorize_answer(request: Request):
         client, _ = await _authorize_request(pool, eid, checked)
     except store.AgentAccessError as err:
         return _html(pages.message("This agent cannot be connected", err.detail, error=True), 400)
+    if not checked.get("resource"):
+        # A page signed before this Host required the resource.
+        return _no_resource(client, checked, origin)
+    if checked["resource"] not in agent_resources(origin):
+        return _html(pages.message("This agent cannot be connected",
+                                   "The agent's link names another server.", error=True), 400)
+    # The issuer the client discovered (RFC 9207): the address it asked for
+    # (an agent on this computer found this Host on 127.0.0.1), else this
+    # page's own.
+    iss = issuer_for(checked["resource"], origin)
     if form.get("decision") != "approve":
-        return _redirect_error(checked, origin, "access_denied", "the person did not connect this agent")
+        return _redirect_error(checked, iss, "access_denied", "the person did not connect this agent")
     read = form.get("read") == "1"
     from server.network.nac_stepup import StepupLocked
     try:
@@ -295,9 +331,9 @@ async def authorize_answer(request: Request):
                                         factors=factors, nonce=nonce), 403, nonce)
     await store.connect(pool, eid, client["id"], read=read)
     code = await store.issue_code(pool, client["id"], checked["redirect_uri"],
-                                  checked["code_challenge"], checked.get("resource") or "")
+                                  checked["code_challenge"], checked["resource"])
     log.info("agent connected: connection=%s read=%s", client["id"], read)
-    params = {"code": code, "iss": origin}
+    params = {"code": code, "iss": iss}
     if checked.get("state"):
         params["state"] = checked["state"]
     return _redirect_with(checked["redirect_uri"], params)
@@ -319,9 +355,11 @@ async def token(request: Request):
                                          status=401)
         if grant == "authorization_code":
             out = await store.redeem_code(pool, eid, client_id, form.get("code") or "",
-                                          form.get("redirect_uri") or "", form.get("code_verifier") or "")
+                                          form.get("redirect_uri") or "", form.get("code_verifier") or "",
+                                          form.get("resource") or "")
         elif grant == "refresh_token":
-            out = await store.refresh_tokens(pool, eid, client_id, form.get("refresh_token") or "")
+            out = await store.refresh_tokens(pool, eid, client_id, form.get("refresh_token") or "",
+                                             form.get("resource") or "")
         else:
             raise store.AgentAccessError("unsupported_grant_type",
                                          "grant_type must be authorization_code or refresh_token")

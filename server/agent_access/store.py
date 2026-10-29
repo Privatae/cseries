@@ -230,7 +230,11 @@ async def connect(pool, eid: int, connection_id: int, *, read: bool) -> None:
 
 
 async def issue_code(pool, connection_id: int, redirect_uri: str, code_challenge: str,
-                     resource: str = "") -> str:
+                     resource: str) -> str:
+    """A one-time code for the address `resource` (RFC 8707), never for none:
+    its tokens are taken on that address alone (resolve_access)."""
+    if not resource:
+        raise AgentAccessError("invalid_request", NO_RESOURCE_WORDS)
     raw, digest = new_secret(CODE_PREFIX)
     await pool.execute(
         "INSERT INTO agent_codes (code_hash, connection_id, redirect_uri, code_challenge, "
@@ -253,8 +257,26 @@ async def _tokens(conn, connection_id: int, from_code: Optional[bytes]) -> dict:
             "refresh_token": refresh}
 
 
+NO_RESOURCE_WORDS = "a code is issued only for the resource (RFC 8707) the agent names"
+# A code or token from before this Host required the resource: it binds no
+# address, so it is refused, and the agent signs in again.
+UNBOUND_WORDS = "this sign-in names no address of this Host (it predates that rule); sign in again"
+
+
+def _resource_problem(asked: str, granted: str) -> Optional[AgentAccessError]:
+    """RFC 8707 §2.2: a token request naming a resource names the one its
+    code was issued for. A code issued with none (before this Host required
+    one) gets nothing."""
+    if not granted:
+        return AgentAccessError("invalid_grant", UNBOUND_WORDS)
+    if asked and asked != granted:
+        return AgentAccessError("invalid_target",
+                                "resource differs from the one the person connected this agent for")
+    return None
+
+
 async def redeem_code(pool, eid: int, client_id: str, code: str, redirect_uri: str,
-                      code_verifier: str) -> dict:
+                      code_verifier: str, resource: str = "") -> dict:
     """authorization_code grant: the code is spent whatever happens next, and a
     code presented again revokes every token that descends from it (RFC 6749
     §4.1.2): someone else held it, and this Host cannot tell which caller is
@@ -269,7 +291,7 @@ async def redeem_code(pool, eid: int, client_id: str, code: str, redirect_uri: s
         "WHERE c.code_hash=$1 AND c.used_at IS NULL AND c.expires_at > now() "
         "AND a.id = c.connection_id AND a.entity_id=$2 AND a.revoked_at IS NULL "
         "AND a.connected_at IS NOT NULL "
-        "RETURNING c.connection_id, c.redirect_uri, c.code_challenge, a.client_id",
+        "RETURNING c.connection_id, c.redirect_uri, c.code_challenge, c.resource, a.client_id",
         digest, eid)
     if row is None:
         replayed = await pool.fetchval(
@@ -289,12 +311,16 @@ async def redeem_code(pool, eid: int, client_id: str, code: str, redirect_uri: s
         raise AgentAccessError("invalid_grant", "redirect_uri differs from the authorize request")
     if not pkce_matches(code_verifier, row["code_challenge"]):
         raise AgentAccessError("invalid_grant", "code_verifier does not match the code_challenge")
+    wrong = _resource_problem(resource, row["resource"])
+    if wrong is not None:
+        raise wrong
     async with pool.acquire() as conn:
         async with conn.transaction():
             return await _tokens(conn, row["connection_id"], digest)
 
 
-async def refresh_tokens(pool, eid: int, client_id: str, refresh_token: str) -> dict:
+async def refresh_tokens(pool, eid: int, client_id: str, refresh_token: str,
+                         resource: str = "") -> dict:
     """refresh_token grant, rotated: the old refresh token is revoked.
 
     A refresh token presented again after it was rotated away (or revoked)
@@ -317,6 +343,20 @@ async def refresh_tokens(pool, eid: int, client_id: str, refresh_token: str) -> 
             if row is not None:
                 if row["client_id"] != client_id:
                     raise AgentAccessError("invalid_grant", "the refresh token belongs to another agent")
+                # Raised inside the transaction: the refresh token is not spent.
+                granted = None if row["from_code"] is None else await conn.fetchval(
+                    "SELECT resource FROM agent_codes WHERE code_hash=$1", row["from_code"])
+                if granted is None:
+                    # Its code's row is gone (or it never had one), and with
+                    # it the address the tokens are for (resolve_access):
+                    # never widened to all.
+                    raise AgentAccessError("invalid_grant",
+                                           "this sign-in can no longer be renewed; sign in again")
+                # A code issued with no resource (before this Host required
+                # one) is refused here too (_resource_problem).
+                wrong = _resource_problem(resource, granted)
+                if wrong is not None:
+                    raise wrong
                 return await _tokens(conn, row["connection_id"], row["from_code"])
     reused = await pool.fetchval(
         "UPDATE agent_tokens t SET revoked_at = now() FROM agent_tokens old, agent_connections a "
@@ -343,7 +383,13 @@ async def revoke_token(pool, eid: int, token: str) -> None:
 
 
 async def resolve_access(pool, eid: int, token: str) -> Optional[dict]:
-    """The live connection behind an access token, or None."""
+    """The live connection behind an access token, or None. `resource` is
+    the address the token is for (its code's RFC 8707 resource, kept through
+    every refresh by from_code). A token bound to no address is not taken at
+    all: one whose code's row is gone (the schema lets one be pruned), one
+    from before tokens named their code, or one whose code was issued
+    without a resource (before this Host required one). Any of them, read as
+    '', would be let in on every address."""
     if not isinstance(token, str) or not token.startswith(ACCESS_PREFIX):
         return None
     row = await pool.fetchrow(
@@ -351,7 +397,11 @@ async def resolve_access(pool, eid: int, token: str) -> Optional[dict]:
         "WHERE t.token_hash=$1 AND t.kind='access' AND t.revoked_at IS NULL "
         "AND t.expires_at > now() AND a.id = t.connection_id AND a.entity_id=$2 "
         "AND a.revoked_at IS NULL AND a.connected_at IS NOT NULL "
-        "RETURNING a.id, a.client_id, a.client_name", _sha(token), eid)
+        "AND EXISTS (SELECT 1 FROM agent_codes c WHERE c.code_hash = t.from_code "
+        "            AND c.resource <> '') "
+        "RETURNING a.id, a.client_id, a.client_name, "
+        "COALESCE((SELECT c.resource FROM agent_codes c WHERE c.code_hash = t.from_code), '') "
+        "AS resource", _sha(token), eid)
     return dict(row) if row else None
 
 

@@ -51,7 +51,6 @@ afterwards to decide what to keep.
 | Writer | Trigger | memory_type |
 |---|---|---|
 | `brain/mastercode/memory_engine.py::write_turn_row`, `write_turn_row_by_token` | every user message and reply | `turn` |
-| `server/synaptive_handler.py::handle_synaptive_signal` | an external client posts the turn it just produced | `turn` |
 | `server/connectors/thread_pick.py::write_pick_marker`, `write_topic_marker` | a thread or topic pick | `turn` (marker row) |
 | `brain/mastercode/runtime/thread_choice.py::_marker` | the Host picks the thread a message lands in | `turn` (marker row) |
 | `brain/mastercode/circles_threads.py::_split_in_transaction` | the person splits a thread | `turn` (marker row) |
@@ -88,7 +87,6 @@ gives an existing row a topic. A row with no topic is outside the slot rule.
 | `brain/mastercode/memory_engine.py::recall_tool_trail` | the `tool_trail` block, per turn |
 | the `recall` tool, through `brain/mastercode/memory_retrieval.py::unified_search` | the tool result |
 | `brain/mastercode/knowledge_toc.py::render_block`, `build_toc` | the `knowledge_toc` block (Circles) |
-| `server/synaptive_handler.py::recent_identity_memories`, `handle_synaptive_recall` | an external client's prompt and recall |
 | the Memory app routes in `server/routes/brain.py` (`GET /memories`, `/memories/stats`, `/memories/{id}`) | the Memory app |
 
 ## 4. The memory types

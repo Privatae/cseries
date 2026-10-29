@@ -55,6 +55,16 @@ cooperates. [claims.md](claims.md) gives the test behind each one.
   (`brain/mastercode/runtime/scheduled_approval.py`). Restoring a backup and
   revealing a saved key have no route the Host can call
   (`brain/mastercode/runtime/kernel_ops.py`).
+- **Outside agents.** An agent you connect, such as Claude Code, signs in to
+  the Host by OAuth and asks over MCP (`server/agent_access/`); Settings,
+  Connected agents, lists each one. `/mcp` and the OAuth paths the agent calls
+  itself reach their handlers from any address with no session
+  (`server/middleware/localhost_only.py`, `AGENT_PATHS`). `/mcp` answers
+  nothing without a token, and an agent gets one only after you, signed in,
+  approve it on the connect page. What you have not allowed for that agent
+  waits for your answer on a page on the Host, with your passkey or your
+  authenticator's code, and then passes the Host's own gates, so an agent
+  never gets more than the Host itself may do.
 - **The person's limits.** Each limit that can stop work (spend, counts of
   turns, repairs and wakes, time) has a coded default; only the person
   changes it, and the Host can only propose a change
@@ -96,7 +106,8 @@ cooperates. [claims.md](claims.md) gives the test behind each one.
 - **The model provider you choose.** Each model call carries the turn's
   context to that provider: the conversation, matching notes, and what the
   Host read for the turn. Calls go from the Host to the provider on your own
-  key (`brain/mastercode/provider_gateway.py`), or to a local model server.
+  key or sign-in (`brain/mastercode/provider_gateway.py`), or to a local
+  model server.
 - **The bastion and its release keys.** `npx cseries` installs a bastion
   only when its release manifest is signed by one of two pinned Ed25519 keys
   and the binary matches the manifest's sha256
@@ -108,6 +119,11 @@ cooperates. [claims.md](claims.md) gives the test behind each one.
   Actions from a tag (`.github/workflows/release.yml`). Attestations and npm
   provenance show which workflow run and commit produced an artifact; they
   do not show that the commit is safe. [verify.md](verify.md) has the checks.
+- **The Privatae network, if you turn on Remote access.** A member Host
+  keeps a tunnel out to each of the network's relays
+  (`server/network/remote_tunnel.py`). A relay carries a browser's
+  still-encrypted connection to a door in the guest, which ends TLS and asks
+  the Host about every request; the Host still asks for your sign-in.
 - **Your own approvals.** An approval is as good as your reading of its card.
   The authenticator's secret is kept in the Host's own database
   (`server/network/nac_stepup.py`), so the code guards against requests from
@@ -121,6 +137,7 @@ cooperates. [claims.md](claims.md) gives the test behind each one.
 
 - There has been no outside security audit.
 - [claims.md](claims.md) ends with the claims that have no test yet.
-- The dashboard serves plain HTTP on 127.0.0.1. Reaching it from another
-  machine safely needs a reverse proxy that terminates TLS, set up as
-  [docs/GUIDE.md](../GUIDE.md#reaching-it-from-other-machines) describes.
+- The dashboard serves plain HTTP on 127.0.0.1. From another machine, use a
+  reverse proxy that terminates TLS, set up as
+  [docs/GUIDE.md](../GUIDE.md#reaching-it-from-other-machines) describes, or,
+  as a network member, Remote access, whose TLS ends in the guest.

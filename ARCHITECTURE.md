@@ -77,6 +77,7 @@ skills it writes and in what it builds in `world`. `docs/HOST-MEMORY-AND-PROMPT.
 │   │   └── ceigas_gate.py      # The kill switch on mapped /api routes
 │   ├── capabilities/
 │   │   └── file_access.py      # host file-access capability (linux/ + windows/ backends)
+│   ├── agent_access/           # outside agents over MCP: OAuth sign-in, approval pages, what they may call
 │   ├── network/                # Bastion pairing and lanes, the egress gate, signed network rules
 │   │   └── local_bastion.py    # the doors a bastion on the same machine uses
 │   └── bridge/
@@ -98,7 +99,7 @@ skills it writes and in what it builds in `world`. `docs/HOST-MEMORY-AND-PROMPT.
 ├── vm/cloud/                   # A Host on a VPS or bare-metal machine with its own front door
 ├── init-db.sql                 # Schema; migrations/ carries every change since
 ├── migrations/
-├── entrypoint.sh               # Boot: identity path → PG → migrations (`entrypoint.sh:453`) → FastAPI
+├── entrypoint.sh               # Boot: identity path → PG → migrations (`entrypoint.sh:455`) → FastAPI
 ├── Dockerfile.linux            # Multi-stage build
 ├── LICENSE                     # GNU AGPL v3 (AGPL-3.0-only)
 └── ARCHITECTURE.md             # This file
@@ -205,22 +206,24 @@ connected coding engine that can (Antigravity or Claude Code), and says which on
 
 A standalone Host can join the Privatae network with a one-time code (`server/bridge/membership.py`).
 Its connection to the network door is outbound only and carries only the operations in `NETWORK_OPS`
-(`server/bridge/member_client.py`): App Store, community board, passport, heartbeat, rendezvous and
-backup storage requests.
+(`server/bridge/member_client.py`): App Store, community board, passport, heartbeat, remote access,
+rendezvous and backup storage requests.
 
 ---
 
 ## Known Issues / Technical Debt
 
-- `runtime/session.py` is about 9,450 lines, most of it two methods of `EntityRuntime`: the turn,
-  `_send_message_core` (about 3,450 lines), and its tool loop, `_run_tool_loop` (about 2,450). Its
+- `runtime/session.py` is about 9,500 lines, most of it two methods of `EntityRuntime`: the turn,
+  `_send_message_core` (about 3,500 lines), and its tool loop, `_run_tool_loop` (about 2,450). Its
   module-level helpers live in turn_input, turn_holds, turn_trace, turn_notices,
   orchestration_tools, turn_lanes and delivery_checks, and session.py re-exports every name. What
   the loop shares with the rest of the turn is on one `TurnState` (turn_state.py), which the core
   makes and hands to the loop.
-- The desktop and the system apps under `/system-apps/` are served with no Content-Security-Policy
-  header: `security_headers` in `server/main.py` sets one only on an app's own origin, and
-  `server/applications/proxy.py` adds one only to what a community app serves.
+- The system apps under `/system-apps/` are served with no Content-Security-Policy that limits
+  their script: on an isolated app's own origin `security_headers` in `server/main.py` sets only
+  `frame-ancestors`, an app that runs on the desktop's origin gets none (only the desktop shell's
+  page has one), and `server/applications/proxy.py` adds a full policy only to what a community
+  app serves.
 
 ---
 
@@ -239,6 +242,8 @@ Host defends against and what you still have to trust. Report a vulnerability as
 [SECURITY.md](SECURITY.md) says.
 
 - **Localhost-only middleware** (`server/middleware/localhost_only.py`): a request must come from 127.0.0.1 or ::1, or carry the owner's signed-in session; the sign-in and setup pages, and a few paths that check their own credential, are the exceptions
+- **Outside agents** (`server/agent_access/`): `/mcp` and the OAuth paths an agent calls itself (`AGENT_PATHS`) reach their handlers from any address with no session; `/mcp` answers nothing without a token, and an agent gets one only after the signed-in owner approves it on the connect page. An agent gets only what the owner approved, never more than the Host itself may do
+- **Remote access** (members, `server/network/remote_tunnel.py`): the Host's tunnels to the network's relays carry each browser's still-encrypted connection to a door container in the guest that publishes no port, ends TLS and asks the Host about every request
 - **CEIGAS gate** (`server/middleware/ceigas_gate.py`): the kill switch. While it is set, requests under the mapped `/api` prefixes are refused unless they are a stop or a governance call. What a caller may do is checked per route (`requires_permission`) and, for the Host's own tools, by the capability gate
 - **Published on loopback only**: the dashboard (8800) and the bastion's two ports (8810, 8811) are bound to 127.0.0.1 in `compose.yaml` and in the guest's `cseries-host.container`
 - **The machine wall** (`vm/wsl/rootfs/etc/cseries-machine/machine.nft`, in the WSL and Lima guests): no container in the virtual machine opens a connection to the machine under it (its loopback as the VM reaches it, the guest's gateway, the machine's own addresses); `npx cseries` writes it into every guest, an older one included (`packages/cseries/src/vm/machine-firewall.js`)

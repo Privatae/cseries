@@ -5,7 +5,7 @@ updates the status of every item here ([docs/RELEASING.md](docs/RELEASING.md)).
 Other documents in this repository say whether each paid offering is on sale,
 and link here for the rest.
 
-Last updated 2026-10-26. An estimate is our guess, counted from that date.
+Last updated 2026-10-29. An estimate is our guess, counted from that date.
 It is not a promised date, and it is changed here when it moves.
 
 - **Available**: in a published release, or on sale.
@@ -45,6 +45,9 @@ It is not a promised date, and it is changed here when it moves.
   apps from the App Store.
 - **MCP servers.** Available. The Host uses tools from MCP servers, including
   servers that ask you to sign in.
+- **Outside agents.** Available. Claude Code and other agents connect to the
+  Host over MCP. Anything new comes to you as a link to an approval page on
+  the Host, which you answer with your passkey or your authenticator's code.
 - **Backups to storage you choose.** Available. Once you make a recovery key,
   the Host backs itself up, encrypted to that key, to a folder in its own
   storage on the machine or to an S3 bucket you name.
@@ -70,6 +73,8 @@ OVHcloud in Virginia (US East). Sizes and prices are in the
 - **The Host's own backups.** Built. Once you give it a backup recovery key,
   the Host takes its own encrypted backups and keeps them on the machine,
   unless you choose other storage.
+- **Network membership included.** Built. Each machine comes with the
+  network membership for as long as it runs.
 - **Bare metal.** Waitlist open. A whole server in Virginia (US East) or
   Oregon (US West), ordered by email at info@privatae.ai, not online.
 

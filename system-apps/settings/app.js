@@ -1668,10 +1668,17 @@
     async function loadAgents() {
         var listEl = document.getElementById('agents-list');
         var addrEl = document.getElementById('agents-address');
-        if (addrEl) addrEl.textContent = 'Your Host\'s address for agents: ' + location.origin + '/mcp';
         if (!listEl) return;
         try {
             var data = await fetchJSON('/api/agent-access/connections');
+            // The Host names the address (agent_access/origin.py agent_address):
+            // on the desktop's own http address it is this computer's
+            // 127.0.0.1, the one an MCP client signs in on over plain http.
+            if (addrEl && data && data.agent_address) {
+                addrEl.textContent = (data.agent_address.indexOf('http://127.0.0.1:') === 0
+                    ? 'Your Host\'s address for agents on this computer: '
+                    : 'Your Host\'s address for agents: ') + data.agent_address;
+            }
             var rows = (data && data.connections) || [];
             if (!rows.length) {
                 listEl.innerHTML = '<div class="cseries-empty"><span class="empty-title">No agents connected</span>' +

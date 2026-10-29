@@ -1,6 +1,6 @@
 ---
 title: Settings
-summary: Settings holds your Host's name and version, its appearance and time zone, how it responds, the limits on what it may spend and how long its work may run, the layout of your desktop and dock, its backups, the optional Privatae network membership, and the git server it keeps code on. It comes with every Host and cannot be removed.
+summary: Settings holds your Host's name and version, the outside agents connected to it, its appearance and time zone, how it responds, the limits on what it may spend and how long its work may run, the layout of your desktop and dock, its backups, the optional Privatae network membership, and the git server it keeps code on. It comes with every Host and cannot be removed.
 section: apps
 order: 10
 questions:
@@ -14,6 +14,7 @@ questions:
   - Where do I set up backups for my Host?
   - Can my Host restore or change its own backups?
   - How do I connect my Host to my own git server?
+  - How do I connect Claude Code or another agent to my Host?
 app: settings
 ---
 
@@ -26,6 +27,10 @@ About has a **Name** field: type the name and choose Save. Only the owner, signe
 ## How do I update my Host?
 
 The Settings app shows the version your Host is running under About. Updating is done on the machine with `npx cseries update`; see [updates and versions](wiki:updates-and-versions). On a Host on its own, **Check for updates** in the Updates tab looks up the newest published release of the installer and either says you are up to date or tells you to run `npx cseries update` on the machine. If it cannot find out, it says why.
+
+## What are Connected agents?
+
+Agents you use elsewhere, such as Claude Code, can ask your Host to work on your machines. The Connected agents tab shows your Host's address for agents. On a Host you installed on this computer it is `http://127.0.0.1:8800/mcp`, for agents on this computer; opened from your remote address, it is that address. Give it to the agent, and it opens the connection page on your Host's own address, where you are already signed in, and you approve the connection with your passkey, or a code from your authenticator. The tab lists each connected agent, what it may do without asking and its recent requests. **Take back** removes one permission, and **Disconnect** removes the agent and ends its sign-in at once. Anything new an agent asks for waits for you; see [approvals](wiki:approvals).
 
 ## What can I change about how it looks?
 

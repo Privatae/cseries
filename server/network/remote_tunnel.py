@@ -32,10 +32,12 @@ the next try over; a refusal the Host cannot fix by retrying waits
 REFUSED_RETRY_S. An expired or refused ticket asks the ticket source for a
 fresh one before the next try.
 
-Nothing starts this yet. Its two inputs come from outside: the ticket source
-(the member door's remote.ticket) and the door on the machine, which is given
-as an address. The tests drive it against the reference relay
-(server/network/remote_relay.py).
+server/network/remote_access.py starts it (RemoteAccess._start_tunnel) once
+remote access is on, and stops it when remote access is turned off, the Host
+leaves the network or loses its passport, or the door refuses a ticket. Its two
+inputs come from there: the ticket source (the member door's remote.ticket)
+and the door on the machine, given as an address. The tests drive it against
+the reference relay (server/network/remote_relay.py).
 """
 
 from __future__ import annotations

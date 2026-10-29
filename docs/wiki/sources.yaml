@@ -68,9 +68,13 @@ approvals:
   - external:bastion/client-go/ops.go
   - external:bastion/client-go/session.go
   - external:bastion/client-go/modelswap.go
+  - server/agent_access/asks.py::ask_answer
+  - server/agent_access/person.py::confirm
+  - server/agent_access/pages.py::grant_ask_page
+  - server/agent_access/pages.py::connect_page
   verified:
-    date: '2026-10-28'
-    digest: sha256:70cd881f12ea9713ea6040e4edc9171edcca37b7850bf9eee302fbc7b35d3fe7
+    date: '2026-10-29'
+    digest: sha256:3b142a2f0ac5c547a87bff9a40842d3188b02f396d9223a523c59761322e09fd
 apps-overview:
   sources:
   - scripts/image_baked_apps.txt
@@ -204,8 +208,8 @@ code-repositories:
   - server/git_server.py::forge_identity
   - server/git_server.py::pr_page
   verified:
-    date: '2026-10-28'
-    digest: sha256:96bf6e758c0344b082c9d81a2b188f675420f5110f64e377d26d862bb25e736f
+    date: '2026-10-29'
+    digest: sha256:8256f6c3b12de2be938fa85f4ea91f51d7e4640e114ba2e951ceabe90c24d929
 coding-agents:
   sources:
   - system-apps/orchestrator/app.yaml
@@ -261,8 +265,8 @@ connected-folders:
   - external:bastion/client-go/freeagent_managed.go
   - external:bastion-agent/bastion_agent/embed.py
   verified:
-    date: '2026-10-28'
-    digest: sha256:9c8bc862714044e020225d8fa35d49b2547df0646bb980c831048b805cdb2103
+    date: '2026-10-29'
+    digest: sha256:6551def0eb8f63a4963590b04b328fd28ee7284fc2cce671df2fcf65a4f5290e
 context-app:
   sources:
   - system-apps/context-manager/app.yaml
@@ -369,8 +373,8 @@ how-a-host-handles-a-request:
   - brain/mastercode/memory_engine.py::MemoryEngine.build_memory_context
   - brain/mastercode/runtime/root_turn.py
   verified:
-    date: '2026-10-28'
-    digest: sha256:f8dfa593e89f21165d949c8d9e165f7d3059bed537951b4e8c831d6009a7ce8b
+    date: '2026-10-29'
+    digest: sha256:2842ac5cb0afaa6f3527f6079bcee06070138167febc314f20e736207eaacd62
 how-your-host-is-protected:
   sources:
   - compose.yaml
@@ -382,9 +386,10 @@ how-your-host-is-protected:
   - server/owner_login.py
   - server/network/remote_access.py
   - compose.remote.yaml
+  - server/agent_access/oauth.py::authorize_answer
   verified:
-    date: '2026-10-28'
-    digest: sha256:cd22149c32b9ba0c92d3204bad9c9579f8f60f1ccd834dd156a0254169a75443
+    date: '2026-10-29'
+    digest: sha256:3e758f406a57547ec923f76280b546db2bae40889310c895a144e5a26524d931
 keys-app:
   sources:
   - system-apps/keys/app.yaml
@@ -490,9 +495,10 @@ network-app:
   - server/network/nac_connector.py::approve_connector
   - server/network/nac_connector.py::revoke_connector
   - server/mcp_connections.py::revoke_for_rule
+  - server/routes/network.py::_open_pairing_window
   verified:
-    date: '2026-10-20'
-    digest: sha256:c3d348f21cb5bc2db6b7c643c3b21349703cdaf1672d4860bc3feac459911b73
+    date: '2026-10-29'
+    digest: sha256:7bedca0e1b9c2e143a0e97101f13f5986f19446f96983185dfa4893216f2fdd6
 orchestrator-app:
   sources:
   - system-apps/orchestrator/app.yaml
@@ -565,9 +571,14 @@ settings-app:
   - server/host_backup.py
   - server/routes/git_server.py
   - server/git_server.py
+  - system-apps/settings/app.js
+  - server/agent_access/asks.py::connections
+  - server/agent_access/asks.py::revoke_connection
+  - server/agent_access/asks.py::revoke_grant
+  - server/agent_access/person.py::confirm
   verified:
-    date: '2026-10-28'
-    digest: sha256:3edd4b4e5ff8dac9b2466815b8c3d69751b92cf9cfeda1fc73a814ce90d6a794
+    date: '2026-10-29'
+    digest: sha256:1c8dacde84001ed9d0f338e108274db7b9b25fd3205e8bf7c23f64977fc0f693
 sites-app:
   sources:
   - system-apps/sites/app.yaml
@@ -606,9 +617,10 @@ the-bastion:
   - server/network/bastion_enroll.py::pairing_code
   - server/network/bastion_enroll.py::one_line
   - server/routes/network.py::_open_pairing_window
+  - server/network/local_bastion.py
   verified:
-    date: '2026-10-20'
-    digest: sha256:ba0d978672a8193c7de7fd305227800b88d940ef259b43a67775605103d20dec
+    date: '2026-10-29'
+    digest: sha256:3e0e3dfbea1efbf4721def26d33c62500f35bae31c8da40e33112ffd50a0ace3
 the-privatae-network:
   sources:
   - server/bridge/membership.py
@@ -619,9 +631,10 @@ the-privatae-network:
   - system-apps/settings/index.html
   - server/network/remote_access.py
   - compose.remote.yaml
+  - server/routes/applications.py::publisher_publish
   verified:
-    date: '2026-10-28'
-    digest: sha256:48b475f4b370f8dce7696e80fa9a6bce4ee2827565d1256dafb4962d8cc9d828
+    date: '2026-10-29'
+    digest: sha256:5ed56b700289e156c4c6c23fe819b34f32be503671669aba4d6ec8d1dab0582c
 updates-and-versions:
   sources:
   - packages/cseries/src/cli.js
@@ -633,8 +646,8 @@ updates-and-versions:
   - circles-web/src/cards/inbox-notes.tsx
   - brain/mastercode/runtime/host_changelog.py::ensure_weekly_changelog_task
   verified:
-    date: '2026-10-25'
-    digest: sha256:faf2c19866824eb9334e23e6a17ce9efe6f0daa01d7b16bd98a391c3c5ce97f9
+    date: '2026-10-29'
+    digest: sha256:64417231981df181f535201dd94b262022b52b6fdfb66e142e2f8434170cb298
 what-a-host-cannot-do:
   sources:
   - brain/mastercode/runtime/agent_grant.py::parse_grant
@@ -666,8 +679,8 @@ what-a-host-cannot-do:
   - external:bastion/client-go/session.go
   - external:bastion/client-go/stepup.go
   verified:
-    date: '2026-10-28'
-    digest: sha256:dad94a60777da7c558cf5bae6358ce0c611cf44708585c382acb70807eb37a68
+    date: '2026-10-29'
+    digest: sha256:11cf8eb63b5b5bea1335060efa056a7ebace10c7c9c0c5707ff52e0cd0853f33
 what-a-host-is:
   sources:
   - compose.yaml
@@ -707,9 +720,10 @@ where-your-data-lives:
   - external:bastion-agent/bastion_agent/embed.py
   - external:bastion-agent/bastion_agent/seal.py
   - server/network/remote_access.py
+  - server/applications/public_store.py
   verified:
-    date: '2026-10-28'
-    digest: sha256:840ae1c879a47a3499df2b87a17da909cb5be4e8033e8204c7a22d8e077b9bed
+    date: '2026-10-29'
+    digest: sha256:efd6ab13b633140cfe8bc35535a33050796161941d16ecaeb75abee4cdae9ac3
 workbench:
   sources:
   - system-apps/workbench/app.yaml
@@ -789,6 +803,7 @@ your-private-network:
   - server/mcp_connections.py::connect
   - server/mcp_connections.py::verify
   - server/network/session_lane.py::run_root_exec
+  - server/routes/network.py::_open_pairing_window
   verified:
-    date: '2026-10-23'
-    digest: sha256:9b3155112a9d12927621bf3a3d88e42053cf1de6b5c1be26e668fa13488f5aa3
+    date: '2026-10-29'
+    digest: sha256:e893bebb0641ef919d3875f3b6f3f5a23030109252975781b9f2513580711375

@@ -699,10 +699,14 @@ class MgmtError(Exception):
     """A management dispatch failure the caller surfaces. `status` is the HTTP code the /mgmt/run
     route maps it to; the mgmt_run host tool just reports `detail`. The default-DENY refusal is NOT
     an error — it returns a normal exit-126 result, the bastion-allowlist shape."""
-    def __init__(self, status: int, detail: str):
+    def __init__(self, status: int, detail: str, *, reached: bool = False):
         super().__init__(detail)
         self.status = status
         self.detail = detail
+        # True only when the machine TOOK the job (a worker accepted it) and
+        # the error came after: the op may have run, or may still be running.
+        # Every other MgmtError is raised before anything reached the machine.
+        self.reached = reached
 
 
 async def _model_pull_reconcile(pool, eid: int, server: str, token_id: int, args,
@@ -894,6 +898,36 @@ def _decide(grants: list, suspended: set, quarantined: set, eid: int, server: st
     return False, reason, decision
 
 
+# The pod gate's refusal is a normal exit-126 result (the bastion-allowlist
+# shape), so by its exit alone it reads the same as the machine's own refusal.
+# run_mgmt_op marks it `refused_by: REFUSED_BY_HOST`: a caller that spent
+# something of its own on the call (an outside agent's 'just this once',
+# agent_access/tools.py) tells from that field, never from the words, that
+# this Host's own permissions refused it and nothing reached the machine.
+REFUSED_BY_HOST = "host"
+
+# Every result whose op never reached the machine says so in NOT_RUN, as a
+# code and never as words: the pod gate's refusal (NOT_RUN_HOST), another
+# refusal this Host made itself (NOT_RUN_POD), an act already done so nothing
+# new was sent (NOT_RUN_ALREADY), or the state of an approval that ended the
+# call before dispatch (nac_approval: "no_way", "denied", "expired",
+# "offline", ...). A caller that spent something of its own on the call (an
+# outside agent's 'just this once') gives it back on any result carrying it.
+# What the machine itself answers carries no NOT_RUN: its exit code is the
+# command's own (client-go mgmt.go passes it through), so a 126 from the
+# machine cannot be told from a command that ran and returned 126.
+# MgmtError.reached says the same for an error.
+NOT_RUN = "not_run"
+NOT_RUN_HOST = "host"
+NOT_RUN_POD = "pod"
+NOT_RUN_ALREADY = "already-done"
+
+
+def gate_refusal_words(server: str, op: str, reason: str) -> str:
+    """The pod gate's refusal as run_mgmt_op words it; `reason` is _decide's."""
+    return f"op '{op}' on '{server}' not permitted — {reason}"
+
+
 async def gate_op(pool, eid: int, server: str, op: str) -> tuple[bool, str, str]:
     """THE POD GATE, as one call: may this host run `op` on `server` under the user's signed
     grants? Returns (allowed, reason, audit decision). Default-DENY. Every lane that reaches a
@@ -1018,7 +1052,8 @@ async def run_mgmt_op(pool, eid: int, server: str, op: str, args, *,
         # quarantined server lands here too (grants intact but the hold short-circuits the decision).
         await audit_mgmt(pool, eid, server, op, exit_code=126, decision=decision)
         return {"server": server, "op": op, "exit": 126, "stdout": "",
-                "stderr": f"op '{op}' on '{server}' not permitted — {reason}"}
+                "stderr": gate_refusal_words(server, op, reason), "refused_by": REFUSED_BY_HOST,
+                NOT_RUN: NOT_RUN_HOST}
     if token_id is not None:
         # A caller that already resolved the bastion (the routes do, by the
         # token the user clicked) passes it, and it is used — after checking it
@@ -1077,7 +1112,8 @@ async def run_mgmt_op(pool, eid: int, server: str, op: str, args, *,
                 # A silent or missing worker, or this side's own failure: an
                 # error, never dressed as a refusal.
                 raise MgmtError(e.status, e.detail)
-            return {"server": server, "op": op, "exit": 126, "stdout": "", "stderr": e.detail}
+            return {"server": server, "op": op, "exit": 126, "stdout": "", "stderr": e.detail,
+                    NOT_RUN: NOT_RUN_POD}
 
     async def _approval(a_args):
         # origin="tool" (the model's mgmt_run) or "route" (POST /mgmt/run, any
@@ -1113,8 +1149,11 @@ async def run_mgmt_op(pool, eid: int, server: str, op: str, args, *,
         return appr, (appr.get("approval") or "")
 
     def _refused(appr):
+        # The approval ended the call before dispatch: nothing reached the
+        # machine. NOT_RUN is the approval's own state.
         return {"server": server, "op": op, "exit": 126, "stdout": "",
-                "stderr": f"refused: {op} on '{server}' — {appr.get('detail') or appr['state']}"}
+                "stderr": f"refused: {op} on '{server}' — {appr.get('detail') or appr['state']}",
+                NOT_RUN: str(appr.get("state") or "refused")}
 
     if op == CONTAIN_OP:
         # NAC agent: terminating a detected agent on the box is a
@@ -1159,7 +1198,7 @@ async def run_mgmt_op(pool, eid: int, server: str, op: str, args, *,
                     "SELECT 1 FROM nac_finding_contain WHERE token_id=$1 AND fp=$2 AND cleared_at IS NULL",
                     token_id, fp):
                 await audit_mgmt(pool, eid, server, op, exit_code=0, decision=f"already {done['outcome'] or 'done'}")
-                return {"server": server, "op": op, "exit": 0, "stderr": "",
+                return {"server": server, "op": op, "exit": 0, "stderr": "", NOT_RUN: NOT_RUN_ALREADY,
                         "stdout": json.dumps({"contain": "already done", "finding": fp,
                                               "outcome": done["outcome"], "cleared_at": str(done["cleared_at"])})}
             if held:
@@ -1218,7 +1257,7 @@ async def run_mgmt_op(pool, eid: int, server: str, op: str, args, *,
                 "SELECT 1 FROM nac_agent_contain WHERE token_id=$1 AND pid=$2 AND cleared_at IS NULL",
                 token_id, pid):
             await audit_mgmt(pool, eid, server, op, exit_code=0, decision=f"already {done['outcome'] or 'done'}")
-            return {"server": server, "op": op, "exit": 0, "stderr": "",
+            return {"server": server, "op": op, "exit": 0, "stderr": "", NOT_RUN: NOT_RUN_ALREADY,
                     "stdout": json.dumps({"contain": "already done", "pid": pid,
                                           "outcome": done["outcome"], "cleared_at": str(done["cleared_at"])})}
         if held:
@@ -1241,13 +1280,13 @@ async def run_mgmt_op(pool, eid: int, server: str, op: str, args, *,
         if why:
             await audit_mgmt(pool, eid, server, op, exit_code=126, decision="denied-pod")
             return {"server": server, "op": op, "exit": 126, "stdout": "",
-                    "stderr": f"op '{op}' on '{server}' not permitted — {why}"}
+                    "stderr": f"op '{op}' on '{server}' not permitted — {why}", NOT_RUN: NOT_RUN_POD}
         if op == "stepup_status" and not host_stepup_known(eid, token_id, args):
             # An ANSWER, not a refusal: the Host's next step (file its ask
             # again) must not read as "do not try another way". Nothing is sent
             # to the box, so the platform's own one-time handout stays its own.
             await audit_mgmt(pool, eid, server, op, exit_code=0, decision="not-filed-here")
-            return {"server": server, "op": op, "exit": 0, "stderr": "",
+            return {"server": server, "op": op, "exit": 0, "stderr": "", NOT_RUN: NOT_RUN_POD,
                     "stdout": json.dumps({"state": "not_filed_here", "detail": NOT_FILED_HERE})}
     relay = get_mgmt_relay()
     if relay.worker_count(token_id) == 0:
@@ -1280,7 +1319,7 @@ async def run_mgmt_op(pool, eid: int, server: str, op: str, args, *,
                              f"{int(budget)}s. Its management worker is connected and "
                              f"working — nothing was cancelled, and the work may still "
                              f"be running on that machine. Ask again for its result "
-                             f"rather than starting it over.")
+                             f"rather than starting it over.", reached=True)
     if res is None:
         await audit_mgmt(pool, eid, server, op, exit_code=None, decision="no-worker")
         raise MgmtError(502, "no live management worker")

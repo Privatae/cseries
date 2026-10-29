@@ -30,13 +30,13 @@ The installer pairs the bastion for you. To pair by hand, the Bastions card in t
 
 When the bastion pairs with your Host over the network, as it does with a C-Series Cloud machine, **Set up a bastion** shows one line for each kind of machine instead. Paste it on the machine you want as a bastion. It installs the bastion, or uses the one already there, pairs it with your Host and starts it, and the bastion then starts again when the machine does. The line carries a pairing code: the token, the address to pair with, and the fingerprint of your Host's certificate authority. The bastion trusts that authority and no other, so there is no certificate file to save. If the machine's bastion already serves another Host, it asks on that machine before adding this one. The steps the line replaces are still on the card, under **Do it step by step**.
 
-Your Host's pairing port opens for 15 minutes, and only to the address your browser came from. So run the line from the same network, with any VPN on or off just as it was when you opened the card. To pair a machine on another network, choose **Pairing a machine on another network?** beside **Set up a bastion** and give that machine's public address: the port then opens to it instead. The same choice is on the card, for when you notice only once it is open. There it ends the card's line before giving a new one, and it uses one more of the hour's pairing openings.
+Once you confirm with your passkey, your Host's pairing port opens for 15 minutes, and only to the address your browser came from. It does not open when you reach your Host through remote access. So run the line from the same network, with any VPN on or off just as it was when you opened the card. To pair a machine on another network, choose **Pairing a machine on another network?** beside **Set up a bastion** and give that machine's public address: the port then opens to it instead. The same choice is on the card, for when you notice only once it is open. There it ends the card's line before giving a new one, and it uses one more of the hour's pairing openings.
 
 During pairing the bastion makes its own keys and sends your Host only their public halves. It gets back a certificate signed by a certificate authority the Host made for itself, and trusts that authority alone. The private keys never leave the machine.
 
 ## Does it open a port on my machine?
 
-It connects out to your Host. The Host publishes a pairing port and a lane port on your machine's own loopback address, and the bastion dials them. The bastion's own console and control ports listen only on the machine itself.
+It connects out to your Host. The Host publishes a pairing port and a lane port on your machine's own loopback address, or on its public address for a Host on a server of its own, such as a C-Series Cloud machine, and the bastion dials them. The bastion's own console and control ports listen only on the machine itself.
 
 ## What can the connection reach?
 
@@ -61,11 +61,11 @@ What your Host may do arrives as signed grants that the bastion verifies itself,
 
 In networked mode one Host is the machine's anchor. Every Host that pairs after that waits with no lane open for it until the anchor's owner approves it and chooses what it may do. Switching to networked mode and claiming the anchor need root, or an administrator on Windows. A bastion installed as networked runs as the machine's own system service, on Linux, macOS and Windows alike: it starts when the machine boots, before anyone signs in, and comes back if it stops. The anchor moves to another Host only with the current anchor's signed consent, or after 14 days of silence from it.
 
-On an anchored machine, anything that changes the machine, such as removing a model or running a program your Host wrote, runs only on an approval you give for that one request, used once, apart from standing work you set up there and taking access away. You give it with the second factor enrolled on that machine or from your approval device, a machine of yours set up to sign approvals. A Host whose changes are refused five times in ten minutes has its changes held on that machine for a while. An update to a newer, signed bastion release needs no approval.
+On an anchored machine, a change such as removing a model runs only on your approval, for that one request or for repeats of one action you allowed (up to 30 days, never as root), apart from standing work you set up there and taking access away. You give it with the second factor enrolled on that machine or from your approval device, a machine of yours set up to sign approvals. A Host whose changes are refused five times in ten minutes has its changes held on that machine for a while. An update to a newer, signed bastion release needs no approval.
 
 ## Can my Host run commands as root on the machine?
 
-Only on a machine it anchors, and only after you grant it there. On the machine, `sudo -H privatae-bastion root-exec grant --for 30d` asks for the code from the authenticator enrolled on it, then lets the anchor run commands as root one at a time, with no approval for each, until the time you chose, at most a year. Nothing your Host sends can create or extend that grant. Every command and its output are recorded on the machine, and `privatae-bastion root-exec revoke` takes the grant back, stopping a command already running.
+Only on a machine it anchors, and only after you grant it there. On the machine, `sudo -H privatae-bastion root-exec grant --for 30d` asks for the code from the authenticator enrolled on it, then lets the anchor run commands as root one at a time, with no approval for each, until the time you chose, at most 30 days. Nothing your Host sends can create or extend that grant. Every command and its output are recorded on the machine, and `privatae-bastion root-exec revoke` takes the grant back, stopping a command already running.
 
 ## How do approvals on the machine work?
 

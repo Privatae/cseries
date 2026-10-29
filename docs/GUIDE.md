@@ -38,7 +38,7 @@ Keys, then apply the recommended setup in the Orchestrator.
 - **Approval card**: a request the Host cannot decide by itself; it waits over the chat and in Circles, under Waiting on you, until you answer.
 - **The person's limits**: every limit that can stop work you asked for, each with a coded default that only you change (Settings, Limits).
 - **`world`**: the Host's own database schema, where it designs tables for data it keeps, under a role that can write nowhere else.
-- **Privatae network**: an optional paid membership; a Host joins with a one-time code over one outbound connection.
+- **Privatae network**: an optional paid membership; a Host joins with a one-time code and connects outbound only.
 - **C-Series Cloud**: an optional paid service that runs a Host on a virtual machine of its own, on a server Privatae runs.
 
 ## Chat apps
@@ -108,12 +108,13 @@ publishing the port on a network address:
    believed. Nobody else's are.
 4. Have the proxy ask the Host about each request before passing it on, at
    `GET /__host/door` (Caddy's `forward_auth`). The Host answers 200, a
-   redirect to its sign-in page, or 401, so nothing but the sign-in pages
-   and the OAuth returns reaches it without the owner's session. Another
-   proxy must send the request's method and URI in `X-Forwarded-Method` and
-   `X-Forwarded-Uri` and hand a redirect back to the browser as it is;
-   nginx's `auth_request` does neither by itself, and treats a redirect as
-   an error.
+   redirect to its sign-in page, or 401, so nothing reaches it without the
+   owner's session but the sign-in pages, the OAuth returns, and `/mcp` and
+   the OAuth paths an outside agent calls itself; `/mcp` answers nothing
+   without a token the owner approved. Another proxy must send the
+   request's method and URI in `X-Forwarded-Method` and `X-Forwarded-Uri`
+   and hand a redirect back to the browser as it is; nginx's `auth_request`
+   does neither by itself, and treats a redirect as an error.
 5. Give the proxy and the Host one door key: a random value of 32 to 512
    characters (letters, digits and `._~+/=-`) in a file only the two of
    them read, for example from `openssl rand -hex 32`. Point

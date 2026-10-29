@@ -25,7 +25,7 @@ A firewall inside the virtual machine stops every container in it, the Host's an
 
 ## Who can sign in?
 
-The owner. The first time, you enter the setup code the Host prints at start and choose an email and a password of at least 12 characters. Until that account exists the code changes every time the Host restarts. Things that matter more than a click, such as revealing a saved key or widening the Host's reach, wait for a code from your authenticator. The code guards against a request from outside the Host, not against code already running inside it.
+The owner. The first time, you enter the setup code the Host prints at start and choose an email and a password of at least 12 characters. Until that account exists the code changes every time the Host restarts. Once you add a passkey, it replaces the password. An outside agent such as Claude Code connects only after you approve it on your Host. Things that matter more than a click, such as revealing a saved key or widening the Host's reach, wait for a code from your authenticator. The code guards against a request from outside the Host, not against code already running inside it.
 
 ## How does the bastion connect?
 
@@ -33,7 +33,7 @@ The bastion pairs with a one-time token and then connects to the Host over mutua
 
 ## What stops my Host doing something I did not approve?
 
-Walls in code. An agent your Host dispatches starts with no capabilities at all. Nothing it dispatches can run code; code runs on a coding engine, in a container of its own. A rule that widens what your Host may reach waits for your approval with your authenticator code. [What a Host cannot do](wiki:what-a-host-cannot-do) covers each wall.
+Walls in code. An agent your Host dispatches starts with no capabilities at all. Nothing it dispatches can run code; your Host runs code only through its own tools, such as a coding engine in a container of its own. A rule that widens what your Host may reach waits for your approval with your authenticator code. [What a Host cannot do](wiki:what-a-host-cannot-do) covers each wall.
 
 ## What is not covered?
 

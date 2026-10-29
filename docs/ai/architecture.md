@@ -60,6 +60,17 @@ What the Host may not do alone waits for the person, in one of three ways:
   anchored to the Host, the bastion asks for its own approvals; its
   repository describes them.
 
+## Outside agents
+
+An agent such as Claude Code connects to the Host's `/mcp` by OAuth, with the
+Host as the authorization server (`server/agent_access/`). It can list the
+person's machines and ask for operations on them. `/mcp` and the OAuth paths
+the agent calls itself reach their handlers from any address with no session;
+`/mcp` answers nothing without a token, and an agent gets one only after the
+signed-in owner approves it on the connect page. Anything the person has not
+allowed comes back as a link to an approval page on the Host, answered with
+the owner's passkey, or the authenticator's code as fallback.
+
 ## Memory
 
 Every message and reply is stored as it happens. In its own turns the Host
@@ -76,11 +87,15 @@ writer and reader.
 
 ## The Privatae network
 
-Optional. A member Host holds one outbound connection to the network, which
+Optional. A member Host holds an outbound connection to the network, which
 carries only the operations listed in `NETWORK_OPS`
 (`server/bridge/member_client.py`): App Store, community board, passport,
-heartbeat, rendezvous and backup storage. A request the network sends to the
-Host is answered as unsupported.
+heartbeat, rendezvous, backup storage and remote access. A request the
+network sends to the Host is answered as unsupported. While remote access is
+on, the Host also keeps a tunnel out to each of the network's relays
+(`server/network/remote_tunnel.py`); a relay carries a browser's
+still-encrypted connection to a door in the guest, which ends TLS and asks
+the Host about every request.
 
 ## Glossary
 

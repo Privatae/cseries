@@ -129,11 +129,16 @@ _DCN_SWEEPS = ("15m", "hourly", "daily", "manual")
 # Pre-seeded default excludes — the production secret-pattern canon (gitignore /
 # secret-scanner standards: keys, env files, cloud creds, shell history). The user
 # can edit per store; these ship as the safe floor (DoR #2 §7).
+# ".agent" is the bastion agent's own folder, where it keeps its store in the
+# clear. Bastion 0.58.1 refuses it itself; a machine on an older bastion serves
+# it under a grant that does not leave it out, so the default does. The box
+# matches each pattern against every path segment (client-go dcn.go
+# dcnExcluded), so this covers a .agent folder at any depth.
 DCN_DEFAULT_EXCLUDES = [
     ".ssh", ".gnupg", ".aws", ".azure", ".config/gcloud", ".kube",
     ".env", ".env.*", "*.pem", "*.key", "*.p12", "*.pfx", "*.keystore",
     "id_rsa*", "id_ed25519*", "*.token", "credentials*", ".netrc",
-    ".git-credentials", "*history",
+    ".git-credentials", "*history", ".agent",
 ]
 
 

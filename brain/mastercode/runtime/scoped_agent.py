@@ -2,10 +2,16 @@
 runtime/scoped_agent.py — dispatched agents: in-container scoped agents.
 
 The host is an orchestrator, not an agent (see docs/host-orchestrator-turn.md).
-`dispatch` spawns an ephemeral, in-container scoped agent that runs INSIDE the
-entity pod with a *scoped slice* of the host's tools, the entity's own
-identity/context, under a slip. It does the host's own domain work (calendar,
-inbox, network, memory) and returns to the host.
+`dispatch` spawns an ephemeral agent that runs INSIDE the Host's container for
+one read-only task: reading untrusted content from outside the platform (the
+open web, a repository nobody on the platform owns, a message in the inbox)
+and reporting back. It holds only the reader tools its scope names
+(agent_reader_tools, or a connected MCP server's tool; scope_work_refusal turns
+away any other work) and only the read capabilities its grant names
+(agent_grant.AGENT_GRANT_NAMES); a grant naming a write is refused at the
+dispatch door (dispatch_precheck, agent_grant.write_grant_refusal). Acting on
+what it read is the Host's own work, in its own turn, after it has read the
+report.
 
 This is a clean, minimal re-use of the chat turn's engine — NOT a copy of
 session.py's full loop (no nudge handling, no local-vLLM XML branch, no
@@ -26,9 +32,10 @@ fast/voice, no tier escalation). It reuses the real building blocks:
 The Claude-subscription host engine (host_sdk_engine.py) and its agent loop
 were DELETED; the generic loop below is the only agent loop.
 
-Code/build work never runs here: it runs on the harness pool, reached only
-through the host's OWN build tools (build / ladder.run), and
-is unrelated to this module beyond the wall that keeps those tools out.
+Code never runs here. The host runs it itself, through its own doors
+(code_exec_guard.HOST_DOOR_TOOLS: build, ladder.run, the review family,
+mesh_harness_run, lab_run), machine_exec, and an op it wrote through mgmt_run;
+this module's only part in that is the wall that keeps those tools out.
 """
 
 import json
@@ -78,11 +85,10 @@ HOST_ONLY_MACHINE_TOOLS: frozenset[str] = frozenset({"machine_exec"})
 
 
 # ── The safety boundary ───────────────────────────────────────────────────
-# A dispatched in-container agent is the host's HANDS — it operates the container +
-# network but may NEVER execute or build code. All executable code goes through
-# the harness pool (a disposable harness pod, OCI-isolated) via the host's own
-# build tools. A dispatched agent can make a
-# mistake but cannot *break* anything because code execution is out of its reach.
+# A dispatched in-container agent only reads and reports, and may NEVER execute
+# or build code: the host runs code itself, through its own tools (see the
+# module docstring). An agent can misread what it reads, but it cannot *break*
+# anything, because changes and code execution are out of its reach.
 # This separation is the security model, so it is enforced HERE, in code — not
 # left to the host picking a good tool_scope.
 #

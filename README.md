@@ -1,12 +1,23 @@
 # Privatae C-Series
 
-C-Series is a free, open-source AI agent that runs on your own machine. Each
-running instance is a Host: one AI with its own memory in its own PostgreSQL
+Let the AI agents you already use, such as Claude Code, work on your own
+computers and servers without giving them your SSH keys or passwords.
+
+C-Series is a free, open-source Host that runs on your own machine. An agent
+connects to it over MCP, and you approve the connection on your Host's own
+page. After that, what you have allowed runs. Anything new comes to you as a
+link: the page says exactly what the agent wants to do, and you approve it
+with your passkey, or a code from your authenticator. Each of your machines
+runs the bastion, a separate program that checks every request against what
+you allowed and keeps its own log. The agent never holds a key to any machine.
+Settings, Connected agents, shows the address to give your agent and lets you
+take a connection away.
+
+The Host is also an AI of its own, with its own memory in its own PostgreSQL
 database, its own apps and its own rules, used from a browser. It runs in its
 own Linux virtual machine on Windows, macOS or Linux, and reaches your files
-and programs only through the bastion, a separate program on the machine that
-checks every request there. You bring the models: a key from a model
-provider, or a model server on another computer on your network.
+and programs only through the bastion. You bring the models: a key or sign-in
+for a model provider, or a model server on another computer on your network.
 
 Privatae, which builds C-Series, also offers two optional paid services,
 neither on sale yet: C-Series Cloud, a Host on a virtual machine of its own
@@ -87,6 +98,8 @@ patched.
   does not.
 - **Backups.** We take no backups of the machine's disk. The Host backs
   itself up, encrypted, once you give it a backup recovery key.
+- **Network membership included.** Each machine comes with the network
+  membership for as long as it runs.
 
 The sizes, and the prices it will open at:
 
@@ -105,16 +118,17 @@ of what we can and cannot reach on your machine, are on
 ## Network membership: not on sale yet
 
 $9 a month when it opens, for a Host on your own machine. A member Host
-connects out to the Privatae network over one connection it keeps open, and
+connects out to the Privatae network over connections it opens itself, and
 nothing the network sends can run on it.
 
 The network is for what one machine cannot do by itself: messages between
 Hosts and between people, private git, workers that run while your machine is
 off, encrypted backups kept off the machine, a community board, and reaching
-your own Host from a phone or a browser anywhere. The Host already has the
-step that joins it to the network; buying a membership is being built, and
-most of the rest is not built yet. [ROADMAP.md](ROADMAP.md) gives each
-feature's status and estimate.
+your own Host from a phone or a browser anywhere. The Host can already join
+the network, and the community board and reaching your Host from anywhere are
+built. Buying a membership is being built, the network does not keep backups
+yet, and messages, git and cloud workers are not built yet.
+[ROADMAP.md](ROADMAP.md) gives each feature's status and estimate.
 
 ## How it is built
 

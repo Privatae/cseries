@@ -5,10 +5,11 @@ row and a system note in the thread) and queued as a wake: a `calendar_events`
 row, `event_type='scheduled_task'`, `payload.saved_request = true`
 (`brain/mastercode/runtime/identity_hold.py::save_refused_request`). This page
 is the whole map of what can happen to such a row. It is pinned against the code
-by `scripts/test_saved_request_state_map.py`: every statement in `server/` and
-`brain/` that writes `calendar_events` must be in the table below, and every row
-of the table has a scenario in `scripts/test_tools_before_first_turn.py`
-(`SM_SCENARIOS`) that starts a saved request in that state, makes the event
+by `scripts/test_saved_request_state_map.py`: every statement in the repo's Python
+(tests, apps and the web front ends aside) that writes `calendar_events` must be in the table
+below, and every row of the table has a scenario in
+`scripts/test_tools_before_first_turn.py` (`SM_IDS`; each scenario is an
+`sm("Txx", …)` in `case_state_machine`) that starts a saved request in that state, makes the event
 happen, and checks the invariant.
 
 In this document "platform" means the C-Series kernel inside the Host, not a hosted service.

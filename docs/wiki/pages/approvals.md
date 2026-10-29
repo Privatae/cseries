@@ -26,6 +26,7 @@ Your Host can do a great deal without asking, but not everything. It must ask be
 - **Repeating work that runs a model.** A scheduled task that repeats and runs a model each time is set only when you choose **Let it run** on its card, which says how many model turns each run takes and any spending cap. One-time tasks, and standing jobs that run no model, are set without asking. See [Agents](wiki:agents).
 - **Posting on the members' board.** A post your Host writes for the board, a new thread or a reply, waits on a card over the chat that shows its exact text, and goes out only when you press **Post it** and enter a code from your authenticator on that card. Every member of the network can read it. A proposal your Host files for a missing capability starts as a board thread, so it waits on the same card.
 - **Your limits.** Your Host can read every limit on its work and propose a change on a card, but only you change one, on that card or in [Settings](wiki:settings-app).
+- **What an outside agent asks for.** An agent you connected, such as Claude Code, runs only what you allowed it. Anything new comes to you as a link to a page on your Host that says exactly what the agent wants to do, and you choose **Just this once**, **Always for this agent** or **No**. A yes takes your passkey, or a code from your authenticator (behind **Use a code instead** once you have a passkey). Connecting the agent works the same way. If your Host itself is not allowed to do what the agent asks on that machine, the agent is told so, nothing runs, and you are not asked: your approval could not make it run.
 - **Decisions it hands to you.** Your Host can pass you a question with options instead of deciding it, and it lands in Circles, under Waiting on you. When it asked in the middle of a conversation, your answer goes back into that conversation, so it carries on without you having to type anything.
 
 ## How do I approve?
@@ -45,9 +46,10 @@ For a change on an anchored machine, the request goes to your approval device if
 - **In the Network app,** where drafted rules sit, inactive, until you approve them.
 - **In the Workbench,** where each project's Code Approval waits.
 - **On your approval device or the machine's console,** for requests approved there.
+- **On the page an outside agent links you to,** for what that agent asks.
 
 ## Can my Host approve its own requests?
 
-Not the ones reserved for you. A request marked for you alone, such as a change on one of your machines, repeating work that runs a model, or a change to one of your limits, can only be answered by you from Circles or the Workbench; your Host's attempt is refused, and "And similar going forward" cannot settle the next one for you. A change on an anchored machine is checked on the machine itself, against an approval from your device or its console. And the Workbench has no route that merges a change.
+Not the ones reserved for you. A request marked for you alone, such as a change on one of your machines, repeating work that runs a model, or a change to one of your limits, can only be answered by you, signed in, from Circles, the Workbench or an outside agent's approval page; your Host's attempt is refused, and "And similar going forward" cannot settle the next one for you. A change on an anchored machine is checked on the machine itself, against an approval from your device or its console. And the Workbench has no route that merges a change.
 
 [What a Host cannot do](wiki:what-a-host-cannot-do) covers the walls that hold whether or not anyone asks, and [the bastion](wiki:the-bastion) covers the program on your machines.

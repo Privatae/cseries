@@ -13,8 +13,8 @@
    "status": "current"
   },
   "approvals": {
-   "checked": "2026-10-28",
-   "status": "changed"
+   "checked": "2026-10-29",
+   "status": "unchecked"
   },
   "apps-overview": {
    "checked": "2026-10-28",
@@ -49,7 +49,7 @@
    "status": "current"
   },
   "code-repositories": {
-   "checked": "2026-10-28",
+   "checked": "2026-10-29",
    "status": "current"
   },
   "coding-agents": {
@@ -65,7 +65,7 @@
    "status": "current"
   },
   "connected-folders": {
-   "checked": "2026-10-28",
+   "checked": "2026-10-29",
    "status": "unchecked"
   },
   "context-app": {
@@ -93,11 +93,11 @@
    "status": "current"
   },
   "how-a-host-handles-a-request": {
-   "checked": "2026-10-28",
-   "status": "changed"
+   "checked": "2026-10-29",
+   "status": "current"
   },
   "how-your-host-is-protected": {
-   "checked": "2026-10-28",
+   "checked": "2026-10-29",
    "status": "current"
   },
   "keys-app": {
@@ -121,8 +121,8 @@
    "status": "current"
   },
   "network-app": {
-   "checked": "2026-10-20",
-   "status": "changed"
+   "checked": "2026-10-29",
+   "status": "current"
   },
   "orchestrator-app": {
    "checked": "2026-10-28",
@@ -141,8 +141,8 @@
    "status": "current"
   },
   "settings-app": {
-   "checked": "2026-10-28",
-   "status": "changed"
+   "checked": "2026-10-29",
+   "status": "current"
   },
   "sites-app": {
    "checked": "2026-10-28",
@@ -153,20 +153,20 @@
    "status": "current"
   },
   "the-bastion": {
-   "checked": "2026-10-20",
-   "status": "changed"
+   "checked": "2026-10-29",
+   "status": "current"
   },
   "the-privatae-network": {
-   "checked": "2026-10-28",
-   "status": "changed"
+   "checked": "2026-10-29",
+   "status": "current"
   },
   "updates-and-versions": {
-   "checked": "2026-10-25",
-   "status": "changed"
+   "checked": "2026-10-29",
+   "status": "current"
   },
   "what-a-host-cannot-do": {
-   "checked": "2026-10-28",
-   "status": "changed"
+   "checked": "2026-10-29",
+   "status": "unchecked"
   },
   "what-a-host-is": {
    "checked": "2026-10-28",
@@ -177,8 +177,8 @@
    "status": "current"
   },
   "where-your-data-lives": {
-   "checked": "2026-10-28",
-   "status": "changed"
+   "checked": "2026-10-29",
+   "status": "unchecked"
   },
   "workbench": {
    "checked": "2026-10-28",
@@ -193,8 +193,8 @@
    "status": "current"
   },
   "your-private-network": {
-   "checked": "2026-10-23",
-   "status": "changed"
+   "checked": "2026-10-29",
+   "status": "current"
   }
  },
  "schema": 1

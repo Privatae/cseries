@@ -51,9 +51,19 @@ PROTOCOL_VERSIONS = ("2025-06-18", "2025-11-25")
 PROTOCOL_VERSION = PROTOCOL_VERSIONS[-1]
 URL_ELICITATION_REQUIRED = -32042
 
+def _host_version() -> str:
+    """The Host's own release, as Settings reads it (build-info.json's tag,
+    routes/system.py _load_build_info: "0.1.14" in a release image)."""
+    try:
+        from server.routes.system import _load_build_info
+        return str(_load_build_info().get("tag") or "dev")
+    except Exception:  # noqa: BLE001 — an unreadable build-info still names a version
+        return "dev"
+
+
 SERVER_INFO = {
     "name": "host",
-    "version": "0.2.0",
+    "version": _host_version(),
 }
 
 # JSON-RPC 2.0 standard error codes
@@ -874,13 +884,23 @@ async def mcp_info(request: Request):
     if "text/event-stream" in (request.headers.get("accept") or ""):
         return JSONResponse({"error": "no event stream; POST JSON-RPC to /mcp"}, status_code=405,
                             headers={"Allow": "POST"})
+    # The address Settings shows (agent_access.origin.agent_address): on an
+    # installed Host, this computer's 127.0.0.1, which an MCP client signs in
+    # on over plain http; an https address as it is.
+    from server.agent_access.origin import agent_address, zone_origin
+    address = agent_address(zone_origin(request))
     return {
         "ok": True,
         "endpoint": "this Host's MCP server (JSON-RPC 2.0 over POST)",
         "protocol_versions": list(PROTOCOL_VERSIONS),
-        "server": SERVER_INFO,
+        # The name only: this page answers anyone with no token (the
+        # internet, through the remote door). The Host's version is in
+        # initialize's serverInfo, behind the token, as /api/system/version
+        # is behind the session.
+        "server": {"name": SERVER_INFO["name"]},
+        "address": address,
         "note": (
-            "Add this address to Claude Code, Codex or any MCP client. It signs in "
+            f"Add {address} to Claude Code, Codex or any MCP client. It signs in "
             "through this Host (OAuth): you approve the connection on a page of your "
             "Host, and every change it asks for on your machines waits for your approval."
         ),
@@ -932,6 +952,16 @@ async def mcp_endpoint(
             harness_cap=x_cseries_harness_cap,
             internal_ok=in_container(request),
         )
+        if auth.get("_agent"):
+            # A token is for the address it was asked for (RFC 8707; MCP
+            # 2025-11-25, token audience): one minted for this computer's
+            # 127.0.0.1 is not taken on the remote address, nor the reverse.
+            from server.agent_access.origin import public_origin
+            # resolve_access takes no token bound to no address, so this is
+            # never ''; were it, it would match no address.
+            audience = auth["_agent"].get("resource") or ""
+            if not audience or audience != await public_origin(request) + "/mcp":
+                raise HTTPException(401, "this token is for another address of this Host")
     except HTTPException as exc:
         # A 401 names where to sign in (RFC 9728 §5.1, MCP authorization): a
         # standard client starts its OAuth flow from this header, never from a
@@ -1023,16 +1053,17 @@ async def mcp_endpoint(
                                      origin=origin)
             if resp is not None:
                 responses.append(resp)
-        # Per spec: if all entries were notifications, return nothing.
+        # Notifications only: 202 Accepted with no body (MCP Streamable HTTP).
         if not responses:
-            return Response(status_code=204)
+            return Response(status_code=202)
         return responses
 
     if isinstance(body, dict):
         resp = await _handle_one(body, authorization, is_internal=is_internal, auth=auth,
                                  origin=origin)
         if resp is None:
-            return Response(status_code=204)
+            # A notification: 202 Accepted with no body (MCP Streamable HTTP).
+            return Response(status_code=202)
         return resp
 
     raise HTTPException(400, "expected JSON-RPC object or batch array")

@@ -78,6 +78,18 @@ async def _card(pool, eid: int, ask: dict) -> dict | None:
     return t if t.get("status") == "open" else None
 
 
+async def host_refuses(pool, eid: int, ask: dict) -> str:
+    """Why this Host itself may not run the ask's op (its pod gate,
+    nac_mgmt.gate_op, as run_mgmt_op asks it), or ''. An ask filed before a
+    grant was taken back is not offered for approval: it could not run."""
+    from server.network import nac_mgmt
+    ok, why, _decision = await nac_mgmt.gate_op(pool, eid, ask["server"], ask["op"])
+    if ok:
+        return ""
+    return (f"Your Host itself is not allowed to run {ask['op']} on {ask['server']} ({why}), "
+            "so it cannot run and there is nothing to approve here.")
+
+
 async def _render(request, pool, eid: int, ask: dict, error: str = "",
                   status: int = 200) -> HTMLResponse:
     import datetime as _dt
@@ -87,6 +99,9 @@ async def _render(request, pool, eid: int, ask: dict, error: str = "",
     if ask["kind"] == store.GRANT_ASK:
         if ask["state"] != "waiting":
             return _gone(_closed_words(ask))
+        host_no = await host_refuses(pool, eid, ask)
+        if host_no:
+            return _html(pages.message("Your Host may not run this", host_no), 409)
         from server.network import nac_approval
         token = await person.sign_form(pool, {"k": "ask", "id": ask["id"]})
         factors = await person.factors(pool, request)
@@ -139,6 +154,8 @@ async def ask_answer(ask_id: str, request: Request):
     if signed.get("k") == "ask":
         if decision not in (store.ONCE, store.ALWAYS, store.REFUSE):
             return await _render(request, pool, eid, ask, "Choose one of the three answers.", 400)
+        if decision != store.REFUSE and await host_refuses(pool, eid, ask):
+            return await _render(request, pool, eid, ask)
         if decision != store.REFUSE:
             from server.network.nac_stepup import StepupLocked
             try:
@@ -186,7 +203,7 @@ def _needs(permission: str):
 
 
 @router.get("/api/agent-access/connections", dependencies=[_needs("read:session")])
-async def connections():
+async def connections(request: Request):
     pool, eid = _pool_eid()
     if pool is None:
         raise HTTPException(503, "host not ready")
@@ -194,7 +211,11 @@ async def connections():
     for r in rows:
         r["redirect_hosts"] = sorted({u.split("/")[2] for u in r.pop("redirect_uris") or []
                                       if u.count("/") >= 2})
-    return {"connections": rows}
+    # The address the person gives their agents (origin.agent_address): on the
+    # desktop's own http address, this computer's 127.0.0.1, where an MCP
+    # client signs in; on an https address, that address.
+    from server.agent_access.origin import agent_address, zone_origin
+    return {"connections": rows, "agent_address": agent_address(zone_origin(request))}
 
 
 @router.post("/api/agent-access/connections/{connection_id}/revoke",

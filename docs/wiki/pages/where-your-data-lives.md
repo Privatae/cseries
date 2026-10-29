@@ -1,6 +1,6 @@
 ---
 title: Where your data lives
-summary: Your Host's memory lives in its own database on your machine, and its apps and files on volumes beside it. Connected folders stay where they are. Text your Host sends to a model goes to that provider under your key. A Host with no network membership sends nothing of yours to Privatae, unless you connect it to Privatae's git server.
+summary: Your Host's memory lives in its own database on your machine, and its apps and files on volumes beside it. Connected folders stay where they are. Text your Host sends to a model goes to that provider under your key or sign-in. A Host with no network membership sends nothing of yours to Privatae.
 section: security
 order: 40
 questions:
@@ -11,7 +11,7 @@ questions:
   - Does my data ever leave my own computer?
 ---
 
-Your Host's memory lives in its own PostgreSQL database, in a container on your machine. Its apps and files live on volumes beside it. Folders you connect stay where they are. What your Host sends to a model goes to that model's provider, under your own key. A Host that has not joined the Privatae network sends nothing of yours to Privatae, unless you connect it to Privatae's git server.
+Your Host's memory lives in its own PostgreSQL database, in a container on your machine. Its apps and files live on volumes beside it. Folders you connect stay where they are. What your Host sends to a model goes to that model's provider, under your own key or sign-in. A Host that has not joined the Privatae network sends nothing of yours to Privatae.
 
 ## What lives in my Host?
 
@@ -28,11 +28,11 @@ Not the folders you connect from your machine. A [connected folder](wiki:connect
 
 ## What goes to model providers?
 
-When your Host uses a model from a provider, the request goes from your Host straight to that provider, under your own key: your message and the context your Host puts together to answer it. What the provider keeps is set by the provider's own terms. A model running on your machine is a different route; see [local models](wiki:local-models).
+When your Host uses a model from a provider, the request goes from your Host straight to that provider, under your own key or sign-in: your message and the context your Host puts together to answer it. If you set a fallback provider and the first one fails or declines the request, it goes to the fallback instead; see [models and keys](wiki:models-and-keys). What the provider keeps is set by the provider's own terms. A model running on your machine is a different route; see [local models](wiki:local-models).
 
 ## What does Privatae receive?
 
-On its own, a Host sends nothing of yours to Privatae; it only reads which bastion version Privatae has published. The exception is your code, if you connect your Host to Privatae's git server. If you [join the Privatae network](wiki:the-privatae-network), your Host keeps one outbound connection that carries only the network's own requests: the App Store, the community board, group listings, renewing or revoking the passport, a heartbeat, the interests you list for introductions, turning on remote access and the tickets for its tunnels, and requests about your Host's own backups, such as whether the network keeps them and how each backup ended; the encrypted backups themselves go only once the network keeps them, and not if you chose a folder or a bucket instead. If you turn on remote access, your Host also keeps a tunnel open to the network's relays, which pass your browser's encrypted connection through to your Host. Your Host's memory, conversations, files and keys are not sent on their own, and a backup arrives already encrypted to keys the network does not hold.
+On its own, a Host sends nothing of yours to Privatae; it only reads what Privatae publishes, such as the newest bastion version and the App Store's free catalog. If you [join the Privatae network](wiki:the-privatae-network), your Host keeps one outbound connection that carries only the network's own requests: the App Store, the community board, group listings, renewing or revoking the passport, a heartbeat, the interests you list for introductions, turning on remote access and the tickets for its tunnels, and requests about your Host's own backups, such as whether the network keeps them and how each backup ended; the encrypted backups themselves go only once the network keeps them, and not if you chose a folder or a bucket instead. If you turn on remote access, your Host also keeps a tunnel open to the network's relays, which pass your browser's encrypted connection through to your Host. Your Host's memory, conversations, files and keys are not sent on their own, and a backup arrives already encrypted to keys the network does not hold.
 
 ## How are backups handled?
 

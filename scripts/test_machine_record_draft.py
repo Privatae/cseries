@@ -187,6 +187,27 @@ def test_the_draft_path_never_approves():
         assert "approved_at = now()" not in q and "signed_terms" not in q.replace("SELECT", ""), q[:80]
 
 
+def test_a_folder_starts_from_excludes_that_leave_out_the_agent_store():
+    """A folder the person adds starts from DCN_DEFAULT_EXCLUDES, and those
+    leave out the bastion agent's own folder (.agent), where it keeps its store
+    in the clear: a machine on a bastion older than 0.58.1 serves it otherwise.
+    Matched as the box matches (client-go dcn.go dcnExcluded): each pattern
+    against every path segment."""
+    import fnmatch
+    import json as _json
+    pool = Pool(existing=None)
+    _run(np_.propose_dcn_store(pool, 9003, store_class="machine", server="box-1", root="/home/p/notes"))
+    ins = pool.store_inserts()
+    assert len(ins) == 1, ins
+    excludes = _json.loads(ins[0][1][3])
+    assert ".agent" in excludes, excludes
+
+    def excluded(rel):
+        return any(fnmatch.fnmatchcase(seg, pat) for pat in excludes for seg in rel.split("/"))
+    assert excluded(".agent/store.json") and excluded("projects/x/.agent/plans/1.json")
+    assert not excluded("projects/agent/notes.md") and not excluded("projects/.agents/notes.md")
+
+
 def _tests():
     return [v for k, v in sorted(globals().items()) if k.startswith("test_")]
 

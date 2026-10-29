@@ -13,7 +13,28 @@
 #
 # Build from the repository root:
 #   docker build -f sidecars/remote-door/Dockerfile -t cseries-remote-door:dev .
+
+# The same Caddy release, built from source with a newer Go. The binary in
+# caddy:2.11.7-alpine was built with Go 1.26.8, whose standard library the
+# release scan fails on (CVE-2026-56857, CRITICAL, fixed in Go 1.26.9 and
+# 1.27.2). Caddy's official builder image, pinned by its multi-arch index
+# (read from Docker Hub on 2026-10-28; Go 1.27.3, xcaddy 0.4.7), builds
+# v2.11.7 with Caddy's standard modules, the set the base image's binary has.
+# Caddy's go.mod fixes every module's version; xcaddy takes them from the Go
+# module proxy, and the go command checks each against the Go checksum
+# database. GOTOOLCHAIN=local (that image sets it too) keeps a toolchain line
+# from fetching another Go: a newer requirement fails the build instead.
+# CGO_ENABLED=0 makes the binary static, as the one it replaces is.
+# XCADDY_SETCAP=0, because the image sets 1: the capability would be stripped
+# again below, and stripping it copies the whole binary into another layer.
+FROM caddy:2.11.7-builder@sha256:bf6a7d38add2508b7d2e3e3f40cf2af399214f143c0fa3daa51f254e01f8d293 AS caddy-build
+RUN GOTOOLCHAIN=local CGO_ENABLED=0 XCADDY_SETCAP=0 xcaddy build v2.11.7 --output /out/caddy \
+    && /out/caddy version | grep -q '^v2\.11\.7 ' \
+    && go version -m /out/caddy | grep -q 'CGO_ENABLED=0' \
+    && /out/caddy list-modules | grep -qx 'caddy.listeners.proxy_protocol'
+
 FROM caddy:2.11.7-alpine@sha256:eb4d35b7452d1ab6171fbdbe8d9275b2301dad6dad92115d91e19fb9b24d510f
+COPY --from=caddy-build /out/caddy /usr/bin/caddy
 
 # Links the published package to its source, as the Host and postgres images do
 # (docs/RELEASING.md).
@@ -36,15 +57,22 @@ LABEL org.opencontainers.image.source="https://github.com/Privatae/cseries"
 # time too, and the build checks it below); move lego off 4.29 only with
 # door-cert's account layout checked against the new series.
 #
-# The caddy base image gives /usr/bin/caddy, and Alpine's package /usr/bin/lego,
-# the file capability cap_net_bind_service=+ep. The door and its certificate
+# The caddy images give /usr/bin/caddy, and Alpine's package /usr/bin/lego,
+# the file capability cap_net_bind_service=+ep (the build above leaves it off
+# its binary, and this still checks). The door and its certificate
 # job run with an empty bounding set (compose.remote.yaml's cap_drop and
 # door-filter, the guests' DropCapability=ALL), and the kernel refuses to run a
 # binary with an effective file capability it cannot grant: "exec: Operation
 # not permitted", so Caddy never starts and lego never makes a certificate.
 # Neither needs it (Caddy listens on 8443; lego answers DNS-01 through
 # cseries-acme-dns-hook), so both lose it here.
-RUN apk add --no-cache python3~3.12 lego~4.29 nftables~1.1 \
+# `apk upgrade` first takes the branch's current revision of every package the
+# base image already has, so a library Alpine has fixed since the base was
+# built (brotli-libs 1.2.0-r0 to 1.2.1-r0 for CVE-2026-111497, 2026-10-28)
+# does not fail the release scan. It is the same live index the add below
+# resolves against.
+RUN apk upgrade --no-cache \
+    && apk add --no-cache python3~3.12 lego~4.29 nftables~1.1 \
     && test -x /usr/bin/lego && test -x /usr/bin/python3 && test -x /usr/sbin/nft \
     && /usr/bin/lego --version | grep -q ' 4\.29\.' \
     && /usr/bin/python3 -I -c 'import os; fc = "security.capability"; bins = ("/usr/bin/caddy", "/usr/bin/lego"); [os.removexattr(b, fc) for b in bins if fc in os.listxattr(b)]; left = [b for b in bins if fc in os.listxattr(b)]; raise SystemExit(f"file capabilities left on {left}" if left else 0)'

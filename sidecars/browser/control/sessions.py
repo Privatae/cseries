@@ -24,10 +24,45 @@ different from the shared page, and all three are the point:
 
 3. A DECLARED BLAST RADIUS. A session is created with the hosts it may
    navigate to. Enforcement is a context-level route guard on DOCUMENT
-   requests, so a redirect or a link click cannot walk the session onto
-   a host the caller never declared. Subresources (CDNs, fonts, XHR)
+   requests, so a link click or a script cannot START a navigation to a
+   host the caller never declared. Subresources (CDNs, fonts, XHR)
    are NOT filtered — filtering them breaks ordinary sites and buys
    little, since the guard already pins which site the page IS.
+
+   A SERVER-SIDE REDIRECT IS NOT SEEN BY THE GUARD. Playwright runs a route
+   handler for the request a navigation starts with, not for the hops a
+   redirect adds (measured on the live image 2026-11-01: allow=[httpbin.org],
+   httpbin's redirect-to example.com landed on example.com, blocked 0). So an
+   open redirect on an allowed site walked the session anywhere. The page's
+   own address is therefore checked too (_page_outside): every action that
+   reads or acts on the page (and navigate, and switch_page) checks the main
+   frame before it runs AND after, so a redirect that lands during a wait or
+   a click is caught too; a page outside allow[] is refused, its output
+   dropped, and it is taken off that page (the first page back to
+   about:blank, a popup closed, with every popup it opened). A sub-frame
+   outside allow[] gets no refs in a snapshot, an element whose frame is
+   outside is refused, and no screenshot is taken while one is on the page.
+   A download from a host outside allow[] is cancelled, and export_state
+   carries only cookies and storage a host in allow[] could have set.
+
+   An about:blank or about:srcdoc document takes its creator's origin, so an
+   outside page can write its own HTML into one. Such a document is judged
+   by whoever made it (_frame_site): a blank sub-frame by its parent, a
+   blank popup by the page that opened it; and a popup whose opener is
+   outside is closed when it opens, as is a blank one whose opener was
+   taken off an outside page in the last few seconds or is already gone.
+
+   type_secret checks, under the session lock, the frame the field is in and
+   the host the credential was declared for, so a page that moves between
+   the vault's check and the typing gets nothing.
+
+   What this cannot do is stop the redirected REQUEST: the GET to the
+   redirect target is sent, and its page runs until the check sees it. It
+   carries none of the allowed sites' cookies (it is another site), and
+   nothing on a page or frame whose document belongs outside allow[] is
+   read, acted on, typed into or kept. Stopping the request itself needs the
+   guard to fetch each navigation with redirects off and follow every hop
+   itself (route.fetch), a different design.
 
 There is deliberately no `eval` action. The caller gets snapshot plus
 named actions, never arbitrary JS in the page. A surface that accepts
@@ -274,6 +309,18 @@ class Session:
     refs: dict = field(default_factory=dict)
     # In-flight download captures, drained before the context closes.
     download_tasks: set = field(default_factory=set)
+    # id(page) -> (page, when _leave_outside reset it). A popup the page
+    # opened while it was outside can arrive just after the reset; a blank
+    # one whose opener was reset this recently is closed on arrival
+    # (_judge_popup). The page is held with its time, and matched by
+    # identity, because a freed page's id goes to the next object made;
+    # entries older than _RESET_POPUP_WINDOW_S are dropped at each reset.
+    reset_at: dict = field(default_factory=dict)
+    # Popups closed on arrival (_judge_popup): a count for info(), and the
+    # reasons not yet told to the caller, handed back on the next action so a
+    # sign-in that stops because its popup was closed does not stop silently.
+    popups_closed: int = 0
+    popup_notes: list = field(default_factory=list)
     # Every file name a download of this session was given, taken BEFORE the
     # first await so two downloads in flight never get one name.
     download_names: set = field(default_factory=set)
@@ -315,6 +362,7 @@ class Session:
             "state_cookies": len((self.state or {}).get("cookies") or []),
             "downloads": len(self.downloads),
             "secret_typed": self.secret_typed,
+            "popups_closed": self.popups_closed,
         }
 
 
@@ -331,6 +379,132 @@ def _validate_name(name: str) -> str:
                    "hyphens, starting and ending alphanumeric",
         )
     return n
+
+
+def _url_outside(url: Optional[str], patterns: tuple[str, ...]) -> Optional[str]:
+    """The host of an http(s) `url` that is not in `patterns`, else None.
+    about:blank, chrome-error:// and the like name no site and are not
+    outside anything. A blob: URL is the document of the origin that made
+    it (blob:https://evil.test/<id> is evil.test's), so it is judged by that
+    origin: read as 'no site', a page that got outside could step onto its
+    own blob and be read there."""
+    parsed = urlparse(url or "")
+    if parsed.scheme == "blob":
+        parsed = urlparse(parsed.path)
+        if parsed.scheme not in ("http", "https"):
+            return None
+    if parsed.scheme not in ("http", "https"):
+        return None
+    host = (parsed.hostname or "").lower()
+    return None if _host_allowed(host, patterns) else (host or "?")
+
+
+# Actions that read or act on the page. A page outside allow[] is refused
+# them; navigate (which may take it back), and the actions about the session
+# rather than a page, are not in this set.
+_PAGE_ACTIONS = frozenset({"snapshot", "click", "type", "type_secret", "press", "select",
+                           "scroll", "wait", "wait_for_text", "text", "screenshot"})
+
+
+# How long after a reset a popup from the reset page is still taken as its.
+_RESET_POPUP_WINDOW_S = 10.0
+
+
+async def _frame_site(frame) -> str:
+    """The address a frame's document belongs to. An about:blank or
+    about:srcdoc document takes the origin of whoever made it, so it is
+    judged by the nearest ancestor frame that names a site, and a top-level
+    about: page (a popup) by the page that opened it: an outside page can
+    write its own HTML into a blank popup or a blank sub-frame, and read as
+    'no site' that content passed every check."""
+    f, hops = frame, 0
+    while f is not None and hops < 16:
+        hops += 1
+        url = f.url or ""
+        if not url.startswith("about:"):
+            return url
+        parent = f.parent_frame
+        if parent is not None:
+            f = parent
+            continue
+        try:
+            opener = await f.page.opener()
+        except Exception:  # noqa: BLE001 — no opener to ask: the blank page is its own
+            opener = None
+        f = opener.main_frame if opener is not None else None
+    return ""
+
+
+async def _page_outside(s: "Session", page) -> Optional[str]:
+    """The outside host the page's document belongs to, or None."""
+    return _url_outside(await _frame_site(page.main_frame), s.allow)
+
+
+async def _opened_by(p, root) -> bool:
+    """Whether page `p` was opened, directly or through other popups, by `root`."""
+    cur, hops = p, 0
+    while cur is not None and hops < 16:
+        hops += 1
+        try:
+            cur = await cur.opener()
+        except Exception:  # noqa: BLE001
+            return False
+        if cur is root:
+            return True
+    return False
+
+
+async def _leave_outside(s: "Session", page, host: str, how: str) -> HTTPException:
+    """Count a page found outside allow[], take it off the outside document,
+    and return the refusal to raise. Popups it opened go first, since what
+    an outside page wrote into them is outside content too. A popup that is
+    itself outside is closed; the session's first page is put back on
+    about:blank. Best-effort: the refusal is the answer either way."""
+    s.blocked += 1
+    log.warning("session %s: page %s %s, outside allow=%s; reset",
+                s.name, how, host, list(s.allow))
+    for p in list(s.pages):
+        if p is not page and not p.is_closed() and await _opened_by(p, page):
+            try:
+                await p.close()
+            except Exception:  # noqa: BLE001
+                pass
+    now = time.monotonic()
+    s.reset_at = {k: v for k, v in s.reset_at.items()
+                  if now - v[1] < _RESET_POPUP_WINDOW_S}
+    s.reset_at[id(page)] = (page, now)
+    try:
+        if s.pages and page is not s.pages[0] and not page.is_closed():
+            await page.close()
+        else:
+            await page.goto("about:blank", timeout=NAV_TIMEOUT_MS)
+    except Exception as e:  # noqa: BLE001 — the refusal below stands regardless
+        log.warning("session %s: reset failed: %s", s.name, type(e).__name__)
+    s.prune_pages()
+    if s.page is None or s.page.is_closed():
+        s.page = s.pages[0] if s.pages else None
+    await _clear_refs(s)
+    return HTTPException(
+        403,
+        f"the page {how} {host}, which is not in this session's allow list "
+        f"{list(s.allow)} — a redirect took it there. It was taken off that page.")
+
+
+def _cookie_in_allow(domain: str, patterns: tuple[str, ...]) -> bool:
+    """Whether a cookie for `domain` could be set by or sent to a host in
+    `patterns`: the domain is such a host, or a parent of one (a login on
+    app.example.com may set its cookie for .example.com)."""
+    d = domain.lower().lstrip(".")
+    if not d:
+        return False
+    if _host_allowed(d, patterns):
+        return True
+    for raw in patterns:
+        p = raw.lower().strip()
+        base = p[2:] if p.startswith("*.") else p
+        if base == d or base.endswith("." + d):
+            return True
+    return False
 
 
 def _host_allowed(host: Optional[str], patterns: tuple[str, ...]) -> bool:
@@ -510,9 +684,65 @@ async def _open_context(s: Session) -> None:
                      s.name, len(s.refs), (frame.url or "?")[:80])
             s.refs = {}
 
+    async def _judge_popup(p) -> None:
+        # A popup from a page that is outside allow[] is that page's
+        # content: closed on arrival. So is a BLANK popup (about:, which an
+        # outside opener can write into) whose opener was reset moments ago
+        # (the popup event can land after the reset) or is already gone:
+        # opener() answers None once the opener has closed (Playwright 1.48
+        # _impl/_page.py:373), so an outside popup that wrote into a blank
+        # one and then closed, or was closed by _leave_outside first, left
+        # nothing to judge it by, and _frame_site read it as 'no site'. A
+        # popup that arrives on its own address (window.open(url), a
+        # target=_blank link; Playwright reports a popup once its first
+        # address commits) carries that site's document, judged by it.
+        try:
+            opener = await p.opener()
+        except Exception:  # noqa: BLE001 — no opener to ask is no opener
+            opener = None
+        own = p.main_frame.url or ""
+        blank = not own or own.startswith("about:")
+        entry = s.reset_at.get(id(opener)) if opener is not None else None
+        recent = (entry is not None and entry[0] is opener
+                  and time.monotonic() - entry[1] < _RESET_POPUP_WINDOW_S)
+        far = await _page_outside(s, opener) if opener is not None else None
+        if far is not None or (blank and (opener is None or recent)):
+            s.blocked += 1
+            s.popups_closed += 1
+            if far is not None:
+                why = f"a popup opened by a page on {far}, outside the allow list, was closed"
+            elif opener is None:
+                why = ("a blank popup was closed: the page that opened it was already gone, "
+                       "so what it holds cannot be told apart from an outside page's")
+            else:
+                why = ("a blank popup was closed: it was opened by a page taken off an outside "
+                       "page moments ago. If it was a sign-in, open it again")
+            s.popup_notes = (s.popup_notes + [why])[-10:]
+            log.warning("session %s: closed a popup (%s)", s.name, why)
+            try:
+                await p.close()
+            except Exception:  # noqa: BLE001
+                pass
+            s.prune_pages()
+            if s.page is p or (s.page is not None and s.page.is_closed()):
+                s.page = s.pages[0] if s.pages else None
+
     def _on_page(p) -> None:
         s.pages.append(p)
         p.on("framenavigated", _invalidate_refs)
+        if s.pages and p is not s.pages[0]:
+            # Playwright's async API delivers this event on the running loop.
+            # Without one there is no judging the popup now, and nothing is
+            # lost: every page action still resolves a blank popup by the
+            # page that opened it (_frame_site).
+            try:
+                loop = asyncio.get_running_loop()
+            except RuntimeError:
+                loop = None
+            if loop is not None:
+                t = loop.create_task(_judge_popup(p))
+                s.download_tasks.add(t)
+                t.add_done_callback(s.download_tasks.discard)
         # Downloads are a PAGE event, not a context one (verified against
         # 1.48: Page carries the "download" overload, BrowserContext has
         # none), so every page needs its own listener — including popups,
@@ -616,6 +846,23 @@ async def _capture_download(s: Session, download) -> None:
     entry: dict[str, Any] = {"ms": int(time.time() * 1000)}
     try:
         entry["url"] = download.url
+        # A redirect to a file walks past the route guard exactly as a
+        # redirect to a page does, so a file from a host outside allow[]
+        # would land in the session as its deliverable. Cancel it.
+        outside = _url_outside(download.url, s.allow)
+        if outside is not None:
+            s.blocked += 1
+            try:
+                await download.cancel()
+            except Exception:  # noqa: BLE001 — refused either way; nothing is saved
+                pass
+            entry.update({"ok": False, "error":
+                          f"refused: the file came from {outside}, which is not in "
+                          f"this session's allow list {list(s.allow)}"})
+            log.warning("session %s: download from %s refused (outside allow)",
+                        s.name, outside)
+            s.downloads.append(entry)
+            return
         name = _unique_name(s, _safe_filename(download.suggested_filename,
                                               f"download-{entry['ms']}"))
         dest_dir = DOWNLOAD_ROOT / s.name
@@ -914,7 +1161,16 @@ async def _snapshot(s: Session, page, offset: int = 0) -> dict:
     considered = 0
     n = 0
 
+    outside_frames: list[str] = []
     for frame in page.frames:
+        # A sub-frame a redirect took outside allow[] (the route guard does
+        # not see redirect hops): its elements get no ref, so no action can
+        # read or reach them. The main frame was checked before this ran.
+        if frame is not page.main_frame:
+            far = _url_outside(frame.url, s.allow)
+            if far is not None:
+                outside_frames.append(far)
+                continue
         limits = {"maxElements": max(0, MAX_ELEMENTS - len(merged)),
                   "maxName": MAX_NAME_CHARS, "offset": skip}
         try:
@@ -970,6 +1226,8 @@ async def _snapshot(s: Session, page, offset: int = 0) -> dict:
         "offset": offset,
         "total_elements": visible_total,
     }
+    if outside_frames:
+        out["frames_outside_allow"] = outside_frames
     if offset + len(merged) < visible_total:
         out["truncated"] = True
         out["next_offset"] = offset + len(merged)
@@ -1004,6 +1262,22 @@ async def _element(s: Session, ref: str):
             status_code=409,
             detail=f"ref {ref!r} was removed from the page since the snapshot — "
                    f"take a fresh one")
+    # The frame the node is in NOW: a sub-frame can be redirected outside
+    # allow[] after the snapshot gave it a ref. Read from the driver, not
+    # the page, so the page cannot answer for itself.
+    try:
+        frame = await el.owner_frame()
+        frame_url = await _frame_site(frame) if frame is not None else ""
+    except Exception:
+        raise HTTPException(
+            status_code=409,
+            detail=f"ref {ref!r} no longer exists on the page — take a fresh snapshot")
+    far = _url_outside(frame_url, s.allow)
+    if far is not None:
+        raise HTTPException(
+            status_code=403,
+            detail=f"ref {ref!r} is in a frame on {far}, which is not in this "
+                   f"session's allow list {list(s.allow)}")
     return el, info
 
 
@@ -1057,6 +1331,10 @@ class ActBody(BaseModel):
                     "input[type=password]. Deliberate escape hatch — the "
                     "default refusal is what stops a secret being typed "
                     "into a visible field on a page that asked nicely.")
+    expect_host: Optional[str] = Field(
+        default=None,
+        description="type_secret only: the host the credential was declared for. "
+                    "The page must be on it when the secret is typed.")
 
 
 router = APIRouter(prefix="/v1/sessions", tags=["sessions"])
@@ -1203,6 +1481,10 @@ async def _act_locked(s: Session, a: str, body: ActBody) -> JSONResponse:
     if page is None:
         raise HTTPException(409, f"session {s.name} has no open page")
     out: dict[str, Any] = {"ok": True, "action": a}
+    if a in _PAGE_ACTIONS:
+        host = await _page_outside(s, page)
+        if host is not None:
+            raise await _leave_outside(s, page, host, "is on")
 
     try:
         if a == "navigate":
@@ -1242,6 +1524,9 @@ async def _act_locked(s: Session, a: str, body: ActBody) -> JSONResponse:
             resp = await page.goto(body.url, wait_until="domcontentloaded",
                                    timeout=NAV_TIMEOUT_MS)
             s.navigations += 1
+            landed = _url_outside(page.url, s.allow)
+            if landed is not None:
+                raise await _leave_outside(s, page, landed, "was redirected to")
             out["status"] = resp.status if resp else None
             left_ms = int(NAV_TIMEOUT_MS - (time.monotonic() - t0) * 1000)
             load_event = False
@@ -1325,6 +1610,30 @@ async def _act_locked(s: Session, a: str, body: ActBody) -> JSONResponse:
                     f"input[type=password]. Take a fresh snapshot and target the "
                     f"password box, or pass allow_non_password if the site genuinely "
                     f"uses something else.")
+            # Where the field IS, read now, under the session lock: the frame
+            # that holds it must be inside allow[] (a sub-frame a redirect
+            # moved elsewhere is not), and the page must still be on the
+            # host the credential was declared for (the vault read that
+            # before calling; the page may have moved since).
+            frame_url = ""
+            try:
+                frame = await el.owner_frame()
+                frame_url = await _frame_site(frame) if frame is not None else ""
+            except Exception:  # noqa: BLE001 — an unreadable frame is refused below
+                frame_url = ""
+            frame_host = (urlparse(frame_url).hostname or "").lower()
+            if not frame_host or not _host_allowed(frame_host, s.allow):
+                raise HTTPException(
+                    403,
+                    f"refusing to type a secret: the field is in a frame on "
+                    f"{frame_host or 'no site'}, which is not in this session's allow list")
+            if body.expect_host:
+                page_host = (urlparse(page.url).hostname or "").lower()
+                if page_host != body.expect_host.strip().lower():
+                    raise HTTPException(
+                        403,
+                        f"refusing to type a secret: the page is on {page_host or 'no site'}, "
+                        f"but this credential was declared for {body.expect_host.strip().lower()}")
             if body.clear:
                 await el.fill("", timeout=ACTION_TIMEOUT_MS)
             await el.fill(body.text, timeout=ACTION_TIMEOUT_MS)
@@ -1401,6 +1710,15 @@ async def _act_locked(s: Session, a: str, body: ActBody) -> JSONResponse:
             # it was written for. Defence in depth either way: the renderer
             # dots a real password input, so glyphs never appear. The mask
             # is for the field that is not what it claims to be.
+            # A sub-frame a redirect moved outside allow[] would be drawn
+            # into the image: refused rather than masked, since a mask
+            # locator for an iframe from the outside cannot be built here.
+            for fr in page.frames:
+                far = _url_outside(await _frame_site(fr), s.allow)
+                if far is not None:
+                    raise HTTPException(
+                        403, f"a frame on this page is on {far}, which is not in this "
+                             f"session's allow list {list(s.allow)}; no screenshot is taken")
             masks = []
             for fr in page.frames:
                 try:
@@ -1452,9 +1770,20 @@ async def _act_locked(s: Session, a: str, body: ActBody) -> JSONResponse:
             # it exists so the caller can seal it in the vault. The blob is
             # every cookie in the session: treat the response as a secret,
             # never log it, never show it to a model.
-            s.state = await s.context.storage_state()
+            # Only what a host in allow[] could have set or be sent: a page
+            # a redirect took outside could set its own cookies before the
+            # check took it off, and those are not this session's login.
+            state = await s.context.storage_state()
+            cookies = state.get("cookies") or []
+            kept = [c for c in cookies if _cookie_in_allow(c.get("domain") or "", s.allow)]
+            origins = [o for o in (state.get("origins") or [])
+                       if _url_outside(o.get("origin") or "", s.allow) is None]
+            s.state = dict(state, cookies=kept, origins=origins)
             out["storage_state"] = s.state
-            out["cookies"] = len(s.state.get("cookies") or [])
+            out["cookies"] = len(kept)
+            dropped = len(cookies) - len(kept) + len(state.get("origins") or []) - len(origins)
+            if dropped:
+                out["dropped_outside_allow"] = dropped
 
         else:
             raise HTTPException(400, f"unknown action: {a}")
@@ -1472,11 +1801,22 @@ async def _act_locked(s: Session, a: str, body: ActBody) -> JSONResponse:
                 f"this session's allow list {list(s.allow)}")
         raise HTTPException(502, f"{a} failed: {type(e).__name__}: {e}")
 
+    # And AFTER: the check above saw the page as it was. A wait, a
+    # wait_for_text, a click, navigate's wait for `load`, or a read that
+    # races a commit spans whatever the page did meanwhile, so a redirect
+    # that landed during the action is refused here, its output dropped.
+    if a in _PAGE_ACTIONS or a in ("navigate", "switch_page"):
+        host = await _page_outside(s, page)
+        if host is not None:
+            raise await _leave_outside(s, page, host, "moved to")
+
     out["url"] = page.url
     try:
         out["title"] = await page.title()
     except Exception:
         out["title"] = None
+    if s.popup_notes:
+        out["popups_closed"], s.popup_notes = s.popup_notes, []
     s.touch()
     return JSONResponse(out)
 

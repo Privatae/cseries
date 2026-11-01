@@ -202,6 +202,8 @@ def test_the_secret_is_sent_to_the_sidecar_on_loopback():
     rec, _ = _call({"session": "bank", "ref": "e4"})
     assert rec["url"] == "http://127.0.0.1:8830/v1/sessions/bank/act"
     assert rec["json"]["action"] == "type_secret"
+    # The sidecar checks it again, under its session lock, as it types.
+    assert rec["json"]["expect_host"] == "bank.example"
     assert rec["json"]["text"] == SECRET.decode()
     assert rec["json"]["ref"] == "e4"
 

@@ -703,6 +703,9 @@ async def _do_browser_type(secret: bytes, request: dict) -> dict[str, Any]:
         "ref": ref,
         "text": sval,
         "allow_non_password": bool(request.get("allow_non_password", False)),
+        # Checked again by the sidecar under its session lock, at the moment
+        # it types: the page read above may have moved since.
+        "expect_host": expect_host,
         "clear": bool(request.get("clear", True)),
     }
     timeout = aiohttp.ClientTimeout(total=float(request.get("timeout") or 30))

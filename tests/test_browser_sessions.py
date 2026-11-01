@@ -136,6 +136,11 @@ class StubPage:
     def main_frame(self):
         return self
 
+    @property
+    def page(self):
+        """Frame.page: the main frame's page is the page itself."""
+        return self
+
     async def evaluate_handle(self, script, arg=None):
         """Return the {info, nodes} handle _snapshot expects."""
         items, nodes = [], {}
@@ -189,6 +194,12 @@ class StubPage:
 
     async def close(self):
         self.closed = True
+
+    async def opener(self):
+        # As Playwright 1.48 answers it (_impl/_page.py:373): None once the
+        # opener has closed, even though the page had one.
+        op = getattr(self, "opener_page", None)
+        return None if op is not None and op.is_closed() else op
 
 
 class StubContext:
@@ -585,7 +596,7 @@ def test_popup_is_tracked_and_switchable(_fresh):
     ctx = _fresh.contexts[-1]
     popup = StubPage()
     popup.url = "https://app.example.com/oauth-popup"
-    ctx.emit_page(popup)                  # what window.open does
+    _emit_popup(ctx, popup)               # what window.open does
     pages = _json(_act("acme", action="pages"))["pages"]
     assert len(pages) == 2 and pages[0]["active"] is True
     _act("acme", action="switch_page", index=1)
@@ -884,8 +895,8 @@ def test_download_lands_on_the_pvc_and_is_listed(dl_root, _fresh):
 def test_downloads_are_filed_per_session(dl_root, _fresh):
     _create(name="bank-a", allow=["a.example.com"])
     _create(name="bank-b", allow=["b.example.com"])
-    _fire_download("bank-a", StubDownload(name="a.csv"))
-    _fire_download("bank-b", StubDownload(name="b.csv"))
+    _fire_download("bank-a", StubDownload(name="a.csv", url="https://a.example.com/a.csv"))
+    _fire_download("bank-b", StubDownload(name="b.csv", url="https://b.example.com/b.csv"))
     assert (dl_root / "bank-a" / "a.csv").exists()
     assert (dl_root / "bank-b" / "b.csv").exists()
     assert not (dl_root / "bank-a" / "b.csv").exists()
@@ -974,8 +985,8 @@ def test_the_download_endpoint_serves_only_this_sessions_own_files(crafted, dl_r
     change, checked by sending each crafted name)."""
     _create(name="bank-a", allow=["a.example.com"])
     _create(name="bank-b", allow=["b.example.com"])
-    _fire_download("bank-a", StubDownload(name="a.csv"))
-    _fire_download("bank-b", StubDownload(name="b.csv"))
+    _fire_download("bank-a", StubDownload(name="a.csv", url="https://a.example.com/a.csv"))
+    _fire_download("bank-b", StubDownload(name="b.csv", url="https://b.example.com/b.csv"))
     st, path = _fetch("bank-a", crafted)
     assert st in (400, 404) and path is None, (crafted, st, path)
     assert _fetch("bank-a", "b.csv")[0] == 404           # bank-b's file
@@ -1008,7 +1019,7 @@ def test_every_page_including_popups_gets_a_download_listener(_fresh):
     ctx = _fresh.contexts[-1]
     assert "download" in ctx.page.handlers, "main page has no download listener"
     popup = StubPage()
-    ctx.emit_page(popup)
+    _emit_popup(ctx, popup)
     assert "download" in popup.handlers, "popup has no download listener"
 
 
@@ -1017,13 +1028,18 @@ def test_every_page_including_popups_gets_a_download_listener(_fresh):
 
 class StubElement:
     def __init__(self, field_type="password", tag="INPUT", content_editable=False,
-                 connected=True):
+                 connected=True, frame_url="https://app.example.com/login"):
         self.field_type = field_type
         self.tag = tag
         self.content_editable = content_editable
         self.connected = connected
         self.disposed = False
         self.filled = []
+        self.frame_url = frame_url
+
+    async def owner_frame(self):
+        """The frame the element is in: type_secret checks its host."""
+        return type("F", (), {"url": self.frame_url})()
 
     async def get_attribute(self, name):
         return self.field_type if name == "type" else None
@@ -1364,3 +1380,365 @@ def test_a_stale_subframe_ref_still_fails_closed(_fresh):
     with pytest.raises(HTTPException) as e:
         _act("acme", action="click", ref="e1")
     assert e.value.status_code == 409
+
+
+# ── a redirect is not a way out of allow[] ──────────────────────────
+#
+# Playwright runs the route guard for the request a navigation starts with,
+# not for the hops a server-side redirect adds. Measured on the live image
+# 2026-11-01: allow=[httpbin.org], httpbin's redirect to example.com landed on
+# example.com with nothing blocked. The page's own address is checked instead.
+
+
+def _redirecting_page(page, to):
+    """Make page.goto land on `to`, as a server-side redirect does."""
+    async def goto(url, wait_until=None, timeout=None):
+        page.goto_calls.append(url)
+        page.url = to if url != "about:blank" else url
+        return type("Resp", (), {"status": 200})()
+    page.goto = goto
+
+
+def test_a_navigation_a_redirect_takes_outside_the_list_is_refused_and_reset(_fresh):
+    _create()
+    page = _fresh.contexts[-1].page
+    _redirecting_page(page, "https://evil.test/landing")
+    with pytest.raises(HTTPException) as e:
+        _act("acme", action="navigate", url="https://app.example.com/go")
+    assert e.value.status_code == 403 and "evil.test" in e.value.detail
+    assert page.url == "about:blank" and page.goto_calls[-1] == "about:blank"
+    assert sessions._sessions["acme"].blocked == 1
+
+
+def test_every_page_action_is_refused_on_a_page_outside_the_list(_fresh):
+    _create()
+    page = _fresh.contexts[-1].page
+    for action in ("snapshot", "text", "screenshot", "scroll"):
+        page.url = "https://evil.test/after-a-click"
+        with pytest.raises(HTTPException) as e:
+            _act("acme", action=action)
+        assert e.value.status_code == 403, action
+        assert page.url == "about:blank", action
+    assert sessions._sessions["acme"].blocked == 4
+    page.url = "https://app.example.com/back"
+    assert _json(_act("acme", action="text"))["ok"] is True
+
+
+def test_a_secret_is_never_typed_into_a_frame_outside_the_list(_fresh):
+    _create()
+    _fresh.contexts[-1].page.url = "https://app.example.com/login"
+    el = _with_element("acme", "e3", StubElement("password", frame_url="https://evil.test/frame"))
+    with pytest.raises(HTTPException) as e:
+        _act("acme", action="type_secret", ref="e3", text="hunter2")
+    assert e.value.status_code == 403 and el.filled == []
+
+
+def test_a_secret_is_typed_only_while_the_page_is_on_the_declared_host(_fresh):
+    _create(allow=["app.example.com", "login.example.com"])
+    page = _fresh.contexts[-1].page
+    page.url = "https://login.example.com/form"
+    el = _with_element("acme", "e3", StubElement("password", frame_url="https://login.example.com/form"))
+    with pytest.raises(HTTPException) as e:
+        _act("acme", action="type_secret", ref="e3", text="hunter2", expect_host="app.example.com")
+    assert e.value.status_code == 403 and el.filled == []
+    out = _json(_act("acme", action="type_secret", ref="e3", text="hunter2", expect_host="LOGIN.example.com"))
+    assert out["typed_into"] == "e3" and el.filled == ["", "hunter2"]
+
+
+# ── review: the other ways a page is outside allow[] when an action runs ──
+
+
+def test_a_page_a_redirect_moves_during_the_action_is_refused_and_reset(_fresh):
+    """The check before an action sees the page as it was. A wait (or a
+    wait_for_text, or a click) spans whatever the page does meanwhile, so a
+    redirect that lands DURING it is caught by the check after it."""
+    _create()
+    page = _fresh.contexts[-1].page
+    page.url = "https://app.example.com/start"
+
+    async def wait_for_timeout(ms):
+        page.url = "https://evil.test/landed-mid-wait"
+    page.wait_for_timeout = wait_for_timeout
+    with pytest.raises(HTTPException) as e:
+        _act("acme", action="wait", ms=10)
+    assert e.value.status_code == 403 and "evil.test" in e.value.detail
+    assert page.url == "about:blank"
+
+
+def test_a_blob_page_is_judged_by_the_origin_that_made_it(_fresh):
+    """blob:https://evil.test/<id> is evil.test's document. Reading every
+    non-http scheme as 'no site' let a page outside allow[] walk onto its own
+    blob and be read."""
+    _create()
+    page = _fresh.contexts[-1].page
+    page.url = "blob:https://evil.test/0f1e2d"
+    with pytest.raises(HTTPException) as e:
+        _act("acme", action="text")
+    assert e.value.status_code == 403 and page.url == "about:blank"
+    page.url = "blob:https://app.example.com/0f1e2d"
+    assert _json(_act("acme", action="text"))["ok"] is True
+
+
+def test_a_subframe_outside_the_list_is_not_snapshotted(_fresh):
+    """A sub-frame a redirect took outside allow[]: its elements get no ref,
+    so nothing can read or act on them."""
+    _create()
+    page = _fresh.contexts[-1].page
+    page.url = "https://app.example.com/home"
+    child = StubFramePage(page)
+    child.url = "https://evil.test/framed"
+    child.refs = {"x": StubElement("text", frame_url=child.url)}
+    page.child_frames = [child]
+    out = _json(_act("acme", action="snapshot"))
+    assert out["element_count"] == 0 and sessions._sessions["acme"].refs == {}
+    assert out["frames_outside_allow"] == ["evil.test"]
+
+
+def test_no_action_reaches_an_element_in_a_frame_outside_the_list(_fresh):
+    _create()
+    _fresh.contexts[-1].page.url = "https://app.example.com/home"
+    el = _with_element("acme", "e1", StubElement("text", frame_url="https://evil.test/f"))
+    for action, extra in (("click", {}), ("type", {"text": "x"})):
+        with pytest.raises(HTTPException) as e:
+            _act("acme", action=action, ref="e1", **extra)
+        assert e.value.status_code == 403, action
+    assert el.filled == []
+
+
+def test_a_download_from_a_host_outside_the_list_is_cancelled(dl_root, _fresh):
+    """A redirect to a file walks past the route guard the same way a
+    redirect to a page does; the file must not land in the session."""
+    _create()
+    d = StubDownload(name="payload.exe", url="https://evil.test/payload.exe")
+    d.cancelled = False
+
+    async def cancel():
+        d.cancelled = True
+    d.cancel = cancel
+    _fire_download("acme", d)
+    assert d.cancelled and d.saved_to is None
+    entry = sessions._sessions["acme"].downloads[-1]
+    assert entry["ok"] is False and "evil.test" in entry["error"]
+
+
+# ── what an outside page wrote: blank popups and blank frames ───────
+#
+# about:blank and about:srcdoc documents take their creator's origin, so an
+# outside page can write its own HTML into one. They are judged by the frame
+# or the page that made them.
+
+
+def _emit_popup(ctx, popup):
+    """Open a popup the way Playwright delivers it: on the running loop, then
+    let the session judge it."""
+    async def go():
+        ctx.emit_page(popup)
+        for _ in range(5):
+            await asyncio.sleep(0)
+    run(go())
+
+
+class _BlankFrame:
+    def __init__(self, url, parent):
+        self.url, self.parent_frame, self.page = url, parent, None
+
+
+def test_a_popup_opened_by_a_page_outside_the_list_is_closed_on_arrival(_fresh):
+    _create()
+    ctx = _fresh.contexts[-1]
+    ctx.page.url = "https://evil.test/after-a-redirect"
+    popup = StubPage()
+    popup.opener_page = ctx.page
+    _emit_popup(ctx, popup)
+    assert popup.closed and popup not in sessions._sessions["acme"].pages
+    assert sessions._sessions["acme"].blocked == 1
+
+
+def test_a_popup_from_a_page_that_was_just_reset_is_closed(_fresh):
+    _create()
+    ctx = _fresh.contexts[-1]
+    _redirecting_page(ctx.page, "https://evil.test/landing")
+    with pytest.raises(HTTPException):
+        _act("acme", action="navigate", url="https://app.example.com/go")
+    popup = StubPage()                    # its event lands after the reset
+    popup.opener_page = ctx.page
+    _emit_popup(ctx, popup)
+    assert popup.closed
+
+
+def test_a_blank_popup_whose_opener_is_already_gone_is_closed_on_arrival(_fresh):
+    """opener() answers None once the opener has closed, so a blank popup an
+    outside popup wrote into arrived with nothing to judge it by when that
+    popup was gone first: taken off by _leave_outside before the blank one's
+    event landed (here), or by its own window.close() (measured in Chromium:
+    opener() is None, the written password form still there)."""
+    _create()
+    ctx = _fresh.contexts[-1]
+    ctx.page.url = "https://app.example.com/home"
+    outside = StubPage()
+    outside.url = "https://app.example.com/oauth"
+    outside.opener_page = ctx.page
+    _emit_popup(ctx, outside)
+    s = sessions._sessions["acme"]
+    outside.url = "https://evil.test/after-a-redirect"
+    s.page = outside
+    with pytest.raises(HTTPException):
+        _act("acme", action="text")
+    assert outside.closed
+    blank = StubPage()                    # what evil.test wrote, landing late
+    blank.opener_page = outside
+    _emit_popup(ctx, blank)
+    assert blank.closed and blank not in s.pages
+
+
+def test_a_sign_in_popup_opened_by_its_address_after_a_reset_is_kept(_fresh):
+    """The just-reset rule is for blank popups, whose document the outside
+    page could have written. A popup that arrives on its own address carries
+    that site's document, so the OAuth popup the caller opens right after
+    navigating back is not closed as the old page's."""
+    _create()
+    ctx = _fresh.contexts[-1]
+    _redirecting_page(ctx.page, "https://evil.test/landing")
+    with pytest.raises(HTTPException):
+        _act("acme", action="navigate", url="https://app.example.com/go")
+    ctx.page.url = "https://app.example.com/home"
+    popup = StubPage()
+    popup.url = "https://app.example.com/oauth"
+    popup.opener_page = ctx.page
+    _emit_popup(ctx, popup)
+    assert not popup.closed and popup in sessions._sessions["acme"].pages
+
+
+def test_a_reset_is_held_against_that_page_not_its_id(_fresh, monkeypatch):
+    """reset_at was keyed by id(page) alone: a popup closed by a reset and
+    freed hands its id on, and the blank popups of the next page to get it
+    were closed as the reset page's. One id for every object stands in for
+    CPython reusing a freed page's address."""
+    monkeypatch.setattr(sessions, "id", lambda o: 1, raising=False)
+    _create()
+    ctx = _fresh.contexts[-1]
+    ctx.page.url = "https://app.example.com/home"
+    gone = StubPage()
+    gone.url = "https://app.example.com/a"
+    gone.opener_page = ctx.page
+    _emit_popup(ctx, gone)
+    s = sessions._sessions["acme"]
+    gone.url = "https://evil.test/x"
+    s.page = gone
+    with pytest.raises(HTTPException):
+        _act("acme", action="text")
+    assert gone.closed
+    fresh = StubPage()
+    fresh.url = "https://app.example.com/b"
+    fresh.opener_page = ctx.page
+    _emit_popup(ctx, fresh)
+    blank = StubPage()                    # fresh's own blank sign-in popup
+    blank.opener_page = fresh
+    _emit_popup(ctx, blank)
+    assert not fresh.closed and not blank.closed
+
+
+def test_resetting_a_page_closes_the_popups_it_opened(_fresh):
+    _create()
+    ctx = _fresh.contexts[-1]
+    popup = StubPage()
+    popup.url = "https://app.example.com/oauth"
+    _emit_popup(ctx, popup)               # opened while the page was allowed
+    popup.opener_page = ctx.page
+    ctx.page.url = "https://evil.test/x"
+    with pytest.raises(HTTPException):
+        _act("acme", action="text")
+    assert popup.closed and ctx.page.url == "about:blank"
+
+
+def test_a_blank_popup_is_read_as_the_page_that_opened_it(_fresh):
+    _create()
+    ctx = _fresh.contexts[-1]
+    opener = StubPage()
+    opener.url = "https://evil.test/writer"
+    blank = StubPage()                    # about:blank, written by evil.test
+    blank.opener_page = opener
+    s = sessions._sessions["acme"]
+    s.pages.append(blank)
+    s.page = blank
+    with pytest.raises(HTTPException) as e:
+        _act("acme", action="text")
+    assert e.value.status_code == 403 and blank.closed
+
+
+def test_a_password_field_in_a_blank_frame_of_an_allowed_page_takes_a_secret(_fresh):
+    _create()
+    page = _fresh.contexts[-1].page
+    page.url = "https://app.example.com/login"
+    el = StubElement("password")
+    el.owner_frame = lambda: _async(_BlankFrame("about:srcdoc", page))
+    _with_element("acme", "e3", el)
+    _act("acme", action="type_secret", ref="e3", text="hunter2")
+    assert el.filled == ["", "hunter2"]
+    page.url = "https://app.example.com/login"
+    outside = StubPage()
+    outside.url = "https://evil.test/frame"
+    el2 = StubElement("password")
+    el2.owner_frame = lambda: _async(_BlankFrame("about:blank", outside))
+    _with_element("acme", "e4", el2)
+    with pytest.raises(HTTPException) as e:
+        _act("acme", action="type_secret", ref="e4", text="hunter2")
+    assert e.value.status_code == 403 and el2.filled == []
+
+
+def test_no_screenshot_draws_a_frame_outside_the_list(_fresh):
+    _create()
+    page = _fresh.contexts[-1].page
+    page.url = "https://app.example.com/home"
+    child = StubFramePage(page)
+    child.url = "https://evil.test/framed"
+    page.child_frames = [child]
+    with pytest.raises(HTTPException) as e:
+        _act("acme", action="screenshot")
+    assert e.value.status_code == 403 and not hasattr(page, "screenshot_mask")
+
+
+def test_switching_to_a_page_outside_the_list_returns_nothing_from_it(_fresh):
+    _create()
+    ctx = _fresh.contexts[-1]
+    popup = StubPage()
+    popup.url = "https://app.example.com/oauth"
+    _emit_popup(ctx, popup)
+    popup.url = "https://evil.test/moved"
+    with pytest.raises(HTTPException) as e:
+        _act("acme", action="switch_page", index=1)
+    assert e.value.status_code == 403 and popup.closed
+    assert sessions._sessions["acme"].page is ctx.page
+
+
+def test_export_state_carries_only_what_the_allow_list_could_have_set(_fresh):
+    _create()
+    ctx = _fresh.contexts[-1]
+    async def state():
+        return {"cookies": [{"name": "sid", "domain": "app.example.com"},
+                            {"name": "sso", "domain": ".example.com"},
+                            {"name": "track", "domain": ".evil.test"}],
+                "origins": [{"origin": "https://app.example.com", "localStorage": []},
+                            {"origin": "https://evil.test", "localStorage": []}]}
+    ctx.storage_state = state
+    out = _json(_act("acme", action="export_state"))
+    names = [c["name"] for c in out["storage_state"]["cookies"]]
+    assert names == ["sid", "sso"] and out["cookies"] == 2
+    assert [o["origin"] for o in out["storage_state"]["origins"]] == ["https://app.example.com"]
+    assert out["dropped_outside_allow"] == 2
+
+
+def test_a_closed_popup_is_told_to_the_caller_not_dropped_silently(_fresh):
+    """A sign-in whose popup was closed on arrival must not just stop: the next
+    action's response says which popup was closed and why, and info counts it."""
+    _create()
+    ctx = _fresh.contexts[-1]
+    ctx.page.url = "https://evil.test/after-a-redirect"
+    popup = StubPage()
+    popup.opener_page = ctx.page
+    _emit_popup(ctx, popup)
+    ctx.page.url = "https://app.example.com/back"
+    out = _json(_act("acme", action="text"))
+    assert out["popups_closed"] and "evil.test" in out["popups_closed"][0]
+    assert "popups_closed" not in _json(_act("acme", action="text"))
+    assert _json(run(sessions.get_session("acme")))["popups_closed"] == 1

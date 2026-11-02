@@ -1982,6 +1982,18 @@ async def main(dsn: str) -> int:
         if not namespaced:
             print("  SKIP  J needs a private PID namespace (unshare) to kill the connector in")
         else:
+            # The turns before this one are dropped from the state file only
+            # when the connector stops following them (forget), which comes
+            # after their reply was sent; X waited only for the reply. Started
+            # before they drain, J read them beside its own: a state with two
+            # turns, or with the last one alone.
+            def _no_turns():
+                with contextlib.suppress(OSError, ValueError):
+                    return not json.loads(state_file.read_text()).get("turns")
+                return False
+            await wait_for(_no_turns, 30)
+            check("J the turns before it have left the state file", _no_turns(),
+                  log_text(log_path)[-400:])
             E2 = asyncio.Event()
             TURNS[:] = [("hold", E2, _sse_text("Finished the long job."))]
             n0 = len(TG_CALLS)

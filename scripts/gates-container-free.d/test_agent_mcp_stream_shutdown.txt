@@ -1,0 +1,5 @@
+# An outside agent's open GET /mcp stream never holds up the Host's stop: the
+# server launch.py runs ends every open agent stream when told to stop, so the
+# app's own shutdown runs. A real uvicorn server on an ephemeral loopback
+# port, stopped through its handle_exit; no signal is sent.
+test_agent_mcp_stream_shutdown.py

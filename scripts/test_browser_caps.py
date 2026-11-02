@@ -65,6 +65,19 @@ class TimeoutError(Exception):  # noqa: A001 — same class name Playwright rais
     pass
 
 
+class _MainFrame:
+    """A page's top frame, as Playwright gives it: its address is the page's,
+    it has no parent, and it knows its page."""
+    parent_frame = None
+
+    def __init__(self, page):
+        self.page = page
+
+    @property
+    def url(self):
+        return self.page.url
+
+
 class _Page:
     def __init__(self, clock, text_after_s=None, slow_load=False):
         self.clock = clock
@@ -74,8 +87,11 @@ class _Page:
         self.url = "https://app.example.com/"
         self.waited = 0
         self.goto_wait_until = None
-        self.main_frame = object()
+        self.main_frame = _MainFrame(self)
         self.frames = [self.main_frame]
+
+    async def opener(self):
+        return None
 
     def is_closed(self):
         return False

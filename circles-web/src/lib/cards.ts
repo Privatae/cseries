@@ -202,7 +202,13 @@ export function unblockedWords(name: string, through: readonly string[] | null |
  */
 export function buildDeck(
   payload: DeckPayload | null | undefined,
-  opts: { supportDrafts?: number; hostNames?: ReadonlyMap<number, string> } = {},
+  opts: {
+    supportDrafts?: number;
+    hostNames?: ReadonlyMap<number, string>;
+    /** Whether this Host can send a support ticket (supportShown): the
+     * Support card is in the deck only then. */
+    support?: boolean;
+  } = {},
 ): Card[] {
   if (!payload) return [];
   const host = hostNameOf(payload);
@@ -323,6 +329,7 @@ export function buildDeck(
       opensOn: "back",
     });
   }
+  if (!opts.support) return out;
   const drafts = opts.supportDrafts ?? 0;
   out.push({
     key: "support",
@@ -343,6 +350,18 @@ export function buildDeck(
     opensOn: "front",
   });
   return out;
+}
+
+/** Whether the deck has a Support card: only where this Host can send a
+ * support ticket. The answer is the server's own (GET /api/support/route,
+ * server/support_reach.py route_view `can_send`): the same lane that opening
+ * and sending a ticket are refused on, so the card is never shown where the
+ * server would refuse what it offers. A Host that is not on the Privatae
+ * network, or whose network takes no private support requests, has none;
+ * its Host still says where a request can go when asked. Not read yet, or
+ * unreadable: no card. */
+export function supportShown(route: { can_send?: unknown } | null | undefined): boolean {
+  return route?.can_send === true;
 }
 
 /** The deck's order (plan, "Order"; mismatch 12's default): you first,
@@ -709,6 +728,47 @@ export function cardOf(cards: readonly Card[], ref: CardRef): Card | null {
         null
       );
   }
+}
+
+/** What waits on you, in its order: the decisions, your Host's older asks,
+ * the support drafts and the platform team's questions, then who is at the
+ * door. A draft and a question open the Support card, so where the deck has
+ * none (`support` false, supportShown) they are left out, and the notices
+ * that card would have carried are listed here instead, after the asks: a
+ * notice (an app update, an agent held back, a pairing) is never left with
+ * nowhere to be read. */
+export function waitingItems<D, M, S, I>(p: {
+  decisions: readonly D[];
+  asks: readonly M[];
+  notices: readonly M[];
+  drafts: readonly S[];
+  supportAsks: number;
+  door: readonly I[];
+  support: boolean;
+}): Array<
+  | { kind: "decision"; d: D }
+  | { kind: "note"; m: M }
+  | { kind: "draft"; s: S }
+  | { kind: "support_q"; n: number }
+  | { kind: "door"; i: I }
+> {
+  const out: Array<
+    | { kind: "decision"; d: D }
+    | { kind: "note"; m: M }
+    | { kind: "draft"; s: S }
+    | { kind: "support_q"; n: number }
+    | { kind: "door"; i: I }
+  > = [];
+  for (const d of p.decisions) out.push({ kind: "decision", d });
+  for (const m of p.asks) out.push({ kind: "note", m });
+  if (p.support) {
+    for (const s of p.drafts) out.push({ kind: "draft", s });
+    if (p.supportAsks > 0) out.push({ kind: "support_q", n: p.supportAsks });
+  } else {
+    for (const m of p.notices) out.push({ kind: "note", m });
+  }
+  for (const i of p.door) out.push({ kind: "door", i });
+  return out;
 }
 
 /** An open decision, as GET /api/circles/waiting lists it. */

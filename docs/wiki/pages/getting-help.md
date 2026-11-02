@@ -19,7 +19,7 @@ Not from a C-Series Host. Sending needs a connection to Privatae's support servi
 - **A Host on the Privatae network** can write a post for the members' community board instead. Every member can read the board. The post is written the same way, from the problem alone. Your Host puts it on a card over the chat exactly as it will go, and it is posted only when you press **Post it** there, with a code from your authenticator.
 - **A security problem** never goes anywhere public: email security@privatae.ai, as the C-Series security policy asks.
 
-The Support card in Circles says the same. A draft made earlier, before your Host could tell, shows why it cannot be sent and can be discarded.
+Circles shows no Support card on a Host that cannot send a ticket. A draft made earlier, before your Host could tell, is not shown there; ask your Host to discard it.
 
 ## Is there a community?
 

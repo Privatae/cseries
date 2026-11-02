@@ -478,7 +478,12 @@ system: false
 #   with the reader kept on the message they were reading. A turn's tool
 #   calls show as one line per kind that counts up ("Read · 40"), each line
 #   opening onto its calls. Bundle rebuilt, repacked and re-signed.
-version: "0.16.13"
+# 0.16.14: the Support card is in the deck only where this Host can send a
+#   support ticket (GET /api/support/route can_send). Elsewhere nothing in
+#   Circles points at it: no draft or question waits on you, a support link
+#   says why, and the notices it carried wait on you instead. Bundle rebuilt,
+#   repacked and re-signed.
+version: "0.16.14"
 # 0.15.0 (2026-10-10): the
 #   cards, on their own address. cards.html, beside index.html in this
 #   bundle, draws Circles as a deck of cards: each contact one card, the

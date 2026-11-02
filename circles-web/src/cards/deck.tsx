@@ -379,7 +379,8 @@ export type WaitItem =
   | { kind: "support_q"; n: number }
   /** An older ask of your Host's, from the decisions inbox (server/routes/
    * decisions.py: an inbox message of kind decision or decision_review), or
-   * a permission request: the Inbox showed them. */
+   * a permission request: the Inbox showed them. On a Host with no Support
+   * card, a notice too (lib/cards.ts waitingItems). */
   | { kind: "note"; m: InboxMessage };
 
 export function waitKey(w: WaitItem): string {
@@ -414,6 +415,7 @@ export function waitWords(w: WaitItem, hostName: string): { title: string; line:
       line: w.n === 1 ? "The platform's team asks you something" : `The platform's team asks you ${w.n} things`,
     };
   if (w.kind === "note") {
+    if (w.m.kind === "system_notification") return { title: "A notice", line: w.m.subject || "Open it to read it" };
     const what =
       w.m.kind === "decision_review"
         ? "decided on its own, for your review"

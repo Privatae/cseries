@@ -1,0 +1,6 @@
+# GET /mcp's event stream is an outside agent's alone: any other credential
+# asking for a stream is answered 405 before its token is looked up or its
+# rate budget spent (a device-bound bearer without its fingerprint header is
+# never answered 401), and the sessions one ask was sent in stay bounded.
+# In-process; no database, no network.
+test_agent_mcp_stream_bounds.py

@@ -1,0 +1,6 @@
+# An outside agent's MCP sessions stay bounded in the Host's memory: a session
+# pushed out of SESSIONS_MAX ends its open stream, a stream for a session no
+# longer held ends at once, one ask keeps its last ASK_SESSIONS_MAX sessions,
+# and the answer still reaches the session that was sent the ask.
+# In-process; no database, no network.
+test_mcp_sessions_bounded.py

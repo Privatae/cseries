@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { newlyLit, stoppedWorking, withBaselines, workingPages, type TabLight } from "@kit/book/rules";
 import { CrisisNotice } from "@kit/ui/crisis-notice";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { fetchActiveTurn, supportBadgeCounts } from "@/lib/api";
+import { fetchActiveTurn, getSupportRoute, supportBadgeCounts } from "@/lib/api";
 import { onAppView, viewFromHash } from "@/lib/app-view";
 import { onComposeWanted } from "@/lib/compose-inbox";
 import { fetchComingUp, fetchDeck, fetchDoor, fetchWaiting, openApp, type WaitingPayload } from "@/lib/cards-api";
@@ -19,8 +19,10 @@ import {
   keepPlaces,
   pageOfTurnKey,
   selfEdge,
+  supportShown,
   threadLights,
   waitingGo,
+  waitingItems,
   type Card,
   type CardsTarget,
   type DeckPayload,
@@ -28,7 +30,7 @@ import {
   type Side,
   type TopicRow,
 } from "@/lib/cards";
-import type { ActiveTurn, CalendarEvent } from "@/lib/types";
+import type { ActiveTurn, CalendarEvent, SupportRoute } from "@/lib/types";
 import { hueOf, Pop } from "./bits";
 import { Connect, DeckCard, DoorCard, PhoneToday, Today, waitKey, type WaitItem } from "./deck";
 import { ContactsSheet } from "./contacts";
@@ -160,13 +162,26 @@ export function CardsApp() {
   // The platform's team asked something on a support ticket (the rail's
   // Tickets mark): Support's light, and an item in Waiting on you.
   const [supportAsks, setSupportAsks] = useState(0);
+  // Where this Host's support requests can go (GET /api/support/route): the
+  // Support card is in the deck only where a ticket can be sent
+  // (lib/cards.ts supportShown). Read with what waits, so a Host that joins
+  // the network, or leaves it, gets the deck that matches; a failed read
+  // keeps the last answer, and none read yet is no card.
+  const [supportRoute, setSupportRoute] = useState<SupportRoute | null>(null);
   const inbox = useInboxNotes();
   const readInboxNotes = inbox.read;
   const readWaiting = useCallback(async () => {
-    const [w, d, b] = await Promise.all([fetchWaiting(), fetchDoor(), supportBadgeCounts(), readInboxNotes()]);
+    const [w, d, b, , sr] = await Promise.all([
+      fetchWaiting(),
+      fetchDoor(),
+      supportBadgeCounts(),
+      readInboxNotes(),
+      getSupportRoute(),
+    ]);
     if (w.ok) setWaiting(w.data);
     if (d.ok) setDoor(d.data.items);
     if (b.ok) setSupportAsks(b.data.needs_info ?? 0);
+    if (sr.ok) setSupportRoute(sr.data);
     const bad = [!w.ok ? `what waits (${w.message})` : "", !d.ok ? `the door (${d.message})` : ""].filter(Boolean);
     setWaitErr(bad.length ? `Couldn't read ${bad.join(" or ")}.` : null);
   }, [readInboxNotes]);
@@ -231,10 +246,11 @@ export function CardsApp() {
   // Every peer Host's name the list has given: a Host you block leaves the
   // list's Hosts, and its person's back keeps its name from here.
   const hostNamesRef = useRef<Map<number, string>>(new Map());
+  const support = supportShown(supportRoute);
   const cards = useMemo(() => {
     for (const [id, n] of hostNamesOf(deck)) hostNamesRef.current.set(id, n);
-    return buildDeck(deck, { supportDrafts: drafts, hostNames: hostNamesRef.current });
-  }, [deck, drafts]);
+    return buildDeck(deck, { supportDrafts: drafts, hostNames: hostNamesRef.current, support });
+  }, [deck, drafts, support]);
   useEffect(() => {
     if (deck && order.length === 0) setOrder(deckOrder(cards).map((c) => c.key));
   }, [deck, cards, order.length]);
@@ -282,6 +298,14 @@ export function CardsApp() {
     },
     [byKey],
   );
+  // The Support card left the deck while it was held (this Host can no
+  // longer send a ticket): let go of it, as if it had never been there.
+  useEffect(() => {
+    if (held !== "support" || support || supportRoute == null) return;
+    setHeld(null);
+    setScreen("deck");
+    if (!phone) open("you", "back");
+  }, [held, support, supportRoute, phone, open]);
   const flip = useCallback(() => {
     const c = held ? byKey.get(held) : null;
     if (!c || !c.hasFront || !c.hasBack) return;
@@ -323,6 +347,13 @@ export function CardsApp() {
         return true;
       }
       if (!deck) return false;
+      if (t.card.kind === "support" && !support) {
+        // Where requests can go is not read yet: the link waits for it.
+        if (supportRoute == null) return false;
+        // No Support card on this Host: the server's own sentence for why.
+        say(supportRoute.head || "This Host can't send a support request.");
+        return true;
+      }
       const c = cardOf(cards, t.card);
       if (!c) {
         // A card the door just let in waits for the deck's next read.
@@ -336,7 +367,7 @@ export function CardsApp() {
       open(c.key, t.side);
       return true;
     },
-    [deck, cards, ht, open, say, inbox.notes],
+    [deck, cards, ht, open, say, inbox.notes, support, supportRoute],
   );
   useEffect(() => {
     const t = pendingRef.current;
@@ -467,14 +498,16 @@ export function CardsApp() {
   }, [inbox.notes, door]);
   const waitItems: WaitItem[] | null = useMemo(() => {
     if (!waiting && !door) return null;
-    const out: WaitItem[] = [];
-    for (const d of waiting?.decisions ?? []) out.push({ kind: "decision", d });
-    for (const m of asks) out.push({ kind: "note", m });
-    for (const s of waiting?.support_drafts ?? []) out.push({ kind: "draft", s });
-    if (supportAsks > 0) out.push({ kind: "support_q", n: supportAsks });
-    for (const i of door ?? []) out.push({ kind: "door", i });
-    return out;
-  }, [waiting, door, asks, supportAsks]);
+    return waitingItems({
+      decisions: waiting?.decisions ?? [],
+      asks,
+      notices,
+      drafts: waiting?.support_drafts ?? [],
+      supportAsks,
+      door: door ?? [],
+      support,
+    });
+  }, [waiting, door, asks, notices, supportAsks, support]);
   const goWait = useCallback(
     (w: WaitItem) => {
       setFocus(waitKey(w));

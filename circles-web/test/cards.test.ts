@@ -21,10 +21,12 @@ import {
   peerBackName,
   readingNotice,
   selfEdge,
+  supportShown,
   threadLights,
   topicTab,
   unblockedWords,
   waitingGo,
+  waitingItems,
   waitingWhere,
   type DeckPayload,
   type ThreadRow,
@@ -173,7 +175,7 @@ test("pairing: a person with no Host connected with you has a blank back", () =>
 });
 
 test("kinds: you open on the back, people on the front, groups on their back, rooms and Support with one side", () => {
-  const deck = buildDeck(payload(), { supportDrafts: 1 });
+  const deck = buildDeck(payload(), { supportDrafts: 1, support: true });
   const by = (k: string) => deck.find((c) => c.key === k)!;
   assert.deepEqual([by("you").opensOn, by("you").hasFront, by("you").hasBack], ["back", true, true]);
   assert.equal(by("you").sub, "Ivy is on the back");
@@ -187,7 +189,7 @@ test("kinds: you open on the back, people on the front, groups on their back, ro
 });
 
 test("order: you first, Support last, the rest by when the other side last wrote", () => {
-  const order = deckOrder(buildDeck(payload())).map((c) => c.key);
+  const order = deckOrder(buildDeck(payload(), { support: true })).map((c) => c.key);
   assert.equal(order[0], "you");
   assert.equal(order[order.length - 1], "support");
   // Wren 1 min, Ana 5, Lake 20, Mara 30, Joel 60, Dad 3000; then never: Book club, Sam (by name).
@@ -204,11 +206,11 @@ test("order: you first, Support last, the rest by when the other side last wrote
 });
 
 test("order: a card that gets something new keeps its place until the deck is drawn again", () => {
-  const first = deckOrder(buildDeck(payload())).map((c) => c.key);
+  const first = deckOrder(buildDeck(payload(), { support: true })).map((c) => c.key);
   const p = payload();
   p.people.find((x) => x.id === "dad@example.com")!.last_inbound_at = T(0);
   p.people.push({ id: "priya@example.com", display_name: "Priya", last_inbound_at: T(0) });
-  const kept = keepPlaces(first, buildDeck(p)).map((c) => c.key);
+  const kept = keepPlaces(first, buildDeck(p, { support: true })).map((c) => c.key);
   // Dad stays where he was; Priya joins just above Support.
   assert.deepEqual(kept.slice(0, first.length - 1), first.slice(0, -1));
   assert.deepEqual(kept.slice(-2), ["person:priya@example.com", "support"]);
@@ -272,7 +274,7 @@ test("lights: amber waits on you whether open or not; green landed unseen, not o
 });
 
 test("lights: the deck's cards", () => {
-  const deck = buildDeck(payload());
+  const deck = buildDeck(payload(), { support: true });
   const by = (k: string) => deck.find((c) => c.key === k)!;
   const self = { amber: false, green: true };
   assert.deepEqual(cardLights(by("person:ana@example.com"), self, 0), {
@@ -536,4 +538,66 @@ test("Unblock says what you lifted, and names the person a Host stays blocked th
     "You lifted your block on Kestrel. It stays blocked because you blocked Sam and Lee.",
   );
   assert.doesNotMatch(unblockedWords("Kestrel", ["Sam"]), /can message you/);
+});
+
+// GET /api/support/route as server/support_reach.py route_view answers it:
+// can_send is true only on the lanes a ticket can be sent on.
+const ROUTE = {
+  platform: { lane: "platform", can_send: true },
+  network: { lane: "network", can_send: true },
+  board: { lane: "board", can_send: false },
+  member_none: { lane: "member_none", can_send: false },
+  standalone: { lane: "standalone", can_send: false },
+};
+
+test("support: the card is in the deck only where this Host can send a ticket", () => {
+  for (const [lane, route] of Object.entries(ROUTE)) {
+    const deck = buildDeck(payload(), { supportDrafts: 1, support: supportShown(route) });
+    const has = deck.some((c) => c.kind === "support");
+    assert.equal(has, route.can_send, lane);
+    // Nothing reaches a card that isn't there: links and search find none.
+    assert.equal(cardOf(deck, { kind: "support" }) != null, route.can_send, lane);
+    assert.equal(findCards(deck, "support").length > 0, route.can_send, lane);
+    // The order keeps you first; Support last only where it is.
+    const order = deckOrder(deck).map((c) => c.key);
+    assert.equal(order[0], "you", lane);
+    assert.equal(order[order.length - 1] === "support", route.can_send, lane);
+    assert.equal(keepPlaces(order, deck).map((c) => c.key).includes("support"), route.can_send, lane);
+  }
+  // Not read yet, unreadable, or an answer without can_send: no card.
+  for (const r of [null, undefined, {}, { can_send: "yes" }, { can_send: 1 }]) {
+    assert.equal(supportShown(r as { can_send?: unknown } | null), false, JSON.stringify(r));
+    assert.equal(buildDeck(payload(), { support: supportShown(r as null) }).some((c) => c.kind === "support"), false);
+  }
+  // The deck with no answer at all has none either.
+  assert.equal(buildDeck(payload()).some((c) => c.kind === "support"), false);
+});
+
+test("support: what waits on you points at the Support card only where it is", () => {
+  const notice = { message_id: "n1", kind: "system_notification" };
+  const ask = { message_id: "a1", kind: "decision" };
+  const parts = {
+    decisions: [{ id: 5 }],
+    asks: [ask],
+    notices: [notice],
+    drafts: [{ id: 62 }],
+    supportAsks: 2,
+    door: [{ id: "d1" }],
+  };
+  const kinds = (support: boolean) =>
+    waitingItems({ ...parts, support }).map((w) =>
+      w.kind === "note" ? `note:${w.m.message_id}` : w.kind === "support_q" ? `support_q:${w.n}` : w.kind,
+    );
+  // A Host that can send: the draft and the platform team's question open
+  // the Support card, which carries the notices.
+  assert.deepEqual(kinds(true), ["decision", "note:a1", "draft", "support_q:2", "door"]);
+  // A Host that can't: nothing opens a card that isn't there, and the notices
+  // are here instead, so none is left unreadable.
+  assert.deepEqual(kinds(false), ["decision", "note:a1", "note:n1", "door"]);
+  assert.deepEqual(kinds(true).filter((k) => k === "note:n1"), []);
+  // No question from the platform's team: no item for it.
+  assert.deepEqual(
+    waitingItems({ ...parts, supportAsks: 0, support: true }).map((w) => w.kind),
+    ["decision", "note", "draft", "door"],
+  );
 });

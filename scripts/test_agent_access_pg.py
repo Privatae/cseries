@@ -132,6 +132,7 @@ async def fake_gate_op(pool, eid, server, op):
 
 
 REAL_RUN_MGMT_OP, REAL_GATE_OP = nac_mgmt.run_mgmt_op, nac_mgmt.gate_op
+REAL_DECIDE, REAL_DISMISS = tickets.decide_ticket_service, tickets.dismiss_ticket_service
 nac_mgmt.run_mgmt_op = fake_run_mgmt_op
 nac_mgmt.gate_op = fake_gate_op
 nac_commit.bastions_list = fake_bastions_list
@@ -497,6 +498,91 @@ async def main(dsn: str) -> int:
                   "and 'once' is spent: the same call asks again")
 
             spent_out = out  # the 'always' section below answers this ask
+
+            # ── the person's answer reaches the agent that asked ──
+            # MCP 2025-11-25: notifications/elicitation/complete, to the client
+            # that got the -32042 only, on the stream it opened with GET /mcp.
+            # The stream ends after STREAM_LIFE_S (the client reopens it); short
+            # here, as the ASGI test client returns a response only once it ends.
+            mcp_route.STREAM_LIFE_S = 1.0
+            caps = {"protocolVersion": "2025-11-25", "capabilities": {"elicitation": {"url": {}}}}
+            r = await rpc(c, access, "initialize", caps)
+            sid = r.headers.get("mcp-session-id", "")
+            check(r.status_code == 200 and len(sid) >= 16,
+                  "initialize gives an outside agent a session id (MCP-Session-Id)", dict(r.headers))
+            other_sid = (await rpc(c, access, "initialize", caps)).headers.get("mcp-session-id", "")
+            sh = {"Authorization": f"Bearer {access}", "Mcp-Session-Id": sid}
+            listen = {**sh, "Accept": "text/event-stream"}
+            listen_other = {**listen, "Mcp-Session-Id": other_sid}
+
+            async def session_call(op_args, rid=41):
+                r = await c.post("/mcp", headers=sh, json={
+                    "jsonrpc": "2.0", "id": rid, "method": "tools/call",
+                    "params": {"name": "machine_op", "arguments": {"server": "box-a", "op": "restart_service",
+                                                                   "args": op_args}}})
+                return r.json()
+
+            out = await session_call(["redis"])
+            el = ((out.get("error") or {}).get("data") or {}).get("elicitations", [{}])[0]
+            done_id, done_path = el.get("elicitationId", ""), urlsplit(el.get("url", "")).path
+            check((out.get("error") or {}).get("code") == -32042 and done_id,
+                  "a change asked for in a session: -32042 with its elicitationId", out)
+            stream = asyncio.create_task(c.get("/mcp", headers=listen))
+            stream_other = asyncio.create_task(c.get("/mcp", headers=listen_other))
+            await asyncio.sleep(0.1)
+            page = (await c.get(done_path, headers=person)).text
+            await c.post(done_path, data={"form": form_token(page), "decision": "once", "code": codes.next()},
+                         headers=person)
+            got, got_other = await stream, await stream_other
+            done_msg = ('{"jsonrpc": "2.0", "method": "notifications/elicitation/complete", '
+                        f'"params": {{"elicitationId": "{done_id}"}}}}')
+            check(got.status_code == 200 and got.headers.get("content-type", "").startswith("text/event-stream")
+                  and f"data: {done_msg}" in got.text and "retry: " in got.text,
+                  "the person allows it: the agent's open stream is told the elicitation is complete",
+                  (got.status_code, got.text[:400]))
+            check(got_other.status_code == 200 and done_id not in got_other.text,
+                  "and only the session that was sent the link is told", got_other.text[:300])
+            n = len(RAN)
+            out = await session_call(["redis"])
+            check("result" in out and len(RAN) == n + 1 and RAN[-1][2] == ["redis"],
+                  "the agent's call after the notification runs it", out)
+            out = await session_call(["memcached"])
+            refuse_id = out["error"]["data"]["elicitations"][0]["elicitationId"]
+            rpath = urlsplit(out["error"]["data"]["elicitations"][0]["url"]).path
+            page = (await c.get(rpath, headers=person)).text
+            await c.post(rpath, data={"form": form_token(page), "decision": "refused"}, headers=person)
+            got = await c.get("/mcp", headers=listen)
+            check(f'"elicitationId": "{refuse_id}"' in got.text,
+                  "a refusal is told too, and an answer given while no stream was open goes on the next one",
+                  got.text[:300])
+            got = await c.get("/mcp", headers=listen)
+            check(got.status_code == 200 and "elicitationId" not in got.text,
+                  "and is told once", got.text[:300])
+            r = await c.get("/mcp", headers={"Authorization": f"Bearer {access}", "Accept": "text/event-stream"})
+            check(r.status_code == 405, "an agent's GET stream without a session: none is offered (405)")
+            r = await c.get("/mcp", headers={"Accept": "text/event-stream", "Mcp-Session-Id": sid})
+            check(r.status_code == 405, "no token: no stream, as before (405)")
+            saved_rate = mcp_route._RATE_MAX_REQUESTS
+            mcp_route._RATE_MAX_REQUESTS = 1
+            mcp_route._rate_buckets.clear()
+            await rpc(c, access, "tools/list")
+            r = await c.get("/mcp", headers=listen)
+            mcp_route._RATE_MAX_REQUESTS = saved_rate
+            mcp_route._rate_buckets.clear()
+            check(r.status_code == 429 and r.headers.get("retry-after"),
+                  "a GET stream past the rate bound is refused like a POST (429)", (r.status_code, r.text[:200]))
+            from server.agent_access import sessions as agent_sessions
+            foreign = agent_sessions.new_session(10 ** 9)
+            r = await c.get("/mcp", headers={**listen, "Mcp-Session-Id": foreign})
+            r2 = await c.post("/mcp", headers={**sh, "Mcp-Session-Id": foreign},
+                              json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+            check(r.status_code == 404 and r2.status_code == 404,
+                  "another connection's session is not this agent's (404, MCP session management)",
+                  (r.status_code, r2.status_code))
+            agent_sessions._sessions.clear()
+            r = await c.post("/mcp", headers=sh, json={"jsonrpc": "2.0", "id": 1, "method": "tools/list"})
+            check(r.status_code == 200 and agent_sessions._sessions.get(sid),
+                  "a session this Host forgot (a restart) is taken back for the same agent, never cut off")
             # ── the Host's own permissions come first ──
             conn_now = await pool.fetchval("SELECT id FROM agent_connections WHERE client_id=$1", client_id)
             asks_n = await pool.fetchval("SELECT count(*) FROM agent_asks")
@@ -721,6 +807,55 @@ async def main(dsn: str) -> int:
             check(r.status_code == 200 and DECIDED[-1] == (41, "once", "user"),
                   "the person's answer decides that card, as the person", DECIDED[-1:])
 
+            # ── the card answered anywhere else: the agent is told too ──
+            # The person may answer the machine's card on the chat's pop-up,
+            # Circles or the Tickets pane (the real tickets.decide_ticket_service
+            # here, as POST /api/tickets/{id}/decide calls it), or set it aside
+            # (dismiss_ticket_service). Either tells the agent whose ask waits on
+            # that card, in the session it was sent in and with its own ask id,
+            # as an answer on the agent's page does; another session is not told.
+            from server.network import nac_ops
+            real_card_decided = nac_ops.card_decided
+
+            async def fake_card_decided(pool_, eid_, *, ticket_id, md, option_id, note=""):
+                return {"choice": option_id, "filed": False}
+
+            nac_ops.card_decided = fake_card_decided
+            try:
+                for how, op_arg in (("decided", "card-decided"), ("set aside", "card-dismissed")):
+                    made = await tickets.create_ticket_service(
+                        pool, ENTITY, source="runtime", sitrep=f"box-a asks to run restart_service {op_arg} once.",
+                        options=[{"id": "once", "label": "Do it once"}, {"id": "no", "label": "Don't"}],
+                        metadata={"kind": tickets.OP_ASK_KIND, "user_only": True, "no_pattern": True,
+                                  "op_ask": {"shape": "mgmt", "server": "box-a", "op": "restart_service"}})
+                    tid = int(made["id"])
+                    MACHINE_STATE["next"] = {"server": "box-a", "op": "restart_service", "exit": None,
+                                             "state": "asked", "ticket_id": tid, "ask": {}, "next": "card up"}
+                    out = await session_call([op_arg])
+                    el = ((out.get("error") or {}).get("data") or {}).get("elicitations", [{}])[0]
+                    card_ask = el.get("elicitationId", "")
+                    waiting = await pool.fetchval("SELECT waiting->>'ticket_id' FROM agent_asks WHERE id=$1",
+                                                  card_ask)
+                    check(card_ask and waiting == str(tid),
+                          f"a machine ask waiting on card #{tid} records that card", (out, waiting))
+                    stream = asyncio.create_task(c.get("/mcp", headers=listen))
+                    stream_other = asyncio.create_task(c.get("/mcp", headers=listen_other))
+                    await asyncio.sleep(0.1)
+                    if how == "decided":
+                        await REAL_DECIDE(pool, ENTITY, tid, option_id="once", actor="user")
+                    else:
+                        await REAL_DISMISS(pool, ENTITY, tid, actor="user")
+                    got, got_other = await stream, await stream_other
+                    told = ('{"jsonrpc": "2.0", "method": "notifications/elicitation/complete", '
+                            f'"params": {{"elicitationId": "{card_ask}"}}}}')
+                    check(f"data: {told}" in got.text,
+                          f"the card {how} outside the agent's page: the agent's stream is told its ask "
+                          "is complete", got.text[:400])
+                    check(card_ask not in got_other.text,
+                          f"...and only the session it was sent in ({how})", got_other.text[:300])
+            finally:
+                nac_ops.card_decided = real_card_decided
+
             # ── a 'once' given back when the machine holds the op ──
             out = await call_tool(c, access, "machine_op", {"server": "box-a", "op": "rotate_logs", "args": []})
             p4 = urlsplit(out["error"]["data"]["elicitations"][0]["url"]).path
@@ -815,6 +950,10 @@ async def main(dsn: str) -> int:
             check(await store.revoke_connection(pool, ENTITY, conn_id), "the person disconnects the agent")
             r = await rpc(c, t5.get("access_token", ""), "tools/list")
             check(r.status_code == 401, "and its token stops at once", r.status_code)
+            r = await c.get("/mcp", headers={"Authorization": f"Bearer {t5.get('access_token', '')}",
+                                             "Accept": "text/event-stream", "Mcp-Session-Id": "s" * 32})
+            check(r.status_code == 401 and "text/event-stream" not in r.headers.get("content-type", ""),
+                  "and its event stream is refused like its POST (401)", (r.status_code, r.text[:200]))
 
             # ── the owner's passkey on both pages ──
             # On the desktop's own address (home_origin.HOME): an owner passkey

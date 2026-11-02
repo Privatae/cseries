@@ -10,7 +10,10 @@ written from the stored ask, never from the agent: what the agent supplied
     the Host's card for it, answered here as the chat's pop-up answers it
     (tickets.decide_ticket_service); or, when the machine waits on the
     person's approval device or its console, where to approve it. The Host
-    never signs a machine's approval.
+    never signs a machine's approval. Whichever surface answers the card,
+    the agent is told (card_closed). An answer on the device or the console
+    reaches the Host only when something asks the machine again (the agent's
+    own next call): nothing tells the agent of that one.
 
 Also the person's list of connected agents for Settings, and its two revokes.
 """
@@ -88,6 +91,35 @@ async def host_refuses(pool, eid: int, ask: dict) -> str:
         return ""
     return (f"Your Host itself is not allowed to run {ask['op']} on {ask['server']} ({why}), "
             "so it cannot run and there is nothing to approve here.")
+
+
+def _tell_agent(ask_id: str) -> None:
+    """The person answered on this page: the agent that was sent the link is
+    told on its MCP stream (notifications/elicitation/complete, sessions.py),
+    so it calls again by itself. Its next call finds what the answer was."""
+    from server.agent_access import sessions
+    try:
+        sessions.answered(ask_id)
+    except Exception:  # noqa: BLE001 — telling the agent never undoes the answer
+        log.exception("agent ask %s: the agent could not be told", ask_id)
+
+
+async def card_closed(pool, eid: int, ticket_id: int) -> int:
+    """The person answered the Host's card `ticket_id`, or set it aside, on any
+    surface: the chat's pop-up, Circles, the Tickets pane, or this page
+    (tickets.decide_ticket_service, dismiss_ticket_service). Each agent whose
+    machine ask waits on that card is told, in its own sessions and with its
+    own ask id, as an answer on this page tells it; its next call finds where
+    the machine's approval stands. Returns how many asks. Never raises: the
+    card's answer stands whether or not an agent could be told."""
+    try:
+        ask_ids = await store.asks_waiting_on_card(pool, eid, ticket_id)
+    except Exception:  # noqa: BLE001 — telling the agent never undoes the answer
+        log.exception("card %s: the agents waiting on it could not be found", ticket_id)
+        return 0
+    for ask_id in ask_ids:
+        _tell_agent(ask_id)
+    return len(ask_ids)
 
 
 async def _render(request, pool, eid: int, ask: dict, error: str = "",
@@ -169,6 +201,7 @@ async def ask_answer(ask_id: str, request: Request):
         except store.AgentAccessError as err:
             return _gone(err.detail)
         log.info("agent ask %s answered: %s", ask["id"], decision)
+        _tell_agent(ask["id"])
         return _html(pages.message("Done", _closed_words({**ask, "state": decision})
                                    + " You can close this page."))
 
@@ -182,6 +215,8 @@ async def ask_answer(ask_id: str, request: Request):
                                                 actor="user")
         except tickets.TicketError as err:
             return _gone(err.detail)
+        # The agent is told by the card's decide itself (card_closed), as it
+        # is when the person answers the card anywhere else.
         if decision == nac_ops.CHOICE_NO:
             return _html(pages.message("Done", "It will not run. You can close this page."))
         return _html(pages.message(

@@ -77,6 +77,28 @@ def ensure_internal_api_secret() -> None:
         os.environ["INTERNAL_API_SECRET"] = secrets.token_hex(32)
 
 
+class HostServer(uvicorn.Server):
+    """uvicorn's server, which also ends every outside agent's open GET /mcp
+    stream the moment it is told to stop. Its graceful stop waits for open
+    responses before the app's shutdown runs, and an agent keeps one open
+    all the time (routes/mcp.py STREAM_LIFE_S): without this a stop with an
+    agent connected waits for the runtime to kill the process, and the app's
+    shutdown (the database pool, the member door) never runs.
+    scripts/test_agent_mcp_stream_shutdown.py."""
+
+    def handle_exit(self, sig, frame) -> None:
+        super().handle_exit(sig, frame)
+        try:
+            import asyncio
+
+            from server.agent_access import sessions
+            # A signal handler runs between the loop's own steps: the streams
+            # are ended from the loop, never from inside the handler.
+            asyncio.get_running_loop().call_soon_threadsafe(sessions.end_all)
+        except Exception:  # noqa: BLE001 — stopping never fails on this
+            pass
+
+
 def main() -> int:
     ensure_internal_api_secret()
     sock = _listener(BIND_HOST, BIND_PORT)
@@ -94,7 +116,7 @@ def main() -> int:
         # session (scripts/test_owner_login.sh). Off, whatever the env says.
         proxy_headers=False,
     )
-    uvicorn.Server(config).run(sockets=[sock])
+    HostServer(config).run(sockets=[sock])
     return 0
 
 

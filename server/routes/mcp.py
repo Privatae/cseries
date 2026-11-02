@@ -726,11 +726,12 @@ def _remember_elicitation(auth: dict | None, params: dict, version: str) -> None
     _AGENT_URL_ELICITATION[int(conn["id"])] = url_ok
 
 
-async def _agent_call(rid, auth: dict, name, args, origin: str) -> dict:
+async def _agent_call(rid, auth: dict, name, args, origin: str, session: str = "") -> dict:
     """tools/call from an outside agent (server/agent_access/tools.py). A call
     the person has to approve first ends with -32042 and its link when the
     client declared URL-mode elicitation, else with the link in the result's
-    text: nothing ran either way."""
+    text: nothing ran either way. A -32042 sent in a session is remembered
+    for it, so the person's answer reaches that client (agent_access.sessions)."""
     from server.agent_access import tools as agent_tools
     conn = auth["_agent"]
     if not isinstance(args, dict):
@@ -743,6 +744,9 @@ async def _agent_call(rid, auth: dict, name, args, origin: str) -> dict:
         return _err(rid, _METHOD_NOT_FOUND, f"unknown tool: {name}")
     except agent_tools.NeedsApproval as need:
         if _AGENT_URL_ELICITATION.get(int(conn["id"])):
+            if session:
+                from server.agent_access import sessions as agent_sessions
+                agent_sessions.asked(need.ask_id, session)
             return {"jsonrpc": "2.0", "id": rid, "error": {
                 "code": URL_ELICITATION_REQUIRED, "message": need.message,
                 "data": {"elicitations": [{"mode": "url", "message": need.message,
@@ -758,9 +762,11 @@ async def _handle_one(
     is_internal: bool = False,
     auth: dict | None = None,
     origin: str = "",
+    session: str = "",
 ) -> dict | None:
     """Handle a single JSON-RPC request. Returns the response dict, or None
-    if the request was a notification (no id) and therefore takes no response."""
+    if the request was a notification (no id) and therefore takes no response.
+    `session` is an outside agent's MCP session id, '' for any other caller."""
     if not isinstance(req, dict):
         return _err(None, _INVALID_REQUEST, "request must be an object")
     if req.get("jsonrpc") != "2.0":
@@ -811,7 +817,7 @@ async def _handle_one(
             name = params.get("name")
             args = params.get("arguments") or {}
             if (auth or {}).get("_agent"):
-                return await _agent_call(rid, auth, name, args, origin)
+                return await _agent_call(rid, auth, name, args, origin, session)
             entry = TOOL_HANDLERS.get(name)
             if entry is None:
                 return _err(rid, _METHOD_NOT_FOUND, f"unknown tool: {name}")
@@ -883,15 +889,62 @@ async def _handle_one(
 
 # ── HTTP entry point ─────────────────────────────────────────────────
 
+# The stream an outside agent opens with GET /mcp (MCP 2025-11-25 Streamable
+# HTTP, "Listening for Messages from the Server"). It carries one message:
+# notifications/elicitation/complete, when the person answered an ask that
+# session was sent (agent_access.sessions). Each stream ends after
+# STREAM_LIFE_S with a `retry` field, and the client opens the next one
+# (its SDK reconnects a GET stream that ends without a response), so a token
+# revoked since is refused at that next GET and no stream outlives it for
+# long. KEEPALIVE_S is a comment line, under the idle cut of the proxies on
+# the way (100 s at Cloudflare's, 60 s at many others).
+STREAM_LIFE_S = 300.0
+STREAM_KEEPALIVE_S = 25.0
+STREAM_RETRY_MS = 2000
+
+
+def _session_header(request: Request) -> str:
+    return (request.headers.get("mcp-session-id") or "").strip()
+
+
+def _session_gone():
+    """MCP transports, session management: a session the server does not
+    hold is answered 404, and the client starts a new one."""
+    from fastapi import Response
+    return Response(content=json.dumps(_err(None, -32001, "session not found")), status_code=404,
+                    media_type="application/json")
+
+
 @router.get("/mcp")
-async def mcp_info(request: Request):
-    """POST /mcp is the protocol. A client asking for a server-sent event
-    stream here is told there is none (405, MCP streamable HTTP, listening);
-    a browser gets a short explainer."""
+async def mcp_info(request: Request, authorization: str | None = Header(None)):
+    """POST /mcp is the protocol. An outside agent in a session gets its
+    event stream here (STREAM_LIFE_S); any other client asking for one is
+    told there is none (405, MCP streamable HTTP, listening); a browser gets
+    a short explainer."""
     from fastapi.responses import JSONResponse
     if "text/event-stream" in (request.headers.get("accept") or ""):
-        return JSONResponse({"error": "no event stream; POST JSON-RPC to /mcp"}, status_code=405,
-                            headers={"Allow": "POST"})
+        no_stream = JSONResponse({"error": "no event stream; POST JSON-RPC to /mcp"}, status_code=405,
+                                 headers={"Allow": "POST"})
+        # Only an outside agent's token in a session is offered one. Any other
+        # caller is answered 405 before its token is looked up, as before the
+        # agent stream existed: a device-bound bearer sent here without its
+        # fingerprint header is never answered 401 (a client's cue to sign in
+        # again), and no budget is spent on a stream it cannot have.
+        from server.agent_access import sessions as agent_sessions
+        from server.agent_access import store as agent_store
+        sid = _session_header(request)
+        bearer = (authorization or "")[7:].strip() \
+            if (authorization or "").lower().startswith("bearer ") else ""
+        if not sid or not bearer.startswith(agent_store.ACCESS_PREFIX):
+            return no_stream
+        auth, refused = await _admit(request, authorization)
+        if refused is not None:
+            return refused
+        if not auth.get("_agent"):
+            return no_stream
+        if not agent_sessions.claim(sid, int(auth["_agent"]["id"])):
+            return _session_gone()
+        return _event_stream(sid)
     # The address Settings shows (agent_access.origin.agent_address): on an
     # installed Host, this computer's 127.0.0.1, which an MCP client signs in
     # on over plain http; an https address as it is.
@@ -913,6 +966,119 @@ async def mcp_info(request: Request):
             "Host, and every change it asks for on your machines waits for your approval."
         ),
     }
+
+
+def _event_stream(sid: str):
+    import asyncio
+    from fastapi.responses import StreamingResponse
+    from server.agent_access import sessions as agent_sessions
+
+    async def events():
+        q = agent_sessions.open_stream(sid)
+        loop = asyncio.get_running_loop()
+        end = loop.time() + STREAM_LIFE_S
+        try:
+            yield f"retry: {STREAM_RETRY_MS}\n\n"
+            while True:
+                left = end - loop.time()
+                if left <= 0:
+                    return
+                try:
+                    ask_id = await asyncio.wait_for(q.get(), min(STREAM_KEEPALIVE_S, left))
+                except asyncio.TimeoutError:
+                    yield ": keepalive\n\n"
+                    continue
+                if ask_id is None:  # a newer stream took over, the session was dropped, or the server is stopping
+                    return
+                yield ("event: message\ndata: "
+                       + json.dumps(agent_sessions.complete_message(ask_id)) + "\n\n")
+        finally:
+            agent_sessions.close_stream(sid, q)
+
+    return StreamingResponse(events(), media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no",
+        "Mcp-Session-Id": sid})
+
+
+async def _admit(request: Request, authorization: str | None, *,
+                 hardware_fingerprint: str | None = None, internal_auth: str | None = None,
+                 harness_cap: str | None = None):
+    """(auth, None) for a caller /mcp takes, else (None, the response that
+    refuses it): its credential, an agent token's address, the NAC wall and
+    the rate limit, for the POST and for an agent's GET stream alike."""
+    # Authentication is wrapped here so failures become JSON-RPC error
+    # envelopes instead of bare FastAPI HTTPException
+    # bodies. Clients then handle one error shape across the whole protocol
+    # surface, not two.
+    from fastapi import Response
+    try:
+        auth = await _auth_or_401(
+            authorization,
+            hardware_fingerprint=hardware_fingerprint,
+            internal_auth=internal_auth,
+            harness_cap=harness_cap,
+            internal_ok=in_container(request),
+        )
+        if auth.get("_agent"):
+            # A token is for the address it was asked for (RFC 8707; MCP
+            # 2025-11-25, token audience): one minted for this computer's
+            # 127.0.0.1 is not taken on the remote address, nor the reverse.
+            from server.agent_access.origin import public_origin
+            # resolve_access takes no token bound to no address, so this is
+            # never ''; were it, it would match no address.
+            audience = auth["_agent"].get("resource") or ""
+            if not audience or audience != await public_origin(request) + "/mcp":
+                raise HTTPException(401, "this token is for another address of this Host")
+    except HTTPException as exc:
+        # A 401 names where to sign in (RFC 9728 §5.1, MCP authorization): a
+        # standard client starts its OAuth flow from this header, never from a
+        # redirect.
+        headers = {}
+        if exc.status_code == 401:
+            from server.agent_access import oauth as agent_oauth
+            from server.agent_access.origin import public_origin
+            headers["WWW-Authenticate"] = agent_oauth.challenge_header(await public_origin(request))
+        return None, Response(
+            content=json.dumps(_err(None, _INVALID_REQUEST, str(exc.detail))),
+            status_code=exc.status_code,
+            headers=headers,
+            media_type="application/json",
+        )
+    is_internal = bool(auth.get("_internal"))
+
+    # P3 — device->host NAC wall: a quarantined bastion is refused here, before any tool
+    # dispatch or the per-tool capability gate. Default-preserve (no policy => permit);
+    # bearer-only + internal callers are exempt (sovereign full access).
+    nac_deny = await _nac_gate(auth)
+    if nac_deny is not None:
+        return None, Response(
+            content=json.dumps(_err(None, _INVALID_REQUEST,
+                "device refused by network access control (quarantined): "
+                + str(nac_deny.get("why", "")))),
+            status_code=403,
+            media_type="application/json",
+        )
+
+    # M4 — per-token rate limit. Sliding-window keyed on token id; internal
+    # callers (id=0) effectively unrate-limited (they're loopback). Returning
+    # 429 is the explicit signal a future API consumer can back-off on.
+    token_key = _rate_key(auth, harness_cap) if not is_internal else "internal"
+    if not is_internal and not _rate_check(token_key):
+        retry = _rate_retry_after(token_key)
+        if token_key.startswith("harness:"):
+            why = (f"harness pod rate limit: a coding-harness pod may send "
+                   f"{_RATE_HARNESS_MAX_REQUESTS} requests in {int(_RATE_WINDOW_SECONDS)}s "
+                   f"(it is a confined peer) — the next is accepted in {retry}s")
+        else:
+            why = (f"runaway backstop: this token sent {_RATE_MAX_REQUESTS} requests "
+                   f"in {int(_RATE_WINDOW_SECONDS)}s — the next is accepted in {retry}s")
+        return None, Response(
+            content=json.dumps(_err(None, _INVALID_REQUEST, why)),
+            status_code=429,
+            headers={"Retry-After": str(retry)},
+            media_type="application/json",
+        )
+    return auth, None
 
 
 # L3 — max request body size at the route: defense-in-depth for the in-pod
@@ -943,82 +1109,18 @@ async def mcp_endpoint(
     x_cseries_internal_auth: str | None = Header(None),
     x_cseries_harness_cap: str | None = Header(None),
 ):
-    # Authentication is wrapped here so failures become JSON-RPC error
-    # envelopes instead of bare FastAPI HTTPException
-    # bodies. Clients then handle one error shape across the whole protocol
-    # surface, not two.
-    #
     # NOTE: we still raise HTTPException for non-protocol failures (oversized
     # body, malformed JSON) — those are HTTP-layer concerns and the JSON-RPC
     # envelope cannot carry a meaningful id (the body wasn't parsed yet).
     from fastapi import Response
-    try:
-        auth = await _auth_or_401(
-            authorization,
-            hardware_fingerprint=x_cseries_hardware_fingerprint,
-            internal_auth=x_cseries_internal_auth,
-            harness_cap=x_cseries_harness_cap,
-            internal_ok=in_container(request),
-        )
-        if auth.get("_agent"):
-            # A token is for the address it was asked for (RFC 8707; MCP
-            # 2025-11-25, token audience): one minted for this computer's
-            # 127.0.0.1 is not taken on the remote address, nor the reverse.
-            from server.agent_access.origin import public_origin
-            # resolve_access takes no token bound to no address, so this is
-            # never ''; were it, it would match no address.
-            audience = auth["_agent"].get("resource") or ""
-            if not audience or audience != await public_origin(request) + "/mcp":
-                raise HTTPException(401, "this token is for another address of this Host")
-    except HTTPException as exc:
-        # A 401 names where to sign in (RFC 9728 §5.1, MCP authorization): a
-        # standard client starts its OAuth flow from this header, never from a
-        # redirect.
-        headers = {}
-        if exc.status_code == 401:
-            from server.agent_access import oauth as agent_oauth
-            from server.agent_access.origin import public_origin
-            headers["WWW-Authenticate"] = agent_oauth.challenge_header(await public_origin(request))
-        return Response(
-            content=json.dumps(_err(None, _INVALID_REQUEST, str(exc.detail))),
-            status_code=exc.status_code,
-            headers=headers,
-            media_type="application/json",
-        )
+    from fastapi.responses import JSONResponse
+    auth, refused = await _admit(request, authorization,
+                                 hardware_fingerprint=x_cseries_hardware_fingerprint,
+                                 internal_auth=x_cseries_internal_auth,
+                                 harness_cap=x_cseries_harness_cap)
+    if refused is not None:
+        return refused
     is_internal = bool(auth.get("_internal"))
-
-    # P3 — device->host NAC wall: a quarantined bastion is refused here, before any tool
-    # dispatch or the per-tool capability gate. Default-preserve (no policy => permit);
-    # bearer-only + internal callers are exempt (sovereign full access).
-    nac_deny = await _nac_gate(auth)
-    if nac_deny is not None:
-        return Response(
-            content=json.dumps(_err(None, _INVALID_REQUEST,
-                "device refused by network access control (quarantined): "
-                + str(nac_deny.get("why", "")))),
-            status_code=403,
-            media_type="application/json",
-        )
-
-    # M4 — per-token rate limit. Sliding-window keyed on token id; internal
-    # callers (id=0) effectively unrate-limited (they're loopback). Returning
-    # 429 is the explicit signal a future API consumer can back-off on.
-    token_key = _rate_key(auth, x_cseries_harness_cap) if not is_internal else "internal"
-    if not is_internal and not _rate_check(token_key):
-        retry = _rate_retry_after(token_key)
-        if token_key.startswith("harness:"):
-            why = (f"harness pod rate limit: a coding-harness pod may send "
-                   f"{_RATE_HARNESS_MAX_REQUESTS} requests in {int(_RATE_WINDOW_SECONDS)}s "
-                   f"(it is a confined peer) — the next is accepted in {retry}s")
-        else:
-            why = (f"runaway backstop: this token sent {_RATE_MAX_REQUESTS} requests "
-                   f"in {int(_RATE_WINDOW_SECONDS)}s — the next is accepted in {retry}s")
-        return Response(
-            content=json.dumps(_err(None, _INVALID_REQUEST, why)),
-            status_code=429,
-            headers={"Retry-After": str(retry)},
-            media_type="application/json",
-        )
 
     # L3 — refuse oversized bodies before parsing.
     body_cap = _MCP_HARNESS_BODY_BYTES if auth.get("_harness") else _MCP_MAX_BODY_BYTES
@@ -1047,9 +1149,20 @@ async def mcp_endpoint(
         raise HTTPException(400, "invalid JSON body")
 
     origin = ""
+    session = ""
+    initialize = isinstance(body, dict) and body.get("method") == "initialize"
     if auth.get("_agent"):
+        from server.agent_access import sessions as agent_sessions
         from server.agent_access.origin import public_origin
         origin = await public_origin(request)
+        # An outside agent's session (MCP transports, session management):
+        # initialize starts one, below; every later request names it. It only
+        # routes the person's answers to this client (agent_access.sessions).
+        sid = _session_header(request)
+        if sid and not initialize:
+            if not agent_sessions.claim(sid, int(auth["_agent"]["id"])):
+                return _session_gone()
+            session = sid
 
     # JSON-RPC supports batch (array) and single (object). Honor both.
     if isinstance(body, list):
@@ -1058,7 +1171,7 @@ async def mcp_endpoint(
         responses: list[dict] = []
         for entry in body:
             resp = await _handle_one(entry, authorization, is_internal=is_internal, auth=auth,
-                                     origin=origin)
+                                     origin=origin, session=session)
             if resp is not None:
                 responses.append(resp)
         # Notifications only: 202 Accepted with no body (MCP Streamable HTTP).
@@ -1068,10 +1181,14 @@ async def mcp_endpoint(
 
     if isinstance(body, dict):
         resp = await _handle_one(body, authorization, is_internal=is_internal, auth=auth,
-                                 origin=origin)
+                                 origin=origin, session=session)
         if resp is None:
             # A notification: 202 Accepted with no body (MCP Streamable HTTP).
             return Response(status_code=202)
+        if initialize and auth.get("_agent") and "result" in resp:
+            from server.agent_access import sessions as agent_sessions
+            sid = agent_sessions.new_session(int(auth["_agent"]["id"]))
+            return JSONResponse(resp, headers={"Mcp-Session-Id": sid})
         return resp
 
     raise HTTPException(400, "expected JSON-RPC object or batch array")

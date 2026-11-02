@@ -1101,6 +1101,10 @@ async def decide_ticket_service(
                 json.dumps(out["op_ask"]), ticket_id)
         except Exception as e:  # noqa: BLE001
             log.warning("ticket %d: op card result not recorded: %s", ticket_id, e)
+        # An outside agent whose ask waits on this card is told now, whichever
+        # surface the person answered on (agent_access/asks.card_closed).
+        from server.agent_access import asks as _agent_asks
+        await _agent_asks.card_closed(pool, eid, ticket_id)
     # The turn that asked is still running: the person's answer
     # goes into it, whichever surface they answered on, in the ask card's own
     # words (app-web-kit/ask.ts answerText) — the Host is holding for it
@@ -1272,6 +1276,11 @@ async def dismiss_ticket_service(
                                                       note=note or "")
         except Exception as e:  # noqa: BLE001 — the card is closed; Network shows the draft
             log.info("ticket %d: connector draft not declined on dismiss: %r", ticket_id, e)
+    if pre and isinstance(md, dict) and md.get("kind") == OP_ASK_KIND:
+        # The person set the card aside: an outside agent whose ask waits on
+        # it is told, as for an answer (agent_access/asks.card_closed).
+        from server.agent_access import asks as _agent_asks
+        await _agent_asks.card_closed(pool, eid, ticket_id)
     from server import host_events
     await host_events.emit(pool, eid, "ticket_decided",
                            {"ticket_id": ticket_id, "status": "dismissed"})

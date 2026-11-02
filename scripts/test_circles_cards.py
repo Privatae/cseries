@@ -45,6 +45,9 @@ Scenarios, each at both sizes:
      reload until Dismiss (or Escape).
   Q. the running count ticks when a turn's row lands.
   S. a support draft is sent with only what was ticked.
+  S3. the Support card is in the deck only where a ticket can be sent (the
+     server's GET /api/support/route); elsewhere nothing points at it and its
+     notices wait on you.
   M. reduced motion: the card does not turn in space.
   F. typed search never reaches a URL.
   V. links, opened with the window and sent to a window already open: every
@@ -2661,62 +2664,69 @@ def scenario_support(page, base, size):
 
 
 def scenario_support_elsewhere(page, base, size):
-    """S3: a Host that can't send a private ticket says so on the Support
-    card before anything is sent, names where a request can go instead, and
-    never offers Send or shows a raw transport error."""
+    """S3: the Support card is in the deck only where this Host can send a
+    ticket, by the server's own answer (GET /api/support/route can_send,
+    server/support_reach.py route_view: the lane opening and sending a ticket
+    are refused on). Where it can't (not on the network, or a network that
+    takes no private support requests), there is no card and nothing points
+    at one: no draft or question from the platform's team waits on you, a
+    support link says why in the server's sentence, and the notices the card
+    carried wait on you instead. Nothing is sent."""
+    def deck_keys():
+        return page.locator("[data-deck] [data-card]").evaluate_all("els => els.map(e => e.dataset.card)")
+
+    def waits():
+        return page.locator("[data-wait]").evaluate_all("els => els.map(e => e.dataset.wait)")
+
     for lane in ("standalone", "board", "member_none"):
         SUPPORT_LANE["lane"] = lane
+        route = real_support_reach.route_view(lane)
+        check(f"S3 ({size}): {lane}: the server says no ticket can be sent", route["can_send"] is False, repr(route))
         open_cards(page, base)
+        # The platform's team asks something on an old ticket: still nothing
+        # here points at a card that isn't there.
+        STATE["support_asks"] = 1
+        read_again(page)
+        check(f"S3 ({size}): {lane}: what waits on you is read",
+              wait_for(lambda: "decision:501" in waits() and "note:n-platform-1" in waits()), repr(waits()))
+        page.wait_for_timeout(400)
+        check(f"S3 ({size}): {lane}: no Support card in the deck", "support" not in deck_keys(), repr(deck_keys()))
+        check(f"S3 ({size}): {lane}: no draft and no question from the platform's team waits on you",
+              "draft:62" not in waits() and "support:asks" not in waits(), repr(waits()))
+        item = page.locator("[data-wait='note:n-platform-1']").first
+        expect(item).to_contain_text("A notice")
+        expect(item).to_contain_text("Maintenance on Sunday")
+        item.click()
+        expect(page.locator("[data-sheet='note']")).to_contain_text("Maintenance on Sunday", timeout=5_000)
+        if lane == "standalone":
+            shot(page, "support-standalone", size)
+        # A link to the Support card, or to a ticket on it, says why there is
+        # none and holds nothing.
+        for view in ("support", "support%3A62", "card%3Asupport"):
+            page.goto("about:blank")
+            page.goto(f"{base}/system-apps/circles/index.html#view={view}", wait_until="domcontentloaded")
+            expect(page.locator("[data-card='you']")).to_be_visible(timeout=15_000)
+            expect(page.locator("[data-toast]")).to_have_text(route["head"], timeout=8_000)
+            check(f"S3 ({size}): {lane}: #{view} holds no Support card",
+                  page.locator("[data-hold]").get_attribute("data-hold") != "support"
+                  and page.locator("[data-support]").count() == 0)
+        check(f"S3 ({size}): {lane}: nothing was sent", not any(c.get("call") == "send" for c in STATE["support_calls"]),
+              repr(STATE["support_calls"]))
+    for lane in ("network", "platform"):
+        SUPPORT_LANE["lane"] = lane
+        check(f"S3 ({size}): {lane}: the server says a ticket can be sent",
+              real_support_reach.route_view(lane)["can_send"] is True)
+        open_cards(page, base)
+        check(f"S3 ({size}): {lane}: what waits on you is read",
+              wait_for(lambda: "draft:62" in waits()), repr(waits()))
+        check(f"S3 ({size}): {lane}: Support is the deck's last card", deck_keys()[-1:] == ["support"], repr(deck_keys()))
+        check(f"S3 ({size}): {lane}: the notices stay on the Support card, not in what waits on you",
+              "note:n-platform-1" not in waits(), repr(waits()))
         page.locator("[data-wait='draft:62']").first.click()
         draft = page.locator("[data-support-draft='62']")
         expect(draft).to_be_visible(timeout=5_000)
-        where = page.locator(f"[data-support-elsewhere='{lane}']")
-        expect(where).to_be_visible(timeout=5_000)
-        card = page.locator("[data-support]")
-        text = card.inner_text()
-        if lane == "standalone":
-            check(f"S3 ({size}): standalone: the card says the Host can't send a report to Privatae",
-                  "This Host isn't on the Privatae network, so it can't send a report to Privatae" in text, text[:400])
-            href = where.locator("[data-support-issue]").get_attribute("href") or ""
-            check(f"S3 ({size}): standalone: it links a new issue on the public repository",
-                  href.startswith("https://github.com/Privatae/cseries/issues/new"), href)
-            check(f"S3 ({size}): standalone: it says the issue is public and the owner posts it",
-                  "That issue is public" in text and "post it yourself" in text, text[:600])
-        else:
-            check(f"S3 ({size}): {lane}: the card says the network takes no private requests yet",
-                  "The Privatae network doesn't take private support requests yet" in text, text[:400])
-            check(f"S3 ({size}): {lane}: a member is never told this Host isn't on the network",
-                  "isn't on the Privatae network" not in text, text[:600])
-        if lane == "board":
-            check(f"S3 ({size}): board: it says every member can read the board",
-                  "Every member can read the board" in text, text[:600])
-            check(f"S3 ({size}): board: the post goes out only on the owner's press on the card",
-                  "it goes out only when you press Post it there" in text, text[:800])
-        if lane == "member_none":
-            href = where.locator("[data-support-issue]").get_attribute("href") or ""
-            check(f"S3 ({size}): member_none: it links a new issue on the public repository",
-                  href.startswith("https://github.com/Privatae/cseries/issues/new"), href)
-        # The card says what the server's public text does, never more: the
-        # cut takes out the shapes it finds and can miss a name or an address.
-        offer_el = where.locator("[data-support-offer]")
-        offer = offer_el.inner_text() if offer_el.count() else ""
-        check(f"S3 ({size}): {lane}: the card shows the server's own sentence",
-              offer.startswith(real_support_reach.offer_of(lane)), offer[:600])
-        check(f"S3 ({size}): {lane}: the card never promises names and addresses are left out",
-              "names and addresses" not in text and "can miss a name or an address written in plain words" in text
-              and "read the text before it goes" in text, text[:800])
-        check(f"S3 ({size}): {lane}: a security problem goes to the security address",
-              (where.locator("[data-support-security]").get_attribute("href") or "") == "mailto:security@privatae.ai")
-        check(f"S3 ({size}): {lane}: the draft has no Send", draft.locator("[data-support-send]").count() == 0)
-        expect(draft.locator("[data-support-cannot-send]")).to_contain_text("Nothing in this draft was sent")
-        check(f"S3 ({size}): {lane}: no New ticket for a ticket that can't go",
-              page.locator("[data-support-new]").count() == 0)
-        check(f"S3 ({size}): {lane}: no raw transport error is shown",
-              not any(w in text for w in ("bridge not connected", "not offered by the network")), text[:400])
-        check(f"S3 ({size}): {lane}: nothing was sent", not any(c.get("call") == "send" for c in STATE["support_calls"]),
-              repr(STATE["support_calls"]))
-        if lane == "standalone":
-            shot(page, "support-standalone", size)
+        expect(draft.locator("[data-support-send]")).to_be_visible()
+        expect(page.locator("[data-notice='n-platform-1']")).to_contain_text("Maintenance on Sunday")
     SUPPORT_LANE["lane"] = "platform"
 
 

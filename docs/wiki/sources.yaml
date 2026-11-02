@@ -80,7 +80,7 @@ approvals:
   - server/network/session_lane.py::run_root_exec
   verified:
     date: '2026-11-02'
-    digest: sha256:1413bd627d8cde20b02bb2fb8513add90e77e350562087c37887464415ebe425
+    digest: sha256:c7bc79f20d7ab0f603717603ab6c9892e39021cf3d55804242356c84d53a42f3
 apps-overview:
   sources:
   - scripts/image_baked_apps.txt
@@ -179,7 +179,7 @@ circles-app:
   - server/network/peer_discovery.py
   verified:
     date: '2026-11-02'
-    digest: sha256:f57bb0d8b3611c85d498578e0dcce1ea466ba7dea0999904f13613a308ab5518
+    digest: sha256:94f1990af68f32486f5145d98c5a9ae644a5be0feed10f8ad7b730092667595a
 claude-code-app:
   sources:
   - system-apps/claude-code/app.yaml
@@ -329,8 +329,8 @@ getting-help:
   - system-apps/community/app.yaml
   - brain/mastercode/runtime/capability_propose.py::propose_feature_request
   verified:
-    date: '2026-10-28'
-    digest: sha256:4e7b0c73589289bfdbf8b416628345d0b91798fe68d581f0fdc4b2edf71e2276
+    date: '2026-11-02'
+    digest: sha256:5a5ed8a8221654381efe26c6ee9d6aff9c1b3fb6febd694eee1c0cc07bf982c5
 getting-started-app:
   sources:
   - system-apps/getting-started/app.yaml
@@ -380,7 +380,7 @@ glossary:
   - server/routes/circles.py::_try_direct_peer_send
   verified:
     date: '2026-11-02'
-    digest: sha256:89c419111a65c84f62c886aacc921f778b818b20188e206ef97e67db8cd335e2
+    digest: sha256:9a556aedb4b79d6a38b877350b0fba1bfd784f93d764b3afb8905a07b8d71a6e
 how-a-host-handles-a-request:
   sources:
   - brain/mastercode/runtime/session.py::EntityRuntime
@@ -739,7 +739,7 @@ what-a-host-cannot-do:
   - external:bastion/client-go/anchor.go
   verified:
     date: '2026-11-02'
-    digest: sha256:7ccc0289b33de202d3695292742f3d9b3428981cd059cec2a5c3380bee9dee92
+    digest: sha256:8571102c5442d7a8c163bb330cc181b62c3f75efd3a67259a97234447f021ec4
 what-a-host-is:
   sources:
   - compose.yaml
@@ -884,4 +884,4 @@ your-private-network:
   - docs/GUIDE.md
   verified:
     date: '2026-11-02'
-    digest: sha256:f2755b6ade5d067e7fee85f09a7148664417ccdbe8250b9bc3a8680961b5cb60
+    digest: sha256:1fa8fdcc2e078220562b48b4b52b12c6ec1ec8836351fb6d2c4b0880e7f35548

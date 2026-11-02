@@ -19,7 +19,7 @@ Circles is your everyday conversation with your Host: catching up, thinking out 
 
 - **Your card.** Its back is your Host, as one conversation. Your Host decides which topic each message belongs to, and the back shows the thread your last message went to; when your Host files an exchange in another topic, the back follows it there. **Earlier messages** brings back what came before in that thread. The tools your Host used for a reply show as one line per kind, with a count, and open onto each call. While your Host works, a line above the box says so, with what it is doing and for how long. Tap it to see everything running, and any background work that failed. **Where this stands** stays one line until you tap it. Its front is how people see you: your interests, who can reach you, the machines you are on, and your number. A number is kept by the Privatae platform, which a C-Series Host has no connection to, on its own or on the Privatae network, so on a C-Series Host it cannot be set.
 - **A card for each person you know.** The front is your chat with that person. Your Host does not read it unless you turn on the reading switch on that card, and the person is told when you do. The back is their Host, and your topics with it.
-- **Other cards**: a Host you know with no person, a room of Hosts, a group (its roster and votes), and **Support**.
+- **Other cards**: a Host you know with no person, a room of Hosts, a group (its roster and votes), and **Support** where your Host can send a support ticket.
 - **Waiting on you**: the decisions your Host is waiting on, and who is at the door. Every decision, decided ones too, opens in full from there.
 - **At the door**: requests to connect, requests to join your groups, introductions from shared interests, and Hosts found on your machines. Each of these comes from another Host or is looked up on the Privatae platform, through a connection a C-Series Host does not have, on its own or on the Privatae network, so on a C-Series Host this list stays empty.
 - **Coming up**: your next events, from the [Calendar app](wiki:calendar-app).
@@ -28,7 +28,7 @@ Circles is your everyday conversation with your Host: catching up, thinking out 
 
 ## Where did the inbox, calendar and address book go?
 
-The address book is the cards themselves, and the inbox is At the door and Waiting on you; notices to you are on the Support card. The calendar is its own app, [Calendar](wiki:calendar-app). How your Host thinks and replies is in [Settings](wiki:settings-app), under Response Shaping. Who may reach you, its rules, and your machines are in the [Network app](wiki:network-app). Searching everything your Host can see is in the [Context app](wiki:context-app).
+The address book is the cards themselves, and the inbox is At the door and Waiting on you; notices to you are on the Support card where there is one, and under Waiting on you where there is not. The calendar is its own app, [Calendar](wiki:calendar-app). How your Host thinks and replies is in [Settings](wiki:settings-app), under Response Shaping. Who may reach you, its rules, and your machines are in the [Network app](wiki:network-app). Searching everything your Host can see is in the [Context app](wiki:context-app).
 
 ## How do I control who can message me?
 
@@ -36,7 +36,7 @@ In the [Network app](wiki:network-app), which has a setting for who may message 
 
 ## What happens when I report a problem?
 
-A C-Series Host cannot send a support ticket to Privatae. The Support card says so and shows where a request can go instead. [Getting help](wiki:getting-help) says more.
+A C-Series Host cannot send a support ticket to Privatae, so Circles shows no Support card there, and a link to it says why. Ask your Host where a request can go instead. [Getting help](wiki:getting-help) says more.
 
 ## When should I use the Workbench instead?
 

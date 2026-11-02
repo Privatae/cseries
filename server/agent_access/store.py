@@ -533,6 +533,18 @@ async def get_ask(pool, eid: int, ask_id: str) -> Optional[dict]:
         "WHERE k.id=$1 AND a.entity_id=$2", ask_id, eid))
 
 
+async def asks_waiting_on_card(pool, eid: int, ticket_id: int) -> list[str]:
+    """The machine asks that wait on the Host's card `ticket_id` (their
+    `waiting` is {"via": "card", "ticket_id": ...}, tools._waiting_words), of
+    connections of this Host's that are still connected."""
+    rows = await pool.fetch(
+        "SELECT k.id FROM agent_asks k JOIN agent_connections a ON a.id = k.connection_id "
+        "WHERE a.entity_id=$1 AND a.revoked_at IS NULL AND k.kind=$2 AND k.state='waiting' "
+        "AND k.waiting->>'via' = 'card' AND k.waiting->>'ticket_id' = $3",
+        int(eid or 0), MACHINE_ASK, str(int(ticket_id)))
+    return [r["id"] for r in rows]
+
+
 ONCE, ALWAYS, REFUSE = "once", "always", "refused"
 
 

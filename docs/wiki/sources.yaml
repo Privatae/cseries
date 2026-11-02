@@ -99,8 +99,8 @@ artifacts-and-designs:
   - server/applications/desktop_tokens.py::extract_tokens
   - server/routes/designs.py
   verified:
-    date: '2026-10-28'
-    digest: sha256:c0323cd1575efdd5ece95300ffc5952964fc467d59f9c17a5e6a009bc5a9076d
+    date: '2026-11-02'
+    digest: sha256:490739975101475d69956cabcb8ee95569780488d7bc821257c048f6f07d1a06
 artifacts-app:
   sources:
   - system-apps/artifacts/app.yaml
@@ -110,8 +110,8 @@ artifacts-app:
   - server/routes/artifacts.py::revert_artifact
   - scripts/image_baked_apps.txt
   verified:
-    date: '2026-10-28'
-    digest: sha256:22a0100970ed3a22da2becffd29c9dee40c1bc89dab15e6e33a1a4aaf5fb0340
+    date: '2026-11-02'
+    digest: sha256:b068d9645ac1d1cd732731ad5e440fd2a9271d6672ac679ce37061542655c5fa
 browser-app:
   sources:
   - system-apps/browser/app.yaml
@@ -223,8 +223,8 @@ coding-agents:
   - system-apps/_harness_runtime/harness_core.py::make_login
   - system-apps/_harness_runtime/harness_core.py
   verified:
-    date: '2026-10-28'
-    digest: sha256:72c5c4bc69ae6f2a28d95fe179d2121666cb507605ea2924c0479187ce0089eb
+    date: '2026-11-02'
+    digest: sha256:4fcf396cdc38f77200c46aac4e05c4b50c8bdbbd2c55a04d2b15fb7c7f6b8f9d
 community-app:
   sources:
   - system-apps/community/app.yaml

@@ -289,8 +289,10 @@ def _copy_content(src: Path, dst: Path) -> int:
             if p.is_symlink() or fn in _NOT_CONTENT:
                 continue
             rel = p.relative_to(src)
-            (dst / rel).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(p, dst / rel)
+            # copy2's mode and times, as a new inode renamed over the name, with
+            # no link followed below dst (server/replace_file.py).
+            from server.replace_file import replace_file_from
+            replace_file_from(dst, rel.as_posix(), p, like_copy2=True)
             n += 1
     return n
 

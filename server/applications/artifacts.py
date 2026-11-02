@@ -248,8 +248,7 @@ async def promote_entry(pool, entity_id: int, artifact_id: int, source: str,
         return {"artifact_id": artifact_id, "promoted": source, "entry": target,
                 "bytes": src.stat().st_size, "changed": False}
     data = src.read_bytes()
-    dst.parent.mkdir(parents=True, exist_ok=True)
-    _write_new_inode(dst, data)
+    _write_new_inode(workspace, target, data)
     rev = _snapshot(workspace, actor=actor, op="promote", note=f"{source} → {target}")
     await pool.execute(
         "UPDATE projects SET updated_at=now() WHERE id=$1 AND entity_id=$2",
@@ -315,8 +314,7 @@ async def import_files(pool, entity_id: int, artifact_id: int, project_id: int,
         if not src.is_file():
             raise ArtifactError(404, f"{rel_from!r} not found in project {project_id}")
         data = src.read_bytes()
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        _write_new_inode(dst, data)
+        _write_new_inode(workspace, rel_to, data)
         copied.append({"from": rel_from, "to": rel_to, "bytes": len(data)})
     rev = _snapshot(workspace, actor=actor, op="import",
                     note=f"from project {project_id}: " + ", ".join(c["to"] for c in copied))
@@ -999,11 +997,21 @@ async def revert_artifact(pool, entity_id: int, artifact_id: int, rev: str,
             if fd is None:
                 continue
             try:
-                dest = workspace / f.rel
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                with open(dest, "wb") as out_f:
-                    while chunk := os.read(fd, 1 << 20):
-                        out_f.write(chunk)
+                # A new inode renamed over the name, reached from the workspace
+                # with no link followed (server/replace_file.py): the workspace
+                # was cleared of links just before, and one planted since is
+                # refused rather than written through. The workspace
+                # is already cleared at this point, so the answer says it is
+                # partly restored; the revision itself is untouched.
+                from server.replace_file import LinkRefused, replace_file_from_fd
+                try:
+                    replace_file_from_fd(workspace, f.rel, fd)
+                except LinkRefused as e:
+                    raise ArtifactError(
+                        400, f"revision {rev} only partly restored: {f.rel} was not "
+                             f"written ({e}), and the files after it are missing; the "
+                             f"revision is unchanged, and restoring it again clears the "
+                             f"link") from None
             finally:
                 os.close(fd)
 
@@ -1408,19 +1416,19 @@ def _reject_git_target(workspace: Path, rel: str) -> None:
         raise ArtifactError(400, f"{rel!r} leads into .git, git's own folder")
 
 
-def _write_new_inode(dest: Path, data: bytes | str) -> None:
-    """Write `data` at `dest` without writing through a hard link: a file with
-    another name elsewhere (possibly inside .git) is unlinked first, so only
-    this name gets the new bytes."""
+def _write_new_inode(workspace: Path, rel: str, data: bytes | str) -> None:
+    """Write `data` at `workspace/rel` as a new inode renamed over the name
+    (server/replace_file.py), reached from the workspace with no link
+    followed: never through a hard link (a file with another name elsewhere,
+    possibly inside .git, keeps its bytes) and never through a symbolic link,
+    whether the name is one or a folder on the way is, including one swapped
+    in after the caller's checks. The lstat-then-write this replaced held only
+    until something moved, and wrote through a link the resolved path named."""
+    from server.replace_file import LinkRefused, replace_file
     try:
-        if os.lstat(dest).st_nlink > 1:
-            dest.unlink()
-    except FileNotFoundError:
-        pass
-    if isinstance(data, bytes):
-        dest.write_bytes(data)
-    else:
-        dest.write_text(data)
+        replace_file(workspace, rel, data)
+    except LinkRefused as e:
+        raise ArtifactError(400, f"not written: {e}") from None
 
 
 def _write_files(workspace: Path, files: list[dict]) -> int:
@@ -1440,8 +1448,7 @@ def _write_files(workspace: Path, files: list[dict]) -> int:
         content = f.get("content")
         if content is None:
             raise ArtifactError(400, f"file {rel!r} has no content")
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        _write_new_inode(dest, content if isinstance(content, bytes) else str(content))
+        _write_new_inode(workspace, rel, content if isinstance(content, bytes) else str(content))
         written += 1
     return written
 

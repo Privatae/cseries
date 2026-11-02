@@ -726,16 +726,17 @@ def write_file(path: str, content: str, encoding: str = "utf-8",
     if len(data) > MAX_WRITE_BYTES:
         return _refused(f"content too large: {len(data)} bytes (max {MAX_WRITE_BYTES})")
 
-    resolved.parent.mkdir(parents=True, exist_ok=True)
-    # Never write through a hard link: a file that also has a name elsewhere
-    # (inside a project's .git, say) is unlinked first, so only this name
-    # gets the new bytes.
+    # A new inode renamed over the name, reached from the root with no link
+    # followed (server/replace_file.py): never through a hard link (a file
+    # with a name inside a project's .git, say), never through a link as the
+    # name or a folder on the way, including one swapped in after the check
+    # above. The lstat-then-write this replaced wrote through a link the
+    # resolved path named (alias.html -> index.html changed index.html).
+    from server.replace_file import LinkRefused, replace_file
     try:
-        if os.lstat(resolved).st_nlink > 1:
-            resolved.unlink()
-    except FileNotFoundError:
-        pass
-    resolved.write_bytes(data)
+        replace_file(base if base is not None else WORKSPACE, path, data)
+    except LinkRefused as e:
+        return _refused(f"not written: {e}")
 
     return {"status": "ok", "path": path, "bytes_written": len(data)}
 

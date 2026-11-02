@@ -193,6 +193,10 @@ def _snapshot_to_project(project_id, src_dir: Path, paths: list,
     if project_id is None or not paths:
         return changed
     proj_root = (PROJECTS_ROOT / str(project_id)).resolve()
+    # The write walks from the PROJECT's root with no link followed, the
+    # module's subdirectory included: a folder on the way swapped for a link
+    # after the checks below is refused, not followed.
+    land_root = proj_root
     _hist = _artifact_history_dir(proj_root)
     if subdir:
         # A MODULE build lands in its module's
@@ -228,15 +232,17 @@ def _snapshot_to_project(project_id, src_dir: Path, paths: list,
                 if skipped_out is not None:
                     skipped_out.append(str(path))
                 continue
-            dst.parent.mkdir(parents=True, exist_ok=True)
             # The run's file may be one a harness wrote, and a merge result
             # may be as large as the files merged: either is compared and
             # copied a chunk at a time, never read whole.
-            import shutil
             body = Path(contents[path]) if contents is not None and path in contents else src
             if dst.is_file() and _same_bytes(body, dst):
                 continue
-            shutil.copyfile(body, dst)
+            # A new inode renamed over the name: the checks above saw no link,
+            # and a link swapped in since, or a hard link to a file elsewhere
+            # in the project (inside .git, say), is never written through.
+            from server.replace_file import replace_file_from
+            replace_file_from(land_root, dst.relative_to(land_root).as_posix(), body)
             changed.append(str(path))
         except OSError as exc:
             # Not written, so not landed: a failed write is reported with the
@@ -9822,10 +9828,14 @@ async def propose_commit(req: ProposeCommitReq) -> dict:
             failed.append({"path": path, "harness": harness, "error": "rejected_unsafe_path"})
             continue
         try:
-            dst.parent.mkdir(parents=True, exist_ok=True)
-            # A chunked copy: the source is the harness's file.
-            import shutil as _shutil
-            _shutil.copyfile(src, dst)
+            # A chunked copy: the source is the harness's file. A new inode
+            # renamed over the name, reached from the project with no link
+            # followed (server/replace_file.py): a destination hard-linked to a
+            # file elsewhere (inside .git) is never written through. The source
+            # is read from the harness's tree with no link followed on any part
+            # of the way, not only its last name.
+            from server.replace_file import replace_file_from as _replace_from
+            _replace_from(project_dir, str(path), str(path), src_root=_wt_root / harness)
             applied.append(path)
         except OSError as e:
             failed.append({"path": path, "harness": harness, "error": str(e)})
@@ -10804,7 +10814,6 @@ async def adopt_run_service(
 
     Returns the adopted paths and a `backup_id` that adopt_undo_service takes.
     """
-    import shutil          # module-local, as everywhere else in this file
     if run_id is not None:
         found = await _adopt_resolve_run(run_id)
         session_id = session_id or found["session_id"]
@@ -10916,6 +10925,16 @@ async def adopt_run_service(
     overwrites, creates, _seen_dests = [], [], {}
     for r in rels:
         d = _adopt_dest(proj_root, r)
+        # Nor through a link INSIDE the project. _adopt_dest only
+        # holds the resolved path inside the project, and `cfg -> .git/config`
+        # or `alias.html -> index.html` stays inside it: the copy then rewrote
+        # git's own config, or another file under this name. The land refuses
+        # the same thing (_snapshot_to_project: dst != proj_root / path).
+        if d != proj_root / r:
+            raise HTTPException(
+                409, f"{r} reaches a link in this project (it resolves to "
+                     f"{d.relative_to(proj_root).as_posix()}) — adopt never writes "
+                     f"through a link; refusing")
         # A type collision used to surface as a raw IsADirectoryError/
         # FileExistsError from the middle of the copy loop — a 500, and in the
         # second case a half-finished adopt. Say what is wrong before touching
@@ -10941,6 +10960,15 @@ async def adopt_run_service(
                      f"project — refusing to adopt both")
         _seen_dests[d] = r
         (overwrites if d.exists() else creates).append(r)
+    # adopt's own bookkeeping lives in the project too, and git can check out
+    # a TRACKED link under either name (info/exclude does not cover a tracked
+    # path; _restore_backup_dir refuses the same): the backups and the
+    # provenance were written through it, wherever it points.
+    for _own in (_ADOPT_BACKUPS, _ADOPT_PROVENANCE):
+        if (proj_root / _own).is_symlink():
+            raise HTTPException(
+                409, f"{_own} in this project is a link — adopt never writes "
+                     f"through a link; refusing")
     if dry_run:
         return {"ok": True, "dry_run": True, "run_id": run_id,
                 "session_id": session_id, "harness": harness,
@@ -10957,12 +10985,16 @@ async def adopt_run_service(
     while (proj_root / _ADOPT_BACKUPS / backup_id).exists():
         _n += 1
         backup_id = f"{_base}.{_n}"
-    backup_dir = proj_root / _ADOPT_BACKUPS / backup_id
+    # The backups and the record go through server/replace_file.py like the
+    # adopted files: reached from the project root with no link followed, so a
+    # folder in .adopt-backups swapped for a link during the adopt is refused,
+    # not written through. replace_file makes the backup folder; a
+    # mkdir on the path here made it wherever a swapped-in link pointed.
+    from server.replace_file import replace_file as _replace, replace_file_from as _replace_from
+    _rec_rel = f"{_ADOPT_BACKUPS}/{backup_id}/manifest.json"
     for rel in overwrites:
-        b = backup_dir / rel
-        b.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(_adopt_dest(proj_root, rel), b)
-    backup_dir.mkdir(parents=True, exist_ok=True)
+        _replace_from(proj_root, f"{_ADOPT_BACKUPS}/{backup_id}/{rel}", rel,
+                      like_copy2=True, src_root=proj_root)
     record = {"backup_id": backup_id, "at": time.time(), "run_id": run_id,
               "session_id": session_id, "harness": harness,
               "project_id": project_id, "paths": paths, "module": into or None,
@@ -10994,12 +11026,14 @@ async def adopt_run_service(
     record["created_dirs"] = sorted(
         (d.relative_to(proj_root).as_posix() for d in _new_dirs),
         key=lambda x: x.count("/"), reverse=True)          # deepest first
-    (backup_dir / "manifest.json").write_text(json.dumps(record, indent=2))
+    _replace(proj_root, _rec_rel, json.dumps(record, indent=2))
 
     for rel in rels:
-        dst = _adopt_dest(proj_root, rel)
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(src / rel, dst)
+        # copy2's mode and times, as a new inode renamed over the name, with no
+        # link followed below the project (server/replace_file.py). The run's
+        # own path, never a resolved one: resolving here again would follow a
+        # link swapped in since the check above, and the walk would never see it.
+        _replace_from(proj_root, rel, src / rel, like_copy2=True)
 
 
     # Re-record from the DESTINATIONS now that they exist. The pre-copy values
@@ -11010,7 +11044,7 @@ async def adopt_run_service(
     # `completed_at` is the flag that says these are measured, not planned.
     record["wrote"] = {rel: _adopt_sha(_adopt_dest(proj_root, rel)) for rel in rels}
     record["completed_at"] = time.time()
-    (backup_dir / "manifest.json").write_text(json.dumps(record, indent=2))
+    _replace(proj_root, _rec_rel, json.dumps(record, indent=2))
 
     # Provenance is appended, never rewritten: adopting twice from two runs is a
     # normal thing to do and the project should carry both facts.
@@ -11022,7 +11056,8 @@ async def adopt_run_service(
     except (OSError, json.JSONDecodeError):
         prov = []
     prov.append(record)
-    prov_path.write_text(json.dumps(prov, indent=2))
+    from server.replace_file import replace_file as _replace_file
+    _replace_file(proj_root, _ADOPT_PROVENANCE, json.dumps(prov, indent=2))
 
     log.info("adopt: %d file(s) from run=%s session=%s harness=%s -> project %s "
              "(backup %s)", len(rels), run_id, session_id, harness, project_id,
@@ -11137,7 +11172,9 @@ def mark_adopt_undone(project_id: int, module: Optional[str], backup_id: str) ->
             try:
                 rec = json.loads(mf.read_text())
                 rec["undone_at"] = time.time()
-                mf.write_text(json.dumps(rec, indent=2))
+                from server.replace_file import replace_file as _replace
+                _replace(root, f"{_ADOPT_BACKUPS}/{backup_id}/manifest.json",
+                         json.dumps(rec, indent=2))
                 return True
             except (OSError, json.JSONDecodeError) as e:
                 log.warning("mark adopt undone %s: %s", backup_id, e)
@@ -11166,13 +11203,19 @@ async def adopt_undo_service(pool=None, *, project_id: int,
     ANY module (an adopt into a module keeps its backup in the module); pass
     `module` to look only there.
     """
-    import shutil          # module-local, as everywhere else in this file
     proj_root = (PROJECTS_ROOT / str(project_id)).resolve()
     if not proj_root.is_relative_to(PROJECTS_ROOT.resolve()) or not proj_root.is_dir():
         raise HTTPException(404, f"no project {project_id}")
     roots = _adopt_roots(proj_root, module)
     if (proj_root / _ADOPT_BACKUPS).is_symlink():
         raise HTTPException(400, f"{_ADOPT_BACKUPS} in project {project_id} is a link — refused")
+    # A named module's rollback store too: _adopt_roots skips linked stores
+    # when it lists modules, but a module named by the caller came back as is,
+    # so undo read a backup record and its files through the link, and wrote
+    # its undone flag there.
+    for _mod, _root in roots:
+        if (_root / _ADOPT_BACKUPS).is_symlink():
+            raise HTTPException(400, f"{_ADOPT_BACKUPS} in module {_mod!r} is a link — refused")
     if backup_id is None:
         backup_id, _mod = _newest_adopt(roots)
         if backup_id is None:
@@ -11190,9 +11233,18 @@ async def adopt_undo_service(pool=None, *, project_id: int,
     if bdir is None:
         raise HTTPException(404, f"no backup {backup_id}")
     proj_root = root_of
+    # From here the backup is read and marked from the root with no link
+    # followed (server/replace_file.py): a store swapped for a link after the
+    # check above resolves under itself, so the lookup alone passed, and undo
+    # read the record and every pre-adopt copy from wherever it pointed.
+    from server.replace_file import LinkRefused as _LinkRefused, open_no_follow as _open_nf
+    _b_rel = f"{_ADOPT_BACKUPS}/{backup_id}"
     try:
-        record = json.loads((bdir / "manifest.json").read_text())
-    except (OSError, json.JSONDecodeError) as e:
+        with os.fdopen(_open_nf(root_of, f"{_b_rel}/manifest.json"), "rb") as _mf:
+            record = json.loads(_mf.read())
+    except _LinkRefused as e:
+        raise HTTPException(400, f"backup {backup_id}: {e} — refused") from None
+    except (OSError, ValueError) as e:
         raise HTTPException(500, f"backup {backup_id} has no usable manifest: {e}")
 
     # What the adopt wrote, per path. A file that no longer matches has been
@@ -11238,15 +11290,25 @@ async def adopt_undo_service(pool=None, *, project_id: int,
             # was still wrong.
             kept.append(rel)
             continue
-        st = _state(rel, dst) if dst.exists() else "changed"
+        # A name that is a link now (or a folder on the way to it) is a change
+        # made since, and undo never writes through it: the resolved file is
+        # another one, and restoring there overwrote it.
+        st = (_state(rel, dst) if dst.exists() and dst == proj_root / rel
+              else "changed")
         if st == "original":
             untouched.append(rel)          # never got copied; already correct
             continue
         if st == "changed":
             kept.append(rel)
             continue
-        dst.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(srcf, dst)
+        from server.replace_file import LinkRefused as _LinkRefused
+        from server.replace_file import replace_file_from as _replace_from
+        try:
+            _replace_from(proj_root, rel, f"{_b_rel}/{rel}", like_copy2=True,
+                          src_root=root_of)
+        except (_LinkRefused, FileNotFoundError):
+            kept.append(rel)               # a link swapped in since the check, or the copy gone
+            continue
         restored.append(rel)
     for rel in record.get("created") or []:
         dst = _adopt_dest(proj_root, rel)
@@ -11280,8 +11342,9 @@ async def adopt_undo_service(pool=None, *, project_id: int,
     if not kept:
         try:
             record["undone_at"] = time.time()
-            (bdir / "manifest.json").write_text(json.dumps(record, indent=2))
-        except OSError as e:
+            from server.replace_file import replace_file as _replace
+            _replace(root_of, f"{_b_rel}/manifest.json", json.dumps(record, indent=2))
+        except (OSError, ValueError) as e:
             log.warning("adopt undo: could not mark %s undone: %s", backup_id, e)
 
     log.info("adopt undo: project %s backup %s — %d restored, %d removed, %d kept",

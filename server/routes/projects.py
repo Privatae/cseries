@@ -2508,6 +2508,11 @@ class ProjectsError(Exception):
         self.detail = detail
 
 
+# Where set_project_manifest_service writes app.yaml; a variable so a test can
+# point it at a temporary folder.
+_MANIFEST_PROJECTS_DIR = Path("/var/lib/cseries/projects")
+
+
 async def set_project_manifest_service(pool, entity_id: int, project_id: int, yaml_text) -> dict:
     """Write + validate the project's app.yaml so the Workbench can ship it — the SINGLE source of
     truth for PUT /api/projects/{id}/manifest AND the set_project_manifest host tool. Stored at
@@ -2515,7 +2520,7 @@ async def set_project_manifest_service(pool, entity_id: int, project_id: int, ya
     ROLLED BACK if it doesn't pass. Entity-scoped: a project the caller doesn't own is 404, never
     written. Raises ProjectsError(status, detail); returns the saved-manifest summary otherwise."""
     from pathlib import Path
-    from server.applications.manifest import load as load_manifest, ManifestError
+    from server.applications.manifest import load as load_manifest
 
     row = await pool.fetchrow(
         "SELECT id FROM projects WHERE id = $1 AND entity_id = $2",
@@ -2527,16 +2532,48 @@ async def set_project_manifest_service(pool, entity_id: int, project_id: int, ya
     if not yaml_text or not isinstance(yaml_text, str):
         raise ProjectsError(400, "yaml string required")
 
-    proj_dir = Path("/var/lib/cseries/projects") / str(project_id)
-    proj_dir.mkdir(parents=True, exist_ok=True)
+    from server.replace_file import LinkRefused, replace_file
+
+    proj_dir = _MANIFEST_PROJECTS_DIR / str(project_id)
     manifest_path = proj_dir / "app.yaml"
-    manifest_path.write_text(yaml_text)
+    # A new inode renamed over the name (server/replace_file.py), reached from
+    # the projects folder with no link followed: an app.yaml that is a link (a
+    # tracked symlink from the forge), or a project folder that is one, is
+    # refused, never written through to wherever it points.
+    # The projects folder itself is made at runtime (Dockerfile.linux keeps it
+    # out of the image), so it may not exist yet on a new Host; the
+    # mkdir(parents=True) this replaced made it.
+    _MANIFEST_PROJECTS_DIR.mkdir(parents=True, exist_ok=True)
+    # The manifest this write replaces, read without following a link, so an
+    # invalid one puts it back. Unlinking on failure deleted the last valid
+    # manifest, and a project that had shipped could no longer be shipped.
+    previous = None
+    try:
+        _fd = os.open(manifest_path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+        try:
+            with os.fdopen(_fd, "rb", closefd=False) as _f:
+                previous = _f.read()
+        finally:
+            os.close(_fd)
+    except OSError:
+        previous = None     # none yet, or a link (refused by the write below)
+    try:
+        replace_file(_MANIFEST_PROJECTS_DIR, f"{project_id}/app.yaml", yaml_text)
+    except LinkRefused as e:
+        raise ProjectsError(409, f"app.yaml not written: {e}") from None
 
     try:
         manifest = load_manifest(manifest_path)
-    except ManifestError as e:
-        # Roll back the write — invalid manifests don't get persisted.
-        manifest_path.unlink(missing_ok=True)
+    except Exception as e:  # noqa: BLE001 — ManifestError, and YAML the parser refuses
+        # Roll back the write — invalid manifests don't get persisted: the
+        # one before it is put back, or the file removed if there was none.
+        # Not only ManifestError: YAML that does not parse raised the parser's
+        # own error, which skipped this and left the broken file in place
+        # behind a 500.
+        if previous is None:
+            manifest_path.unlink(missing_ok=True)
+        else:
+            replace_file(_MANIFEST_PROJECTS_DIR, f"{project_id}/app.yaml", previous)
         raise ProjectsError(400, f"manifest invalid: {e}") from None
 
     return {

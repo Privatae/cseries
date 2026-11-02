@@ -261,6 +261,83 @@ ck("gate6 ...and the outside dir is untouched",
 (PROJ / "vendor").unlink()
 shutil.rmtree(RUN_SRC / "vendor")
 
+# (f) nor through a link INSIDE the project that stays inside it: a
+# checkout can carry `cfg -> .git/config`, and the run (model output) names
+# `cfg`. _adopt_dest resolves the link to .git/config, which is inside the
+# project, so a write to the resolved path rewrote git's own config, a file
+# that can name programs git runs. `alias.html -> index.html` the same way.
+(PROJ / ".git").mkdir(exist_ok=True)
+(PROJ / ".git" / "config").write_text("[core]\n")
+(PROJ / "cfg").symlink_to(".git/config")
+(PROJ / "alias.html").symlink_to("index.html")
+_idx6f = (PROJ / "index.html").read_bytes()
+(RUN_SRC / "cfg").write_text("[core]\n\tfsmonitor = touch /tmp/pwned\n")
+(RUN_SRC / "alias.html").write_text("<title>through the link</title>")
+for _p6f in ("cfg", "alias.html"):
+    _r6f = run_expect_error(R.adopt_run_service(
+        session_id=SESSION, harness="codex", project_id=9198, paths=[_p6f]))
+    ck(f"gate6 a project link ({_p6f}) is refused, not written through",
+       isinstance(_r6f, HTTPException) and _r6f.status_code == 409,
+       f"{type(_r6f).__name__}: {getattr(_r6f, 'detail', _r6f)}")
+    ck(f"gate6 ...and {_p6f} is still a link", (PROJ / _p6f).is_symlink())
+ck("gate6 ...and .git/config is untouched",
+   (PROJ / ".git" / "config").read_text() == "[core]\n",
+   repr((PROJ / ".git" / "config").read_text()))
+ck("gate6 ...and index.html is untouched", (PROJ / "index.html").read_bytes() == _idx6f)
+(PROJ / "cfg").unlink(); (PROJ / "alias.html").unlink(); shutil.rmtree(PROJ / ".git")
+(RUN_SRC / "cfg").unlink(); (RUN_SRC / "alias.html").unlink()
+
+# (g) undo never writes through a link either: the adopted file replaced since
+# by a link to another file that holds the adopted bytes read as "adopted"
+# through the link, and the restore overwrote THAT file with the old bytes.
+(PROJ / "u6g.txt").write_text("old")
+(RUN_SRC / "u6g.txt").write_text("new")
+_a6g = adopt(paths=["u6g.txt"])
+(PROJ / "u6g-other.txt").write_text("new")
+(PROJ / "u6g.txt").unlink()
+(PROJ / "u6g.txt").symlink_to("u6g-other.txt")
+_u6g = run_expect_error(R.adopt_undo_service(project_id=9198, backup_id=_a6g["backup_id"]))
+ck("gate6 undo keeps a name that is a link now, not restoring through it",
+   isinstance(_u6g, dict) and "u6g.txt" in (_u6g.get("kept") or []), repr(_u6g))
+ck("gate6 ...and the file the link points to keeps its bytes",
+   (PROJ / "u6g-other.txt").read_text() == "new", (PROJ / "u6g-other.txt").read_text())
+(PROJ / "u6g.txt").unlink(); (PROJ / "u6g.txt").write_text("new")
+run(R.adopt_undo_service(project_id=9198, backup_id=_a6g["backup_id"]))   # marks it undone
+(PROJ / "u6g.txt").unlink(); (PROJ / "u6g-other.txt").unlink(); (RUN_SRC / "u6g.txt").unlink()
+
+# (h) adopt's own bookkeeping is never written through a link: git checks out
+# a TRACKED `.adopt-backups` or `.adopt-provenance.json` link (info/exclude
+# covers untracked paths only), and the backup copy and the provenance JSON
+# went wherever it pointed, outside the project included.
+(RUN_SRC / "index.html").write_text("<title>6h</title>")
+_idx6h = (PROJ / "index.html").read_bytes()
+for _own6h, _make in ((".adopt-provenance.json", lambda t: t.write_text("[]")),
+                      (".adopt-backups", lambda t: t.mkdir())):
+    _real6h = PROJ / _own6h
+    _aside6h = PROJ / (_own6h + ".aside-6h")
+    _had6h = _real6h.exists()
+    if _had6h:
+        os.replace(_real6h, _aside6h)
+    _tgt6h = OUTSIDE / ("6h" + _own6h)
+    _make(_tgt6h)
+    _before6h = sorted(p.name for p in _tgt6h.iterdir()) if _tgt6h.is_dir() else _tgt6h.read_text()
+    _real6h.symlink_to(_tgt6h)
+    _r6h = run_expect_error(R.adopt_run_service(
+        session_id=SESSION, harness="codex", project_id=9198, paths=["index.html"]))
+    ck(f"gate6 a project whose {_own6h} is a link is refused",
+       isinstance(_r6h, HTTPException) and _r6h.status_code == 409,
+       f"{type(_r6h).__name__}: {getattr(_r6h, 'detail', _r6h)}")
+    _after6h = sorted(p.name for p in _tgt6h.iterdir()) if _tgt6h.is_dir() else _tgt6h.read_text()
+    ck(f"gate6 ...and what the {_own6h} link points to is untouched",
+       _after6h == _before6h, f"{_before6h!r} -> {_after6h!r}")
+    if not isinstance(_r6h, HTTPException):        # before the fix: put it back
+        run(R.adopt_undo_service(project_id=9198, backup_id=_r6h["backup_id"]))
+    _real6h.unlink()
+    if _had6h:
+        os.replace(_aside6h, _real6h)
+ck("gate6 ...and index.html is unchanged", (PROJ / "index.html").read_bytes() == _idx6h)
+(RUN_SRC / "index.html").write_text("<title>the design they picked</title>")
+
 # ── gate7: provenance accumulates ───────────────────────────────────
 a1 = adopt(paths=["index.html"])
 a2 = adopt(paths=["assets/app.js"])
@@ -610,27 +687,31 @@ ck("gate20 an orphan backup dir is not selectable — it carries no undo "
 #     backup blob is already on disk, so it is correct for the files copied so
 #     far. Written only at the end, this left an unrecoverable half-adopt —
 #     bare undo 404, explicit undo 500, pre-adopt bytes in a dir nothing reads.
-_real_copy2 = shutil.copy2
+# The adopt copy loop writes through server.replace_file.replace_file_from (a
+# new inode renamed over the name, no link followed), imported at call
+# time, so the crash is planted there. The backup copies go through it too
+# (rel under .adopt-backups/), and are let through.
+from server import replace_file as _RF  # noqa: E402
+_real_rff = _RF.replace_file_from
 _seen = {"n": 0}
 
 
-def _copy2_that_dies(a, b, *args, **kw):
-    # let the backup pass through, then die inside the ADOPT copy loop
-    if str(b).startswith(str(PROJ)) and ".adopt-backups" not in str(b):
+def _rff_that_dies(root, rel, src, *args, **kw):
+    # die inside the ADOPT copy loop, on its second file
+    if str(root).startswith(str(PROJ)) and ".adopt-backups" not in f"{root}/{rel}":
         _seen["n"] += 1
         if _seen["n"] > 1:
             raise OSError("simulated crash mid-copy")
-    return _real_copy2(a, b, *args, **kw)
+    return _real_rff(root, rel, src, *args, **kw)
 
 
 (PROJ / "crash-a.txt").write_text("USER A")
 (PROJ / "crash-b.txt").write_text("USER B")
 (RUN_SRC / "crash-a.txt").write_text("RUN A")
 (RUN_SRC / "crash-b.txt").write_text("RUN B")
-shutil.copy2 = _copy2_that_dies
-R.shutil = shutil
+_RF.replace_file_from = _rff_that_dies
 crashed = adopt(paths=["crash-a.txt", "crash-b.txt"], _expect_error=True)
-shutil.copy2 = _real_copy2
+_RF.replace_file_from = _real_rff
 ck("gate20 a crash mid-copy raises", isinstance(crashed, Exception), repr(crashed))
 _ids = sorted((PROJ / ".adopt-backups").iterdir(), key=lambda d: d.stat().st_mtime)
 _last = _ids[-1]
@@ -781,24 +862,28 @@ shutil.rmtree(_gd, ignore_errors=True)
 # `wrote` is the run file's hash before the copy. If the run dir is rewritten
 # mid-adopt (a still-active run: _collect_out wipes and re-extracts), the
 # planned hash is not what landed, and undo declined a file it could restore.
-_real_copy2b = shutil.copy2
 (PROJ / "live.txt").write_text("USER ORIGINAL")
 (RUN_SRC / "live.txt").write_text("RUN v1")
+_real_rff_b = _RF.replace_file_from
+_mutated = {"n": 0}
 
 
-def _copy2_mutating_source(a, b, *args, **kw):
-    # Only the copy OUT OF THE RUN DIR. Keying on the filename alone also fired
-    # on the backup copy — whose source is the project's own file — so the
-    # probe rewrote the thing it was trying to preserve and "failed" against
-    # correct code.
-    if str(a).startswith(str(RUN_SRC)) and str(a).endswith("live.txt"):
-        pathlib.Path(a).write_text("RUN v2")        # the run moved under us
-    return _real_copy2b(a, b, *args, **kw)
+def _rff_mutating_source(root, rel, src, *args, **kw):
+    # Only the copy OUT OF THE RUN DIR (the adopt loop, which goes through
+    # replace_file_from). Keying on the filename alone also fired on the backup
+    # copy, whose source is the project's own file, so the probe rewrote the
+    # thing it was trying to preserve and "failed" against correct code.
+    if str(src).startswith(str(RUN_SRC)) and str(src).endswith("live.txt"):
+        pathlib.Path(src).write_text("RUN v2")        # the run moved under us
+        _mutated["n"] += 1
+    return _real_rff_b(root, rel, src, *args, **kw)
 
 
-shutil.copy2 = _copy2_mutating_source
+_RF.replace_file_from = _rff_mutating_source
 a24 = adopt(paths=["live.txt"])
-shutil.copy2 = _real_copy2b
+_RF.replace_file_from = _real_rff_b
+ck("gate24 the probe ran: the run file changed during the adopt copy", _mutated["n"] == 1,
+   "the adopt copy no longer goes through replace_file_from; move the probe")
 u24 = run(R.adopt_undo_service(project_id=9198, backup_id=a24["backup_id"]))
 ck("gate24 undo restores a file whose run content changed mid-adopt",
    (PROJ / "live.txt").read_text() == "USER ORIGINAL",
@@ -840,6 +925,44 @@ ck("gate26 ...and the user's directory is untouched",
    sorted(q.name for q in (PROJ / "a").iterdir()))
 (PROJ / "b").unlink(); shutil.rmtree(PROJ / "a")
 shutil.rmtree(RUN_SRC / "a"); shutil.rmtree(RUN_SRC / "b")
+
+# ── gate28: the rollback store swapped for a link DURING the adopt ──
+# The store is checked for a link before anything is written; the backups and
+# the record are then reached with no link followed. A folder made
+# through the swapped link is a write through it as well.
+(PROJ / "swap.txt").write_text("USER SWAP")
+(RUN_SRC / "swap.txt").write_text("RUN SWAP")
+_STORE_ELSEWHERE = WORK / "store-elsewhere"
+_STORE_ELSEWHERE.mkdir()
+_real_rff_c = _RF.replace_file_from
+_swapped = {"n": 0}
+
+
+def _rff_swapping_store(root, rel, src, *args, **kw):
+    out = _real_rff_c(root, rel, src, *args, **kw)
+    if str(rel).startswith(".adopt-backups/") and not _swapped["n"]:
+        (PROJ / ".adopt-backups").rename(PROJ / ".adopt-backups-real")
+        (PROJ / ".adopt-backups").symlink_to(_STORE_ELSEWHERE)
+        _swapped["n"] += 1
+    return out
+
+
+_RF.replace_file_from = _rff_swapping_store
+r28 = adopt(paths=["swap.txt"], _expect_error=True)
+_RF.replace_file_from = _real_rff_c
+(PROJ / ".adopt-backups").unlink()
+(PROJ / ".adopt-backups-real").rename(PROJ / ".adopt-backups")
+ck("gate28 the probe ran: the store became a link after the first backup copy",
+   _swapped["n"] == 1, "the backup copy no longer goes through replace_file_from; move the probe")
+ck("gate28 the adopt stops at the swapped store", isinstance(r28, Exception), repr(r28))
+ck("gate28 ...and makes nothing where the link points",
+   not any(_STORE_ELSEWHERE.iterdir()), sorted(q.name for q in _STORE_ELSEWHERE.iterdir()))
+ck("gate28 ...and the project file is not overwritten",
+   (PROJ / "swap.txt").read_text() == "USER SWAP", (PROJ / "swap.txt").read_text())
+for _b in list((PROJ / ".adopt-backups").iterdir()):
+    if not (_b / "manifest.json").exists():
+        shutil.rmtree(_b)                    # this gate's own half-written backup
+(PROJ / "swap.txt").unlink(); (RUN_SRC / "swap.txt").unlink()
 
 # ── gate8: the host can actually reach it ───────────────────────────
 from mastercode.runtime.meta_tool_caps import META_TOOL_CAPS         # noqa: E402

@@ -26,7 +26,10 @@
                     <span>Updates</span>
                     <span class="cseries-pill warn" id="update-badge" hidden>new</span>
                 </button>
-                <button class="cseries-nav-btn" data-view="history" role="tab" aria-selected="false">History</button>
+                <!-- History lists updates applied through the platform (pc.update_apply,
+                     server/routes/update.py apply_update; nothing else writes it), so the tab
+                     shows only when this Host can send that op (/js/network-reach.js). -->
+                <button class="cseries-nav-btn" data-view="history" role="tab" aria-selected="false" hidden data-needs-op="pc.update_apply">History</button>
                 <button class="cseries-nav-btn" data-view="agents" role="tab" aria-selected="false">Connected agents</button>
                 <button class="cseries-nav-btn" data-view="shaping" role="tab" aria-selected="false">Response Shaping</button>
                 <button class="cseries-nav-btn" data-view="limits" role="tab" aria-selected="false">Limits</button>
@@ -454,12 +457,18 @@
                 </div>
                 <div class="label-sys" id="bk-status" style="margin-top: var(--space-3);"></div>
 
+                <!-- Shown only once the Host holds a bastion's copy (GET /api/backup/local
+                     configured, server/routes/backup.py local_backup_status). Nothing in
+                     this tree writes local_backup_blob or local_backup_envelope yet, so a
+                     card that said one is coming would promise what no code does. -->
+                <div id="bk-local-section" hidden>
                 <div class="view-heading" style="margin-top: var(--space-5);">
                     <h3 class="bundle-title">Your bastion's copy</h3>
                     <p class="view-sub">A separate copy your own machine makes and keeps encrypted. Only you can open it — this host cannot.</p>
                 </div>
                 <div class="cseries-card">
                     <div class="label-sys" id="bk-local">Checking…</div>
+                </div>
                 </div>
 
                 <div class="view-heading" style="margin-top: var(--space-5);">
@@ -580,6 +589,7 @@
         </footer>
     </div>
 
+    <script src="/js/network-reach.js"></script>
     <script src="/system-apps/settings/app.js"></script>
     <script type="module" src="/system-apps/settings/restore.js"></script>
 </body>

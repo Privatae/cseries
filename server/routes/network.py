@@ -189,9 +189,25 @@ async def get_bastions():
     so the Network app can offer a machine on another network before setup."""
     pool = brain_service.get_pool()
     eid = brain_service._entity_id
-    from server.network import nac_commit
+    from server.network import nac_commit, observations
     out = await nac_commit.bastions_list(pool, eid)
     out["pairing_window"] = _opens_pairing_window()
+    # The tool servers each machine's agent clients declare and how much the
+    # bastion read (v256), for the Agents view. Read here rather than in
+    # list_bastions so the many other readers of that list (the Host's turn
+    # types, outside agents' machine list) do not start carrying them. A
+    # cold read leaves both None, which the view words as "not reported".
+    rows = out.get("bastions") or []
+    extra = await observations._heartbeat_extra(
+        pool, [b["id"] for b in rows if isinstance(b.get("id"), int)]) if pool and rows else {}
+    for b in rows:
+        x = extra.get(b.get("id")) or {}
+        # observations._bastion decides, by the rule an app's read follows: a
+        # machine whose pairing withholds observe hands on nothing it stored
+        # before, online or not, so both stay None ("not reported").
+        shaped = observations._bastion(b, x)
+        b["tool_servers"] = shaped.get("tool_servers")
+        b["tool_server_scan"] = shaped.get("tool_server_scan")
     return out
 
 
@@ -232,6 +248,41 @@ async def get_agents():
                        and not a.get("acknowledged")
                        and (a.get("kind") or "agent") not in nac_agents._NEVER_ALERTED})
     return {"agents": agents, "unrequested_count": unrequested}
+
+
+@router.get("/observations", dependencies=[Depends(requires_permission("read:observations"))])
+async def get_observations(request: Request, since: Optional[str] = Query(None, max_length=80)):
+    """What this Host's bastions observed, for an app that analyses it
+    (server/network/observations.py says what is in it and what never is).
+
+    `since` is the `next_since` of the previous read ("<ISO time>|<row id>",
+    URL-encoded or not; a bare ISO time with a zone also works). Agent rows
+    come oldest first, one page per read, once they are ten seconds old
+    (nac_agents.APP_SETTLE_SECONDS); `more` says another page is waiting.
+    When nothing is new, `next_since` is the `since` that was sent, so a
+    reader can always store what it got back.
+
+    Read by an app's PROCESS, never its page: a request a browser sent is
+    refused. A page in a browser can always navigate away or open a WebRTC
+    connection, which no page rule stops, so the raw rows must never reach
+    one directly. A page
+    cannot omit or forge the headers that say a browser sent it."""
+    from server.routes.applications import _from_browser
+    if _from_browser(request):
+        raise HTTPException(status_code=403, detail="observations are read by an app's process, "
+                                                    "never by a page in a browser")
+    from server.network import observations
+    try:
+        cursor = observations.parse_since(since)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=f"since: {e}")
+    pool = brain_service.get_pool()
+    if not pool:
+        return {"bastions": [], "agents": [], "next_since": since, "more": False}
+    out = await observations.for_app(pool, brain_service._entity_id, since=cursor)
+    if out["next_since"] is None:
+        out["next_since"] = since
+    return out
 
 
 @router.post("/agent-delegations", dependencies=[Depends(requires_permission("write:network"))])
@@ -331,7 +382,9 @@ async def contain_agent(request: Request):
         raise HTTPException(e.status, e.detail)
     if res.get("exit") == 126:
         raise HTTPException(403, res.get("stderr") or
-                            "containing an agent needs a management grant listing 'contain' for this server")
+                            "stopping an agent needs your Host to hold the job 'stop an AI agent' on this "
+                            "machine: give it in this app's NAC view, under Management, then approve "
+                            "it with your code")
     from server.network import nac_agents as _na
     await _na.audit_disposition(pool, entity_id=eid,
                                 disposition="contain", token_id=token_id, pid=pid)
@@ -628,7 +681,15 @@ async def bastion_heartbeat(
     )
     if row is None:
         raise HTTPException(401, "invalid or revoked bastion bearer")
+    # A quarantined machine's beat is ACCEPTED BUT RECORDED ONLY: the owner still
+    # sees it is alive (last_seen_at), which is what they need to decide on a
+    # release, while nothing it reports is believed and the reply grants nothing
+    # (quarantine_gate.held_beat). An unreadable quarantine state reads as held.
+    # The body is still read under its cap, so a held machine's beat costs no more.
     body = dict(await _json_in(request, _LARGE_BODY_MAX, only_json=True))
+    from server.network import quarantine_gate
+    if await quarantine_gate.is_quarantined(pool, row["id"]):
+        return await quarantine_gate.held_beat(pool, row["id"])
     body["token_id"] = row["id"]   # bearer-derived — never trust a body-supplied id
     rec = await topology.upsert_heartbeat(pool, row["entity_id"], body)
     if rec is None:
@@ -678,13 +739,9 @@ async def bastion_git_credential(authorization: Optional[str] = Header(None)):
     if row is None:
         raise HTTPException(401, "invalid or revoked bastion bearer")
     # Same refusal as the /bastion-git lane: a quarantined bastion gets no credential
-    # (the network cut lands on the next forwarder reconcile; this closes the window).
-    try:
-        q = await pool.fetchval("SELECT 1 FROM nac_bastion_quarantine WHERE token_id=$1", row["id"])
-    except Exception:
-        q = 1
-    if q:
-        raise HTTPException(403, "this bastion is quarantined")
+    # (quarantine_gate, the one check every bastion lane consults; fails closed).
+    from server.network import quarantine_gate
+    await quarantine_gate.refuse_http(pool, row["id"])
     from server.routes.gitea import _user_bearer_fresh, user_login
     tok = await _user_bearer_fresh()
     if not tok:
@@ -734,12 +791,8 @@ async def bastion_context_source(
     if row is None:
         raise HTTPException(401, "invalid or revoked bastion bearer")
     # A quarantined machine gets no bytes, same as it gets no git credential.
-    try:
-        q = await pool.fetchval("SELECT 1 FROM nac_bastion_quarantine WHERE token_id=$1", row["id"])
-    except Exception:
-        q = 1
-    if q:
-        raise HTTPException(403, "this bastion is quarantined")
+    from server.network import quarantine_gate
+    await quarantine_gate.refuse_http(pool, row["id"])
 
     from server.network import context_tickets
     tk = context_tickets.redeem(ticket, row["id"])
@@ -817,12 +870,8 @@ async def bastion_dcn_propose(
         raise HTTPException(401, "invalid or revoked bastion bearer")
     # Same refusal as git-credential and context-source: a quarantined bastion
     # drafts nothing (fails closed if the quarantine table cannot be read).
-    try:
-        q = await pool.fetchval("SELECT 1 FROM nac_bastion_quarantine WHERE token_id=$1", row["id"])
-    except Exception:
-        q = 1
-    if q:
-        raise HTTPException(403, "this bastion is quarantined")
+    from server.network import quarantine_gate
+    await quarantine_gate.refuse_http(pool, row["id"])
     hostname = await pool.fetchval(
         "SELECT hostname FROM network_bastion_heartbeat WHERE token_id = $1", row["id"])
     if not hostname:
@@ -1986,6 +2035,20 @@ async def nac_mgmt_grants_list():
     eid = brain_service._entity_id
     from server.network import nac_commit
     return await nac_commit.mgmt_grants_list(pool, eid)
+
+
+@router.get("/nac/mgmt/purposes", dependencies=[Depends(requires_permission("read:topology"))])
+async def nac_mgmt_purposes():
+    """The jobs a person can give their Host on a machine (grant_vocab.PURPOSES): each one's
+    words, what still asks every time, and the ops it adds. The Management lane drafts a
+    grant from these with POST /nac/mgmt/grant/propose {server, purposes}, so a Host with no
+    model to draft one (a control plane for the person's machines) can still be given a job;
+    the draft is approved with the person's code like any other. A job that runs an image the
+    person names is left out: its draft needs the image, which this list cannot ask for."""
+    from server.network import grant_vocab
+    return {"purposes": [
+        {"name": name, "job": p["job"], "asks": p.get("gated") or "", "ops": list(p["ops"])}
+        for name, p in grant_vocab.PURPOSES.items() if not p.get("image")]}
 
 
 @router.post("/nac/mgmt/grant/propose", dependencies=[Depends(requires_permission("write:network"))])

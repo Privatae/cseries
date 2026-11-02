@@ -10,6 +10,11 @@
 # can never read another's. Chrome, Firefox, and Safari on macOS 26 or later
 # send every *.localhost name to this machine without any DNS setup.
 #
+# With no model key it is a control plane for your machines: bastions on
+# other computers pair to it over your network once CSERIES_LANE_HOST and
+# CSERIES_LANE_BIND are set (docs/GUIDE.md, "A control plane for your
+# machines").
+#
 # The dashboard is published on 127.0.0.1 only. It serves plain HTTP: to reach
 # it from other machines, put it behind a reverse proxy that terminates TLS
 # rather than publishing this port on a network address. Give it a name with
@@ -53,11 +58,16 @@ services:
       - postgres
     ports:
       - "127.0.0.1:${CSERIES_PORT:-8800}:8800"
-      # A bastion on this machine pairs on 8810 (HTTPS, the redeem) and
-      # dials in on 8811 (mutual TLS, its lanes), both under the Host's own
-      # CA (server/network/local_bastion.py). Loopback only, like 8800.
-      - "127.0.0.1:${CSERIES_ENROLL_PORT:-8810}:8810"
-      - "127.0.0.1:${CSERIES_LANE_PORT:-8811}:8811"
+      # A bastion pairs on 8810 (HTTPS, the redeem) and dials in on 8811
+      # (mutual TLS, its lanes), both under the Host's own CA
+      # (server/network/local_bastion.py). Loopback only, like 8800, unless
+      # CSERIES_LANE_BIND names an address of this machine: a control plane
+      # for bastions on other machines publishes them on its network address
+      # (docs/GUIDE.md, "A control plane for your machines"). The redeem
+      # answers one route to a holder of a live pairing token, and the lane
+      # only a client certificate this Host issued and has not revoked.
+      - "${CSERIES_LANE_BIND:-127.0.0.1}:${CSERIES_ENROLL_PORT:-8810}:8810"
+      - "${CSERIES_LANE_BIND:-127.0.0.1}:${CSERIES_LANE_PORT:-8811}:8811"
     environment:
       # The address the owner opens C-Series on (server/home_origin.py).
       CSERIES_URL: ${CSERIES_URL:-http://home.cseries.localhost:${CSERIES_PORT:-8800}}
@@ -66,6 +76,10 @@ services:
       # URL and the lane address the redeem answers name them.
       CSERIES_ENROLL_PORT: ${CSERIES_ENROLL_PORT:-8810}
       CSERIES_LANE_PORT: ${CSERIES_LANE_PORT:-8811}
+      # The name or address other machines reach those two ports at. Unset,
+      # the pair command names 127.0.0.1 and pairs a bastion on this machine
+      # only (local_bastion.lane_host).
+      CSERIES_LANE_HOST: ${CSERIES_LANE_HOST:-}
     volumes:
       # The database socket the postgres container creates. The Host never
       # sees the data directory.

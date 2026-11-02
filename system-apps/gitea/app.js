@@ -140,6 +140,11 @@
     // ── view switching ───────────────────────────────────────
     function showView(view) {
         stopDeviceFlow();           // leaving (or re-entering) mirrors kills timers
+        // Mirrors need the platform's forge sign-in (gitea.user_token); a Host
+        // that cannot send it has no Mirrors tab, and a link to it opens Your repos.
+        if (view === 'mirrors' && !(window.CSeriesReach && window.CSeriesReach.now().offers('gitea.user_token'))) {
+            view = 'user';
+        }
         state.view = view;
         document.querySelectorAll('.cseries-nav-btn[data-view]').forEach((btn) => {
             btn.classList.toggle('active', btn.dataset.view === view);

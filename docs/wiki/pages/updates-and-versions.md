@@ -34,7 +34,7 @@ In the Settings app, the About tab shows the version your Host is running and wh
 
 ## How do I know a new version is out?
 
-In the Settings app, open Updates and choose **Check for updates**. On a Host on its own it looks up the newest release of the installer and compares it with the version you run: it says "You're up to date" with your version, or names the new version and tells you to run `npx cseries update` on the machine the Host is installed on. If the check cannot reach the release, it shows the reason instead.
+In the Settings app, open Updates and choose **Check for updates**. On every C-Series Host, on its own or on the Privatae network, it looks up the newest release of the installer and compares it with the version you run: it says "You're up to date" with your version, or names the new version and tells you to run `npx cseries update` on the machine the Host is installed on. If the check cannot reach the release, it shows the reason instead.
 
 ## Can I pick a version or roll back?
 

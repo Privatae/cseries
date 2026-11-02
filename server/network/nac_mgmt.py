@@ -258,16 +258,33 @@ async def load_suspended_servers(pool) -> set:
 # migrations/v069_nac_bastion_quarantine.sql:25; there is no runtime mirror.
 
 
+class QuarantineUnreadable(frozenset):
+    """load_quarantined's answer when the quarantine table cannot be read: every
+    server is in it, and it is never empty, so each gate's `server in quarantined`
+    refuses. It lists nothing (iterating it yields no names), so a page that shows
+    the list shows none rather than a made-up one."""
+
+    def __contains__(self, item) -> bool:
+        return True
+
+    def __bool__(self) -> bool:
+        return True
+
+
 async def load_quarantined(pool) -> set:
     """The set of currently-quarantined server hostnames. A quarantined server denies
     at the gate unconditionally — like suspend, the safe direction (a tighten always
     holds), and on top of that its concentrator peer is dropped so the whole tunnel is
-    dead. Releasing (a WIDEN) deletes the row and restores the peer."""
+    dead. Releasing (a WIDEN) deletes the row and restores the peer.
+
+    Fails closed: when the table cannot be read every server reads as quarantined
+    (QuarantineUnreadable). It used to answer an empty set, so an unreadable table
+    released every machine at once."""
     try:
         rows = await pool.fetch("SELECT server FROM nac_bastion_quarantine")
     except Exception as e:
-        log.info("load_quarantined unavailable: %r", e)
-        return set()
+        log.warning("load_quarantined unavailable (%r): every machine is held until it can be read", e)
+        return QuarantineUnreadable()
     return {r["server"] for r in rows}
 
 

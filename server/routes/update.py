@@ -161,12 +161,19 @@ def _npm_latest() -> str:
     return version.strip()
 
 
+VERSION_OP = "pc.version_query"
+
+
 def _is_standalone(bridge) -> bool:
     """True when nothing but the installer can say what is published: a Host
-    with no platform (NoPlatform), or one with no live bridge that is not a
-    member of the network either."""
+    with no platform (NoPlatform), a member Host (the member door does not
+    carry VERSION_OP: member_client.NETWORK_OPS), or one with no live bridge
+    that is not a member of the network either."""
     from server.bridge.no_platform import NoPlatform
     if bridge is None or isinstance(bridge, NoPlatform):
+        return True
+    offers = getattr(bridge, "offers", None)
+    if callable(offers) and not offers(VERSION_OP):
         return True
     if getattr(bridge, "connected", False):
         return False
@@ -229,7 +236,7 @@ async def check_updates():
         # ("bridge unavailable on pc.version_query: timeout") instead of the
         # ambiguous "returned no data", so the cache-fallback response's
         # `error` field tells the truth about WHY it's stale.
-        data = await bridge.request("pc.version_query", {"platform": platform},
+        data = await bridge.request(VERSION_OP, {"platform": platform},
                                     raise_on_infra=True)
         if data is None:
             raise RuntimeError("bridge returned no data")

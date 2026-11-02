@@ -17,7 +17,7 @@ The App Store is where you find apps for your Host and add them, and see where e
 
 ## What is in the App Store?
 
-Two shelves. **On your machine** holds apps that install on your Host. **For your public sites** holds ready-made web applications for sites; see the [Sites](wiki:sites-app) app. Tabs show the updates waiting and what you have installed, and one search box covers both shelves.
+**On your machine** holds apps that install on your Host. Tabs show the updates waiting and what you have installed, and one search box covers the store. A second shelf, **For your public sites**, holds ready-made web applications for sites (see the [Sites](wiki:sites-app) app); it appears only when the Privatae network offers publishing sites to your Host, which it does not in this release.
 
 The apps built into every Host are not listed, since there is nothing to choose.
 

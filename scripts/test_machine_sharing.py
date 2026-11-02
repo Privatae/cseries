@@ -820,11 +820,15 @@ def test_a_machine_that_withholds_what_runs_on_it_never_reads_as_quiet():
     state, why = _bastion_watch_state(box())
     assert state == "withheld", state
     assert "not reporting it to this host" in why and "never" in why
-    # Granted observe, it reads as watching again.
-    assert _bastion_watch_state(box(capabilities=["agent-observe"]))[0] == "watching"
-    assert _bastion_watch_state(
-        box(enforcing={"anchored": True, "is_anchor": False,
-                       "pairing_caps": ["inference", "observe"]}))[0] == "watching"
+    # A box that CAN look (it advertises the agent-observe capability) and
+    # withholds observe from us is still withheld: the capability is the
+    # machine's scanner, not our pairing's grant.
+    assert _bastion_watch_state(box(capabilities=["agent-observe"]))[0] == "withheld"
+    # Granted observe, it reads as watching again, with or without the capability.
+    for caps in ([], ["agent-observe"]):
+        assert _bastion_watch_state(
+            box(capabilities=caps, enforcing={"anchored": True, "is_anchor": False,
+                                              "pairing_caps": ["inference", "observe"]}))[0] == "watching"
     # The anchor, and an unanchored box, are untouched — 19 of the fleet's 22.
     assert _bastion_watch_state(
         box(enforcing={"anchored": True, "is_anchor": True, "pairing_caps": []}))[0] == "watching"

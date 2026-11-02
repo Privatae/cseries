@@ -135,12 +135,73 @@ passkey (never the last one) and signs out every other session, each after
 a fresh check with a passkey or a recovery code.
 
 To pair a bastion on another machine, set `CSERIES_LANE_HOST` to the name or
-address that machine reaches the Host's ports 8810 and 8811 at; the Network
-app then shows the pair command for it. Where a server's firewall keeps 8810
+address that machine reaches the Host's ports 8810 and 8811 at, and publish
+those ports there (next section); the Network app then shows the pair
+command for it. Where a server's firewall keeps 8810
 shut, `CSERIES_DOOR_HELPER` names the unix socket of a helper on that server
 that opens it to the owner's address for the 15-minute pairing window, after
 a fresh passkey check. `CSERIES_SETUP_CODE_FILE` names a file holding the
 setup code, for a Host someone else installs.
+
+## A control plane for your machines
+
+A Host needs no model to look after your machines. Without a model key it
+still pairs bastions, and its Network app and Oversight show what each
+machine runs: its AI agents, the tool servers they use, its posture and its
+audit. Chat says no model is set up until you add one.
+<!-- pairing: server/network/bastion_enroll.py add_tcp_pairing; agents: server/network/nac_agents.py ingest; findings: brain/mastercode/runtime/oversight.py -->
+
+Run it on one Linux machine on your network. Beside `compose.yaml`, put the
+two settings in a file named `.env`:
+
+```sh
+# The name or address your other machines reach this one at.
+CSERIES_LANE_HOST=192.168.1.20
+# The address of this machine to publish the pairing ports 8810 and 8811 on.
+CSERIES_LANE_BIND=192.168.1.20
+```
+
+then start it as above with `docker compose up -d --build`. When
+`CSERIES_LANE_HOST` is an address, `CSERIES_LANE_BIND` is usually the same
+one; when it is a name, set `CSERIES_LANE_BIND` to the address that name
+points at. Let your other machines reach ports 8810 and 8811 through this
+machine's firewall. The dashboard stays on 127.0.0.1; open it from another
+computer as the section above says.
+<!-- compose.yaml host.ports and CSERIES_LANE_HOST; server/network/local_bastion.py lane_host -->
+
+The pairing ports are safe to publish on your network. Port 8810 answers one
+request, the redeem of a pairing token that is single-use and expires in 15
+minutes. Port 8811 answers only a client certificate this Host issued at a
+redeem and has not taken back.
+<!-- server/network/local_bastion.py module docstring (:8810, :8811); server/network/bastion_enroll.py PAIRING_TTL_SECONDS -->
+
+To pair a machine, open the Network app and set up a bastion. Its card shows
+one line for macOS and Linux and one for Windows; run the one for that
+machine in a terminal there. The line installs the bastion, pairs it with
+this Host trusting this Host's certificate and no other, and starts it.
+<!-- server/network/bastion_enroll.py one_line, add_tcp_pairing -->
+
+What the bastion lets this Host do depends on how it was installed (the
+bastion's README, "Your own computer or a shared machine"):
+
+- **Your own computer.** Run as yourself, the line installs the bastion for
+  the whole machine through `sudo` (or as administrator on Windows) and takes
+  this Host as the machine's one Host. That is what Oversight's checks need,
+  including the ones that read what only root can.
+  <!-- privatae-bastion deploy/install.sh elevate_whole_machine; client-go/anchor.go capsAllowIn -->
+- **Just your account.** Installed with `--just-me`, or where `sudo` is
+  missing, the bastion runs as you: it sees your own agents, and checks that
+  need root are refused.
+  <!-- privatae-bastion deploy/install.sh --just-me -->
+- **A shared machine.** Installed with `--shared`, or as root, one Host is in
+  charge of the machine and every write waits for your approval at the
+  machine. The first Host paired as root is put in charge; another one is put
+  in charge at that machine with `sudo -H privatae-bastion claim-anchor`.
+  <!-- privatae-bastion client-go/anchor.go; README "Your own computer or a shared machine" -->
+
+To pass an option through the card's line on macOS or Linux, end it with
+`sh -s -- --shared` (or `--just-me`) instead of `sh`.
+<!-- privatae-bastion deploy/install.sh option parsing -->
 
 ## The Privatae network
 

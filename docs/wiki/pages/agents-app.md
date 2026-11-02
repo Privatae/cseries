@@ -27,7 +27,7 @@ A strip at the top counts how many scheduled runs needed a model and how many di
 
 ## What can I see about each agent?
 
-Its title, whether it is running, queued, done or failed, how long it has run, how many tools it has called and which model it ran on. Pick one to see where that model came from (named by your Host for the task, your preference or your Host's for that kind of work, or your Host's own model) and to follow it live: the tools it was allowed, then its transcript as it works, with its reasoning, what it wrote, each tool it called and what came back, and any error.
+Its title, whether it is running, queued, done or failed, how many tool calls it made, counting any that were refused, and which model it ran on. The window does not yet show how long an agent has run or which tools it was allowed. Pick one to see where that model came from (named by your Host for the task, your preference or your Host's for that kind of work, or your Host's own model) and to follow it live: its transcript as it works, with its reasoning, what it wrote, each tool it called and what came back, and any error.
 
 ## What does scheduled work cost?
 
@@ -41,4 +41,4 @@ Every scheduled item has a **Stop** button. One click and it will not run again.
 
 ## Why does it say "Your host has no model"?
 
-Your Host has not been given a model yet, so the agents it tries to send off cannot run. Choose one in the [Orchestrator](wiki:orchestrator-app), on a key you hold or a model running on one of your own machines. [Models and keys](wiki:models-and-keys) explains the choice.
+Your Host has not been given a model yet, so the agents it tries to send off cannot run. Choose one in the [Orchestrator](wiki:orchestrator-app), on a key you hold or a model server on another computer on your network. [Models and keys](wiki:models-and-keys) explains the choice.

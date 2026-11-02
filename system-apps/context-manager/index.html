@@ -133,7 +133,8 @@
                 <!-- Where it lives (raw per-piece index) -->
                 <div id="lens-index" class="ctx-lens" role="tabpanel" aria-label="Where it lives">
                     <div class="view-heading">
-                        <p class="view-sub">Every piece of your context, and the machine that holds its bytes. <strong>platform</strong> = kept for you on the network; an <strong>S3 bucket</strong> or a <strong>bastion</strong> = a machine you own. A bastion-held piece shows offline when its machine isn't checked in.</p>
+                        <!-- "platform" is the "pg" backend, the Host's own Postgres (server/routes/context_manager.py, backend "pg"; compose.yaml service "postgres"). -->
+                        <p class="view-sub">Every piece of your context, and the machine that holds its bytes. <strong>platform</strong> = kept in this Host's own database, on this machine; an <strong>S3 bucket</strong> or a <strong>bastion</strong> = a machine you own. A bastion-held piece shows offline when its machine isn't checked in.</p>
                         <div class="view-toolbar">
                             <input type="text" class="cseries-input" id="idx-filter" placeholder="Filter by path prefix…" aria-label="Filter by path prefix" style="max-width:280px">
                             <button class="cseries-btn" id="idx-refresh">Refresh</button>

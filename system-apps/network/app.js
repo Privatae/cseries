@@ -178,11 +178,15 @@
         const gwTotal = (o.counts && o.counts.bastions) || 0;
         const ua = (o.counts && o.counts.unrequested_agents) || 0;
         state.agentsUnrequested = ua;
+        // The connection to the Privatae network, shown to a member only: a Host on
+        // its own has none to report, and its bastions reach it directly
+        // (server/bridge/platform_reach.py; CSeriesReach.now().member).
+        const member = !!(window.CSeriesReach && CSeriesReach.now().member);
         el.innerHTML = `
-            <span class="net-health-chip" title="The bridge signs the doors into your network, then steps out — it never carries your traffic.">
+            ${member ? `<span class="net-health-chip" title="Your Host's connection to the Privatae network.">
                 <span class="net-status-dot ${bOk ? 'live' : ''}"></span>
-                <span class="label-sys">control plane</span> <b>${bOk ? 'reachable' : 'unreachable'}</b>
-            </span>
+                <span class="label-sys">network</span> <b>${bOk ? 'connected' : 'not connected'}</b>
+            </span>` : ''}
             <span class="net-health-chip" title="Bastions online / total">
                 <span class="net-status-dot ${gw ? 'live' : ''}"></span>
                 <span class="label-sys">bastions</span> <b>${gw}/${gwTotal}</b>
@@ -199,6 +203,9 @@
 
     // ── overview (drives header + topology + stats) ──────────
     async function loadOverview(opts) {
+        // The membership answer first, so the header knows whether there is a
+        // network connection to show (network-reach.js reads it once a page).
+        if (window.CSeriesReach) { try { await CSeriesReach.load(); } catch (e) { /* not a member */ } }
         try {
             state.overview = await fetchJSON('/api/network/overview');
         } catch (e) {
@@ -258,7 +265,8 @@
             { v: c.bastions_online != null ? `${c.bastions_online}/${c.bastions || 0}` : '—', l: 'bastions live' },
             { v: c.secured_channels != null ? c.secured_channels : '—', l: 'secured peers' },
             { v: c.contacts != null ? c.contacts : '—', l: 'contacts' },
-            { v: (o.bridge && o.bridge.connected) ? 'reachable' : 'unreachable', l: 'control plane' },
+            ...((window.CSeriesReach && CSeriesReach.now().member)
+                ? [{ v: (o.bridge && o.bridge.connected) ? 'connected' : 'not connected', l: 'network' }] : []),
             { v: peer.trust_ready ? 'ready' : 'syncing', l: 'trust' },
         ];
         $('topo-stats').innerHTML = cards.map(s =>
@@ -407,14 +415,14 @@
     }
 
     // ── view: logical (the original wheel, unchanged) ────────
-    // The sub-line used to say "Direct connections — the platform isn't in
-    // this picture". Every machine's tunnel runs through the platform relay
-    // (the only bastion data plane, bridge adapter.py
-    // _relay_endpoints), so it now says what this view is: who belongs to
-    // whom, with the path left to the Physical view.
+    // The sub-line once said each machine's tunnel runs through the platform
+    // relay; that is the platform's data plane, which a C-Series Host does
+    // not have.
     registerView('logical', {
         label: 'Logical',
-        sub: "Your Host at the center, the bastions and peers in your mesh around it. Your machines reach it through the relay their tunnels dial — the Physical view draws that path. Live, refreshed automatically.",
+        // A C-Series Host has no relay: a bastion reaches it on the Host's own
+        // sockets, or on ports 8810/8811 (server/network/local_bastion.py).
+        sub: "Your Host at the center, the bastions and peers in your mesh around it. Your machines reach it directly, over the connection each one's bastion makes to this Host. Live, refreshed automatically.",
         render(graph) {
             // A machine-peer sits on an OUTER ring at its machine's angle, and
             // its line runs to that machine rather than to the Host. That is the
@@ -503,7 +511,10 @@
     // already rides the heartbeat or the enrollment row.
     registerView('physical', {
         label: 'Physical',
-        sub: 'The path itself, left to right: your machine, the relay its tunnel dials, and your Host. A segment is drawn broken where that hop is actually down.',
+        // A bastion paired to a C-Series Host dials it directly, on the Host's own
+        // sockets or ports 8810/8811 (server/network/local_bastion.py); the hop
+        // shows a relay's address only for a machine whose enrollment names one.
+        sub: 'The path itself, left to right: your machine, how its bastion reaches your Host, and your Host. A segment is drawn broken where that hop is actually down.',
         render(graph) {
             const machines = graph.nodes.filter(n => n.kind === 'bastion');
             const sharedWith = graph.nodes.filter(n => n.kind === 'machine-peer');
@@ -533,7 +544,7 @@
             if (!machines.length) {
                 return `<div style="padding:48px">${empty(
                     'No machines in your network yet',
-                    'The physical path is drawn from your machines. Stand one up in Bastions and its path appears here — machine, relay, Host.')}</div>`;
+                    'The physical path is drawn from your machines. Stand one up in Bastions and its path appears here — machine, connection, Host.')}</div>`;
             }
 
             const head = (x, t) =>
@@ -558,7 +569,7 @@
                 <g class="topo-path ${down ? 'is-down' : ''}" aria-hidden="true">
                     <line class="${segCls}" x1="${COL_M + 66}" y1="${y}" x2="${COL_R - HOP_W / 2}" y2="${y}"></line>
                     <line class="${segCls}" x1="${COL_R + HOP_W / 2}" y1="${y}" x2="${COL_H - HOST_R - 2}" y2="${hostCy}"></line>
-                    <text class="topo-seg-label" x="${(COL_M + COL_R) / 2}" y="${y - 8}">${esc(m.tunnel_ip || 'tunnel')}</text>
+                    <text class="topo-seg-label" x="${(COL_M + COL_R) / 2}" y="${y - 8}">${esc(m.tunnel_ip || '')}</text>
                     <rect class="topo-hop" x="${COL_R - HOP_W / 2}" y="${y - 18}" width="${HOP_W}" height="36" rx="6"></rect>
                     ${hopLabel(m.endpoint, COL_R, y)}
                 </g>`;
@@ -603,11 +614,11 @@
             const peerNote = others.length
                 ? `<text class="topo-foot label-sys" x="${W / 2}" y="${H - 14}" text-anchor="middle">${esc(
                     others.length + (others.length === 1 ? ' peer host' : ' peer hosts')
-                    + ' — reached host to host, not through your relay. See the Logical view or Peers.')}</text>`
+                    + ' — reached host to host. See the Logical view or Peers.')}</text>`
                 : '';
 
             return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Physical network path">
-                ${head(COL_M, 'your machine')}${head(COL_R, 'the relay it dials')}${head(COL_H, 'your Host')}
+                ${head(COL_M, 'your machine')}${head(COL_R, 'how it connects')}${head(COL_H, 'your Host')}
                 ${paths}${hostBox}${rows}${peerNote}
             </svg>`;
         },
@@ -860,7 +871,7 @@
     // one thing a person came to this view to read.
     function hopLabel(endpoint, cx, y) {
         if (!endpoint) {
-            return `<text class="topo-hop-label" x="${cx}" y="${y + 4}">relay</text>`;
+            return `<text class="topo-hop-label" x="${cx}" y="${y + 4}">direct</text>`;
         }
         const s = String(endpoint);
         const i = s.lastIndexOf(':');
@@ -2183,6 +2194,7 @@
         renderNacConnectors(cn);
         renderNacEgress(eg);
         renderNacGrants(gr);
+        renderGrantForm();
         renderNacAudit(au);
         applyLaneDefaults();   // open lanes that have pending drafts (unless the user overrode)
         updateNacBadge();
@@ -2661,7 +2673,7 @@
                    : `<span class="cseries-pill ${pillCls}">${esc(pillLbl)}</span>`);
             let note;
             if (isQtn) {
-                note = `<div class="nac-suspend-note">Quarantined — the whole mesh is cut: its concentrator peer is dropped (tunnel dead) and management + harness are denied. The bearer is kept; release restores the box with no re-enrol (it asks for your code).</div>`;
+                note = `<div class="nac-suspend-note">Quarantined — this Host refuses everything the machine asks of it and has closed what it had open; its check-ins are still noted. Nothing is removed: release brings it back without pairing again (it asks for your code).</div>`;
             } else if (isSusp) {
                 note = `<div class="nac-suspend-note">Suspended — management + harness denied on this bastion even with valid grants. Its grants are kept; resume restores them.</div>`;
             } else {
@@ -3095,6 +3107,61 @@
         return out.length ? `<div class="nac-grant-words">${out.join(' ')}</div>` : '';
     }
 
+    // ── A grant the person drafts: a job (grant_vocab.PURPOSES, from /nac/mgmt/purposes)
+    // on one machine or on all of them. The draft lands in the list below and is
+    // approved there with the person's code, like a draft the Host proposed. A Host
+    // with no model has nothing else that drafts one.
+    async function renderGrantForm() {
+        const box = $('nac-grant-new');
+        if (!box) return;
+        if (!state.nac.purposes) {
+            try {
+                const r = await fetchJSON('/api/network/nac/mgmt/purposes');
+                state.nac.purposes = (r && r.purposes) || [];
+            } catch (e) { box.innerHTML = errBox(e.message); return; }
+        }
+        const machines = (state.nac.endpoints || []).map(e => e.hostname).filter(Boolean)
+            .filter((h, i, a) => a.indexOf(h) === i).sort();
+        if (!machines.length) { box.innerHTML = ''; return; }
+        const jobs = state.nac.purposes.map(p => `
+            <label class="nac-grant-job">
+                <input type="checkbox" name="purpose" value="${attr(p.name)}">
+                <span><strong>${esc(p.job)}</strong>${p.asks ? `<br><span class="label-sys">Still asks you: ${esc(p.asks)}</span>` : ''}</span>
+            </label>`).join('');
+        box.innerHTML = `
+            <details class="nac-grant-new-box">
+                <summary>Give your Host a job on a machine</summary>
+                <p class="view-sub">Pick the machine and what your Host may do there. This drafts a grant;
+                it does nothing until you approve it below with your code.</p>
+                <label class="label-sys" for="nac-grant-server">Machine</label>
+                <select id="nac-grant-server">
+                    ${machines.map(h => `<option value="${attr(h)}">${esc(h)}</option>`).join('')}
+                    <option value="*">every machine</option>
+                </select>
+                <div class="nac-grant-jobs">${jobs}</div>
+                <div class="row" style="gap:8px;margin-top:8px">
+                    <button class="cseries-btn primary" id="nac-grant-draft">Draft the grant</button>
+                    <span class="net-inline-status" id="nac-grant-status"></span>
+                </div>
+            </details>`;
+        $('nac-grant-draft').addEventListener('click', draftGrant);
+    }
+    async function draftGrant() {
+        const status = $('nac-grant-status');
+        const server = $('nac-grant-server').value;
+        const purposes = [...document.querySelectorAll('#nac-grant-new input[name=purpose]:checked')].map(i => i.value);
+        if (!purposes.length) { status.textContent = 'Pick at least one job.'; return; }
+        status.textContent = 'Drafting…';
+        try {
+            await fetchJSON('/api/network/nac/mgmt/grant/propose', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ server, purposes }),
+            });
+            state.nac.laneOpen.mgmt = true;
+            nacReload();
+        } catch (e) { status.textContent = e.message; }
+    }
+
     // ── MANAGEMENT GRANTS — default-deny; approved + drafts inline. ──
     function renderNacGrants(gr) {
         const list = $('nac-grants-list');
@@ -3105,7 +3172,7 @@
         const drafts = grants.filter(isDraft).length;
         if (count) { count.textContent = drafts ? (drafts + ' pending') : String(grants.length); count.classList.toggle('pending', drafts > 0); }
         if (!grants.length) {
-            list.innerHTML = empty('No management grants', 'Default-deny — no management operation your Host sends to your servers runs without a grant. When your agent proposes one, approve it here.');
+            list.innerHTML = empty('No management grants', 'Default-deny — no management operation your Host sends to your servers runs without a grant. Give it a job on a machine above, or approve one your Host proposes here.');
             return;
         }
         const suspended = state.nac.suspended || [];
@@ -3120,8 +3187,8 @@
                 : (expired ? '<span class="cseries-pill">expired</span>'
                    : (isSusp ? '<span class="cseries-pill suspend">suspended</span>' : '<span class="cseries-pill">approved</span>'));
             const sub = draft
-                ? (widening ? 'proposed by your agent · grant is a widen — needs your code'
-                            : 'proposed by your agent · deny only — tightens, no code needed')
+                ? (widening ? 'a draft · grant is a widen — needs your code'
+                            : 'a draft · deny only — tightens, no code needed')
                 : (isSusp
                     ? `suspended — denies even with this grant · resume restores it (asks for your code)`
                     : `signed · ${fmtExpiry(g.expires_at, grantExpired(g))}${g.stepup_at ? ' · approved with step-up' : ''}`);
@@ -3790,6 +3857,12 @@
             const pids = new Set(f.members.map(m => m.pid));
             const root = f.members.find(m => !m.ppid || !pids.has(m.ppid)) || f.members[0];
             f.origin = root.origin || (f.members.map(m => m.origin).filter(Boolean)[0]) || null;
+            // The account behind it, the file it runs and its unit (v256): the
+            // root's, else the first member that reported them. A bastion too
+            // old to send them leaves all three null, which reads "not reported".
+            f.owner = [root].concat(f.members).find(m => m.owner_class || m.owner_admin || m.owner_interactive) || null;
+            f.exe = root.exe || (f.members.map(m => m.exe).filter(Boolean)[0]) || null;
+            f.unit = root.unit || (f.members.map(m => m.unit).filter(Boolean)[0]) || null;
             f.evidence = [];
             f.members.forEach(m => (m.evidence || []).forEach(e => {
                 if (e && e.signal && !f.evidence.some(x => x.signal === e.signal && x.value === e.value)) f.evidence.push(e);
@@ -3838,6 +3911,85 @@
         if (!when.length || when.some(w => !w)) return null;
         return when.slice().sort()[0];
     }
+    // The account an agent runs as (v256): three facts from the bastion, each
+    // with an honest "could not be read", never folded into "no". Plain words
+    // for someone who has never heard of a uid; the agent-written account name
+    // goes through esc() wherever this is drawn.
+    const OWNER_CLASS_WORDS = {
+        domain_user: "a person's account from their organisation's directory",
+        local_user: "a person's account on this machine",
+        service: 'an account that exists for a program, not a person',
+        system: "the machine's own all-powerful account (root or SYSTEM)",
+    };
+    function accountWords(m) {
+        if (!m || !(m.owner_class || m.owner_admin || m.owner_interactive)) return null;
+        const who = OWNER_CLASS_WORDS[m.owner_class] || 'an account the bastion could not identify';
+        const name = m.agent_user ? ` (${m.agent_user})` : '';
+        const admin = m.owner_admin === 'yes' ? 'it can change anything on the machine (administrator)'
+            : m.owner_admin === 'no' ? 'it is not an administrator'
+                : 'whether it is an administrator could not be read';
+        const here = m.owner_interactive === 'yes' ? 'someone is signed in to it now'
+            : m.owner_interactive === 'no' ? 'nobody is signed in to it now'
+                : 'whether anyone is signed in to it could not be read';
+        return `Runs as ${who}${name}; ${admin}; ${here}.`;
+    }
+    // A pill on the card only for the fact that changes what an agent can do:
+    // it runs with administrator rights. "no" and "unknown" stay in the inspector.
+    function adminPill(m) {
+        if (!m || m.owner_admin !== 'yes') return '';
+        return `<span class="cseries-pill warn" title="${esc(accountWords(m) || '')}">administrator</span>`;
+    }
+
+    // Tool servers (v256): what each machine's agent clients are set up to
+    // start or connect to, read from their settings files. The problems are
+    // the bastion console's own sentences (client-go uimachine.go
+    // toolProblems), so the machine and the Host say the same thing.
+    function toolServerProblems(s) {
+        if (!s || s.disabled) return [];
+        const p = [];
+        if (s.secret_in_plaintext) p.push('a key is written in plain text in ' + (s.path || 'its settings file'));
+        if (s.package_pinned === 'no' && s.package_name) p.push('runs ' + s.package_name + ' with no fixed version, so whatever is published next is what runs');
+        if (s.running_state === 'running_not_declared') p.push('running, but not in any settings file this machine can read');
+        return p;
+    }
+    const TOOL_RUNNING_WORDS = {
+        declared_running: 'running now',
+        declared_not_running: 'not running now',
+        running_not_declared: 'running, with no settings file naming it',
+        not_local: 'on another computer',
+    };
+    function toolServerLine(s) {
+        const where = s.locality === 'local_process' ? 'started on this machine'
+            : s.locality === 'loopback' ? 'reached on this machine'
+                : s.locality === 'lan' ? 'reached on the local network' + (s.url_host ? ' at ' + s.url_host : '')
+                    : s.locality === 'remote' ? 'reached over the internet' + (s.url_host ? ' at ' + s.url_host : '')
+                        : null;
+        return [s.client || null, where, s.disabled ? 'turned off' : (TOOL_RUNNING_WORDS[s.running_state] || null)]
+            .filter(Boolean).join(' · ');
+    }
+    // How much the bastion read, so "no tool servers" from a machine that read
+    // forty settings files is a different sentence from one that read none.
+    function toolServerScanNote(b) {
+        const who = b.hostname || b.name;
+        const scan = b.tool_server_scan;
+        const listed = Array.isArray(b.tool_servers);
+        if (scan && scan.supported) {
+            const n = scan.files_read || 0;
+            const parts = [`${who}: read ${n} settings ${n === 1 ? 'file' : 'files'}`];
+            if (scan.files_unreadable) parts.push(`${scan.files_unreadable} could not be opened`);
+            if (scan.files_unparsed) parts.push(`${scan.files_unparsed} could not be understood`);
+            if (scan.files_foreign_owner) parts.push(`${scan.files_foreign_owner} skipped because another account owns ${scan.files_foreign_owner === 1 ? 'it' : 'them'}`);
+            if (scan.truncated) parts.push('the list was cut short');
+            if (scan.timed_out) parts.push('reading took too long; showing the last full read');
+            if (scan.process_scan && scan.process_scan !== 'ok') parts.push('whether each one is running could not be checked');
+            return parts.join(', ');
+        }
+        if (scan && !scan.supported) return `${who}: its bastion cannot read tool server settings on this kind of machine`;
+        if (!b.online) return listed ? `${who}: offline; showing its last list` : null;
+        return listed ? `${who}: not read on the last check-in; showing its last list`
+            : `${who}: not reported — the bastion is too old to read them, or this pairing is not watching`;
+    }
+
     function originPill(o) {
         if (!o) return '';
         const cls = o === 'scheduler' ? 'deny' : '';
@@ -3874,6 +4026,7 @@
                             <span class="net-card-name">${esc(f.signature || (f.kind === 'client' ? 'unknown model client' : 'agent'))}</span>
                             ${pill}
                             ${originPill(f.origin)}
+                            ${adminPill(f.owner)}
                             ${pending ? `<span class="cseries-pill warn" title="${attr('You ordered this contained ' + fmtRel(pending) + '. It is carried out on the bastion\'s next check-in that can see its agents; the bastion card says whether that is now.')}">containment pending</span>` : ''}
                             ${f.active ? '' : '<span class="cseries-pill">idle</span>'}
                         </div>
@@ -3930,6 +4083,43 @@
                 : empty('No automations observed', 'A browser driver, an input injector or an RPA runtime with no model behind it shows up here. Inventory, not an alert — the moment one starts talking to a model it moves up to Agents.');
         }
         renderScheduled();
+        renderToolServers();
+    }
+
+    // One card per declared tool server, worst first within each machine, with
+    // the scan notes above. Every value here was written by a program on the
+    // person's machine, so every one goes through esc().
+    function renderToolServers() {
+        const list = $('toolservers-list');
+        if (!list) return;
+        const notes = [];
+        const rows = [];
+        (state.bastions || []).forEach(b => {
+            const note = toolServerScanNote(b);
+            if (note) notes.push(note);
+            (Array.isArray(b.tool_servers) ? b.tool_servers : []).forEach(s => {
+                if (s && typeof s === 'object') rows.push({ s: s, host: b.hostname || b.name, problems: toolServerProblems(s) });
+            });
+        });
+        rows.sort((x, y) => String(x.host).localeCompare(String(y.host)) || (y.problems.length - x.problems.length));
+        const note = notes.length ? `<p class="view-sub">${esc(notes.join(' · '))}</p>` : '';
+        if (!rows.length) {
+            list.innerHTML = note + empty('No tool servers found', 'When an agent client on one of your machines (Claude Code, Cursor, VS Code and others) is set up to start or reach a tool server, it is listed here with anything worth fixing.');
+            return;
+        }
+        list.innerHTML = note + rows.map(({ s, host, problems }) => `
+                <div class="net-card ${problems.length ? 'down' : (s.disabled ? 'stale' : '')}">
+                    <div class="net-card-main">
+                        <div class="net-card-title">
+                            <span class="net-card-name">${esc(s.name || s.package_name || 'unnamed tool server')}</span>
+                            ${problems.length ? `<span class="cseries-pill deny">${problems.length === 1 ? '1 problem' : esc(problems.length + ' problems')}</span>` : ''}
+                            ${s.disabled ? '<span class="cseries-pill">turned off</span>' : ''}
+                        </div>
+                        <div class="net-card-sub">${esc([host, toolServerLine(s)].filter(Boolean).join(' · '))}</div>
+                        ${s.path ? `<div class="net-card-sub">set up in <code>${esc(s.path)}</code></div>` : ''}
+                        ${problems.map(p => `<div class="net-card-sub">${esc(p)}</div>`).join('')}
+                    </div>
+                </div>`).join('');
     }
 
     // Scheduled jobs (bastion 0.13.12): the crontab / timer / launchd / Task
@@ -4012,6 +4202,9 @@
             ['server', f.hostname || '—'],
             [n === 1 ? 'pid' : 'processes', n === 1 ? String(a.pid) : (n + ' — pids ' + pids), n > 1],
             ['user', f.user || '—'],
+            ['account', accountWords(f.owner) || 'not reported (the bastion is too old to say)'],
+            ['program file', f.exe || 'not reported', true],
+            ...(f.unit ? [['service unit', f.unit, true]] : []),
             ['command', a.cmdline || '—', true],
             ['talking to', f.endpoints.length ? f.endpoints.join(', ') : 'no LLM endpoint seen yet', true],
         ];
@@ -4767,5 +4960,10 @@
         // can pin their words without a browser.
         containPendingPill, findingContainPendingPill, containPendingSince, schedulerScanNote, versionBefore,
         autoUpdateLine,
+        // scripts/test_network_agent_facts.js pins these (v256).
+        accountWords, adminPill, toolServerProblems, toolServerLine, toolServerScanNote, agentFamilies,
+        renderToolServers, openFamilyInspector,
+        // scripts/test_network_grant_form.js pins the person's own grant draft.
+        renderGrantForm, draftGrant,
     };
 })();

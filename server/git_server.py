@@ -18,14 +18,19 @@ Where each part is kept:
     elsewhere or swap in another account's token;
   - the address and the two usernames: entity_registry.behavioral_params under
     SETTINGS_KEY, where the Host keeps its other settings (backup, harnesses);
-  - for the git command line: ~/.git-credentials and ~/.gitconfig, written from
-    what is connected at start and on every connect or disconnect
-    (sync_git_files). That file holds the token in plain text on the Host's
-    volume, as it always has when an install sets GITEA_URL, GITEA_USERNAME
-    and GITEA_API_TOKEN (entrypoint.sh).
+  - for git itself: no file holds the token. ~/.gitconfig names a credential
+    helper (server/git_credential_helper.py, helper_command) that asks this
+    process over a Unix socket (serve_credentials), and each answer reads the
+    token from Keys for that one sign-in. The Host's own git calls pass the
+    same helper with -c (helper_args). sync_git_files, at start and on every
+    connect or disconnect, writes the helper and the git identity, and takes
+    out of ~/.git-credentials the plain-text line earlier versions (and
+    entrypoint.sh, from GITEA_URL, GITEA_USERNAME and GITEA_API_TOKEN) wrote
+    there.
 
-With nothing connected, forge_identity() answers from that file or those three
-variables, so an install that sets them keeps working unchanged.
+With nothing connected, forge_identity() answers from those three variables,
+so an install that sets them keeps working unchanged, else from a
+~/.git-credentials the person wrote themselves.
 
 Only the Host's own coding forge comes from here. Privatae's forge (capability
 proposals, bug reports, the community board, and which destinations always take
@@ -117,11 +122,17 @@ def _env_identity() -> Optional[tuple[str, str, str]]:
 
 def forge_identity() -> Optional[tuple[str, str, str]]:
     """(user, token, netloc) of the Host's own coding forge: the connected
-    server, else ~/.git-credentials, else the install's GITEA_* variables.
-    None when there is none."""
+    server, else the install's GITEA_* variables, else a ~/.git-credentials
+    the person wrote (this module writes none). GITEA_* comes before the
+    file: entrypoint.sh used to write their line first in it, and now that
+    nothing does, what is left there is the person's own servers, never the
+    install's forge. None when there is none."""
     c = _connected
     if c is not None:
         return c.user, c.token, c.netloc
+    env = _env_identity()
+    if env is not None:
+        return env
     try:
         from server.network import nac_harness
         cred = nac_harness._read_git_credential()
@@ -324,7 +335,7 @@ def _email_for(user: str, netloc: str, given: str) -> str:
     return given or f"{user}@noreply.{_host_of(netloc).strip('[]')}"
 
 
-# ── the files the git command line reads ───────────────────────────────────
+# ── what git reads: the helper, the identity, no token file ────────────────
 
 def _cred_path() -> Path:
     return Path(os.path.expanduser("~/.git-credentials"))
@@ -334,8 +345,39 @@ def _gitconfig() -> str:
     return os.path.expanduser("~/.gitconfig")
 
 
-def _cred_line(user: str, token: str, netloc: str) -> str:
-    return f"https://{quote(user, safe='')}:{quote(token, safe='')}@{netloc}"
+# The socket the helper asks on. In a folder of its own, mode 0700, made by
+# this process, so only this container's uid reaches it; the listener checks
+# the caller's uid as well (_peer_ok). /tmp is the container's own tmpfs: no
+# other container, and nothing on the machine, shares it.
+SOCK_ENV = "CSERIES_GIT_CREDENTIAL_SOCK"
+_SOCK_DEFAULT = "/tmp/cseries-git/credential.sock"
+HELPER = Path(__file__).resolve().with_name("git_credential_helper.py")
+_REQUEST_MAX = 64 * 1024
+
+
+def credential_socket() -> str:
+    return os.environ.get(SOCK_ENV) or _SOCK_DEFAULT
+
+
+def helper_command() -> str:
+    """The credential.helper value: git runs it with `get` (or store/erase)
+    appended, through the shell because of the leading "!"."""
+    import shlex
+    import sys
+    return "!" + " ".join(shlex.quote(x) for x in
+                          (sys.executable, "-I", str(HELPER), credential_socket()))
+
+
+def helper_args() -> tuple[str, ...]:
+    """-c arguments for a git call of the Host's own: no other helper, only
+    this one. The git calls that sign in to the coding forge through git's
+    own credential lookup pass them (codesearch.repo_sync,
+    gitea_propose._git_work), so none depends on what ~/.gitconfig holds."""
+    return ("-c", "credential.helper=", "-c", f"credential.helper={helper_command()}")
+
+
+def _is_our_helper(value: str) -> bool:
+    return value.startswith("!") and HELPER.name in value
 
 
 def _signs_in_as(line: str, user: str, netloc: str) -> bool:
@@ -345,15 +387,43 @@ def _signs_in_as(line: str, user: str, netloc: str) -> bool:
     return bool(m) and m.group(1) == quote(user, safe='') and m.group(3) == netloc
 
 
-def _write_cred_file(user: str, token: str, netloc: str) -> None:
+def _authority(netloc: str) -> str:
+    """host[:port] of a netloc, lowercased: what git sends as `host=`."""
+    return netloc.split("/", 1)[0].lower()
+
+
+def _line_origin(line: str) -> str:
+    m = re.fullmatch(r"(https?)://[^@\s]*@([^/\s]+)\S*", line.strip())
+    return f"{m.group(1)}://{m.group(2)}" if m else ""
+
+
+def drop_written_lines(ours: set) -> tuple[int, list[str]]:
+    """Take out of ~/.git-credentials every line this module or entrypoint.sh
+    wrote there: one that signs in one of `ours` ((user, netloc) pairs: the
+    connected server, the one the settings row names, the install's GITEA_*),
+    whatever token it carries. Both writers wrote exactly that shape and
+    nothing else (https://<user>:<token>@<netloc>, one line). Any other line
+    is the person's own and stays; the file goes only when nothing else is
+    left in it. Returns (lines taken out, the https://host of each line left)."""
     path = _cred_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_name(path.name + ".tmp")
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    with os.fdopen(fd, "w") as f:
-        f.write(_cred_line(user, token, netloc) + "\n")
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, path)
+    try:
+        if path.is_symlink() or not path.is_file():
+            return 0, []
+        lines = [ln for ln in path.read_text().splitlines() if ln.strip()]
+    except (OSError, UnicodeDecodeError):
+        return 0, []
+    keep = [ln for ln in lines if not any(_signs_in_as(ln, u, n) for u, n in ours)]
+    dropped = len(lines) - len(keep)
+    if dropped:
+        if keep:
+            tmp = path.with_name(path.name + ".tmp")
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC | os.O_NOFOLLOW, 0o600)
+            with os.fdopen(fd, "w") as f:
+                f.write("\n".join(keep) + "\n")
+            os.replace(tmp, path)
+        else:
+            path.unlink(missing_ok=True)
+    return dropped, [_line_origin(ln) for ln in keep]
 
 
 def _git_config(*args: str) -> Optional[str]:
@@ -366,41 +436,159 @@ def _git_config(*args: str) -> Optional[str]:
     return r.stdout.strip() if r.returncode == 0 else None
 
 
+def _set_helper(left: list[str], forge_hosts: set) -> None:
+    """~/.gitconfig's credential.helper: this module's helper, and no `store`.
+    `store` (which this module and entrypoint.sh used to set) is taken out
+    because git hands every sign-in that worked to every helper to keep, and
+    `store` would write the token back into ~/.git-credentials. When that
+    file still holds the person's own lines (`left`), `store` stays for each
+    of their servers alone, never for the coding forge's own host."""
+    have = (_git_config("--get-all", "credential.helper") or "").splitlines()
+    want = helper_command()
+    if "store" in have:
+        _git_config("--unset-all", "credential.helper", "^store$")
+    for v in have:
+        if _is_our_helper(v) and v != want:
+            _git_config("--unset-all", "credential.helper", "^" + re.escape(v) + "$")
+    if want not in have:
+        _git_config("--add", "credential.helper", want)
+    for origin in sorted(set(left)):
+        if origin and origin.split("://", 1)[-1].lower() not in forge_hosts:
+            _git_config(f"credential.{origin}.helper", "store")
+
+
 def _set_git_identity(user: str, email: str) -> None:
-    _git_config("credential.helper", "store")
     _git_config("user.name", user)
     _git_config("user.email", email)
 
 
 def sync_git_files(previous: Optional[Connected] = None) -> None:
-    """Make ~/.git-credentials and the git identity say what forge_identity()
-    says. Connected: that server. Else the install's GITEA_* identity, as
-    entrypoint.sh writes it. Else, when `previous` was connected, its line and
-    identity are taken away, matched by account and address, not by token; a
-    file that holds something else is left alone."""
+    """Make what git reads say what forge_identity() says, with no token on
+    the disk: the credential helper (_set_helper), and the git identity of the
+    connected server, else of the install's GITEA_* identity as entrypoint.sh
+    sets it; else, when `previous` was connected, its identity is taken away
+    (matched by account, not by token). Every time, the plain-text lines
+    earlier versions wrote into ~/.git-credentials for any of these accounts
+    are taken out (drop_written_lines)."""
     c = _connected
+    env = _env_identity()
+    ours = {(x.user, x.netloc) for x in (c, previous) if x is not None and x.user}
+    if env is not None:
+        ours.add((env[0], env[2]))
+    dropped, left = drop_written_lines(ours)
+    if dropped:
+        log.info("took %d plain-text git sign-in line(s) out of the git credential file; git "
+                 "now asks the Host for the token at each sign-in", dropped)
+    _set_helper(left, {_authority(n) for _u, n in ours})
     if c is not None:
-        _write_cred_file(c.user, c.token, c.netloc)
         _set_git_identity(c.user, _email_for(c.user, c.netloc, c.email))
         return
-    env = _env_identity()
     if env is not None:
-        user, token, netloc = env
-        _write_cred_file(user, token, netloc)
-        _set_git_identity(user, f"{user}@privatae.ai")
+        _set_git_identity(env[0], f"{env[0]}@privatae.ai")
         return
-    if previous is None:
-        return
-    path = _cred_path()
-    try:
-        first = (path.read_text().strip().splitlines() or [""])[0].strip()
-    except OSError:
-        first = ""
-    if first and _signs_in_as(first, previous.user, previous.netloc):
-        path.unlink(missing_ok=True)
-    if _git_config("--get", "user.name") == previous.user:
+    if previous is not None and _git_config("--get", "user.name") == previous.user:
         _git_config("--unset", "user.name")
         _git_config("--unset", "user.email")
+
+
+# ── the helper's answers ───────────────────────────────────────────────────
+
+async def credential_for(pool, entity_id: int, protocol: str, host: str) -> Optional[tuple[str, str]]:
+    """(username, token) for one git sign-in at https://<host>, or None.
+    The connected server's token is read from Keys now, for this answer
+    alone, so a token revoked or switched off in Keys stops working at the
+    next sign-in. With none there, the install's GITEA_* identity, as
+    forge_identity() falls back. Only https, and only the forge's own host."""
+    if protocol != "https" or not host:
+        return None
+    host = host.lower()
+    s = await _read_settings(pool, entity_id) if pool is not None else {}
+    if s.get("url") and s.get("username"):
+        from server.vault import api as vault_api
+        try:
+            netloc = clean_url(s["url"])
+        except GitServerError:
+            netloc = ""
+        raw = None
+        if netloc:
+            raw = await vault_api.open_secret(pool, entity_id=entity_id, name=TOKEN_NAME,
+                                              actor="git-credential-helper", sign_in=True)
+        if raw:
+            if _authority(netloc) != host:
+                return None
+            return str(s["username"]), raw.decode("utf-8", "replace").strip()
+    env = _env_identity()
+    if env is not None and _authority(env[2]) == host:
+        return env[0], env[1]
+    return None
+
+
+def _parse_request(data: bytes) -> dict:
+    out: dict = {}
+    for line in data.decode("utf-8", "replace").splitlines():
+        k, sep, v = line.partition("=")
+        if sep and k in ("protocol", "host"):
+            out[k] = v.strip()
+    return out
+
+
+def _peer_ok(writer) -> bool:
+    """The caller runs as this process's own uid (SO_PEERCRED)."""
+    import socket
+    import struct
+    sock = writer.get_extra_info("socket")
+    try:
+        raw = sock.getsockopt(socket.SOL_SOCKET, socket.SO_PEERCRED, struct.calcsize("3i"))
+        _pid, uid, _gid = struct.unpack("3i", raw)
+    except (OSError, AttributeError):
+        return False
+    return uid == os.getuid()
+
+
+_cred_server = None
+
+
+async def serve_credentials(pool, entity_id: int) -> None:
+    """Listen on credential_socket() for the helper's requests, for the life
+    of the process. Never raises: without it git gets no token for the forge,
+    and the Host's API clients still work."""
+    global _cred_server
+    import contextlib
+    import stat as _stat
+
+    async def handle(reader, writer):
+        try:
+            if not _peer_ok(writer):
+                return
+            data = await asyncio.wait_for(reader.read(_REQUEST_MAX), timeout=10)
+            req = _parse_request(data)
+            got = await credential_for(pool, entity_id, req.get("protocol", ""),
+                                       req.get("host", ""))
+            if got:
+                writer.write(f"username={got[0]}\npassword={got[1]}\n".encode())
+                await writer.drain()
+        except Exception as e:  # noqa: BLE001 — an empty answer is "no credential"
+            log.warning("git credential request failed: %s", e.__class__.__name__)
+        finally:
+            with contextlib.suppress(Exception):
+                writer.close()
+
+    path = Path(credential_socket())
+    try:
+        if _cred_server is not None:
+            _cred_server.close()
+        folder = path.parent
+        folder.mkdir(mode=0o700, parents=True, exist_ok=True)
+        st = os.lstat(folder)
+        if not _stat.S_ISDIR(st.st_mode) or st.st_uid != os.getuid():
+            raise OSError(f"{folder} is not a folder of this Host's own")
+        os.chmod(folder, 0o700)
+        path.unlink(missing_ok=True)
+        _cred_server = await asyncio.start_unix_server(handle, path=str(path))
+        os.chmod(path, 0o600)
+        log.info("git credential helper listening on %s", path)
+    except Exception as e:  # noqa: BLE001
+        log.warning("git credential helper not started: %s", e)
 
 
 # ── connect, disconnect, status, start ─────────────────────────────────────
@@ -494,20 +682,23 @@ async def status(pool, entity_id: int) -> dict:
 
 async def load(pool, entity_id: int) -> None:
     """At start: the connected server back from the settings row and Keys,
-    and the git files written from it. Never raises."""
+    and what git reads written from it (sync_git_files, which also takes out
+    the plain-text token line an earlier version left on the volume, with
+    nothing connected too). Never raises."""
     global _connected
     from server.vault import api as vault_api
     try:
         s = await _read_settings(pool, entity_id)
         if not s.get("url"):
+            await asyncio.to_thread(sync_git_files, None)
             return
         raw = await vault_api.open_secret(pool, entity_id=entity_id, name=TOKEN_NAME,
                                           actor="git-server:start", sign_in=True)
         if not raw:
             log.warning("git server %s is set but its token is not in Keys", s.get("url"))
-            # The file still holds the token from the last start, and
-            # forge_identity() reads it there: take it out, so a token removed
-            # or switched off in Keys is not used through the file.
+            # An earlier version's file may still hold the token, and
+            # forge_identity() reads that file: take it out, so a token
+            # removed or switched off in Keys is not used through it.
             await asyncio.to_thread(sync_git_files, _from_settings(s))
             return
         netloc = clean_url(s["url"])

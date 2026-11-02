@@ -90,6 +90,15 @@ class _Db:
             return [{"server": h} for h in self.quarantined]
         return []   # suspend set: none
 
+    async def fetchval(self, q, *a):
+        # The owner's quarantine as the gate reads it (quarantine_gate.is_quarantined):
+        # by token id, or by the hostname that token's machine reports.
+        q1 = " ".join(q.split())
+        if "FROM nac_bastion_quarantine" in q1:
+            host = next((e["hostname"] for e in self.endpoints if e["token_id"] == a[0]), None)
+            return 1 if host is not None and host in self.quarantined else None
+        return None
+
     async def fetchrow(self, q, *a):
         q1 = " ".join(q.split())
         if "FROM nac_endpoints WHERE token_id" in q1:   # the gate's own read (_endpoint_state)
@@ -174,7 +183,7 @@ const document = { getElementById: mkEl, createElement() { let t = ''; return {
   get innerHTML() { return t.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); } }; } };
 const state = { nac: { laneOpen: {} }, loaded: {} };
 function renderNacStepupChip() {} function renderNacPending() {} function renderNacIngress() {}
-function renderNacEgress() {} function renderNacGrants() {} function renderNacAudit() {}
+function renderNacEgress() {} function renderNacGrants() {} function renderGrantForm() {} function renderNacAudit() {}
 function applyLaneDefaults() {} function updateNacBadge() {}
 """
 

@@ -16,7 +16,7 @@ Your Host writes code by handing the work to a coding engine you connected: Clau
 
 ## Which coding engines are there?
 
-Seven: Claude Code, Codex, Cursor, Grok, Kimi Code and Antigravity CLI each run on their own vendor's account or key, and opencode runs on a model-provider key of yours. You connect them in the Orchestrator app, where you can also set each engine's default model and effort and tick one engine as your default. A build that names no engine runs on the default.
+Seven: Claude Code, Codex, Cursor, Grok, Kimi Code and Antigravity CLI each run on their own vendor's account or key, and opencode runs on your OpenRouter key, from the Keys app, and on no other provider's key. You connect them in the Orchestrator app, where you can also set each engine's default model and effort and tick one engine as your default. A build that names no engine runs on the default.
 
 ## Where does the coding engine run?
 

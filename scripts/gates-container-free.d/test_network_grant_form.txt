@@ -1,0 +1,3 @@
+# The person drafts a management grant from a job in the Network app (a Host
+# with no model has no agent to draft one), and the draft shows at once.
+test_network_grant_form.py

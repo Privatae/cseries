@@ -362,6 +362,18 @@ check("schema: every lane it offers is accepted by the validator",
 # raise inside evaluate() and be ADMITTED by the gate's admit-on-error. It now denies.
 from server.routes.mcp import _nac_gate   # noqa: E402
 
+
+class _NotHeld:
+    """The owner's quarantine as _nac_gate reads it first (server/network/quarantine_gate.py):
+    no machine here is quarantined, so these checks reach the policy engine."""
+
+    async def fetchval(self, q, *a):
+        return None
+
+
+from server import brain_service as _bs_q  # noqa: E402
+_bs_q._pool = _NotHeld()
+
 _PROFILES = [{"id": 1, "name": "str-allow", "enforcement": "allow", "is_default": False,
               "permits": ["mcp"]},
              {"id": 2, "name": "ok-allow", "enforcement": "allow", "is_default": False,

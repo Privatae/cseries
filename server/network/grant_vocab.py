@@ -48,7 +48,12 @@ MACHINERY_OPS = frozenset(
     | {"service_grant_sync", "service_grant_drop"}
     # The standing coder grant (bastion 0.50.0 coder_grant.go) is pushed like the
     # reach grant: signed terms the person approved, installed by the pod.
-    | {"coder_grant_sync", "coder_grant_drop"})
+    | {"coder_grant_sync", "coder_grant_drop"}
+    # Taking a standing op approval back (bastion 0.58.0 op_grant_drop) is a
+    # tighten the person does, not a job a Host is granted. This Host does not
+    # send it yet; the machine answers it, so it is known (nac_dcn) and kept
+    # out of what a Host may ask for.
+    | {"op_grant_drop"})
 
 # The DCN lane's ops. Files on a machine are reached through a DCN store, under
 # the store's own grant: the dcn tool's gate never reads a management grant
@@ -122,6 +127,18 @@ def harness_problems(ops: list, server: str) -> list:
     return out
 
 
+# Reads bastion 0.58.0 added to the observe job, with the arguments the
+# machine takes (the machine checks them). A grant names op ids exactly
+# (nac_mgmt.mgmt_decision), so a grant signed before these existed never covers
+# them; a machine on an older bastion is drafted them with a caution that it
+# does not answer them yet (nac_propose.propose_mgmt_grant).
+#   observe:folders  args [absolute path, depth 1..3]   folder sizes under it
+#   observe:journal  args [systemd unit, minutes 1..60] what that service logged
+#   observe:logins   args [hours 1..168]                sign-in attempts
+#   observe:cert     args [local TCP port, server name] the certificate served there
+OBSERVE_NEW = ("observe:folders", "observe:journal", "observe:logins", "observe:cert")
+
+
 # name -> the job in the user's words, the ops, whether the person must name an
 # image, and what still asks them. A write asks only on a machine that gates
 # writes (anchored to this Host, bastion 0.33.0+: enforcing.write_gate); on any
@@ -135,11 +152,13 @@ def harness_problems(ops: list, server: str) -> list:
 PURPOSES: dict[str, dict] = {
     "observe": {
         "job": "watch the machine's health: uptime, disks, network, services, kernel, "
-               "sockets, firewall, Kubernetes, alerts, metrics and logs, and read the "
-               "machine's own record of what it refused",
+               "sockets, firewall, Kubernetes, alerts, metrics and logs, what is filling "
+               "its folders, what a service logged, who tried to sign in and when a "
+               "certificate expires, and read the machine's own record of what it refused",
         "ops": ["uptime", "observe:host", "observe:disk", "observe:net", "observe:units",
                 "observe:kernel", "observe:sockets", "observe:firewall", "observe:k8s",
-                "observe:alerts", "observe:metrics", "observe:logs", "audit_fetch"],
+                "observe:alerts", "observe:metrics", "observe:logs", "audit_fetch",
+                *OBSERVE_NEW],
         "gated": "never: these are reads", "ungated": "never: these are reads",
         "proof": "mgmt_run op='uptime'",
     },

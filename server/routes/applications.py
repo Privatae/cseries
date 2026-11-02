@@ -133,7 +133,12 @@ async def list_apps() -> dict:
     from server.applications import app_origin
     keys = app_origin.keys_for(apps)
     serialized = [_serialize(a, keys) for a in apps]
-    return {"applications": [s for s in serialized if not s.get("operator_only")]}
+    # Apps that do nothing without the platform are left out unless this Host
+    # can send the op each is built on (server/bridge/platform_reach.py).
+    from server.bridge import platform_reach
+    reach = platform_reach.reach()
+    return {"applications": [s for s in serialized if not s.get("operator_only")
+                             and platform_reach.app_shown(s.get("id"), reach)]}
 
 
 @router.get("/scopes")

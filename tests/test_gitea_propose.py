@@ -141,6 +141,43 @@ class FakePool:
         return [{"domain_id": "external.operator", "access_level": self.access}]
 
 
+# Every git call _git_work makes signs in through the Host's credential helper:
+# server.git_server.helper_args() goes in front of the subcommand. The fakes
+# below match on the subcommand, so the helper's options are taken off here;
+# test_every_git_call_signs_in_through_the_helper checks they are there.
+HELPER_OPTS = ("-c", "credential.helper=", "-c", "credential.helper=!helper-under-test")
+
+
+@pytest.fixture(autouse=True)
+def _helper_stripped(monkeypatch):
+    from server import git_server
+    monkeypatch.setattr(git_server, "helper_args", lambda: HELPER_OPTS)
+    real = GP._run_git
+
+    def strip(run):
+        def call(argv, cwd, env, *a, **k):
+            argv = list(argv)
+            if tuple(argv[:len(HELPER_OPTS)]) == HELPER_OPTS:
+                call.signed.append(True)
+                argv = argv[len(HELPER_OPTS):]
+            else:
+                call.signed.append(False)
+            return run(argv, cwd, env, *a, **k)
+        call.signed = []
+        return call
+
+    orig_setattr = monkeypatch.setattr
+
+    def setattr_(target, name, value=None, *rest, **kw):
+        if target is GP and name == "_run_git" and value is not real:
+            value = strip(value)
+            _helper_stripped.last = value
+        return orig_setattr(target, name, value, *rest, **kw)
+    monkeypatch.setattr = setattr_
+    yield
+    monkeypatch.setattr = orig_setattr
+
+
 # audit row column order (see GP._audit INSERT)
 OUTCOME, DETAIL, PR_NUMBER, FILES, COMMIT = 10, 11, 5, 7, 9
 
@@ -655,3 +692,12 @@ def test_migration_and_init_db_carry_the_audit_table():
         for col in ("files", "file_count", "commit", "outcome"):
             assert col in src.split("gitea_propose_audit", 1)[1][:1200]
     assert "CREATE TABLE" not in pathlib.Path(GP.__file__).read_text()
+
+
+def test_every_git_call_signs_in_through_the_helper(lane):
+    """The token reaches git only through the Host's credential helper, put in
+    front of every git call _git_work makes; never a file, a URL or argv."""
+    fake, git, pool = lane
+    _call(BODY)
+    signed = _helper_stripped.last.signed
+    assert signed and all(signed), signed

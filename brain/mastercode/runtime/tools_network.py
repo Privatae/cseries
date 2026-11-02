@@ -72,15 +72,15 @@ def _bastion_watch_state(b: dict) -> tuple[str, str]:
     platform = (b.get("platform") or "").strip().lower()
     if not b.get("online"):
         return "unknown", "offline — no recent heartbeat, so nothing is being watched right now."
-    if "agent-observe" in caps:
-        return "watching", "reporting the agent activity it can see on itself."
-    # WITHHELD is a fourth state, and it has to come before the platform
-    # fallback below. What runs on a machine is gated on `observe`
-    # now, so a box can be watching perfectly well and simply not be telling
-    # THIS host. The Linux fallback would call that "watching" and then show an
+    # WITHHELD is a fourth state, and it has to come before the capability
+    # and the platform fallback below. What runs on a machine is gated on
+    # `observe` now, so a box can be watching perfectly well and simply not be
+    # telling THIS host. `agent-observe` is the MACHINE's capability (it has
+    # the scanners), not what our pairing holds, so a box that advertises it
+    # and withholds observe from us was read as "watching" and shown with an
     # empty list — the exact quiet-vs-blind confusion this function exists to
-    # prevent, in a third flavour. The box says which on the same beat: its
-    # enforcing report names the caps it applies to us.
+    # prevent. The box says which on the same beat: its enforcing report names
+    # the caps it applies to us.
     enf = b.get("enforcing") or {}
     pc = enf.get("pairing_caps")
     if enf.get("anchored") and not enf.get("is_anchor") and isinstance(pc, list) \
@@ -90,6 +90,8 @@ def _bastion_watch_state(b: dict) -> tuple[str, str]:
             "does not hold 'observe', so what runs there is none of our business. An empty "
             "agent list here means 'not shared', never 'nothing running'. Its own user sees it."
         )
+    if "agent-observe" in caps:
+        return "watching", "reporting the agent activity it can see on itself."
     if platform == "linux":
         return "watching", (
             "watching, on an older build: Linux has had the /proc + ss scanner all "

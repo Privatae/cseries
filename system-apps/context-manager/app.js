@@ -1242,7 +1242,8 @@
     function machineLabel(f) {
         const m = f.machine;
         if (!m) return '<span class="ctx-machine">—</span>';
-        if (m === 'platform') return '<span class="ctx-machine platform" title="Kept for you on the network">platform</span>';
+        // "platform" is the "pg" backend: the Host's own Postgres (server/routes/context_manager.py).
+        if (m === 'platform') return '<span class="ctx-machine platform" title="Kept in this Host\'s own database">platform</span>';
         const kind = f.backend === 's3' ? 'S3 bucket' : (f.backend === 'bastion' ? 'your bastion' : 'machine');
         const dot = f.backend === 'bastion'
             ? `<span class="ctx-dot ${f.online ? 'live' : 'down'}" title="${f.online ? 'online' : 'offline — not checked in'}"></span>`
@@ -1361,7 +1362,8 @@
     function renderBackendCard(cfg, kind) {
         const b = cfg.backend || 'pg';
         let where;
-        if (b === 'pg') where = 'Kept for you on the platform';
+        // The "pg" backend is the Host's own Postgres (server/routes/context_manager.py).
+        if (b === 'pg') where = 'Kept in this Host\'s own database';
         else if (b === 's3') where = `S3 bucket <strong>${esc(cfg.bucket || '—')}</strong>${cfg.endpoint_url ? ` · ${esc(cfg.endpoint_url)}` : ''}`;
         else if (b === 'bastion') where = `Your bastion <strong>${esc(cfg.server || '—')}</strong>${cfg.root ? ` · ${esc(cfg.root)}` : ''}`;
         else where = '—';

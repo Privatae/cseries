@@ -1,0 +1,8 @@
+# 2026-11-02: a quarantined machine gets no lane to this Host. Against a
+# fresh clone of the kernel's schema (TEST_PG_DSN / PEER_TEST_DSN / TEST_DSN, else
+# a throwaway server, like the other _pg gates here): the six bastion worker
+# sockets, the bastion HTTP routes and /mcp refuse a quarantined machine and admit
+# it once released; quarantine cuts the sockets already open and closes the lane
+# port's connections; the heartbeat is recorded only; an unreadable quarantine
+# state holds every machine.
+test_quarantine_every_lane_pg.py

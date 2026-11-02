@@ -978,6 +978,10 @@ class _BearerPool:
         self.asked.append(sql)
         return self.row
 
+    async def fetchval(self, sql, *a):
+        # The quarantine read every bastion lane makes (quarantine_gate): not held.
+        return None
+
 
 class _BeatReq:
     headers = {"content-type": "application/json"}

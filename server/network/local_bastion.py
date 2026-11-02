@@ -500,9 +500,11 @@ _lane_conns: dict[int, set] = {}
 _closed_at: dict[int, float] = {}
 
 
-def close_lanes(token_id: int) -> int:
+def close_lanes(token_id: int, why: str = "revoked") -> int:
     """Close every lane-port connection bastion row `token_id` holds, and
-    any whose lookup was already under way. Returns how many."""
+    any whose lookup was already under way. Returns how many. `why` is for
+    the log: a revoke, or a quarantine (nac_commit.quarantine_bastion), whose
+    machine may connect again and meets the quarantine at each route."""
     _closed_at[token_id] = time.monotonic()
     conns = _lane_conns.pop(token_id, set())
     for w in conns:
@@ -511,8 +513,8 @@ def close_lanes(token_id: int) -> int:
         except Exception:
             pass
     if conns:
-        log.info("lane port: closed %d connection(s) of revoked bastion token_id=%s",
-                 len(conns), token_id)
+        log.info("lane port: closed %d connection(s) of %s bastion token_id=%s",
+                 len(conns), why, token_id)
     return len(conns)
 
 

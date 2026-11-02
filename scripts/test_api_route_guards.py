@@ -247,6 +247,8 @@ NEWLY_SCOPED: list[tuple[str, str, str]] = [
     ("POST", "/api/agents/scheduled/{event_id}/cancel", "write:calendar"),
     ("GET", "/api/appearance/network", "read:topology"),
     ("GET", "/api/appearance/network/meta", "read:topology"),
+    # 2026-11-02: the raw observations an assessment app reads (first-party).
+    ("GET", "/api/network/observations", "read:observations"),
     ("GET", "/api/applications/publisher/my-apps", "publish:apps"),
     ("GET", "/api/applications/publisher/sales", "publish:apps"),
     ("GET", "/api/applications/sites/list", "read:sites"),

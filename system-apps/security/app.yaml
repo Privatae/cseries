@@ -1,6 +1,8 @@
 id: security
 name: Security
-description: See what your host is allowed to reach, and scan your machine for known weaknesses.
+# The scan reads the Host container's own system (/etc, /usr, /var, its processes and
+# ports), not the machine it runs on: server/routes/security.py (module docstring).
+description: See what your host is allowed to reach, and scan your host's own system for known weaknesses.
 icon: icon.png
 icon_small: icon-64.png
 entrypoint: index.html
@@ -29,7 +31,7 @@ system: true
 #   and what lives in it; do_when_active is gone from the manifest contract,
 #   and its how-to lines live in skills and tool descriptions the Host reads on
 #   demand. Manifest-only; bundle repacked.
-version: "2.0.10"
+version: "2.0.11"
 # Environment-catalog facts (host-facing, code-true). Source for the L1
 # topology block + describe_app. This is a control panel, not a conversational
 # surface, so the load-bearing content lives in what_it_is (the only field

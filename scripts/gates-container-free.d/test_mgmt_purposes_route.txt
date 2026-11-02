@@ -1,0 +1,3 @@
+# GET /api/network/nac/mgmt/purposes offers every job a grant can be drafted from
+# without naming an image, with its words and exactly the ops a draft adds.
+test_mgmt_purposes_route.py

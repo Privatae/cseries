@@ -1,6 +1,6 @@
 ---
 title: What a Host is
-summary: A Host is one AI that runs on your own machine, in a Linux virtual machine, as two containers, the Host and its PostgreSQL database. Its memory, apps and files live on volumes that survive an update, and its dashboard is published only on your own machine.
+summary: A Host is one AI that runs on your own machine, in a Linux virtual machine, as two containers, the Host and its PostgreSQL database, with two more for remote access that wait until you turn it on. Its memory, apps and files live on volumes that survive an update, and its dashboard is published only on your own machine.
 section: host
 order: 10
 questions:
@@ -20,10 +20,12 @@ No. You talk to it, but it is a program with the properties a program has: a pla
 
 ## What is inside a Host?
 
-Two containers run together:
+Two containers do the work:
 
 - **The Host itself.** The program that thinks, works and serves your dashboard. Its root filesystem is read-only, it runs as an ordinary user, and every Linux capability is dropped.
 - **Its database.** PostgreSQL, in a container of its own. It listens on a Unix socket shared with the Host and on no network port.
+
+The virtual machine the installer sets up holds two more, for [remote access](wiki:the-privatae-network): the door a browser comes in through, and a job that gets the door its certificate. Until you turn remote access on, both wait and do nothing.
 
 When the Host needs its browser, a coding engine or an app that runs in a container of its own, the virtual machine starts that container beside it, within the memory the Host leaves free.
 
@@ -31,7 +33,7 @@ Beside them are volumes that survive when the containers are replaced. One holds
 
 ## What does the network see of it?
 
-The dashboard is published on 127.0.0.1 only, so only your own machine can reach it, and it serves plain HTTP. Two more ports are published the same way for the bastion on your machine: one where the bastion pairs and one where it connects in. Nothing is open to the public internet. To use the Host from another machine you put your own reverse proxy in front of it, one that ends TLS; the README points to the steps. A Host that has joined the [Privatae network](wiki:the-privatae-network) can use remote access instead, through a connection it makes out to the network.
+The dashboard is published on 127.0.0.1 only, so only your own machine can reach it, and it serves plain HTTP. Two more ports are published the same way for the bastion on your machine: one where the bastion pairs and one where it connects in. If you run a Host as the control plane for your other machines, you set the network address those two ports are published on, so the bastions on those machines can reach them; the dashboard stays on 127.0.0.1. Nothing is open to the public internet. To use the Host from another machine you put your own reverse proxy in front of it, one that ends TLS; the README points to the steps. A Host that has joined the [Privatae network](wiki:the-privatae-network) can use remote access instead, through a connection it makes out to the network.
 
 ## Where does the model run?
 

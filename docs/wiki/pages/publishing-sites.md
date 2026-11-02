@@ -20,4 +20,4 @@ No. The Host's dashboard is published only on your own machine, on 127.0.0.1. A 
 
 For a static site, the built folder (dist, build, out or public) when it has a page, otherwise the project's own index.html. A static site never includes hidden files such as .env, and a project built with a bundler such as Vite must be built first; its unbuilt page is refused with a message saying so. There is no upload step and no zip to prepare.
 
-The [Sites](wiki:sites-app) app is the control panel for that service, so it works only where the publish step does.
+The [Sites](wiki:sites-app) app is the control panel for that service, so it works only where the publish step does. Your Host leaves it out of your apps, and hides the App Store's list of apps for public sites, unless the Privatae network offers publishing to your Host, which it does not in this release.

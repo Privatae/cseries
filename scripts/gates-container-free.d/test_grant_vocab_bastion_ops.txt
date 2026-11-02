@@ -1,0 +1,5 @@
+# the ops a Host may grant are the ops the current bastion answers. Pins
+# the generated box-op block to privatae-bastion a87f11c's mgmtOpVocabulary(),
+# so a regeneration updates the pin in the same change; the four 0.58.0 observe
+# reads may be granted; the bastion's local CLI reads may not.
+test_grant_vocab_bastion_ops.py

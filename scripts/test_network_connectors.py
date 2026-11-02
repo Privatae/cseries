@@ -74,7 +74,7 @@ function withStepup(fn, widening) { posts.push({ widening: !!widening }); fn(wid
 function nacReload() {}
 function setInterval() { return 1; } function clearInterval() {}
 function renderNacStepupChip() {} function renderNacPending() {} function renderNacPosture() {}
-function renderNacEgress() {} function renderNacGrants() {} function renderNacAudit() {}
+function renderNacEgress() {} function renderNacGrants() {} function renderGrantForm() {} function renderNacAudit() {}
 function updateNacBadge() {}
 """
 

@@ -21,6 +21,12 @@
 
     // ── Navigation ───────────────────────────────────────
     function showView(view) {
+        // History lists platform-applied updates only; its tab is hidden on a
+        // Host that cannot send pc.update_apply (index.html, /js/network-reach.js),
+        // and a deep link to it opens About instead.
+        if (view === 'history' && !(window.CSeriesReach && window.CSeriesReach.now().offers('pc.update_apply'))) {
+            view = 'overview';
+        }
         var moved = state.view !== view;
         state.view = view;
         document.querySelectorAll('.cseries-nav-btn').forEach(function (b) {
@@ -435,6 +441,10 @@
                 : (notKept ? 'The network\'s storage (the network does not keep backups yet)'
                     : 'The network\'s storage'));
         netOpt.disabled = !onNetwork || notKept;
+        // A Host off the network is not offered the network's storage at all;
+        // the option stays (disabled, with the note below) only when the saved
+        // setting still names it, so the select can show what is saved.
+        netOpt.hidden = !onNetwork && cur.where !== 'network';
         document.getElementById('bk-platform-text').textContent =
             'Keep my encrypted backups in ' + networkName(cur.mode);
         where.value = cur.where || (cur.mode === 'platform' ? 'network' : 'local');
@@ -498,20 +508,26 @@
         // schedule above governs, driven by the user's own machine and not
         // decryptable here. Read-only; absent is the normal state until they
         // install a bastion, so say that plainly rather than showing an error.
+        // Nothing in this tree writes that copy yet (local_backup_blob has no
+        // writer), so the section shows only when the Host holds one; a card
+        // that told the person to install a bastion for it would promise what
+        // no code does. A failed read is shown, since it is not "no copy".
         var loc = document.getElementById('bk-local');
+        var locSection = document.getElementById('bk-local-section');
         if (loc) {
             try {
                 var lb = await fetchJSON('/api/backup/local');
                 if (!lb || !lb.configured) {
-                    loc.textContent = 'No bastion copy yet. Install a bastion on a machine you own '
-                        + 'and it will keep its own encrypted copy that only you can open.';
+                    if (locSection) locSection.hidden = true;
                 } else {
+                    if (locSection) locSection.hidden = false;
                     var mb = Math.round((lb.blob_bytes || 0) / 1048576);
                     loc.textContent = (lb.blob_count || 0) + ' items kept (' + mb + ' MB)'
                         + (lb.last_sync_at ? ', last synced ' + new Date(lb.last_sync_at).toLocaleString() : '')
                         + '. Recovery code: ' + ((lb.envelopes && lb.envelopes.recovery_code) ? 'set' : 'not set') + '.';
                 }
             } catch (e) {
+                if (locSection) locSection.hidden = false;
                 loc.textContent = 'Could not read bastion backup state: ' + (e && e.message || e);
             }
         }
@@ -1692,7 +1708,8 @@
                 }).join('') || '<div class="label-sys">It may only ask. Nothing runs without your approval.</div>';
                 var calls = (c.calls || []).slice(0, 5).map(function (k) {
                     return '<div class="label-sys">' + esc(formatDate(k.at)) + ' · ' + esc(k.tool) +
-                        (k.op ? ' ' + esc(k.op) : '') + (k.server ? ' on ' + esc(k.server) : '') + ' — ' + esc(k.outcome) + '</div>';
+                        // A tool named for its op (contain runs the op contain) says it once.
+                        (k.op && k.op !== k.tool ? ' ' + esc(k.op) : '') + (k.server ? ' on ' + esc(k.server) : '') + ' — ' + esc(k.outcome) + '</div>';
                 }).join('');
                 var used = c.last_used_at ? 'last used ' + formatDate(c.last_used_at) : 'not used yet';
                 return '<div class="cseries-card">' +
@@ -3011,8 +3028,12 @@
 
     async function leaveNetwork() {
         if (net.busy) return;
-        if (!window.confirm('Leave the network? This Host stops using the App Store and the '
-                + 'community board, and its passport is revoked and deleted. Joining again '
+        // What leaving stops: the member door's ops (server/bridge/member_client.py
+        // NETWORK_OPS: the community board, the network's backups, remote access).
+        // The App Store does not need the network (server/applications/public_store.py).
+        if (!window.confirm('Leave the network? This Host stops using the community board, '
+                + 'remote access and the network\'s storage, and its passport is revoked and '
+                + 'deleted. The App Store keeps working without the network. Joining again '
                 + 'takes a new code.')) return;
         var btn = document.getElementById('net-leave-btn');
         net.busy = true;

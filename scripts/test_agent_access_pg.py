@@ -387,8 +387,14 @@ async def main(dsn: str) -> int:
                   "a notification, alone or in a batch, is answered 202 Accepted with no body "
                   "(MCP Streamable HTTP)", (r1.status_code, r2.status_code))
             names = [x["name"] for x in (await rpc(c, access, "tools/list")).json()["result"]["tools"]]
-            check(names == ["machines", "machine_op"], "an agent sees the machine tools and nothing else", names)
+            check(names == ["list_machines", "list_agents", "list_scheduled", "tool_server_configs", "posture",
+                            "baseline_delta", "contain", "machine_op"],
+                  "an agent sees the machine tools and nothing else", names)
             out = await call_tool(c, access, "machines", {})
+            check((out.get("error") or {}).get("code") == -32601,
+                  "the old name `machines` is unknown on tools/call, like any name tools/list does not "
+                  "give (a tool is callable only if it is listed)", out)
+            out = await call_tool(c, access, "list_machines", {})
             check(out["result"]["structuredContent"]["machines"][0]["name"] == "box-a",
                   "machines: the person's machines, with read", out)
             out = await call_tool(c, access, "machine_op", {"server": "box-a", "op": "uptime"})
@@ -769,7 +775,7 @@ async def main(dsn: str) -> int:
                                                    "redirect_uri": REDIRECT, "client_id": client_id,
                                                    "code_verifier": verifier})
             t3 = r.json()
-            out = await call_tool(c, t3.get("access_token", ""), "machines", {})
+            out = await call_tool(c, t3.get("access_token", ""), "list_machines", {})
             check((out.get("result") or {}).get("isError") is True
                   and await pool.fetchval("SELECT count(*) FROM agent_grants WHERE connection_id=$1 "
                                           "AND kind='read' AND revoked_at IS NULL", conn_id) == 0,

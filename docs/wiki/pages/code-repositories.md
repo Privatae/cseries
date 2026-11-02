@@ -31,11 +31,11 @@ Ask for changes sends your words to the Host, and the Code Approval shows that c
 
 ## Can my Host work on a repository I already have?
 
-Yes, once a git server is connected. When you start a project you can pick any repository your Host can reach instead of a new one. You grant your Host read or write access to one of your own repositories in the Gitea app, and you can take it back there at any time. On a git server you connected, you do that on the server itself, by adding your Host's account as a collaborator on the repository. Your Host indexes every repository it can read, and drops the index when its access goes. A repository your Host can only read, or one another project is already using, is offered as a fork: a new private repository under the Host's account holding a copy of its main branch.
+Yes, once a git server is connected. When you start a project you can pick any repository your Host can reach instead of a new one. On a git server you connected in Settings, you give your Host access on the server itself: open the repository's settings there, signed in as yourself, and add your Host's account as a collaborator with read or write access; removing it there takes the access back. The Gitea app's Permissions panel does not grant on a connected server; it tells you to do this and names your Host's account. Only on a git server your Host's install names, where you sign in to the app as yourself, can you grant and take back access from the Permissions panel. Your Host indexes every repository it can read, and drops the index when its access goes. A repository your Host can only read, or one another project is already using, is offered as a fork: a new private repository under the Host's account holding a copy of its main branch.
 
 ## Can I bring in code from GitHub?
 
-Yes, once a git server is connected. In the Gitea app you connect GitHub once and pick repositories to mirror into your own account; the server then keeps them in step with GitHub on its own. On a git server you connected, you make the mirror on the server's own pages instead, signed in as yourself. Mirrors only pull, so nothing is ever written back to GitHub.
+Yes, on the git server itself. On a git server you connected in Settings, your Host does not make mirrors: you make one on the server's own pages, signed in as yourself (on Gitea, New Migration, then GitHub), and the server keeps it in step with GitHub. The Gitea app has a Mirrors panel only when the Privatae network offers mirroring to your Host, which it does not in this release. Either way a mirror only pulls, so nothing is ever written back to GitHub.
 
 ## How does my Host get a git server?
 

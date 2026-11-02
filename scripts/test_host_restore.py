@@ -78,6 +78,9 @@ hr.STAGED = hr.RESTORE_DIR / "apps"
 hr.PREVIOUS = hr.RESTORE_DIR / "previous"
 hr.PLAN = hr.RESTORE_DIR / "plan.json"
 hr.MANIFEST = hr.RESTORE_DIR / "manifest"
+# The Host's other volumes (host_backup.FILE_ROOTS) are never the machine's
+# own folders here: scripts/test_backup_file_roots.py tests them.
+hr.hb.FILE_ROOTS = []
 
 
 def put(base, rel, text):
@@ -1233,7 +1236,7 @@ hr.keep_resealed(stamp, sidecar_for())
 asyncio.run(hr.stage(APool(), 42, stamp))
 check("a backup this Host made is staged, and the encrypted file must be the one its key file names",
       unpacked_with[-1] == {"expect": {"sha256": hashlib.sha256(_blob).hexdigest(), "bytes": len(_blob)},
-                            "trust_links": True}, unpacked_with[-1])
+                            "trust_links": True, "roots": []}, unpacked_with[-1])
 
 
 async def _entry_other_sha(pool, eid, st, where=None):

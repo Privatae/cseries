@@ -15,11 +15,11 @@ A Host runs in a Linux virtual machine on your machine and publishes its ports o
 
 ## Is my Host exposed to the internet?
 
-Not by default. The dashboard and the two bastion ports are published on 127.0.0.1 inside the virtual machine and forwarded only to 127.0.0.1 on your machine, so only programs on your own machine can connect to them. The installer's virtual machine mounts none of your folders. The database container has no network port at all: it listens on a Unix socket shared with the Host. To reach the dashboard from other machines you put a reverse proxy that ends TLS in front of it, as the project's guide describes, or, with network membership, turn on remote access; either is your choice.
+Not by default. The dashboard and the two bastion ports are published on 127.0.0.1 inside the virtual machine and forwarded only to 127.0.0.1 on your machine, so only programs on your own machine can connect to them. The installer's virtual machine mounts none of your folders. The database container has no network port at all: it listens on a Unix socket shared with the Host. To reach the dashboard from other machines you put a reverse proxy that ends TLS in front of it, as the project's guide describes, or, with network membership, turn on remote access; either is your choice. If you run a Host as the control plane for your other machines, you choose a network address to publish the two bastion ports on, so bastions on those machines can reach them; the pairing port answers only a one-time pairing token, the other only a certificate your Host issued, and the dashboard stays on 127.0.0.1.
 
 ## What makes a Host contained?
 
-Both containers run as an ordinary user with every Linux capability dropped and a read-only root filesystem, and they cannot gain privileges. The Host's container also runs under a restricted set of system calls. What the Host keeps goes to named volumes, its /tmp is in memory, and the database's data directory is never mounted into the Host.
+The Host's and the database's containers, and in the virtual machine the two for remote access, run as an ordinary user with every Linux capability dropped and a read-only root filesystem, and they cannot gain privileges. The Host's container also runs under a restricted set of system calls. What the Host keeps goes to named volumes, its /tmp is in memory, and the database's data directory is never mounted into the Host.
 
 A firewall inside the virtual machine stops every container in it, the Host's and those of its apps, browser and coding engines, from opening a connection to your machine: not to the programs listening on your machine's own loopback, and not to its network addresses. The bastion connects in to the Host; the Host never dials your machine. Other computers on your network, such as a model server you name, and the internet stay reachable.
 
@@ -29,7 +29,7 @@ The owner. The first time, you enter the setup code the Host prints at start and
 
 ## How does the bastion connect?
 
-The bastion pairs with a one-time token and then connects to the Host over mutual TLS under a certificate authority the Host makes for itself. The Host accepts only certificates it issued at pairing and has not revoked, and drops the open connections of a bastion it revokes. [The bastion](wiki:the-bastion) covers what it checks on every operation.
+The bastion pairs with a one-time token and then connects to the Host over mutual TLS under a certificate authority the Host makes for itself. The Host accepts only certificates it issued at pairing and has not revoked, and drops the open connections of a bastion it revokes or quarantines. [The bastion](wiki:the-bastion) covers what it checks on every operation.
 
 ## What stops my Host doing something I did not approve?
 

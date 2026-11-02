@@ -117,7 +117,7 @@ system: true
 #   other, and a Host with no platform has no catalog. The card's lane pill names
 #   a provider lane by its provider and an unset model as not set, where it read
 #   "managed" for every lane but a machine you run. App-only change.
-version: "2.8.3"
+version: "2.8.4"
 # Context is NOT a conversational surface — the user operates it directly and
 # talks to the host in Circles/the Workbench. So this is the code-true source for the
 # ENVIRONMENT CATALOG (topology block + describe_app), NOT a surface_role

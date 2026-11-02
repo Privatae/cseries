@@ -14,8 +14,12 @@ Pinned here:
      harness credential, open_forge, the site publish clone, the repo links in
      knowledge_toc) and not the Privatae-forge readers (nac_egress's platform
      destinations, proposals, bug reports, the community board);
-  4. ~/.git-credentials (mode 600) and the git identity are written under a
-     temporary HOME;
+  4. no ~/.git-credentials is written: ~/.gitconfig names the Host's
+     credential helper, and a real git clone, push and ls-remote against a
+     smart-HTTP server that asks for a sign-in get the token through it, read
+     from Keys at each sign-in, with no file on the disk holding it after;
+     at start an earlier version's lines (the Host's account at the forge,
+     or the install's GITEA_*) are taken out, the person's own lines stay;
   5. a new project repo is created under the Host's account, and the person's
      username is added as a collaborator with the Host's own token; whether
      the Host may merge there (Auto-Approve) is the connected server's answer;
@@ -67,6 +71,8 @@ os.environ["GITEA_URL"] = "https://forge.platform.example"
 # The fake server below answers on 127.0.0.1, an address a connect refuses
 # outside a test machine; section 13 checks that refusal with this unset.
 os.environ["CSERIES_GIT_SERVER_ALLOW_LOOPBACK"] = "1"
+# The socket the credential helper asks on, in the run's own folder.
+os.environ["CSERIES_GIT_CREDENTIAL_SOCK"] = str(TMP / "run" / "credential.sock")
 
 CERT, KEY = TMP / "cert.pem", TMP / "key.pem"
 subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "1",
@@ -94,6 +100,17 @@ TOKENS = {TOK_HOST: (HOST_USER, True), TOK_OTHER: ("someone-else", True),
           TOK_NOREPO: (HOST_USER, False)}
 SEEN: list = []          # (method, path, auth_login, auth_kind, body)
 PRS: dict = {}           # number -> pr json
+GIT_SEEN: list = []      # (method, path, auth_login) of git's own requests
+# The repositories the fake serves over git's smart HTTP: one, with a commit.
+REPOS = TMP / "repos"
+_seed = TMP / "seed"
+subprocess.run(["git", "init", "-q", "-b", "main", str(_seed)], check=True)
+(_seed / "README.md").write_text("# demo\n")
+subprocess.run(["git", "-C", str(_seed), "add", "-A"], check=True)
+subprocess.run(["git", "-C", str(_seed), "-c", "user.name=seed", "-c", "user.email=seed@example.org",
+                "commit", "-q", "-m", "start"], check=True)
+subprocess.run(["git", "clone", "-q", "--bare", str(_seed), str(REPOS / HOST_USER / "demo.git")],
+               check=True)
 
 
 class Gitea(BaseHTTPRequestHandler):
@@ -147,10 +164,53 @@ class Gitea(BaseHTTPRequestHandler):
             return self._send(200, PRS.get(num) or {})
         return self._send(404, {"message": "not found"})
 
+    def _git(self):
+        """git's smart HTTP, served by `git http-backend` over REPOS, behind
+        the same basic sign-in as the API: a request without the Host's token
+        is asked to sign in (401), as Gitea does."""
+        who, _kind = self._who()
+        path, _, query = self.path.partition("?")
+        GIT_SEEN.append((self.command, path, who[0] if who else None))
+        if who is None:
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="Gitea"')
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        n = int(self.headers.get("Content-Length") or 0)
+        body = self.rfile.read(n) if n else b""
+        env = {"PATH": os.environ["PATH"], "HOME": str(TMP), "GIT_CONFIG_NOSYSTEM": "1",
+               "GIT_PROJECT_ROOT": str(REPOS), "GIT_HTTP_EXPORT_ALL": "1",
+               "PATH_INFO": path, "QUERY_STRING": query, "REQUEST_METHOD": self.command,
+               "CONTENT_TYPE": self.headers.get("Content-Type") or "",
+               "CONTENT_LENGTH": str(len(body)), "REMOTE_USER": who[0],
+               "HTTP_CONTENT_ENCODING": self.headers.get("Content-Encoding") or "",
+               "GIT_PROTOCOL": self.headers.get("Git-Protocol") or ""}
+        r = subprocess.run(["git", "http-backend"], input=body, env=env, capture_output=True)
+        sep = b"\r\n\r\n" if b"\r\n\r\n" in r.stdout else b"\n\n"
+        head, _, payload = r.stdout.partition(sep)
+        status, headers = 200, []
+        for line in head.decode(errors="replace").splitlines():
+            k, _, v = line.partition(":")
+            if k.lower() == "status":
+                status = int(v.strip().split()[0])
+            elif k:
+                headers.append((k, v.strip()))
+        self.send_response(status)
+        for k, v in headers:
+            self.send_header(k, v)
+        self.send_header("Content-Length", str(len(payload)))
+        self.end_headers()
+        self.wfile.write(payload)
+
     def do_GET(self):
+        if ".git/" in self.path:
+            return self._git()
         self._handle("GET")
 
     def do_POST(self):
+        if ".git/" in self.path:
+            return self._git()
         self._handle("POST")
 
     def do_PUT(self):
@@ -244,10 +304,38 @@ def cred_file():
     return HOME / ".git-credentials"
 
 
-def git_get(key):
-    r = subprocess.run(["git", "config", "--file", str(HOME / ".gitconfig"), "--get", key],
+def git_get(key, *, all_values=False):
+    r = subprocess.run(["git", "config", "--file", str(HOME / ".gitconfig"),
+                        "--get-all" if all_values else "--get", key],
                        capture_output=True, text=True)
     return r.stdout.strip() if r.returncode == 0 else None
+
+
+def run_git(*argv, cwd=None, global_config=True, extra=()):
+    """Real git, as the git command line on the Host runs it: HOME's
+    ~/.gitconfig (global_config), or none and the Host's own -c set, as its
+    own git calls run (extra=helper_args())."""
+    env = {**os.environ, "GIT_SSL_CAINFO": str(CERT), "GIT_TERMINAL_PROMPT": "0"}
+    if not global_config:
+        env["GIT_CONFIG_GLOBAL"] = "/dev/null"
+    return subprocess.run(["git", *extra, *argv], cwd=cwd, env=env, capture_output=True,
+                          text=True, timeout=60)
+
+
+def token_on_disk() -> list:
+    """Every file under HOME and the run's folder (the served repositories
+    aside) whose bytes hold the Host's token."""
+    hits = []
+    for base in (HOME, TMP / "run", TMP / "work"):
+        for dirpath, _dirs, files in os.walk(base):
+            for f in files:
+                p = Path(dirpath) / f
+                try:
+                    if TOK_HOST.encode() in p.read_bytes():
+                        hits.append(str(p))
+                except OSError:
+                    pass
+    return hits
 
 
 async def main():
@@ -259,6 +347,7 @@ async def main():
     vault_api.store_secret, vault_api.open_secret = _store_secret, _open_secret
     vault_api.revoke_secret = _revoke_secret
     pool = FakePool()
+    await gs.serve_credentials(pool, 1)
 
     # 1 — refusals store nothing
     async def refused(url, user, token, why):
@@ -351,15 +440,99 @@ async def main():
         check(needle in src and "git_server" not in src,
               f"{rel} (Privatae's forge) still names the install's identity, not the connected server")
 
-    # 4 — the git command line's files, under the temporary HOME
-    f = cred_file()
-    check(f.is_file() and f.read_text().strip() == f"https://{HOST_USER}:{TOK_HOST}@{NETLOC}"
-          and stat.S_IMODE(f.stat().st_mode) == 0o600,
-          "~/.git-credentials holds the connected server, mode 600")
-    check(git_get("user.name") == HOST_USER and git_get("user.email") == f"{HOST_USER}@mail.example"
-          and git_get("credential.helper") == "store",
+    # 4 — git signs in through the Host's credential helper, under the
+    # temporary HOME, and no file holds the token
+    check(not cred_file().exists(), "connect writes no ~/.git-credentials")
+    check(git_get("credential.helper", all_values=True) == gs.helper_command(),
+          "~/.gitconfig names the Host's credential helper and nothing else",
+          str(git_get("credential.helper", all_values=True)))
+    check(git_get("user.name") == HOST_USER and git_get("user.email") == f"{HOST_USER}@mail.example",
           "the git identity is the Host's account there",
           f"{git_get('user.name')} {git_get('user.email')}")
+    work = TMP / "work"
+    work.mkdir()
+    GIT_SEEN.clear()
+    r = await asyncio.to_thread(run_git, "clone", "-q", f"{URL}/{HOST_USER}/demo.git",
+                                str(work / "demo"))
+    signed = [s for s in GIT_SEEN if s[2] == HOST_USER]
+    check(r.returncode == 0 and (work / "demo" / "README.md").is_file() and signed
+          and any(s[2] is None for s in GIT_SEEN),
+          "git clone on the command line is asked to sign in and signs in with the token from "
+          "the helper", r.stderr[-300:] + str(GIT_SEEN[:4]))
+    (work / "demo" / "notes.md").write_text("a line\n")
+    await asyncio.to_thread(run_git, "add", "-A", cwd=work / "demo")
+    await asyncio.to_thread(run_git, "commit", "-q", "-m", "notes", cwd=work / "demo")
+    r = await asyncio.to_thread(run_git, "push", "-q", "origin", "HEAD:main", cwd=work / "demo")
+    pushed = subprocess.run(["git", "--git-dir", str(REPOS / HOST_USER / "demo.git"), "log",
+                             "--format=%s", "-1", "main"], capture_output=True, text=True).stdout
+    check(r.returncode == 0 and pushed.strip() == "notes",
+          "git push signs in through the helper and lands", r.stderr[-300:])
+    r = await asyncio.to_thread(run_git, "ls-remote", f"{URL}/{HOST_USER}/demo.git",
+                                global_config=False, extra=gs.helper_args())
+    check(r.returncode == 0 and "refs/heads/main" in r.stdout,
+          "the Host's own git calls (no ~/.gitconfig, helper_args) sign in the same way",
+          r.stderr[-300:])
+    check(not cred_file().exists() and not token_on_disk(),
+          "after clone, push and fetch no file on the disk holds the token "
+          "(git's sign-in that worked was not stored)", str(token_on_disk()))
+    # Read from Keys at each sign-in: the token gone from Keys, the next
+    # sign-in has nothing, though the process still has it loaded.
+    held = VAULT.pop(gs.TOKEN_NAME)
+    r = await asyncio.to_thread(run_git, "ls-remote", f"{URL}/{HOST_USER}/demo.git")
+    VAULT[gs.TOKEN_NAME] = held
+    check(r.returncode != 0 and gs.connected() is not None,
+          "the helper reads the token from Keys at each sign-in: gone from Keys, git cannot sign in",
+          r.stdout[-200:])
+    other = await gs.credential_for(pool, 1, "https", "elsewhere.example")
+    plain = await gs.credential_for(pool, 1, "http", NETLOC)
+    check(other is None and plain is None,
+          "the helper answers only for the forge's own host, and only over https")
+    # Only this process's own user reaches the socket: its folder is 0700 and
+    # the listener checks the caller's uid (SO_PEERCRED).
+    sock = Path(gs.credential_socket())
+    check(stat.S_IMODE(sock.parent.stat().st_mode) == 0o700
+          and sock.parent.stat().st_uid == os.getuid()
+          and stat.S_IMODE(sock.stat().st_mode) == 0o600,
+          "the helper's socket sits in a 0700 folder of this user's own, mode 0600")
+
+    class _PeerAs:
+        def __init__(self, s):
+            self.s = s
+
+        def get_extra_info(self, _k):
+            return self.s
+    import socket as _socket
+    a, b = _socket.socketpair()
+    try:
+        check(gs._peer_ok(_PeerAs(a)), "a caller of this process's own user is answered")
+    finally:
+        a.close()
+        b.close()
+    if os.getuid() == 0:
+        # A caller of another user: a child dropped to nobody connects to an
+        # abstract-namespace socket (no folder in the way), and the uid check
+        # is asked about that real connection.
+        lst = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+        lst.bind("\0cseries-git-peer-test-%d" % os.getpid())
+        lst.listen(1)
+        pid = os.fork()
+        if pid == 0:
+            try:
+                os.setgid(65534)
+                os.setuid(65534)
+                c = _socket.socket(_socket.AF_UNIX, _socket.SOCK_STREAM)
+                c.connect(lst.getsockname())
+                c.recv(1)
+            finally:
+                os._exit(0)
+        conn, _ = lst.accept()
+        try:
+            check(not gs._peer_ok(_PeerAs(conn)),
+                  "a caller of another user is refused by the socket's uid check")
+        finally:
+            conn.close()
+            lst.close()
+            os.waitpid(pid, 0)
 
     # 5 — repo creation, and the person added with the Host's token
     from server.routes import projects as pj
@@ -476,11 +649,66 @@ async def main():
     # start: the server comes back from the row and Keys
     await gs.connect(pool, 1, url=URL, username=HOST_USER, token=TOK_HOST, person_username=PERSON)
     gs._connected = None
-    cred_file().unlink()
     await gs.load(pool, 1)
     check(gs.connected() is not None and gs.connected().person == PERSON
-          and cred_file().read_text().strip().endswith(f"@{NETLOC}"),
-          "at start the connected server comes back, and the git files are written again")
+          and not cred_file().exists()
+          and git_get("credential.helper", all_values=True) == gs.helper_command(),
+          "at start the connected server comes back, git's helper is written again, no token file")
+
+    # the upgrade: an earlier version's file and `store`. Only the lines this
+    # code wrote go (the Host's account at the forge, whatever token); the
+    # person's own line stays, and `store` stays for their server alone.
+    gs._connected = None
+    mine = f"https://{HOST_USER}:{TOK_HOST}@{NETLOC}"
+    stale = f"https://{HOST_USER}:{'c' * 40}@{NETLOC}"          # a token since replaced
+    theirs = "https://robin-example:not-a-real-secret@git.elsewhere.example"
+    cred_file().write_text(f"{mine}\n{theirs}\n{stale}\n")
+    os.chmod(cred_file(), 0o600)
+    subprocess.run(["git", "config", "--file", str(HOME / ".gitconfig"), "--replace-all",
+                    "credential.helper", "store"], check=True)
+    await gs.load(pool, 1)
+    left = cred_file().read_text().splitlines() if cred_file().exists() else None
+    check(left == [theirs] and stat.S_IMODE(cred_file().stat().st_mode) == 0o600,
+          "the upgrade takes the Host's own lines out of ~/.git-credentials and keeps the "
+          "person's own", str(left))
+    check(git_get("credential.helper", all_values=True) == gs.helper_command()
+          and git_get("credential.https://git.elsewhere.example.helper") == "store"
+          and git_get(f"credential.https://{NETLOC}.helper") is None,
+          "`store` is gone for every server but the person's own; the forge's host never has it",
+          str(git_get("credential.helper", all_values=True)))
+    cred_file().write_text(f"{mine}\n")
+    await gs.load(pool, 1)
+    check(not cred_file().exists(),
+          "a file holding only the line an earlier version wrote is removed")
+    # GITEA_* (entrypoint.sh's line on a platform install) is this code's too.
+    gs._connected = None
+    saved_row = dict(pool.bp)
+    pool.bp.clear()
+    os.environ.update(GITEA_USERNAME="entity-7", GITEA_API_TOKEN="e" * 40)
+    try:
+        cred_file().write_text(f"https://entity-7:{'e' * 40}@forge.platform.example\n")
+        await gs.load(pool, 1)
+        ans = await gs.credential_for(pool, 1, "https", "forge.platform.example")
+        check(not cred_file().exists() and ans == ("entity-7", "e" * 40),
+              "the install's GITEA_* line is taken out too, and the helper answers it from the "
+              "environment", str(ans))
+        # The file left after that holds only the person's own lines, so it
+        # never names the Host's forge over the install's: entrypoint.sh used
+        # to put GITEA_*'s line first in it, and no longer writes one.
+        cred_file().write_text(f"https://entity-7:{'e' * 40}@forge.platform.example\n{theirs}\n")
+        await gs.load(pool, 1)
+        ident = gs.forge_identity()
+        check(cred_file().read_text().splitlines() == [theirs]
+              and ident == ("entity-7", "e" * 40, "forge.platform.example"),
+              "with GITEA_* set, the person's own line left in the file is never taken as the "
+              "Host's forge", str(ident and ident[::2]))
+        cred_file().unlink(missing_ok=True)
+    finally:
+        os.environ.pop("GITEA_USERNAME", None)
+        os.environ.pop("GITEA_API_TOKEN", None)
+        pool.bp.update(saved_row)
+    await gs.load(pool, 1)
+    check(gs.connected() is not None, "and the connected server loads again")
 
     # 11 — the token is the git server's alone: the vault holds its name, so
     # no tool, plan or other app can send it elsewhere or swap in another

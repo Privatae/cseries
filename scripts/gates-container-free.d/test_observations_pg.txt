@@ -1,0 +1,11 @@
+# 2026-11-02: what GET /api/network/observations (read:observations) returns,
+# against a fresh clone of the kernel's schema (TEST_PG_DSN / PEER_TEST_DSN /
+# TEST_DSN, else a throwaway server, like the other _pg gates here). Drives the
+# real ingest and heartbeat upsert: exe, unit, the owner facts and the declared
+# tool servers are kept (v256); no token, key or grant reaches the output; a
+# pairing withholding observe gives its name only, online or offline, and an
+# unreadable bastion list hides every agent row; paging returns every row once,
+# skips none still being written, and survives a cursor pasted unencoded. The
+# Network app's own reads (GET /api/network/agents and /bastions) carry the same
+# facts. Fails on the ingest and upsert that dropped those fields.
+test_observations_pg.py

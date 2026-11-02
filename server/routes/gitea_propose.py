@@ -44,10 +44,10 @@ URL, and the only non-GET requests that touch the upstream are "create
 fork" and "open/update pull request". Merging is never done here — the
 user or the upstream owner merges.
 
-Credentials: git reads them from the pod's own credential store
-(entrypoint.sh wires ~/.git-credentials + credential.helper store), the same
-way embed._run_repo_job clones a granted repo. No token in a URL, no token in
-an argument, and git's output is scrubbed of it before it lands anywhere.
+Credentials: git asks the Host's credential helper, which reads the token
+from Keys at each sign-in (server/git_server.helper_args), the same way
+codesearch.repo_sync clones a granted repo. No token in a URL, an argument or
+a file, and git's output is scrubbed of it before it lands anywhere.
 """
 
 from __future__ import annotations
@@ -469,8 +469,11 @@ def _git_work(*, host: str, host_login: str, token: str, upstream_full: str,
     tmp = tempfile.mkdtemp(prefix="gitea-propose-")
     root = Path(tmp).resolve()
 
+    from server.git_server import helper_args
+    signs_in = helper_args()
+
     def git(*argv: str) -> tuple[int, str]:
-        rc, out = _run_git(list(argv), str(root), env)
+        rc, out = _run_git([*signs_in, *argv], str(root), env)
         # The token must never echo into a result, a log line or an audit row.
         return rc, (out.replace(token, "***") if token else out)[:400]
 

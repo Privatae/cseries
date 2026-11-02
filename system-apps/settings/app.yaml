@@ -183,7 +183,9 @@ system: true
 #   and Disconnect / Take back (GET /api/agent-access/connections, POST
 #   .../revoke; read:session / write:session, both already declared). An
 #   agent connects itself, so there is nothing to mint here.
-version: "3.17.0"
+# 3.18.1 (2026-11-02): Connected agents names a tool once when it is named for
+#   its op (contain runs the op contain).
+version: "3.18.1"
 # Environment-catalog facts (host-facing, code-true). Source for the L1
 # topology block + describe_app — NOT a surface_role body (this is a control
 # panel, not a conversational surface): what_it_is/user_path only.

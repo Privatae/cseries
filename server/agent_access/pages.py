@@ -206,10 +206,16 @@ def agent_words(rows: list[tuple[str, str]]) -> str:
 
 
 # What the 'read' choice lets an agent do without asking, said exactly
-# (tools.READ_GRANT_OPS and READ_GRANT_PREFIXES): nothing more is in it.
-READ_WORDS = ("Without asking you, let it list your machines and run these on them: uptime; the "
+# (tools.READ_TOOLS, tools.READ_GRANT_OPS and READ_GRANT_PREFIXES): nothing
+# more is in it.
+READ_WORDS = ("Without asking you, let it list your machines; see what your Host knows about "
+              "each: the AI agents running on it, the scheduled jobs and tool servers they use "
+              "(never where a key is kept), its security checks, and programs its baseline "
+              "does not hold; and run these on them: uptime; the "
               "health checks (disks, network, services, kernel, open ports, firewall, "
-              "Kubernetes, alerts, metrics and system logs); what is installed, the folder "
+              "Kubernetes, alerts, metrics and system logs); what is filling its folders, what "
+              "a service logged, who tried to sign in and when a certificate expires; what is "
+              "installed, the folder "
               "names and the open windows' titles; and the lists of models, backups and your "
               "Host's ops with their status.")
 NOT_READ_WORDS = ("Anything else asks you first, every time or once for good: reading your files, "

@@ -95,9 +95,10 @@ DB_BYTES_PER_SOURCE_BYTE = 6.8
 # core.fsmonitor=false, diff.external=). The environment also drops the global
 # and system config (GIT_CONFIG_GLOBAL=/dev/null, GIT_CONFIG_NOSYSTEM), so no
 # filter, hook path, url rewrite or submodule setting can come from there, and
-# the credential store is named here instead of in ~/.gitconfig.
+# the credential helper is named in checkout() (git_server.helper_args: git
+# asks the Host for the token, which reads it from Keys) instead of in
+# ~/.gitconfig.
 _SYNC_GIT_CONFIG = (
-    "-c", "credential.helper=store",          # ~/.git-credentials (entrypoint.sh)
     "-c", "core.symlinks=true",               # a link is written as a link, never followed
     "-c", "core.autocrlf=false",
     "-c", "submodule.recurse=false", "-c", "fetch.recurseSubmodules=false",
@@ -252,8 +253,8 @@ async def remote_head(repo: str, branch: str) -> Optional[str]:
 
 
 def clone_url(host: str, repo: str) -> str:
-    """The forge's clone URL. Never carries the token: git reads that from
-    its own credential store (~/.git-credentials, entrypoint.sh)."""
+    """The forge's clone URL. Never carries the token: git asks the Host's
+    credential helper for it (server/git_server.helper_args)."""
     return f"https://{host}/{repo}.git"
 
 
@@ -498,8 +499,9 @@ async def checkout(repo: str, *, ref: str = "") -> dict:
         return {"ok": False, "error": f"refusing to write outside the repos root for {repo!r}"}
     owner_dir = dest.parent
     url = clone_url(host, repo)
-    # The credential travels through git's own store (credential.helper
-    # store, ~/.git-credentials) — never on the command line. The proxy is
+    # The credential travels through the Host's credential helper, read from
+    # Keys at each sign-in (server/git_server.helper_args) — never on the
+    # command line, never in a file. The proxy is
     # the same egress lane every gitea API call takes. No global or system
     # config is read (_SYNC_GIT_CONFIG says what that keeps out).
     env = {**os.environ, "GIT_TERMINAL_PROMPT": "0",
@@ -512,7 +514,9 @@ async def checkout(repo: str, *, ref: str = "") -> dict:
     # fetch from anywhere else.
     from server.routes.project_git import HARDENED_GIT_CONFIG
     scheme = (urlsplit(url).scheme or "file").lower()
-    config = (*HARDENED_GIT_CONFIG, *_SYNC_GIT_CONFIG, "-c", f"protocol.{scheme}.allow=always")
+    from server.git_server import helper_args
+    config = (*HARDENED_GIT_CONFIG, *helper_args(), *_SYNC_GIT_CONFIG,
+              "-c", f"protocol.{scheme}.allow=always")
 
     async def _git(*argv: str, cwd: Optional[str] = None, timeout: float = 600.0,
                    max_file: Optional[int] = None):

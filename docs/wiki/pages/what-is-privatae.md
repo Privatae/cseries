@@ -13,7 +13,7 @@ questions:
   - What can I build with it?
 ---
 
-C-Series is an open-source AI agent (AGPL-3.0-only) that runs on your own machine. Each running instance is called a Host: one AI with its own memory, its own PostgreSQL database, its own apps and its own rules. You use it from a browser. It runs sandboxed in a small Linux virtual machine as two containers, the Host and its database, and a separate program on the machine, the [bastion](wiki:the-bastion), decides what the Host may touch there.
+C-Series is an open-source AI agent (AGPL-3.0-only) that runs on your own machine. Each running instance is called a Host: one AI with its own memory, its own PostgreSQL database, its own apps and its own rules. You use it from a browser. It runs sandboxed in a small Linux virtual machine as containers: the Host, its database, and two for remote access, a door and a certificate job, which do nothing until you turn remote access on. A separate program on the machine, the [bastion](wiki:the-bastion), decides what the Host may touch there.
 
 ## Where does a Host run?
 
@@ -35,7 +35,7 @@ Checks in code, not requests in a prompt. An agent it dispatches holds only what
 
 ## What is the bastion?
 
-A separate program, licensed GPL-3.0-or-later, that runs on the machine itself rather than inside the virtual machine. Once it is paired with the Host, the Host can use what the machine offers and you allow: a folder, a model server running there. Nothing is reachable without a grant. [The bastion](wiki:the-bastion) covers the whole of it.
+A separate program, licensed GPL-3.0-or-later, that runs on the machine itself rather than inside the virtual machine. Once it is paired with the Host, the Host can use what the machine offers and you allow: a folder, or the models stored on it. Nothing is reachable without a grant. [The bastion](wiki:the-bastion) covers the whole of it.
 
 ## Do my files have to be uploaded?
 

@@ -102,7 +102,8 @@
                     <div class="net-scene-head">
                         <div class="view-heading">
                             <h2>Your network</h2>
-                            <p class="view-sub" id="topo-sub">Your Host at the center, the bastions and peers in your mesh around it. Your machines reach it through the relay their tunnels dial — the Physical view draws that path. Live, refreshed automatically.</p>
+                            <p class="view-sub" id="topo-sub">Your Host at the center, the bastions and peers in your mesh around it. Your machines reach it directly, over the connection each one's bastion makes to this Host. Live, refreshed automatically.</p>
+                            <!-- Bastions reach a C-Series Host on its own sockets or ports 8810/8811, no relay: server/network/local_bastion.py (module docstring). -->
                         </div>
                         <div class="net-scene-controls">
                             <!-- One rendering of one graph. The renderers register themselves
@@ -158,11 +159,16 @@
                         <div class="label-sys">Egress — what your Host reaches</div>
                     </div>
                     <div class="net-statstrip" id="egress-stats"></div>
-                    <p class="view-sub">Your Host reaches the internet through your own bastions, over your own connections — you decide what it can reach, host-local, and you sign those rules. The platform meters throughput only; it never sees where your Host goes. (Set limits from your agent — this is a read-only view.)</p>
+                    <p class="view-sub">Your Host reaches the internet through your own bastions, over your own connections — you decide what it can reach, host-local, and you sign those rules. The gate checks each destination against your rules and keeps no record of where your Host goes. (Set limits from your agent — this is a read-only view.)</p>
+                    <!-- The gate keeps no record of destinations: server/network/nac_egress.py (module docstring, "NEVER LOGS DESTINATIONS"). -->
                 </div>
                 <!-- Automatic updates: the switch, and where the newest
-                     published version stands in the canary ring. -->
-                <div class="net-block" id="autoupdate-block">
+                     published version stands in the canary ring. The loop asks
+                     the platform for each version's rollout (bastion.rollout,
+                     server/network/bastion_autoupdate.py _rollout), so the block
+                     shows only when this Host can send that op
+                     (dashboard/base/js/network-reach.js). -->
+                <div class="net-block" id="autoupdate-block" hidden data-needs-op="bastion.rollout">
                     <div class="net-block-head">
                         <div class="label-sys">Automatic updates</div>
                         <button class="cseries-btn" id="autoupdate-toggle" hidden></button>
@@ -266,6 +272,9 @@
                         <div class="nac-default-line">
                             <span>No grant, no rights. Every command run under a grant is audited. Granting rights widens reach (asks for your code); revoking is free, except an approved grant that carries your "do NOT" and has not expired, which asks for your code. A grant, and its "do NOT", stops applying when it expires. A <strong style="color:var(--cseries-clay)">suspended</strong> bastion denies even with a grant.</span>
                         </div>
+                        <!-- The person drafts a grant here themselves: a Host with no model has
+                             no agent to propose one (GET /nac/mgmt/purposes). -->
+                        <div class="nac-grant-new" id="nac-grant-new"></div>
                         <div class="stack" id="nac-grants-list"></div>
                     </div>
                 </div>
@@ -326,6 +335,11 @@
                     <div class="net-block-head"><div class="label-sys">Scheduled — jobs that would run an agent</div></div>
                     <p class="view-sub">Crontabs, timers, launchd jobs and scheduled tasks on your machines whose command runs an agent or an automation. Listed <strong>before they fire</strong> — the “ran every night for months and nobody knew” shape, caught from the schedule.</p>
                     <div id="scheduled-list" class="stack"></div>
+                </div>
+                <div class="net-block">
+                    <div class="net-block-head"><div class="label-sys">Tool servers — what your agents can reach</div></div>
+                    <p class="view-sub">The tool servers the agent programs on your machines are set up to start or connect to, read from their settings files. A key left in plain text, a package with no fixed version, or a server running that no settings file names is listed under it.</p>
+                    <div id="toolservers-list" class="stack"></div>
                 </div>
                 <div class="net-block">
                     <div class="net-block-head"><div class="label-sys">Automations — no model</div></div>
@@ -460,6 +474,7 @@
 <!-- The CSP every host-authored frame is mounted under (one definition,
      dashboard/base/js/sandbox-csp.js). Must load before app.js. -->
 <script src="/js/sandbox-csp.js"></script>
+<script src="/js/network-reach.js"></script>
 <script src="/system-apps/network/app.js"></script>
 </body>
 </html>

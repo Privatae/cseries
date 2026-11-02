@@ -12,9 +12,11 @@ data. So:
     data volume the runtime keeps outside the Host's container for every
     installed app and every removed one whose data the owner kept, as
     podman's `volume export` writes it (the runtime streams it,
-    _add_app_data).
+    _add_app_data), and its other volumes, the person's workspace, user
+    files, home folder and keys folder (FILE_ROOTS, files/<key>/), each left
+    out whole when it would not fit (plan_file_roots).
   * They leave as ONE file, streamed with nothing written to disk:
-        tar (db chunks, apps/, app-data/, gitea-repos/, manifest.json, README.txt)
+        tar (db chunks, apps/, app-data/, gitea-repos/, files/, manifest.json, README.txt)
           | zstd | age -r <recipients>  -> upload in parts
     README.txt inside the file says how it is laid out and how to open it.
   * THE RULE: the platform holds a backup OR a key, never both. The file is
@@ -151,6 +153,30 @@ APPS_EXCLUDES = (
     ".cache",
     "core.[0-9]*",
 )
+
+
+# The Host's other volumes that hold the person's own things (compose.yaml:
+# secrets, home, user-files, workspace). Each goes into a backup under
+# files/<key>/ and a restore puts it back (host_restore.FileRoot). Listed in
+# the order a backup takes them when not all of them fit (plan_file_roots):
+# the small and irreplaceable first, the workspace, which can be the largest,
+# last. A volume an install does not have is skipped.
+FILES_PREFIX = "files"
+FILE_ROOTS: list[tuple[str, str]] = [
+    ("secrets", "/app/secrets"),
+    ("home", "/home/privatae"),
+    ("user-files", "/app/user-files"),
+    ("workspace", os.environ.get("CEIGAS_WORKSPACE") or "/app/workspace"),
+]
+# A restore stages each of them inside the volume itself (so its files move in
+# by rename), in this folder, which a backup therefore leaves out.
+ROOT_RESTORE_DIR = ".host-restore"
+# The share of MANIFEST_MAX a backup keeps free when it takes these volumes
+# (plan_file_roots): 1/16, 4 MiB of list, some 25,000 files a volume may gain
+# between the plan and the write.
+FILES_LIST_SPARE = 16
+# The most one backup can carry: 10,000 upload parts (PART_BYTES above).
+STREAM_MAX = PART_BYTES * 10_000
 
 LOOP_SECONDS = 60
 QUIET_AFTER = dt.timedelta(minutes=10)     # under the 15-minute idle freeze
@@ -380,6 +406,23 @@ def excluded(rel: str) -> bool:
         elif any(fnmatch.fnmatchcase(p, pattern) for p in parts):
             return True
     return False
+
+
+def excluded_in_root(root: str, rel: str) -> bool:
+    """A path under one of FILE_ROOTS (relative to it) that backups leave out,
+    and a restore therefore leaves where it is: the restore's own folder there,
+    the names APPS_EXCLUDES leaves out at any depth (node_modules, .venv,
+    .cache, core dumps), and the folder of backups on this machine when an
+    install put it inside that volume."""
+    if rel == ROOT_RESTORE_DIR or rel.startswith(ROOT_RESTORE_DIR + "/"):
+        return True
+    full = os.path.join(root, rel)
+    local = str(LOCAL_DIR).rstrip("/")
+    if full == local or full.startswith(local + "/"):
+        return True
+    parts = rel.split("/")
+    return any(fnmatch.fnmatchcase(p, pattern) for pattern in APPS_EXCLUDES
+               if not pattern.startswith(APPS_ROOT + "/") for p in parts)
 
 
 # ── the user's choices ───────────────────────────────────────────────────────
@@ -1050,6 +1093,11 @@ WHAT IS INSIDE
                          then tar -tvf <app>.tar lists it
   gitea-repos/           mirrors of your Host's own Git repositories, when there
                          are any; git clone gitea-repos/<name>.git gives a copy
+  files/<name>/          your Host's other folders: files/workspace (its
+                         workspace), files/user-files (files you gave it),
+                         files/home (its home folder) and files/secrets (its
+                         keys folder), each left out whole when it did not fit
+                         (manifest.json's parts.files says which and why)
   manifest.json          every file above with its size and sha256, every link
                          with its target, and each app's data with its sha256
 """
@@ -1057,7 +1105,8 @@ WHAT IS INSIDE
 
 def write_file(*, upload: "Uploader", recips: list[str], eid: int, stamp: str, kind: str,
                dbname: str, git_dir: Optional[Path], apps_root: Optional[str] = None,
-               who: Optional[list[dict]] = None, app_data: Optional[dict] = None) -> dict:
+               who: Optional[list[dict]] = None, app_data: Optional[dict] = None,
+               file_roots: Optional[list] = None) -> dict:
     """Stream one backup file into `upload`. Synchronous; runs in a worker
     thread. Raises (and the caller aborts the upload) if the database dump or
     age fails: a backup without its database is not a backup."""
@@ -1113,6 +1162,8 @@ def write_file(*, upload: "Uploader", recips: list[str], eid: int, stamp: str, k
         if app_data is not None:
             parts["app_data"] = _add_app_data(tout, app_data, procs)
         parts["gitea"] = _add_tree(tout, git_dir, "gitea-repos", files) if git_dir else {"repos": 0}
+        if file_roots is not None:
+            parts["files"] = _add_file_roots(tout, file_roots, files)
         listed = json.dumps(manifest)
         # The running count left out only `parts`, which is small; this is exact.
         if len(listed.encode()) > MANIFEST_MAX:
@@ -1327,8 +1378,13 @@ def _add_member(tout: Optional[tarfile.TarFile], full: str, arc: str, files: lis
     # sockets, fifos and devices are not backed up
 
 
-def _add_apps(tout: Optional[tarfile.TarFile], root: str, files: list) -> dict:
+def _add_apps(tout: Optional[tarfile.TarFile], root: str, files: list, *,
+              prefix: str = "apps", skip: Optional[Callable[[str], bool]] = None) -> dict:
+    """The tree under `root` into the backup as <prefix>/<path>, leaving out
+    what `skip` (default: excluded, the apps tree's) names. Also each of
+    FILE_ROOTS (_add_file_roots)."""
     notes: dict[str, Any] = {"files": 0, "bytes": 0}
+    skip = skip or excluded
     if not os.path.isdir(root):
         return notes
     real_root = os.path.realpath(root)
@@ -1338,17 +1394,17 @@ def _add_apps(tout: Optional[tarfile.TarFile], root: str, files: list) -> dict:
         keep = []
         for d in sorted(dirnames):
             rel = f"{rel_dir}/{d}" if rel_dir else d
-            if excluded(rel):
+            if skip(rel):
                 continue
-            _add_member(tout, os.path.join(dirpath, d), f"apps/{rel}", files, notes,
+            _add_member(tout, os.path.join(dirpath, d), f"{prefix}/{rel}", files, notes,
                         root=real_root)
             if not os.path.islink(os.path.join(dirpath, d)) and not unshowable(d):
                 keep.append(d)
         dirnames[:] = keep
         for f in sorted(filenames):
             rel = f"{rel_dir}/{f}" if rel_dir else f
-            if not excluded(rel):
-                _add_member(tout, os.path.join(dirpath, f), f"apps/{rel}", files, notes,
+            if not skip(rel):
+                _add_member(tout, os.path.join(dirpath, f), f"{prefix}/{rel}", files, notes,
                             root=real_root)
     for k in ("unreadable", "changed"):
         if k in notes:
@@ -1458,6 +1514,106 @@ def precount(apps_root: str, git_dir: Optional[Path], files: "_Listing") -> None
     _add_apps(None, apps_root, files)
     if git_dir:
         _add_tree(None, git_dir, "gitea-repos", files)
+
+
+def _root_skip(path: str) -> Callable[[str], bool]:
+    return lambda rel: excluded_in_root(path, rel)
+
+
+def _apps_tree_folders() -> set:
+    """(st_dev, st_ino) of the apps tree's app-state/ folders. A platform pod
+    mounts /app/workspace, /app/user-files and /app/secrets from there
+    (subPath app-state/<name> of the apps volume), so the apps tree already
+    carries them; backed up again under files/, a restore would move them
+    twice. A bind mount has no path to compare, so the folder itself is."""
+    out = set()
+    with contextlib.suppress(OSError):
+        for e in os.scandir(os.path.join(APPS_ROOT, "app-state")):
+            with contextlib.suppress(OSError):
+                if e.is_dir(follow_symlinks=False):
+                    st = e.stat(follow_symlinks=False)
+                    out.add((st.st_dev, st.st_ino))
+    return out
+
+
+def plan_file_roots(listed: "_Listing", room: Optional[int]) -> tuple[list, dict]:
+    """Which of FILE_ROOTS this backup takes: ([(key, path)], {key: why it
+    was left out}). Run after the apps tree and the Git mirrors are counted
+    (write_object), so they always come first, as before these volumes were
+    backed up: a volume is taken whole or left out whole, in FILE_ROOTS'
+    order, while the list stays under MANIFEST_MAX and, when `room` is known,
+    its bytes (before compression, so never more than it will take) fit in
+    what is left of it. One left out makes the run partial and says why; no
+    file of the person's is ever refused a place, and a backup that fitted
+    before still fits. Reads no file."""
+    take: list[tuple[str, str]] = []
+    left: dict[str, str] = {}
+    in_apps = _apps_tree_folders()
+    for key, path in FILE_ROOTS:
+        if not os.path.isdir(path):
+            continue
+        st = os.stat(path)
+        if (st.st_dev, st.st_ino) in in_apps:
+            continue            # the apps tree already holds it (a platform pod's subPath mount)
+        # Counted with room to spare: the volumes are read again when the file
+        # is written, minutes later, and one that grew past the list's limit
+        # by then would stop the whole run, database and all.
+        spare = MANIFEST_MAX // FILES_LIST_SPARE
+        trial = _Listing(listed.size + spare)
+        try:
+            _add_apps(None, path, trial, prefix=f"{FILES_PREFIX}/{key}", skip=_root_skip(path))
+        except TooManyFiles:
+            left[key] = (f"{path} was left out: with it, this backup would list more files than "
+                         f"one backup can ({MANIFEST_MAX >> 20} MiB of list)")
+            continue
+        size = sum(int(e.get("bytes") or 0) for e in trial)
+        if room is not None and size > room:
+            left[key] = (f"{path} was left out: its {size >> 20} MiB do not fit in the "
+                         f"{max(room, 0) >> 20} MiB this backup's destination has left")
+            continue
+        listed.size = trial.size - spare
+        if room is not None:
+            room -= size
+        take.append((key, path))
+    return take, left
+
+
+def _add_file_roots(tout: tarfile.TarFile, roots: list, files: list) -> dict:
+    """Each volume plan_file_roots took, under files/<key>/, with what the
+    apps tree records for itself (files, bytes, and what could not be read)."""
+    out: dict[str, Any] = {}
+    for key, path in roots:
+        notes = _add_apps(tout, path, files, prefix=f"{FILES_PREFIX}/{key}",
+                          skip=_root_skip(path))
+        notes["path"] = path
+        out[key] = notes
+    return out
+
+
+def _files_room(store, base_bytes: int) -> int:
+    """Bytes the backup's destination has for FILE_ROOTS once the database,
+    the apps tree and the Git mirrors (`base_bytes`) are in: the folder on
+    this machine, its disk's free room above what the machine keeps free,
+    plus the older backups there that a run may drop to make room
+    (backup_stores.LocalStore.make_room: never the newest, never one in
+    store.protect); anywhere else, STREAM_MAX. Counting a backup make_room
+    keeps would take a volume the disk has no room for, and the whole run,
+    database too, would stop when the disk filled."""
+    from server import backup_stores
+    cap = STREAM_MAX
+    if isinstance(store, backup_stores.LocalStore):
+        folder = store.folder
+        while not folder.is_dir() and folder != folder.parent:
+            folder = folder.parent
+        st = os.statvfs(folder)
+        held = 0
+        with contextlib.suppress(OSError):
+            pairs = store.pairs()
+            protect = set(getattr(store, "protect", None) or ())
+            held = sum(int(pairs[s].get("bytes") or 0)
+                       for s in sorted(pairs)[:-1] if s not in protect)
+        cap = min(cap, st.f_bavail * st.f_frsize - store.reserve(st.f_blocks * st.f_frsize) + held)
+    return cap - base_bytes
 
 
 def _add_tree(tout: Optional[tarfile.TarFile], base: Path, prefix: str, files: list) -> dict:
@@ -1728,9 +1884,19 @@ async def write_object(pool, eid: int, *, kind: str, name: Optional[str] = None,
             git_dir, git_part = None, {"ok": True, "repos": 0}
         if git_dir:
             await asyncio.to_thread(_add_tree, None, git_dir, "gitea-repos", listed)
+        dbname = await pool.fetchval("SELECT current_database()")
+        # Then the person's other volumes (FILE_ROOTS), each whole or left out
+        # whole, after everything a backup held before them has its place.
+        try:
+            db_bytes = int(await pool.fetchval(
+                "SELECT pg_database_size(current_database())") or 0)
+        except Exception:  # noqa: BLE001 — unknown: the room is the files' own
+            db_bytes = 0
+        base = db_bytes + sum(int(e.get("bytes") or 0) for e in listed)
+        roots, roots_left = await asyncio.to_thread(
+            plan_file_roots, listed, await asyncio.to_thread(_files_room, store, base))
         if on_counted is not None:
             on_counted()
-        dbname = await pool.fetchval("SELECT current_database()")
         # Listed before the stamp and the upload: what each app's data takes
         # is not known until it is read, so nothing here waits on it.
         app_data = await app_data_listing()
@@ -1746,7 +1912,7 @@ async def write_object(pool, eid: int, *, kind: str, name: Optional[str] = None,
                 await on_stamp(stamp)
             written = await asyncio.to_thread(
                 write_file, upload=up, recips=recips, eid=eid, stamp=stamp, kind=kind,
-                dbname=dbname, git_dir=git_dir, who=who, app_data=app_data)
+                dbname=dbname, git_dir=git_dir, who=who, app_data=app_data, file_roots=roots)
             result = dict(await asyncio.to_thread(up.complete), stamp=stamp)
         except BaseException:
             await asyncio.to_thread(up.abort)
@@ -1763,7 +1929,33 @@ async def write_object(pool, eid: int, *, kind: str, name: Optional[str] = None,
     parts["gitea"] = {**git_part, "bytes": parts["gitea"].get("bytes", 0), **git_notes}
     if git_notes.get("left_out") and parts["gitea"].get("ok"):
         parts["gitea"].update(ok=False, error=_left_out_text(git_notes, None))
+    parts["files"] = _files_part(parts.get("files") or {}, roots_left)
     return result, parts
+
+
+def _files_part(written: dict, left: dict) -> dict:
+    """parts.files of a run: {ok, roots: {key: {path, ok, files, bytes, ...}},
+    error}. A volume left out (plan_file_roots) or with files that could not
+    be read makes it not ok, and the error says which and why."""
+    roots: dict[str, Any] = {}
+    errors: list[str] = []
+    for key, notes in written.items():
+        one = dict(notes)
+        one["ok"] = not one.get("unreadable") and not one.get("left_out")
+        if one.get("unreadable"):
+            errors.append(f"{one['path']}: some files could not be read")
+        elif one.get("left_out"):
+            text = _left_out_text(one, None)
+            one["error"] = text
+            errors.append(f"{one['path']}: {text}")
+        roots[key] = one
+    for key, why in left.items():
+        roots[key] = {"path": dict(FILE_ROOTS).get(key), "ok": False, "error": why}
+        errors.append(why)
+    part: dict[str, Any] = {"ok": not errors, "roots": roots}
+    if errors:
+        part["error"] = "; ".join(errors)[:RUN_ERROR_MAX]
+    return part
 
 
 LEFT_OUT_IN_TEXT = 5    # left-out names spelled out in the run's sentence
@@ -1813,8 +2005,8 @@ def _partial_error(parts: dict) -> str:
     a long list of paths in one cannot push out the other; a clause that
     names left-out paths is shortened by spelling out fewer of them
     (_left_out_text), never by cutting its instruction."""
-    bad = [p for p in ("apps", "app_data", "gitea")
-           if not (parts.get(p) or {"ok": p == "app_data"}).get("ok")]
+    bad = [p for p in ("apps", "app_data", "gitea", "files")
+           if not (parts.get(p) or {"ok": p in ("app_data", "files")}).get("ok")]
     texts = {p: (parts.get(p) or {}).get("error") or "some files could not be read" for p in bad}
     label = {"app_data": "app data"}
     room = RUN_ERROR_MAX - len("; ") * (len(bad) - 1) - sum(len(f"{label.get(p, p)}: ") for p in bad)
@@ -1941,7 +2133,8 @@ async def _run(pool, eid: int, reason: str, keep: tuple = ()) -> dict:
     if error or not side:
         state = STATE_FAILED
     elif (all((parts.get(p) or {}).get("ok") for p in ("db", "apps", "gitea"))
-          and (parts.get("app_data") or {"ok": True}).get("ok")):
+          and (parts.get("app_data") or {"ok": True}).get("ok")
+          and (parts.get("files") or {"ok": True}).get("ok")):
         state = STATE_OK
     else:
         state = STATE_PARTIAL

@@ -23,7 +23,7 @@ system: true
 #   and its how-to lines live in skills and tool descriptions the Host reads on
 #   demand. Manifest-only; bundle repacked.
 # 1.0.5 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
-version: "1.0.5"
+version: "1.1.0"
 # 1.0.0 (2026-09-28): rebuilt as a shelf of DESKTOPS: a repository of designs
 # for everyone that people can preview, click and try, instead of designs
 # stuck in artifacts where nobody can see what they look like. Two shelves: Ours

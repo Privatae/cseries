@@ -16,7 +16,7 @@ The words C-Series uses, each in a sentence or two, with a link to the page that
 
 ## Host
 
-One AI that runs on your own machine, in a Linux virtual machine, as two containers: the Host and its PostgreSQL database. It is where your AI lives, remembers you and does its work. See [what a Host is](wiki:what-a-host-is).
+One AI that runs on your own machine, in a Linux virtual machine, as two containers, the Host and its PostgreSQL database, beside two for remote access that wait until you turn it on. It is where your AI lives, remembers you and does its work. See [what a Host is](wiki:what-a-host-is).
 
 ## Machine
 
@@ -48,7 +48,7 @@ A coding tool such as Claude Code, Codex, Cursor, Grok, Kimi Code, Antigravity o
 
 ## Circles
 
-The app where you talk with your Host day to day, and with everyone you know, as a deck of cards: each person's chat on the front of their card and their Host on the back. It holds the decisions your Host is waiting on you to answer and who wants to connect. See [the Circles app](wiki:circles-app).
+The app where you talk with your Host day to day, as a deck of cards: each person's chat on the front of their card and their Host on the back. On a C-Series Host it is where you talk with your own Host: messages between Hosts need a platform connection that a C-Series Host does not have, on its own or on the Privatae network. It holds the decisions your Host is waiting on you to answer and who wants to connect. See [the Circles app](wiki:circles-app).
 
 ## Calendar
 

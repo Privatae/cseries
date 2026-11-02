@@ -44,6 +44,12 @@ without step 4: the third one puts the previous database and files back. Undo
 refuses once the previous database is gone, because then the restored data is
 the only data there is.
 
+The Host's other volumes a backup holds (files/<key>/: host_backup.FILE_ROOTS)
+go through the same steps, each staged, set aside and recorded inside its own
+volume (FileRoot), so its files move by rename too; one the backup does not
+hold is left as it is, and so are the home and keys folders after a backup
+this Host cannot confirm it made (UNVERIFIED_ROOTS_KEPT).
+
 What a backup leaves out (node_modules, .venv, caches, crash dumps, scratch;
 host_backup.APPS_EXCLUDES) a restore leaves where it is. The Git repositories
 are not written back: they live on the platform's Git server, and pushing a
@@ -115,6 +121,57 @@ _STAMP_AT_END = re.compile(r"([0-9]{8}T[0-9]{6}Z)\.(tar\.zst|key)\.age$")
 
 class RestoreError(Exception):
     """A restore refused or failed, with a message for the user."""
+
+
+class FileRoot(NamedTuple):
+    """One of the Host's other volumes a backup carries under files/<key>/
+    (host_backup.FILE_ROOTS). Staged, set aside and recorded inside the
+    volume itself, so its files move in and out by rename, as the apps
+    tree's do; the plan (on the apps volume) names each one (file_roots)."""
+    key: str
+    live: Path
+
+    @property
+    def base(self) -> Path:
+        return self.live / hb.ROOT_RESTORE_DIR
+
+    @property
+    def staged(self) -> Path:
+        return self.base / "staged"
+
+    @property
+    def previous(self) -> Path:
+        return self.base / "previous"
+
+    @property
+    def manifest(self) -> Path:
+        return self.base / "manifest"
+
+    def kept(self, rel: str) -> bool:
+        return hb.excluded_in_root(str(self.live), rel)
+
+
+# What a restore of a backup this Host cannot confirm it made leaves as it is
+# on this Host, as it leaves installed code (CODE_DIRS): the home folder holds
+# settings that run programs (git's config, the coding engine's hooks), and
+# the keys folder this Host's own keys. Its database already brings the Keys.
+UNVERIFIED_ROOTS_KEPT = ("home", "secrets")
+
+
+def restorable_roots(verified: bool) -> list[FileRoot]:
+    """The volumes a restore may put back: all of FILE_ROOTS, less
+    UNVERIFIED_ROOTS_KEPT for an unverified backup."""
+    return [FileRoot(k, Path(p)) for k, p in hb.FILE_ROOTS
+            if verified or k not in UNVERIFIED_ROOTS_KEPT]
+
+
+def plan_roots(plan: dict) -> list[FileRoot]:
+    """The volumes a plan restores: those the backup held and were staged."""
+    out = []
+    for r in plan.get("file_roots") or []:
+        if isinstance(r, dict) and r.get("key") and r.get("live"):
+            out.append(FileRoot(str(r["key"]), Path(str(r["live"]))))
+    return out
 
 
 class Room(NamedTuple):
@@ -1918,7 +1975,8 @@ async def _stage(pool, eid: int, stamp: str, unverified_ok: bool = False,
     src = await _open_source(pool, eid, entry)
     try:
         got = await asyncio.to_thread(unpack, src, body["identity"], STAGED,
-                                      expect=expect, trust_links=is_own)
+                                      expect=expect, trust_links=is_own,
+                                      roots=restorable_roots(is_own))
     finally:
         with contextlib.suppress(Exception):
             src.close()
@@ -1934,8 +1992,16 @@ async def _stage(pool, eid: int, stamp: str, unverified_ok: bool = False,
         finally:
             await conn.close()
     await asyncio.to_thread(_write_manifest)
+    file_roots = got.get("file_roots") or []
+    for r in file_roots:
+        fr = FileRoot(r["key"], Path(r["live"]))
+        await asyncio.to_thread(_write_manifest, fr.staged, fr.manifest)
 
     plan = await new_plan(pool, eid, stamp, entry, got)
+    # The other volumes the backup held, put back by the swap like the apps
+    # tree; one it did not hold (an older backup, one left out for room) and
+    # home and keys after an unverified one stay as they are on this Host.
+    plan["file_roots"] = file_roots
     plan["verified"] = is_own
     plan["code_left_out"] = code_left_out
     # This Host's own, through the swap (set_aside), after an unverified one.
@@ -2078,7 +2144,8 @@ def _make_dirs(staged: Path, parts: list[str]) -> None:
 LINK_HOPS = 40      # links followed in one resolution, as Linux's MAXSYMLINKS
 
 
-def _link_escapes(staged_real: str, live_root: str, parts: list[str], target: str) -> bool:
+def _link_escapes(staged_real: str, live_root: str, parts: list[str], target: str,
+                  kept_fn=None) -> bool:
     """Does a restored link lead outside the restored tree once it is live?
 
     A link staged at STAGED/<parts> is moved to LIVE/<parts> (move_in), so it
@@ -2104,7 +2171,10 @@ def _link_escapes(staged_real: str, live_root: str, parts: list[str], target: st
     hops = 0
     def kept(rel: str) -> bool:
         # Only an unverified restore checks its links here (unpack
-        # trust_links), and it takes these from the image or this Host.
+        # trust_links), and it takes these from the image or this Host. In
+        # one of the other volumes, what that volume leaves alone (kept_fn).
+        if kept_fn is not None:
+            return kept_fn(rel)
         return _kept(rel) or _left_out_unverified(rel)
 
     if any(kept("/".join(cur[:i])) for i in range(1, len(cur) + 1)):
@@ -2197,7 +2267,8 @@ def _check_app_data(manifest: dict, got: dict, app_dir: Path, staged: bool) -> l
 
 def unpack(src, identity: str, staged: Path, *, expect: Optional[dict] = None,
            trust_links: bool = False, spool: Optional[Path] = None,
-           stage_app_data: Optional[bool] = None) -> dict:
+           stage_app_data: Optional[bool] = None,
+           roots: Optional[list] = None) -> dict:
     """Decrypt, check and unpack one backup file: apps/ into `staged`, each
     app's kept data into app-data/ beside it (one tar an app, put back by the
     local runtime at finish), the database into RESTORE_DB, only after
@@ -2205,7 +2276,11 @@ def unpack(src, identity: str, staged: Path, *, expect: Optional[dict] = None,
     encrypted file, from its sidecar. `stage_app_data`: write the apps' data
     out (default: when this machine runs the local runtime, the only place it
     can go back to); otherwise it is still read and checked, and listed as
-    not restored. Synchronous; runs in a worker thread."""
+    not restored. `roots`: the FileRoots whose files/<key>/ this restore
+    stages, each in its own volume (FileRoot.staged), the ones the backup
+    holds named in the result's file_roots; a volume not in it, or not in the
+    backup, is read past and left as it is on this Host. Synchronous; runs in
+    a worker thread."""
     from compression import zstd
 
     staged.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -2220,27 +2295,58 @@ def unpack(src, identity: str, staged: Path, *, expect: Optional[dict] = None,
     app_dir = staged.parent / APP_DATA.name
     shutil.rmtree(app_dir, ignore_errors=True)
     staged_real = os.path.realpath(staged)
-    room = _room(staged)
-    unit = max(1, _alloc_unit(staged, room.unit))
-    keep, keep_inodes, keep_src = _reserve(room)
-    log.info("restore: room %d B, unit %d B, keeping %d B and %s inodes free (%s)",
-             room.free, unit, keep, keep_inodes, keep_src)
-    budget = {"bytes": room.free - keep,
-              "inodes": room.inodes_free - keep_inodes if keep_inodes is not None else None}
+    # The room, one budget a filesystem: the apps volume, and the volume of
+    # each FileRoot when it is another disk (two volumes on one disk share it).
+    budgets: dict[int, dict] = {}
 
-    def spend(n: int, name: str) -> None:
-        budget["bytes"] -= max(0, int(n))
-        if budget["bytes"] < 0:
+    def budget_for(path: Path) -> int:
+        dev = os.stat(path).st_dev
+        if dev not in budgets:
+            room = _room(path)
+            u = max(1, _alloc_unit(path, room.unit))
+            keep, keep_inodes, keep_src = _reserve(room)
+            log.info("restore: room %d B, unit %d B, keeping %d B and %s inodes free (%s) at %s",
+                     room.free, u, keep, keep_inodes, keep_src, path)
+            budgets[dev] = {"bytes": room.free - keep, "unit": u,
+                            "inodes": room.inodes_free - keep_inodes if keep_inodes is not None else None}
+        return dev
+
+    apps_dev = budget_for(staged)
+    unit = budgets[apps_dev]["unit"]
+    # key -> (FileRoot, its budget, its staged folder's real path)
+    by_key: dict[str, tuple] = {}
+    # A volume that is a folder of the apps tree (a platform pod's subPath
+    # mount) comes back with the apps tree, as a backup takes it with it
+    # (host_backup.plan_file_roots). Staged inside it, its copy would sit in
+    # the apps tree, and the apps tree's swap would set it aside.
+    in_apps = hb._apps_tree_folders()
+    for fr in roots or []:
+        if not fr.live.is_dir():
+            continue
+        st = fr.live.stat()
+        if (st.st_dev, st.st_ino) in in_apps:
+            continue
+        fr.base.mkdir(mode=0o700, exist_ok=True)
+        fr.staged.mkdir(mode=0o700, exist_ok=True)
+        if any(fr.staged.iterdir()):
+            raise RestoreError(f"the staging folder in {fr.live} is not empty; cancel and try again")
+        by_key[fr.key] = (fr, budget_for(fr.staged), os.path.realpath(fr.staged))
+
+    def spend(n: int, name: str, dev: Optional[int] = None) -> None:
+        b = budgets[apps_dev if dev is None else dev]
+        b["bytes"] -= max(0, int(n))
+        if b["bytes"] < 0:
             raise RestoreError(f"the backup is larger than this Host has room for (at {name})")
 
-    def make(name: str, data: int) -> None:
+    def make(name: str, data: int, dev: Optional[int] = None) -> None:
         """A new file, folder or link: its data in whole units, its name in
         its folder, and an inode. Spent before it is made."""
-        if budget["inodes"] is not None:
-            budget["inodes"] -= 1
-            if budget["inodes"] < 0:
+        b = budgets[apps_dev if dev is None else dev]
+        if b["inodes"] is not None:
+            b["inodes"] -= 1
+            if b["inodes"] < 0:
                 raise RestoreError(f"the backup holds more files than this Host has room for (at {name})")
-        spend(_units(data, unit) + _name_cost(name.rsplit("/", 1)[-1]), name)
+        spend(_units(data, b["unit"]) + _name_cost(name.rsplit("/", 1)[-1]), name, dev)
 
     # The database spool: one file, its pieces spent as they arrive, and a
     # unit for the last one it only partly fills.
@@ -2287,8 +2393,8 @@ def unpack(src, identity: str, staged: Path, *, expect: Optional[dict] = None,
     app_data: dict[str, dict] = {}
     app_cur: list = [None]          # the app whose pieces are arriving
     files: dict[str, str] = {}
-    links: list[tuple[list[str], str]] = []
-    seen: dict[str, str] = {}       # rel -> d (folder named), i (folder implied), f, l
+    links: list[tuple[str, list[str], str]] = []    # (prefix, parts, target)
+    seen: dict[str, str] = {}       # prefix+rel -> d (folder named), i (folder implied), f, l
     manifest = None
     failure: Optional[BaseException] = None
     rc = None
@@ -2367,28 +2473,37 @@ def unpack(src, identity: str, staged: Path, *, expect: Optional[dict] = None,
                         if one.get("f"):
                             one["f"].write(b)
                     one["chunks"] += 1
-                elif name.startswith("apps/"):
-                    parts = _safe_rel(name, "apps/")
+                elif name.startswith("apps/") or name.startswith(hb.FILES_PREFIX + "/"):
+                    if name.startswith("apps/"):
+                        prefix, into, dev = "apps/", staged, apps_dev
+                    else:
+                        key = name[len(hb.FILES_PREFIX) + 1:].split("/", 1)[0]
+                        if key not in by_key:
+                            continue        # a volume this restore leaves as it is
+                        prefix, into, dev = f"{hb.FILES_PREFIX}/{key}/", by_key[key][0].staged, by_key[key][1]
+                    u = budgets[dev]["unit"]
+                    parts = _safe_rel(name, prefix)
                     if parts[0] == RESTORE_DIR.name:
-                        # Never written by a backup (host_backup.APPS_EXCLUDES); moved
-                        # in, it would land on this restore's own plan and staging.
+                        # Never written by a backup (host_backup.APPS_EXCLUDES,
+                        # excluded_in_root); moved in, it would land on this
+                        # restore's own plan and staging.
                         raise RestoreError(f"the backup holds {name}, which backups never hold")
-                    rel = "/".join(parts)
+                    rel = prefix + "/".join(parts)
                     if rel in seen and not (seen[rel] == "i" and m.isdir()):
                         raise RestoreError(f"the backup holds {name} twice")
                     for i in range(1, len(parts)):
-                        if seen.get("/".join(parts[:i]), "i") not in ("d", "i"):
+                        if seen.get(prefix + "/".join(parts[:i]), "i") not in ("d", "i"):
                             raise RestoreError(f"the backup has something below a file or a link ({name})")
                     for i in range(1, len(parts)):
-                        here = "/".join(parts[:i])
+                        here = prefix + "/".join(parts[:i])
                         if here not in seen:
                             seen[here] = "i"
-                            make("apps/" + here, unit)       # a folder the path implies
-                    target = staged.joinpath(*parts)
+                            make(here, u, dev)       # a folder the path implies
+                    target = into.joinpath(*parts)
                     if m.isdir():
                         if rel not in seen:
-                            make(name, unit)
-                        _make_dirs(staged, parts)
+                            make(name, u, dev)
+                        _make_dirs(into, parts)
                         dfd = os.open(target, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
                         try:
                             os.fchmod(dfd, (m.mode & 0o777) | 0o700)
@@ -2399,12 +2514,12 @@ def unpack(src, identity: str, staged: Path, *, expect: Optional[dict] = None,
                         if not m.linkname or "\0" in m.linkname:
                             raise RestoreError(f"the backup holds a link with no target ({name})")
                         target_len = len(os.fsencode(m.linkname))
-                        make(name, target_len if target_len >= LINK_INLINE else 0)
-                        links.append((parts, m.linkname))
+                        make(name, target_len if target_len >= LINK_INLINE else 0, dev)
+                        links.append((prefix, parts, m.linkname))
                         seen[rel] = "l"
                     elif m.isfile():
-                        make(name, m.size)
-                        _make_dirs(staged, parts[:-1])
+                        make(name, m.size, dev)
+                        _make_dirs(into, parts[:-1])
                         h = hashlib.sha256()
                         ffd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
                         with os.fdopen(ffd, "wb") as w:
@@ -2483,13 +2598,14 @@ def unpack(src, identity: str, staged: Path, *, expect: Optional[dict] = None,
             if hb.unshowable(p):
                 raise RestoreError("the backup's manifest names a path with a line break or another "
                                    "control character in it, which backups never hold")
-            if not p.startswith("apps/"):
+            if not (p.startswith("apps/") or any(p.startswith(f"{hb.FILES_PREFIX}/{k}/")
+                                                 for k in by_key)):
                 continue
             if "link" in f:
                 want_links[p] = f.get("link")
             else:
                 want_files[p] = f.get("sha256")
-        got_links = {"apps/" + "/".join(parts): t for parts, t in links}
+        got_links = {prefix + "/".join(parts): t for prefix, parts, t in links}
         for p in sorted(set(files) | set(want_files)):
             if files.get(p) != want_files.get(p):
                 raise RestoreError(f"{p} does not match the manifest")
@@ -2498,24 +2614,43 @@ def unpack(src, identity: str, staged: Path, *, expect: Optional[dict] = None,
                 raise RestoreError(f"the link {p} does not match the manifest")
         restored_apps = _check_app_data(manifest, app_data, app_dir, stage_app_data)
         # Checked. Now the links, then the database.
-        for parts, t in links:
-            _make_dirs(staged, parts[:-1])
-            os.symlink(t, staged.joinpath(*parts))
+        def where(prefix: str) -> tuple:
+            """(staged folder, its real path, live root, what it leaves alone)"""
+            if prefix == "apps/":
+                return staged, staged_real, str(LIVE), None
+            fr, _dev, real = by_key[prefix[len(hb.FILES_PREFIX) + 1:].rstrip("/")]
+            return fr.staged, real, str(fr.live), fr.kept
+        for prefix, parts, t in links:
+            into = where(prefix)[0]
+            _make_dirs(into, parts[:-1])
+            os.symlink(t, into.joinpath(*parts))
         refused: list[str] = []
         if not trust_links:
-            live_root = str(LIVE)
             left = list(links)
             changed = True
             while changed:           # a link left out can change where others lead
                 changed = False
-                for parts, t in list(left):
-                    path = staged.joinpath(*parts)
-                    if _link_escapes(staged_real, live_root, parts, t):
-                        os.unlink(path)
-                        left.remove((parts, t))
-                        refused.append("/".join(parts))
+                for prefix, parts, t in list(left):
+                    into, real, live_root, kept_fn = where(prefix)
+                    if _link_escapes(real, live_root, parts, t, kept_fn):
+                        os.unlink(into.joinpath(*parts))
+                        left.remove((prefix, parts, t))
+                        refused.append(("" if prefix == "apps/" else prefix) + "/".join(parts))
                         changed = True
         git_dirs = defuse_git(staged)
+        # The person's own repositories in the other volumes keep their
+        # settings when the backup is this Host's own; from one it cannot
+        # confirm, they are reset the way the apps tree's are (defuse_git).
+        held = (manifest.get("parts") or {}).get("files")
+        held = held if isinstance(held, dict) else {}
+        file_roots = []
+        for key, (fr, _dev, _real) in by_key.items():
+            if key not in held:
+                shutil.rmtree(fr.staged, ignore_errors=True)
+                continue
+            if not trust_links:
+                git_dirs += [f"{hb.FILES_PREFIX}/{key}/{d}".rstrip("/") for d in defuse_git(fr.staged)]
+            file_roots.append({"key": key, "live": str(fr.live)})
         loaded = _load_database(spool) or {}
     finally:
         with contextlib.suppress(FileNotFoundError):
@@ -2523,7 +2658,7 @@ def unpack(src, identity: str, staged: Path, *, expect: Optional[dict] = None,
     return {"files": len(files), "db_bytes": db_bytes, "links_refused": sorted(refused)[:50],
             "links_refused_count": len(refused), "world_note": loaded.get("note"),
             "load_columns": loaded.get("columns") or [], "deferred_checks": loaded.get("checks") or [],
-            "app_data": restored_apps, "git_dirs_reset": git_dirs,
+            "app_data": restored_apps, "git_dirs_reset": git_dirs, "file_roots": file_roots,
             "entity_id": manifest.get("entity_id") if isinstance(manifest.get("entity_id"), int) else None}
 
 
@@ -3181,25 +3316,27 @@ def _tail(text: str, n: int = 300) -> str:
     return " ".join((text or "").split())[-n:]
 
 
-def _write_manifest() -> None:
-    """Every file and folder the staged tree holds, relative to the apps root.
+def _write_manifest(staged: Optional[Path] = None, manifest: Optional[Path] = None) -> None:
+    """Every file and folder the staged tree holds, relative to the apps root
+    (or to a FileRoot's volume, for its own staged tree and manifest).
     The swap decides what belongs from this list, never from what is left in
     the staged folder, so a swap that restarts halfway decides the same way."""
+    staged, manifest = staged or STAGED, manifest or MANIFEST
     entries = []
-    for dirpath, dirnames, filenames in os.walk(STAGED):
-        rel_dir = os.path.relpath(dirpath, STAGED)
+    for dirpath, dirnames, filenames in os.walk(staged):
+        rel_dir = os.path.relpath(dirpath, staged)
         rel_dir = "" if rel_dir == "." else rel_dir
         for name in dirnames + filenames:
             full = os.path.join(dirpath, name)
             rel = f"{rel_dir}/{name}" if rel_dir else name
             kind = "d" if os.path.isdir(full) and not os.path.islink(full) else "f"
             entries.append(kind + rel)
-    MANIFEST.write_bytes("\0".join(entries).encode("utf-8", "surrogateescape"))
-    MANIFEST.chmod(0o600)
+    manifest.write_bytes("\0".join(entries).encode("utf-8", "surrogateescape"))
+    manifest.chmod(0o600)
 
 
-def _manifest_files() -> set[str]:
-    raw = MANIFEST.read_bytes().decode("utf-8", "surrogateescape")
+def _manifest_files(manifest: Optional[Path] = None) -> set[str]:
+    raw = (manifest or MANIFEST).read_bytes().decode("utf-8", "surrogateescape")
     return {e[1:] for e in raw.split("\0") if e.startswith("f")}
 
 
@@ -3209,6 +3346,10 @@ async def _clear_staging(pool) -> None:
     await asyncio.to_thread(shutil.rmtree, APP_DATA, True)
     with contextlib.suppress(FileNotFoundError):
         (STAGED.parent / SPOOL_NAME).unlink()
+    for fr in restorable_roots(True):
+        await asyncio.to_thread(shutil.rmtree, fr.staged, True)
+        with contextlib.suppress(FileNotFoundError):
+            fr.manifest.unlink()
 
 
 def _restart() -> None:
@@ -3256,10 +3397,12 @@ def _is_folder(p: Path) -> bool:
     return p.is_dir() and not p.is_symlink()
 
 
-def _files(base: Path, *, skip_kept: bool) -> list[tuple[str, str]]:
+def _files(base: Path, *, skip_kept: bool, kept=None) -> list[tuple[str, str]]:
     """(path relative to base, full path) of every file and link under base.
     A link to a folder counts as a file and is never followed. With skip_kept,
-    what a restore leaves alone is neither listed nor entered."""
+    what a restore leaves alone (`kept`, default the apps tree's) is neither
+    listed nor entered."""
+    is_kept = kept or _kept
     out = []
     for dirpath, dirnames, filenames in os.walk(base):
         rel_dir = os.path.relpath(dirpath, base)
@@ -3267,13 +3410,13 @@ def _files(base: Path, *, skip_kept: bool) -> list[tuple[str, str]]:
         names, keep = list(filenames), []
         for d in dirnames:
             rel = f"{rel_dir}/{d}" if rel_dir else d
-            if skip_kept and _kept(rel):
+            if skip_kept and is_kept(rel):
                 continue
             (names if os.path.islink(os.path.join(dirpath, d)) else keep).append(d)
         dirnames[:] = keep
         for f in names:
             rel = f"{rel_dir}/{f}" if rel_dir else f
-            if not (skip_kept and _kept(rel)):
+            if not (skip_kept and is_kept(rel)):
                 out.append((rel, os.path.join(dirpath, f)))
     return out
 
@@ -3284,49 +3427,54 @@ def _remove_empty_folders(path: Path) -> None:
         os.rmdir(dirpath)
 
 
-def set_aside(root: Path, manifest_files: set[str], keep=()) -> int:
+def set_aside(root: Path, manifest_files: set[str], keep=(), *,
+              previous: Optional[Path] = None, kept=None) -> int:
     """Move every live file the backup does not hold into previous/, except
     under the top-level folders `keep` names (an unverified restore's
-    LIVE_KEPT_DIRS). Folders stay where they are (bind mounts). Idempotent."""
+    LIVE_KEPT_DIRS). Folders stay where they are (bind mounts). Idempotent.
+    For a FileRoot: its own previous/ and what it leaves alone (`kept`)."""
     moved = 0
     keep = tuple(keep or ())
-    for rel, full in _files(root, skip_kept=True):
+    previous = previous or PREVIOUS
+    for rel, full in _files(root, skip_kept=True, kept=kept):
         if rel.split("/", 1)[0] in keep:
             continue
         if rel not in manifest_files:
-            _move(full, PREVIOUS / rel)
+            _move(full, previous / rel)
             moved += 1
     return moved
 
 
-def move_in(root: Path) -> int:
+def move_in(root: Path, staged: Optional[Path] = None, previous: Optional[Path] = None) -> int:
     """Move the restored files from the staged tree into the live one; a live
     file in the way goes to previous/ first. Folders are made, never moved.
-    Idempotent: a moved file has left the staged tree."""
-    for dirpath, dirnames, _ in os.walk(STAGED):
+    Idempotent: a moved file has left the staged tree. For a FileRoot: its
+    own staged tree and previous/."""
+    staged, previous = staged or STAGED, previous or PREVIOUS
+    for dirpath, dirnames, _ in os.walk(staged):
         for d in list(dirnames):
             full = os.path.join(dirpath, d)
             if os.path.islink(full):
                 continue
-            rel = os.path.relpath(full, STAGED)
+            rel = os.path.relpath(full, staged)
             target = root / rel
             if os.path.lexists(target) and not _is_folder(target):
-                _move(str(target), PREVIOUS / rel)      # a file where the backup has a folder
+                _move(str(target), previous / rel)      # a file where the backup has a folder
             target.mkdir(exist_ok=True)
             with contextlib.suppress(OSError):
                 os.chmod(target, os.stat(full).st_mode & 0o7777)
     moved = 0
-    for rel, full in _files(STAGED, skip_kept=False):
+    for rel, full in _files(staged, skip_kept=False):
         dst = root / rel
         if _is_folder(dst):
             # A folder where the backup has a file. set_aside already moved
             # the files in it that the backup does not hold; what is left is
             # what a restore leaves alone, and it goes to previous/ as well.
             for sub, inner in _files(dst, skip_kept=False):
-                _move(inner, PREVIOUS / rel / sub)
+                _move(inner, previous / rel / sub)
             _remove_empty_folders(dst)
-        elif os.path.lexists(dst) and not os.path.lexists(PREVIOUS / rel):
-            _move(str(dst), PREVIOUS / rel)
+        elif os.path.lexists(dst) and not os.path.lexists(previous / rel):
+            _move(str(dst), previous / rel)
         os.replace(full, dst)
         moved += 1
     return moved
@@ -3414,10 +3562,15 @@ def swap(live: str) -> int:
         root = LIVE
         if plan["state"] == DB_DONE:
             plan["set_aside"] = set_aside(root, manifest, keep=plan.get("live_kept") or ())
+            for fr in plan_roots(plan):
+                plan["set_aside"] += set_aside(fr.live, _manifest_files(fr.manifest),
+                                               previous=fr.previous, kept=fr.kept)
             plan["state"] = ASIDE_DONE
             _write_plan(plan)
         if plan["state"] == ASIDE_DONE:
             plan["moved_in"] = move_in(root)
+            for fr in plan_roots(plan):
+                plan["moved_in"] += move_in(fr.live, fr.staged, fr.previous)
             plan.update(state=SWAPPED, swapped_at=hb._now().isoformat(), boots=1)
             _write_plan(plan)
         print(f"restore: swapped in the backup of {plan.get('taken_at')} "
@@ -3466,21 +3619,24 @@ def undo(live: str, why: str) -> None:
     root = LIVE
     # A restored file is one that has left the staged tree; send those back,
     # then return everything the swap set aside.
-    for rel in _manifest_files():
-        cur = root / rel
-        if os.path.lexists(cur) and not os.path.lexists(STAGED / rel) and not _is_folder(cur):
-            _move(str(cur), STAGED / rel)
-    if PREVIOUS.exists():
-        for rel, full in _files(PREVIOUS, skip_kept=False):
-            dst = root / rel
-            if _is_folder(dst):
-                try:
-                    _remove_empty_folders(dst)    # a folder the restore made where a file was
-                except OSError:
-                    print(f"restore: {rel} is a folder with things in it now, so the file "
-                          "that was there is not put back", file=sys.stderr)
-                    continue
-            _move(full, dst)
+    sets = [(root, MANIFEST, STAGED, PREVIOUS)] + [
+        (fr.live, fr.manifest, fr.staged, fr.previous) for fr in plan_roots(plan)]
+    for live_root, manifest, staged, previous in sets:
+        for rel in _manifest_files(manifest):
+            cur = live_root / rel
+            if os.path.lexists(cur) and not os.path.lexists(staged / rel) and not _is_folder(cur):
+                _move(str(cur), staged / rel)
+        if previous.exists():
+            for rel, full in _files(previous, skip_kept=False):
+                dst = live_root / rel
+                if _is_folder(dst):
+                    try:
+                        _remove_empty_folders(dst)    # a folder the restore made where a file was
+                    except OSError:
+                        print(f"restore: {dst} is a folder with things in it now, so the file "
+                              "that was there is not put back", file=sys.stderr)
+                        continue
+                _move(full, dst)
     if before in dbs:
         _rename_pair((live, RESTORE_DB), (before, live))
     elif not (RESTORE_DB in dbs and live in dbs):
@@ -3557,6 +3713,8 @@ async def finish(pool, eid: int) -> Optional[dict]:
             await pool.execute(f'DROP DATABASE IF EXISTS "{live}_before_restore" WITH (FORCE)')
             await asyncio.to_thread(shutil.rmtree, PREVIOUS, True)
             await asyncio.to_thread(shutil.rmtree, STAGED, True)
+            for fr in plan_roots(plan):
+                await asyncio.to_thread(shutil.rmtree, fr.base, True)
             # What the carry said about the owner's sign-in (carry_rows), from
             # its marker in this database, before the marker is dropped below.
             carried = await hb._state(pool, CARRIED_MARKER)
@@ -3575,6 +3733,8 @@ async def finish(pool, eid: int) -> Optional[dict]:
                                                   "app_data_note": app_note,
                                                   "stamp": plan.get("stamp"),
                                                   "files": plan.get("moved_in"),
+                                                  "file_roots": [r.get("key") for r in
+                                                                 plan.get("file_roots") or []],
                                                   "verified": plan.get("verified"),
                                                   "links_left_out": plan.get("links_refused") or [],
                                                   "links_left_out_count": plan.get("links_refused_count")
@@ -3587,6 +3747,8 @@ async def finish(pool, eid: int) -> Optional[dict]:
             # staged tree holds only the restored copy.
             await _clear_staging(pool)
             await asyncio.to_thread(shutil.rmtree, PREVIOUS, True)
+            for fr in plan_roots(plan):
+                await asyncio.to_thread(shutil.rmtree, fr.base, True)
             parts, outcome, error = {}, "failed", plan.get("error") or "the restore failed"
         if not plan.get("recorded"):
             await pool.execute(

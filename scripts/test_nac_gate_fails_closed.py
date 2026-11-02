@@ -38,6 +38,18 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey 
 from server.network import nac_commit, nac_controller as nc, nac_propose, nac_stepup  # noqa: E402
 from server.routes.mcp import _nac_gate  # noqa: E402
 
+
+class _NotHeld:
+    """The owner's quarantine as _nac_gate reads it first (server/network/quarantine_gate.py):
+    no machine here is quarantined, so these checks reach the policy engine."""
+
+    async def fetchval(self, q, *a):
+        return None
+
+
+from server import brain_service as _bs_q  # noqa: E402
+_bs_q._pool = _NotHeld()
+
 FAILS: list[str] = []
 
 

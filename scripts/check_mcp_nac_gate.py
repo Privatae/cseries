@@ -13,7 +13,22 @@ import os
 import sys
 
 sys.path.insert(0, os.environ.get("CSERIES_ROOT", "/app"))
+from server import brain_service
 from server.routes.mcp import _nac_gate
+
+
+class _QuarantinePool:
+    """The owner's quarantine (nac_bastion_quarantine), read by token id; the gate asks
+    it before the policy engine (server/network/quarantine_gate.py)."""
+    def __init__(self):
+        self.held = set()
+
+    async def fetchval(self, q, *a):
+        return 1 if "nac_bastion_quarantine" in q and a and a[0] in self.held else None
+
+
+_QPOOL = _QuarantinePool()
+brain_service.get_pool = lambda: _QPOOL
 
 
 class _FakeNac:
@@ -55,6 +70,28 @@ async def run():
     # when the engine's import or construction failed at start.
     if await _nac_gate(device, nac=None) is None:
         fails.append("a governed device must be refused when no network engine is loaded")
+    # the owner's quarantine of the machine: refused even when the engine admits it,
+    # and even for a bastion bearer with no bound fingerprint; released, admitted again
+    bastion_no_fp = {"id": 7, "hardware_fingerprint": None, "operator_kind": "bastion", "entity_id": 1}
+    _QPOOL.held.update({5, 7})
+    if await _nac_gate(device, nac=_FakeNac(True)) is None:
+        fails.append("a quarantined machine must be refused even when the policy engine admits it")
+    if await _nac_gate(bastion_no_fp, nac=_FakeNac(True)) is None:
+        fails.append("a quarantined bastion bearer with no bound fingerprint must be refused")
+    if await _nac_gate(bearer_only, nac=_FakeNac(True)) is not None:
+        fails.append("a pasted (non-bastion) token is not a machine and is not held")
+    _QPOOL.held.clear()
+    if await _nac_gate(device, nac=_FakeNac(True)) is not None:
+        fails.append("a released machine must pass the gate again")
+    if await _nac_gate(bastion_no_fp, nac=_FakeNac(True)) is not None:
+        fails.append("a released bastion bearer with no bound fingerprint must pass again")
+    # the quarantine cannot be read -> refused (fails closed)
+    brain_service.get_pool = lambda: None
+    try:
+        if await _nac_gate(device, nac=_FakeNac(True)) is None:
+            fails.append("a machine must be refused when the quarantine cannot be read")
+    finally:
+        brain_service.get_pool = lambda: _QPOOL
     return fails
 
 

@@ -1,0 +1,14 @@
+# 2026-11-02: an outside agent's machine reads and contain on /mcp
+# (server/agent_access/reads.py, tools.py): list_agents, list_scheduled,
+# tool_server_configs, posture and baseline_delta take the machine first, are
+# refused and recorded without the connect-time 'read', refuse a machine this
+# Host has no record of or a name two machines share, answer a pairing that
+# withholds observe with its watch state only, and hand out no settings-file
+# path, no secret in a command line and no delegation tag. contain files the
+# ask machine_op files for ('contain', [pid]) and runs only after the person's
+# answer; a tool is callable only if tools/list gives it, so the old name
+# `machines` is unknown, and machine_op still answers. Real heartbeat upsert, agent
+# ingest and asks on a fresh clone of the kernel's schema (TEST_PG_DSN /
+# PEER_TEST_DSN / TEST_DSN, else a throwaway server); the machine side is
+# stubbed. Fails on main, where none of these tools exists.
+test_agent_access_remote_tools_pg.py

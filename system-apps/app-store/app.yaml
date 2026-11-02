@@ -26,7 +26,7 @@ system: true
 #   no rollback record) show above the list. Same execute:install scope.
 # 2.2.8 (2026-10-20): text only. The memory line no longer mentions plans; the
 #   payments-unavailable message says payments are not set up on this Host.
-version: "2.2.8"
+version: "2.3.0"
 # 2.2.1 (2026-09-17): a "Group only" badge on any catalog card whose
 #   `distribution` is 'circle' — the store's source of truth (migration 045
 #   demoted `audience`/`public` to derived columns, so this reads the real

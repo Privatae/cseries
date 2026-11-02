@@ -28,7 +28,11 @@
                 <button class="cseries-nav-btn active" data-view="user" type="button">Your repos</button>
                 <button class="cseries-nav-btn" data-view="host" type="button">Host repos</button>
                 <button class="cseries-nav-btn" data-view="perms" type="button">Permissions</button>
-                <button class="cseries-nav-btn" data-view="mirrors" type="button">Mirrors</button>
+                <!-- Mirrors run as you on Privatae's forge, with the token the platform mints
+                     (gitea.user_token, server/routes/gitea.py _ensure_user_token;
+                     server/routes/github_mirror.py). The tab shows only when this Host
+                     can send that op (/js/network-reach.js). -->
+                <button class="cseries-nav-btn" data-view="mirrors" type="button" hidden data-needs-op="gitea.user_token">Mirrors</button>
             </nav>
         </header>
 
@@ -103,6 +107,7 @@
         </footer>
     </div>
 
+    <script src="/js/network-reach.js"></script>
     <script src="/system-apps/gitea/app.js"></script>
 </body>
 </html>

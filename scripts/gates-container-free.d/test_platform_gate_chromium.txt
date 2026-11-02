@@ -1,0 +1,3 @@
+# A Host that is not a network member sees none of the platform-only
+# controls, in headless Chromium, across six membership answers.
+test_platform_gate_chromium.py

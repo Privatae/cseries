@@ -802,3 +802,10 @@ button.net-host-name:focus-visible { outline: 1px solid var(--cseries-ember); ou
     padding: var(--space-1) var(--space-3);
     user-select: all;
 }
+
+/* The person's own grant draft (Management lane). */
+.nac-grant-new-box { margin: 8px 0 12px; padding: 10px 12px; border: 1px solid var(--cseries-line, rgba(255,255,255,.12)); border-radius: 8px; }
+.nac-grant-new-box summary { cursor: pointer; font-weight: 600; }
+.nac-grant-jobs { display: grid; gap: 6px; margin-top: 8px; }
+.nac-grant-job { display: flex; gap: 8px; align-items: flex-start; }
+.nac-grant-job input { margin-top: 3px; }

@@ -2,10 +2,13 @@
 
 Two layers decide every call, and neither can widen the other:
 
-  1. this agent's permissions (store.holds): 'read' covers the machine list
-     and the ops in READ_GRANT_OPS alone, the box's observe family (its health
-     checks, what is installed, the folder tree and open windows) and the
-     model, backup and op lists and statuses. Anything else, every op that
+  1. this agent's permissions (store.holds): 'read' covers the machine list,
+     the reads in READ_TOOLS (what this Host already holds off a machine's
+     heartbeat: its agents, the scheduled jobs and tool servers they use, its
+     posture and its delta, reads.py), and the ops in READ_GRANT_OPS alone,
+     the box's observe family (its health checks, what is installed, the
+     folder tree and open windows) and the model, backup and op lists and
+     statuses. Anything else, every op that
      returns the person's data (their files under dcn_*, their context store
      under ctx_*, the machine's record of refused ops) and every change, needs
      an 'always' permission for (machine, op) on this connection, or a 'just
@@ -51,7 +54,7 @@ def name_problem(server: str, op: str) -> str:
     if not _OP_NAME.fullmatch(op):
         return "op must be one op name from the machine's list (letters, digits, '_', '.', ':', '-')"
     if store.ANY in server or len(server) > SERVER_MAX or not server.isprintable():
-        return f"server must be one machine's name from `machines` (no '*', at most {SERVER_MAX} characters)"
+        return f"server must be one machine's name from `list_machines` (no '*', at most {SERVER_MAX} characters)"
     return ""
 
 
@@ -75,9 +78,28 @@ def read_grant_covers(op: str) -> bool:
         return False
     return op in READ_GRANT_OPS or op.startswith(READ_GRANT_PREFIXES)
 
+
+def _machine_arg(desc: str = "The machine's name, from `list_machines`.") -> dict:
+    return {"type": "string", "description": desc}
+
+
+def _read_tool(name: str, title: str, description: str, extra: dict | None = None) -> dict:
+    props = {"machine": _machine_arg(), **(extra or {})}
+    return {"name": name, "title": title, "description": description,
+            "inputSchema": {"type": "object", "properties": props, "required": ["machine"],
+                            "additionalProperties": False},
+            "annotations": {"readOnlyHint": True, "openWorldHint": False}}
+
+
+# The names are the bastion's own reads (privatae-bastion `agents`,
+# `schedules`, `tool-servers`, `posture`, `baseline diff`) with the machine
+# first, so a skill written for the bastion on one machine works here for any
+# of the person's machines. The reads answer from what this Host
+# already holds off the machines' heartbeats (reads.py) and need the 'read'
+# ticked at connect; contain is a change and is asked for like any other.
 TOOLS: list[dict] = [
     {
-        "name": "machines",
+        "name": "list_machines",
         "title": "Your machines",
         "description": (
             "The person's machines this Host reaches through their bastions: name, whether it "
@@ -86,13 +108,70 @@ TOOLS: list[dict] = [
         "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
         "annotations": {"readOnlyHint": True, "openWorldHint": False},
     },
+    _read_tool("list_agents", "AI agents on a machine", (
+        "The AI agents, model clients, apps and automations the machine's bastion sees running: "
+        "pid, kind (agent, client, app, automation), what it is, how it was started (origin), "
+        "the account it runs as, its executable and service unit, the model endpoints it talks "
+        "to, and whether a stop is already pending. Command lines have secrets replaced. "
+        "Agents seen in the last five minutes unless include_inactive. Read-only."),
+        {"include_inactive": {"type": "boolean",
+                              "description": "Also list agents not seen in the last five minutes."}}),
+    _read_tool("list_scheduled", "Scheduled jobs that start an agent", (
+        "The scheduled jobs on the machine (cron, systemd timers, launchd, Task Scheduler) that "
+        "would start an AI agent or an automation: where, when, as whom, and the command with "
+        "secrets replaced. Read-only.")),
+    _read_tool("tool_server_configs", "Agents' tool servers", (
+        "The MCP tool servers the machine's AI agents are set up to start, per agent, each with "
+        "its problems (a key written in plain text, a package with no fixed version, a server "
+        "running that no settings file declares). Where a settings file sits is not given. "
+        "Read-only.")),
+    _read_tool("posture", "A machine's posture", (
+        "The machine as the Host's Oversight reads it: its host checks (firewall, open SSH, "
+        "security updates, reboot needed, disk), its alert and detection states, holes in its "
+        "own record, what it says it enforces, and the open findings against it. A value the "
+        "machine never reported is null and means unknown, never fine. Read-only.")),
+    _read_tool("baseline_delta", "What runs that the baseline does not hold", (
+        "What the Host has of the machine's delta against its baseline: the summary on its "
+        "last report (counts per level and the baseline's state) and the open findings the "
+        "Host's Oversight filed from the machine's record, each with its fingerprint. The full "
+        "delta is read on the machine itself. Read-only.")),
+    {
+        "name": "contain",
+        "title": "Stop an agent on a machine",
+        "description": (
+            "Stop an AI agent on one of the person's machines: by its pid from `list_agents`, "
+            "or a program the baseline does not hold by its fingerprint from `baseline_delta`. "
+            "It runs only once the person has approved it: the first call returns a link for "
+            "them to open on their Host and nothing runs; call again with the same arguments "
+            "after they answer. The machine stops only a process it detected as an agent "
+            "(never an app the person is using) and may ask the person itself as well."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "machine": _machine_arg(),
+                "pid": {"type": "integer", "minimum": 1,
+                        "description": "The agent's pid, from `list_agents`."},
+                "finding": {"type": "string",
+                            "description": "Instead of a pid: a finding's fingerprint (`fp`), "
+                                           "from `baseline_delta`."},
+                "note": {"type": "string",
+                         "description": ("Why, in a sentence. Shown to the person on the approval "
+                                         "page as your own words, apart from the Host's; never "
+                                         "sent to the machine.")},
+            },
+            "required": ["machine"],
+            "additionalProperties": False,
+        },
+        "annotations": {"destructiveHint": True, "openWorldHint": False},
+    },
     {
         "name": "machine_op",
         "title": "Run an op on a machine",
         "description": (
             "Run one op on one of the person's machines through their Host (an op the machine "
-            "lists in `machines`, e.g. 'uptime'). If you were allowed to see their machines, a "
-            "health check or a list runs at once: uptime, observe:*, computer:*, model:list, "
+            "lists in `list_machines`, e.g. 'uptime'). If you were allowed to see their machines, "
+            "a health check or a list runs at once: uptime, observe:*, computer:*, model:list, "
             "backup_list, op_list, op_run_status and op_plan_status. Anything else, including "
             "reading their files (dcn_*) or their context store (ctx_*), and every change, runs "
             "only once the person has approved it: the first call returns a link for them to "
@@ -102,7 +181,7 @@ TOOLS: list[dict] = [
         "inputSchema": {
             "type": "object",
             "properties": {
-                "server": {"type": "string", "description": "The machine's name, from `machines`."},
+                "server": {"type": "string", "description": "The machine's name, from `list_machines`."},
                 "op": {"type": "string", "description": "The op the machine lists."},
                 "args": {"type": "array", "items": {"type": "string"},
                          "description": "The op's arguments."},
@@ -117,6 +196,8 @@ TOOLS: list[dict] = [
         "annotations": {"destructiveHint": True, "openWorldHint": False},
     },
 ]
+
+READ_TOOLS = ("list_agents", "list_scheduled", "tool_server_configs", "posture", "baseline_delta")
 
 
 class NeedsApproval(Exception):
@@ -221,20 +302,62 @@ def _waiting_words(state: dict) -> tuple[dict, str]:
             state.get("next") or "The machine is waiting for the person's approval.")
 
 
+NO_READ_WORDS = ("This agent was not allowed to see the person's machines when it was "
+                 "connected. They can reconnect it with that ticked.")
+FINDING_FP = re.compile(r"[0-9a-f]{32}")
+PID_MAX = 2 ** 31 - 1
+
+
+def machine_problem(machine: str) -> str:
+    """Why `machine` cannot name a machine, or ''."""
+    return name_problem(machine, "uptime").replace("server must", "machine must")
+
+
 async def call(pool, eid: int, conn: dict, name: str, args: dict, origin: str) -> dict:
     """One tools/call from a connected agent: an MCP CallToolResult, or
     NeedsApproval. `conn` is store.resolve_access's row."""
     cid = int(conn["id"])
     held = await store.grants(pool, cid)
-    if name == "machines":
+    tool = name
+    if tool == "list_machines":
         if not store.holds(held, store.READ, "*", "*"):
             await store.record_call(pool, cid, name, "", "", "refused: no read")
-            return _text("This agent was not allowed to see the person's machines when it was "
-                         "connected. They can reconnect it with that ticked.", error=True)
+            return _text(NO_READ_WORDS, error=True)
         await store.record_call(pool, cid, name, "", "", "ok")
         return _text({"machines": await _machines(pool, eid)})
 
-    if name != "machine_op":
+    if tool in READ_TOOLS:
+        return await _read(pool, eid, cid, held, tool, args)
+
+    if tool == "contain":
+        machine = str(args.get("machine") or "").strip()
+        note = str(args.get("note") or "")
+        pid, finding = args.get("pid"), args.get("finding")
+        if not machine:
+            return _text("machine is required", error=True)
+        if (pid is None) == (finding is None):
+            return _text("contain takes one of pid (from list_agents) or finding (a fingerprint "
+                         "from baseline_delta)", error=True)
+        if finding is not None:
+            fp = str(finding).strip().lower()
+            if not FINDING_FP.fullmatch(fp):
+                return _text("finding must be a finding's 32-hex fingerprint (`fp` in "
+                             "baseline_delta)", error=True)
+            op_arg = "finding:" + fp
+        else:
+            if isinstance(pid, str) and pid.strip().isdigit():
+                pid = int(pid.strip())
+            if isinstance(pid, bool) or not isinstance(pid, int) or not 0 < pid <= PID_MAX:
+                return _text("pid must be a process id from list_agents", error=True)
+            op_arg = str(pid)
+        # The same op and arguments machine_op would send ('contain', [pid]),
+        # so the person's page, a 'just this once' and a refusal are one act
+        # whichever tool asked.
+        from server.network import nac_mgmt
+        return await _run_op(pool, eid, cid, held, name, machine, nac_mgmt.CONTAIN_OP, [op_arg],
+                             note, origin)
+
+    if tool != "machine_op":
         raise KeyError(name)
     server = str(args.get("server") or "").strip()
     op = str(args.get("op") or "").strip()
@@ -249,7 +372,46 @@ async def call(pool, eid: int, conn: dict, name: str, args: dict, origin: str) -
         op_args = _clean_args(args.get("args"))
     except ValueError as exc:
         return _text(str(exc), error=True)
+    return await _run_op(pool, eid, cid, held, name, server, op, op_args, note, origin)
 
+
+async def _read(pool, eid: int, cid: int, held: list, tool: str, args: dict) -> dict:
+    """One of READ_TOOLS: what this Host already holds about one machine
+    (reads.py). Covered by the connect page's 'read' and nothing else; every
+    call is recorded, refused or not."""
+    from server.agent_access import reads
+    machine = str(args.get("machine") or "").strip()
+    if not machine:
+        return _text("machine is required", error=True)
+    why_not = machine_problem(machine)
+    if why_not:
+        await store.record_call(pool, cid, tool, machine[:SERVER_MAX], "", "refused: bad name")
+        return _text(why_not, error=True)
+    if not store.holds(held, store.READ, machine, "*"):
+        await store.record_call(pool, cid, tool, machine, "", "refused: no read")
+        return _text(NO_READ_WORDS, error=True)
+    fn = {"list_agents": reads.list_agents, "list_scheduled": reads.list_scheduled,
+          "tool_server_configs": reads.tool_server_configs, "posture": reads.posture,
+          "baseline_delta": reads.baseline_delta}[tool]
+    kw = {"include_inactive": args.get("include_inactive") is True} if tool == "list_agents" else {}
+    try:
+        out = await fn(pool, eid, machine, **kw)
+    except reads.MachineProblem as p:
+        await store.record_call(pool, cid, tool, machine, "", p.outcome)
+        return _text(p.words, error=True)
+    await store.record_call(pool, cid, tool, machine, "", "ok")
+    return _text(out)
+
+
+async def _run_op(pool, eid: int, cid: int, held: list, name: str, server: str, op: str,
+                  op_args: list, note: str, origin: str) -> dict:
+    """One op on one machine for a connected agent (machine_op, contain): the
+    Host's own gate, then this agent's permission or the person's ask, then
+    nac_mgmt.run_mgmt_op."""
+    why_not = name_problem(server, op)
+    if why_not:
+        await store.record_call(pool, cid, name, server[:SERVER_MAX], op[:128], "refused: bad name")
+        return _text(why_not, error=True)
     from server.network import nac_mgmt
     if host_only(op):
         await store.record_call(pool, cid, name, server, op, "refused: the Host's own")
@@ -260,7 +422,7 @@ async def call(pool, eid: int, conn: dict, name: str, args: dict, origin: str) -
     # into the Host's own sentence).
     if server not in {m["name"] for m in await _machines(pool, eid) if m.get("name")}:
         await store.record_call(pool, cid, name, server, op, "refused: no such machine")
-        return _text(f"'{server}' is not one of the person's machines. `machines` lists them.",
+        return _text(f"'{server}' is not one of the person's machines. `list_machines` lists them.",
                      error=True)
     # The Host's own permission first, by the pod gate's own check (the one
     # run_mgmt_op runs): an op this Host may not run itself is refused here,
@@ -296,8 +458,7 @@ async def call(pool, eid: int, conn: dict, name: str, args: dict, origin: str) -
                          error=True)
         if free_read:
             await store.record_call(pool, cid, name, server, op, "refused: no read")
-            return _text("This agent was not allowed to see the person's machines when it was "
-                         "connected. They can reconnect it with that ticked.", error=True)
+            return _text(NO_READ_WORDS, error=True)
         ask_id = await store.file_ask(pool, cid, store.GRANT_ASK, server, op, op_args, note)
         await store.record_call(pool, cid, name, server, op, "asked the person")
         url = ask_url(origin, ask_id)

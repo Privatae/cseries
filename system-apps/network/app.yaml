@@ -433,7 +433,27 @@ system: true
 #   field, as an error, and leaves the card, its line, Copy buttons and countdown as they
 #   were. The earlier steps stay, folded, under "Do it step by step". A Host
 #   whose answer has no one line shows the card as before.
-version: "1.21.0"
+# 1.22.1 (2026-11-02): the Agents view says what the bastion keeps (v256): per
+#   agent the kind of account it runs as, whether that account administers
+#   the machine and whether anyone is signed in to it, the program file and
+#   its unit; an administrator agent carries a pill. A Tool servers block
+#   lists each machine's declared tool servers with what is worth fixing,
+#   and how much the bastion read. No new permission: /api/network/agents
+#   and /api/network/bastions (read:topology) carry them.
+# 1.22.2 (2026-11-02): the Physical view says how each bastion reaches this
+#   Host (directly, on its own ports) instead of "the relay it dials": a
+#   bastion paired to a C-Series Host dials no relay (local_bastion.py).
+# 1.23.0 (2026-11-02): NAC, Management: "Give your Host a job on a machine"
+#   drafts a grant from a job (GET /api/network/nac/mgmt/purposes) for the
+#   person to approve with their code: a Host with no model has no agent to
+#   propose one. The header's bridge chip ("control plane") shows only on a
+#   network member, as "network": a Host on its own has no such connection.
+# 1.23.1 (2026-11-02): a drafted grant shows at once: Draft no longer stops on
+#   the lane's open state before the list reloads.
+# 1.23.2 (2026-11-02): a quarantined machine's card says what the Host does
+#   (refuses everything it asks, closes what it had open, notes its check-ins)
+#   instead of a platform tunnel this Host does not have.
+version: "1.23.2"
 # Network is NOT a conversational surface — the user operates it directly and
 # talks to the host in Circles/the Workbench. So this is the code-true source for
 # the ENVIRONMENT CATALOG (topology block + describe_app), NOT a surface_role

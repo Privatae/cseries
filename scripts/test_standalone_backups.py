@@ -116,6 +116,9 @@ apps = tmp / "apps"
 (apps / "app-state/user-files").mkdir(parents=True)
 (apps / "app-state/user-files/notes.txt").write_text("my notes\n")
 hb.APPS_ROOT = str(apps)
+# The Host's other volumes are this test's to leave out: never the machine's
+# own folders (scripts/test_backup_file_roots.py tests them).
+hb.FILE_ROOTS = []
 hb.APPS_EXCLUDES = tuple(p.replace("/var/lib/cseries", str(apps)) for p in hb.APPS_EXCLUDES)
 hb.WORKDIR = tmp / "work"
 hb.LOCAL_DIR = apps / ".host-backups"

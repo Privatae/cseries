@@ -370,24 +370,31 @@ _PENDING_BOX_OPS: frozenset[str] = frozenset({
     # op_list / op_run_status) passed through
     # here once and moved to the generated block when bastion 0.37.0
     # merged (720f355).
+    #
+    # Regenerated on 2026-11-02 from privatae-bastion a87f11c (main after
+    # 0.60.0): observe:folders, observe:journal, observe:logins, observe:cert
+    # and op_grant_drop joined. observe:baseline and observe:delta are NOT box
+    # ops: they are the bastion's local CLI, which no Host can send, so
+    # mgmtOpVocabulary() does not carry them and neither does this list.
 })
 
 _GATEWAY_BOX_OPS = frozenset({
     # BEGIN GENERATED box ops — do not hand-edit; scripts/gen_box_ops.py writes this.
-    # mgmtOpVocabulary() as the Go compiler reports it, from the gateway source (ea562df).
+    # mgmtOpVocabulary() as the Go compiler reports it, from /opt/privatae-bastion (a87f11c).
     "audit_fetch", "backup_fetch", "backup_list", "backup_push", "backup_reseal",
     "coder_grant_drop", "coder_grant_sync", "computer:inventory", "computer:tree",
     "computer:windows", "ctx_del", "ctx_extract", "ctx_get", "ctx_put", "dcn_catalog",
     "dcn_grant_drop", "dcn_grant_sync", "dcn_list", "dcn_plan_apply", "dcn_read_range",
     "dcn_search", "dcn_stat", "device_request", "device_status", "model:drop",
-    "model:list", "model:pull", "observe:alerts", "observe:disk", "observe:firewall",
-    "observe:host", "observe:k8s", "observe:kernel", "observe:logs", "observe:metrics",
+    "model:list", "model:pull", "observe:alerts", "observe:cert", "observe:disk",
+    "observe:firewall", "observe:folders", "observe:host", "observe:journal",
+    "observe:k8s", "observe:kernel", "observe:logins", "observe:logs", "observe:metrics",
     "observe:net", "observe:sockets", "observe:units", "op_apply", "op_dry_run",
-    "op_grant_run", "op_list", "op_plan_line", "op_plan_status", "op_plan_undo",
-    "op_run_status", "op_sync", "pairing_anchor_consent", "pairing_grant_drop",
-    "pairing_grant_sync", "pairing_list", "pairing_redeem", "service_grant_drop",
-    "service_grant_sync", "session:open", "session:root", "session:root:exec",
-    "stepup_request", "stepup_status", "uptime"
+    "op_grant_drop", "op_grant_run", "op_list", "op_plan_line", "op_plan_status",
+    "op_plan_undo", "op_run_status", "op_sync", "pairing_anchor_consent",
+    "pairing_grant_drop", "pairing_grant_sync", "pairing_list", "pairing_redeem",
+    "service_grant_drop", "service_grant_sync", "session:open", "session:root",
+    "session:root:exec", "stepup_request", "stepup_status", "uptime"
     # END GENERATED box ops
 })
 

@@ -448,7 +448,10 @@ def scenario_fresh_others(page, base):
 
 def scenario_phone_tabs(page, base):
     open_app(page, base, view="")
-    views = page.locator(".cseries-nav-btn").evaluate_all("bs => bs.map(b => b.dataset.view)")
+    # The tabs a person can select: a tab hidden on this Host (History needs the
+    # network's update op, network-reach.js) is never scrolled to.
+    views = page.locator(".cseries-nav-btn").evaluate_all(
+        "bs => bs.filter(b => !b.hidden && b.offsetParent !== null).map(b => b.dataset.view)")
     nav = page.locator(".cseries-nav")
     check("PT the tab bar is wider than a phone", nav.evaluate("n => n.scrollWidth > n.clientWidth"))
     seen = []

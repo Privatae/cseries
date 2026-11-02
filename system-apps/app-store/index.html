@@ -23,7 +23,9 @@
             <nav class="cseries-nav" aria-label="Browse apps">
                 <button class="cseries-nav-btn active" data-filter="all" aria-pressed="true">All</button>
                 <button class="cseries-nav-btn" data-filter="machine" aria-pressed="false">On your machine</button>
-                <button class="cseries-nav-btn" data-filter="sites" aria-pressed="false">For your public sites</button>
+                <!-- Shown only when this Host can publish sites (webapp.publish_bundle;
+                     /js/network-reach.js): the platform serves every public zone. -->
+                <button class="cseries-nav-btn" data-filter="sites" aria-pressed="false" hidden data-needs-op="webapp.publish_bundle">For your public sites</button>
                 <button class="cseries-nav-btn" data-filter="updates" aria-pressed="false">
                     <span>Updates</span>
                     <span class="cseries-pill warn" id="filter-updates-pill" hidden></span>
@@ -102,6 +104,7 @@
         </div>
     </div>
 
+    <script src="/js/network-reach.js"></script>
     <script src="/system-apps/app-store/app.js"></script>
 </body>
 </html>

@@ -233,6 +233,7 @@ class FakePool:
         self.revoked = set()   # ids of revoked mcp_client_tokens rows
         self.writes = []       # every (sql, args) that writes
         self.fail_insert = False  # the next pairing-token INSERT raises, as a refused write would
+        self.quarantined = set()  # ids of mcp_client_tokens rows under the owner's quarantine
 
     def acquire(self):
         return _Acquire(self)
@@ -262,6 +263,11 @@ class FakePool:
                 return "UPDATE 0"
             t["expired"] = True
             return "UPDATE 1"
+        raise AssertionError(sql)
+
+    async def fetchval(self, sql, *args):
+        if "FROM nac_bastion_quarantine" in sql:   # the check every lane makes (quarantine_gate)
+            return 1 if args[0] in self.quarantined else None
         raise AssertionError(sql)
 
     async def fetchrow(self, sql, *args):
@@ -875,6 +881,14 @@ async def part_kernel(pool, out, lane_head):
     code, _a = await _ws(app, scope("websocket", "/bastion-harness"), "BEARER mcp_not-the-bearer")
     check("/bastion-harness over the lane with a wrong bearer: closed 4401", code == 4401, code)
     relay = get_harness_relay()
+    # A refused socket is held before it closes (quarantine_gate.REFUSED_HOLD_S);
+    # the close code is what this checks, so no hold here.
+    from server.network import quarantine_gate
+    quarantine_gate.REFUSED_HOLD_S = 0
+    pool.quarantined.add(1)
+    code, _a = await _ws(app, scope("websocket", "/bastion-harness"), "BEARER " + out["bearer"])
+    check("/bastion-harness over the lane, the machine quarantined: closed 4403", code == 4403, code)
+    pool.quarantined.discard(1)
     code, _a = await _ws(app, scope("websocket", "/bastion-harness"), "BEARER " + out["bearer"])
     parked = any(relay._workers.get(k) is not None for k in relay._idle)
     check("/bastion-harness over the lane with the redeemed bearer: authed and parked as a worker",

@@ -378,12 +378,17 @@ async def status():
     # A stored placeholder ("Entity", "Entity 1", "entity-1") is shown as
     # "Host #N" — the dock, taskbar, desktop and Settings all read this field.
     display_name = display_name_or_host(display_name, entity_id) if entity_id else display_name
+    # Whether this Host is an active network member and which platform ops it
+    # can send: the one answer the apps gate their platform-only controls on
+    # (server/bridge/platform_reach.py, dashboard/base/js/network-reach.js).
+    from server.bridge import platform_reach
     return {
         "entity_id": entity_id,
         "entity_display_name": display_name,
         "uptime_s": int(time.time() - _start_time),
         "dashboard_port": int(os.environ.get("DASHBOARD_PORT", "8800")),
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "network": platform_reach.reach(),
     }
 
 

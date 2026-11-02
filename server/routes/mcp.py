@@ -261,6 +261,14 @@ async def _nac_gate(auth: dict, nac=None) -> dict | None:
     or None to allow. `nac` is injectable for tests; production uses get_nac_controller()."""
     if auth.get("_internal"):
         return None
+    # The owner's quarantine of a paired machine (nac_bastion_quarantine) comes before
+    # the policy engine and before the bearer-only exemption below: a bastion bearer
+    # with no bound fingerprint is still that machine's. The check every bastion lane
+    # shares; it fails closed (quarantine_gate.is_quarantined).
+    from server.network import quarantine_gate
+    held = await quarantine_gate.mcp_refusal(auth)
+    if held is not None:
+        return held
     if not auth.get("hardware_fingerprint"):
         return None  # bearer-only (or pre-CSR bastion) -> sovereign full access
     token_id = auth.get("id")

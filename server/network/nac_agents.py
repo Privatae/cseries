@@ -335,21 +335,30 @@ async def ingest(pool, token_id: int, hostname, agents) -> int:
         sig = _s(a.get("signature"), 64)
         eps_json = json.dumps(a.get("llm_endpoints") or [])
         try:
+            # exe, unit and the owner facts (v256) are kept as sent, bounded,
+            # like origin: the bastion is the authority on what it saw. exe is
+            # the kernel's path for the process (absolute or empty, never
+            # argv[0]), so it is bounded at the bastion's own path limit.
             await pool.execute(
                 "INSERT INTO nac_agent_activity "
                 "(token_id, hostname, pid, agent_user, signature, cmdline, llm_endpoints, delegation_token, "
-                " kind, ppid, family, origin, evidence) "
-                "VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,$13::jsonb) "
+                " kind, ppid, family, origin, evidence, exe, unit, owner_class, owner_admin, "
+                " owner_interactive) "
+                "VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,$12,$13::jsonb,$14,$15,$16,$17,$18) "
                 "ON CONFLICT (token_id, pid, signature) DO UPDATE SET "
                 "last_seen=now(), cmdline=EXCLUDED.cmdline, agent_user=EXCLUDED.agent_user, "
                 "hostname=EXCLUDED.hostname, llm_endpoints=EXCLUDED.llm_endpoints, "
                 "delegation_token=EXCLUDED.delegation_token, kind=EXCLUDED.kind, "
                 "ppid=EXCLUDED.ppid, family=EXCLUDED.family, "
-                "origin=EXCLUDED.origin, evidence=EXCLUDED.evidence",
+                "origin=EXCLUDED.origin, evidence=EXCLUDED.evidence, "
+                "exe=EXCLUDED.exe, unit=EXCLUDED.unit, owner_class=EXCLUDED.owner_class, "
+                "owner_admin=EXCLUDED.owner_admin, owner_interactive=EXCLUDED.owner_interactive",
                 token_id, _s(hostname), pid, _s(a.get("user"), 128), sig, _s(a.get("cmdline"), 256),
                 eps_json, _s(a.get("delegation_token"), 200),
                 a.get("kind"), a.get("ppid"), _s(a.get("family"), 200),
-                a.get("origin"), json.dumps(a.get("evidence") or []))
+                a.get("origin"), json.dumps(a.get("evidence") or []),
+                _s(a.get("exe"), 1024), _s(a.get("unit"), 256), _s(a.get("owner_class"), 24),
+                _s(a.get("owner_admin"), 16), _s(a.get("owner_interactive"), 16))
             # The same pid under an OLD signature (claude-code before it was
             # recognised as claude-desktop) would linger as a stale duplicate.
             await pool.execute(
@@ -393,6 +402,9 @@ async def list_observations(pool, entity_id: int, window_seconds: int = 300) -> 
     try:
         rows = await pool.fetch(
             "SELECT a.token_id, a.hostname, a.pid, a.ppid, a.agent_user, a.signature, a.cmdline, "
+            # The file it runs, its unit and the account behind it (v256), so
+            # the Agents view can say who an agent runs as and what it is.
+            "a.exe, a.unit, a.owner_class, a.owner_admin, a.owner_interactive, "
             "a.llm_endpoints, (a.delegation_token IS NOT NULL) AS delegation_tag_present, "
             "a.first_seen, a.last_seen, "
             "COALESCE(a.kind, 'agent') AS kind, a.family, a.origin, a.evidence, "
@@ -441,6 +453,135 @@ async def list_observations(pool, entity_id: int, window_seconds: int = 300) -> 
             d["family"] = f"{d.get('hostname') or ''}|{d.get('kind')}|{d.get('signature')}"
         out.append(d)
     return out
+
+
+# How long a row written by ingest waits before list_app_observations hands
+# it out. An ingest statement is one upsert of one row; ten seconds is far
+# past any such statement's run, and a sixth of the bastion's 60 s beat.
+APP_SETTLE_SECONDS = 10
+
+
+async def list_app_observations(pool, entity_id: int, since=None, limit: int = 5000) -> list:
+    """The agent rows GET /api/network/observations returns (read:observations).
+
+    The same join as list_observations (this entity's live bastion pairings),
+    with what a reader that pages needs: the row id for its cursor, oldest
+    first, and the same exe, unit and owner facts (v256). Named columns only, so a
+    column added to the table later reaches an app only when it is added here.
+    No delegation token value, ever: `carries_delegation` says whether one was
+    carried and `requested` whether it was valid for its server.
+
+    Oldest first, by (last_seen, id). `since` is that key of the last row a
+    reader holds, (datetime, id); only rows after it come back. A key, not a time alone: rows written in one beat can share a
+    last_seen, and a page that ended inside them would lose the rest. A row
+    seen again on a later beat moves to the end and is read again, which is
+    what an incremental reader wants. Without `since`, every row.
+
+    Only rows last seen more than APP_SETTLE_SECONDS ago. last_seen is now()
+    of the statement that wrote it, which is when it STARTED, not when it
+    committed: a write that began before a read and committed after it would
+    land behind that reader's cursor and never be read, and if it was the
+    agent's last sighting nothing would move it forward again. A row comes on
+    the read after it settles."""
+    since_ts, after_id = since if since else (None, 0)
+    try:
+        rows = await pool.fetch(
+            "SELECT a.id, a.token_id, a.hostname, a.pid, a.ppid, a.agent_user, a.signature, a.cmdline, "
+            "a.exe, a.unit, a.owner_class, a.owner_admin, a.owner_interactive, "
+            "COALESCE(a.kind, 'agent') AS kind, a.family, a.origin, a.evidence, a.llm_endpoints, "
+            "a.first_seen, a.last_seen, (a.acknowledged_at IS NOT NULL) AS acknowledged, "
+            "(a.delegation_token IS NOT NULL) AS carries_delegation, "
+            "EXISTS(SELECT 1 FROM nac_agent_delegations d WHERE d.token = a.delegation_token "
+            "  AND (d.server = a.hostname OR d.server = '*') AND d.revoked_at IS NULL "
+            "  AND (d.expires_at IS NULL OR d.expires_at > now())) AS requested "
+            "FROM nac_agent_activity a "
+            "JOIN mcp_client_tokens t ON t.id = a.token_id "
+            "WHERE t.entity_id = $1 AND t.operator_kind = 'bastion' AND t.revoked_at IS NULL "
+            "  AND ($2::timestamptz IS NULL "
+            "       OR (a.last_seen, a.id) > ($2::timestamptz, $3::bigint)) "
+            "  AND a.last_seen < now() - make_interval(secs => $5) "
+            "ORDER BY a.last_seen ASC, a.id ASC LIMIT $4",
+            entity_id, since_ts, int(after_id), int(limit), float(APP_SETTLE_SECONDS))
+    except Exception as e:
+        logger.info("list_app_observations unavailable: %r", e)
+        return []
+    out = []
+    for r in rows:
+        d = dict(r)
+        for k in ("first_seen", "last_seen"):
+            if d.get(k) is not None and hasattr(d[k], "isoformat"):
+                d[k] = d[k].isoformat()
+        for k in ("llm_endpoints", "evidence"):
+            v = d.get(k)
+            if isinstance(v, str):
+                try:
+                    v = json.loads(v)
+                except Exception:
+                    v = []
+            d[k] = v if isinstance(v, list) else []
+        out.append(d)
+    return out
+
+
+# A platform protection, not a user limit: one machine's agent rows for one
+# outside agent's read. A busy workstation runs tens of agent processes; the
+# rows past this are counted, never silently dropped (`more`).
+MACHINE_AGENTS_MAX = 500
+
+
+async def list_machine_agents(pool, entity_id: int, token_id: int, *, window_seconds: int = 300,
+                              include_inactive: bool = False,
+                              limit: int = MACHINE_AGENTS_MAX) -> tuple[list, bool]:
+    """One bastion's agent rows, newest sighting first, for an outside agent's
+    `list_agents` (server/agent_access/reads.py): (rows, more).
+
+    The same join as list_observations, scoped to one live pairing of this
+    entity, with the facts list_app_observations adds (exe, unit, the owner
+    facts, v247). Named columns only, and no delegation token value, ever:
+    `carries_delegation` says whether one was carried and `requested` whether
+    it was valid for its server. Only rows seen within the window unless
+    `include_inactive`."""
+    try:
+        rows = await pool.fetch(
+            "SELECT a.pid, a.ppid, COALESCE(a.kind, 'agent') AS kind, a.signature, a.family, "
+            "a.origin, a.agent_user, a.owner_class, a.owner_admin, a.owner_interactive, "
+            "a.exe, a.unit, a.cmdline, a.llm_endpoints, a.evidence, a.first_seen, a.last_seen, "
+            "(a.last_seen > now() - make_interval(secs => $3)) AS active, "
+            "(a.acknowledged_at IS NOT NULL) AS acknowledged, "
+            "(a.delegation_token IS NOT NULL) AS carries_delegation, "
+            "EXISTS(SELECT 1 FROM nac_agent_delegations d WHERE d.token = a.delegation_token "
+            "  AND (d.server = a.hostname OR d.server = '*') AND d.revoked_at IS NULL "
+            "  AND (d.expires_at IS NULL OR d.expires_at > now())) AS requested, "
+            "(SELECT MIN(c.requested_at) FROM nac_agent_contain c "
+            "  WHERE c.token_id = a.token_id AND c.pid = a.pid AND c.cleared_at IS NULL) "
+            "  AS contain_pending_since "
+            "FROM nac_agent_activity a "
+            "JOIN mcp_client_tokens t ON t.id = a.token_id "
+            "WHERE t.entity_id = $1 AND t.id = $2 AND t.operator_kind = 'bastion' "
+            "  AND t.revoked_at IS NULL "
+            "  AND ($4 OR a.last_seen > now() - make_interval(secs => $3)) "
+            "ORDER BY a.last_seen DESC, a.id DESC LIMIT $5",
+            entity_id, token_id, float(window_seconds), bool(include_inactive), int(limit) + 1)
+    except Exception as e:
+        logger.info("list_machine_agents unavailable: %r", e)
+        raise
+    more = len(rows) > limit
+    out = []
+    for r in rows[:limit]:
+        d = dict(r)
+        for k in ("first_seen", "last_seen", "contain_pending_since"):
+            if d.get(k) is not None and hasattr(d[k], "isoformat"):
+                d[k] = d[k].isoformat()
+        for k in ("llm_endpoints", "evidence"):
+            v = d.get(k)
+            if isinstance(v, str):
+                try:
+                    v = json.loads(v)
+                except Exception:
+                    v = []
+            d[k] = v if isinstance(v, list) else []
+        out.append(d)
+    return out, more
 
 
 async def notify_unrequested(pool, entity_id: int, window_seconds: int = 300) -> int:

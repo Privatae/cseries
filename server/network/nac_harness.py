@@ -376,7 +376,7 @@ def _read_git_credential():
 
 def _forge_identity():
     """(user, token, host) of the Host's own coding forge: the git server
-    connected in Settings, else the file above or the install's GITEA_*
+    connected in Settings, else the install's GITEA_* or the file above
     (server/git_server.forge_identity)."""
     from server.git_server import forge_identity
     return forge_identity()

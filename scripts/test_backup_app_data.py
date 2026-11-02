@@ -188,6 +188,9 @@ apps_root = tmp / "host-apps"
 (apps_root / "app-state").mkdir(parents=True)
 (apps_root / "app-state/notes.txt").write_text("the Host's own file\n")
 hb.APPS_ROOT = str(apps_root)
+# The Host's other volumes are this test's to leave out: never the machine's
+# own folders (scripts/test_backup_file_roots.py tests them).
+hb.FILE_ROOTS = []
 hb.APPS_EXCLUDES = tuple(p.replace("/var/lib/cseries", str(apps_root)) for p in hb.APPS_EXCLUDES)
 hb.DB_CHUNK = 64 * 1024        # small, so an app's data is really cut into pieces
 live = tmp / "restored-host"

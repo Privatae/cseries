@@ -18,7 +18,7 @@ system: true
 #   says to connect one there. On a connected server, Your repos and Permissions
 #   point at the server's own pages, because the sign-in this app offers is
 #   Privatae's forge's (server/routes/gitea.py _own_server).
-version: "0.8.0"
+version: "0.9.0"
 # Host-facing catalog fact (code-true). Four panels over the app's OWN authenticated
 # gitea client (server/routes/gitea.py -> gitea_client) — the same client the Workbench
 # uses for reads and writes. what_it_is/user_path only. Code Approvals (the plain-English

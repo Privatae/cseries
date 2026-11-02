@@ -1664,9 +1664,11 @@ async def resume_bastion(pool, eid: int, server: str, stepup_code: str, actor: O
 # intact so a release brings the box back with no re-enrol.
 
 async def quarantine_bastion(pool, eid: int, server: str, token_id, actor: Optional[str]) -> dict:
-    """Quarantine a bastion (TIGHTEN — no step-up). Cuts the box's WHOLE mesh reach: inserts the
-    quarantine row (mgmt + harness gates then deny) AND drops its concentrator peer so the WG
-    tunnel — egress + inbound — goes dead on the next forwarder reconcile. The bearer in
+    """Quarantine a bastion (TIGHTEN — no step-up). Cuts the box's WHOLE reach: inserts the
+    quarantine row, which every lane its bearer can use consults (quarantine_gate: the six
+    worker sockets, the bastion HTTP routes, /mcp; the heartbeat is recorded only), stops the
+    lanes it holds open now, AND drops its concentrator peer so the WG tunnel — egress +
+    inbound — goes dead on the next forwarder reconcile (platform only). The bearer in
     mcp_client_tokens is left intact (that's the point vs revoke) so a release brings the box back
     with no re-enrol. Audited via the agent-governance disposition trail (disposition='quarantine')."""
     server = (server or "").strip()
@@ -1683,13 +1685,38 @@ async def quarantine_bastion(pool, eid: int, server: str, token_id, actor: Optio
         "ON CONFLICT (server) DO UPDATE SET quarantined_at=now(), token_id=EXCLUDED.token_id, "
         "quarantined_by=EXCLUDED.quarantined_by",
         server, b["token_id"], (actor or "user"))
+    # Every lane the machine holds open on this Host now (egress, mgmt, harness, embed,
+    # memory mirror, git) is stopped at once; each refuses a new one at its door
+    # (quarantine_gate.run_lane), and the HTTP routes and /mcp refuse per request.
+    from server.network import quarantine_gate
+    lanes_cut = quarantine_gate.cut(b["token_id"])
+    # The row is keyed by server, and the gate holds every token that reported this
+    # hostname; cut those too. Best-effort: each still meets the gate at its next request.
+    try:
+        for r in await pool.fetch(
+                "SELECT token_id FROM network_bastion_heartbeat WHERE hostname=$1 AND token_id<>$2",
+                server, b["token_id"]):
+            lanes_cut += quarantine_gate.cut(r["token_id"])
+    except Exception as e:
+        quarantine_gate.log.info("quarantine: other tokens of %s not looked up (%r)", server, e)
+    # The lane port (server/network/local_bastion.py, :8811): close the connections the
+    # machine holds there now, so a request already in flight on one (a /mcp call, a
+    # document download) ends too. The door itself still admits the certificate, so the
+    # heartbeat reaches the route that records it (held_beat); every other route and
+    # socket behind it refuses. Nothing is open there on a Host with a platform.
+    try:
+        from server.network import local_bastion
+        local_bastion.close_lanes(b["token_id"], why="quarantined")
+    except Exception as e:
+        quarantine_gate.log.warning("quarantine: closing the lane port's connections failed: %s", e)
     # Network-level cut: drop the concentrator peer (bearer untouched → reversible).
     await bastion_enroll.drop_concentrator_peer(b.get("wg_bastion_pubkey"))
     await nac_agents.audit_disposition(
         pool, entity_id=eid, disposition="quarantine", token_id=b["token_id"], target=server,
-        detail={"peer_dropped": bool(b.get("wg_bastion_pubkey")), "actor": (actor or "user")})
+        detail={"peer_dropped": bool(b.get("wg_bastion_pubkey")), "actor": (actor or "user"),
+                "lanes_cut": lanes_cut})
     return {"server": server, "token_id": b["token_id"], "quarantined": True,
-            "peer_dropped": bool(b.get("wg_bastion_pubkey"))}
+            "peer_dropped": bool(b.get("wg_bastion_pubkey")), "lanes_cut": lanes_cut}
 
 
 async def unquarantine_bastion(pool, eid: int, server: str, token_id, stepup_code: str,

@@ -174,9 +174,17 @@
             out.push(c.wearing
                 ? `<span class="label-sys worn">wearing</span>`
                 : `<button class="cseries-btn" data-act="wear">Wear it</button>`);
-            out.push(`<button class="cseries-btn ghost" data-act="publish">Publish</button>`);
+            // Publishing puts the design in the platform's library
+            // (design.publish, server/routes/designs.py publish_document), so
+            // the button shows only when this Host can send that op.
+            if (canPublish()) out.push(`<button class="cseries-btn ghost" data-act="publish">Publish</button>`);
         }
         return out.join('');
+    }
+
+    // Whether this Host can publish a design (dashboard/base/js/network-reach.js).
+    function canPublish() {
+        return !!(window.CSeriesReach && window.CSeriesReach.now().offers('design.publish'));
     }
 
     function render() {
@@ -203,10 +211,14 @@
                 ? `The shelf can't be reached right now (${state.libraryError}).`
                 : 'Desktops we made. Try one — it goes on your screen at once, and "Go back" undoes it.';
         } else {
-            note.textContent = 'Designs you shared, and every desktop your Host made. '
-                + (state.publishesTo === 'everyone'
-                    ? 'This is one of our Hosts: publishing puts a design on Ours, for everyone.'
-                    : 'Publish one to see it on all your Hosts.');
+            note.textContent = !canPublish()
+                // Wearing a desktop is this Host's own act (server/routes/designs.py
+                // local_desktops, /wear); publishing needs the platform's library.
+                ? 'Every desktop your Host made. Wear one to put it on your screen.'
+                : 'Designs you shared, and every desktop your Host made. '
+                    + (state.publishesTo === 'everyone'
+                        ? 'This is one of our Hosts: publishing puts a design on Ours, for everyone.'
+                        : 'Publish one to see it on all your Hosts.');
         }
         const empty = $('empty');
         empty.hidden = cards.length > 0;
@@ -467,7 +479,10 @@
         } catch (_e) { state.trying = null; }
         showTrying();
         try {
-            await Promise.all([load(), loadApps()]);
+            // The network's answer first, so the first render already knows
+            // whether Publish can be shown (a failed read: it is not).
+            await Promise.all([load(), loadApps(),
+                window.CSeriesReach ? window.CSeriesReach.load() : null]);
             // Nothing on the house shelf yet but designs of your own: open on Yours.
             if (!state.designs.some(d => d.shelf === 'house') && (state.local.length || state.designs.length)) {
                 state.shelf = 'yours';

@@ -359,6 +359,9 @@ for rel, text in (("app-state/user-files/notes.txt", "my notes\n"),
 (apps / "proj/.git/objects").mkdir(parents=True)
 os.link(apps / "proj/lib/vocabularies/core", apps / "proj/.git/objects/core-link")   # a hard link
 hb.APPS_ROOT = str(apps)
+# The Host's other volumes are this test's to leave out: never the machine's
+# own folders (scripts/test_backup_file_roots.py tests them).
+hb.FILE_ROOTS = []
 hb.APPS_EXCLUDES = tuple(p.replace("/var/lib/cseries", str(apps)) for p in hb.APPS_EXCLUDES)
 hb.WORKDIR = tmp / "work"
 hb.DB_CHUNK = 300       # small, so the dump is really cut into pieces

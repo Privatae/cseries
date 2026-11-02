@@ -633,24 +633,21 @@ fi
 # platform's hosted Ollama, or to the configured backend. See
 # brain/mastercode/memory_engine.py:_embed_via_bridge.
 
-# ══════ Gitea credentials ══════
-# Entities are provisioned with a per-entity gitea API token. When
-# present, wire it into ~/.git-credentials so any `git push` / `git pull`
-# against $GITEA_URL uses it transparently. Identity also rewrites
-# user.name / user.email to entity-specific values so commits attribute
-# correctly. No-op if GITEA_API_TOKEN is unset (genesis-mode entity, or
-# a deployment without the gitea integration).
+# ══════ Gitea identity ══════
+# Entities are provisioned with a per-entity gitea API token. The token is
+# never written to a file: once the kernel is up, git asks it for the token at
+# each sign-in through the credential helper server/git_server.py writes into
+# ~/.gitconfig (sync_git_files, at start), which also takes out the
+# plain-text line earlier versions of this block left on the home volume.
+# Here only user.name / user.email, so commits attribute correctly. No-op if
+# GITEA_API_TOKEN is unset (genesis-mode entity, or a deployment without the
+# gitea integration).
 if [ -n "${GITEA_API_TOKEN:-}" ] && [ -n "${GITEA_USERNAME:-}" ] && [ -n "${GITEA_URL:-}" ]; then
     HOST=$(echo "$GITEA_URL" | sed -E 's,^https?://,,; s,/$,,')
-    HOME_DIR="${HOME:-/home/privatae}"
-    mkdir -p "$HOME_DIR"
-    echo "https://${GITEA_USERNAME}:${GITEA_API_TOKEN}@${HOST}" > "$HOME_DIR/.git-credentials"
-    chmod 600 "$HOME_DIR/.git-credentials"
-    git config --global credential.helper store
     git config --global user.name  "${GITEA_USERNAME}"
     git config --global user.email "${GITEA_USERNAME}@privatae.ai"
     git config --global init.defaultBranch main
-    echo "Gitea credentials configured for ${GITEA_USERNAME} → ${HOST}"
+    echo "Gitea identity set for ${GITEA_USERNAME} → ${HOST} (the token is asked of the kernel at each sign-in)"
 fi
 
 # ══════ Start FastAPI ══════

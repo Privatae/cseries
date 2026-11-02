@@ -96,6 +96,9 @@
             }
         });
 
+        // Draw again once the network's answer is in: it decides the sites shelf.
+        if (window.CSeriesReach) window.CSeriesReach.load().then(function () { render(); });
+
         // Free-text search over both lanes.
         var search = document.getElementById('catalog-search');
         if (search) {
@@ -423,9 +426,17 @@
     }
 
     // ── Render ──────────────────────────────────────────
+    // Site apps deploy to a public zone the platform serves (webapp.*,
+    // server/routes/applications.py); a Host that cannot send that op has no
+    // "For your public sites" shelf (index.html, /js/network-reach.js).
+    function sitesShelf() {
+        return !!(window.CSeriesReach && window.CSeriesReach.now().offers('webapp.publish_bundle'));
+    }
+
     function render() {
+        if (state.filter === 'sites' && !sitesShelf()) state.filter = 'all';
         var showMachine = state.filter !== 'sites';
-        var showSites = state.filter === 'all' || state.filter === 'sites';
+        var showSites = sitesShelf() && (state.filter === 'all' || state.filter === 'sites');
 
         var apps;
         switch (state.filter) {

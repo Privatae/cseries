@@ -17,7 +17,8 @@ to date". Pinned here:
      https on the registry's own host, never to plain http or elsewhere;
   4. a bridge that is not connected on a Host that is not a network member is
      standalone too; a member's or a connected bridge's check still goes to
-     the bridge, and never to npm;
+     the bridge, and never to npm; but a client that says it does not carry
+     pc.version_query (the member door) is standalone: npm is asked;
   5. the Settings app shows each answer (scripts/test_update_check_standalone.js).
 
 Container-free: APP_ROOT=<repo> python3 scripts/test_update_check_standalone.py
@@ -57,6 +58,14 @@ class ConnectedBridge:
 
 class DownBridge:
     connected = False
+
+
+class MemberDoor(ConnectedBridge):
+    """A member Host's client: connected, and carrying only the network's
+    ops (member_client.NETWORK_OPS), which have no version query."""
+
+    def offers(self, op):
+        return op != "pc.version_query"
 
 
 async def main():
@@ -238,6 +247,14 @@ async def main():
         check(bridge.ops == ["pc.version_query"] and out.get("tag") == "0.1.9"
               and len(npm_calls) == n and out.get("channel") != "installer",
               "a connected bridge is asked as before, and npm is not", str(out))
+
+        door = MemberDoor()
+        server_main.get_bridge_client = lambda: door
+        out = await update.check_updates()
+        check(out.get("channel") == "installer" and out.get("latest") == "0.1.5"
+              and door.ops == [] and len(npm_calls) == n + 1,
+              "a member Host, connected to a door that has no version query, asks npm "
+              "and never sends the query", str(out))
     finally:
         server_main.get_bridge_client = real_bridge
         update._npm_latest, update._read_local_tag = real_npm, real_tag

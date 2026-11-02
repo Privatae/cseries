@@ -131,7 +131,8 @@ ONLINE_WINDOW_SECONDS = 180
 #                              unapproved_pairing_attempts), v136
 #                              (other_bastions, other_bastions_scanned_at),
 #                              v137 (prep_tools, prep_scan), v146 (detect),
-#                              v150 (alerts) —
+#                              v150 (alerts), v256 (tool_servers,
+#                              tool_server_scan) —
 #                              and `models`, which had no migration until v144.
 #   nac_agent_contain          v065_nac_agent_contain.sql:11
 #
@@ -615,6 +616,62 @@ def narrow_prep_scan(scan_in: Any) -> Optional[dict]:
     return prep_scan
 
 
+# The bastion's own bounds for a declared tool server (the bastion source,
+# client-go/mcpconfig.go: mcpMaxServers, mcpCommandMax, mcpNameMax,
+# mcpHostMax, mcpPathMax, mcpMaxEnvNames, mcpMaxPIDs). The same numbers here, so
+# nothing a current bastion sends is cut, and nothing larger is stored.
+_TS_MAX_SERVERS = 500
+_TS_NAME, _TS_HOST, _TS_PATH, _TS_COMMAND = 128, 253, 1024, 200
+_TS_MAX_ENV, _TS_MAX_PIDS = 32, 8
+
+
+def narrow_tool_servers(servers_in: Any, scan_in: Any) -> tuple[Optional[str], Optional[str]]:
+    """The heartbeat's declared tool servers and their scan report, as the JSON
+    the two v256 columns store: each field by name and bounded, anything else
+    dropped. Word fields (transport, locality, running_state…) are kept as
+    sent, like an agent's origin: the bastion is the authority on what it saw.
+
+    (None, …) when the beat has no `tool_servers` list, so the upsert keeps
+    what is stored; a list, even empty, replaces it. The scan is None when the
+    beat carries none, which is the "not read this beat" reading."""
+    servers_json = None
+    if isinstance(servers_in, list):
+        out = []
+        for e in servers_in[:_TS_MAX_SERVERS]:
+            if not isinstance(e, dict):
+                continue
+            row = {k: str(e.get(k) or "")[:n] for k, n in (
+                ("client", 32), ("scope", 16), ("path", _TS_PATH), ("name", _TS_NAME),
+                ("transport", 16), ("locality", 24), ("url_host", _TS_HOST),
+                ("command", _TS_COMMAND), ("package_source", 16), ("package_name", _TS_NAME),
+                ("package_pinned", 16), ("auth_configured", 24), ("bind_class", 24),
+                ("running_state", 32))}
+            env = e.get("env_names")
+            row["env_names"] = ([str(x)[:_TS_NAME] for x in env[:_TS_MAX_ENV] if isinstance(x, str)]
+                                if isinstance(env, list) else [])
+            pids = e.get("pids")
+            row["pids"] = ([p for p in pids[:_TS_MAX_PIDS] if isinstance(p, int) and not isinstance(p, bool)]
+                           if isinstance(pids, list) else [])
+            row["secret_in_plaintext"] = e.get("secret_in_plaintext") is True
+            row["disabled"] = e.get("disabled") is True
+            out.append(row)
+        servers_json = json.dumps(out)
+    scan_json = None
+    if isinstance(scan_in, dict):
+        def _n(k):
+            v = scan_in.get(k)
+            return v if isinstance(v, int) and not isinstance(v, bool) and v >= 0 else 0
+        scan = {"supported": scan_in.get("supported") is True,
+                "truncated": scan_in.get("truncated") is True,
+                "timed_out": scan_in.get("timed_out") is True,
+                "process_scan": str(scan_in.get("process_scan") or "")[:16]}
+        for k in ("accounts", "projects", "files_read", "files_unreadable", "files_unparsed",
+                  "files_foreign_owner"):
+            scan[k] = _n(k)
+        scan_json = json.dumps(scan)
+    return servers_json, scan_json
+
+
 # ── the wake: one subscriber on the beat, not a new bus (§2d) ───────────────
 #
 # Today nothing on this host starts on an event: twelve writers into the inbox
@@ -941,6 +998,8 @@ async def upsert_heartbeat(pool, entity_id: int, payload: dict) -> Optional[dict
     # `scheduler_scan` going NULL on the same beat is what says "not read now".
     schedulers_json = json.dumps(schedulers) if isinstance(payload.get("schedulers"), list) else None
     scheduler_scan_json = json.dumps(scheduler_scan) if scheduler_scan is not None else None
+    tool_servers_json, tool_server_scan_json = narrow_tool_servers(
+        payload.get("tool_servers"), payload.get("tool_server_scan"))
     # Peer announcement (2026-09-07): the OTHER hosts this bastion serves. The
     # box is the only party that can know this — the platform cannot correlate
     # two pairings of one machine, by design — so it arrives as the bastion's
@@ -1157,12 +1216,12 @@ async def upsert_heartbeat(pool, entity_id: int, payload: dict) -> Optional[dict
              schedulers, scheduler_scan, peers, owner_claim,
              mode, anchor, pairings, unapproved_pairing_attempts, other_bastions,
              other_bastions_scanned_at, prep_tools, prep_scan, detect, alerts,
-             posture, record_dropped, last_seen_at)
+             posture, record_dropped, tool_servers, tool_server_scan, last_seen_at)
         VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10::jsonb, $11,
                 $12, $13, $14, $15::jsonb, $16::jsonb, COALESCE($17::jsonb, '[]'::jsonb), $18::jsonb,
                 $19::jsonb, $20::jsonb, $21, $22::jsonb, $23::jsonb, $24::jsonb,
                 $25::jsonb, $26, $27::jsonb, $28::jsonb, $29::jsonb, $30::jsonb,
-                $31::jsonb, $32::jsonb, now())
+                $31::jsonb, $32::jsonb, $33::jsonb, $34::jsonb, now())
         ON CONFLICT (token_id) DO UPDATE SET
             hostname        = EXCLUDED.hostname,
             gateway_version = EXCLUDED.gateway_version,
@@ -1284,6 +1343,12 @@ async def upsert_heartbeat(pool, entity_id: int, payload: dict) -> Optional[dict
             -- is the all-clear and NULL means "not reported this beat" — the
             -- same meaning NULL has one line up.
             record_dropped  = COALESCE(EXCLUDED.record_dropped, network_bastion_heartbeat.record_dropped),
+            -- Declared tool servers (v256): the schedulers' rule. A beat with
+            -- no `tool_servers` key keeps the stored list; the scan report is
+            -- replaced, so NULL says "not read this beat" and an old list is
+            -- never dated as current.
+            tool_servers    = COALESCE(EXCLUDED.tool_servers, network_bastion_heartbeat.tool_servers),
+            tool_server_scan = EXCLUDED.tool_server_scan,
             last_seen_at    = now()
         RETURNING token_id, last_seen_at, detect, alerts
         """,
@@ -1319,6 +1384,8 @@ async def upsert_heartbeat(pool, entity_id: int, payload: dict) -> Optional[dict
         alerts_json,
         posture_json,
         record_dropped_json,
+        tool_servers_json,
+        tool_server_scan_json,
     )
     # THE WAKE. Fire-and-forget, never awaited, never
     # able to fail the beat — the heartbeat reply is liveness and a monitoring

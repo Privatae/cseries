@@ -10,7 +10,7 @@ questions:
 app: sites
 ---
 
-Sites is the control panel for websites that a public web service serves. It is built into every Host, but the service it controls is not part of the Host, and in this release a Host cannot reach it: a Host on its own has no connection to it, and the Privatae network does not carry it to a member Host. [Publishing a website](wiki:publishing-sites) says what that means.
+Sites is the control panel for websites that a public web service serves. It is built into every Host, but the service it controls is not part of the Host, and in this release a Host cannot reach it: a Host on its own has no connection to it, and the Privatae network does not carry it to a member Host. So Sites is left out of your Host's apps, and it appears there once your Host can reach that service. [Publishing a website](wiki:publishing-sites) says what that means.
 
 ## How do I upload my site?
 

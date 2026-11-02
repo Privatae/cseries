@@ -180,6 +180,15 @@ PERMISSIONS: Final[frozenset[str]] = frozenset({
     # bridge/peer/egress health. Drives the Network app's overview/gateways/peers
     # reads (server/routes/network.py). Read-only; mutations stay on write:network.
     "read:topology",
+    # What this Host's bastions observed: each agent's command line (a secret
+    # in it replaced), the file it runs, its account and whether that account administers the
+    # machine; the scheduler inventory; the tool servers agent clients declare
+    # (GET /api/network/observations, server/network/observations.py). For an
+    # app that analyses the machines, first of them the security assessment.
+    # Never a token or a key. Deliberately absent from
+    # build_contract.COMMUNITY_ALLOWED_SCOPES, as read:topology and
+    # read:oversight are: it names a person's machines and what runs on them.
+    "read:observations",
     # Network membership (server/routes/network_membership.py): whether this
     # Host is a member of the network, and joining or leaving it with a code
     # from the owner's account page. Settings declares both. Deliberately absent

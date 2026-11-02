@@ -107,6 +107,15 @@ def test_a_beat_with_holes_reaches_the_row():
     assert json.loads(stored[0]) == {"observe-host": 3, "findings": 1}
 
 
+def _column(q, args, name):
+    """The argument the INSERT binds to column `name`, by the column list, not
+    by position: a column added after record_dropped (v256 tool_servers) must
+    not move what this reads."""
+    cols = [c.strip() for c in q.split("(", 1)[1].split(")", 1)[0].split(",")]
+    assert name in cols, f"the heartbeat INSERT has no {name} column"
+    return dict(zip(cols, args))[name]
+
+
 def test_the_update_path_preserves_like_its_neighbours_and_stores_whole_as_empty():
     pool = Pool()
     _run(topology.upsert_heartbeat(pool, 9003, _beat(machine_record_dropped={"observe-host": 1})))
@@ -116,8 +125,8 @@ def test_the_update_path_preserves_like_its_neighbours_and_stores_whole_as_empty
     # {} from the box is WHOLE and must be stored as {}, never collapsed to NULL.
     pool = Pool()
     _run(topology.upsert_heartbeat(pool, 9003, _beat(machine_record_dropped={})))
-    _, args = pool.insert()
-    assert args[-1] == "{}", f"a whole record was stored as {args[-1]!r}, want '{{}}'"
+    got = _column(*pool.insert(), "record_dropped")
+    assert got == "{}", f"a whole record was stored as {got!r}, want '{{}}'"
 
 
 def test_an_absent_or_malformed_value_is_stored_as_null():
@@ -125,8 +134,8 @@ def test_an_absent_or_malformed_value_is_stored_as_null():
         pool = Pool()
         assert _run(topology.upsert_heartbeat(pool, 9003, beat)) is not None
         q, args = pool.insert()
-        assert "record_dropped" in q
-        assert args[-1] is None, f"a malformed/absent value was stored as {args[-1]!r}, want NULL"
+        got = _column(q, args, "record_dropped")
+        assert got is None, f"a malformed/absent value was stored as {got!r}, want NULL"
 
 
 def test_every_column_lines_up_with_its_argument():
@@ -193,8 +202,8 @@ def test_nan_and_infinity_do_not_take_the_beat_down():
     assert _run(topology.upsert_heartbeat(pool, 9003, _beat(
         machine_record_dropped={"observe-host": float("nan"), "observe-net": float("inf"),
                                 "observe-units": 2}))) is not None
-    _, args = pool.insert()
-    assert args[-1] is None, f"an unreadable beat stored {args[-1]!r}; {{}} would clear real holes"
+    got = _column(*pool.insert(), "record_dropped")
+    assert got is None, f"an unreadable beat stored {got!r}; {{}} would clear real holes"
 
 
 def test_narrowing_caps_the_shelf_count_keeping_the_largest():

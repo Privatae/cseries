@@ -466,11 +466,13 @@ async def lifespan(app: FastAPI):
         await owner_login.init()
 
         # The git server the owner connected in Settings, back from its
-        # settings row and Keys, and ~/.git-credentials written from it, before
-        # anything reads the Host's coding forge (server/git_server.py).
-        # Never raises.
+        # settings row and Keys, and git's credential helper and identity
+        # written from it, before anything reads the Host's coding forge; then
+        # the socket that helper asks on, each answer read from Keys
+        # (server/git_server.py). Never raises.
         from server import git_server
         await git_server.load(brain_pool, relay_entity_id)
+        await git_server.serve_credentials(brain_pool, relay_entity_id)
 
         # The credential audit's retention bound: routine reads older than 30
         # days become daily counts in vault_audit_rollup, counted and removed
@@ -1462,6 +1464,10 @@ from server.middleware.host_header import HostHeaderGuard  # noqa: E402
 app.add_middleware(HostHeaderGuard)
 
 
+# The one quarantine check every bastion lane below consults.
+from server.network import quarantine_gate  # noqa: E402
+
+
 def _enforce_bastion_binding(ws, row, lane_log) -> bool:
     """B1b (cert<->bearer binding) — ENFORCED. The mTLS frontdoor (server/mtls_frontdoor.py)
     OWNS :8443, verifies the CEIGAS client cert (CERT_REQUIRED), STRIPS any client-supplied
@@ -1559,11 +1565,17 @@ async def bastion_egress_relay(ws: WebSocket):
             return
         worker = RelayWorker(ws, bastion_token_id=row["id"])
         relay = get_egress_relay()
-        egress_log.info("worker authed (token %s)", row["id"])
-        try:
-            await worker.serve(relay)
-        finally:
-            relay.discard(worker)
+
+        async def _serve():
+            egress_log.info("worker authed (token %s)", row["id"])
+            try:
+                await worker.serve(relay)
+            finally:
+                relay.discard(worker)
+        # A quarantined machine exits nothing for this Host (quarantine_gate).
+        if not await quarantine_gate.run_lane(brain_pool, row["id"], "egress", _serve):
+            await safe_close(quarantine_gate.CLOSE_CODE)
+            return
     except Exception as e:
         egress_log.warning("endpoint exception: %r", e)
     finally:
@@ -1615,11 +1627,18 @@ async def bastion_mgmt_relay(ws: WebSocket):
             return
         worker = MgmtWorker(ws, bastion_token_id=row["id"])
         relay = get_mgmt_relay()
-        mgmt_log.info("mgmt worker authed (token %s)", row["id"])
-        try:
-            await worker.serve(relay)
-        finally:
-            relay.discard(worker)
+
+        async def _serve():
+            mgmt_log.info("mgmt worker authed (token %s)", row["id"])
+            try:
+                await worker.serve(relay)
+            finally:
+                relay.discard(worker)
+        # The job gate (nac_mgmt._decide) already refuses a quarantined server by
+        # name; the socket itself is refused here too, by token (quarantine_gate).
+        if not await quarantine_gate.run_lane(brain_pool, row["id"], "mgmt", _serve):
+            await safe_close(quarantine_gate.CLOSE_CODE)
+            return
     except Exception as e:
         mgmt_log.warning("mgmt endpoint exception: %r", e)
     finally:
@@ -1695,15 +1714,25 @@ async def bastion_pgwire_relay(ws: WebSocket):
             await safe_close(4403)
             return
 
-        try:
-            await pgwire_relay.relay(
-                ws,
-                await mirror.db_name(brain_pool),
-                mirror.application_name(str(cfg.get("bastion_name") or "")),
-                "/var/run/postgresql/.s.PGSQL.5432",
-            )
-        except pgwire_relay.PgWireError as e:
-            pgwire_relay.log.info("mirror lane refused: %s", e)
+        refused_wire = []
+
+        async def _serve():
+            try:
+                await pgwire_relay.relay(
+                    ws,
+                    await mirror.db_name(brain_pool),
+                    mirror.application_name(str(cfg.get("bastion_name") or "")),
+                    "/var/run/postgresql/.s.PGSQL.5432",
+                )
+            except pgwire_relay.PgWireError as e:
+                pgwire_relay.log.info("mirror lane refused: %s", e)
+                refused_wire.append(e)
+        # An enabled mirror does not outrank a quarantine: a held machine streams
+        # none of the database (quarantine_gate), and an open stream is cut.
+        if not await quarantine_gate.run_lane(brain_pool, row["id"], "pgwire", _serve):
+            await safe_close(quarantine_gate.CLOSE_CODE)
+            return
+        if refused_wire:
             await safe_close(4409)
             return
     except Exception as e:
@@ -1764,11 +1793,17 @@ async def bastion_harness_relay(ws: WebSocket):
             return
         worker = HarnessWorker(ws, bastion_token_id=row["id"], lane=lane)
         relay = get_harness_relay()
-        harness_log.info("harness worker authed (token %s, lane %s)", row["id"], lane)
-        try:
-            await worker.serve(relay)
-        finally:
-            relay.discard(worker)
+
+        async def _serve():
+            harness_log.info("harness worker authed (token %s, lane %s)", row["id"], lane)
+            try:
+                await worker.serve(relay)
+            finally:
+                relay.discard(worker)
+        # Harness runs and terminal sessions alike (quarantine_gate).
+        if not await quarantine_gate.run_lane(brain_pool, row["id"], "harness:" + lane, _serve):
+            await safe_close(quarantine_gate.CLOSE_CODE)
+            return
     except Exception as e:
         harness_log.warning("harness endpoint exception: %r", e)
     finally:
@@ -1822,11 +1857,18 @@ async def bastion_embed_relay(ws: WebSocket):
             return
         worker = EmbedWorker(ws, bastion_token_id=row["id"])
         relay = get_embed_relay()
-        embed_log.info("embed worker authed (token %s)", row["id"])
-        try:
-            await worker.serve(relay)
-        finally:
-            relay.discard(worker)
+
+        async def _serve():
+            embed_log.info("embed worker authed (token %s)", row["id"])
+            try:
+                await worker.serve(relay)
+            finally:
+                relay.discard(worker)
+        # No signed-grant gate on embeds, but a quarantine still holds: the Host's
+        # text is not handed to a held machine (quarantine_gate).
+        if not await quarantine_gate.run_lane(brain_pool, row["id"], "embed", _serve):
+            await safe_close(quarantine_gate.CLOSE_CODE)
+            return
     except Exception as e:
         embed_log.warning("embed endpoint exception: %r", e)
     finally:
@@ -1876,19 +1918,12 @@ async def bastion_git_relay(ws: WebSocket):
         if not _enforce_bastion_binding(ws, row, git_log):
             await safe_close(4401)
             return
-        # A quarantined bastion (nac_mgmt.nac_bastion_quarantine, keyed by the same
-        # token id) gets nothing — a tighten always holds, so an unreadable table refuses.
-        try:
-            q = await brain_pool.fetchval(
-                "SELECT 1 FROM nac_bastion_quarantine WHERE token_id=$1", row["id"])
-        except Exception as e:
-            git_log.info("git lane: quarantine check unavailable (%r) — refusing", e)
-            q = 1
-        if q:
-            git_log.info("git lane REFUSED: bastion token %s is quarantined", row["id"])
-            await safe_close(4403)
+        # A quarantined bastion gets nothing — a tighten always holds, so an
+        # unreadable table refuses (quarantine_gate, the check every lane shares).
+        worker = GitWorker(ws, bastion_token_id=row["id"], proxy=_nac_egress_ref)
+        if not await quarantine_gate.run_lane(brain_pool, row["id"], "git", worker.serve):
+            await safe_close(quarantine_gate.CLOSE_CODE)
             return
-        await GitWorker(ws, bastion_token_id=row["id"], proxy=_nac_egress_ref).serve()
     except Exception as e:
         git_log.warning("endpoint exception: %r", e)
     finally:

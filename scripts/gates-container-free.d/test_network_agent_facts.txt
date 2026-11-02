@@ -1,0 +1,4 @@
+# The Network app's Agents view: the account behind an agent, the file it runs,
+# its unit and each machine's tool servers, in plain words and drawn as text
+# (v256), under node.
+test_network_agent_facts.py

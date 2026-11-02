@@ -105,9 +105,11 @@ def asked(ask_id: str, sid: str) -> None:
 
 
 def answered(ask_id: str) -> int:
-    """The person answered `ask_id`: each session that was sent it is told,
-    on its open stream or on the next one it opens. Returns how many."""
-    told = 0
+    """The person answered `ask_id`: each call held on it goes on (held.py),
+    and each session that was sent it as a -32042 is told, on its open
+    stream or on the next one it opens. Returns how many."""
+    from server.agent_access import held
+    told = held.answered(ask_id)
     for sid in _asks.pop(ask_id, {}):
         q = _streams.get(sid)
         if q is not None:
@@ -146,7 +148,10 @@ def end_all() -> None:
     """The server is stopping (launch.HostServer): every open stream ends
     now. A server's graceful stop waits for open responses before its own
     shutdown runs, and an agent's stream would hold it for up to
-    STREAM_LIFE_S. The client reopens it on the server that comes back."""
+    STREAM_LIFE_S. The client reopens it on the server that comes back.
+    Every held tool call ends too (held.py), with "nothing ran"."""
+    from server.agent_access import held
+    held.end_all()
     for q in list(_streams.values()):
         q.put_nowait(None)
 

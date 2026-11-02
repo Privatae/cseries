@@ -141,9 +141,10 @@ TOOLS: list[dict] = [
         "description": (
             "Stop an AI agent on one of the person's machines: by its pid from `list_agents`, "
             "or a program the baseline does not hold by its fingerprint from `baseline_delta`. "
-            "It runs only once the person has approved it: the first call returns a link for "
-            "them to open on their Host and nothing runs; call again with the same arguments "
-            "after they answer. The machine stops only a process it detected as an agent "
+            "It runs only once the person has approved it. Where your client can show them the "
+            "approval page, the call waits while they answer on their Host and returns what ran; "
+            "otherwise it returns a link for them to open and nothing runs, and you call again "
+            "with the same arguments after they answer. The machine stops only a process it detected as an agent "
             "(never an app the person is using) and may ask the person itself as well."
         ),
         "inputSchema": {
@@ -174,9 +175,11 @@ TOOLS: list[dict] = [
             "a health check or a list runs at once: uptime, observe:*, computer:*, model:list, "
             "backup_list, op_list, op_run_status and op_plan_status. Anything else, including "
             "reading their files (dcn_*) or their context store (ctx_*), and every change, runs "
-            "only once the person has approved it: the first call returns a link for them to "
-            "open on their Host and nothing runs; call again with the same arguments after they "
-            "answer. The machine applies its own rules as well. Returns {exit, stdout, stderr}."
+            "only once the person has approved it. Where your client can show them the approval "
+            "page, the call waits while they answer on their Host and returns what ran; otherwise "
+            "it returns a link for them to open and nothing runs, and you call again with the same "
+            "arguments after they answer. The machine applies its own rules as well. Returns "
+            "{exit, stdout, stderr}."
         ),
         "inputSchema": {
             "type": "object",
@@ -202,13 +205,20 @@ READ_TOOLS = ("list_agents", "list_scheduled", "tool_server_configs", "posture",
 
 class NeedsApproval(Exception):
     """The call stops here until the person answers on the Host. `url` is the
-    page; `message` says it in the Host's words; `ask_id` names the ask."""
+    page; `message` says it in the Host's words, to the agent; `ask_id` names
+    the ask. `person_words` says it to the person, for a client that shows
+    them the page itself (held.py). `answered_here`: this Host learns of the
+    answer (its own page or the machine's card), so the call can wait for
+    it; a machine's device or console tells nobody."""
 
-    def __init__(self, ask_id: str, url: str, message: str):
+    def __init__(self, ask_id: str, url: str, message: str, *, person_words: str = "",
+                 answered_here: bool = False):
         super().__init__(message)
         self.ask_id = ask_id
         self.url = url
         self.message = message
+        self.person_words = person_words
+        self.answered_here = answered_here
 
 
 def host_only(op: str) -> bool:
@@ -464,7 +474,10 @@ async def _run_op(pool, eid: int, cid: int, held: list, name: str, server: str, 
         url = ask_url(origin, ask_id)
         raise NeedsApproval(ask_id, url, (
             f"Running {op} on {server} needs the person's approval. Nothing ran. Ask them to "
-            f"open {url} on their Host, then call again with the same arguments."))
+            f"open {url} on their Host, then call again with the same arguments."),
+            person_words=(f"Your agent asks to run {op} on {server}. Allow it or say no on your "
+                          "Host. Nothing runs until you answer."),
+            answered_here=True)
 
     # The agent's note stays on this Host's approval page, shown there as its
     # own words. It is never handed to the machine: the card and the device
@@ -503,7 +516,10 @@ async def _run_op(pool, eid: int, cid: int, held: list, name: str, server: str, 
         url = ask_url(origin, ask_id)
         raise NeedsApproval(ask_id, url, (
             f"{words} Nothing ran yet. Ask them to open {url} on their Host, then call again "
-            "with the same arguments."))
+            "with the same arguments."),
+            person_words=(f"{server} is holding {op} for your approval. Answer it on your Host. "
+                          "Nothing runs until you do."),
+            answered_here=waiting.get("via") == "card")
     exit_code = res.get("exit") if isinstance(res, dict) else None
     not_run = res.get(nac_mgmt.NOT_RUN) if isinstance(res, dict) else None
     if not_run:

@@ -295,3 +295,58 @@ SEEN just now`.
 - `baseline_delta` gives the machine's last summary and the open findings, not
   the full delta, which only the bastion's own `baseline diff` has.
 - Circles still shows a Support card on a Host that is not a network member.
+
+## Later the same day: an approval held inside the call, and a held machine that stops dialling
+
+The same three machines, the Host rebuilt from the change that holds an
+outside agent's call while the person answers. m2-b1 ran bastion 0.61.2;
+m2-b2 stayed on 0.60.0 for comparison.
+
+**Claude Code 2.1.312 calls `contain` on m2-b1.** Claude Code showed the
+Host's page inside the call, with the Host's own words:
+
+```
+MCP server "m2gate" wants to open a URL
+Your agent asks to run contain on m2-b1. Allow it or say no on your Host. Nothing runs until you answer.
+http://home.cseries.localhost:8800/agent-access/ask/JhMXCb1yGJyO7nAsEYr43vTV
+❯ Accept    Decline
+```
+
+After Accept it showed "waiting for completion", with no Retry button. The
+person allowed it once on the page 58 s after the call began, and the same
+call returned the result:
+
+```
+{"server":"m2-b1","op":"contain","exit":0,"stdout":"{\"contain\": \"queued\", \"pid\": 1328, ...}","stderr":""}
+```
+
+On the wire (the Host's loopback), one POST answered with an event stream:
+`elicitation/create`, the client's `{"action":"accept"}` taken with 202,
+`notifications/progress` twice, `notifications/elicitation/complete`, and
+the call's result. Claude Code's own log:
+
+```
+Received elicitation request: {"method":"elicitation/create","params":{"mode":"url",...
+Elicitation response: {"action":"accept"}
+Tool 'contain' still running (30s elapsed)
+Received elicitation completion notification: JhMXCb1yGJyO7nAsEYr43vTV
+Tool 'contain' completed successfully in 58s
+```
+
+pid 1328 was gone from m2-b1 a few minutes later, on the bastion's next
+check-in.
+
+**Quarantine of both machines at 18:19.** m2-b1's bastion (0.61.2):
+
+```
+18:19:02 the Host refused a lane: it holds this machine; its lanes dial again in 5s
+18:19:37 the Host refused a lane: it holds this machine; its lanes dial again in 10s
+18:19:43 the Host holds this machine (quarantined there): its lanes wait until its owner releases it
+```
+
+The Host's refusals from 18:20 to 18:24: m2-b1 none, m2-b2 (0.60.0) 120.
+Released at 18:25, m2-b1 logged "the Host released this machine: its lanes
+are back" and held 13 lane connections again, as m2-b2 did.
+
+**Result: pass.** This closes the "Retry now" item and the bastion's half of
+item 3 above.

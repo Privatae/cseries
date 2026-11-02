@@ -1,0 +1,9 @@
+# An outside agent's call that needs the person is held open while they answer
+# (server/agent_access/held.py, MCP URL elicitation): elicitation/create on the
+# call's own stream, the client's answer taken with 202, progress while it
+# waits, then complete and the call's result; decline, no answer, a revoked
+# token and the Host stopping end it with nothing run; a device ask, a client
+# without a stream and calls past the bounds get -32042 as before. Real routes
+# under uvicorn on a loopback port, read as a stream, on a fresh clone of the
+# kernel's schema; the machine side is stubbed.
+test_agent_mcp_held_call_pg.py

@@ -726,12 +726,32 @@ def _remember_elicitation(auth: dict | None, params: dict, version: str) -> None
     _AGENT_URL_ELICITATION[int(conn["id"])] = url_ok
 
 
-async def _agent_call(rid, auth: dict, name, args, origin: str, session: str = "") -> dict:
+class _Hold:
+    """A tools/call answered by holding it open (agent_access.held): the POST
+    is answered with an event stream that sends the person the approval page
+    and ends with the call's response once they answered."""
+
+    def __init__(self, rid, need, rerun, progress_token, unheld):
+        self.rid, self.need, self.rerun, self.progress_token = rid, need, rerun, progress_token
+        self.unheld = unheld
+
+
+def _holdable(conn: dict, session: str, hold_ok: bool, need) -> bool:
+    from server.agent_access import held
+    return (hold_ok and bool(session) and bool(_AGENT_URL_ELICITATION.get(int(conn["id"])))
+            and bool(getattr(need, "answered_here", False)) and held.can_hold(int(conn["id"])))
+
+
+async def _agent_call(rid, auth: dict, name, args, origin: str, session: str = "",
+                      hold_ok: bool = False, progress_token=None, bearer: str = ""):
     """tools/call from an outside agent (server/agent_access/tools.py). A call
-    the person has to approve first ends with -32042 and its link when the
-    client declared URL-mode elicitation, else with the link in the result's
-    text: nothing ran either way. A -32042 sent in a session is remembered
-    for it, so the person's answer reaches that client (agent_access.sessions)."""
+    the person has to approve first is held open while they answer (a _Hold,
+    agent_access.held) when the client declared URL-mode elicitation and can
+    take an event stream (`hold_ok`), and the Host learns of the answer.
+    Otherwise it ends with -32042 and its link when the client declared
+    URL-mode elicitation, else with the link in the result's text: nothing
+    ran either way. A -32042 sent in a session is remembered for it, so the
+    person's answer reaches that client (agent_access.sessions)."""
     from server.agent_access import tools as agent_tools
     conn = auth["_agent"]
     if not isinstance(args, dict):
@@ -743,17 +763,54 @@ async def _agent_call(rid, auth: dict, name, args, origin: str, session: str = "
     except KeyError:
         return _err(rid, _METHOD_NOT_FOUND, f"unknown tool: {name}")
     except agent_tools.NeedsApproval as need:
-        if _AGENT_URL_ELICITATION.get(int(conn["id"])):
-            if session:
-                from server.agent_access import sessions as agent_sessions
-                agent_sessions.asked(need.ask_id, session)
-            return {"jsonrpc": "2.0", "id": rid, "error": {
-                "code": URL_ELICITATION_REQUIRED, "message": need.message,
-                "data": {"elicitations": [{"mode": "url", "message": need.message,
-                                           "url": need.url, "elicitationId": need.ask_id}]}}}
-        return _ok(rid, {"content": [{"type": "text", "text": need.message}], "isError": True,
-                         "structuredContent": {"state": "needs_approval", "url": need.url,
-                                               "ask": need.ask_id}})
+        if _holdable(conn, session, hold_ok, need):
+            async def rerun() -> dict:
+                # The call runs again as its token stands now: one revoked or
+                # expired while it waited runs nothing, and the person's
+                # answer stays for the agent's next call.
+                # A failure is the call's result, as _handle_one makes it
+                # -32603 for an unheld call: the stream already started, and
+                # an exception here would end it with no response at all.
+                from server.agent_access import store as agent_store
+                try:
+                    now = await agent_store.resolve_access(pool, eid, bearer)
+                    if now is None or int(now["id"]) != int(conn["id"]) \
+                            or (now.get("resource") or "") != (conn.get("resource") or ""):
+                        return {"content": [{"type": "text", "text": (
+                            "This agent's sign-in ended while it waited, so nothing ran. The person's "
+                            "answer stands: sign in again and call again with the same arguments.")}],
+                            "isError": True}
+                    return await agent_tools.call(pool, eid, now, name, args, origin)
+                except agent_tools.NeedsApproval:
+                    raise
+                except KeyError:
+                    return {"content": [{"type": "text", "text": f"unknown tool: {name}"}], "isError": True}
+                except Exception as e:  # noqa: BLE001 — the held call still gets its response
+                    logger.exception("agent held call %s failed on its rerun", name)
+                    return {"content": [{"type": "text", "text": f"{type(e).__name__}: {e}"}],
+                            "isError": True}
+
+            def unheld(n) -> dict:
+                return _unheld(rid, conn, session, n)
+            return _Hold(rid, need, rerun, progress_token, unheld)
+        return _unheld(rid, conn, session, need)
+
+
+def _unheld(rid, conn: dict, session: str, need) -> dict:
+    """A call the person has to approve, not held: -32042 and its link for a
+    client that declared URL-mode elicitation (remembered for its session, so
+    the person's answer reaches it), else the link in the result's text."""
+    if _AGENT_URL_ELICITATION.get(int(conn["id"])):
+        if session:
+            from server.agent_access import sessions as agent_sessions
+            agent_sessions.asked(need.ask_id, session)
+        return {"jsonrpc": "2.0", "id": rid, "error": {
+            "code": URL_ELICITATION_REQUIRED, "message": need.message,
+            "data": {"elicitations": [{"mode": "url", "message": need.message,
+                                       "url": need.url, "elicitationId": need.ask_id}]}}}
+    return _ok(rid, {"content": [{"type": "text", "text": need.message}], "isError": True,
+                     "structuredContent": {"state": "needs_approval", "url": need.url,
+                                           "ask": need.ask_id}})
 
 
 async def _handle_one(
@@ -763,10 +820,13 @@ async def _handle_one(
     auth: dict | None = None,
     origin: str = "",
     session: str = "",
-) -> dict | None:
+    hold_ok: bool = False,
+):
     """Handle a single JSON-RPC request. Returns the response dict, or None
     if the request was a notification (no id) and therefore takes no response.
-    `session` is an outside agent's MCP session id, '' for any other caller."""
+    `session` is an outside agent's MCP session id, '' for any other caller.
+    `hold_ok`: the request came alone in a POST that takes an event stream,
+    so an outside agent's tools/call may be held (a _Hold is returned)."""
     if not isinstance(req, dict):
         return _err(None, _INVALID_REQUEST, "request must be an object")
     if req.get("jsonrpc") != "2.0":
@@ -817,7 +877,14 @@ async def _handle_one(
             name = params.get("name")
             args = params.get("arguments") or {}
             if (auth or {}).get("_agent"):
-                return await _agent_call(rid, auth, name, args, origin, session)
+                meta = params.get("_meta") if isinstance(params.get("_meta"), dict) else {}
+                token = meta.get("progressToken")
+                if isinstance(token, bool) or not isinstance(token, (str, int)):
+                    token = None
+                bearer = (authorization or "")[7:].strip()
+                return await _agent_call(rid, auth, name, args, origin, session,
+                                         hold_ok=hold_ok and not is_notification,
+                                         progress_token=token, bearer=bearer)
             entry = TOOL_HANDLERS.get(name)
             if entry is None:
                 return _err(rid, _METHOD_NOT_FOUND, f"unknown tool: {name}")
@@ -1000,6 +1067,24 @@ def _event_stream(sid: str):
         "Mcp-Session-Id": sid})
 
 
+def _held_stream(sid: str, connection_id: int, hold: "_Hold"):
+    """The event stream that answers a held tools/call (agent_access.held)."""
+    from fastapi.responses import StreamingResponse
+    from server.agent_access import held
+    from server.agent_access import sessions as agent_sessions
+
+    def holdable(need) -> bool:
+        return bool(getattr(need, "answered_here", False))
+
+    events = held.run(sid=sid, rid=hold.rid, connection_id=connection_id, need=hold.need,
+                      progress_token=hold.progress_token, rerun=hold.rerun, holdable=holdable,
+                      ok=_ok, told_later=lambda ask_id, s: agent_sessions.asked(ask_id, s),
+                      unheld=hold.unheld)
+    return StreamingResponse(events, media_type="text/event-stream", headers={
+        "Cache-Control": "no-cache, no-transform", "X-Accel-Buffering": "no",
+        "Mcp-Session-Id": sid})
+
+
 async def _admit(request: Request, authorization: str | None, *,
                  hardware_fingerprint: str | None = None, internal_auth: str | None = None,
                  harness_cap: str | None = None):
@@ -1163,6 +1248,17 @@ async def mcp_endpoint(
             if not agent_sessions.claim(sid, int(auth["_agent"]["id"])):
                 return _session_gone()
             session = sid
+        # The client's answer to a request this Host sent it on a held
+        # call's stream (agent_access.held): a JSON-RPC response, taken with
+        # 202 Accepted (MCP Streamable HTTP, "Sending Messages to the
+        # Server"), whether or not a held call still waits for it.
+        if (isinstance(body, dict) and "method" not in body and "id" in body
+                and ("result" in body or "error" in body)):
+            if not session:
+                raise HTTPException(400, "a response needs the session it answers in")
+            from server.agent_access import held
+            held.respond(session, body)
+            return Response(status_code=202)
 
     # JSON-RPC supports batch (array) and single (object). Honor both.
     if isinstance(body, list):
@@ -1180,8 +1276,13 @@ async def mcp_endpoint(
         return responses
 
     if isinstance(body, dict):
+        # A held call answers on an event stream, which the client says it
+        # takes in its Accept (MCP Streamable HTTP: a client MUST list both).
+        hold_ok = bool(session) and "text/event-stream" in (request.headers.get("accept") or "")
         resp = await _handle_one(body, authorization, is_internal=is_internal, auth=auth,
-                                 origin=origin, session=session)
+                                 origin=origin, session=session, hold_ok=hold_ok)
+        if isinstance(resp, _Hold):
+            return _held_stream(session, int(auth["_agent"]["id"]), resp)
         if resp is None:
             # A notification: 202 Accepted with no body (MCP Streamable HTTP).
             return Response(status_code=202)

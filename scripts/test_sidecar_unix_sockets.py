@@ -182,7 +182,13 @@ class FakeProxy:
 def main() -> int:
     app_root = os.environ.get("APP_ROOT", "/app")
     cli = os.path.join(app_root, "cli")
-    tmp = Path(tempfile.mkdtemp(prefix="sc-unix-"))
+    # A unix socket's path holds at most 107 bytes, and this run's sockets sit
+    # under this folder: a CI runner's temp folder is deep enough to push them past
+    # that, so the folder is made directly under /tmp there.
+    _BASE = tempfile.gettempdir()
+    if len(_BASE) > 40 and os.path.isdir("/tmp") and os.access("/tmp", os.W_OK):
+        _BASE = "/tmp"
+    tmp = Path(tempfile.mkdtemp(prefix="sc-unix-", dir=_BASE))
 
     print("== 1. control plane on a unix socket ==")
     ctl_dir = tmp / "ctl"

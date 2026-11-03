@@ -69,6 +69,16 @@ hr.STAGED = hr.RESTORE_DIR / "apps"
 hr.PREVIOUS = hr.RESTORE_DIR / "previous"
 hr.PLAN = hr.RESTORE_DIR / "plan.json"
 hr.MANIFEST = hr.RESTORE_DIR / "manifest"
+# The Host's other volumes (host_backup.FILE_ROOTS: workspace, user files,
+# home, keys) are never the machine's own folders here, as in
+# test_host_restore.py: a finish clears each one's staging, and on a runner
+# that reached the real /home/privatae (Permission denied there in CI). Every
+# folder this gate may touch is under its own temporary one.
+hr.hb.FILE_ROOTS = []
+_outside = [str(fr.live) for fr in hr.restorable_roots(True) if tmp not in fr.live.parents]
+if _outside:
+    print(f"FAIL  this gate would touch the machine's own folders: {_outside}")
+    sys.exit(1)
 dbs = set()
 
 

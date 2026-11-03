@@ -56,7 +56,13 @@ from pathlib import Path
 ROOT = Path(os.environ.get("APP_ROOT") or Path(__file__).resolve().parents[1]).resolve()
 sys.path[:0] = [str(ROOT), str(ROOT / "brain")]
 
-TMP = Path(tempfile.mkdtemp(prefix="git-server-test-"))
+# A unix socket's path holds at most 107 bytes, and this run's sockets sit
+# under this folder: a CI runner's temp folder is deep enough to push them past
+# that, so the folder is made directly under /tmp there.
+_BASE = tempfile.gettempdir()
+if len(_BASE) > 40 and os.path.isdir("/tmp") and os.access("/tmp", os.W_OK):
+    _BASE = "/tmp"
+TMP = Path(tempfile.mkdtemp(prefix="git-server-test-", dir=_BASE))
 HOME = TMP / "home"
 HOME.mkdir()
 # Before anything resolves a path or builds an SSL context.

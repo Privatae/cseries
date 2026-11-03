@@ -941,13 +941,14 @@ export function useHostThread() {
   );
 
   const answerAsk = useCallback(
-    async (option: AskOption, note: string, stepupCode?: string) => {
+    async (option: AskOption, note: string, stepupCode?: string, choices?: string[]) => {
       const ask = asks[0];
       if (!ask) return;
       const topic = topicOfAsk(ask.ticketId);
       setAskBusy(true);
       setAskError(null);
-      const r = await decideTicket(ask.ticketId, option.id, false, note, null, stepupCode ?? null);
+      const r = await decideTicket(ask.ticketId, option.id, false, note, null, stepupCode ?? null,
+                                   choices ?? null);
       if (!r.ok) {
         setAskError(`Couldn’t record that — ${r.message}`.trim());
         setAskBusy(false);

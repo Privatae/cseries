@@ -37,7 +37,7 @@ The dashboard is published on 127.0.0.1 only, so only your own machine can reach
 
 ## Where does the model run?
 
-Outside the Host. For each of its roles the Host uses the provider and model you chose, on your own key, or a model server on another computer on your network. The Host is the resident; the model is a route it takes. [Models and keys](wiki:models-and-keys) has the details.
+Outside the Host. For each of its roles the Host uses the provider and model you chose, on your own key, or a model server on a computer of yours. With no key at all, a Host whose computer already runs a model thinks with that one until you choose another. The Host is the resident; the model is a route it takes. [Models and keys](wiki:models-and-keys) has the details.
 
 ## Can Privatae get into my Host?
 

@@ -855,6 +855,7 @@ export function decideTicket(
   note = "",
   seenEventMax: number | null = null,
   stepupCode: string | null = null,
+  choices: string[] | null = null,
 ): Promise<ApiResult<DecideResult>> {
   // `note` is the person's own words on the decision — for a one-option
   // ("done") ticket it is the place to write what they did. The route has
@@ -869,6 +870,8 @@ export function decideTicket(
   // A pipeline change adding a check that runs outside the platform: the
   // code from the person's authenticator, checked and burned by the kernel.
   if (stepupCode) body.stepup_code = stepupCode;
+  // A card with boxes (another Host asking to use a machine): what was ticked.
+  if (choices) body.choices = choices;
   return request("POST", `/api/tickets/${id}/decide`, body);
 }
 

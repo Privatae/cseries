@@ -24,9 +24,16 @@ Two listeners:
             browser's TLS: that ends on the Host's machine.
 
 What it keeps: in memory only, per tunnel the ticket's address, serial,
-expiry and limits; per stream the counts. Its log line for a stream holds the
-address ID, the browser's /24 (IPv6: /48), the bytes each way and how long it
-lasted, never a full address.
+expiry, limits and kinds; per stream the counts. Its log line for a stream
+holds the address ID, the stream's kind, the browser's /24 (IPv6: /48), the
+bytes each way and how long it lasted, never a full address.
+
+Kinds: a stream is "lane" when the name's first label starts bl- or bp- (a
+bastion meeting its Host through the network) and "web" otherwise
+(remote_protocol.stream_kind). The ticket says which the Host's tunnel may
+carry (its "kinds"; none named is web only), and a stream of any other kind is
+closed before the Host hears of it: a Host that turned on only the meeting
+point is never reached by a browser.
 
 Limits, each refusing the connection that would pass it (never slowing the
 others): tunnels in all, streams in all, per browser source (/32, IPv6 /64)
@@ -208,6 +215,7 @@ class _Tunnel:
         self.serial = serial
         self.exp: float = float(ticket["exp"])
         self.limits: rp.Limits = ticket["limits"]
+        self.kinds: frozenset = ticket.get("kinds", rp.DEFAULT_KINDS)
         self.streams: dict[int, rp.MuxStream] = {}
         self._next_sid = 1
         self._sender = rp.Sender()
@@ -283,6 +291,8 @@ class _Tunnel:
                 and self._opens.take(time.monotonic()))
 
     def new_stream(self) -> rp.MuxStream:
+        # No kind argument: the edge's tunnel class overrides new_stream(self),
+        # and the relay is vendored there as is. Relay._browser sets the kind.
         sid = self._next_sid
         self._next_sid += 1
         stream = rp.MuxStream(sid, self.send, window=self.limits.window)
@@ -333,8 +343,11 @@ class _Tunnel:
         # holds every stream to it: a stream opened with a new one would
         # overrun the Host's credit and close the tunnel. The ticket's other
         # limits apply now, its window from the next tunnel.
+        # The kinds too: a Host that turns browser access on later is offered
+        # it from this ticket. A stream already open stays as it was.
         self.exp = float(t["exp"])
         self.limits = dataclasses.replace(t["limits"], window=self.limits.window)
+        self.kinds = t["kinds"]
         await self.send_text({"type": "ticket_ok", "exp": self.exp})
 
     def drop_streams(self) -> None:
@@ -514,6 +527,11 @@ class Relay:
 
     # ── browsers ──
 
+    def stream_refused(self, reason: str) -> None:
+        """A connection named a live tunnel and was closed before any stream:
+        `reason` "kind" (the ticket does not carry that kind). For a relay
+        that counts refusals (the network's edge); nothing here."""
+
     async def _browser(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         task = asyncio.current_task()
         self._browser_tasks.add(task)
@@ -522,6 +540,7 @@ class Relay:
         tunnel = None
         src = "0.0.0.0"
         started = time.monotonic()
+        kind = "-"
         try:
             peer = writer.get_extra_info("peername")
             if self._expect_proxy:
@@ -545,10 +564,17 @@ class Relay:
             buf, sni = await peek_sni(reader)
             aid = rp.address_id_of(sni, self.zone) if sni else None
             tunnel = self.tunnels.get(aid) if aid else None
-            if (tunnel is None or self._streams_open >= self.limits.streams
-                    or not tunnel.open_allowed()):
+            if tunnel is None:
+                return
+            # Before the tunnel's limits, so a refused kind spends none of them.
+            kind = rp.stream_kind(sni)
+            if kind not in tunnel.kinds:
+                self.stream_refused("kind")
+                return
+            if self._streams_open >= self.limits.streams or not tunnel.open_allowed():
                 return
             stream = tunnel.new_stream()
+            stream.kind = kind
             stream.attach(reader, writer)
             self._streams_open += 1
             await tunnel.send(rp.encode(rp.OPEN, stream.sid, rp.open_payload(src, sport, sni)))
@@ -577,9 +603,9 @@ class Relay:
                 self._streams_open -= 1
                 if tunnel is not None:
                     tunnel.streams.pop(stream.sid, None)
-                log.info("remote relay: stream %s from %s, %d bytes from the browser, "
+                log.info("remote relay: stream %s %s from %s, %d bytes from the browser, "
                          "%d to it, %.1f s",
-                         tunnel.address_id if tunnel else "-", log_source(src),
+                         tunnel.address_id if tunnel else "-", kind, log_source(src),
                          stream.bytes_out, stream.bytes_in, time.monotonic() - started)
             if key is not None:
                 left = self._per_source.get(key, 1) - 1

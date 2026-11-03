@@ -19,6 +19,7 @@ With a Host installed by `npx cseries`, the bastion runs on the same machine as 
 
 - **On your own computer,** both ports are on the machine's own loopback address, so nothing on another machine can reach them.
 - **On a Host you run as the control plane for your other machines,** both are on the network address you set for them, so the bastions on those machines can reach them. The pairing port answers only a pairing token, and the other port only a machine holding a certificate your Host gave it and has not revoked.
+- **For a server that can't reach your Host back,** such as a server on the internet when your Host is at home behind its router, your Host connects to the server instead, on the one port its bastion opens there (8812), with the code that bastion showed. Nothing on your home network is opened. See [the bastion](wiki:the-bastion).
 - **On a C-Series Cloud machine,** both are on its public address. Anyone can reach the port a bastion connects in on, but it lets in only a machine holding a certificate your Host gave it when it paired, and none your Host has revoked. The pairing port stays shut. Each time you set up a bastion and confirm with your passkey, it opens for 15 minutes to one address: the one your browser came from, or the one you give for a machine on another network.
 
 When you revoke a machine, its credential is revoked at once and its connection is refused from then on.

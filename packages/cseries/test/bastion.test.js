@@ -238,7 +238,7 @@ test('the binary is the one for this machine\'s CPU', () => {
 test('another account\'s run stops at the owner step: nothing is paired or enrolled, and the first account keeps its approvals', async () => {
   const other = 'S-1-5-21-1111111111-2222222222-3333333333-1002';
   const { ctx, m } = ctxFor({ bastionOwner: other });
-  await assert.rejects(() => both(ctx), /belong to another Windows account/);
+  await assert.rejects(() => both(ctx), /belong to another account, which keeps them/);
   assert.equal(m.bastion.owner, other, 'the recorded owner is unchanged');
   assert.equal(m.pairCalls.length, 0, 'nothing was paired');
   assert.equal(m.enrolments, 0, 'no authenticator was enrolled');

@@ -975,6 +975,8 @@
             const elsewhere = $('gw-add-elsewhere');
             if (elsewhere) elsewhere.hidden = listed.pairing_window !== true;
             syncElsewhereForm();
+            const addSrv = $('gw-add-server');
+            if (addSrv) addSrv.hidden = listed.add_server !== true;
             state.loaded.topology = true;
             // Fresh rows arrived, so the session set has done its job — drop it and let
             // SERVER TRUTH rebuild it below (renderBastions re-adds from
@@ -4746,6 +4748,49 @@
         loadOverview();
     }
 
+    // ════════════════════ ADD A SERVER ════════════════════
+    // A server this Host can reach but that can't reach it back (this Host at
+    // home, the server on the internet). The person runs
+    // `privatae-bastion pair --open` on the server, which shows a code, and
+    // gives this card the server's address and that code. This Host opens the
+    // connection and pairs (POST /api/network/servers/pair); the card then
+    // shows what the server said, in its words.
+    function addServer() {
+        openInspector('Add a server', [
+            ['on the server', 'Run <code>privatae-bastion pair --open</code> there (as an administrator). It shows a code that works once, for 15 minutes.', false, true],
+            ['address', '<input id="srv-addr" class="cseries-input" autocomplete="off" spellcheck="false" placeholder="the server\'s address, like 203.0.113.7 or my-server.example.com">', false, true],
+            ['code', '<input id="srv-code" class="cseries-input" autocomplete="off" spellcheck="false" placeholder="the code it showed, like ABCDE-FGHJK-MNPQR-STVWX">', false, true],
+            ['', '<span id="srv-status" class="net-inline-status" role="status"></span>', false, true],
+        ], [{ label: 'Connect', cls: 'primary', onClick: connectServer }]);
+        const a = $('srv-addr'); if (a) a.focus();
+    }
+    async function connectServer(e) {
+        const btn = e && e.target;
+        const address = (($('srv-addr') || {}).value || '').trim();
+        const code = (($('srv-code') || {}).value || '').trim();
+        const status = $('srv-status');
+        if (!address || !code) {
+            if (status) { status.classList.add('error'); status.textContent = 'Give the server\'s address and the code it showed.'; }
+            return;
+        }
+        if (btn) btn.disabled = true;
+        if (status) { status.classList.remove('error'); status.textContent = 'Connecting to ' + address + '…'; }
+        try {
+            const res = await fetchJSON('/api/network/servers/pair', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ address: address, code: code }),
+            });
+            openInspector(res.state === 'pending' ? 'Server paired, waiting to be let in' : 'Server added',
+                [['', res.message || 'Paired.']], []);
+            state.loaded.topology = false;
+            loadBastions({ keepInspector: true });
+            loadOverview();
+        } catch (err) {
+            if (status) { status.classList.add('error'); status.textContent = err.message; }
+            if (btn) btn.disabled = false;
+        }
+    }
+
     // Before setup, for a machine on another network than this browser's: one
     // setup request with pair_from, so one window opens, to that address only.
     // Its form sits beneath the toolbar, not inside the choice: opened inside,
@@ -4798,6 +4843,8 @@
         $('gw-update-all').addEventListener('click', updateAllBastions);
         $('autoupdate-toggle').addEventListener('click', toggleAutoUpdate);
         $('gw-add').addEventListener('click', setupBastion);
+        const addSrvBtn = $('gw-add-server');
+        if (addSrvBtn) addSrvBtn.addEventListener('click', addServer);
         const elsewhereGo = $('gw-add-elsewhere-go');
         if (elsewhereGo) elsewhereGo.addEventListener('click', setupFromElsewhere);
         const elsewhere = $('gw-add-elsewhere');

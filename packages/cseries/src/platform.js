@@ -100,6 +100,42 @@ function paths(platform = process.platform, env = process.env, home = os.homedir
   };
 }
 
+// A whole-machine install on Linux (scope.js): the Host belongs to the
+// machine, not to the account that ran npx cseries. Everything is in
+// /var/lib/cseries, which only root writes: the state, the logs and the
+// downloads; Lima's release (tools); and LIMA_HOME (lima) with the VM's
+// disk, which belongs to the system account vmUser that Lima and QEMU run
+// as (Lima refuses root), with vmHome as that account's home. autostart is
+// the system unit that starts the VM at boot, as vmUser, with nobody signed
+// in. The bastion's paths are the ones above: it is the machine's already.
+const MACHINE_BASE = '/var/lib/cseries';
+const MACHINE_USER = 'cseries';
+const MACHINE_UNIT = '/etc/systemd/system/cseries.service';
+
+function machinePaths() {
+  const p = path.posix;
+  const base = MACHINE_BASE;
+  return {
+    base,
+    state: p.join(base, 'state.json'),
+    downloads: p.join(base, 'downloads'),
+    hostCa: p.join(base, 'host-ca.pem'),
+    installLog: p.join(base, 'bastion-install.log'),
+    log: p.join(base, 'install.log'),
+    bastionDir: '/root/.local/bin',
+    bastionExe: '/root/.local/bin/privatae-bastion',
+    serviceDir: '/usr/local/bin',
+    serviceExe: '/usr/local/bin/privatae-bastion',
+    serviceUnit: '/etc/systemd/system/privatae-bastion.service',
+    lima: p.join(base, 'lima'),
+    tools: p.join(base, 'tools'),
+    vmHome: p.join(base, 'home'),
+    vmUser: MACHINE_USER,
+    autostart: MACHINE_UNIT,
+    join: p.join,
+  };
+}
+
 // The bastion manifest's key for this machine's binary.
 function bastionBinaryKey(platform, arch) {
   const cpu = arch === 'arm64' ? 'arm64' : 'amd64';
@@ -108,4 +144,4 @@ function bastionBinaryKey(platform, arch) {
   return `linux-${cpu}`;
 }
 
-module.exports = { machineArch, paths, bastionBinaryKey };
+module.exports = { machineArch, paths, machinePaths, bastionBinaryKey, MACHINE_BASE, MACHINE_USER, MACHINE_UNIT };

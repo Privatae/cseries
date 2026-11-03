@@ -680,8 +680,16 @@ class NotifyPool(Pool):
         return []
 
 
+async def _no_card(*a, **k):
+    """The pop-up cannot be filed (tickets down): the anchor's ask falls back to
+    the inbox note on the same clocks. scripts/test_pairing_popup.py covers the
+    pop-up itself."""
+    return False
+
+
 def test_ingest_asks_once_then_raises_unapproved_daily(monkeypatch):
     sent: list = []
+    monkeypatch.setattr(pg, "_raise_card", _no_card)
 
     async def _inbox(subject, body, payload):
         sent.append(payload)
@@ -711,7 +719,7 @@ def test_ingest_asks_once_then_raises_unapproved_daily(monkeypatch):
     assert any("SET pending_notified_at = now(), unapproved_raised_at = now()" in q for q, _ in pool.sql)
     # the ask names the approve op on the anchor; inbox row lands BEFORE the host message
     assert sent[0].get("event") == "pairing_pending" and sent[1].get("host_message") == "pairing_pending"
-    assert "manage_pairing op='approve'" in sent[1]["content"]
+    assert "nothing for you to approve" in sent[1]["content"]
     # asked 3h ago, clock started then → still silent (once per DAY, not per 10 min)
     sent.clear()
     pool = NotifyPool(row(pending_notified_at=now - dt.timedelta(hours=3),
@@ -773,6 +781,7 @@ def test_ingest_on_a_member_host_informs_once_and_never_asks_to_approve(monkeypa
 
 def test_ingest_failed_inbox_write_leaves_no_host_message_and_no_mark(monkeypatch):
     sent: list = []
+    monkeypatch.setattr(pg, "_raise_card", _no_card)
 
     async def _inbox(subject, body, payload):
         return False
@@ -793,6 +802,7 @@ def test_ingest_failed_inbox_write_leaves_no_host_message_and_no_mark(monkeypatc
 
 def test_ingest_retries_an_undelivered_grant_while_the_box_reports_pending(monkeypatch):
     relay = Relay()
+    monkeypatch.setattr(pg, "_raise_card", _no_card)
     monkeypatch.setattr(pg, "_dispatch", relay)
 
     async def _vk(pool, eid):

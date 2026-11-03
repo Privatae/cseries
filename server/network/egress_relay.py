@@ -39,6 +39,10 @@ class RelayWorker:
     """One bastion->host worker WebSocket = one egress job. The WS endpoint coroutine owns
     ALL WS I/O; the gate just hands it (head + the client streams) and awaits completion."""
 
+    # The lane's own logger: a subclass for another lane (serve_relay.ServeWorker) logs
+    # under its own name.
+    _log = log
+
     def __init__(self, ws, bastion_token_id: Optional[int] = None):
         self.ws = ws
         self.bastion_token_id = bastion_token_id
@@ -69,7 +73,7 @@ class RelayWorker:
                 # and moves to the next worker — otherwise it would hand a job to a worker
                 # that already left serve(), and the gate's `await done` would hang forever.
                 self._job.cancel()
-                log.info("worker %s dropped while idle", self.bastion_token_id)
+                self._log.info("worker %s dropped while idle", self.bastion_token_id)
                 return
             # Got a job: stop the idle receive BEFORE relaying, so _relay's receive_bytes
             # isn't racing a second concurrent receive on the same socket (that empties the
@@ -95,7 +99,7 @@ class RelayWorker:
             try:
                 await self._relay(head, c_reader, c_writer)
             except Exception as e:
-                log.info("worker %s relay error: %r", self.bastion_token_id, e)
+                self._log.info("worker %s relay error: %r", self.bastion_token_id, e)
             finally:
                 if not done.done():
                     done.set_result(True)
@@ -109,7 +113,7 @@ class RelayWorker:
             elif not started and not self._job.cancelled():
                 job = self._job.result()
                 if job is not None and not job[3].done():
-                    log.info("worker %s stopped before relaying its job", self.bastion_token_id)
+                    self._log.info("worker %s stopped before relaying its job", self.bastion_token_id)
                     job[3].set_result(False)
             return
         finally:

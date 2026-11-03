@@ -326,6 +326,13 @@ _WALLED_PATHS: frozenset[str] = frozenset({
     # sign-in routes, so the classification survives any later exposure of
     # /api/system.
     "/api/system/name",
+    # The passkey half of an approval pop-up (server/routes/approvals.py): a
+    # challenge for one card's answer or one card's request. The Host never
+    # asks for an approval and could not answer one; walled so the
+    # classification survives any later exposure of /api/approvals.
+    "/api/approvals/passkey",
+    "/api/approvals/passkey/ticket",
+    "/api/approvals/passkey/request",
 })
 
 _CONNECTOR_WALL = (
@@ -350,6 +357,10 @@ _MCP_SIGNIN_WALL = (
 # Why a walled path is walled, where it is NOT the credential-bytes reason the
 # original entries share. run_kernel_op relays this, so the host tells the user
 # something true and actionable instead of "it returns credential bytes".
+_APPROVAL_WALL = (
+    "An approval is the person's own tap or code on the card over the chat. You never "
+    "ask for one and cannot answer one: file the card, and their answer reaches you as "
+    "the answer to that ticket.")
 _WALL_REASONS: dict[str, str] = {
     "/api/oversight/findings/{finding_id}/resolve": (
         "Marking a finding resolved is the user's own action — it records that a "
@@ -395,6 +406,9 @@ _WALL_REASONS: dict[str, str] = {
     "/api/mcp/oauth/{name}/start": _MCP_SIGNIN_WALL,
     "/api/mcp/oauth/{name}/sign-out": _MCP_SIGNIN_WALL,
     "/api/mcp/oauth/callback": _MCP_SIGNIN_WALL,
+    "/api/approvals/passkey": _APPROVAL_WALL,
+    "/api/approvals/passkey/ticket": _APPROVAL_WALL,
+    "/api/approvals/passkey/request": _APPROVAL_WALL,
     "/api/system/name": (
         "The name you are called by is the owner's to choose: they set it in Settings, "
         "About. If they ask you to change it, tell them where, and suggest a name if "

@@ -513,20 +513,42 @@ async def stepup_wait_seconds(pool, *, at: Optional[float] = None, by: Optional[
     return _longest(waits)[0]
 
 
-async def verify_stepup(pool, code: str, *, at: Optional[float] = None) -> bool:
-    """Verify a step-up TOTP code against the host's ENROLLED secret and BURN it.
-    Returns False if no factor is enrolled yet — so an allow cannot commit without an
-    armed second factor — False for a missing or malformed code (not counted), and
-    False for a wrong code or one already accepted once (replay), both counted on
-    every record of the caller's. Raises StepupLocked (429) when any of those
-    records is waiting, without looking at the code, and when this wrong code
-    starts a wait."""
-    if pool is None or not await is_enrolled(pool):
+async def verify_stepup(pool, code: str, *, at: Optional[float] = None,
+                        purpose: Optional[str] = None) -> bool:
+    """Verify a step-up and BURN it: a TOTP code against the host's ENROLLED
+    secret, or an approval made with the owner's passkey ("passkey:<json>",
+    server/approval_passkeys.py) for exactly `purpose`.
+
+    A code: False if no code is enrolled — so an allow cannot commit without
+    an armed second factor — False for a missing or malformed code (not
+    counted), and False for a wrong code or one already accepted once
+    (replay), both counted on every record of the caller's.
+
+    A passkey approval: accepted only when the caller passes the `purpose` it
+    is about to act on (the decide route of a card, the machine-share route);
+    with none it is refused and not counted, so every other caller keeps
+    taking codes alone and the Host's tools can never spend one. One for
+    another purpose, used, expired, from another address, without the
+    person's verification, or whose signature or counter fails, is a wrong
+    one, counted like a wrong code.
+
+    Raises StepupLocked (429) when any of the caller's records is waiting,
+    without looking at the code, and when this wrong one starts a wait."""
+    if pool is None:
         return False
-    if not _well_formed(code):
-        return False
+    from server import approval_passkeys
+    proof = None
+    if approval_passkeys.is_proof(code):
+        proof = approval_passkeys.parse_proof(code)
+        if proof is None or not purpose:
+            return False
+    else:
+        if not await is_enrolled(pool):
+            return False
+        if not _well_formed(code):
+            return False
     fids, by = await _records_of(pool, attempts_by())
-    secret = await ensure_stepup_secret(pool)
+    secret = await ensure_stepup_secret(pool) if proof is None else ""
     now = at if at is not None else time.time()
     ok, wait, held = False, 0, fids[0]
     async with pool.acquire() as conn:
@@ -539,8 +561,17 @@ async def verify_stepup(pool, code: str, *, at: Optional[float] = None) -> bool:
             wait, held = _longest({f: _wait_from(n, last, now, _ceiling(f))
                                    for f, (n, last) in counts.items()})
             if not wait:
-                counter = matched_counter(secret, code, at=now)
-                ok = counter is not None and await _consume_counter_in(conn, counter)
+                if proof is not None:
+                    # A savepoint, so a store that cannot be read refuses the
+                    # approval and the attempt is still recorded below.
+                    try:
+                        async with conn.transaction():
+                            ok = await approval_passkeys.verify_in(conn, proof, purpose)
+                    except Exception:  # noqa: BLE001 — refused, never let through
+                        ok = False
+                else:
+                    counter = matched_counter(secret, code, at=now)
+                    ok = counter is not None and await _consume_counter_in(conn, counter)
                 if ok:
                     for fid in fids:
                         await conn.execute("DELETE FROM kernel_secrets WHERE id=$1", fid)

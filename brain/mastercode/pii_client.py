@@ -82,11 +82,16 @@ def _api_key() -> str | None:
 async def resolve_endpoint(pool, entity_id: int) -> str | None:
     """Live PII-service endpoint for this entity, or None when not advertised.
 
-    Mirrors model_backends.list_local_models' heartbeat query shape. The
-    `pii_port` column does not exist server-side yet (the advertisement is
-    the platform side's piece): an undefined-column error is treated as NOT ADVERTISED
-    — the honest disabled state, never an error. PII_SERVICE_URL env
-    overrides resolution entirely (dev).
+    Mirrors model_backends.list_local_models' heartbeat query shape. A
+    bastion with an address advertises the service as `pii_port` (its tunnel
+    forward), reached at http://<reported_ip>:<pii_port>. A pairing with no
+    address of its own (every pairing of a standalone Host) has no port: its
+    beat carries `pii_ok` alone, and the sterilizer on its machine is reached
+    over the bastion's serve lane ("pii", server/network/serve_relay.py) at a
+    loopback origin of this Host's, while that lane is connected. The newest
+    beat that resolves wins. An undefined-column error is treated as NOT
+    ADVERTISED — the honest disabled state, never an error. PII_SERVICE_URL
+    env overrides resolution entirely (dev).
     """
     override = (os.environ.get("PII_SERVICE_URL") or "").strip()
     if override:
@@ -95,18 +100,19 @@ async def resolve_endpoint(pool, entity_id: int) -> str | None:
         return None
     try:
         from server.network.topology import ONLINE_WINDOW_SECONDS
-        row = await pool.fetchrow(
+        rows = await pool.fetch(
             f"""
-            SELECT h.reported_ip, h.pii_port
+            SELECT t.id AS token_id, h.reported_ip, h.pii_port
               FROM mcp_client_tokens t
               JOIN network_bastion_heartbeat h ON h.token_id = t.id
              WHERE t.entity_id = $1
                AND t.operator_kind = 'bastion'
                AND t.revoked_at IS NULL
-               AND h.pii_port IS NOT NULL
+               AND (h.pii_port IS NOT NULL
+                    OR (h.pii_ok IS NOT NULL AND COALESCE(h.reported_ip, '') = ''))
                AND h.last_seen_at > now() - INTERVAL '{int(ONLINE_WINDOW_SECONDS)} seconds'
              ORDER BY h.last_seen_at DESC
-             LIMIT 1
+             LIMIT 8
             """,
             entity_id,
         )
@@ -115,11 +121,18 @@ async def resolve_endpoint(pool, entity_id: int) -> str | None:
         # honesty as list_local_models: None, logged at debug, never raised.
         log.debug("pii endpoint resolution unavailable (%s)", type(e).__name__)
         return None
-    if not row:
-        return None
-    from mastercode.model_backends import resolve_model_endpoint
-    return resolve_model_endpoint(
-        {"reported_ip": row["reported_ip"]}, row["pii_port"])
+    from mastercode.model_backends import resolve_model_endpoint, _serve_lane_endpoint
+    for row in rows or []:
+        if (row["reported_ip"] or "").strip():
+            if row["pii_port"]:
+                ep = resolve_model_endpoint({"reported_ip": row["reported_ip"]}, row["pii_port"])
+                if ep:
+                    return ep
+            continue
+        ep = await _serve_lane_endpoint(row["token_id"], "pii")
+        if ep:
+            return ep
+    return None
 
 
 @dataclasses.dataclass

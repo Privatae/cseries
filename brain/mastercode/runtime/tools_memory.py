@@ -1625,7 +1625,7 @@ async def _exec_media_embedding_route(sub: str, a: dict) -> dict:
         if pool is None or entity_id is None:
             return {"status": "error", "result": "embedding_route: brain pool/host id unavailable"}
         from mastercode.embed_backends import resolve_endpoint_for_hostname
-        endpoint = await resolve_endpoint_for_hostname(pool, entity_id, server)
+        endpoint = await resolve_endpoint_for_hostname(pool, entity_id, server, model)
         if not endpoint:
             return {"status": "error", "result":
                     f"embedding_route media_use_bastion: '{server}' has no reachable "

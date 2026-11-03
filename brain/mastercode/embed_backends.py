@@ -19,6 +19,16 @@ embedder must never touch the control connection — the bridge circuit-breaker
 lesson). When a sealed token is registered, _embed_via_byo routes through the
 vault broker so the raw key never reaches this layer.
 
+A PAIRING WITH NO ADDRESS (every pairing of a standalone Host: its socket,
+its lane port, a server it connects to) has no tunnel address to dial, so
+its embedder is reached over the bastion's serve lane
+(server/network/serve_relay.py), at a loopback origin of this Host's, while
+that lane is connected: the "ollama" service for a model in `models` (the
+`embed` capability), the "llm" service (llama.cpp's llama-server, vLLM,
+LM Studio, all OpenAI /v1/embeddings) for one in `llm_models`. The Host names
+the service; the bastion dials only the server set on its own machine. A
+bastion that reports an address is resolved exactly as before.
+
 PAIRED, NOT IN THIS MODULE:
   - Bastion side (the gateway): advertise the 'embed' capability + report its
     embedder endpoint in the heartbeat. Until then resolve_embed_endpoint falls
@@ -74,6 +84,61 @@ def resolve_embed_endpoint(bastion: dict) -> str | None:
     return f"http://{host}:{DEFAULT_OLLAMA_PORT}"
 
 
+def _addressless(bastion: dict) -> bool:
+    """A pairing that reports no address of its own: a standalone Host's
+    (serve_relay.py). Its embedder rides the serve lane."""
+    return not (bastion.get("reported_ip") or "").strip()
+
+
+def lane_embed_service(bastion: dict, model: str | None = None) -> str | None:
+    """Which serve-lane service carries an address-less bastion's embedder:
+    "ollama" for a model it serves on ollama (the `embed` capability), "llm"
+    for one in its OpenAI-compatible server's list, None when neither holds
+    `model` (or, with no model named, neither holds an embedding model this
+    host knows). Ollama first, as model_backends lists it."""
+    from mastercode.model_backends import _norm_model as _norm
+    caps = bastion.get("capabilities") or []
+    ollama = [str(m) for m in (bastion.get("models") or [])]
+    llm = [str(m) for m in (bastion.get("llm_models") or [])]
+    if model:
+        want = _norm(model)
+        if EMBED_CAPABILITY in caps and any(_norm(m) == want for m in ollama):
+            return "ollama"
+        if any(_norm(m) == want for m in llm):
+            return "llm"
+        return None
+    if EMBED_CAPABILITY in caps and known_embed_models(ollama):
+        return "ollama"
+    if known_embed_models(llm):
+        return "llm"
+    return None
+
+
+async def resolve_embed_endpoint_live(bastion: dict, model: str | None = None) -> str | None:
+    """resolve_embed_endpoint, and for a bastion that reports no address, its
+    serve-lane origin (lane_embed_service) while that lane is connected. A
+    bastion with an address is resolved exactly as resolve_embed_endpoint
+    does. `bastion["id"]` is its token (topology.list_bastions)."""
+    ep = resolve_embed_endpoint(bastion)
+    if ep or not isinstance(bastion, dict) or not _addressless(bastion):
+        return ep
+    service = lane_embed_service(bastion, model)
+    if not service:
+        return None
+    from mastercode.model_backends import _serve_lane_endpoint
+    return await _serve_lane_endpoint(bastion.get("id"), service)
+
+
+def _embed_models_of(bastion: dict) -> list:
+    """The models a bastion's embedder can be picked from: its ollama list,
+    and for an address-less pairing its OpenAI-compatible server's list too
+    (both reached over the serve lane)."""
+    models = list(bastion.get("models") or [])
+    if _addressless(bastion):
+        models += [m for m in (bastion.get("llm_models") or []) if m not in models]
+    return models
+
+
 async def list_embed_bastions(pool, entity_id: int) -> list[dict]:
     """The host's ONLINE bastions that advertise the 'embed' capability AND have a
     resolvable embedder endpoint — the choosable targets to serve this host's
@@ -90,11 +155,15 @@ async def list_embed_bastions(pool, entity_id: int) -> list[dict]:
     for b in rows:
         if not b.get("online"):
             continue
-        if EMBED_CAPABILITY not in (b.get("capabilities") or []):
+        # An address-less pairing's OpenAI-compatible server serving an
+        # embedding model is an embedder too (lane_embed_service), with no
+        # `embed` capability: that capability is the bastion's ollama probe.
+        if EMBED_CAPABILITY not in (b.get("capabilities") or []) and not (
+                _addressless(b) and lane_embed_service(b) == "llm"):
             continue
         if not b.get("hostname"):
             continue  # un-addressable
-        ep = resolve_embed_endpoint(b)
+        ep = await resolve_embed_endpoint_live(b)
         if not ep:
             continue  # online + capable but no reachable endpoint
         out.append({
@@ -103,14 +172,15 @@ async def list_embed_bastions(pool, entity_id: int) -> list[dict]:
             "handle": b.get("handle"),
             "id": b.get("id"),
             "capabilities": b.get("capabilities") or [],
-            "models": b.get("models") or [],
+            "models": _embed_models_of(b),
             "embed_endpoint": ep,
             "last_seen_at": b.get("last_seen_at"),
         })
     return out
 
 
-async def resolve_endpoint_for_hostname(pool, entity_id: int, server: str) -> str | None:
+async def resolve_endpoint_for_hostname(pool, entity_id: int, server: str,
+                                        model: str | None = None) -> str | None:
     """Resolve a bastion's embedder endpoint LIVE from its latest heartbeat —
     the reader-side companion to validate_embed_bastion_target. The persisted
     embedding config stores the bastion IDENTITY (hostname), never a raw tunnel
@@ -119,14 +189,21 @@ async def resolve_endpoint_for_hostname(pool, entity_id: int, server: str) -> st
     deliberately NOT required here: the tunnel IP only changes when the bastion
     re-enrolls, and a re-enroll writes a new heartbeat row immediately — so the
     latest row is always the right address, even mid heartbeat-gap. Revoked
-    bastions never resolve (their token is gone). Returns None when unknown."""
+    bastions never resolve (their token is gone). Returns None when unknown.
+
+    A bastion whose latest beat reports no address is reached over its serve
+    lane (resolve_embed_endpoint_live): the service is the one whose list
+    holds `model` (the host's embedding model), and the origin exists only
+    while that lane is connected, so a machine that went away is None here,
+    and the caller marks the lane down."""
     server = (server or "").strip()
     if not server or pool is None or entity_id is None:
         return None
     try:
         row = await pool.fetchrow(
             """
-            SELECT h.reported_ip
+            SELECT t.id AS token_id, h.reported_ip, h.capabilities, h.models,
+                   h.llm_models
               FROM network_bastion_heartbeat h
               JOIN mcp_client_tokens t ON t.id = h.token_id
              WHERE h.hostname = $1
@@ -139,9 +216,22 @@ async def resolve_endpoint_for_hostname(pool, entity_id: int, server: str) -> st
     except Exception as e:
         log.warning("resolve_endpoint_for_hostname(%s): heartbeat lookup failed: %s", server, e)
         return None
-    if not row or not row["reported_ip"]:
+    if not row:
         return None
-    return resolve_embed_endpoint({"reported_ip": str(row["reported_ip"])})
+    if row["reported_ip"]:
+        return resolve_embed_endpoint({"reported_ip": str(row["reported_ip"])})
+    return await resolve_embed_endpoint_live({
+        "id": row.get("token_id"), "reported_ip": "",
+        "capabilities": _json_list(row.get("capabilities")),
+        "models": _json_list(row.get("models")),
+        "llm_models": _json_list(row.get("llm_models")),
+    }, model)
+
+
+def _json_list(raw) -> list:
+    """A heartbeat jsonb model column as clean ids (model_backends' reader)."""
+    from mastercode.model_backends import _model_list
+    return _model_list(raw)
 
 
 async def validate_embed_bastion_target(pool, entity_id: int, server: str) -> tuple[bool, str, str | None]:
@@ -165,6 +255,9 @@ async def validate_embed_bastion_target(pool, entity_id: int, server: str) -> tu
         return False, f"'{server}' is not a known bastion of this host", None
     if not m.get("online"):
         return False, f"bastion '{server}' is offline (no recent heartbeat)", None
+    if _addressless(m) and lane_embed_service(m):
+        return False, (f"bastion '{server}' serves an embedding model on its own machine, but its "
+                       "serve lane is not connected to this Host right now"), None
     if EMBED_CAPABILITY not in (m.get("capabilities") or []):
         return False, f"bastion '{server}' does not advertise the '{EMBED_CAPABILITY}' capability", None
     return False, f"bastion '{server}' reports no reachable embedder endpoint", None
@@ -256,6 +349,16 @@ async def set_embed_bastion(pool, entity_id: int, server: str,
                         "served_embedding_models": [n for n, _ in served_known]}
             target_model, target_dim = pick
             chosen = True
+    # An address-less pairing can serve embedders on two servers (ollama and
+    # its OpenAI-compatible one), each with its own lane origin, and the
+    # endpoint above is the one picked with no model named. Once the model is
+    # known, the origin is the one of the server that holds it; a model on
+    # neither keeps the endpoint, and the probe refuses it.
+    from mastercode.memory_engine import _is_serve_lane_origin
+    if target_model and _is_serve_lane_origin(endpoint):
+        by_model = await resolve_endpoint_for_hostname(pool, entity_id, server, target_model)
+        if by_model:
+            endpoint = by_model
     # `bastion=server` persists the bastion IDENTITY next to the endpoint: the
     # embed reader re-resolves the live endpoint from the heartbeat every call
     # (resolve_endpoint_for_hostname), so a re-enroll (new tunnel IP) self-heals

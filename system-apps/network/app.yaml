@@ -453,7 +453,13 @@ system: true
 # 1.23.2 (2026-11-02): a quarantined machine's card says what the Host does
 #   (refuses everything it asks, closes what it had open, notes its check-ins)
 #   instead of a platform tunnel this Host does not have.
-version: "1.23.2"
+# 1.24.0 (2026-11-03): Bastions, "Add a server": a server this Host can reach
+#   but that can't reach it back. The address and the code its
+#   `privatae-bastion pair --open` showed; this Host connects and pairs (POST
+#   /api/network/servers/pair, write:network) and the card shows what the
+#   server said. Offered on a Host with no platform (GET /api/network/bastions
+#   add_server).
+version: "1.24.0"
 # Network is NOT a conversational surface — the user operates it directly and
 # talks to the host in Circles/the Workbench. So this is the code-true source for
 # the ENVIRONMENT CATALOG (topology block + describe_app), NOT a surface_role

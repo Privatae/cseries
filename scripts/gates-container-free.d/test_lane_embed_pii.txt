@@ -1,0 +1,8 @@
+# A Host reaches the embedder and the PII sterilizer on a bastion's machine over
+# the bastion's serve lane, as chat does (test_serve_lane.py): an address-less
+# pairing's embedder ("ollama" or "llm") and sterilizer ("pii") get a loopback
+# origin of this Host's while that lane is connected, dialled directly (never
+# the Hub's peer forward); a bastion with an address resolves as before; every
+# lane down, no caller returns any address. Stub pools, a fake bastion
+# WebSocket spliced to a real stand-in server on loopback. No DB.
+test_lane_embed_pii.py

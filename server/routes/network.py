@@ -192,6 +192,10 @@ async def get_bastions():
     from server.network import nac_commit, observations
     out = await nac_commit.bastions_list(pool, eid)
     out["pairing_window"] = _opens_pairing_window()
+    # "Add a server" (POST /servers/pair): a Host with no platform connects to
+    # a server that can't reach it back (host_dials).
+    from server.network import local_bastion as _lb
+    out["add_server"] = _lb.standalone()
     # The tool servers each machine's agent clients declare and how much the
     # bastion read (v256), for the Agents view. Read here rather than in
     # list_bastions so the many other readers of that list (the Host's turn
@@ -454,6 +458,29 @@ async def acknowledge_agent(request: Request):
     await nac_agents.audit_disposition(pool, entity_id=brain_service._entity_id,
                                        disposition="acknowledge", token_id=token_id, pid=pid)
     return {"token_id": token_id, "pid": pid, "acknowledged": True}
+
+
+@router.post("/servers/pair", dependencies=[Depends(requires_permission("write:network"))])
+async def pair_server(request: Request):
+    """"Add a server": pair this Host with a server it can reach but that can't
+    reach it back (server/network/host_dials.py). The body is the server's
+    address and the code `privatae-bastion pair --open` showed there. This Host
+    opens the connection, proves the code, checks the server's proof before it
+    signs anything, and answers with what the server said, in plain words
+    (`message`); from then on it keeps connecting to the server by itself."""
+    pool = brain_service.get_pool()
+    if not pool:
+        raise HTTPException(503, "brain pool not ready")
+    from server.network import host_dials, local_bastion
+    if not local_bastion.standalone():
+        raise HTTPException(409, "This Host reaches its machines through the platform; a server is "
+                                 "added with Set up a bastion.")
+    body = await _json_in(request, only_json=True)
+    try:
+        return await host_dials.pair_with_server(pool, brain_service._entity_id,
+                                                 body.get("address"), body.get("code"))
+    except host_dials.PairError as e:
+        raise HTTPException(e.status, e.words)
 
 
 @router.post("/bastions/setup", dependencies=[Depends(requires_permission("write:network"))])
@@ -2190,6 +2217,11 @@ async def machine_offers_list(direction: Optional[str] = None, state: Optional[s
     return {"offers": await machine_offers.list_offers(pool, direction=direction, state=state)}
 
 
+# The share card's request a passkey approval can be made for
+# (routes/approvals.py); its purpose is this path and the body.
+MACHINE_OFFER_ACCEPT_PATH = "/api/network/bastions/machine-offers/accept"
+
+
 @router.post("/bastions/machine-offers/accept",
              dependencies=[Depends(requires_permission("resolve:decision"))])
 async def machine_offer_accept(request: Request, x_authentik_email: Optional[str] = Header(None)):
@@ -2200,13 +2232,20 @@ async def machine_offer_accept(request: Request, x_authentik_email: Optional[str
     pool = brain_service.get_pool()
     eid = brain_service._entity_id
     body = await _json_in(request, only_json=True)
+    from server import approval_passkeys
     from server.network import machine_offers, pairing_grants
+    from server.routes.tickets import PERSON_SURFACES
+    # A passkey approval is for this request exactly (its body without the
+    # proof), and only from the person's own chat (the share card is Circles').
+    tok = getattr(request.state, "app_token", None)
+    purpose = (approval_passkeys.purpose_for_request("POST", MACHINE_OFFER_ACCEPT_PATH, body)
+               if str(getattr(tok, "app_id", "") or "") in PERSON_SURFACES else None)
     try:
         return await machine_offers.accept_inbound(
             pool, eid, body.get("offer_id"), server=body.get("server"),
             caps=body.get("caps") or ["inference"], models=body.get("models"),
             stepup_code=str(body.get("stepup_code") or ""), ttl_days=body.get("ttl_days"),
-            decided_by=x_authentik_email or "user", via="ui")
+            decided_by=x_authentik_email or "user", via="ui", passkey_purpose=purpose)
     except machine_offers.OfferError as e:
         raise HTTPException(e.status, e.message)
     except pairing_grants.PairingError as e:

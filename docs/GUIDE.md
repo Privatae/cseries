@@ -6,10 +6,38 @@ is available and what is coming is in [ROADMAP.md](../ROADMAP.md).
 ## What the installer asks for
 
 On Windows without WSL, it first asks for administrator rights to install
-WSL and for a restart, then carries on by itself after the restart. On Linux
-without QEMU, or without access to `/dev/kvm`, it asks for your sudo password
-once to install QEMU from the distribution's packages or to add you to the
-`/dev/kvm` group. Run it as yourself, not as root.
+WSL and for a restart, then carries on by itself after the restart.
+
+On Linux, C-Series is installed for the whole machine, as the bastion is:
+run `npx cseries` as yourself and it asks for your sudo password once, for
+the whole run. The Host's virtual machine runs as a system account of its
+own, `cseries`, started at boot by the system service `cseries.service`,
+and everything of it is in `/var/lib/cseries`. No account's home holds any
+of it, so removing an account does not remove the Host. QEMU, when it is
+missing, comes from the distribution's packages in the same run.
+`npx cseries --just-me` installs it for your account only instead: the
+virtual machine then lives in your home and starts at your login, and sudo
+is asked only to install QEMU or to add you to the `/dev/kvm` group. An
+install made before whole-machine installs keeps working as it is, and
+`npx cseries` offers it once to move it to the whole machine. On a y the
+Host's virtual machine and all its data (its database, apps, pairings and
+keys) move to `/var/lib/cseries`, still the same Host, so the bastion stays
+paired and anchored to it; the copy in your home is removed only once the
+moved Host runs, and a move that does not finish is undone. On a no it is
+never asked again; `npx cseries --whole-machine` moves it later.
+
+`npx cseries uninstall --delete-data` removes the Host and its data, the
+bastion it installed with its pairings, keys and audit log (also when that
+bastion is anchored to this Host; `--keep-bastion` keeps it), and its
+folders and system account. On Windows that is the bastion's service, its
+program in `Program Files\Privatae`, its state under the system profile, the
+tray's sign-in entry and its own firewall rules, through the same single
+administrator prompt the install uses. It names the QEMU packages it
+installed (Linux), or WSL and the lines it added to your `.wslconfig`
+(Windows), and removes them only when you type y. A bastion it did not
+install stays; it names the command that removes it
+(`sudo -H privatae-bastion uninstall --delete-data`, or on Windows the same
+from an Administrator terminal).
 
 The virtual machine mounts none of your folders. The Host publishes its ports
 (8800 for the dashboard, 8810 and 8811 for the bastion) on 127.0.0.1 only. A

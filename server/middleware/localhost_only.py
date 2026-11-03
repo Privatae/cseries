@@ -594,7 +594,8 @@ class LocalhostOnlyMiddleware(BaseHTTPMiddleware):
 # over HTTP; the owner's session passes from its own origin; loopback passes
 # when it names this machine; any other peer is closed before the handler runs.
 _BASTION_WS_PATHS = frozenset({"/bastion-egress", "/bastion-mgmt", "/bastion-pgwire",
-                               "/bastion-harness", "/bastion-embed", "/bastion-git"})
+                               "/bastion-harness", "/bastion-embed", "/bastion-git",
+                               "/bastion-serve"})
 
 
 _BASTION_CN = "operator"

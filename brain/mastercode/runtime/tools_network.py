@@ -38,6 +38,24 @@ def _bastion_embed_readiness(b: dict) -> tuple[bool, str]:
     ip = (b.get("reported_ip") or "").strip()
     if not online:
         return False, "offline — no recent heartbeat; bring the gateway online."
+    if not ip:
+        # A pairing with no address of its own (a standalone Host's) is reached
+        # over its serve lane, never at an address (embed_backends).
+        from mastercode.embed_backends import lane_embed_service
+        service = lane_embed_service(b)
+        if not service:
+            return False, ("online, but its machine serves no embedding model this host knows "
+                           "(on ollama, or on its OpenAI-compatible server).")
+        try:
+            from server.network import serve_relay
+            lane_up = serve_relay.connected(b.get("id"))
+        except Exception:  # noqa: BLE001 — no Host server in this process
+            lane_up = False
+        if not lane_up:
+            return False, ("serves an embedding model on its own machine, but its serve lane is not "
+                           "connected to this Host right now; it reconnects on its own.")
+        return True, (f"ready — its machine's {'ollama' if service == 'ollama' else 'OpenAI-compatible'} "
+                      "server is reached through the bastion's serve lane.")
     if "embed" not in caps:
         return False, (
             "online but not advertising the 'embed' capability. Either the gateway "
@@ -863,10 +881,9 @@ def _bastion_summary(b: dict) -> dict:
     # The embedding models the box actually serves. The heartbeat
     # lists every ollama tag on the machine; without this the host was handed
     # "embed_ready: true" and no model name, and guessed one the box did not run.
-    models = b.get("models") or []
     try:
-        from mastercode.embed_backends import known_embed_models
-        embed_models = [{"model": n, "dim": d} for n, d in known_embed_models(models)]
+        from mastercode.embed_backends import known_embed_models, _embed_models_of
+        embed_models = [{"model": n, "dim": d} for n, d in known_embed_models(_embed_models_of(b))]
     except Exception:  # pragma: no cover - defensive
         embed_models = []
     return {
@@ -882,7 +899,7 @@ def _bastion_summary(b: dict) -> dict:
         "embed_ready": ready,
         "embed_reason": reason,
         "embed_models": embed_models,
-        "models_served": len(models),
+        "models_served": len(b.get("models") or []),
         "agent_watch": watch,
         "agent_watch_reason": watch_reason,
         "enforcing": _bastion_enforcing_summary(b),
@@ -2001,9 +2018,18 @@ async def _exec_manage_bastion(args: dict) -> dict:
         from server.network import nac_commit
         a = args or {}
         op = (a.get("op") or "list").strip().lower()
-        token_id = int(a["token_id"]) if a.get("token_id") is not None else None
         pool = brain_service.get_pool()
         eid = brain_service._entity_id
+        if op == "add_server":
+            # A server the person can reach but that can't reach them (host_dials):
+            # never paired on the Host's word, only on the person's Connect on the card.
+            from server.network import host_dials
+            try:
+                return {"status": "ok", "result": await host_dials.ask_to_pair(
+                    pool, eid, a.get("address"), a.get("code"))}
+            except host_dials.PairError as e:
+                return _refused(e.words)
+        token_id = int(a["token_id"]) if a.get("token_id") is not None else None
         res = await nac_commit.manage_bastion(
             pool, eid, op, name=(a.get("name") or "bastion"),
             token_id=token_id, version=(a.get("version") or ""))

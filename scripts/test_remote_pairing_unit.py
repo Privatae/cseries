@@ -689,9 +689,11 @@ async def bastions_list_says_window():
         LB.standalone = lambda: False
         with Env(CSERIES_DOOR_HELPER="/run/cseries-door/helper.sock"):
             platform = await NR.get_bastions()
-        check(on == {"bastions": [], "pairing_window": True} and off.get("pairing_window") is False
+        check(on == {"bastions": [], "pairing_window": True, "add_server": True} and off.get("pairing_window") is False
               and platform.get("pairing_window") is False,
               "GET /bastions says whether setup opens a pairing window", (on, off, platform))
+        check(on.get("add_server") is True and off.get("add_server") is True and platform.get("add_server") is False,
+              "GET /bastions offers Add a server on a Host with no platform only", (on, off, platform))
     finally:
         nac_commit.bastions_list, LB.standalone = real_list, real_sa
 

@@ -23,7 +23,7 @@ vm.createContext(sb0);
 vm.runInContext(fs.readFileSync(path.join(APP, 'steps.js'), 'utf8'), sb0);
 const SLIDES = sb0.window.GS_SLIDES;
 const ids = SLIDES.map((s) => s.id);
-check(ids.join(',') === 'welcome,name,keys,orchestrator,privatae-network,circles,workbench,done',
+check(ids.join(',') === 'welcome,name,local-model,keys,orchestrator,privatae-network,circles,workbench,done',
     'slide order: ' + ids.join(','));
 const name = SLIDES.find((s) => s.id === 'name');
 check(!!name && ids.indexOf('name') === ids.indexOf('welcome') + 1, 'Name your Host comes right after Welcome');
@@ -48,6 +48,22 @@ check(net && net.check.endpoint === '/api/network/status'
     && net.check.evaluate({ member: true }) === true && net.check.evaluate({ member: false }) === false,
     'its check passes once the Host is a member');
 
+// The model slide comes before Keys and offers the machine's own model.
+const lm = SLIDES.find((s) => s.id === 'local-model');
+check(!!lm && ids.indexOf('local-model') === ids.indexOf('keys') - 1, 'the model slide comes right before Keys');
+check(lm && !lm.appId && lm.offer && lm.offer.endpoint === '/api/inference/local-default'
+    && lm.offer.action.method === 'POST' && lm.offer.action.endpoint === '/api/inference/local-default',
+    'it reads and sets the local default on the Host, opening no app');
+const offerData = { candidate: { model: 'qwen3-8b-q4', machine: 'desk', kind: 'llm-openai' }, chat_routed: false };
+check(lm && lm.offer.offered(offerData) === true, 'a served model with chat unrouted is offered');
+check(lm && lm.offer.offered({ ...offerData, chat_routed: true }) === false, 'not when chat already has a model');
+check(lm && lm.offer.offered({ candidate: null, chat_routed: false }) === false, 'not when no machine serves one');
+check(lm && lm.offer.button(offerData) === 'Use the model on this machine (qwen3-8b-q4)', 'the button names the model');
+check(lm && JSON.stringify(lm.offer.action.body(offerData)) === '{"model":"qwen3-8b-q4"}', 'the button sends that model');
+const keysSlide = SLIDES.find((s) => s.id === 'keys');
+check(keysSlide && keysSlide.whenPassed && keysSlide.whenPassed.slide === 'local-model'
+    && /optional/i.test(keysSlide.whenPassed.title), 'Keys says it is optional once the model slide passed');
+
 // ── the engine ────────────────────────────────────────────────────────
 const els = {};
 function makeEl() {
@@ -60,6 +76,7 @@ const docListeners = {};
 const doc = { getElementById: (id) => (els[id] = els[id] || makeEl()),
     addEventListener: (t, fn) => { docListeners[t] = fn; } };
 const calls = []; const posted = [];
+let localDefault = { candidate: null, chat_routed: false };
 function respond(status, body) {
     return Promise.resolve({ ok: status >= 200 && status < 300, status, json: () => Promise.resolve(body) });
 }
@@ -69,6 +86,9 @@ const sandbox = { document: doc, console, setTimeout: (fn) => { fn(); return 0; 
         calls.push({ url, method: (opts && opts.method) || 'GET', body: opts && opts.body });
         if (url === '/api/system/status') return respond(200, { entity_display_name: 'C-Series' });
         if (url === '/api/network/status') return respond(200, { member: false });
+        if (url === '/api/inference/local-default') {
+            return (opts && opts.method === 'POST') ? respond(200, { set: true }) : respond(200, localDefault);
+        }
         return respond(200, {});
     } };
 sandbox.addEventListener = () => {};
@@ -100,6 +120,28 @@ async function settle() { for (let i = 0; i < 20; i++) await tick(); }
     await els['btn-primary'].onclick();
     const open = posted.filter((m) => m.type === 'cseries:open-app').pop();
     check(open && open.app_id === 'settings' && open.view === 'network', 'the network slide opens Settings at Network: ' + JSON.stringify(open));
+
+    // No model on any machine: the tour goes straight past the model slide.
+    await App.goTo(ids.indexOf('local-model'));
+    await settle();
+    check(SLIDES[App.state.idx].id === 'keys', 'no local model: the model slide is passed over');
+    check(els.title.textContent === 'Add one provider key', 'and Keys asks for a key as before');
+
+    // A model on the machine: offered, pressed, passed, and Keys is optional.
+    localDefault = offerData;
+    await App.goTo(ids.indexOf('local-model'));
+    await settle();
+    check(SLIDES[App.state.idx].id === 'local-model', 'a local model: the model slide shows');
+    check(els['btn-primary'].textContent === 'Use the model on this machine (qwen3-8b-q4)',
+        'its button names the model: ' + els['btn-primary'].textContent);
+    check(els['btn-skip'].hidden === false, 'it can be skipped');
+    await els['btn-primary'].onclick();
+    await settle();
+    const sent = calls.filter((c) => c.url === '/api/inference/local-default' && c.method === 'POST').pop();
+    check(sent && sent.body === '{"model":"qwen3-8b-q4"}', 'the press routes chat to it: ' + JSON.stringify(sent));
+    check(App.state.steps['local-model'] === 'passed' && SLIDES[App.state.idx].id === 'keys',
+        'a 2xx passes the slide and moves to Keys');
+    check(els.title.textContent === 'Add a provider key (optional)', 'Keys is optional now: ' + els.title.textContent);
 
     if (failures.length) {
         failures.forEach((f) => console.log('  FAIL  ' + f));

@@ -24,6 +24,10 @@ remote access promises:
     ends that stream with an RST, or that tunnel only, never the link;
   * an RST that cancels a send waiting in drain leaves the drain future
     alone, so the tunnel's later sends (ticket_ok, pongs) still go out.
+  * a stream of a kind the ticket does not carry is closed before the Host
+    hears of it: a lanes-only Host (the meeting point) gets bl-/bp- streams
+    and no browser, a ticket naming no kinds gets browsers and no lane, and
+    the stream's log line names its kind.
 
 Run: python3 -m pytest -q tests/test_remote_tunnel.py
 """
@@ -151,13 +155,16 @@ class PKI:
     def serial(self, who="a") -> int:
         return self.passports[who][2] if who in self.passports else self.stranger[2]
 
-    def ticket(self, who="a", *, aid=AID, life=3600.0, serial=None, limits=None, now=None):
+    def ticket(self, who="a", *, aid=AID, life=3600.0, serial=None, limits=None, now=None,
+               kinds=None):
         now = time.time() if now is None else now
         payload = {"v": 1, "kid": KID, "host_uuid": f"host-{who}",
                    "serial": format(self.serial(who) if serial is None else serial, "x"),
                    "address_id": aid, "zone": ZONE, "iat": now, "exp": now + life}
         if limits is not None:
             payload["limits"] = limits
+        if kinds is not None:
+            payload["kinds"] = kinds
         return rp.sign_ticket(self.ticket_key, payload)
 
 
@@ -335,7 +342,7 @@ class Rig:
         return self
 
     def client(self, who="a", *, tickets=None, port=None, heartbeat=0.5, aid=AID, door=None,
-               **kw):
+               delays=FAST, **kw):
         async def default_tickets(fresh):
             self.ticket_calls.append(fresh)
             return self.pki.ticket(who, aid=aid)
@@ -343,7 +350,7 @@ class Rig:
             address_id=aid, zone=ZONE,
             relays=[tun.RelayAddress("127.0.0.1", port or self.relay.tunnel_port, "test")],
             ssl_context=self.pki.client_ssl(who), tickets=tickets or default_tickets,
-            door=door or ("127.0.0.1", self.door.port), heartbeat=heartbeat, delays=FAST,
+            door=door or ("127.0.0.1", self.door.port), heartbeat=heartbeat, delays=delays,
             rng=random.Random(7), **kw)
         self.clients.append(c)
         self.tasks.append(c.start())
@@ -1114,7 +1121,12 @@ def test_the_newest_tunnel_for_an_address_wins_and_the_old_one_stays_off(pki, lo
     async def main():
         rig = await Rig(pki).start()
         try:
-            first = rig.client()
+            # The replaced one waits a refusal's time, then dials again and
+            # takes the address back. Under FAST's 0.3 s that came during the
+            # browse below on a loaded CI box, which cut it (an empty answer),
+            # so here the refusal outlasts the test.
+            first = rig.client(delays=tun.Delays(first=FAST.first, cap=FAST.cap, stable=FAST.stable,
+                                                 refused=30.0))
             await rig.wait_up(first)
             t1 = rig.relay.tunnels[AID]
             second = rig.client()
@@ -1123,7 +1135,7 @@ def test_the_newest_tunnel_for_an_address_wins_and_the_old_one_stays_off(pki, lo
                 await asyncio.sleep(0.02)
             await rig.wait_up(second)
             assert t1.ws.closed
-            await asyncio.sleep(0.15)          # under FAST.refused: the first is still waiting
+            await asyncio.sleep(0.15)          # well under its refusal: the first is still waiting
             st = first.status()[0]
             assert st["last_refusal"] == "replaced" and st["state"] == "refused"
             assert "another machine" in st["last_error"]
@@ -1962,4 +1974,203 @@ def test_a_cancelled_send_on_the_hosts_tunnel_leaves_the_drain_alone():
         ws.waiter.cancel()          # the connection torn down under the send
         with pytest.raises(ConnectionResetError):
             await asyncio.wait_for(cut, 2)
+    run(main())
+
+
+# ── kinds: what a Host's tunnel may carry ────────────────────────────────────
+
+LANE_NAME = f"bl-{'a' * 26}.{AID}.{ZONE}"
+PAIR_NAME = f"bp-{'b' * 26}.{AID}.{ZONE}"
+
+
+def test_a_streams_kind_is_read_from_the_first_label():
+    assert rp.stream_kind(LANE_NAME) == rp.KIND_LANE
+    assert rp.stream_kind(PAIR_NAME) == rp.KIND_LANE
+    assert rp.stream_kind(PAIR_NAME.upper()) == rp.KIND_LANE
+    for name in (HOST_NAME, f"apps-k-home.{AID}.{ZONE}", f"blx.{AID}.{ZONE}",
+                 f"b-l.{AID}.{ZONE}", f"xbl-a.{AID}.{ZONE}"):
+        assert rp.stream_kind(name) == rp.KIND_WEB, name
+    # A lane name is still one label under the address, so it routes.
+    assert rp.address_id_of(LANE_NAME, ZONE) == AID
+    assert rp.address_id_of(PAIR_NAME, ZONE) == AID
+
+
+def test_a_tickets_kinds_parse_and_default_to_web(pki):
+    keys = {KID: pki.ticket_key.public_key()}
+    assert rp.verify_ticket(pki.ticket(), keys)["kinds"] == {rp.KIND_WEB}
+    assert rp.verify_ticket(pki.ticket(kinds=["lane"]), keys)["kinds"] == {rp.KIND_LANE}
+    assert rp.verify_ticket(pki.ticket(kinds=["web", "lane"]), keys)["kinds"] == rp.KINDS
+    # A kind this relay does not know is left out, never let through and never
+    # the end of the ticket.
+    assert rp.verify_ticket(pki.ticket(kinds=["lane", "later"]), keys)["kinds"] == {rp.KIND_LANE}
+    assert rp.verify_ticket(pki.ticket(kinds=["later"]), keys)["kinds"] == frozenset()
+    for bad in ([], "lane", {"lane": 1}, ["lane", 7], [""], ["x" * 33], ["web"] * 9):
+        with pytest.raises(rp.TicketError) as exc:
+            rp.verify_ticket(pki.ticket(kinds=bad), keys)
+        assert exc.value.reason == "ticket_invalid", bad
+
+
+class _CountingRelay(relay_mod.Relay):
+    def __init__(self, **kw):
+        super().__init__(**kw)
+        self.refusals: list[str] = []
+
+    def stream_refused(self, reason):
+        self.refusals.append(reason)
+
+
+async def _refused(pki, relay, name):
+    with pytest.raises((ssl.SSLError, OSError, asyncio.IncompleteReadError, asyncio.TimeoutError)):
+        await browse(pki, relay, name=name, timeout=2)
+
+
+def test_a_lanes_only_host_gets_lane_streams_and_no_browser(pki, loopback_door, caplog):
+    caplog.set_level("INFO", logger="cseries.remote_relay")
+
+    async def main():
+        rig = await Rig(pki, relay_cls=_CountingRelay).start()
+        try:
+            async def tickets(fresh):
+                return pki.ticket("a", kinds=["lane"])
+            c = rig.client(tickets=tickets)
+            await rig.wait_up(c)
+            assert rig.relay.tunnels[AID].kinds == {rp.KIND_LANE}
+            for name in (HOST_NAME, f"apps-k-home.{AID}.{ZONE}"):
+                await _refused(pki, rig.relay, name)
+            assert not rig.taps                       # the Host heard of neither
+            assert rig.relay.refusals == ["kind", "kind"]
+            for name in (LANE_NAME, PAIR_NAME):
+                answer, _ = await browse(pki, rig.relay, name=name)
+                assert answer.startswith(b"src=127.0.0.1 "), name
+            assert rig.relay.refusals == ["kind", "kind"]
+        finally:
+            await rig.close()
+    run(main())
+    lines = [r.getMessage() for r in caplog.records if "remote relay: stream" in r.getMessage()]
+    assert sum(f"stream {AID} lane from 127.0.0.0/24" in ln for ln in lines) == 2, lines
+    assert not any(" web from " in ln for ln in lines), lines
+
+
+def test_a_ticket_naming_no_kinds_carries_browsers_and_no_lane(pki, loopback_door, caplog):
+    caplog.set_level("INFO", logger="cseries.remote_relay")
+
+    async def main():
+        rig = await Rig(pki, relay_cls=_CountingRelay).start()
+        try:
+            c = rig.client()
+            await rig.wait_up(c)
+            await _refused(pki, rig.relay, LANE_NAME)
+            await _refused(pki, rig.relay, PAIR_NAME)
+            assert not rig.taps
+            assert rig.relay.refusals == ["kind", "kind"]
+            answer, _ = await browse(pki, rig.relay)
+            assert answer.startswith(b"src=127.0.0.1 ")
+        finally:
+            await rig.close()
+    run(main())
+    lines = [r.getMessage() for r in caplog.records if "remote relay: stream" in r.getMessage()]
+    assert [f"stream {AID} web from 127.0.0.0/24" in ln for ln in lines] == [True], lines
+
+
+def test_a_host_with_both_kinds_gets_both(pki, loopback_door):
+    async def main():
+        rig = await Rig(pki, relay_cls=_CountingRelay).start()
+        try:
+            async def tickets(fresh):
+                return pki.ticket("a", kinds=["web", "lane"])
+            c = rig.client(tickets=tickets)
+            await rig.wait_up(c)
+            for name in (HOST_NAME, LANE_NAME, PAIR_NAME):
+                answer, _ = await browse(pki, rig.relay, name=name)
+                assert answer.startswith(b"src=127.0.0.1 "), name
+            assert rig.relay.refusals == []
+        finally:
+            await rig.close()
+    run(main())
+
+
+def test_a_refused_kind_spends_none_of_the_tunnels_limits(pki, loopback_door):
+    """The kind is checked before the tunnel's stream bucket: a flood of
+    browser names at a lanes-only Host leaves its lanes their whole burst."""
+    async def main():
+        rig = await Rig(pki).start()
+        try:
+            async def tickets(fresh):
+                return pki.ticket("a", kinds=["lane"], limits={"open_burst": 1, "open_rate": 1})
+            c = rig.client(tickets=tickets)
+            await rig.wait_up(c)
+            for _ in range(3):
+                await _refused(pki, rig.relay, HOST_NAME)
+            answer, _ = await browse(pki, rig.relay, name=LANE_NAME)
+            assert answer.startswith(b"src=127.0.0.1 ")
+        finally:
+            await rig.close()
+    run(main())
+
+
+class _OldTunnel(relay_mod._Tunnel):
+    """A tunnel subclass written before kinds, as the network's edge has one
+    (accounting in new_stream): its new_stream takes no kind."""
+    made: list = []
+
+    def new_stream(self):
+        stream = super().new_stream()
+        _OldTunnel.made.append(stream)
+        return stream
+
+
+class _OldTunnelRelay(relay_mod.Relay):
+    tunnel_class = _OldTunnel
+
+
+def test_a_tunnel_subclass_from_before_kinds_still_carries_streams(pki, loopback_door):
+    """The relay is vendored into the edge, whose tunnel class overrides
+    new_stream(self). Kinds must not change that call, or every browser
+    stream there ends in a TypeError the moment the file is synced."""
+    _OldTunnel.made = []
+
+    async def main():
+        rig = await Rig(pki, relay_cls=_OldTunnelRelay).start()
+        try:
+            async def tickets(fresh):
+                return pki.ticket("a", kinds=["web", "lane"])
+            c = rig.client(tickets=tickets)
+            await rig.wait_up(c)
+            for name in (HOST_NAME, LANE_NAME):
+                answer, _ = await browse(pki, rig.relay, name=name)
+                assert answer.startswith(b"src=127.0.0.1 "), name
+        finally:
+            await rig.close()
+    run(main())
+    assert [s.kind for s in _OldTunnel.made] == [rp.KIND_WEB, rp.KIND_LANE]
+
+
+def test_a_refreshed_ticket_changes_the_kinds_a_tunnel_carries(pki):
+    """A Host that turns browser access on later is offered it from its next
+    ticket, on the tunnel it already has."""
+    import aiohttp
+
+    async def main():
+        rig = await Rig(pki).start()
+        try:
+            async with aiohttp.ClientSession() as http:
+                ws = await http.ws_connect(
+                    f"https://127.0.0.1:{rig.relay.tunnel_port}{rp.TUNNEL_PATH}",
+                    protocols=(rp.PROTOCOL,), ssl=pki.client_ssl("a"),
+                    server_hostname=rp.tunnel_name(ZONE),
+                    headers={rp.TICKET_HEADER: pki.ticket("a", kinds=["lane"])})
+                assert json.loads((await ws.receive()).data)["type"] == "ready"
+                assert rig.relay.tunnels[AID].kinds == {rp.KIND_LANE}
+                await ws.send_str(json.dumps({"type": "ticket",
+                                              "ticket": pki.ticket("a", kinds=["web", "lane"])}))
+                assert json.loads((await asyncio.wait_for(ws.receive(), 5)).data)["type"] == "ticket_ok"
+                assert rig.relay.tunnels[AID].kinds == rp.KINDS
+                # A refused ticket changes nothing.
+                await ws.send_str(json.dumps({"type": "ticket",
+                                              "ticket": pki.ticket("b", kinds=["lane"])}))
+                assert json.loads((await asyncio.wait_for(ws.receive(), 5)).data)["type"] == "ticket_refused"
+                assert rig.relay.tunnels[AID].kinds == rp.KINDS
+                await ws.close()
+        finally:
+            await rig.close()
     run(main())

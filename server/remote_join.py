@@ -92,6 +92,12 @@ async def new_code(token: str, host: str) -> dict:
     await require_fresh_check(token, "Adding a phone",
                               "Add a passkey on this computer first, so you can still sign in "
                               "here without the phone.")
+    # The phone's passkey approves on the remote address what the code
+    # approves, so while a code is set up a recovery code alone does not add
+    # it: the check must be this computer's passkey (owner_passkeys._approval_factor).
+    if await P._code_enrolled(L._pool()) and not P.fresh_step_up(token, (P.PASSKEY,)):
+        raise P.StepUpNeeded("Adding a phone needs a check with your passkey in the last five "
+                             "minutes.")
     now = time.monotonic()
     _forget_old(now)
     code = secrets.token_urlsafe(32)

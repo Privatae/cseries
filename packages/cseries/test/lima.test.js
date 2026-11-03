@@ -394,7 +394,7 @@ test('stop, start, status, and uninstall --delete-data', async () => {
   const { m, p } = machineFor('linux', { qemu: true });
   assert.equal((await run([], m, p)).code, 0);
   let r = await run(['status'], m, p);
-  assert.match(r.out.text(), /Linux system \(Lima\): installed\n {2}running: {3}yes/);
+  assert.match(r.out.text(), /Linux system \(Lima\): installed\n {2}for: {7}your account only \(in .*, started at your login\)\n {2}running: {3}yes/);
   assert.match(r.out.text(), /system service: running/);
   r = await run(['stop'], m, p);
   assert.equal(r.code, 0);
@@ -408,4 +408,9 @@ test('stop, start, status, and uninstall --delete-data', async () => {
   assert.ok(!fs.existsSync(p.lima));
   assert.ok(!fs.existsSync(p.autostart));
   assert.ok(m.userUnits.includes('disable cseries.service'));
+  // The bastion this command installed went with it, its state included.
+  assert.ok(m.bastionCalls().some((c) => c.args[0] === 'uninstall' && c.args.length === 1), 'its own uninstall, without a second question');
+  assert.ok(!fs.existsSync(p.serviceUnit), 'no bastion service');
+  assert.ok(!fs.existsSync(m.stateDirs['/root/.config/privatae-bastion']), 'no pairings, keys or audit log');
+  for (const f of [p.state, p.log, p.installLog, p.downloads, p.tools, p.lima, p.hostCa]) assert.ok(!fs.existsSync(f), `${f} is removed`);
 });

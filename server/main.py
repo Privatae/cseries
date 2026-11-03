@@ -1875,6 +1875,68 @@ async def bastion_embed_relay(ws: WebSocket):
         await safe_close()
 
 
+# Serve lane (server/network/serve_relay.py): a model server on a bastion's own machine,
+# reached by a Host that has no address to dial it at (every pairing of a standalone Host).
+# The bastion parks workers here and the Host hands each one connection, naming a SERVICE
+# ("llm", "ollama"), never an address; the bastion reaches only the server on its own
+# machine. Authed by the bastion's OWN bearer and bound to its operator cert, like egress.
+@app.websocket("/bastion-serve")
+async def bastion_serve_relay(ws: WebSocket):
+    from server.network.serve_relay import get_serve_relay, ServeWorker, log as serve_log
+
+    async def safe_close(code: int = 1000):
+        try:
+            await ws.close(code=code)
+        except Exception:
+            pass
+
+    await ws.accept()
+    try:
+        from server import brain_service
+        brain_pool = brain_service.get_pool()
+        if not brain_pool:
+            await safe_close(1011)
+            return
+        try:
+            hello = await asyncio.wait_for(ws.receive_text(), timeout=10)
+        except Exception:
+            await safe_close(4400)
+            return
+        if not hello.startswith("BEARER "):
+            await safe_close(4401)
+            return
+        import hashlib
+        th = hashlib.sha256(hello[len("BEARER "):].strip().encode()).digest()
+        row = await brain_pool.fetchrow(
+            "SELECT id, notes->>'operator_uuid' AS op_uuid, hardware_fingerprint "
+            "FROM mcp_client_tokens WHERE token_hash=$1 "
+            "AND operator_kind='bastion' AND revoked_at IS NULL "
+            "AND (expires_at IS NULL OR expires_at > now())", th)
+        if not row:
+            serve_log.info("serve worker auth REJECTED (token unknown/revoked)")
+            await safe_close(4401)
+            return
+        if not _enforce_bastion_binding(ws, row, serve_log):
+            await safe_close(4401)
+            return
+        worker = ServeWorker(ws, bastion_token_id=row["id"])
+        relay = get_serve_relay()
+
+        async def _serve():
+            try:
+                await worker.serve(relay)
+            finally:
+                relay.discard(worker)
+        # The person's prompts are not handed to a held machine (quarantine_gate).
+        if not await quarantine_gate.run_lane(brain_pool, row["id"], "serve", _serve):
+            await safe_close(quarantine_gate.CLOSE_CODE)
+            return
+    except Exception as e:
+        serve_log.warning("serve endpoint exception: %r", e)
+    finally:
+        await safe_close()
+
+
 @app.websocket("/bastion-git")
 async def bastion_git_relay(ws: WebSocket):
     """Bastion git lane (server/network/git_relay.py): the user's LOCAL git, spliced
@@ -2105,6 +2167,8 @@ app.include_router(agents_routes.router)
 
 from server.routes import tickets as tickets_routes
 app.include_router(tickets_routes.router)
+from server.routes import approvals as _approvals_routes
+app.include_router(_approvals_routes.router)    # the passkey half of an approval pop-up
 from server.routes import limits as _limits_route
 app.include_router(_limits_route.router)    # Settings > Limits: the person's limits (runtime/user_limits)
 # Tickets pane, support half: platform-help tickets (draft -> user approves the

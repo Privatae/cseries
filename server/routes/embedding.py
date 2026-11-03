@@ -97,7 +97,7 @@ async def current():
         # Identity is truth; the endpoint is derived. A re-enrolled bastion
         # (new tunnel IP) resolves to its NEW address here — never the pin.
         from mastercode.embed_backends import resolve_endpoint_for_hostname
-        live = await resolve_endpoint_for_hostname(pool, entity_id, bastion)
+        live = await resolve_endpoint_for_hostname(pool, entity_id, bastion, model)
         if live:
             base_url = live
     dim = bp.get("embedding_dim") or model_dim(model)
@@ -170,9 +170,12 @@ async def apply_embedding_switch(pool, entity_id, model: str,
         # memory search. (Managed/catalog models take base_url=None and are gated
         # by the catalog check below, not this probe.) Bastion targets are
         # overlay-only → the probe rides the Hub's host→peer forward, exactly
-        # like the production embeds it stands in for.
+        # like the production embeds it stands in for. A bastion with no
+        # address of its own is at its serve-lane origin on this Host's
+        # loopback (serve_relay.py), dialled directly as its embeds are.
+        from server.network import serve_relay as _serve_relay
         peer_forward = None
-        if bastion:
+        if bastion and not _serve_relay.is_lane_origin(base_url):
             import os as _os
             peer_forward = (_os.environ.get("HUB_PEER_FORWARD_ADDR") or "").strip() or "[::1]:3129"
         ok, why = await probe_embedding_endpoint(

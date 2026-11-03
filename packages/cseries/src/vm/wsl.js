@@ -141,6 +141,9 @@ const driver = {
       throw new CliError(`WSL could not be installed (exit ${r.code}). ${r.stderr}`.trim(),
         'Open a terminal and run "wsl.exe --install --no-distribution" to see why, then run npx cseries again.');
     }
+    // WSL was not on this PC before: uninstall --delete-data offers to
+    // remove it again (cli.js windowsExtras), and only then.
+    if (ctx.state) ctx.state.set('wslInstalled', true);
     await win.setRegistryValue(ctx.runner, win.RUNONCE_KEY, RUNONCE_VALUE, resumeCommand(ctx));
     out.detail('WSL is installed.');
     const now = ctx.prompt ? await ctx.prompt('Restart Windows now to finish? [y/N] ') : false;
@@ -153,6 +156,12 @@ const driver = {
 
   async guestExists(ctx) {
     return (await distros(ctx)).some((d) => d.toLowerCase() === DISTRO);
+  },
+
+  // The WSL distributions on this PC other than ours (uninstall: WSL is
+  // offered for removal only when none is left).
+  async otherDistros(ctx) {
+    return (await distros(ctx)).filter((d) => d.toLowerCase() !== DISTRO);
   },
 
   async guestRunning(ctx) {
@@ -209,7 +218,8 @@ const driver = {
       leave('it is not saved as UTF-8, and rewriting it could change what you wrote');
       return;
     }
-    const { text, added } = mergeWslConfig(decoded.text, want);
+    const existed = fs.existsSync(file);
+    const { text, added, section } = mergeWslConfig(decoded.text, want);
     if (!added.length) return;
     try {
       fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -218,6 +228,17 @@ const driver = {
       if (!e || !e.code) throw e;
       leave(`it could not be written: ${e.code}`);
       return;
+    }
+    // state.json "wslConfigAdded": the lines written, so uninstall
+    // --delete-data names them and takes them out on a yes, and only them.
+    if (ctx.state) {
+      const was = ctx.state.get('wslConfigAdded') || {};
+      ctx.state.set('wslConfigAdded', {
+        file,
+        lines: [...new Set([...(Array.isArray(was.lines) ? was.lines : []), ...added.map((k) => `${k}=${want[k]}`)])],
+        section: Boolean(was.section || section),
+        created: was.lines ? Boolean(was.created) : !existed,
+      });
     }
     ctx.out.detail(`Added ${added.map((k) => `${k}=${want[k]}`).join(' and ')} to ${file}, which limits what the Linux system may take from this PC. Your other settings there are as they were.`);
     if (await this.guestRunning(ctx)) {

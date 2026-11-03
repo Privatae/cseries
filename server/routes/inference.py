@@ -3641,6 +3641,63 @@ async def set_role_model(body: SetRoleModel):
     return await apply_role_route(body, set_by="user")
 
 
+class UseLocalModel(BaseModel):
+    model: str
+
+
+@router.get("/local-default", dependencies=[Depends(requires_permission("read:inference_catalog"))])
+async def get_local_default():
+    """The model on the person's own machine, for Getting Started's first
+    model slide ("Use the model on this machine (<id>)"):
+
+      candidate    {model, machine, kind}: the first chat-capable model an
+                   online machine of theirs serves now
+                   (inference_config.local_chat_models), or null
+      chat_routed  chat already has a model the person or their setup chose
+                   (anything but the no-key local default)
+      holds_key    they hold a key or sign-in for a provider
+      by_default   chat runs on the candidate right now without anyone
+                   choosing it (no key, no route: inference_config rung 6)"""
+    pool = brain_service.get_pool()
+    if not pool:
+        raise HTTPException(503, "Brain not initialized")
+    eid = brain_service._entity_id
+    from mastercode.inference_config import (
+        holds_provider_credential, local_chat_models, resolve_role_route)
+    served = await local_chat_models(pool, eid)
+    route = await resolve_role_route(pool, eid, "chat")
+    top = served[0] if served else None
+    return {
+        "candidate": ({"model": top["id"], "machine": top["bastion"], "kind": top["kind"]}
+                      if top else None),
+        "chat_routed": bool(route.get("model")) and not route.get("local_default"),
+        "holds_key": await holds_provider_credential(pool, eid),
+        "by_default": bool(route.get("local_default")),
+    }
+
+
+@router.post("/local-default", dependencies=[Depends(requires_permission("write:inference_routing"))])
+async def use_local_default(body: UseLocalModel):
+    """The person pressed "Use the model on this machine": chat is routed to
+    that local model, as their own choice (set_by 'user', the same write as
+    the Orchestrator's). Only a model an online machine of theirs serves now
+    and a chat can run on (local_chat_models); apply_role_route checks it is
+    served again and stores no endpoint."""
+    pool = brain_service.get_pool()
+    if not pool:
+        raise HTTPException(503, "Brain not initialized")
+    from mastercode.inference_config import local_chat_models
+    from mastercode.model_backends import _norm_model
+    want = _norm_model(body.model)
+    hit = next((m for m in await local_chat_models(pool, brain_service._entity_id)
+                if _norm_model(m["id"]) == want), None)
+    if hit is None:
+        raise HTTPException(409, f"no machine of yours is serving {body.model!r} for chat right now")
+    res = await apply_role_route(SetRoleModel(role="chat", provider="local", model=hit["id"]),
+                                 set_by="user")
+    return {**res, "machine": hit["bastion"]}
+
+
 ROUTE_SET_BY = ("user", "decision", "host", "host_revert", "canary")
 
 

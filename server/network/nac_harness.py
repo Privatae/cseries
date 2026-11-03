@@ -942,7 +942,12 @@ async def service_endpoint(pool, server: str, tunnel_port: int) -> Optional[str]
     The address is on the mesh overlay, which the app container has no kernel route to:
     dial it through the Hub's peer forward (an HTTP CONNECT proxy on pod loopback,
     HUB_PEER_FORWARD_ADDR, default [::1]:3129 — hub/peerfwd), exactly as the embed and
-    PII lanes do. The forward admits any port on this Host's own registered peers."""
+    PII lanes do. The forward admits any port on this Host's own registered peers.
+
+    A pairing with no address of its own (a standalone Host's: its socket, its lane
+    port) has no slot to reach here and gets None: its bastion offers no slots to it
+    (client-go/agents.go, servicesOn is off for a local pairing), and the serve lane
+    (serve_relay.py) carries the machine's model servers and sterilizer only."""
     if not (18100 <= int(tunnel_port or 0) <= 18199):
         return None
     row = await pool.fetchrow(

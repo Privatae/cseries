@@ -100,13 +100,14 @@ test('the bastion refused (min_version) stops the run before anything else is in
   assert.equal(m.imports.length, 0);
 });
 
-test('uninstall --delete-data, then a new Host: one prompt releases the old anchor, pairs fresh, anchors and enrols', async () => {
+test('uninstall --delete-data --keep-bastion, then a new Host: one prompt releases the old anchor, pairs fresh, anchors and enrols', async () => {
   const { m, run } = machine();
   assert.equal((await run()).code, 0);
   assert.equal(m.elevated.length, 1);
-  const u = await run(['uninstall', '--delete-data', '--yes']);
+  const u = await run(['uninstall', '--delete-data', '--keep-bastion', '--yes']);
   assert.equal(u.code, 0, u.err);
   assert.match(u.text, /The bastion stays installed/);
+  assert.equal(m.elevated.length, 1, 'kept: no prompt');
   // The reinstalled Host has a new CA; the bastion still holds the old pairing.
   m.hostCa = '-----BEGIN CERTIFICATE-----\nMIIBexample1\n-----END CERTIFICATE-----';
   const r = await run();

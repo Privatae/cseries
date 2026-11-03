@@ -24,6 +24,13 @@
 //   - Commands in the guest: `limactl shell --workdir / cseries sudo
 //     /usr/local/bin/cseries-guest <command>`; Lima's user in the guest has
 //     sudo without a password, as Lima sets it up.
+//
+// Installed for the whole machine on Linux (scope.js; ctx.paths.vmUser is
+// set): this command runs as root, Lima and QEMU as the system account
+// ctx.paths.vmUser (created here, in /dev/kvm's group), every limactl through
+// `runuser -u <it> --`, LIMA_HOME and the tools in /var/lib/cseries, and the
+// VM is started and kept running by the system unit cseries.service (User=
+// that account, WantedBy=multi-user.target) rather than by a login item.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -61,8 +68,41 @@ function limactlPath(ctx) {
   return ctx.paths.join(limaDir(ctx), 'bin', 'limactl');
 }
 
+// The whole machine's install (platform.js machinePaths).
+function isMachine(ctx) {
+  return Boolean(ctx.paths && ctx.paths.vmUser);
+}
+
 function env(ctx) {
-  return { LIMA_HOME: ctx.paths.lima };
+  return isMachine(ctx) ? { LIMA_HOME: ctx.paths.lima, HOME: ctx.paths.vmHome } : { LIMA_HOME: ctx.paths.lima };
+}
+
+const RUNUSER_PATHS = ['/usr/sbin/runuser', '/sbin/runuser', '/usr/bin/runuser', '/bin/runuser'];
+
+function findRunuser(ctx) {
+  const list = ctx.runuserPaths || RUNUSER_PATHS;
+  const found = list.find((p) => {
+    try {
+      fs.accessSync(p, fs.constants.X_OK);
+      return true;
+    } catch {
+      return false;
+    }
+  });
+  if (!found) {
+    throw new CliError('runuser (util-linux) is not on this machine, and the whole-machine install runs Lima through it as the cseries account.',
+      'Install util-linux, or install C-Series for your account only: npx cseries --just-me');
+  }
+  return found;
+}
+
+// [cmd, args] for running a program of Lima's: as the VM's own account on a
+// whole-machine install (runuser keeps the environment the runner adds, and
+// sets the account's groups, /dev/kvm's among them, from the group database),
+// as this account otherwise. runuser runs the program itself, not a shell.
+function asVmUser(ctx, cmd, args) {
+  if (!isMachine(ctx)) return [cmd, args];
+  return [findRunuser(ctx), ['-u', ctx.paths.vmUser, '--', cmd, ...args]];
 }
 
 function text(b) {
@@ -70,7 +110,8 @@ function text(b) {
 }
 
 async function limactl(ctx, args, opts = {}) {
-  const r = await ctx.runner.run(limactlPath(ctx), ['--tty=false', ...args], { ...opts, env: env(ctx) });
+  const [cmd, argv] = asVmUser(ctx, limactlPath(ctx), ['--tty=false', ...args]);
+  const r = await ctx.runner.run(cmd, argv, { ...opts, env: env(ctx) });
   return { code: r.code, notFound: r.notFound, stdout: text(r.stdout), stderr: text(r.stderr) };
 }
 
@@ -80,7 +121,7 @@ function tail(s, n = 12) {
 
 // The facts machine.js gathers, once per run, again after an install.
 async function facts(ctx, fresh = false) {
-  if (!ctx.limaFacts || fresh) ctx.limaFacts = await machine.probe(ctx);
+  if (!ctx.limaFacts || fresh) ctx.limaFacts = await machine.probe(ctx, isMachine(ctx) ? ctx.paths.vmUser : null);
   return ctx.limaFacts;
 }
 
@@ -136,23 +177,39 @@ async function installLima(ctx) {
 
 function describeLinuxInstall(out, packages, f, join) {
   out.detail('C-Series runs the Host in a Linux virtual machine, with Lima and QEMU. QEMU comes');
-  out.detail('from this Linux\'s own packages, so sudo asks for your password once, to:');
+  out.detail(f.uid === '0' ? 'from this Linux\'s own packages, so this command, as root:' : 'from this Linux\'s own packages, so sudo asks for your password once, to:');
   if (packages.length) out.detail(`  - install ${packages.join(' ')} (${f.pm})`);
   if (join) out.detail(`  - add you to the ${f.kvm_group} group, so the VM can use this machine's virtualization (/dev/kvm)`);
+}
+
+// state.json "packagesAdded": {pm, packages}, what this command installed
+// from the distribution's packages, and "kvmJoined": {group, user}, the
+// account it added to /dev/kvm's group, so uninstall can say what to remove
+// (and remove it, when the person says yes) without guessing.
+function recordAdded(ctx, f, packages, join) {
+  if (!ctx.state) return;
+  if (packages.length) {
+    const was = ctx.state.get('packagesAdded');
+    const had = was && was.pm === f.pm && Array.isArray(was.packages) ? was.packages : [];
+    ctx.state.set('packagesAdded', { pm: f.pm, packages: [...new Set([...had, ...packages])] });
+  }
+  if (join) ctx.state.set('kvmJoined', { group: f.kvm_group, user: f.user });
 }
 
 async function installLinuxPieces(ctx) {
   const f = await facts(ctx);
   const pieces = machine.missingPieces(f);
   const kvm = machine.kvmAccess(f);
-  const join = kvm === 'join';
+  // The whole machine's VM runs as its own account, which ensureVmUser puts
+  // in /dev/kvm's group; nobody's own account is added.
+  const join = kvm === 'join' && !isMachine(ctx);
   if (!pieces.length && !join) return;
   const packages = pieces.length ? machine.packagesFor(f, ctx.arch, pieces) : [];
   if (packages === null) {
     throw new CliError(`This Linux has no package manager this command knows (apt-get, dnf, zypper or pacman), and Lima needs QEMU: ${pieces.join(', ')} ${pieces.length === 1 ? 'is' : 'are'} missing.`,
       `Install QEMU for ${machine.QEMU[ctx.arch]} with its UEFI firmware and qemu-img, and an SSH client, then run npx cseries again.`);
   }
-  if (!f.sudo) {
+  if (!f.sudo && f.uid !== '0') {
     throw new CliError('Lima needs QEMU from this Linux\'s packages, and sudo, which installs it, is not here.',
       `Install ${packages.join(' ')} as root, then run npx cseries again.`);
   }
@@ -165,7 +222,9 @@ async function installLinuxPieces(ctx) {
   let status = null;
   const log = ctx.log || NO_LOG;
   log.section(`sudo: ${doing}`);
-  const r = await ctx.runner.run(f.sudo, ['-p', '[cseries] sudo password for %u: ', '/bin/sh', '-c', script], {
+  // As root (the whole machine's install) the script runs as it is.
+  const [cmd, argv] = f.uid === '0' ? ['/bin/sh', ['-c', script]] : [f.sudo, ['-p', '[cseries] sudo password for %u: ', '/bin/sh', '-c', script]];
+  const r = await ctx.runner.run(cmd, argv, {
     stdin: 'inherit',
     onOutput: (c) => {
       log.write(c);
@@ -179,6 +238,7 @@ async function installLinuxPieces(ctx) {
       `Run npx cseries again. The whole output is in ${ctx.paths.log}. To do it by hand: sudo ${f.pm} install ${packages.join(' ')}${join ? `, then sudo usermod -a -G ${f.kvm_group} ${f.user}` : ''}.`);
   }
   if (status) status.end(packages.length ? `Installed ${packages.join(' ')}.` : `You are in the ${f.kvm_group} group.`);
+  recordAdded(ctx, f, packages, join);
   const after = await facts(ctx, true);
   const still = machine.missingPieces(after);
   if (still.length) {
@@ -204,6 +264,142 @@ async function limaStart(ctx) {
   log.section('limactl start');
   const r = await ctx.runner.run(cmd, argv, { env: env(ctx), onOutput: (c) => log.write(c) });
   return { code: r.code, stdout: text(r.stdout), stderr: text(r.stderr) };
+}
+
+// The whole machine's VM account: a system account of its own with no
+// login, in /dev/kvm's group, owning LIMA_HOME and its home, both 700. An
+// account by that name that this command did not make (another home) is
+// refused, never taken over. state.json "vmUserCreated": this command made
+// it, so uninstall --delete-data removes it.
+function vmUserScript(ctx, f) {
+  const p = ctx.paths;
+  const g = f.kvm_group && f.kvm_group !== 'root' && f.kvm_group !== 'UNKNOWN' ? f.kvm_group : '';
+  return [
+    'set -eu',
+    'umask 022',
+    'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
+    'export PATH',
+    `u=${machine.shq(p.vmUser)}`,
+    `home=${machine.shq(p.vmHome)}`,
+    `install -d -o root -g root -m 755 ${machine.shq(p.base)}`,
+    'if ! getent passwd "$u" >/dev/null; then',
+    '  nl=$(command -v nologin || echo /bin/false)',
+    '  useradd --system --user-group --home-dir "$home" --no-create-home --shell "$nl" --comment "C-Series Host VM (npx cseries)" "$u"',
+    '  echo created=yes',
+    'fi',
+    'h=$(getent passwd "$u" | cut -d: -f6)',
+    '[ "$h" = "$home" ] || { echo "an account named $u is already here, with the home $h, and this command did not make it" >&2; exit 3; }',
+    g ? `usermod -a -G ${machine.shq(g)} "$u"` : ':',
+    `install -d -o "$u" -g "$u" -m 700 ${machine.shq(p.lima)} "$home"`,
+    'echo ready=yes',
+  ].join('\n');
+}
+
+async function ensureVmUser(ctx) {
+  const f = await facts(ctx);
+  const r = await ctx.runner.run('/bin/sh', ['-c', vmUserScript(ctx, f)], { timeoutMs: 60000 });
+  const out = text(r.stdout);
+  if (r.code !== 0 || !/^ready=yes$/m.test(out)) {
+    throw new CliError(`The system account ${ctx.paths.vmUser}, which the whole machine's VM runs as, could not be set up: ${tail(`${text(r.stderr)}\n${out}`, 4) || `exit ${r.code}`}`,
+      'Run npx cseries again. To install C-Series for your account only instead: npx cseries --just-me');
+  }
+  if (/^created=yes$/m.test(out) && ctx.state) ctx.state.set('vmUserCreated', true);
+  await facts(ctx, true);
+  ctx.out.detail(`The VM runs as the system account ${ctx.paths.vmUser}, which no one signs in as.`);
+}
+
+// The account is there with this command's home, and in /dev/kvm's group
+// when the device is not open to everyone, and LIMA_HOME, which is the
+// account's, is here: uninstall --delete-data that keeps the bastion removes
+// LIMA_HOME and leaves the account, and the next install makes it again.
+function vmUserReady(ctx, f) {
+  if (f.vm_user_home !== ctx.paths.vmHome) return false;
+  if (!fs.existsSync(ctx.paths.lima)) return false;
+  if (f.kvm_world === 'yes') return true;
+  return String(f.vm_user_groups || '').split(/\s+/).includes(f.kvm_group);
+}
+
+function systemUnit(ctx) {
+  const exe = sdq(limactlPath(ctx));
+  return [
+    '[Unit]',
+    'Description=C-Series: the Host\'s Linux VM (Lima), for the whole machine',
+    'After=network-online.target',
+    'Wants=network-online.target',
+    // Three failed starts in five minutes and the unit reads as failed (what
+    // startMachineGuest stops on, with journalctl's hint), instead of
+    // restarting every RestartSec for good: systemd's own limit, five in ten
+    // seconds, a 10-second RestartSec never reaches.
+    'StartLimitIntervalSec=300',
+    'StartLimitBurst=3',
+    '',
+    '[Service]',
+    'Type=simple',
+    `User=${ctx.paths.vmUser}`,
+    `Group=${ctx.paths.vmUser}`,
+    `Environment=${sdq(`LIMA_HOME=${ctx.paths.lima}`)} ${sdq(`HOME=${ctx.paths.vmHome}`)}`,
+    `WorkingDirectory=${ctx.paths.vmHome}`,
+    `ExecStart=${exe} --tty=false start --foreground ${INSTANCE}`,
+    `ExecStop=${exe} --tty=false stop ${INSTANCE}`,
+    'Restart=on-failure',
+    'RestartSec=10',
+    'TimeoutStopSec=120',
+    '',
+    '[Install]',
+    'WantedBy=multi-user.target',
+    '',
+  ].join('\n');
+}
+
+async function systemctl(ctx, args) {
+  const r = await ctx.runner.run('systemctl', args, { timeoutMs: 60000 });
+  return { code: r.code, out: text(r.stdout).trim(), why: `${text(r.stderr)}${text(r.stdout)}`.trim() || `exit ${r.code}` };
+}
+
+// The unit in place (rewritten when this release's differs) and systemd
+// told about it.
+async function writeSystemUnit(ctx) {
+  const file = ctx.paths.autostart;
+  const want = systemUnit(ctx);
+  let have = null;
+  try {
+    have = fs.readFileSync(file, 'utf8');
+  } catch { /* none yet */ }
+  if (have === want) return;
+  fs.mkdirSync(path.posix.dirname(file), { recursive: true });
+  fs.writeFileSync(`${file}.new`, want, { mode: 0o644 });
+  fs.renameSync(`${file}.new`, file);
+  const r = await systemctl(ctx, ['daemon-reload']);
+  if (r.code !== 0) throw new CliError(`systemd did not take the unit ${file}: ${r.why}`, 'Run npx cseries again.');
+}
+
+// Starts the whole machine's VM through its unit, then waits for Lima to
+// say it runs and for the guest to answer: the unit's limactl stays in the
+// foreground, so systemctl start returns before the VM has booted.
+async function startMachineGuest(ctx, drv, first) {
+  await writeSystemUnit(ctx);
+  const status = ctx.out.status(first ? 'Starting the VM (the first start takes a minute or two)' : 'Starting the VM');
+  const s = await systemctl(ctx, ['start', 'cseries.service']);
+  if (s.code !== 0) {
+    status.end();
+    throw new CliError(`systemd could not start cseries.service: ${s.why}`, 'Run npx cseries again. "journalctl -u cseries.service" shows why.');
+  }
+  const deadline = Date.now() + (ctx.vmStartTimeoutMs || 10 * 60 * 1000);
+  for (;;) {
+    const i = await instance(ctx);
+    if (i && i.status === 'Running') {
+      const w = await drv.guest(ctx, ['wait-boot']);
+      if (w.code === 0) break;
+    }
+    const a = await systemctl(ctx, ['is-active', 'cseries.service']);
+    if (a.out === 'failed' || Date.now() >= deadline) {
+      status.end();
+      throw new CliError(`The C-Series Linux system did not start${a.out === 'failed' ? ' (cseries.service failed)' : ' within 10 minutes'}.`,
+        `Run npx cseries again. "journalctl -u cseries.service" and Lima's log ${ctx.paths.join(ctx.paths.lima, INSTANCE, 'ha.stderr.log')} show why.`);
+    }
+    await ctx.sleep(3000);
+  }
+  status.end('The VM is started.');
 }
 
 // state.json "limaFirstStart": set when the VM is created and cleared once it
@@ -328,9 +524,12 @@ function driver(platform) {
         throw new CliError(`C-Series runs on x64 and Arm64 machines; this one is ${ctx.arch}.`, '');
       }
       const f = await facts(ctx);
-      if (f.uid === '0') {
-        throw new CliError('Run npx cseries as yourself, not as root or with sudo.',
-          'Lima refuses to run as root, and npx cseries asks for your password itself, once, when it needs it.');
+      if (f.uid === '0' && !isMachine(ctx)) {
+        throw new CliError('Run npx cseries as yourself, not as root or with sudo, to install C-Series for your account only.',
+          'Lima refuses to run as root. Without --just-me, npx cseries installs C-Series for the whole machine and asks for your password itself, once.');
+      }
+      if (isMachine(ctx) && f.uid !== '0') {
+        throw new CliError('The whole-machine install runs as root, and this run is not.', 'Run npx cseries again; it asks sudo for your password itself.');
       }
       if (platform === 'darwin') {
         if (f.macos && !versionAtLeast(f.macos, MIN_MACOS)) {
@@ -344,7 +543,10 @@ function driver(platform) {
       } else if (f.kvm === 'missing') {
         throw new CliError('This Linux has no /dev/kvm, and the VM the Host runs in needs it.',
           'Turn on virtualization (Intel VT-x or AMD-V) in the firmware settings and make sure the kvm module is loaded (lsmod | grep kvm). Inside a VM, turn on nested virtualization in its host.');
-      } else if (machine.kvmAccess(f) === 'refuse') {
+      } else if (isMachine(ctx) && f.kvm_world !== 'yes' && (!f.kvm_group || f.kvm_group === 'root' || f.kvm_group === 'UNKNOWN')) {
+        throw new CliError(`/dev/kvm belongs to the group ${f.kvm_group || 'unknown'}, so the account the whole machine's VM runs as cannot be given access to it.`,
+          'Give /dev/kvm a group of its own (usually kvm, as the distribution\'s udev rules do), then run npx cseries again.');
+      } else if (!isMachine(ctx) && machine.kvmAccess(f) === 'refuse') {
         throw new CliError(`/dev/kvm is not yours to open (its group is ${f.kvm_group || 'unknown'}), and this command cannot change that safely.`,
           'Ask whoever administers this machine to give your account access to /dev/kvm (usually the kvm group), then run npx cseries again.');
       }
@@ -363,12 +565,18 @@ function driver(platform) {
         const pieces = machine.missingPieces(f);
         if (pieces.length) ready = false;
         else ctx.out.detail(`QEMU is installed (${f.qemu}).`);
-        if (machine.kvmAccess(f) === 'join') ready = false;
+        if (isMachine(ctx)) {
+          if (!vmUserReady(ctx, f)) ready = false;
+          else ctx.out.detail(`The VM runs as the system account ${ctx.paths.vmUser}.`);
+        } else if (machine.kvmAccess(f) === 'join') ready = false;
       }
       return ready;
     },
 
     async installRuntime(ctx) {
+      // The account first: on a whole-machine install every limactl, the
+      // version check after unpacking included, runs as it.
+      if (isMachine(ctx) && !vmUserReady(ctx, await facts(ctx))) await ensureVmUser(ctx);
       if ((await installedLimaVersion(ctx)) !== LIMA.version) await installLima(ctx);
       if (platform === 'linux') await installLinuxPieces(ctx);
     },
@@ -413,7 +621,11 @@ function driver(platform) {
 
     async startGuest(ctx) {
       const i = await instance(ctx);
-      if (!i || i.status !== 'Running') {
+      if (isMachine(ctx)) {
+        const first = Boolean(ctx.state && ctx.state.get(FIRST_START));
+        if (!i || i.status !== 'Running') await startMachineGuest(ctx, this, first);
+        if (first) ctx.state.set(FIRST_START, undefined);
+      } else if (!i || i.status !== 'Running') {
         const first = Boolean(ctx.state && ctx.state.get(FIRST_START));
         const status = ctx.out.status(first ? 'Starting the VM (the first start takes a minute or two)' : 'Starting the VM');
         const r = await limaStart(ctx);
@@ -433,12 +645,12 @@ function driver(platform) {
     },
 
     async guest(ctx, args, opts = {}) {
-      const argv = ['--tty=false', 'shell', '--workdir', '/', INSTANCE, 'sudo', GUEST_BIN, ...args];
+      const [cmd, argv] = asVmUser(ctx, limactlPath(ctx), ['--tty=false', 'shell', '--workdir', '/', INSTANCE, 'sudo', GUEST_BIN, ...args]);
       if (opts.inherit) {
-        const r = await ctx.runner.inherit(limactlPath(ctx), argv, { env: env(ctx) });
+        const r = await ctx.runner.inherit(cmd, argv, { env: env(ctx) });
         return { code: r.code, stdout: '', stderr: '' };
       }
-      const r = await ctx.runner.run(limactlPath(ctx), argv, { input: opts.input, env: env(ctx), onOutput: opts.onOutput });
+      const r = await ctx.runner.run(cmd, argv, { input: opts.input, env: env(ctx), onOutput: opts.onOutput });
       return { code: r.code, stdout: text(r.stdout), stderr: text(r.stderr) };
     },
 
@@ -446,15 +658,18 @@ function driver(platform) {
     // what a guest older than this command cannot do with its own
     // cseries-guest (machine-firewall.js).
     async guestShell(ctx, script) {
-      const argv = ['--tty=false', 'shell', '--workdir', '/', INSTANCE, 'sudo', '/bin/sh', '-s'];
-      const r = await ctx.runner.run(limactlPath(ctx), argv, { input: script, env: env(ctx) });
+      const [cmd, argv] = asVmUser(ctx, limactlPath(ctx), ['--tty=false', 'shell', '--workdir', '/', INSTANCE, 'sudo', '/bin/sh', '-s']);
+      const r = await ctx.runner.run(cmd, argv, { input: script, env: env(ctx) });
       return { code: r.code, stdout: text(r.stdout), stderr: text(r.stderr) };
     },
 
     async stopGuest(ctx) {
       if (!(await this.guestRunning(ctx))) return;
       await this.guest(ctx, ['stop']);
-      await limactl(ctx, ['stop', INSTANCE]);
+      // The unit's own ExecStop is limactl stop; a stop outside it would
+      // read as a failure, and Restart=on-failure would start the VM again.
+      if (isMachine(ctx)) await systemctl(ctx, ['stop', 'cseries.service']);
+      else await limactl(ctx, ['stop', INSTANCE]);
     },
 
     async removeGuest(ctx, { deleteData }) {
@@ -474,6 +689,21 @@ function driver(platform) {
     // Host runs now either way, and npx cseries start brings it back later.
     async setAutostart(ctx, on) {
       const file = ctx.paths.autostart;
+      if (isMachine(ctx)) {
+        if (on) {
+          await writeSystemUnit(ctx);
+          const en = await systemctl(ctx, ['enable', 'cseries.service']);
+          if (en.code !== 0) ctx.out.warn(`C-Series will not start by itself at boot: systemctl enable cseries.service failed (${en.why}).`);
+          return;
+        }
+        if (fs.existsSync(file)) {
+          // --now: the VM stops with it, through the unit's ExecStop.
+          await systemctl(ctx, ['disable', '--now', 'cseries.service']);
+          fs.rmSync(file, { force: true });
+          await systemctl(ctx, ['daemon-reload']);
+        }
+        return;
+      }
       if (platform === 'darwin') {
         if (on) {
           fs.mkdirSync(path.posix.dirname(file), { recursive: true });
@@ -531,4 +761,6 @@ function driver(platform) {
   };
 }
 
-module.exports = { driver, LIMA, INSTANCE, GUEST_BIN, launchAgentPlist, userUnit, limactlPath, versionAtLeast };
+module.exports = {
+  driver, LIMA, INSTANCE, GUEST_BIN, launchAgentPlist, userUnit, systemUnit, vmUserScript, limactlPath, versionAtLeast, isMachine, findRunuser, RUNUSER_PATHS,
+};

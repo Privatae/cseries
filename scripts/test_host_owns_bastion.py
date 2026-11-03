@@ -587,7 +587,7 @@ async def part_sockets():
         return real_load(ctx, cert_pem, key_pem_)
     host_ca.load_server_chain = recording_load
 
-    names = await local_bastion.lane_names(1)
+    names = await local_bastion.lane_names(1, pool)
     ctx, _until = await host_ca.lane_server_ssl_context(pool, names)
     enroll = await local_bastion.start_enroll_server(local_bastion.enroll_socket(),
                                                      pool_getter=lambda: pool)
@@ -621,8 +621,14 @@ async def part_sockets():
               and os.path.dirname(out.get("runs_dir", "")) == shared, (shared, out.get("runs_dir")))
         check("ONE name: the answer's host_name is local_bastion.host_name() and the lane "
               "certificate's first DNS name",
-              out.get("host_name") == await local_bastion.host_name(1) == names[0],
+              out.get("host_name") == await local_bastion.host_name(1, pool) == names[0],
               (out.get("host_name"), names))
+        # A C-Series Host's name carries its install's own id, so two default
+        # Hosts are two names on one bastion; the bare name a pairing made
+        # before the id carries stays on the lane certificate.
+        check("the name is <handle><the Host CA's id><zone>, and the bare name is on the lane too",
+              out.get("host_name") == f"{HOME.handle}{await local_bastion.host_id(pool)}{HOME.zone}"
+              and f"{HOME.handle}{HOME.zone}" in names[1:], (out.get("host_name"), names))
         check("no relay endpoint and no tunnel address in it",
               not ({"endpoint", "endpoints", "endpoint_pubkey", "bastion_tunnel_ip",
                     "host_tunnel_ip"} & set(out)), sorted(out))

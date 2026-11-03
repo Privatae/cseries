@@ -53,6 +53,7 @@ import {
   sealErrorText,
 } from "@kit/ask";
 import { AskOverlay } from "@kit/ui/ask-overlay";
+import { usePasskeyApprover } from "@kit/ui/use-passkey";
 import { PairingCodeOverlay } from "@kit/ui/pairing-code-overlay";
 import { CrisisNotice } from "@kit/ui/crisis-notice";
 import { ArtifactCard, artifactIdOf, artifactsOfTurn, VisualsAllowed } from "@kit/visuals";
@@ -612,11 +613,13 @@ export function ChatPane({
   // next card starts clean.
   const shownAskId = ask?.ticketId ?? null;
   useEffect(() => setAskError(null), [shownAskId]);
-  const onAskAnswer = async (option: AskOption, note: string, stepupCode?: string) => {
+  // The person's passkey, offered on a card that needs them.
+  const passkey = usePasskeyApprover();
+  const onAskAnswer = async (option: AskOption, note: string, stepupCode?: string, choices?: string[]) => {
     if (!ask) return;
     setAskBusy(true);
     setAskError(null);
-    const r = await decideTicket(ask.ticketId, option.id, note, stepupCode ?? null);
+    const r = await decideTicket(ask.ticketId, option.id, note, stepupCode ?? null, choices ?? null);
     if (!r.ok) {
       setAskError(`Couldn’t record that — ${r.message}`.trim());
       setAskBusy(false);
@@ -1028,6 +1031,7 @@ export function ChatPane({
             onAnswer={onAskAnswer}
             onNotNow={onAskNotNow}
             onSealCredential={onSealCredential}
+            passkey={passkey}
             waiting={askWaiting}
           />
         )}

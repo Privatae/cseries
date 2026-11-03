@@ -432,6 +432,18 @@ EXEMPT: dict[tuple[str, str], str] = {
     ("packages/cseries/src/cli.js", "Type y to go on"):
         "the installer's confirmation before uninstall --delete-data deletes the Host's data for "
         "good: a permanent deletion is the person's own act, so the terminal asks before it",
+    ("packages/cseries/src/cli.js", "Remove WSL too? Type y to remove it:"):
+        "uninstall --delete-data on Windows: removing WSL, which the installer added, changes the "
+        "person's own PC, so the terminal asks before it, and never removes it unasked",
+    ("packages/cseries/src/cli.js", "Take them out again? Type y to take them out:"):
+        "uninstall --delete-data on Windows: the lines the installer added to the person's own "
+        ".wslconfig are taken out only when the terminal is answered y",
+    ("packages/cseries/src/move.js", "Move it to the whole machine? Type y to move it, anything else keeps it as it is:"):
+        "the installer's one-time offer to move an account's own Linux install to the whole machine: "
+        "it moves the Host's VM and data to a system location through sudo, so the terminal asks first",
+    ("packages/cseries/src/cli.js", "Remove them too, if nothing else on this machine needs them? Type y to remove them:"):
+        "uninstall --delete-data on Linux: removing the distribution's QEMU packages the installer "
+        "added changes the person's own system, so the terminal asks before it, and never removes them unasked",
 }
 
 seen_exempt: set = set()

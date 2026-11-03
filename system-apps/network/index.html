@@ -138,6 +138,10 @@
                              names the count so the button says what it will do. -->
                         <button class="cseries-btn" id="gw-update-all" hidden></button>
                         <button class="cseries-btn primary" id="gw-add">Set up a bastion</button>
+                        <!-- A server on the internet that can't reach this Host back:
+                             this Host connects to it with the code its `pair --open`
+                             showed. Shown on a Host with no platform (add_server). -->
+                        <button class="cseries-btn" id="gw-add-server" hidden>Add a server</button>
                         <!-- Shown only where setup opens the pairing port to one
                              address (GET /api/network/bastions answers
                              pairing_window), so a machine on another network

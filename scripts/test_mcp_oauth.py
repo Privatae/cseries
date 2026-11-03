@@ -2,9 +2,9 @@
 """Gate: signing in to an MCP server with OAuth (server/mcp_oauth.py,
 migrations/v239, the MCP authorization spec revision 2026-07-28).
 
-Fake servers over TLS on 127.0.0.1, reachable ONLY through a stand-in for the
-kernel's egress gate (a CONNECT tunnel that maps the names below to local
-ports, as scripts/test_mcp_client.py does):
+Fake servers over TLS on a unix socket, reachable ONLY through a stand-in for
+the kernel's egress gate (a CONNECT tunnel on 127.0.0.1 that maps the names
+below to that socket; scripts/test_mcp_client.py's maps them to local ports):
 
   mcp-files.example.com    an MCP server that wants a bearer token from its
                            authorization server: 401 with a challenge naming
@@ -166,7 +166,7 @@ import asyncio  # noqa: E402
 
 import aiohttp  # noqa: E402
 from aiohttp import web  # noqa: E402
-from gate_loopback import await_peer_close, client_closes_first_aiohttp  # noqa: E402
+from gate_loopback import CLIENT_CLOSE_WAIT_S, await_peer_close, client_closes_first_aiohttp  # noqa: E402
 
 FAILED = 0
 
@@ -180,23 +180,38 @@ def check(label, cond, detail=""):
 
 # ── the stand-in egress gate ────────────────────────────────────────────────
 GATE_LOG: list = []
-ROUTES: dict[str, int] = {}
+# Every host the stand-in lets through goes to the fake servers' unix socket.
+# Over TCP loopback a stalled request (C12, C13, C14, E6) left a TIME_WAIT on
+# the fake server's port: the client gives up and sends its TLS close, the
+# server answers and hangs up first. In CI a later CONNECT whose source port
+# landed on one of those pairs was refused (scripts/gate_loopback.py says
+# why), and the tool call through it failed with ServerDisconnectedError.
+ROUTES: dict[str, str] = {}
 SEEN: list = []
 
 
-async def _pipe(r, w):
+async def _pipe(r, w, close=True):
+    """Copy r to w until r's sender hangs up. When w's far end is gone, read on
+    and drop the rest, so the pipe still ends at the sender's own close."""
+    out = w
     try:
         while True:
             b = await r.read(65536)
             if not b:
                 break
-            w.write(b)
-            await w.drain()
+            if out is None:
+                continue
+            try:
+                out.write(b)
+                await out.drain()
+            except Exception:  # noqa: BLE001
+                out = None
     except Exception:  # noqa: BLE001
         pass
     finally:
-        with contextlib.suppress(Exception):
-            w.close()
+        if close:
+            with contextlib.suppress(Exception):
+                w.close()
 
 
 async def _gate(reader, writer):
@@ -221,10 +236,21 @@ async def _gate(reader, writer):
         await await_peer_close(reader)
         writer.close()
         return
-    up_r, up_w = await asyncio.open_connection("127.0.0.1", ROUTES[host])
+    up_r, up_w = await asyncio.open_unix_connection(ROUTES[host])
     writer.write(b"HTTP/1.1 200 Connection established\r\n\r\n")
     await writer.drain()
-    await asyncio.gather(_pipe(reader, up_w), _pipe(up_r, writer))
+    # The client's end is closed only after the client has hung up, so its
+    # TIME_WAIT is on its own side. When the server hangs up first, its TLS
+    # close has gone through to the client, which then closes; one that does
+    # not is closed CLIENT_CLOSE_WAIT_S later.
+    to_server = asyncio.ensure_future(_pipe(reader, up_w))
+    await _pipe(up_r, writer, close=False)
+    with contextlib.suppress(Exception):
+        await asyncio.wait_for(asyncio.shield(to_server), CLIENT_CLOSE_WAIT_S)
+    with contextlib.suppress(Exception):
+        writer.close()
+    if not to_server.done():
+        to_server.cancel()
 
 
 def _spy_aiohttp():
@@ -467,7 +493,7 @@ async def _dispatch(request: web.Request):
     return await _mcp(request)
 
 
-async def _serve() -> tuple[web.AppRunner, int]:
+async def _serve() -> tuple[web.AppRunner, str]:
     app = web.Application()
     app.router.add_route("*", "/{tail:.*}", _dispatch)
     client_closes_first_aiohttp(app)
@@ -475,9 +501,12 @@ async def _serve() -> tuple[web.AppRunner, int]:
     await runner.setup()
     ctx = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
     ctx.load_cert_chain(CERT_PEM, KEY_PEM)
-    site = web.TCPSite(runner, "127.0.0.1", 0, ssl_context=ctx)
+    path = str(_TMP / "mcp.sock")
+    if len(path.encode()) > 107:    # sun_path holds 108 bytes with its NUL
+        raise SystemExit(f"the fake servers' socket path is too long for a unix socket: {path}")
+    site = web.UnixSite(runner, path, ssl_context=ctx)
     await site.start()
-    return runner, site._server.sockets[0].getsockname()[1]
+    return runner, path
 
 
 def _reserve() -> socket.socket:
@@ -1620,8 +1649,8 @@ async def main(dsn: str) -> int:
     gate_port = gate_sock.getsockname()[1]
     os.environ["NAC_EGRESS_PORT"] = str(gate_port)
     _spy_aiohttp()
-    runner, port = await _serve()
-    ROUTES.update({h: port for h in HOSTS})
+    runner, path = await _serve()
+    ROUTES.update({h: path for h in HOSTS})
     from server import mcp_connections as _MC
 
     async def _fake_resolve(host: str) -> list[str]:

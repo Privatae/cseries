@@ -91,18 +91,23 @@
         state.checkRun += 1;
         state.waiting = false;
 
+        // A slide may say other words once another slide has passed (the
+        // key slide is optional once the machine's own model is in use).
+        const words = (s.whenPassed && state.steps[s.whenPassed.slide] === 'passed') ? s.whenPassed : s;
         $('kicker').textContent = `${state.idx + 1} of ${SLIDES.length}`;
-        $('title').textContent = s.title;
-        $('lines').innerHTML = s.lines.map((l) => `<p>${esc(l)}</p>`).join('');
+        $('title').textContent = words.title;
+        $('lines').innerHTML = words.lines.map((l) => `<p>${esc(l)}</p>`).join('');
 
         const btn = $('btn-primary');
         btn.textContent = s.button;
         btn.disabled = false;
         btn.onclick = s.appId ? () => openApp(s) : (state.idx === SLIDES.length - 1 ? finish : next);
 
-        $('btn-skip').hidden = !s.appId;
+        $('btn-skip').hidden = !(s.appId || s.offer);
         $('btn-again').hidden = true;
         setStatus('');
+
+        if (s.offer) { offer(s); return; }
 
         // "Picks up where things stand": a step already done on the host
         // (a key added last week, say) passes quietly and moves on.
@@ -165,6 +170,47 @@
         await new Promise((res) => setTimeout(res, 600));
         if (run !== state.checkRun || slide() !== s) return;
         next();
+    }
+
+    // ── An offer: one act on the Host, no app ────────────────────
+    // Read what there is to offer; nothing → straight on to the next slide,
+    // never shown. The button sends the action; a 2xx passes the slide, a
+    // failure says so and leaves the button and Skip.
+    async function offer(s) {
+        const run = state.checkRun;
+        const btn = $('btn-primary');
+        btn.disabled = true;
+        let d = null;
+        try {
+            const r = await apiFetch(s.offer.endpoint);
+            if (r.ok) d = await r.json();
+        } catch (e) { /* nothing to offer */ }
+        if (run !== state.checkRun || slide() !== s) return;
+        if (!d || !s.offer.offered(d)) { await goTo(state.idx + 1); return; }
+        btn.textContent = s.offer.button(d);
+        btn.disabled = false;
+        btn.onclick = async () => {
+            if (run !== state.checkRun) return;
+            btn.disabled = true;
+            setStatus('Setting it up…');
+            let ok = false;
+            try {
+                const r = await apiFetch(s.offer.action.endpoint, {
+                    method: s.offer.action.method,
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(s.offer.action.body(d)),
+                });
+                ok = r.ok;
+            } catch (e) { ok = false; }
+            if (run !== state.checkRun) return;
+            if (ok) {
+                setStatus('Done.', 'ok');
+                await pass(s, run);
+                return;
+            }
+            btn.disabled = false;
+            setStatus(s.offer.failed, 'warn');
+        };
     }
 
     // ── The app hop ──────────────────────────────────────────────

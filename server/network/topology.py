@@ -151,6 +151,10 @@ async def list_bastions(pool, entity_id: int) -> list[dict]:
                    t.machine_anchor_id, t.notes, t.created_at, t.last_used_at,
                    h.hostname, h.gateway_version, h.platform, h.tunnel_status,
                    h.reported_ip, h.wg_pubkey, h.capabilities, h.models, h.last_seen_at,
+                   -- The OpenAI-compatible server's models (llama.cpp, vLLM):
+                   -- an address-less pairing's embedder may be one of them,
+                   -- over the serve lane (embed_backends.lane_embed_service).
+                   h.llm_models,
                    h.freeagent_ok, h.freeagent_stores, h.enforcing,
                    h.schedulers, h.scheduler_scan, h.peers, h.owner_claim,
                    h.prep_tools, h.prep_scan,
@@ -352,6 +356,7 @@ def _bastion_row(r) -> dict:
         "wg_pubkey": r["wg_pubkey"],
         "capabilities": caps or [],
         "models": models or [],
+        "llm_models": _json_or(r["llm_models"], []) if "llm_models" in r.keys() else [],
         "last_seen_at": _iso(r["last_seen_at"]),
         "online": bool(r["online"]),
         # managed bastion agent (v118): the bastion's verdict + per-store detail

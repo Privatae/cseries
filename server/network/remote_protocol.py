@@ -210,6 +210,43 @@ def tunnel_name(zone: str) -> str:
     return f"{TUNNEL_LABEL}.{zone}"
 
 
+# What a stream through the relay carries, read from the first label of the
+# name it asked for. A bastion meeting its Host through the network (the
+# privatae-bastion meeting-point design, "through Privatae") asks for
+# bl-<lane token>.<address_id>.<zone> for a lane and bp-<invite>.<address_id>.
+# <zone> to pair; both are KIND_LANE. Any other label is a browser: KIND_WEB.
+# The ticket says which kinds the Host's tunnel may carry (ticket_kinds), so a
+# Host that turned on only the meeting point gets no browser traffic at all.
+KIND_WEB = "web"
+KIND_LANE = "lane"
+KINDS = frozenset({KIND_WEB, KIND_LANE})
+LANE_LABEL_PREFIXES = ("bl-", "bp-")
+# A ticket without "kinds" is one from before the meeting point: browsers only.
+DEFAULT_KINDS = frozenset({KIND_WEB})
+_MAX_KINDS = 8
+
+
+def stream_kind(sni: str) -> str:
+    """KIND_LANE for a name whose first label starts bl- or bp-, else KIND_WEB.
+    Only meaningful for a name address_id_of accepted."""
+    first = sni.lower().split(".", 1)[0] if isinstance(sni, str) else ""
+    return KIND_LANE if first.startswith(LANE_LABEL_PREFIXES) else KIND_WEB
+
+
+def ticket_kinds(value) -> frozenset:
+    """The kinds a ticket's "kinds" names. Absent (None) is DEFAULT_KINDS.
+    Otherwise a non-empty list of at most _MAX_KINDS strings, else
+    TicketError. A string this relay does not know is left out rather than
+    refused: a door that adds a kind must not take every tunnel down on a relay
+    not yet updated, and a kind left out is one the tunnel never carries."""
+    if value is None:
+        return DEFAULT_KINDS
+    if (not isinstance(value, list) or not 0 < len(value) <= _MAX_KINDS
+            or not all(isinstance(k, str) and 0 < len(k) <= 32 for k in value)):
+        raise TicketError("ticket_invalid", "kinds is not a list of names")
+    return frozenset(k for k in value if k in KINDS)
+
+
 # ── tickets ─────────────────────────────────────────────────────────────────
 
 TICKET_CONTEXT = b"cseries-remote-ticket-v1."
@@ -341,6 +378,7 @@ def verify_ticket(token: str, keys: Mapping[str, Ed25519PublicKey], *,
     if not isinstance(host_uuid, str) or not 0 < len(host_uuid) <= 64:
         raise TicketError("ticket_invalid", "the ticket names no Host")
     payload["limits"] = Limits.from_dict(payload.get("limits"))
+    payload["kinds"] = ticket_kinds(payload.get("kinds"))
     payload["zone"] = zone.lower()
     return payload
 
@@ -523,6 +561,7 @@ class MuxStream:
         self.max_queued = 0
         self.bytes_in = 0                # from the peer, out to the socket
         self.bytes_out = 0               # from the socket, out to the peer
+        self.kind = KIND_WEB             # what it carries (stream_kind); the relay sets it
         self._reset = False
         self._peer_fin = False
         self._tasks: list[asyncio.Task] = []

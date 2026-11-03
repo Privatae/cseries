@@ -1,6 +1,7 @@
 import { Fragment, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import { AskOverlay } from "@kit/ui/ask-overlay";
+import { usePasskeyApprover } from "@kit/ui/use-passkey";
 import { PairingCodeOverlay } from "@kit/ui/pairing-code-overlay";
 import { climbLevels, pageEffort } from "@kit/book/hold-to-think";
 import { NudgeLine } from "@kit/book/nudge-line";
@@ -167,6 +168,8 @@ export function OwnBack({
   onToast: (s: string) => void;
 }) {
   const threadId = ht.threadId;
+  // The person's passkey, offered on a card that needs them.
+  const passkey = usePasskeyApprover();
   const row = ht.threads.find((t) => t.id === threadId);
   const busy = ht.status === "submitted" || ht.status === "streaming";
 
@@ -460,6 +463,7 @@ export function OwnBack({
             onDetails={onDecisionDetails}
             onNotNow={ht.notNowAsk}
             onSealCredential={ht.sealCredential}
+            passkey={passkey}
             waiting={Math.max(0, ht.asks.length - 1)}
           />
         )}

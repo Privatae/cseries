@@ -252,6 +252,118 @@ function bastionInstallScript(p) {
   ].join('\n');
 }
 
+// What the bastion keeps outside its service and program, as the Windows
+// bastion names it: the tray's logon entry (tray.go trayRunKey/trayRunName),
+// its audit log's event source (auditlog.go auditEventSource), its door's own
+// firewall rules, one per port (doorfw.go doorFWRuleName), and its state,
+// the service's (LocalSystem's) roaming AppData (sysservice.go
+// windowsSystemAppData) and ProgramData's privatae\bastion (singleton.go
+// markerPath) and privatae-bastion (contextsock_windows.go contextSockDir).
+const TRAY_RUN_KEY = 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run';
+const TRAY_RUN_NAME = 'PrivataeBastionTray';
+const AUDIT_SOURCE = 'PrivataeBastionAudit';
+const DOOR_RULES = 'Privatae bastion: your Host connects (TCP *)';
+
+// uninstall --delete-data on Windows: the one elevated run, through the same
+// UAC prompt as the install (elevatedScript), that removes the bastion this
+// command installed with everything it holds, the anchor to this Host
+// included (uninstalling is not unpairing), and, when the person said yes,
+// WSL. p: {nonce, log, bastion: bool, wsl: bool}.
+//   1. `privatae-bastion uninstall`, the bastion's own way out: it stops and
+//      removes the service, the tray's logon entry, its event source and its
+//      door's firewall rules, and keeps its state, which step 3 removes,
+//      since the person already said yes to deleting it (its own
+//      --delete-data asks again at a terminal, a second question for the
+//      same answer). Windows cannot remove the program it runs from, so it
+//      leaves that too;
+//   2. what an older bastion's uninstall does not do, or one that stopped
+//      half way leaves: each of those by name, the tray processes still
+//      running the program (they hold it open), the program, the host-ca.pem
+//      the install copied beside it, the Privatae folder when that leaves it
+//      empty, and the folder's entry on the machine's PATH (serviceBlock);
+//   3. the state folders above, named from Windows' own system folder and
+//      ProgramData (never from an environment variable the elevating account
+//      could set);
+//   4. WSL's own uninstall, only on p.wsl;
+//   5. a check: running=yes|no for the service, left=<path> for anything of
+//      the bastion still there.
+// It logs as the install does (run=<nonce>, then key=value lines), the
+// bastion's own output marked "> ".
+function bastionUninstallScript(p) {
+  const body = [];
+  if (p.bastion) {
+    body.push(
+      "Emit 'step=uninstall'",
+      'if (Test-Path -LiteralPath $exe) {',
+      "  $ErrorActionPreference = 'Continue'",
+      "  $text = (& $exe 'uninstall' 2>&1 | ForEach-Object { \"$_\" }) -join \"`n\"",
+      '  $rc = $LASTEXITCODE',
+      "  $ErrorActionPreference = 'Stop'",
+      "  if ($text) { Emit ((($text -split \"`n\") | ForEach-Object { '> ' + $_ }) -join \"`n\") }",
+      '  Emit "uninstall_exit=$rc"',
+      '}',
+      "Emit 'step=leftovers'",
+      `$svc = Get-Service -Name ${psQuote(SERVICE)} -ErrorAction SilentlyContinue`,
+      'if ($svc) {',
+      "  if ($svc.Status -ne 'Stopped') { Stop-Service -Name $svc.Name -Force -ErrorAction SilentlyContinue; try { $svc.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30)) } catch {} }",
+      `  & (Join-Path ([Environment]::SystemDirectory) 'sc.exe') delete ${psQuote(SERVICE)} | Out-Null`,
+      '}',
+      `Remove-ItemProperty -LiteralPath ${psQuote(TRAY_RUN_KEY)} -Name ${psQuote(TRAY_RUN_NAME)} -ErrorAction SilentlyContinue`,
+      `try { if ([System.Diagnostics.EventLog]::SourceExists(${psQuote(AUDIT_SOURCE)})) { [System.Diagnostics.EventLog]::DeleteEventSource(${psQuote(AUDIT_SOURCE)}) } } catch {}`,
+      `Get-NetFirewallRule -DisplayName ${psQuote(DOOR_RULES)} -ErrorAction SilentlyContinue | ForEach-Object { $n = $_.DisplayName; Remove-NetFirewallRule -Name $_.Name -ErrorAction SilentlyContinue; Emit "removed=firewall rule $n" }`,
+      "Get-Process -Name 'privatae-bastion' -ErrorAction SilentlyContinue | Where-Object { $_.Path -and ($_.Path -eq $exe) } | ForEach-Object { Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue }",
+      'Start-Sleep -Milliseconds 500',
+      "foreach ($f in @($exe, \"$exe.new\", (Join-Path $dir 'host-ca.pem'))) {",
+      '  if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue; if (-not (Test-Path -LiteralPath $f)) { Emit "removed=$f" } }',
+      '}',
+      'if ((Test-Path -LiteralPath $dir) -and -not (Get-ChildItem -LiteralPath $dir -Force)) { Remove-Item -LiteralPath $dir -Force; Emit "removed=$dir" }',
+      "$envKey = [Microsoft.Win32.Registry]::LocalMachine.OpenSubKey('SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment', $true)",
+      'try {',
+      "  $raw = [string]$envKey.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)",
+      "  $all = @($raw.Split(';'))",
+      "  $kept = @($all | Where-Object { $_.TrimEnd('\\') -ne $dir })",
+      "  if ($kept.Count -ne $all.Count) { $envKey.SetValue('Path', ($kept -join ';'), $envKey.GetValueKind('Path')); Emit \"removed=$dir from the machine's PATH\" }",
+      '} finally { $envKey.Close() }',
+      "Emit 'step=state'",
+      "$state = Join-Path ([Environment]::SystemDirectory) 'config\\systemprofile\\AppData\\Roaming\\privatae-bastion'",
+      "$pd = [Environment]::GetFolderPath('CommonApplicationData')",
+      "foreach ($d in @($state, (Join-Path $pd 'privatae\\bastion'), (Join-Path $pd 'privatae-bastion'))) {",
+      '  if (Test-Path -LiteralPath $d) { Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue; if (-not (Test-Path -LiteralPath $d)) { Emit "removed=$d" } }',
+      '}',
+      "$pp = Join-Path $pd 'privatae'",
+      'if ((Test-Path -LiteralPath $pp) -and -not (Get-ChildItem -LiteralPath $pp -Force)) { Remove-Item -LiteralPath $pp -Force }',
+    );
+  }
+  if (p.wsl) {
+    body.push(
+      "Emit 'step=wsl'",
+      "$ErrorActionPreference = 'Continue'",
+      "$text = (& (Join-Path ([Environment]::SystemDirectory) 'wsl.exe') '--uninstall' 2>&1 | ForEach-Object { \"$_\" }) -join \"`n\"",
+      '$rc = $LASTEXITCODE',
+      "$ErrorActionPreference = 'Stop'",
+      "if ($text) { Emit ((($text -replace \"`0\", '') -split \"`n\" | ForEach-Object { '> ' + $_ }) -join \"`n\") }",
+      'Emit "wsl_exit=$rc"',
+    );
+  }
+  body.push("Emit 'step=check'");
+  if (p.bastion) {
+    body.push(
+      `if (Get-Service -Name ${psQuote(SERVICE)} -ErrorAction SilentlyContinue) { Emit 'running=yes' } else { Emit 'running=no' }`,
+      "foreach ($f in @($exe, $state)) { if (Test-Path -LiteralPath $f) { Emit \"left=$f\" } }",
+      `if ((Get-ItemProperty -LiteralPath ${psQuote(TRAY_RUN_KEY)} -ErrorAction SilentlyContinue).${TRAY_RUN_NAME}) { Emit 'left=the tray''s logon entry' }`,
+    );
+  }
+  body.push("Emit 'result=ok'", 'exit 0');
+  return [
+    ...preamble(p),
+    'try {',
+    ...body.map((l) => `  ${l}`),
+    '} catch {',
+    '  Quit $code $_.Exception.Message',
+    '}',
+  ].join('\n');
+}
+
 // The log the script wrote for THIS run (its first line names the nonce): the
 // key=value lines, in order. A log from another run, or none, is empty.
 function parseInstallLog(text, nonce) {
@@ -259,10 +371,10 @@ function parseInstallLog(text, nonce) {
   if (lines[0] !== `run=${nonce}`) return { ours: false, entries: [] };
   const entries = [];
   for (const l of lines.slice(1)) {
-    const m = /^(installed|old_install|service|owner|released|paired_host|anchored|enrolled|result|error|exit|step)=(.*)$/.exec(l);
+    const m = /^(installed|old_install|service|owner|released|paired_host|anchored|enrolled|result|error|exit|step|uninstall_exit|removed|running|left|wsl_exit|machine_record|machine_left)=(.*)$/.exec(l);
     if (m) entries.push({ key: m[1], value: m[2].trim() });
   }
   return { ours: true, entries };
 }
 
-module.exports = { bastionInstallScript, parseInstallLog, CA_VAR, SERVICE };
+module.exports = { bastionInstallScript, bastionUninstallScript, parseInstallLog, CA_VAR, SERVICE, TRAY_RUN_KEY, TRAY_RUN_NAME, AUDIT_SOURCE, DOOR_RULES };

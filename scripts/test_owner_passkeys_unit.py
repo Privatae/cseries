@@ -211,8 +211,15 @@ class Store:
 DB = Store()
 
 
+async def _no_code(pool) -> bool:
+    return False
+
+
 def fresh_state():
     L._pool = lambda: DB
+    # No authenticator code set up, unless a check below sets one
+    # (owner_passkeys._approval_factor).
+    P._code_enrolled = _no_code
     L._owner_email, L._cookie_suffix, L._setup_code = DB.owner["email"], DB.owner["cookie_suffix"], None
     L._failures.clear()
     L._cache.clear()

@@ -390,7 +390,7 @@ async def behaviour(dsn):
             async def anchored(_pool, _eid, server):
                 return {"hostname": server}
 
-            async def stepup(_pool, code):
+            async def stepup(_pool, code, purpose=None):
                 return code == "123456"
 
             async def token_from_peer(_peer, **_k):

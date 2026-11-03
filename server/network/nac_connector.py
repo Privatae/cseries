@@ -668,7 +668,7 @@ async def _file_approval_ticket(pool, grant_id: int) -> Optional[int]:
                             token_names=[row["token_name"], row["app_token_name"]])
     options = [
         {"id": APPROVE_OPTION, "label": "Let this account in",
-         "consequence": "Needs a code from your authenticator. Messages from this account "
+         "consequence": "Needs your passkey, or a code from your authenticator. Messages from this account "
                         "start turns in your chat.", "recommend": False},
         {"id": DECLINE_OPTION, "label": "Don't pair",
          "consequence": "Nothing changes; the pairing is closed.", "recommend": False},
@@ -800,7 +800,7 @@ async def _tell_host(pool, eid: Optional[int], grant_id: int, outcome: str,
 
 async def approve_connector(pool, eid: int, grant_id: int, *, stepup_code: Optional[str],
                             approved_by: Optional[str] = None, via: str = "unknown",
-                            note: str = "") -> dict:
+                            note: str = "", passkey_purpose: Optional[str] = None) -> dict:
     """The person lets the reported account in. Only from the person's own
     surfaces (via='ui': the Network app, or the ticket answered by the person);
     the Host's approve_nac_draft refuses kind connector before it gets here.
@@ -827,7 +827,13 @@ async def approve_connector(pool, eid: int, grant_id: int, *, stepup_code: Optio
         raise ConnectorError(409, "already approved")
     if row["pairing"] != "matched" or not row["account_id"]:
         raise ConnectorError(409, "no account has sent the pairing code yet")
-    if not await nac_stepup.verify_stepup(pool, str(stepup_code or "")):
+    # `passkey_purpose`: only the card's own decide passes one (the ticket,
+    # its option and this grant's account, approval_passkeys.ticket_purpose),
+    # so a passkey approval opens nothing from the Network app's button.
+    if not await nac_stepup.verify_stepup(pool, str(stepup_code or ""), purpose=passkey_purpose):
+        from server import approval_passkeys
+        if approval_passkeys.is_proof(stepup_code):
+            raise ConnectorError(403, approval_passkeys.REFUSED)
         raise ConnectorError(403, "letting an account in needs a current code from your "
                                   "authenticator (the second factor enrolled in Network): enter it "
                                   "in the Network app, Ingress, Messaging connectors. Nothing was "
@@ -901,7 +907,8 @@ async def decline_connector(pool, grant_id: int, *, actor: str = "user",
 
 
 async def decide_from_ticket(pool, eid: int, ticket_id: int, md: dict, *, option_id: str,
-                             stepup_code: Optional[str], actor: str, note: str = "") -> dict:
+                             stepup_code: Optional[str], actor: str, note: str = "",
+                             passkey_purpose: Optional[str] = None) -> dict:
     """The approval ticket's decide (tickets.decide_ticket_service hands a
     connector_pairing ticket here). Honoured only for the ticket the grant
     itself names, so a ticket written to look like this one decides nothing.
@@ -919,7 +926,7 @@ async def decide_from_ticket(pool, eid: int, ticket_id: int, md: dict, *, option
         raise ConnectorError(409, "this card does not belong to that pairing")
     if option_id == APPROVE_OPTION:
         res = await approve_connector(pool, eid, gid, stepup_code=stepup_code, via="ui",
-                                      note=note)
+                                      note=note, passkey_purpose=passkey_purpose)
     elif option_id == DECLINE_OPTION:
         res = await decline_connector(pool, gid, actor="user", eid=eid, note=note)
     else:

@@ -192,7 +192,45 @@ function commandBlock(c) {
     lines.push(`emit ${shq(`released=${c.args[2]}`)}`);
   } else if (c.args[0] === 'claim-anchor') {
     lines.push("emit 'anchored=yes'");
+  } else if (c.args[0] === 'approvals-owner') {
+    lines.push("emit 'owner=yes'");
   }
+  return lines;
+}
+
+// Linux, an account's install that takes over the bastion the whole
+// machine's uninstall kept (bastion.js machineRecordFor): first, before
+// anything is installed or paired, the machine's record of it is cleared, so
+// no whole-machine install pairs it again and no whole-machine uninstall
+// removes it. Only that record: the script stops, with nothing changed, when
+// the machine's install is here again (its unit or lima/) or the record is
+// not the one the account read (its sha256). Then what that uninstall kept
+// only for the record goes as the uninstall would have taken it: the folder,
+// the record with it (a record still there stops the script), then the
+// system account this command made. What else cannot be removed is reported
+// (machine_left=<the command that removes it>), and the takeover stands. A
+// record already gone is nothing to clear.
+function machineRecordBlock(p) {
+  const r = p.machineRecord;
+  const c = EXIT.machineRecord;
+  const lines = [
+    "emit 'step=machine-record'",
+    `st=${shq(r.state)}`,
+    'if [ -e "$st" ]; then',
+    `  if [ -e ${shq(r.unit)} ] || [ -e ${shq(r.lima)} ]; then quit ${c} "an install of C-Series for the whole machine is here again, and the bastion stays its own"; fi`,
+    '  h=$(sha "$st")',
+    `  [ "$h" = ${shq(r.sha256)} ] || quit ${c} "the whole machine's record ($st) changed after this command read it"`,
+    `  rm -rf ${shq(r.base)}`,
+    `  [ ! -e "$st" ] || quit ${c} "cannot remove $st"`,
+  ];
+  if (r.vmUserCreated) {
+    lines.push(`  if getent passwd ${shq(r.vmUser)} >/dev/null 2>&1; then userdel ${shq(r.vmUser)} >/dev/null 2>&1 || emit ${shq(`machine_left=userdel ${r.vmUser}`)}; fi`);
+  }
+  lines.push(
+    `  [ ! -e ${shq(r.base)} ] || emit ${shq(`machine_left=rm -rf ${r.base}`)}`,
+    'fi',
+    "emit 'machine_record=cleared'",
+  );
   return lines;
 }
 
@@ -211,6 +249,7 @@ function restartBlock(p) {
 
 // p: {platform, nonce, program, unit (Linux), install: {file, sha256}|null,
 //     serviceInstall, hostCa: {file, sha256}|null, host,
+//     machineRecord: bastion.js machineRecordFor|null,
 //     commands: bastionCommands(plan, CA_VAR)}
 // The service is restarted at the end, before the authenticator's own run:
 // the bastion reads its second factor from its state file on every check
@@ -218,6 +257,7 @@ function restartBlock(p) {
 // sees a factor enrolled after it started.
 function bastionInstallScript(p) {
   const body = [...preamble(p)];
+  if (p.machineRecord) body.push(...machineRecordBlock(p));
   if (p.install) body.push(...installBlock(p));
   if (p.serviceInstall) body.push(...serviceBlock(p));
   if (p.hostCa) body.push(...hostCaBlock(p));
@@ -254,4 +294,93 @@ function enrolArgs(program, command, host) {
   return ['cseries-enrol', program, ...command.args.map((a) => (a === HOST ? host : a))];
 }
 
-module.exports = { bastionInstallScript, enrolScript, enrolArgs, CA_VAR, LAUNCHD_LABEL, UNIT, shq };
+// The bastion's state as the service keeps it (os.UserConfigDir under the
+// HOME the service runs with), and what else it makes outside that folder
+// on Linux: the drop folder of its free agents (client-go
+// freeagent_drop_unix.go faRootStateBase), its runtime folder
+// (singleton.go runtimeDir), the folder of its ask and context sockets
+// (contextsock_unix.go contextSockDir, /var/run/privatae-bastion; a stopped
+// bastion leaves both sockets there), and the machine's marker of where its
+// state is (singleton.go markerDirLinux, markerDirDarwin).
+const BASTION_STATE = {
+  linux: ['/root/.config/privatae-bastion', '/var/lib/privatae/freeagent', '/var/lib/privatae/bastion', '/run/privatae',
+    '/run/privatae-bastion'],
+  darwin: ['/var/root/Library/Application Support/privatae-bastion', '/Library/Application Support/privatae/bastion',
+    '/var/run/privatae-bastion'],
+};
+
+// uninstall --delete-data: the one root run that removes the bastion this
+// command installed, whatever it holds (the anchor to this Host included:
+// uninstalling is not unpairing, and the bastion asks nothing of its anchor
+// to be removed). Run as `sudo /bin/sh -s` (or /bin/sh -s as root), this on
+// its standard input.
+//   1. `privatae-bastion uninstall`, the bastion's own way out (bastion 0.62
+//      and later): it stops and removes the service and the program, and
+//      keeps its state, which this script removes itself in step 3, since
+//      the person already said yes to deleting it (the bastion's own
+//      --delete-data asks again at a terminal, a second question for the
+//      same answer);
+//   2. what the bastion's own uninstall may not have done (an older bastion
+//      without it, a program already gone): the service stopped, its unit or
+//      launchd job removed, the program and macOS's link removed;
+//   3. the state folders above;
+//   4. a check that no bastion service runs, reported as running=yes|no.
+// Its output: run=<nonce>, the bastion's own lines marked "> ", and
+// key=value lines (removed=, running=, result=ok).
+function bastionUninstallScript(p) {
+  const darwin = p.platform === 'darwin';
+  const state = BASTION_STATE[darwin ? 'darwin' : 'linux'];
+  const lines = [
+    'set -u',
+    'umask 022',
+    'PATH=/usr/sbin:/usr/bin:/sbin:/bin',
+    `HOME=${darwin ? '/var/root' : '/root'}`,
+    'export PATH HOME',
+    'unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME TMPDIR',
+    `exe=${shq(p.program)}`,
+    'emit() { printf \'%s\\n\' "$1"; }',
+    `emit ${shq(`run=${p.nonce}`)}`,
+    "emit 'step=uninstall'",
+    'if [ -x "$exe" ]; then',
+    '  text=$("$exe" uninstall </dev/null 2>&1); rc=$?',
+    '  [ -z "$text" ] || printf \'%s\\n\' "$text" | sed \'s/^/> /\'',
+    '  emit "uninstall_exit=$rc"',
+    'fi',
+  ];
+  if (darwin) {
+    lines.push(
+      `launchctl bootout system/${LAUNCHD_LABEL} >/dev/null 2>&1 || true`,
+      `rm -f /Library/LaunchDaemons/${LAUNCHD_LABEL}.plist`,
+      'rm -f "$exe"',
+      '[ "$(readlink /usr/local/bin/privatae-bastion 2>/dev/null)" = "$exe" ] && rm -f /usr/local/bin/privatae-bastion',
+    );
+  } else {
+    lines.push(
+      'if [ -d /run/systemd/system ]; then',
+      '  systemctl disable --now privatae-bastion.service >/dev/null 2>&1 || true',
+      `  rm -f ${UNIT}`,
+      '  systemctl daemon-reload >/dev/null 2>&1 || true',
+      '  systemctl reset-failed privatae-bastion.service >/dev/null 2>&1 || true',
+      'fi',
+      'rm -f "$exe"',
+    );
+  }
+  lines.push("emit 'step=state'");
+  for (const d of state) {
+    lines.push(`if [ -e ${shq(d)} ]; then rm -rf ${shq(d)} && emit ${shq(`removed=${d}`)}; fi`);
+  }
+  // The folders above them that the bastion made and nothing else uses:
+  // removed only when that left them empty.
+  if (!darwin) lines.push('rmdir /var/lib/privatae 2>/dev/null || true', 'rmdir /root/.config 2>/dev/null || true');
+  lines.push(
+    "emit 'step=check'",
+    darwin
+      ? `if launchctl print system/${LAUNCHD_LABEL} >/dev/null 2>&1; then emit running=yes; else emit running=no; fi`
+      : 'if [ -d /run/systemd/system ] && systemctl is-active --quiet privatae-bastion.service; then emit running=yes; else emit running=no; fi',
+    "emit 'result=ok'",
+    '',
+  );
+  return lines.join('\n');
+}
+
+module.exports = { bastionInstallScript, bastionUninstallScript, enrolScript, enrolArgs, CA_VAR, LAUNCHD_LABEL, UNIT, BASTION_STATE, shq };

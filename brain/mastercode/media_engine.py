@@ -571,6 +571,23 @@ async def media_config(pool, entity_id) -> dict:
     return cfg
 
 
+def _is_loopback_origin(url: str) -> bool:
+    """Is `url` an http origin on this Host's own loopback? A bastion on the
+    mesh is never pinned at one; a serve-lane origin always is."""
+    import ipaddress
+    from urllib.parse import urlsplit
+    try:
+        host = urlsplit(url or "").hostname or ""
+    except ValueError:
+        return False
+    if host == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False
+
+
 async def media_config_state(pool, entity_id) -> tuple[dict, bool]:
     """(config, unreadable) — media_config plus the state it cannot express.
 
@@ -621,19 +638,36 @@ async def media_config_state(pool, entity_id) -> tuple[dict, bool]:
         # a re-enrolled box's new address is picked up instead of a dead pin —
         # the same rule the text lane learned at embedding.py:96-102.
         # resolve_endpoint_for_hostname always yields a plain http:// address
-        # (embed_backends.py:146 hands resolve_embed_endpoint only reported_ip,
-        # so its relay-sentinel branch cannot fire) — which is what this lane
-        # wants anyway, since the reverse relay is text-only.
+        # (it hands resolve_embed_endpoint only reported_ip, so its
+        # relay-sentinel branch cannot fire) — which is what this lane wants
+        # anyway, since the reverse relay is text-only. A bastion with no
+        # address of its own yields its serve-lane origin on this Host's
+        # loopback, dialled directly, never through the peer forward.
+        live = None
         try:
             from mastercode.embed_backends import resolve_endpoint_for_hostname
-            live = await resolve_endpoint_for_hostname(pool, entity_id, cfg["bastion"])
+            live = await resolve_endpoint_for_hostname(pool, entity_id, cfg["bastion"], cfg.get("model"))
             if live:
                 cfg["base_url"] = live
         except Exception as e:
             log.debug("media: bastion endpoint re-resolve failed (%s)", e)
-        import os as _os
-        cfg["peer_forward"] = (
-            (_os.environ.get("HUB_PEER_FORWARD_ADDR") or "").strip() or "[::1]:3129")
+        if not live and _is_loopback_origin(cfg["base_url"]):
+            # The pin is a serve-lane origin from switch time (an address-less
+            # pairing's), and that lane is not connected now. The port is this
+            # Host's own loopback: dialled after its listener closed it reaches
+            # nothing or another bastion's listener, and the peer forward
+            # admits mesh peers only. The lane is DOWN: still configured (the
+            # job lane and coverage keep their column), with nothing to dial.
+            log.info("media: bastion %r has no live serve lane — media lane DOWN "
+                     "this call (the pinned lane origin is not used)", cfg["bastion"])
+            cfg["base_url"] = ""
+            cfg["backend_down"] = True
+            return cfg, False
+        from mastercode.memory_engine import _is_serve_lane_origin
+        if not _is_serve_lane_origin(cfg.get("base_url") or ""):
+            import os as _os
+            cfg["peer_forward"] = (
+                (_os.environ.get("HUB_PEER_FORWARD_ADDR") or "").strip() or "[::1]:3129")
     return cfg, False
 
 

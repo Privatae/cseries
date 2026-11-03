@@ -1,0 +1,7 @@
+# A Host with no provider key runs chat on the model its person's own machine
+# serves (inference_config rung 6: no key + a bastion's llm_models or models
+# → local, an OpenAI-compatible server first, embedders never); a key, or an
+# explicit route, leaves it unchanged; neither keeps today's message.
+# Getting Started's GET/POST /api/inference/local-default. Stub pool and
+# vault. No DB, no network.
+test_local_model_default.py

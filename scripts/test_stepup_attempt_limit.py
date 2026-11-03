@@ -944,9 +944,26 @@ for _q, _file in _PERSON_PAGES.items():
     _who = _body.find("person_email(") if "person_email(" in _body else _body.find("_load(request")
     check(f"  {_q} asks who the person is before it checks a code",
           0 <= _who < _body.find("person.confirm(") if "person.confirm(" in _body else False)
+# The owner's passkey page (server/routes/owner.py, /passkey): while an
+# authenticator code is set up, adding a passkey takes it too
+# (owner_passkeys._approval_factor), because a passkey approves what the code
+# approves. The page is the owner's own, on the desktop's name, in a browser
+# with no app token. Each handler refuses a request without the owner's live
+# session (_signed_in) before it calls into owner_passkeys, so a code it checks
+# is the owner's own and counts on the owner's record. Checked below.
+_OWNER_SESSION_ROUTES = {"server.routes.owner:passkey_register_options": "server/routes/owner.py",
+                         "server.routes.owner:passkey_register_verify": "server/routes/owner.py"}
+for _q, _file in _OWNER_SESSION_ROUTES.items():
+    _fn = _q.split(":")[1]
+    _src = open(os.path.join(ROOT, _file)).read()
+    _body = _src[_src.index(f"async def {_fn}("):]
+    _body = _body[:_body.index("\n@router", 1)]
+    _who = _body.find("await _signed_in(request)")
+    check(f"  {_q} asks for the owner's live session before it reaches a code",
+          0 <= _who < _body.find("owner_passkeys."), _who)
 _open, _shell_scoped = [], []
 for q, mod, path in _code_routes:
-    if q in _BEARER_ROUTES or q in _PERSON_PAGES:
+    if q in _BEARER_ROUTES or q in _PERSON_PAGES or q in _OWNER_SESSION_ROUTES:
         continue
     built = _built(q, mod, path)
     scopes = [s for r in built for s in _scopes(r)]
@@ -954,7 +971,8 @@ for q, mod, path in _code_routes:
         _open.append(q)
     elif any(s in _RA.SHELL_SCOPES for s in scopes):
         _shell_scoped.append(q)
-check("each route the scan connects, other than the bastion heartbeat and the owner's agent pages, "
+check("each route the scan connects, other than the bastion heartbeat, the owner's agent pages and "
+      "the owner's passkey page, "
       "requires an app token with a permission (so no app token gets a 401)", not _open, _open)
 check("  and none of those permissions is one of the shell's own (so its token gets a 403)",
       not _shell_scoped, _shell_scoped)

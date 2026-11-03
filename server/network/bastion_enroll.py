@@ -579,6 +579,11 @@ async def redeem_local(pool, *, entity_id: int, handle: str, secret: str, operat
     try:
         operator_cert, serial = await host_ca.sign_operator_csr(pool, operator_csr)
         ca_cert = await host_ca.ca_cert_pem(pool)
+        # The one name this pairing is filed under (local_bastion.pairing_host_name:
+        # the handle and this install's own id, from the CA just read), kept on
+        # the row below and handed to the bastion.
+        pair_name = local_bastion.pairing_host_name(
+            own, host_ca.ca_sha256(ca_cert)[:local_bastion.HOST_ID_LEN])
     except Exception:
         await _rearm_pairing_token(pool, secret_hash)
         raise
@@ -592,7 +597,7 @@ async def redeem_local(pool, *, entity_id: int, handle: str, secret: str, operat
         "operator_uuid": str(uuid.uuid4()),
         # The lane on the enroll port finds this row by it (local_bastion).
         "cert_serial": serial,
-        "host_name": local_bastion.pairing_host_name(own),
+        "host_name": pair_name,
         "machine": hostname or None,
         "platform": platform or None,
     }
@@ -622,7 +627,7 @@ async def redeem_local(pool, *, entity_id: int, handle: str, secret: str, operat
         # the pairing under it, and a coder grant names it as its subject. On
         # the unix lane it is also the name the lane certificate carries; the
         # TCP lane's is local_bastion.TCP_SERVER_NAME.
-        "host_name": local_bastion.pairing_host_name(own),
+        "host_name": pair_name,
     }
     if transport == "unix":
         out["lane_socket"] = local_bastion.lane_socket()

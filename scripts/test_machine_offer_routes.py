@@ -90,7 +90,7 @@ async def fake_dispatch(pool, eid, server, op, args, timeout=None):
                                               "pairing_state":"pending"}),"stderr":""}
     return {"exit":0,"stdout":"","stderr":""}
 pg._dispatch = fake_dispatch
-async def ok_stepup(pool, code): return code == "123456"
+async def ok_stepup(pool, code, purpose=None): return code == "123456"
 pg._verify_stepup = ok_stepup
 async def own(eid): return (ANCHOR,)
 pg._own_host_names = own

@@ -1,0 +1,11 @@
+# 2026-11-03: an approval over the chat takes the owner's passkey tap,
+# bound to exactly that answer (server/approval_passkeys.py: the ticket, the
+# option, the card's words, the boxes ticked; or one request's body), used once,
+# 120 seconds, the person's verification required, checked by
+# nac_stepup.verify_stepup before anything acts; the authenticator code still
+# works; adding a passkey while a code is set up takes a passkey check or the
+# code. A software authenticator through the real webauthn library, the real
+# routes and decide, on a fresh clone of the kernel's schema (TEST_PG_DSN /
+# PEER_TEST_DSN / TEST_DSN, else a throwaway server, like the other _pg gates);
+# only the machine is stubbed. Fails on main, where no approval takes a passkey.
+test_passkey_approvals_pg.py

@@ -149,7 +149,7 @@ test('the sudo script stops before pair when this /bin/sh has no builtin printf'
   assert.ok(fake.includes(`exe='${program}'`) && !fake.includes('/usr/local/bin') && !fake.includes('HOME=/root'),
     'the script runs only the fake bastion, with a temp HOME');
   const r = require('node:child_process').spawnSync('/bin/sh', ['-s'], {
-    input: fake, env: { ...process.env, FAKE_BASTION_LOG: log },
+    input: fake, env: { ...process.env, FAKE_BASTION_LOG: log, FAKE_BASTION_HOME: home },
   });
   const text = r.stdout.toString();
   assert.equal(r.status, 16, text);

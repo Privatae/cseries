@@ -57,6 +57,24 @@ export interface Ask {
    * RESULT_ASK_TOOLS result: the platform wrote it from the machine's own
    * report; a Host's `escalate` carries no attachment. */
   attachment?: AskAttachment;
+  /** Boxes the person ticks before answering — what another Host may do on
+   * their machine (a machine pairing card). Read only from a PLATFORM-SET
+   * kind's metadata (choicesAsk), never from anything a Host wrote; the
+   * ticked ids ride the answer (decide's `choices`). */
+  choices?: AskChoices;
+}
+
+export interface AskChoice {
+  id: string;
+  label: string;
+  /** Ticked when the card opens. */
+  on: boolean;
+}
+
+export interface AskChoices {
+  /** The line above the boxes. */
+  label: string;
+  items: AskChoice[];
 }
 
 interface ToolLike {
@@ -200,6 +218,14 @@ export function stepupAsk(metadata: unknown): StepupAsk | null {
   if (md.kind === "board_post_proposal") {
     return { option: "post", why: "This puts text on the members' board, under your Host's name." };
   }
+  // Another Host asking to use one of the person's machines
+  // (server/network/pairing_grants.py): 'Let it in' takes the code.
+  if (md.kind === "bastion_pairing") {
+    const option = asRecord(md.bastion_pairing)?.stepup_option;
+    if (typeof option === "string" && option) {
+      return { option, why: "This lets another Host use one of your machines." };
+    }
+  }
   if (md.kind === "connector_pairing") {
     const option = asRecord(md.connector_pairing)?.stepup_option;
     if (typeof option === "string" && option) {
@@ -210,6 +236,27 @@ export function stepupAsk(metadata: unknown): StepupAsk | null {
     }
   }
   return null;
+}
+
+/** The boxes a card carries, from a platform-set kind only: a machine
+ * pairing card's ceiling (bastion_pairing.ceiling: [{id, label, on}]). Null
+ * for every other ticket. */
+export function choicesAsk(metadata: unknown): AskChoices | null {
+  const md = asRecord(metadata) ?? {};
+  if (md.kind !== "bastion_pairing") return null;
+  const raw = asRecord(md.bastion_pairing)?.ceiling;
+  const items: AskChoice[] = [];
+  for (const c of Array.isArray(raw) ? raw : []) {
+    const r = asRecord(c);
+    if (!r || typeof r.id !== "string" || !r.id) continue;
+    items.push({ id: r.id, label: typeof r.label === "string" && r.label ? r.label : r.id, on: r.on === true });
+  }
+  return items.length ? { label: "What it may do there", items } : null;
+}
+
+/** The ids ticked on a card, in the card's order. */
+export function pickedChoices(choices: AskChoices, ticked: Record<string, boolean>): string[] {
+  return choices.items.filter((c) => (c.id in ticked ? ticked[c.id] : c.on)).map((c) => c.id);
 }
 
 /** The room key GET /api/tickets?asked_in= takes for the conversation on
@@ -255,6 +302,8 @@ export function askFromTicket(ticket: unknown): Ask | null {
     ask.stepupOption = st.option;
     ask.stepupWhy = st.why;
   }
+  const ch = choicesAsk(t.metadata);
+  if (ch) ask.choices = ch;
   return ask;
 }
 

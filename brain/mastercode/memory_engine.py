@@ -246,6 +246,17 @@ async def _entity_embedding_config(pool, entity_id: int) -> tuple[str, str]:
     return ("platform", model)
 
 
+def _is_serve_lane_origin(url: str) -> bool:
+    """Is `url` a bastion's serve-lane origin on this Host's loopback
+    (server/network/serve_relay.py)? Such an embedder is dialled directly: the
+    Hub's peer forward is for mesh peers, and a lane origin is none."""
+    try:
+        from server.network import serve_relay
+    except Exception:  # noqa: BLE001 — no Host server in this process
+        return False
+    return serve_relay.is_lane_origin(url)
+
+
 async def _byo_embedding_config(pool, entity_id: int) -> dict:
     """Phase-3a (s2-embed-byo): read the entity's BYO embedding endpoint config
     from behavioral_params, if any. Four distinct returns so the caller can hold
@@ -299,7 +310,8 @@ async def _byo_embedding_config(pool, entity_id: int) -> dict:
         # switch time. Same-package import, no heavy deps (embed_backends
         # imports nothing at module level).
         from mastercode.embed_backends import resolve_endpoint_for_hostname
-        live = await resolve_endpoint_for_hostname(pool, entity_id, bastion)
+        live = await resolve_endpoint_for_hostname(
+            pool, entity_id, bastion, (bp.get("embedding_model") or "").strip() or None)
         if live:
             base_url = live
         else:
@@ -318,7 +330,7 @@ async def _byo_embedding_config(pool, entity_id: int) -> dict:
     if not base_url:
         return {}
     out = {"base_url": base_url}
-    if bastion:
+    if bastion and not _is_serve_lane_origin(base_url):
         # Bastion targets live on the host's WG overlay, which the app container
         # has NO kernel route to (the Hub's WireGuard is a userspace netstack;
         # the old kernel-routed wg-gw concentrator is retired). The

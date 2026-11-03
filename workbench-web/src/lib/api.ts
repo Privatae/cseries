@@ -99,6 +99,7 @@ export function decideTicket(
   optionId: string,
   note = "",
   stepupCode: string | null = null,
+  choices: string[] | null = null,
 ): Promise<ApiResult<DecideResult>> {
   return request("POST", `/api/tickets/${id}/decide`, {
     option_id: optionId,
@@ -107,6 +108,10 @@ export function decideTicket(
     // A pipeline change adding a check that runs outside the platform: the
     // code from the person's authenticator, checked and burned by the kernel.
     ...(stepupCode ? { stepup_code: stepupCode } : {}),
+    // A card with boxes (a machine pairing card): the ids ticked. A passkey
+    // tap on it is made for exactly these (server/approval_passkeys.py), so
+    // the decide must carry what the overlay signed.
+    ...(choices ? { choices } : {}),
   });
 }
 

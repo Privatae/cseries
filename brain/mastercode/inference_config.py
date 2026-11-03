@@ -39,6 +39,7 @@ Legacy shapes are migrated on read: {lane, model, direct_provider?} and
 {provider, model_id} both normalize through normalize_provider().
 """
 
+import json
 import logging
 import os
 
@@ -684,9 +685,190 @@ async def _resolve_role_route(
         if provider and model:
             return _route(provider, model)
 
-    # 6. unrouted — surfaced, never guessed. There is NO default model.
+    # 6. chat with no route, no provider key and a model on the person's own
+    #    machine: that model (local_default_model). Resolved live, never
+    #    stored: when the machine goes away or a key is added, this rung stops
+    #    answering and the turn says what it always said.
+    if role == "chat":
+        local = await local_default_model(pool, entity_id)
+        if local:
+            return {**_route("local", local["id"], local["endpoint"]),
+                    "local_default": {"machine": local["bastion"], "kind": local["kind"]}}
+
+    # 7. unrouted — surfaced, never guessed. There is NO default model.
     return _empty_route(
         f"no {role} route — pick a provider and model in the Orchestrator")
+
+
+async def holds_provider_credential(pool, entity_id: int) -> bool:
+    """Whether the person holds a key or a sign-in for ANY model provider: an
+    active Keys row a provider's slot would use (the Keys app's own reading,
+    server/routes/vault.list_providers: the canonical name, or a free-typed
+    name of a type that serves the slot), or the OPENROUTER_API_KEY rung of
+    the credential ladder. An unreadable vault reads as True: the local
+    default is for a Host that certainly has no key, and a guess either way
+    must not move a Host off what its person set up."""
+    if OPENROUTER_API_KEY:
+        return True
+    try:
+        from server.vault import api as vault
+        from server.vault import providers as vp
+        rows = [r for r in await vault.list_secrets(pool, entity_id=entity_id)
+                if not r.get("deactivated_at")]
+    except Exception as e:  # noqa: BLE001
+        log.info("holds_provider_credential: vault unreadable (%s)", type(e).__name__)
+        return True
+    names = {r.get("logical_name") for r in rows}
+    for p in vp.PROVIDERS:
+        for ctype in ("api_key", "oauth_token"):
+            if vp.canonical_name(p, ctype) in names or any(
+                    vp.matches_provider(p, ctype, r.get("logical_name") or "")
+                    and vp.stored_type_serves(r.get("cred_type"), ctype) for r in rows):
+                return True
+    return False
+
+
+# The name parts of the embedding model families a model server lists beside
+# its chat models (ollama's library: nomic-embed-text, mxbai-embed-large,
+# snowflake-arctic-embed, all-minilm, bge-m3, bge-large, paraphrase-
+# multilingual; Hugging Face's e5 and gte families). A heartbeat carries model
+# NAMES only, so the name is all there is to go on.
+_EMBED_NAME_PARTS = frozenset({"embed", "embedding", "minilm", "bge", "e5", "gte", "paraphrase"})
+
+
+def _chat_capable(model: dict) -> bool:
+    """A served model a chat can run on: not an embedding model. An ollama
+    box lists every tag it has, embedders included, and an embedder answers
+    no chat. Read from the name: a part naming an embedding family
+    (_EMBED_NAME_PARTS, or any part starting 'embed'), or a model the memory
+    store knows as an embedder (embed_backends.known_embed_models)."""
+    import re as _re
+    mid = str(model.get("id") or "").strip().lower()
+    if not mid:
+        return False
+    parts = set(_re.split(r"[/:_.\-\s]+", mid.split(":", 1)[0]))
+    if parts & _EMBED_NAME_PARTS or any(p.startswith("embed") for p in parts):
+        return False
+    try:
+        from mastercode.embed_backends import known_embed_models
+        return not known_embed_models([model.get("id")])
+    except Exception:  # noqa: BLE001
+        return True
+
+
+async def own_machine_tokens(pool, entity_id: int) -> set[int]:
+    """The paired bastions (mcp_client_tokens.id) on a machine that is the
+    person's own, the only machines a model is picked from without the person
+    choosing it:
+
+      - this Host is in charge of the machine: the box's anchor names this
+        Host (the check approve_pairing makes before it lets anyone in,
+        server/network/pairing_grants._anchored_here), or
+      - the bastion runs on the machine this Host runs on: it redeemed on the
+        Host's enroll socket (transport "unix", a directory on this machine),
+        or on the enroll port while that port is published on the machine's
+        loopback only (transport "tcp", no CSERIES_LANE_HOST).
+
+    A machine where this Host is only a guest (another person's computer: the
+    anchor names another Host, or nobody) is left out, so a person's prompts
+    never go there unless they choose its model themselves. Anything that
+    cannot be read counts as not theirs."""
+    try:
+        rows = await pool.fetch(
+            """
+            SELECT t.id, t.notes, h.anchor
+              FROM mcp_client_tokens t
+              JOIN network_bastion_heartbeat h ON h.token_id = t.id
+             WHERE t.entity_id = $1
+               AND t.operator_kind = 'bastion'
+               AND t.revoked_at IS NULL
+            """,
+            entity_id,
+        )
+    except Exception as e:  # noqa: BLE001 — none is the safe answer
+        log.info("own_machine_tokens: unavailable (%s)", type(e).__name__)
+        return set()
+
+    def _obj(v):
+        if isinstance(v, str):
+            try:
+                v = json.loads(v)
+            except ValueError:
+                return {}
+        return v if isinstance(v, dict) else {}
+
+    try:
+        from server.network import local_bastion
+        loopback_port = not local_bastion.remote_lane()
+    except Exception:  # noqa: BLE001
+        loopback_port = False
+    own: set[int] = set()
+    names: tuple | None = None
+    for r in rows:
+        transport = _obj(r["notes"]).get("transport")
+        if transport == "unix" or (transport == "tcp" and loopback_port):
+            own.add(r["id"])
+            continue
+        anchor_host = _obj(r["anchor"]).get("anchor_host")
+        if not anchor_host:
+            continue
+        if names is None:
+            try:
+                from server.network.pairing_grants import _own_host_names
+                names = tuple(await _own_host_names(entity_id))
+            except Exception as e:  # noqa: BLE001
+                log.info("own_machine_tokens: this Host's names unreadable (%s)",
+                         type(e).__name__)
+                names = ()
+        if anchor_host in names:
+            own.add(r["id"])
+    return own
+
+
+async def local_default_model(pool, entity_id: int) -> dict | None:
+    """The model on the person's own machine a Host with NO provider key and
+    no chat route runs on: {id, bastion, endpoint, kind}, or None.
+
+    The candidates are every model an ONLINE machine of the person's own
+    serves right now (own_machine_tokens: one this Host is in charge of, or
+    the machine it runs on; never one where it is only a guest), through
+    model_backends.list_local_models: a bastion's `llm_models` — an
+    OpenAI-compatible server such as llama.cpp, vLLM or LM Studio — and its
+    `models` — ollama — then the model servers the owner named, embedding
+    models left out. An OpenAI-compatible server's model comes first: it is a
+    server the person started to serve that model, where an ollama box lists
+    every model it has ever pulled. Then the order the machines report.
+
+    None whenever the person holds a key (holds_provider_credential): with a
+    key, an unrouted chat is unchanged, and picking a model is theirs (the
+    Orchestrator, or the routing a sign-in sets)."""
+    try:
+        if await holds_provider_credential(pool, entity_id):
+            return None
+    except Exception:  # noqa: BLE001 — it does not raise; belt and braces
+        return None
+    served = await local_chat_models(pool, entity_id)
+    return served[0] if served else None
+
+
+async def local_chat_models(pool, entity_id: int) -> list[dict]:
+    """Every chat-capable model the person's own machines serve right now, in
+    the order local_default_model picks from: an OpenAI-compatible server's
+    first, then ollama's, each in the order the machines report. Only the
+    bastions own_machine_tokens names, and the model servers the owner named
+    themselves; a machine where this Host is a guest is not listed (its model
+    can still be chosen in the Orchestrator). [] when there are none or the
+    table cannot be read."""
+    try:
+        from mastercode.model_backends import list_local_models
+        own = await own_machine_tokens(pool, entity_id)
+        served = [m for m in await list_local_models(pool, entity_id, token_ids=own)
+                  if _chat_capable(m)]
+    except Exception as e:  # noqa: BLE001 — none is the safe answer
+        log.info("local_chat_models: unavailable (%s)", type(e).__name__)
+        return []
+    rank = {"llm-openai": 0}
+    return sorted(served, key=lambda m: rank.get(m.get("kind"), 1))
 
 
 async def resolve_role_model(

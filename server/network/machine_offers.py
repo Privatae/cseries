@@ -257,7 +257,8 @@ async def decline_inbound(pool, offer_id: int, *, decided_by: Optional[str] = No
 
 async def accept_inbound(pool, eid: int, offer_id: int, *, server: str, caps: Any, models: Any,
                          stepup_code: str, ttl_days: Optional[int] = None,
-                         decided_by: Optional[str] = None, via: str = "unknown") -> dict:
+                         decided_by: Optional[str] = None, via: str = "unknown",
+                         passkey_purpose: Optional[str] = None) -> dict:
     """Approve an ask, end to end, in the order that keeps the credential's life
     as short as it can be: fetch a token from the asking host, hand it straight
     to our own machine, then sign the ceiling.
@@ -304,7 +305,15 @@ async def accept_inbound(pool, eid: int, offer_id: int, *, server: str, caps: An
     # it before anyone is asked to mint is what stops a typo from costing the
     # other host a single-use credential, and sign_and_push_grant deliberately
     # does not check it again (it cannot — the counter is already burned).
-    if not await pairing_grants._verify_stepup(pool, str(stepup_code or "")):
+    # `passkey_purpose`: the share card's route passes this exact request's
+    # (approval_passkeys.purpose_for_request), so a passkey approval made for
+    # one machine and model list shares no other.
+    code = str(stepup_code or "")
+    if not await (pairing_grants._verify_stepup(pool, code, passkey_purpose) if passkey_purpose
+                  else pairing_grants._verify_stepup(pool, code)):
+        from server import approval_passkeys
+        if approval_passkeys.is_proof(stepup_code):
+            raise OfferError(403, approval_passkeys.REFUSED)
         raise OfferError(403, "sharing a machine widens access — it needs a valid step-up code "
                               "(enroll a second factor at /nac/stepup/enroll first)")
 

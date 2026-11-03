@@ -33,6 +33,10 @@ PublishPort=127.0.0.1:8810:8810
 PublishPort=127.0.0.1:8811:8811
 Environment=CSERIES_URL=http://home.cseries.localhost:8800
 Environment=CSERIES_TRUSTED_PROXIES=
+# Empty, as compose.yaml's default: the pairing ports above are on the
+# machine's 127.0.0.1, so a bastion reaches them at 127.0.0.1. A Cloud box's
+# drop-in names the Host's public name instead.
+Environment=CSERIES_LANE_HOST=
 # The database socket the postgres container creates. The Host never sees the
 # data directory.
 Volume=cseries_pgsock:/var/run/postgresql

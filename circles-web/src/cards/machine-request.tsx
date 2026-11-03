@@ -5,6 +5,12 @@ import { acceptMachineOffer, declineMachineOffer, listBastions, listMachineOffer
 import type { MachineOffer, ShareableBastion } from "@/lib/api";
 import type { InboxMessage } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { requestProof } from "@kit/passkey";
+import { usePasskeyApprover } from "@kit/ui/use-passkey";
+
+// The route this card's Share sends to, which a passkey approval is made for
+// (server/routes/approvals.py REQUEST_PATHS).
+const ACCEPT_PATH = "/api/network/bastions/machine-offers/accept";
 
 // Moved whole from the Inbox pane (inbox-pane.tsx) when the rail went: the
 // door draws it for a
@@ -35,6 +41,11 @@ export function MachineRequestWidget({
   const [code, setCode] = useState("");
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Share takes a passkey tap where one can be used here; the code
+  // stays behind "Use a code instead".
+  const passkey = usePasskeyApprover();
+  const [useCode, setUseCode] = useState(false);
+  const byPasskey = passkey.mode === "approve" && !useCode;
 
   const p = (message.payload ?? {}) as Record<string, unknown>;
   const who = String(p.from_display_name ?? p.from_handle ?? message.from ?? "A host");
@@ -75,13 +86,22 @@ export function MachineRequestWidget({
   const approve = async () => {
     if (!offer) return;
     setBusy(true);
+    // Exactly the body Share sends, without the proof: the passkey approves
+    // this machine and these models and nothing else.
+    const body = { offer_id: offer.id, server, models };
+    let proof = code;
+    if (byPasskey) {
+      setStatus("Waiting for your passkey…");
+      try {
+        proof = await requestProof(ACCEPT_PATH, body);
+      } catch (e) {
+        setBusy(false);
+        setStatus(e instanceof Error ? e.message : String(e));
+        return;
+      }
+    }
     setStatus("Sharing…");
-    const r = await acceptMachineOffer({
-      offer_id: offer.id,
-      server,
-      models,
-      stepup_code: code,
-    });
+    const r = await acceptMachineOffer({ ...body, stepup_code: proof });
     setBusy(false);
     if (r.ok) {
       setStatus(`Shared. They can use ${r.data.may_use} on ${server} — nothing else.`);
@@ -178,22 +198,52 @@ export function MachineRequestWidget({
         </>
       )}
 
-      <label className="mt-3 block text-foreground text-xs" htmlFor="machine-offer-code">
-        Your 2FA code
-      </label>
-      <input
-        autoComplete="one-time-code"
-        className="mt-1 w-40 rounded-md border border-border bg-card p-2 text-sm"
-        disabled={busy}
-        id="machine-offer-code"
-        inputMode="numeric"
-        onChange={(e) => setCode(e.target.value)}
-        value={code}
-      />
+      {byPasskey ? (
+        <p className="mt-3 text-muted-foreground text-xs">
+          Share asks your device for your passkey (your face, fingerprint or PIN).{" "}
+          <button className="text-primary underline" disabled={busy} onClick={() => setUseCode(true)} type="button">
+            Use a code instead
+          </button>
+        </p>
+      ) : (
+        <>
+          <label className="mt-3 block text-foreground text-xs" htmlFor="machine-offer-code">
+            Your 2FA code
+          </label>
+          <input
+            autoComplete="one-time-code"
+            className="mt-1 w-40 rounded-md border border-border bg-card p-2 text-sm"
+            disabled={busy}
+            id="machine-offer-code"
+            inputMode="numeric"
+            onChange={(e) => setCode(e.target.value)}
+            value={code}
+          />
+          {passkey.mode === "approve" && (
+            <button
+              className="mt-1 block text-primary text-xs underline"
+              disabled={busy}
+              onClick={() => setUseCode(false)}
+              type="button"
+            >
+              Use your passkey instead
+            </button>
+          )}
+          {passkey.mode === "setup" && (
+            <span className="mt-1 block text-muted-foreground text-xs">
+              No passkey yet?{" "}
+              <a className="text-primary underline" href={passkey.setupUrl} rel="noopener" target="_blank">
+                Set one up
+              </a>{" "}
+              and this is one tap next time.
+            </span>
+          )}
+        </>
+      )}
 
       <div className="mt-3 flex gap-2">
         <Button
-          disabled={busy || !offer || !server || models.length === 0 || !code}
+          disabled={busy || !offer || !server || models.length === 0 || (!byPasskey && !code)}
           onClick={approve}
           size="sm"
         >

@@ -38,6 +38,7 @@ import type {
 } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { sealErrorText, sealedNote, stepupAsk, stepupCodeReady } from "@kit/ask";
+import { usePasskeyApprover } from "@kit/ui/use-passkey";
 import { Sheet } from "./bits";
 
 // The Tickets pane's cards, moved here whole when the rail went: a decision in full
@@ -222,6 +223,24 @@ export function TicketDetail({
   // pairing card).
   const stepup = stepupAsk(ticket.metadata);
   const codeFor = stepup?.option ?? null;
+  // That option takes a passkey tap where one can be used here;
+  // the code stays behind "Use a code instead".
+  const passkey = usePasskeyApprover();
+  const [useCode, setUseCode] = useState(false);
+  const [proving, setProving] = useState(false);
+  const [tapError, setTapError] = useState<string | null>(null);
+  const byPasskey = passkey.mode === "approve" && !useCode;
+  const tapAndDecide = async (optionId: string) => {
+    setProving(true);
+    setTapError(null);
+    try {
+      onDecide(optionId, note.trim(), await passkey.prove(ticket.id, optionId));
+    } catch (e) {
+      setTapError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setProving(false);
+    }
+  };
   // One sealed field per option that asks for a credential; the value never
   // leaves this component except into the vault.
   const [secrets, setSecrets] = useState<Record<string, string>>({});
@@ -233,6 +252,9 @@ export function TicketDetail({
     setSecrets({});
     setSealing(null);
     setSealError(null);
+    setUseCode(false);
+    setProving(false);
+    setTapError(null);
   }, [ticket.id]);
   const link = phaseLink(ticket);
   const op = opAsk(ticket);
@@ -431,11 +453,17 @@ export function TicketDetail({
                       : "cursor-default opacity-60",
                     ticket.decision?.option_id === o.id && "border-primary bg-primary/10",
                   )}
-                  disabled={!decidable || (o.id === codeFor && !stepupCodeReady(code))}
+                  disabled={
+                    !decidable ||
+                    proving ||
+                    (o.id === codeFor && !byPasskey && !stepupCodeReady(code))
+                  }
                   key={o.id}
                   onClick={() =>
                     o.id === codeFor
-                      ? onDecide(o.id, note.trim(), code.replace(/\s/g, ""))
+                      ? byPasskey
+                        ? void tapAndDecide(o.id)
+                        : onDecide(o.id, note.trim(), code.replace(/\s/g, ""))
                       : onDecide(o.id, note.trim())
                   }
                   type="button"
@@ -445,7 +473,9 @@ export function TicketDetail({
                       {o.label || o.id}
                     </span>
                     {o.recommend && <Pill tone="success">Recommended</Pill>}
-                    {o.id === codeFor && <Pill>needs your code</Pill>}
+                    {o.id === codeFor && (
+                      <Pill>{byPasskey ? "with your passkey" : "needs your code"}</Pill>
+                    )}
                   </div>
                   {o.consequence && (
                     <div className="mt-0.5 text-muted-foreground text-xs">
@@ -456,7 +486,20 @@ export function TicketDetail({
               ),
             )}
           </div>
-          {decidable && codeFor && (
+          {decidable && codeFor && byPasskey && (
+            <div className="mt-3 text-sm">
+              <span className="text-foreground">Your device asks for your passkey</span>
+              <span className="block text-muted-foreground text-xs">{stepup?.why}</span>
+              <button
+                className="mt-1 block text-primary text-xs underline"
+                onClick={() => setUseCode(true)}
+                type="button"
+              >
+                Use a code instead
+              </button>
+            </div>
+          )}
+          {decidable && codeFor && !byPasskey && (
             <label className="mt-3 block text-sm">
               <span className="text-foreground">Code from your authenticator</span>
               <span className="block text-muted-foreground text-xs">{stepup?.why}</span>
@@ -470,7 +513,30 @@ export function TicketDetail({
                 placeholder="123456"
                 value={code}
               />
+              {passkey.mode === "approve" && (
+                <button
+                  className="mt-1 block text-primary text-xs underline"
+                  onClick={() => setUseCode(false)}
+                  type="button"
+                >
+                  Use your passkey instead
+                </button>
+              )}
+              {passkey.mode === "setup" && (
+                <span className="mt-1 block text-muted-foreground text-xs">
+                  No passkey yet?{" "}
+                  <a className="text-primary underline" href={passkey.setupUrl} rel="noopener" target="_blank">
+                    Set one up
+                  </a>{" "}
+                  and this is one tap next time.
+                </span>
+              )}
             </label>
+          )}
+          {tapError && (
+            <div className="mt-2 text-destructive text-xs" role="alert">
+              {tapError}
+            </div>
           )}
           {decideError && (
             <div className="mt-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-destructive text-xs">

@@ -71,7 +71,7 @@ function mergeWslConfig(text, want) {
     if (k) have.add(k[1].toLowerCase());
   }
   const added = Object.keys(want).filter((k) => !have.has(k.toLowerCase()));
-  if (!added.length) return { text, added };
+  if (!added.length) return { text, added, section: false };
   const add = added.map((k) => `${k}=${want[k]}`);
   if (start === -1) {
     if (lines.length && lines[lines.length - 1].trim() !== '') lines.push('');
@@ -81,7 +81,47 @@ function mergeWslConfig(text, want) {
     while (at > start + 1 && lines[at - 1].trim() === '') at--;
     lines.splice(at, 0, ...add);
   }
-  return { text: lines.join(eol) + eol, added };
+  return { text: lines.join(eol) + eol, added, section: start === -1 };
 }
 
-module.exports = { vmLimits, decodeWslConfig, mergeWslConfig };
+// The lines mergeWslConfig added, taken out again (uninstall, on a yes):
+// `lines` as it wrote them ("memory=8GB"), each removed only where it still
+// stands exactly so in a [wsl2] section, so a value the person changed since
+// is theirs and stays. `section`: mergeWslConfig wrote the [wsl2] header
+// too, which goes when nothing but blank lines is left under it.
+// -> {text, removed: [lines]}
+function removeWslConfigLines(text, added, section) {
+  const eol = /\r\n/.test(text) ? '\r\n' : '\n';
+  const lines = text === '' ? [] : text.split(/\r?\n/);
+  const trailing = lines.length && lines[lines.length - 1] === '';
+  if (trailing) lines.pop();
+  const want = new Set(added);
+  const removed = [];
+  let inWsl2 = false;
+  const kept = [];
+  for (const l of lines) {
+    const s = /^\s*\[([^\]]*)\]\s*(?:[#;].*)?$/.exec(l);
+    if (s) inWsl2 = s[1].trim().toLowerCase() === 'wsl2';
+    if (!s && inWsl2 && want.has(l.trim()) && !removed.includes(l.trim())) {
+      removed.push(l.trim());
+      continue;
+    }
+    kept.push(l);
+  }
+  if (section && removed.length) {
+    // The last [wsl2] header with nothing under it but blank lines.
+    for (let i = kept.length - 1; i >= 0; i--) {
+      if (!/^\s*\[\s*wsl2\s*\]\s*$/i.test(kept[i])) continue;
+      let j = i + 1;
+      while (j < kept.length && kept[j].trim() === '') j++;
+      if (j === kept.length) {
+        kept.splice(i);
+        while (kept.length && kept[kept.length - 1].trim() === '') kept.pop();
+      }
+      break;
+    }
+  }
+  return { text: kept.length ? kept.join(eol) + (trailing || removed.length ? eol : '') : '', removed };
+}
+
+module.exports = { vmLimits, decodeWslConfig, mergeWslConfig, removeWslConfigLines };

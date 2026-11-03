@@ -1,0 +1,6 @@
+# Another Host asking to use one of the person's machines: the anchor Host
+# files the ask card (kind bastion_pairing) from the heartbeat, asks once,
+# again after a day, never after Never; Let it in admits with the ticked
+# ceiling and the card's code, before the card is decided. Recording pool,
+# stubbed ticket writer and grant calls. No DB, no network.
+test_pairing_popup.py

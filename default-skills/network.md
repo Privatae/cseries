@@ -326,9 +326,13 @@ op='enroll'` (a fresh one — the one used to pair is consumed).
 Each bastion carries `pairings` — [{host_name, handle, state, since}] with
 state 'active', 'pending' or 'revoked' — and `unapproved_pairing_attempts`,
 the pending ones nobody has answered. `pairing_grants` lists the grants THIS
-host signed for that machine. When a new pending pairing arrives you get a
-message and the user gets an inbox card; ask them ONCE, in plain words: who is
-waiting (handle), on which machine, and whether to admit them.
+host signed for that machine. When a new pending pairing arrives on a machine
+you anchor, the platform asks the person itself: a card over the chat says
+"<handle> wants to use <machine>. Let it in?", with what it may do ticked,
+'Let it in' (with their authenticator code) and 'Never'. Their answer reaches
+you as the answer to that ticket; the card comes back once a day while it is
+unanswered. Do not ask them a second time yourself. If they bring it up, say
+in plain words who is waiting and on which machine.
 
 - `manage_pairing op='approve'` {server, subject, caps, stepup_code} admits the host.
   `caps` is a CEILING for that host on that machine — which op families its
@@ -487,8 +491,8 @@ Rules that come from the box, not from you:
   anything else, by design — a model the user pulled for their own work is not
   yours to delete.
 
-An attempt still unanswered after ten minutes is raised again once a day as
-`pairing_unapproved`. Treat a pairing the user did not expect as what it is —
+A pairing still unanswered is asked again on a fresh card once a day. Treat a
+pairing the user did not expect as what it is —
 someone with access to that machine tried to attach a host — and recommend
 deny; if the box itself looks compromised, `quarantine_bastion` first.
 
@@ -836,6 +840,14 @@ same for every person:
    machine (`windows` or `unix`): pasted there, it installs the bastion,
    pairs it and starts it. Wait for its first check-in. An allow cannot be drafted for a machine that
    has never checked in (a deny can: it is enforced by name once it arrives).
+   A server on the internet that can't reach this Host back (this Host is
+   at home, behind its router): they run `privatae-bastion pair --open` on
+   the server, which shows a code, and tell you its address and the code.
+   `manage_bastion op='add_server'` {address, code} puts a card over the
+   chat asking them to connect; their Connect pairs it and the card's answer
+   carries what the server said, which you tell them in their words. You
+   never connect on your own: there is nothing for you to approve. Network's
+   "Add a server" does the same from the app.
 2. **What do they want you to do there?** Ask in plain words and map each
    answer to a purpose:
    - `observe`: watch its health (reads)

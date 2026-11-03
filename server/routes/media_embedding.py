@@ -125,8 +125,11 @@ async def apply_media_embedding_switch(
     if pool is None or entity_id is None:
         return {"error": "brain pool unavailable"}
 
+    # A bastion with no address of its own is at its serve-lane origin on this
+    # Host's loopback (serve_relay.py): dialled directly, as its embeds are.
+    from server.network import serve_relay as _serve_relay
     peer_forward = None
-    if bastion:
+    if bastion and not _serve_relay.is_lane_origin(base_url):
         import os as _os
         peer_forward = (_os.environ.get("HUB_PEER_FORWARD_ADDR") or "").strip() or "[::1]:3129"
 

@@ -62,7 +62,15 @@ system: true
 #   network; its button opens Settings at that view, and its check reads GET
 #   /api/network/status (read:network_membership). A slide may now name the
 #   view its app opens at (appView).
-version: "0.4.0"
+# 0.5.0 (2026-11-03): a MODEL slide before Keys, shown only when one of the
+#   person's machines already serves a model and chat has none of its own:
+#   "Use the model on this machine (<model id>)". Its button routes chat to
+#   that model as the person's choice (POST /api/inference/local-default,
+#   write:inference_routing); it reads GET /api/inference/local-default
+#   (read:inference_catalog, already declared). Once it has passed, the Keys
+#   slide says a key is optional. A slide can now do one act on the Host
+#   itself (an offer) instead of opening an app.
+version: "0.5.0"
 window:
   title: Getting Started
   width: 560
@@ -76,7 +84,8 @@ window:
 # trust class as the shell's own dock writes).
 permissions:
   - read:vault              # Keys — GET /api/vault/providers
-  - read:inference_catalog  # Orchestrator — GET /api/inference/routing
+  - read:inference_catalog  # Orchestrator — GET /api/inference/routing; the model slide — GET /api/inference/local-default
+  - write:inference_routing # the model slide's button — POST /api/inference/local-default
   - read:circles            # Circles — GET /api/circles/thread/self/self
   - read:network_membership # Privatae network — GET /api/network/status
   - read:projects           # Workbench — GET /api/projects
@@ -84,8 +93,9 @@ permissions:
 
 prompt_behavior:
   what_it_is: >-
-    The Getting Started app is the first-run walkthrough. Eight slides, one action
-    each: name the Host (Settings -> About), add a provider key (Keys), apply the recommended setup
+    The Getting Started app is the first-run walkthrough. Nine slides, one action
+    each: name the Host (Settings -> About), use the model already running on the person's
+    machine when there is one (a button on the slide; the key then optional), add a provider key (Keys), apply the recommended setup
     (Orchestrator, Simple mode), optionally join the Privatae network with a
     membership code in Settings -> Network (the App Store needs no account), send
     one message and get an answer (Circles), and start a project (Workbench). Each slide opens the real app;

@@ -1,0 +1,8 @@
+# A Host reaches the model server on a bastion's machine over the bastion's
+# serve lane (/bastion-serve, server/network/serve_relay.py): a beat with no
+# address gets a loopback origin while that lane is connected, a chat
+# completion by the real chat client arrives at the server on the bastion's
+# side, the Host names a service and never an address, a connection goes only
+# to its own bastion, refusals carry their reason. Stub pool, a fake bastion
+# WebSocket spliced to a real stand-in server on loopback. No DB.
+test_serve_lane.py

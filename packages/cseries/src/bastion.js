@@ -49,7 +49,7 @@ const crypto = require('node:crypto');
 const { CliError } = require('./errors');
 const { signatureURL, verifySignedManifest, BASTION_RELEASE_KEYS } = require('./verify');
 const { compare, isVersion } = require('./version');
-const { bastionBinaryKey } = require('./platform');
+const { bastionBinaryKey, machinePaths } = require('./platform');
 const { bastionCommands, EXIT, EXIT_WORDS } = require('./bastion-commands');
 const pairing = require('./pairing');
 const win = require('./win/windows');
@@ -112,9 +112,14 @@ async function installedVersion(ctx, exe = ctx.paths.serviceExe) {
   return m && isVersion(m[1]) ? m[1] : null;
 }
 
+// The record in this run's state.json; with none, the one the whole machine's
+// uninstall kept, while an account's install takes it over (cli.js
+// adoptKeptBastion), which is written into state.json only once the machine's
+// record of it is cleared (record).
 function bastionState(ctx) {
   const s = ctx.state.get('bastion');
-  return s && typeof s === 'object' ? s : {};
+  if (s && typeof s === 'object') return s;
+  return ctx.keptBastion ? ctx.keptBastion.record : {};
 }
 
 // install.sh's systemd unit for a networked bastion (deploy/install.sh,
@@ -274,7 +279,8 @@ function posixOps(ctx) {
         serviceInstall: plan.serviceInstall,
         hostCa: plan.hostCa ? { file: ctx.paths.hostCa, sha256: plan.hostCa.sha256 } : null,
         host: plan.host,
-        commands: bastionCommands({ ...plan, owner: undefined }, posixElevated.CA_VAR),
+        machineRecord: plan.machineRecord,
+        commands: bastionCommands({ ...plan, owner: undefined, ownerAccount: plan.ownerNeeded ? plan.ownerAccount : undefined }, posixElevated.CA_VAR),
       });
       const r = await ctx.runner.run(sudo, ['-p', SUDO_PROMPT, '/bin/sh', '-s'], { input: script });
       let out = r.stdout.toString('utf8');
@@ -356,7 +362,8 @@ async function planFor(ctx, token) {
     // Windows only: earlier releases installed a per-user bastion there, and
     // approvals-owner records a Windows account (approvals_owner.go).
     oldInstall: ctx.platform === 'win32' && fs.existsSync(ctx.paths.bastionExe),
-    ownerNeeded: ctx.platform === 'win32' && !st.owner,
+    ownerNeeded: (ctx.platform === 'win32' || Boolean(ownerAccount(ctx))) && !st.owner,
+    ownerAccount: ctx.platform === 'win32' ? null : ownerAccount(ctx),
     // The Host this command paired before is gone (a new CA): its anchor is
     // released first, since 0.53 refuses to re-pair over it.
     release: pair && st.host ? st.host : null,
@@ -369,7 +376,47 @@ async function planFor(ctx, token) {
     // its factor aside, so the person's app holds an entry that no longer
     // works, under the same name as the one enrolled next.
     staleEntry: pair && st.host && st.enrolled ? authenticatorEntry(ctx, st.host) : null,
+    machineRecord: machineRecordFor(ctx),
   };
+}
+
+// The takeover of the bastion the whole machine's uninstall kept (cli.js
+// adoptKeptBastion), in the same sudo run as its pairing, before it: the
+// machine's record is cleared (posix/elevated.js machineRecordBlock), and
+// with it what that uninstall kept only for that record, its folder and the
+// system account it made. null when no takeover is under way.
+function machineRecordFor(ctx) {
+  const k = ctx.keptBastion;
+  if (!k) return null;
+  const mp = machinePaths();
+  return {
+    state: mp.state, base: mp.base, unit: mp.autostart, lima: mp.lima, vmUser: mp.vmUser,
+    sha256: k.sha256, vmUserCreated: k.vmUserCreated,
+  };
+}
+
+// macOS and Linux: the account this command runs for, which the bastion
+// records as the machine's owner (approvals-owner --account, bastion 0.62
+// and later): the person's own account, or on the whole machine's install,
+// the account sudo ran it for (SUDO_USER). null for root itself, for a name
+// that is not a plain account name, and for a bastion older than 0.62.
+const OWNER_ACCOUNT_MIN = '0.62.0';
+
+function ownerAccount(ctx) {
+  if (ctx.platform === 'win32') return null;
+  const version = ctx.bastion && ctx.bastion.version;
+  if (!version || compare(version, OWNER_ACCOUNT_MIN) < 0) return null;
+  let name = null;
+  if (ctx.scope === 'machine') name = ctx.env.SUDO_USER || null;
+  else {
+    try {
+      name = ctx.accountName || os.userInfo().username;
+    } catch {
+      name = null;
+    }
+  }
+  if (!name || name === 'root' || !/^[A-Za-z0-9._][A-Za-z0-9._-]{0,63}$/.test(name)) return null;
+  return name;
 }
 
 // The name the bastion gives the authenticator entry it enrols
@@ -384,8 +431,11 @@ function planNeeded(p) {
 }
 
 // Step 6: what the log says was done, into state.json, line by line, so a run
-// that stopped half way leaves exactly what is left for the next one.
+// that stopped half way leaves exactly what is left for the next one. A
+// takeover (plan.machineRecord) whose run did not clear the machine's record
+// writes nothing: the bastion stays the machine's. -> whether it was written.
 function record(ctx, plan, log) {
+  if (plan.machineRecord && !log.entries.some((e) => e.key === 'machine_record')) return false;
   const st = { ...bastionState(ctx) };
   for (const { key, value } of log.entries) {
     switch (key) {
@@ -419,6 +469,7 @@ function record(ctx, plan, log) {
   ctx.state.set('bastion', st);
   // The per-user bastion's pairing, from releases before the system service.
   if (st.service && ctx.state.get('pairedHostCa') !== undefined) ctx.state.set('pairedHostCa', undefined);
+  return true;
 }
 
 const SERVICE_NAME = {
@@ -430,11 +481,21 @@ const SERVICE_NAME = {
 function describePlan(out, p, ctx) {
   const win = ctx.platform === 'win32';
   out.detail('The bastion runs as this machine\'s system service, so nothing running as you can replace or stop it.');
-  out.detail(win ? 'Windows asks for an administrator\'s permission once, for all of it:' : 'sudo asks for your password once, for all of it:');
+  out.detail(win ? 'Windows asks for an administrator\'s permission once, for all of it:'
+    : ctx.scope === 'machine' ? 'This command, as root, does all of it:' : 'sudo asks for your password once, for all of it:');
+  if (p.machineRecord) {
+    const m = p.machineRecord;
+    out.detail(`  - take over the bastion the whole machine's install left here: clear its record in ${m.state},`);
+    out.detail(`    kept by that install's uninstall, so the whole machine's installs and uninstalls leave it to you;`);
+    out.detail(`    with it go ${m.base}${m.vmUserCreated ? ` and the system account ${m.vmUser}` : ''}, which that uninstall kept only for it`);
+  }
   if (p.install) out.detail(`  - install the bastion ${p.install.version} ${win ? 'under Program Files' : `in ${ctx.paths.serviceDir}`}`);
   if (p.oldInstall) out.detail('  - remove the per-user bastion an earlier release installed');
   if (p.serviceInstall) out.detail(`  - register it as ${SERVICE_NAME[ctx.platform] || 'the system service'}`);
-  if (p.ownerNeeded) out.detail('  - record your Windows account as the only one whose tray answers approvals');
+  if (p.ownerNeeded) {
+    out.detail(win ? '  - record your Windows account as the only one whose tray answers approvals'
+      : `  - record ${p.ownerAccount} as this machine's owner: the bastion's console opens to that account, and a model server it runs here can serve the Host`);
+  }
   if (p.release) out.detail(`  - release its anchor to ${p.release}, the Host whose data was deleted`);
   if (p.pair) out.detail('  - pair it with this Host and anchor it there');
   else if (p.anchor) out.detail('  - anchor it to this Host');
@@ -481,7 +542,11 @@ const installStep = {
     const win = ctx.platform === 'win32';
     describePlan(ctx.out, plan, ctx);
     const r = await ops.elevate(plan);
-    record(ctx, plan, r.log);
+    if (!record(ctx, plan, r.log)) throw notTakenOver(ctx, plan, r);
+    const left = r.log.entries.filter((e) => e.key === 'machine_left').map((e) => e.value);
+    if (left.length) {
+      ctx.out.warn(`The bastion is this account's now, but not all that the whole machine's uninstall kept for it could be removed. To remove it yourself: ${left.map((c) => `sudo ${c}`).join('; ')}`);
+    }
     if (r.declined) {
       if (win) {
         throw new CliError('The bastion was not set up: the Windows permission prompt was declined. The Host works without it meanwhile.',
@@ -511,10 +576,114 @@ const installStep = {
   },
 };
 
+// A takeover (plan.machineRecord) whose sudo run did not clear the machine's
+// record: nothing was taken over or paired, and the bastion stays the whole
+// machine's, as its record says.
+function notTakenOver(ctx, plan, r) {
+  const err = r.log.entries.filter((e) => e.key === 'error').map((e) => e.value).pop();
+  const why = r.declined
+    ? `sudo did not run the step that takes it over${r.stderr ? ` (${r.stderr.split('\n').pop()})` : ''}`
+    : `${err || EXIT_WORDS[r.code] || `the step that takes it over ended with exit code ${r.code}`}`;
+  return new CliError(`The bastion the whole machine's install left here was not taken over for this account: ${why}. It stays the whole machine's, as its record (${plan.machineRecord.state}) says, and nothing was paired. This Host works without it meanwhile.`,
+    r.declined
+      ? 'Run npx cseries again in a terminal, as an account that may use sudo, and enter your password when sudo asks.'
+      : `Run npx cseries again. The log is ${ctx.paths.installLog}.`);
+}
+
 const getStep = {
   title: 'Getting the bastion',
   run: (ctx) => prepare(ctx),
 };
+
+// Whether this machine runs a bastion as its system service at all, ours or
+// not: its unit or launchd job on macOS and Linux, the service on Windows.
+async function bastionHere(ctx) {
+  if (ctx.platform !== 'win32') return Boolean(ctx.paths.serviceUnit) && fs.existsSync(ctx.paths.serviceUnit);
+  try {
+    return (await osOps(ctx).serviceState()) !== 'missing';
+  } catch {
+    return false;
+  }
+}
+
+// The command that removes this machine's bastion with all it holds, for a
+// person to type: the bastion's own uninstall, which asks at the terminal
+// before it deletes the audit log.
+function manualRemoval(ctx) {
+  if (ctx.platform === 'win32') return `"${ctx.paths.serviceExe}" uninstall --delete-data   (from an Administrator terminal)`;
+  return `sudo -H ${posixElevated.shq(ctx.paths.serviceExe)} uninstall --delete-data`;
+}
+
+// uninstall --delete-data on Windows: one elevated run, through the same UAC
+// prompt as the install (win/elevated.js bastionUninstallScript), for the
+// bastion this command installed (bastion: true) and WSL (wsl: true, when the
+// person said yes). -> {removed, running, left, folders, wslExit, why}
+async function removeOnWindows(ctx, { bastion = true, wsl = false } = {}) {
+  const nonce = crypto.randomBytes(8).toString('hex');
+  fs.mkdirSync(path.dirname(ctx.paths.installLog), { recursive: true });
+  fs.rmSync(ctx.paths.installLog, { force: true });
+  const script = elevated.bastionUninstallScript({ nonce, log: ctx.paths.installLog, bastion, wsl });
+  const r = await win.elevatedScript(ctx.runner, script);
+  let text = '';
+  try {
+    text = fs.readFileSync(ctx.paths.installLog, 'utf8');
+  } catch {
+    text = '';
+  }
+  if (ctx.log) {
+    ctx.log.section('bastion uninstall (elevated)');
+    ctx.log.write(text);
+  }
+  const log = elevated.parseInstallLog(text, nonce);
+  const val = (k) => log.entries.filter((e) => e.key === k).map((e) => e.value);
+  if (r.declined) return { removed: false, why: 'the Windows permission prompt was declined' };
+  if (!log.ours || !val('result').includes('ok')) {
+    const err = val('error').pop();
+    return { removed: false, why: err || (log.ours ? `it stopped with exit code ${r.code}` : `it left no log (exit code ${r.code}${r.stderr ? `: ${r.stderr.split('\n').pop()}` : ''})`) };
+  }
+  const wslExit = val('wsl_exit').pop();
+  return {
+    removed: bastion,
+    running: val('running').includes('yes'),
+    left: val('left'),
+    folders: val('removed'),
+    wslExit: wslExit === undefined ? null : Number(wslExit),
+  };
+}
+
+// uninstall --delete-data on macOS and Linux: removes the bastion this command
+// installed (state.json bastion.service), with its service, program, state,
+// pairings, keys and audit log, in one root run (posix/elevated.js
+// bastionUninstallScript): through sudo, or as it is when this run is root
+// (the whole machine's install). On Windows, removeOnWindows.
+// -> {removed: bool, running, folders, why}
+async function removeBastion(ctx, opts = {}) {
+  if (ctx.platform === 'win32') return removeOnWindows(ctx, { bastion: true, wsl: Boolean(opts.wsl) });
+  const nonce = crypto.randomBytes(8).toString('hex');
+  const script = posixElevated.bastionUninstallScript({ platform: ctx.platform, nonce, program: ctx.paths.serviceExe });
+  let cmd = '/bin/sh';
+  let argv = ['-s'];
+  if (ctx.scope !== 'machine') {
+    const sudo = findSudo(ctx);
+    if (!sudo) return { removed: false, why: 'sudo is not here, and the bastion is the machine\'s system service' };
+    cmd = sudo;
+    argv = ['-p', SUDO_PROMPT, '/bin/sh', '-s'];
+  }
+  const r = await ctx.runner.run(cmd, argv, { input: script, timeoutMs: 5 * 60 * 1000 });
+  const out = r.stdout.toString('utf8');
+  if (ctx.log) {
+    ctx.log.section('bastion uninstall');
+    ctx.log.write(out);
+  }
+  const lines = out.split(/\r?\n/);
+  const ours = lines[0] === `run=${nonce}`;
+  const val = (k) => (ours ? lines.slice(1) : []).filter((l) => l.startsWith(`${k}=`)).map((l) => l.slice(k.length + 1));
+  if (!ours || !val('result').includes('ok')) {
+    const why = r.code !== 0 && !ours ? `sudo did not run it${r.stderr.length ? ` (${r.stderr.toString('utf8').trim().split('\n').pop()})` : ''}` : `it stopped with exit code ${r.code}`;
+    return { removed: false, why };
+  }
+  return { removed: true, running: val('running').includes('yes'), folders: val('removed') };
+}
 
 module.exports = {
   getStep,
@@ -533,6 +702,10 @@ module.exports = {
   installedVersion,
   osOps,
   bastionState,
+  removeBastion,
+  removeOnWindows,
+  bastionHere,
+  manualRemoval,
   MANIFEST_URL,
   SUDO_PATHS,
 };

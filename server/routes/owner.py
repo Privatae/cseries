@@ -115,11 +115,11 @@ function credentialJSON(c) {
   }
   return out;
 }
-async function ceremony(name, create) {
+async function ceremony(name, create, body) {
   if (!window.PublicKeyCredential) {
     return {ok: false, j: {error: 'This browser has no passkey support.'}};
   }
-  const a = await post('/api/owner/passkey/' + name + '/options', {});
+  const a = await post('/api/owner/passkey/' + name + '/options', body || {});
   if (!a.ok) return a;
   let cred;
   try {
@@ -155,8 +155,17 @@ on('passkey', async () => {
 const ended = (n) => n ? ' ' + n + ' other session' + (n === 1 ? ' was' : 's were') + ' signed out.' : '';
 on('add', async () => {
   say('err', '');
-  const res = await withCheck(() => ceremony('register', true));
-  if (!res.ok) { fail(res.j.error); return; }
+  // While an authenticator code is set up, adding a passkey takes it too
+  // (owner_passkeys._approval_factor): the box shows when the Host asks.
+  const codeEl = $('add-code');
+  const typed = codeEl ? codeEl.value.replace(/\s/g, '') : '';
+  const res = await withCheck(() => ceremony('register', true, typed ? {code: typed} : {}));
+  if (codeEl) codeEl.value = '';
+  if (!res.ok) {
+    if (res.j.code_needed && $('add-code-box')) { $('add-code-box').hidden = false; codeEl.focus(); }
+    fail(res.j.error);
+    return;
+  }
   say('done', (res.j.recovery_codes ? 'Passkey added. Your password no longer signs in to this Host.'
                                     : 'Passkey added.') + ended(res.j.sessions_ended));
   showCodes(res.j.recovery_codes);
@@ -423,6 +432,13 @@ async def login_page(request: Request = None):
     return _page("Sign in to C-Series", "", body)
 
 
+# Shown when the Host asks for the authenticator code to add a passkey
+# (owner_passkeys.CodeNeeded): a passkey approves what the code approves.
+_ADD_CODE_BOX = ('<div id="add-code-box" hidden><label for="add-code">Code from your authenticator'
+                 '</label><input id="add-code" inputmode="numeric" autocomplete="one-time-code" '
+                 'maxlength="7"></div>')
+
+
 @router.get("/passkey", include_in_schema=False)
 async def passkey_page(request: Request):
     """The owner's passkeys: add one (walked to after setup or a password
@@ -446,14 +462,14 @@ async def passkey_page(request: Request):
                  'face or a PIN. Once you add one, your password no longer signs in, so a password '
                  'someone learns is not enough to get in, and every other session is signed '
                  'out.</p>')
-        body = '<button id="add" type="button">Add a passkey</button>' + codes_html + end_others
+        body = _ADD_CODE_BOX + '<button id="add" type="button">Add a passkey</button>' + codes_html + end_others
     else:
         intro = (f'<p class="note">This Host has {passkeys} passkey{"" if passkeys == 1 else "s"} '
                  f'and {codes} unused recovery code{"" if codes == 1 else "s"}.</p>')
         body = ('<button id="confirm" type="button">Confirm with your passkey</button>'
                 '<p class="note">Pairing a machine from outside needs this in the last five '
                 'minutes.</p>'
-                '<button id="add" type="button">Add another passkey</button>'
+                + _ADD_CODE_BOX + '<button id="add" type="button">Add another passkey</button>'
                 '<button id="new-codes" type="button">Make new recovery codes</button>' + codes_html
                 + await _passkey_list(passkeys) + end_others)
     if cloud_machine.state() is not None:
@@ -648,6 +664,8 @@ def _refusal(exc: owner_login.LoginError, status: int) -> JSONResponse:
     body = {"error": str(exc)}
     if isinstance(exc, owner_passkeys.StepUpNeeded):
         body["step_up"] = True
+    if isinstance(exc, owner_passkeys.CodeNeeded):
+        body["code_needed"] = True
     return _no_store(JSONResponse(body, status_code=status))
 
 
@@ -699,9 +717,10 @@ async def passkey_register_options(request: Request):
     token = await _signed_in(request)
     if not token:
         return _no_store(JSONResponse(_SIGN_IN_FIRST, status_code=401))
+    body = await _form(request)
     try:
         return _no_store(JSONResponse(await owner_passkeys.registration_options(
-            token, request_host(request.scope))))
+            token, request_host(request.scope), _text(body, "code") or None)))
     except owner_login.LoginError as exc:
         return _refusal(exc, 403)
 

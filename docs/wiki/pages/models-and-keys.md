@@ -17,9 +17,9 @@ You bring the models. In the Orchestrator app you choose, for each role your Hos
 
 ## Which providers can I use?
 
-The Keys app has slots for OpenRouter, Anthropic, OpenAI, xAI, Google, Kimi, DeepInfra, Together, Fireworks and Groq. A model server on another computer on your network, such as Ollama, llama.cpp or vLLM, can also serve your Host once you add its address in the Orchestrator, as its Host model or, if you ask your Host, for its memory search. A model server on a machine that runs a bastion is not reached through the bastion; it is used by its address like any other. [Local models](wiki:local-models) explains how.
+The Keys app has slots for OpenRouter, Anthropic, OpenAI, xAI, Google, Kimi, DeepInfra, Together, Fireworks and Groq. A model server on another computer on your network, such as Ollama, llama.cpp or vLLM, can also serve your Host once you add its address in the Orchestrator, as its Host model or, if you ask your Host, for its memory search. A model server on a machine that runs a bastion, the computer your Host runs on included, is reached through that bastion, with nothing to set up. A server at an address you add has to be on another computer, because your Host's virtual machine is walled off from the computer it runs on. [Local models](wiki:local-models) explains how.
 
-There is no model built into your Host and none supplied by Privatae. Until you choose one, the Host tells you it has no model. The Getting Started app walks you through adding a key and applying the recommended setup in the Orchestrator.
+There is no model built into your Host and none supplied by Privatae. Until you choose one, the Host tells you it has no model, with one exception: if you hold no key or sign-in for any provider and a chat model is served on the computer your Host runs on, on a machine it is in charge of, or by a model server you added, your Host uses that model until you choose one yourself. The Getting Started app walks you through adding a key and applying the recommended setup in the Orchestrator.
 
 ## What does the Orchestrator let me set?
 

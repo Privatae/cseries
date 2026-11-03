@@ -1,0 +1,6 @@
+# Two C-Series Hosts never collide on one bastion: a standalone Host's
+# pairing name is <handle><the first 8 hex of its Host CA's SHA-256><zone>;
+# the bare name an existing pairing was filed under stays on the lane
+# certificate and in the anchor check. CA from host_ca's own generator, stub
+# pool. No DB, no network.
+test_host_names_unique.py

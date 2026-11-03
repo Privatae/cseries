@@ -181,10 +181,10 @@ test('the Safari note is said on macOS only', async () => {
   }
 });
 
-test('uninstall --delete-data names the authenticator entry that no longer works; the re-enrolment says to delete it before scanning', async () => {
+test('uninstall --delete-data names the authenticator entry that no longer works; with the bastion kept, the re-enrolment says to delete it before scanning', async () => {
   const { m, run } = linux({ qemu: true });
   assert.equal((await run()).code, 0);
-  const u = await run(['uninstall', '--delete-data', '--yes']);
+  const u = await run(['uninstall', '--delete-data', '--keep-bastion', '--yes']);
   assert.equal(u.code, 0, u.err);
   assert.match(u.text, /entry "Privatae NAC: test-machine for host-a" was for this Host\nand no longer works: delete it from the app/);
   // The new Host has a new CA; the bastion still holds the old pairing.
@@ -196,7 +196,7 @@ test('uninstall --delete-data names the authenticator entry that no longer works
   assert.doesNotMatch(later.text, /from before/, 'said once, for the enrolment that replaces it');
 });
 
-test('on Windows too: the stale entry is named at uninstall and before the new QR code', async () => {
+test('on Windows too: the stale entry is named at uninstall and, with the bastion kept, before the new QR code', async () => {
   const p = testPaths();
   const m = fakeMachine(p, {});
   const rel = validRelease();
@@ -211,7 +211,7 @@ test('on Windows too: the stale entry is named at uninstall and before the new Q
     return { code, text: out.text(), err: out.errText() };
   };
   assert.equal((await run()).code, 0);
-  const u = await run(['uninstall', '--delete-data', '--yes']);
+  const u = await run(['uninstall', '--delete-data', '--keep-bastion', '--yes']);
   assert.match(u.text, /"Privatae NAC: TEST-PC for host-a"/);
   m.hostCa = '-----BEGIN CERTIFICATE-----\nMIIBexample1\n-----END CERTIFICATE-----';
   const again = await run();

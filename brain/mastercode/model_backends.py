@@ -21,7 +21,11 @@ different ports. They are advertised in SEPARATE heartbeat columns —
 reached on the port the bastion reports in `llm_port`) — because a merged
 list forces one derived port onto both and silently dials the wrong server.
 Endpoint derivation mirrors embed_backends.resolve_embed_endpoint: prefer an
-explicitly-reported model_endpoint, else http://<reported_ip>:<port>.
+explicitly-reported model_endpoint, else http://<reported_ip>:<port>. A
+pairing that reports no address (every pairing of a standalone Host: its
+socket, its lane port, a server it connects to) is reached over the bastion's
+serve lane instead, at a loopback origin of this Host's
+(server/network/serve_relay.py), while that lane is connected.
 
 Every endpoint here is a bare ORIGIN (scheme://host:port, no path). The
 caller appends the route — provider_gateway._call_local normalizes to
@@ -38,7 +42,9 @@ log = logging.getLogger("privatae.model_backends")
 
 # A bastion advertises this when it serves OpenAI-compatible inference over the
 # mesh (llama.cpp llama-server, vLLM). Mirrors embed_backends.EMBED_CAPABILITY.
-# Set by the gateway when CSERIES_LLM_ADDR probes clean.
+# Set by the bastion when its OpenAI-compatible server answers: the address
+# PRIVATAE_LLM_ADDR names (client-go/env.go llmTarget), or, unset, one it found
+# on the machine's loopback.
 LLM_OPENAI_CAPABILITY = "llm-openai"
 DEFAULT_OLLAMA_PORT = 11434
 # Fallback only — the bastion reports its real forward port in `llm_port`.
@@ -90,7 +96,26 @@ def _model_list(raw) -> list[str]:
     return out
 
 
-async def list_local_models(pool, entity_id: int, *, strict: bool = False) -> list[dict]:
+async def _serve_lane_endpoint(token_id, service: str) -> str | None:
+    """The loopback origin of bastion `token_id`'s serve lane for `service`
+    ('llm' or 'ollama'), or None when the lane is not connected now or this
+    process has no lane (a brain run on its own, a test)."""
+    if token_id is None:
+        return None
+    try:
+        from server.network import serve_relay
+    except Exception as e:  # noqa: BLE001 — no Host server in this process
+        log.debug("serve lane unavailable (%s)", e)
+        return None
+    try:
+        return await serve_relay.lane_endpoint(token_id, service)
+    except Exception as e:  # noqa: BLE001 — a listener that cannot be made is no endpoint
+        log.info("serve lane endpoint for bastion %s/%s: %s", token_id, service, type(e).__name__)
+        return None
+
+
+async def list_local_models(pool, entity_id: int, *, strict: bool = False,
+                            token_ids: set[int] | None = None) -> list[dict]:
     """Every model served by this host's ONLINE bastions, then by the model
     servers the owner named by address (mastercode/owner_endpoints), with the
     serving machine and the endpoint of the server that actually answers for
@@ -105,12 +130,15 @@ async def list_local_models(pool, entity_id: int, *, strict: bool = False) -> li
     the UI shows its honest 'discovery pending' state, never an error.
     `strict` raises the read's failure instead: the turn-type wall reads
     "none" as "this call reaches no server", so it must not be told that
-    when the truth is "could not read"."""
+    when the truth is "could not read".
+
+    `token_ids` narrows the bastions to those rows (mcp_client_tokens.id);
+    None is every bastion. The owner's named servers are listed either way."""
     try:
         from server.network.topology import ONLINE_WINDOW_SECONDS
         rows = await pool.fetch(
             f"""
-            SELECT h.hostname, h.reported_ip, h.models,
+            SELECT t.id AS token_id, h.hostname, h.reported_ip, h.models,
                    COALESCE(h.llm_models, '[]'::jsonb) AS llm_models,
                    h.llm_port
               FROM mcp_client_tokens t
@@ -130,17 +158,26 @@ async def list_local_models(pool, entity_id: int, *, strict: bool = False) -> li
     out: list[dict] = []
     seen: set[tuple[str, str]] = set()
     for r in rows:
+        if token_ids is not None and r.get("token_id") not in token_ids:
+            continue
         host = r["hostname"] or ""
         # Ollama FIRST so a box serving the same id on both servers keeps the
         # endpoint it resolved to before the split existed (no silent re-route).
         lanes = (
-            (_model_list(r["models"]), DEFAULT_OLLAMA_PORT, "ollama"),
-            (_model_list(r["llm_models"]), r["llm_port"] or DEFAULT_LLM_PORT, "llm-openai"),
+            (_model_list(r["models"]), DEFAULT_OLLAMA_PORT, "ollama", "ollama"),
+            (_model_list(r["llm_models"]), r["llm_port"] or DEFAULT_LLM_PORT, "llm-openai", "llm"),
         )
-        for ids, port, kind in lanes:
+        for ids, port, kind, service in lanes:
             if not ids:
                 continue
             ep = resolve_model_endpoint({"reported_ip": r["reported_ip"]}, port)
+            if not ep:
+                # A pairing with no address of its own (every pairing of a
+                # standalone Host: its socket, its lane port, or a server it
+                # connects to) serves its models over the bastion's serve lane
+                # (server/network/serve_relay.py), reached at a loopback origin
+                # while that lane is connected.
+                ep = await _serve_lane_endpoint(r.get("token_id"), service)
             if not ep:
                 continue
             for mid in ids:

@@ -29,7 +29,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 
-from server import brain_service
+from server import approval_passkeys, brain_service
 from server.applications.middleware import requires_permission
 
 log = logging.getLogger("privatae.pc.tickets")
@@ -213,8 +213,11 @@ async def decide_ticket(ticket_id: int, request: Request) -> dict:
                                 pattern_template.conditions)
         stepup_code            the code from the user's authenticator, on a
                                 pipeline proposal whose 'apply' adds a check
-                                that runs outside the platform, and on a board
-                                post card's 'Post it'
+                                that runs outside the platform, on a board
+                                post card's 'Post it', and on a machine
+                                pairing card's 'Let it in'
+        choices                a machine pairing card's ticked ceiling (the
+                                families the admitted Host may use)
     """
     pool = brain_service.get_pool()
     eid = _entity_id()
@@ -232,6 +235,7 @@ async def decide_ticket(ticket_id: int, request: Request) -> dict:
             pattern_conditions=body.get("pattern_conditions"),
             seen_event_max=body.get("seen_event_max"),
             stepup_code=body.get("stepup_code"),
+            choices=body.get("choices"),
             actor=_route_actor(request),
         )
     except TicketError as e:
@@ -684,6 +688,7 @@ async def decide_ticket_service(
     seen_event_max: Any = None,
     stepup_code: str | None = None,
     deliver_answer: bool = True,
+    choices: Any = None,
 ) -> dict:
     """Apply a handler decision to an OPEN ticket — the source of truth for
     POST /api/tickets/{id}/decide and the `tickets` tool op='decide'. Entity-scoped
@@ -718,6 +723,9 @@ async def decide_ticket_service(
     missing code leaves the card open to try again; only the route passes
     one, and the ticket is user_only, so the host can never supply it.
 
+    `choices`: a machine pairing card's ticked ceiling (BASTION_PAIRING_KIND);
+    no other card reads it.
+
     `deliver_answer` False: the PLATFORM is closing a card the person already
     answered somewhere else (resolve_phase_gate_tickets — the phase was
     approved in the Workbench, or on another card for the same phase). The
@@ -730,7 +738,7 @@ async def decide_ticket_service(
         raise TicketError(400, "option_id required")
 
     ticket = await pool.fetchrow(
-        """SELECT id, circle_id, status, options, metadata
+        """SELECT id, circle_id, status, options, metadata, sitrep
            FROM entity_tickets WHERE id = $1 AND entity_id = $2""",
         ticket_id, eid,
     )
@@ -757,6 +765,14 @@ async def decide_ticket_service(
     chosen = next((o for o in options if o.get("id") == option_id), None)
     if not chosen:
         raise TicketError(400, f"option_id {option_id!r} not in ticket options")
+    # What a passkey tap on this card approves (server/approval_passkeys.py):
+    # this ticket, this option, and what the card says now, with the boxes
+    # ticked. Only the person's own answer has one; the Host's decide passes
+    # none, so a passkey approval it relayed would be refused.
+    passkey_purpose = (approval_passkeys.ticket_purpose(
+        ticket_id, ticket.get("sitrep"), options, md, option_id, choices,
+        await approval_passkeys.acted_on(pool, md))
+        if actor == "user" else None)
 
     # A messaging connector's pairing card: 'Let this account in' takes the
     # authenticator code, checked and burned before anything changes, and
@@ -777,7 +793,8 @@ async def decide_ticket_service(
         try:
             return await nac_connector.decide_from_ticket(
                 pool, eid, ticket_id, md, option_id=option_id,
-                stepup_code=stepup_code, actor=actor, note=note or "")
+                stepup_code=stepup_code, actor=actor, note=note or "",
+                passkey_purpose=passkey_purpose)
         except nac_connector.ConnectorError as e:
             raise TicketError(e.status, e.detail) from None
 
@@ -821,7 +838,10 @@ async def decide_ticket_service(
     if md.get("kind") == PIPELINE_PROPOSAL_KIND and option_id == "apply" \
             and (md.get("pipeline_proposal") or {}).get("requires_stepup"):
         from server.network import nac_stepup
-        if actor != "user" or not await nac_stepup.verify_stepup(pool, str(stepup_code or "")):
+        if actor != "user" or not await nac_stepup.verify_stepup(pool, str(stepup_code or ""),
+                                                                  purpose=passkey_purpose):
+            if approval_passkeys.is_proof(stepup_code):
+                raise TicketError(403, approval_passkeys.REFUSED)
             raise TicketError(403, "applying this adds a check that runs outside the platform, "
                                    "so it needs a current code from your authenticator (the "
                                    "second factor enrolled in Network). Nothing was changed — "
@@ -837,8 +857,40 @@ async def decide_ticket_service(
     # passes a code, and the card is user_only, so the Host never supplies one.
     if md.get("kind") == BOARD_POST_PROPOSAL_KIND and option_id == BOARD_POST_STEPUP_OPTION:
         from server.network import nac_stepup
-        if actor != "user" or not await nac_stepup.verify_stepup(pool, str(stepup_code or "")):
-            raise TicketError(403, BOARD_POST_STEPUP_REFUSED)
+        if actor != "user" or not await nac_stepup.verify_stepup(pool, str(stepup_code or ""),
+                                                                  purpose=passkey_purpose):
+            raise TicketError(403, approval_passkeys.REFUSED
+                              if approval_passkeys.is_proof(stepup_code) else BOARD_POST_STEPUP_REFUSED)
+
+    # Another Host asking to use one of the person's machines: 'Let it in'
+    # admits it (the ticked ceiling, the code checked and burned there) and
+    # 'Never' refuses it, BEFORE the status flips, so a wrong code or a
+    # refused approve leaves the card up to try again. The answer then reaches
+    # the Host like any card's (_answer_to_turn below).
+    pairing_card = None
+    if md.get("kind") == BASTION_PAIRING_KIND:
+        from server.network import pairing_grants
+        try:
+            pairing_card = await pairing_grants.decide_card(
+                pool, eid, md, option_id=option_id, stepup_code=stepup_code, actor=actor,
+                choices=choices, passkey_purpose=passkey_purpose)
+        except pairing_grants.PairingError as e:
+            raise TicketError(e.status, e.detail) from None
+
+    # The person asked their Host to connect to a server (host_dials.ask_to_pair):
+    # 'Connect' pairs now, with the address and code the card holds, BEFORE the
+    # status flips, so a refusal leaves the card up with the server's words.
+    # What the server said is the decision's note, so it reaches the Host
+    # with the answer and the person reads it there.
+    server_card = None
+    if md.get("kind") == SERVER_PAIR_KIND:
+        from server.network import host_dials
+        try:
+            server_card = await host_dials.decide_card(pool, eid, ticket_id, md, option_id=option_id,
+                                                       actor=actor)
+        except host_dials.PairError as e:
+            raise TicketError(e.status, e.words) from None
+        note = server_card.get("message") or note
 
     decision = {
         "option_id": option_id,
@@ -883,6 +935,24 @@ async def decide_ticket_service(
                 WHERE id = $3 AND status = 'open'
                   AND COALESCE((metadata->>'platform_event_max')::int, 0) = $4""",
             json.dumps(decision), eid, ticket_id, seen,
+        )
+    if isinstance(result, str) and not result.endswith(" 1") and pairing_card is not None:
+        # The person's answer on a machine pairing card has already been
+        # applied (admitted or refused, above) and the heartbeat took the card
+        # down meanwhile (pairing_grants._close_card: the pairing stopped
+        # waiting, or the daily re-ask). The answer stands, so the card is
+        # theirs, not 'decided by another request'. A card a second decide
+        # already took is not 'dismissed', so a double click still 409s.
+        from server.network import pairing_grants as _pg
+        result = await pool.execute(
+            """UPDATE entity_tickets
+                  SET status = 'decided',
+                      decision = $1::jsonb,
+                      decided_by = $2,
+                      decided_at = NOW()
+                WHERE id = $3 AND status = 'dismissed'
+                  AND decision->>'note' = $4""",
+            json.dumps(decision), eid, ticket_id, _pg.CARD_SETTLED_NOTE,
         )
     if isinstance(result, str) and not result.endswith(" 1"):
         if seen is not None:
@@ -943,6 +1013,17 @@ async def decide_ticket_service(
         "decision": decision,
         "pattern_id": pattern_id,
     }
+    if server_card is not None:
+        out["server"] = server_card
+    if pairing_card is not None:
+        out["pairing"] = pairing_card
+        try:
+            await pool.execute(
+                "UPDATE entity_tickets SET metadata = COALESCE(metadata, '{}'::jsonb) "
+                "|| jsonb_build_object('bastion_pairing_result', $1::jsonb) WHERE id = $2",
+                json.dumps(pairing_card), ticket_id)
+        except Exception as e:  # noqa: BLE001 — the decide already stands
+            log.warning("ticket %d: pairing result not recorded: %s", ticket_id, e)
     # A route-change proposal: the platform applies the route on the user's
     # 'apply' — after the ticket is marked decided, so a retry cannot apply
     # twice (a decided ticket is refused above), and never by handing the
@@ -1343,6 +1424,15 @@ RUNBOOK_TRIGGER_PROPOSAL_KIND = "runbook_trigger_proposal"  # = runtime/schedule
 BOARD_POST_PROPOSAL_KIND = "board_post_proposal"  # = runtime/board_post_approval.PROPOSAL_KIND
 # Its 'Post it' takes the authenticator code on the card (decide_ticket_service).
 BOARD_POST_STEPUP_OPTION = "post"  # = runtime/board_post_approval.OPT_POST
+# Another Host asking to use one of the person's machines (the pop-up
+# server/network/pairing_grants.py files on the anchor's heartbeat): 'Let it
+# in' admits it with the ticked ceiling and the authenticator code, 'Never'
+# refuses it (pairing_grants.decide_card). Only the heartbeat files one.
+BASTION_PAIRING_KIND = "bastion_pairing"   # = server/network/pairing_grants.PAIRING_CARD_KIND
+# The person asked their Host to connect to a server with the code it showed
+# (server/network/host_dials.ask_to_pair): 'Connect' pairs with it
+# (host_dials.decide_card). Only the Host's manage_bastion op='add_server' files one.
+SERVER_PAIR_KIND = "server_pair"   # = server/network/host_dials.SERVER_CARD_KIND
 BOARD_POST_STEPUP_REFUSED = (
     "Posting on the members' board needs a current code from your authenticator (the "
     "second factor enrolled in Network). Nothing was posted: enter a fresh code on the "
@@ -1389,12 +1479,13 @@ def _strip_platform_locks(metadata: Any) -> dict:
                         "limit_change", "limit_change_apply",
                         "recurring_task", "recurring_task_apply",
                         "runbook_trigger", "runbook_trigger_apply",
-                        "board_post", "board_post_then", "board_post_apply")}
+                        "board_post", "board_post_then", "board_post_apply",
+                        "bastion_pairing", "bastion_pairing_result", "server_pair")}
     if out.get("kind") in (PHASE_GATE_KIND, SUPPORT_KIND, OP_ASK_KIND, PIPELINE_PROPOSAL_KIND,
                            TURN_TYPE_PROPOSAL_KIND, LIVE_CONTEXT_PROPOSAL_KIND,
                            CONNECTOR_PAIRING_KIND, LIMIT_CHANGE_PROPOSAL_KIND,
                            RECURRING_TASK_PROPOSAL_KIND, RUNBOOK_TRIGGER_PROPOSAL_KIND,
-                           BOARD_POST_PROPOSAL_KIND):
+                           BOARD_POST_PROPOSAL_KIND, BASTION_PAIRING_KIND, SERVER_PAIR_KIND):
         # kind=support: the platform applies the answer on another Host's
         # ticket (a verdict, or the person's 'Tell them it's fixed') — only the operator's own
         # collect may raise one.

@@ -3885,7 +3885,7 @@ async def _exec_pipeline(args: dict, entity_id: int, pool) -> dict:
         {"id": "apply", "label": "Apply this pipeline",
          "consequence": ("The next build of this project is checked this way. Nothing "
                          "already built changes."
-                         + (" Needs a code from your authenticator." if wide else "")),
+                         + (" Needs your passkey, or a code from your authenticator." if wide else "")),
          "recommend": False},
         {"id": "keep", "label": "Keep the current pipeline",
          "consequence": "Nothing changes.", "recommend": False},

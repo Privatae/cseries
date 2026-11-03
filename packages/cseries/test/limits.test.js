@@ -288,7 +288,7 @@ test('the person\'s own values stay, stricter or looser, in any case, and only t
 
 test('a file that already has both is returned untouched; a commented key does not count', () => {
   const both = '[wsl2]\nmemory=3GB\nprocessors=2\n';
-  assert.deepEqual(mergeWslConfig(both, { memory: '8GB', processors: '8' }), { text: both, added: [] });
+  assert.deepEqual(mergeWslConfig(both, { memory: '8GB', processors: '8' }), { text: both, added: [], section: false });
   const r = mergeWslConfig('[wsl2]\n# memory=3GB\n; processors=2\n', { memory: '8GB', processors: '8' });
   assert.deepEqual(r.added, ['memory', 'processors']);
 });

@@ -7,7 +7,7 @@ with one paired bastion (an invented machine) and its own bearer:
 
   G  the check: by token, by the server the row is keyed on, and FAILING CLOSED
      (no pool, a read that raises); the job gate's quarantine set fails closed too
-  W  each worker socket (/bastion-egress, -mgmt, -pgwire, -harness, -embed, -git)
+  W  each worker socket (/bastion-egress, -mgmt, -pgwire, -harness, -embed, -git, -serve)
      is closed 4403 at the door while held, and admitted once released
   C  quarantine_bastion cuts every socket the machine already holds open, at once
   H  the HTTP routes (git-credential, context-source, dcn-propose) answer 403 while
@@ -284,6 +284,7 @@ async def main(dsn: str) -> int:
             "egress": m.bastion_egress_relay, "mgmt": m.bastion_mgmt_relay,
             "pgwire": m.bastion_pgwire_relay, "harness": m.bastion_harness_relay,
             "embed": m.bastion_embed_relay, "git": m.bastion_git_relay,
+            "serve": m.bastion_serve_relay,
         }
         await hold()
         for name, ep in lanes.items():
@@ -313,7 +314,7 @@ async def main(dsn: str) -> int:
             if len(QG.open_lanes(TOKEN)) == len(lanes) and QG.open_lanes(OTHER_TOKEN):
                 break
             await asyncio.sleep(0.01)
-        check(len(QG.open_lanes(TOKEN)) == len(lanes), "C six lanes open on the released machine",
+        check(len(QG.open_lanes(TOKEN)) == len(lanes), "C every lane open on the released machine",
               QG.open_lanes(TOKEN))
         r = await hold()
         pg_gone.set()

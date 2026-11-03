@@ -55,6 +55,10 @@ approvals:
   sources:
   - server/network/nac_commit.py
   - server/network/nac_stepup.py::verify_stepup
+  - server/approval_passkeys.py
+  - server/routes/approvals.py
+  - server/owner_passkeys.py::_approval_factor
+  - app-web-kit/passkey.ts
   - server/network/nac_approval.py
   - server/network/nac_ops.py
   - server/routes/tickets.py
@@ -78,9 +82,10 @@ approvals:
   - server/agent_access/pages.py::connect_page
   - external:bastion/client-go/rootexec.go
   - server/network/session_lane.py::run_root_exec
+  - server/network/host_dials.py::decide_card
   verified:
-    date: '2026-11-02'
-    digest: sha256:c7bc79f20d7ab0f603717603ab6c9892e39021cf3d55804242356c84d53a42f3
+    date: '2026-11-03'
+    digest: sha256:ea098b37c20270637a595e8bb82f1a89b09226f6ed08802f4f034cf7c4439891
 apps-overview:
   sources:
   - scripts/image_baked_apps.txt
@@ -339,9 +344,15 @@ getting-started-app:
   - dashboard/base/js/walkthrough-autolaunch.js
   - server/routes/host_name.py
   - scripts/image_baked_apps.txt
+  - server/routes/inference.py::get_local_default
+  - server/routes/inference.py::use_local_default
+  - brain/mastercode/inference_config.py::local_chat_models
+  - brain/mastercode/inference_config.py::own_machine_tokens
+  - brain/mastercode/model_backends.py::list_local_models
+  - server/network/serve_relay.py
   verified:
-    date: '2026-10-21'
-    digest: sha256:d2f9e55b3e3fa245c5b28b169b7e11ab6858703ffb5c9593ddd8508113bfd1b2
+    date: '2026-11-03'
+    digest: sha256:75c9c344ff7df73bb07142cf75641471e7c270969317e0093520d1af84d24f54
 gitea-app:
   sources:
   - system-apps/gitea/app.yaml
@@ -414,9 +425,10 @@ how-your-host-is-protected:
   - server/network/local_bastion.py::lane_host
   - docs/GUIDE.md
   - server/network/nac_commit.py::quarantine_bastion
+  - server/network/host_dials.py
   verified:
-    date: '2026-11-02'
-    digest: sha256:4fa1aa487c7f6d082de9b26c006b839a8b1e593a7e6d56054403d8c44e0f04ba
+    date: '2026-11-03'
+    digest: sha256:f22919977c17a7aa243685740fb6a5d4d7d471e25001e7647c892fab2310435e
 keys-app:
   sources:
   - system-apps/keys/app.yaml
@@ -434,8 +446,8 @@ keys-app:
   - server/routes/vault.py::_keys_signin_button
   - server/vault/providers.py::signin_harness
   verified:
-    date: '2026-10-28'
-    digest: sha256:b8626903a2724567ff5c54de0abc68cbf05e75628c17aef2d334e25d73cc00db
+    date: '2026-11-03'
+    digest: sha256:e5debd3358dee765782796df4dc69fb7990c661f24f4b4406c9f2cfc392b58c7
 local-models:
   sources:
   - server/routes/embedding.py
@@ -453,9 +465,15 @@ local-models:
   - external:bastion/client-go/modelswap.go
   - external:bastion/client-go/inferencefilter.go
   - external:bastion/client-go/anchor.go
+  - server/network/serve_relay.py
+  - brain/mastercode/model_backends.py::_serve_lane_endpoint
+  - external:bastion/client-go/llmlocal.go
+  - brain/mastercode/embed_backends.py::resolve_embed_endpoint_live
+  - brain/mastercode/embed_autowire.py::autowire_decision
+  - brain/mastercode/pii_client.py::resolve_endpoint
   verified:
-    date: '2026-11-02'
-    digest: sha256:f752541401e755fc2b14f01e1dcafc3468dd95bc9edce80dad77fb26894b3b60
+    date: '2026-11-03'
+    digest: sha256:60b9c1635335ffbedfea340a8fd5e251b310a33fabd65c041d0c1409a6cae3be
 memory:
   sources:
   - brain/mastercode/memory_engine.py::write_turn_row
@@ -472,8 +490,8 @@ memory:
   - brain/mastercode/runtime/task_record.py::cited_fact_text
   - server/host_backup.py::run_host_backup_loop
   verified:
-    date: '2026-10-28'
-    digest: sha256:739dc27501fab5db6f915ef9d615cc2db805aefa62dbb3a11350ac0a8c1f9b0c
+    date: '2026-11-03'
+    digest: sha256:8691cbabf6bd1b54d8ce7c3abf18a294d0f5bd9c8d62bc4158e0164fc4e5d46d
 memory-app:
   sources:
   - system-apps/oracle/app.yaml
@@ -512,14 +530,24 @@ models-and-keys:
   - brain/mastercode/attachment_parts.py::model_reads_images
   - brain/mastercode/owner_endpoints.py
   - brain/mastercode/runtime/tools_vault.py::_exec_connect_compute
+  - brain/mastercode/model_backends.py::list_local_models
+  - brain/mastercode/model_backends.py::resolve_model_endpoint
+  - brain/mastercode/inference_config.py::local_default_model
+  - brain/mastercode/inference_config.py::local_chat_models
+  - brain/mastercode/inference_config.py::own_machine_tokens
+  - brain/mastercode/inference_config.py::holds_provider_credential
+  - server/network/bastion_enroll.py::redeem_local
+  - server/network/serve_relay.py
+  - brain/mastercode/model_backends.py::_serve_lane_endpoint
   verified:
-    date: '2026-11-02'
-    digest: sha256:38f2a155cfb6977de99def8debab106115961ee1dfd224a1b0cb05160e2373bc
+    date: '2026-11-03'
+    digest: sha256:bfee0f12902ee133b17c0891977a9500eb7089ff808ff8eb8d039643a9e222c6
 network-app:
   sources:
   - system-apps/network/app.yaml
   - system-apps/network/index.html
   - system-apps/network/app.js
+  - server/routes/network.py::pair_server
   - server/network/bastion_enroll.py::mint_pairing_token
   - server/network/bastion_enroll.py::add_tcp_pairing
   - server/network/nac_commit.py::approve_egress
@@ -542,8 +570,8 @@ network-app:
   - server/routes/network.py::get_bastions
   - server/bridge/member_client.py
   verified:
-    date: '2026-11-02'
-    digest: sha256:69086d028eb4304c638cc5be96db8356077e8b023916c41f222530564c1a8b7b
+    date: '2026-11-03'
+    digest: sha256:2ef0a7539a34d9cceeee1f8d3b38f38863ac74d5b563ae03bcf73c2ccf9da283
 orchestrator-app:
   sources:
   - system-apps/orchestrator/app.yaml
@@ -560,8 +588,8 @@ orchestrator-app:
   - server/routes/inference.py::_provider_status
   - brain/mastercode/attachment_parts.py::model_reads_images
   verified:
-    date: '2026-10-28'
-    digest: sha256:cc66a40f504cd1e3492682bf4dd27d5c269401d9f9add534f2c4b81f92493d80
+    date: '2026-11-03'
+    digest: sha256:005772c92d54252a5277b421e458f0fabcb800f8f856c018f599251b04f66ad8
 oversight-app:
   sources:
   - system-apps/oversight/app.yaml
@@ -672,9 +700,15 @@ the-bastion:
   - server/network/local_bastion.py::lane_host
   - docs/GUIDE.md
   - brain/mastercode/model_backends.py::list_local_models
+  - server/network/serve_relay.py
+  - server/network/host_dials.py
+  - server/routes/network.py::pair_server
+  - external:bastion/client-go/pair_window.go
+  - external:bastion/client-go/hostdoor.go
+  - external:bastion/client-go/doorfw.go
   verified:
-    date: '2026-11-02'
-    digest: sha256:14000897f3368d5208a9c2907d747739987907df8452702ab5da93dde7839b4a
+    date: '2026-11-03'
+    digest: sha256:ae2cbd8319dd5575fbb0423122dbf8fccedf21bb939aa12a305c95375c19e1fc
 the-privatae-network:
   sources:
   - server/bridge/membership.py
@@ -755,8 +789,8 @@ what-a-host-is:
   - server/network/local_bastion.py::lane_host
   - docs/GUIDE.md
   verified:
-    date: '2026-11-02'
-    digest: sha256:f3514e53700c1c17b69dc2200c01680751b823d89deee1ffb4cd8ca9c8b0a220
+    date: '2026-11-03'
+    digest: sha256:2d45a45592ffdc08c80b6a8d9f24e1eaba8614d0fc95f98bd02aba24939e8c53
 what-is-privatae:
   sources:
   - compose.yaml
@@ -773,8 +807,8 @@ what-is-privatae:
   - vm/wsl/rootfs/etc/containers/systemd/cseries-remote-cert.container
   - brain/mastercode/model_backends.py::list_local_models
   verified:
-    date: '2026-11-02'
-    digest: sha256:7c061c395ceaa48f34808b48dbc95e27d8c2b1e1134e7c7f4fc5bd32ee67e8d1
+    date: '2026-11-03'
+    digest: sha256:1d0c8ce03acce8834c7d0853deb9c660ef4f78ba313e0e038d7a58e3373d253d
 where-your-data-lives:
   sources:
   - compose.yaml
@@ -882,6 +916,7 @@ your-private-network:
   - server/routes/network.py::_open_pairing_window
   - server/network/local_bastion.py::lane_host
   - docs/GUIDE.md
+  - server/network/host_dials.py
   verified:
-    date: '2026-11-02'
-    digest: sha256:1fa8fdcc2e078220562b48b4b52b12c6ec1ec8836351fb6d2c4b0880e7f35548
+    date: '2026-11-03'
+    digest: sha256:bd2cea51e5ab17410bd687f9d0b06b3d0107655133d5f7eba9e5532a605d8304

@@ -53,10 +53,17 @@ def autowire_decision(configured: bool, bastion: dict | None, caps_ok: bool) -> 
         return None, "host lacks the embedding_route capability"
     if not isinstance(bastion, dict) or not bastion.get("online"):
         return None, "bastion offline"
-    from mastercode.embed_backends import EMBED_CAPABILITY, choose_bastion_embed_model
-    if EMBED_CAPABILITY not in (bastion.get("capabilities") or []):
+    from mastercode.embed_backends import (
+        EMBED_CAPABILITY, choose_bastion_embed_model, lane_embed_service, _addressless,
+        _embed_models_of)
+    # A pairing with no address (a standalone Host's) may serve its embedder
+    # on its OpenAI-compatible server (llama.cpp, vLLM), which the bastion's
+    # `embed` capability (its ollama probe) does not cover; both ride the
+    # serve lane there.
+    lane_llm = _addressless(bastion) and lane_embed_service(bastion) == "llm"
+    if EMBED_CAPABILITY not in (bastion.get("capabilities") or []) and not lane_llm:
         return None, "bastion does not advertise embed"
-    pick = choose_bastion_embed_model(bastion.get("models") or [])
+    pick = choose_bastion_embed_model(_embed_models_of(bastion))
     if not pick:
         return None, "bastion serves no embedding model this host knows"
     return pick[0], f"unconfigured host, {bastion.get('hostname')} serves {pick[0]} ({pick[1]}d)"

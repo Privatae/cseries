@@ -1,0 +1,9 @@
+# A Host connects to a server that can't reach it back (server/network/host_dials.py,
+# the bastion's docs/host-connects.md): the code and its proofs, the pairing
+# exchange as the TLS server on a connection the Host opens (its certificate
+# then its CA, the Host proving first, the bastion's proof checked before
+# anything is signed, done's words), the dialler's pool (4 idle, the lane
+# ALPN and certificate, a wrong client certificate closed, backoff), and the
+# chat's card (only the person's Connect pairs). Stub pool, real TLS on
+# loopback. No DB.
+test_host_dials.py

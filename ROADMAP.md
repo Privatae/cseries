@@ -5,7 +5,7 @@ updates the status of every item here ([docs/RELEASING.md](docs/RELEASING.md)).
 Other documents in this repository say whether each paid offering is on sale,
 and link here for the rest.
 
-Last updated 2026-10-29. An estimate is our guess, counted from that date.
+Last updated 2026-11-03. An estimate is our guess, counted from that date.
 It is not a promised date, and it is changed here when it moves.
 
 - **Available**: in a published release, or on sale.
@@ -28,10 +28,25 @@ It is not a promised date, and it is changed here when it moves.
 
 - **Install with one command.** Available. `npx cseries` sets up a Linux
   virtual machine (WSL on Windows, Lima on macOS and Linux), starts the Host
-  in it and pairs the bastion with it.
+  in it and pairs the bastion with it. On Linux it installs for the whole
+  machine, so the Host starts when the machine boots, with nobody signed in.
+  `npx cseries uninstall --delete-data` removes the Host, its data and the
+  bastion it installed.
 - **The bastion.** Available. A separate program on your machine; the Host
   reaches your files and programs only through it, and it checks each
   request there.
+- **Your other machines.** Available. A bastion on another computer pairs
+  with your Host over your own network. A server that your Host can reach,
+  but that cannot reach your Host, is added from the Network app with the
+  code the server's bastion shows (bastion 0.63.0 or later). When another
+  Host asks to use one of your machines, your Host asks you first, on a card
+  over your chat, with what it may do in plain words. With no model key, the
+  Host still shows the AI agents on each machine and stops one when you
+  approve.
+- **A model on your own machine.** Available. With no key or sign-in for a
+  model provider, the Host uses a model server running on its own machine,
+  such as llama.cpp, vLLM or LM Studio, which the bastion finds and passes
+  through to it.
 - **Folder search.** Available. The bastion agent indexes a folder you
   connect, on your machine, and the Host searches it through the bastion.
 - **Memory and skills.** Available. The Host keeps its memory in its own

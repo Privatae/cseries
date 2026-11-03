@@ -188,22 +188,57 @@ def lane_address() -> str:
     return f"{lane_host()}:{_published_port('CSERIES_LANE_PORT', PUBLISHED_LANE_PORT)}"
 
 
-def pairing_host_name(handle: str) -> str:
+# The stable id in a standalone Host's name: the first HOST_ID_LEN hex digits
+# of its Host CA certificate's SHA-256 (host_ca.ca_sha256). Every C-Series
+# Host's handle is CSERIES_URL's first label, so every default install is
+# "home"; a bastion files a pairing under the Host's name and refuses a second
+# Host of the same name (the bastion's pair.go sameNameOtherHost). The CA is
+# made once per install and never rotates (host_ca._stored is write-once), so
+# the id is the install's own, and it changes exactly when the bastion would
+# no longer trust the Host anyway. 32 bits keeps the label short (a handle
+# leaves room for 25 more characters, home_origin._HANDLE_RE) and two Hosts on
+# one bastion colliding is a one-in-four-billion chance.
+HOST_ID_LEN = 8
+
+
+async def host_id(pool) -> str:
+    """This Host's stable id (HOST_ID_LEN hex digits of its CA's SHA-256)."""
+    from server.network import host_ca
+    return host_ca.ca_sha256(await host_ca.ca_cert_pem(pool))[:HOST_ID_LEN]
+
+
+def pairing_host_name(handle: str, host_id_: str) -> str:
     """THE name of this Host to a bastion on its machine, from one place: the
     redeem answer's host_name (the bastion files the pairing under it), the
     first DNS name on the lane certificate (the bastion's TLS ServerName), and
-    the `subject` a coder grant names."""
-    from server.network import bastion_enroll
-    return bastion_enroll._host_name(handle)
+    the `subject` a coder grant names. `<handle><id><zone>`: the handle the
+    owner chose, then the install's own id (host_id), so two default Hosts
+    are two names on one bastion ("home3f9a1c2e.cseries.localhost"). No
+    separator: the lane's requests carry this name as their Host, and the
+    kernel reads a name in its zone by the label grammar it shares with the
+    router (app_origin.classify), where a desktop label is [a-z0-9] only — a
+    hyphen there reads as a bad app address and the lane is refused.
+
+    A pairing made before the id existed was filed under the bare
+    `<handle><zone>` (host_names.host_name), and the bastion keeps the name it
+    was given. That name stays this Host's too: it is on the lane certificate
+    (lane_names) and among the names the anchor check accepts
+    (pairing_grants._own_host_names), so an existing pairing keeps working
+    unchanged and only a new pairing gets the new name."""
+    from server import host_names
+    return host_names.host_name(f"{handle}{host_id_}")
 
 
-async def host_name(entity_id: int = 1) -> str:
-    """pairing_host_name for this Host's own handle."""
+async def host_name(entity_id: int = 1, pool=None) -> str:
+    """pairing_host_name for this Host's own handle and id."""
     from server.network import bastion_enroll
     handle = await bastion_enroll.resolve_self_handle(entity_id)
     if not handle:
         raise RuntimeError("this Host has no handle")
-    return pairing_host_name(handle)
+    pool = pool if pool is not None else _control_pool()
+    if pool is None:
+        raise RuntimeError("the Host's database is not ready")
+    return pairing_host_name(handle, await host_id(pool))
 
 
 def run_socket_path(run: str) -> str:
@@ -461,15 +496,16 @@ async def start_lane_server(path: str, ctx):
     return server
 
 
-async def lane_names(entity_id: int) -> list[str]:
+async def lane_names(entity_id: int, pool=None) -> list[str]:
     """The DNS names on the lane certificate: pairing_host_name first (what
-    the bastion checks), then every other name this Host answers to and the
-    bare handle."""
+    the bastion checks), then every other name this Host answers to — the
+    bare `<handle><zone>` a pairing made before the id carries — and the bare
+    handle."""
     from server.network import bastion_enroll
     handle = await bastion_enroll.resolve_self_handle(entity_id)
     if not handle:
         raise RuntimeError("this Host has no handle")
-    return list(dict.fromkeys([pairing_host_name(handle)]
+    return list(dict.fromkeys([await host_name(entity_id, pool)]
                               + list(bastion_enroll._host_names(handle)) + [handle]))
 
 
@@ -619,7 +655,7 @@ async def _renew_due(pool, certs: list, names: list[str], what: str) -> None:
 async def _serve_once(pool, entity_id: int) -> None:
     global STATE
     from server.network import host_ca
-    names = await lane_names(entity_id)
+    names = await lane_names(entity_id, pool)
     ctx, not_after = await host_ca.lane_server_ssl_context(pool, names)
     enroll = await start_enroll_server(enroll_socket(), entity_id=entity_id)
     try:
@@ -728,9 +764,13 @@ async def run_supervised(entity_id: int = 1) -> None:
     CA (first boot), then serve enroll.sock and lane.sock while the shared
     directory is there and writable, and the enroll and lane ports always.
     Each pair restarts after a crash on its own, like the :8443 door, and the
-    sockets wait for the directory instead of giving up."""
+    sockets wait for the directory instead of giving up. And a dialler for
+    each server this Host connects to (host_dials: a server that can't reach
+    this Host back), serving the same lane over connections it opens."""
     global STATE, TCP_STATE
     if not standalone():
         STATE = TCP_STATE = "platform"
         return
-    await asyncio.gather(_supervise_sockets(entity_id), _supervise_ports(entity_id))
+    from server.network import host_dials
+    await asyncio.gather(_supervise_sockets(entity_id), _supervise_ports(entity_id),
+                         host_dials.supervise(entity_id))

@@ -29,6 +29,14 @@ owner's browser must not be able to add it. Once it is added, every other
 session ends: a session made with a password someone else learned must not
 outlive the passkey that was meant to shut them out.
 
+A passkey also approves what the authenticator code approves (the pop-ups
+over the chat, server/approval_passkeys.py), so while a code is set up a new
+passkey must not be gained with less than an approval takes: adding one needs,
+besides the check above, a passkey check made in the last STEP_UP_S (an
+existing passkey, which approves already) or the code itself
+(_approval_factor). A recovery code, or the password, is not enough then: on
+its own neither ever approved anything.
+
 Removing a passkey, and signing out every other session, ask for the same
 fresh check as adding another (or, before there is a passkey, a password
 sign-in in that time); removing one also ends every other session, since a
@@ -105,6 +113,11 @@ class PasskeyError(L.LoginError):
 
 class StepUpNeeded(PasskeyError):
     """Refused until the owner makes a fresh check (fresh_step_up)."""
+
+
+class CodeNeeded(PasskeyError):
+    """Refused until the owner gives the code from their authenticator (or
+    makes a fresh check with a passkey): see _approval_factor."""
 
 
 class PasswordAgain(PasskeyError):
@@ -374,12 +387,55 @@ async def remove_passkey(token: str, host: str, credential_id) -> int:
     return await L.end_other_sessions(token)
 
 
-async def _may_add(pool, token: str, starting: bool = False) -> None:
+async def _code_enrolled(pool) -> bool:
+    """Whether the authenticator code is set up (nac_stepup). An answer that
+    cannot be read counts as set up, so the code is asked for: refusing a
+    passkey for a moment is the safe direction."""
+    try:
+        from server.network import nac_stepup
+        return await nac_stepup.is_enrolled(pool)
+    except Exception:  # noqa: BLE001
+        return True
+
+
+async def _code_ok(pool, code) -> bool:
+    from server.network import nac_stepup
+    return await nac_stepup.verify_stepup(pool, str(code or ""))
+
+
+async def _approval_factor(pool, token: str, code, what: str) -> None:
+    """A passkey approves what the code approves (approval_passkeys), so
+    while the code is set up, `what` (adding a passkey, adding a phone) needs
+    a passkey check from the last STEP_UP_S or the code itself (checked and
+    burned here). Nothing more when no code is set up: the first factor is
+    then the passkey itself."""
+    if not await _code_enrolled(pool):
+        return
+    if fresh_step_up(token, (PASSKEY,)):
+        return
+    if code:
+        from server.network.nac_stepup import StepupLocked
+        try:
+            if await _code_ok(pool, code):
+                return
+        except StepupLocked as locked:
+            # The /passkey page reads `error`, not an HTTPException's detail:
+            # the wait reaches the person in words, the code still refused.
+            raise CodeNeeded(f"{what} is waiting: {locked.detail}.") from None
+    raise CodeNeeded(
+        ("That code didn't work. " if code else "")
+        + f"{what} needs the code from your authenticator too, because a passkey approves what "
+          "the code approves. Enter the current code and try again.")
+
+
+async def _may_add(pool, token: str, starting: bool = False, code=None) -> None:
     """Whether the session `token` may add a passkey now. Once one exists:
     a passkey check or a recovery-code sign-in in the last STEP_UP_S. Before
     that, when the ceremony starts (`starting`): a password sign-in in that
     time; the challenge, used once within CEREMONY_TTL_S by this session
-    alone, carries that check to the answer."""
+    alone, carries that check to the answer. And when it starts, while the
+    authenticator code is set up: a passkey check or the code
+    (_approval_factor)."""
     if await passkey_count(pool):
         if not fresh_step_up(token, (PASSKEY, RECOVERY)):
             raise StepUpNeeded("Adding another passkey needs a check with one you have, or a "
@@ -387,6 +443,8 @@ async def _may_add(pool, token: str, starting: bool = False) -> None:
     elif starting and not fresh_step_up(token, SIGNED_IN):
         raise PasswordAgain("Adding your first passkey needs a sign-in from the last five "
                             "minutes. Sign in again at /login, then add it here.")
+    if starting:
+        await _approval_factor(pool, token, code, "Adding a passkey")
 
 
 async def creation_options(pool, origin, purpose: str, host: str, holder: str) -> dict:
@@ -405,10 +463,12 @@ async def creation_options(pool, origin, purpose: str, host: str, holder: str) -
     return {"ceremony": cid, "options": _rp_options(opts)}
 
 
-async def registration_options(token: str, host: str) -> dict:
+async def registration_options(token: str, host: str, code=None) -> dict:
+    """A new passkey's ceremony. `code`: the authenticator code, when one is
+    set up and this session made no passkey check lately (_approval_factor)."""
     origin = _check_host(host)
     pool = L._pool()
-    await _may_add(pool, token, starting=True)
+    await _may_add(pool, token, starting=True, code=code)
     return await creation_options(pool, origin, REGISTER, host, _holder_of_session(token))
 
 

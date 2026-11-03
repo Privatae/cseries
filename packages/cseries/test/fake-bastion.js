@@ -15,6 +15,14 @@ const path = require('node:path');
 if (!process.env.FAKE_BASTION_LOG) return;
 
 const home = process.env.HOME;
+// This fake writes under HOME, where the real one keeps its state: the
+// computer running the tests may have a real bastion, with its state in
+// /root/.config/privatae-bastion. It runs only with the HOME the test made
+// for it (FAKE_BASTION_HOME), and writes nothing otherwise.
+if (!process.env.FAKE_BASTION_HOME || !home || path.resolve(home) !== path.resolve(process.env.FAKE_BASTION_HOME)) {
+  process.stderr.write(`fake-bastion: HOME is ${home}, not the test's own (${process.env.FAKE_BASTION_HOME}); nothing done\n`);
+  process.exit(97);
+}
 const stateFile = path.join(home, 'fake-bastion.json');
 const st = fs.existsSync(stateFile)
   ? JSON.parse(fs.readFileSync(stateFile, 'utf8'))
@@ -26,6 +34,14 @@ if (process.env.FAKE_BASTION_LOG) {
 
 function done(code, text) {
   fs.writeFileSync(stateFile, JSON.stringify(st, null, 2));
+  // Where the real one keeps its pairings and anchor (os.UserConfigDir), so
+  // a test sees uninstall remove them.
+  if (Object.keys(st.pairings).length || st.anchor) {
+    const dir = path.join(home, '.config', 'privatae-bastion');
+    fs.mkdirSync(path.join(dir, 'pairings'), { recursive: true });
+    for (const h of Object.keys(st.pairings)) fs.writeFileSync(path.join(dir, 'pairings', `${h}.json`), '{}');
+    if (st.anchor) fs.writeFileSync(path.join(dir, 'anchor.json'), JSON.stringify({ host: st.anchor }));
+  }
   if (text) process.stdout.write(`${text}\n`);
   process.exit(code);
 }
@@ -111,6 +127,23 @@ switch (args[0]) {
     done(0, '');
     break;
   }
+  case 'approvals-owner': {
+    // On Linux and macOS (owner_account.go): --account <name>; the same
+    // account again changes nothing, another is refused without --replace.
+    const name = args[args.indexOf('--account') + 1];
+    if (!args.includes('--account') || !name) done(2, 'usage: sudo -H privatae-bastion approvals-owner --account <name> [--replace]');
+    if (st.owner && st.owner !== name) done(1, `error: this machine's owner is ${st.owner}`);
+    st.owner = name;
+    done(0, `owner: ${name}`);
+    break;
+  }
+  case 'uninstall':
+    // As 0.62 does without --delete-data: the service and the program go,
+    // the state stays and is named. This fake's service is its state's flag.
+    if (args.length > 1) done(2, 'usage: privatae-bastion uninstall [--delete-data]');
+    st.service = false;
+    done(0, `  stopped the system service privatae-bastion\nKept ${path.join(home, '.config', 'privatae-bastion')}: its pairings, keys and the audit log of what Hosts and agents did here.`);
+    break;
   default:
     done(1, `unknown ${args[0]}`);
 }

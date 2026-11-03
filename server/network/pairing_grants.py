@@ -107,6 +107,10 @@ _MODEL_NAME_MAX = 128
 
 # The states a pairing reports. Anything else is refused at the boundary.
 PAIRING_STATES = ("active", "pending", "revoked")
+# How a pending pairing's lanes would run, and how it came to the machine
+# (bastion client-go/anchor.go pairingEntry). Kept only for the pop-up's words.
+PAIRING_TRANSPORTS = ("tunnel", "tcp", "unix")
+PAIRING_ORIGINS = ("paired", "carried", "former_anchor")
 
 MODES = ("local", "networked")
 
@@ -243,6 +247,22 @@ def _narrow_host_list(v: Any, *, with_state: bool) -> Optional[list]:
             if state not in PAIRING_STATES:
                 continue
             row["state"] = state
+            # What a pending pairing says about itself for the pop-up (bastion
+            # anchor.go pairingEntry): who admits it, how its lanes would run,
+            # whether its Host is on that machine, and how it came. The box's
+            # word, used for WORDS on the card only; nothing is authorized by it.
+            # A value outside the known set is dropped, never passed on.
+            waiting = str(e.get("waiting_for") or "").strip()[:253]
+            if waiting:
+                row["waiting_for"] = waiting
+            transport = str(e.get("transport") or "").strip().lower()
+            if transport in PAIRING_TRANSPORTS:
+                row["transport"] = transport
+            if e.get("same_machine") is True:
+                row["same_machine"] = True
+            origin = str(e.get("origin") or "").strip().lower()
+            if origin in PAIRING_ORIGINS:
+                row["origin"] = origin
         out.append(row)
     return out
 
@@ -921,9 +941,23 @@ async def _sign(pool, eid: int, terms: dict) -> tuple[str, str]:
     return base64.b64encode(canonical(terms)).decode(), sig_b64
 
 
-async def _verify_stepup(pool, code: str) -> bool:
+async def _stepup_enrolled(pool) -> bool:
+    """Whether the person has an authenticator enrolled (nac_stepup). An
+    unreadable answer reads as enrolled: the card then says the code was
+    wrong, which is what it said before this was asked."""
+    try:
+        from server.network import nac_stepup
+        return await nac_stepup.is_enrolled(pool)
+    except Exception:  # noqa: BLE001
+        return True
+
+
+async def _verify_stepup(pool, code: str, purpose: Optional[str] = None) -> bool:
+    """nac_stepup.verify_stepup. `purpose`: what a passkey approval must be
+    for (approval_passkeys); only the person's own answer on a card or a
+    window passes one, so with none a passkey approval is refused."""
     from server.network import nac_stepup
-    return await nac_stepup.verify_stepup(pool, code)
+    return await nac_stepup.verify_stepup(pool, code, purpose=purpose)
 
 
 async def _dispatch(pool, eid: int, server: str, op: str, args: list,
@@ -948,9 +982,22 @@ async def _own_host_names(eid: int) -> tuple:
     this pod would mint today. Comparing against a single derived name would
     403 every already-anchored machine on the fleet.
     """
-    from server.network import bastion_enroll
+    from server.network import bastion_enroll, local_bastion
     handle = await bastion_enroll.resolve_self_handle(eid)
-    return bastion_enroll._host_names(handle) if handle else ()
+    if not handle:
+        return ()
+    names = bastion_enroll._host_names(handle)
+    if local_bastion.standalone():
+        # A C-Series Host pairs under `<handle><id><zone>`
+        # (local_bastion.pairing_host_name) and, for a pairing made before the
+        # id existed, under the bare name above: both are this Host. If the id
+        # cannot be read right now the bare name alone answers, so a machine
+        # paired under the new name is refused (the safe direction) until it can.
+        try:
+            names = (await local_bastion.host_name(eid),) + tuple(names)
+        except Exception as e:  # noqa: BLE001
+            logger.info("own names: this Host's id is unreadable right now: %r", e)
+    return tuple(dict.fromkeys(names))
 
 
 class PairingError(Exception):
@@ -1038,16 +1085,29 @@ async def record_and_notify(pool, entity_id: int, token_id: int, bastion_label: 
                             pairings: Optional[list], attempts: Optional[list],
                             *, is_anchor: bool = False) -> dict:
     """Keep the durable per-(machine, subject) row current and raise what the
-    user has not been told: a NEW pending pairing once (payload.event =
-    'pairing_pending'), and — on the ANCHOR host only — an attempt unanswered
-    past UNAPPROVED_AFTER at most once per UNAPPROVED_REPEAT (payload.event =
-    'pairing_unapproved'). `is_anchor` is the box's word from this beat's
-    enforcing report (anchor.go: is_anchor on the anchor pairing's beat): the
-    anchor's user is asked to approve; a member is told, once, that someone
-    is asking to join and its admin decides. Also retries delivery of an
-    approved grant the box has not confirmed while it still reports that
-    subject pending — never one the box REFUSED. Returns counts. Best-effort:
-    the liveness beat that carries this must never break on it."""
+    user has not been told. `is_anchor` is the box's word from this beat's
+    enforcing report (anchor.go: is_anchor on the anchor pairing's beat).
+
+    On the ANCHOR Host the person is asked with a pop-up over the chat (the
+    ask card, a ticket of kind PAIRING_CARD_KIND, _raise_card): "<Host> wants
+    to use <machine>. Let it in?", with what it may do ticked, Let it in /
+    Never, and the card's own Not now. Asked once per pairing; while it waits
+    unanswered (Not now, or nobody has looked) the card is filed afresh every
+    ASK_AGAIN_AFTER; Never (deny_pairing) stops it. A card is filed whether or
+    not the person is on the page, so a Host nobody is looking at asks at the
+    person's next visit: Circles raises every open card when it opens. A card
+    whose pairing stopped waiting (admitted in Network, removed on the
+    machine, refused) is closed on the next beat. If the card cannot be filed,
+    the inbox note ('pairing_pending' / 'pairing_unapproved') is the fallback.
+
+    On a MEMBER Host the person is told once, in the inbox, that someone is
+    asking to join and the anchor decides.
+
+    Also retries delivery of an approved grant the box has not confirmed while
+    it still reports that subject pending — never one the box REFUSED.
+    Returns counts (pending_raised: first asks; unapproved_raised: asks
+    again). Best-effort: the liveness beat that carries this must never break
+    on it."""
     out = {"pending_raised": 0, "unapproved_raised": 0, "resynced": 0}
     if pairings is None and attempts is None:
         return out
@@ -1078,6 +1138,19 @@ async def record_and_notify(pool, entity_id: int, token_id: int, bastion_label: 
         return out
 
     pending = [s for s, p in rows.items() if p.get("state") == "pending"]
+    # The pop-ups this machine already has (anchor only: only the anchor's
+    # person is asked). A card whose pairing is no longer pending here was
+    # settled somewhere else (admitted in Network, removed on the machine):
+    # it goes now, so nobody answers a question that is already answered.
+    # Only a beat that LISTED every pairing can say one stopped waiting: an
+    # older box that sends its attempts alone says nothing of the rest.
+    cards: list[dict] = []
+    if is_anchor:
+        cards = await _cards(pool, entity_id, token_id)
+        for c in [c for c in cards
+                  if c["open"] and pairings is not None and c["subject"] not in pending]:
+            await _close_card(pool, entity_id, c["id"])
+            c["open"] = False
     if not pending:
         return out
 
@@ -1115,28 +1188,61 @@ async def record_and_notify(pool, entity_id: int, token_id: int, bastion_label: 
                     out["resynced"] += 1
 
     machine = _plain(bastion_label or "one of your machines")
+    own: Optional[tuple] = None
     for r in db:
-        if r["denied_at"] is not None:
-            continue  # the user said no; the card shows it, no more asking
         subject, handle = r["subject"], (r["subject_handle"] or r["subject"].split(".")[0])
+        mine = [c for c in cards if c["subject"] == subject]
+        if r["denied_at"] is not None:
+            # The user said Never (here or in Network): no more asking, and a
+            # card still up for it goes.
+            for c in mine:
+                if c["open"]:
+                    await _close_card(pool, entity_id, c["id"])
+            continue
+        if is_anchor:
+            entry = rows.get(subject) or {}
+            waiting = entry.get("waiting_for")
+            if waiting:
+                # The box names the Host that admits it. Not this one (a
+                # policy names another): that Host's person is asked, not ours.
+                if own is None:
+                    own = await _own_host_names(entity_id)
+                if own and waiting not in own:
+                    continue
+            asked = r["pending_notified_at"]
+            last = r["unapproved_raised_at"] or asked
+            open_ids = [c["id"] for c in mine if c["open"]]
+            first = asked is None
+            # Asked before, but never with a pop-up (the inbox note of an
+            # older build): the pop-up comes now rather than in a day.
+            never_carded = not first and not mine
+            due = not first and now - last >= ASK_AGAIN_AFTER
+            if not (first or never_carded or due):
+                continue
+            for tid in open_ids:
+                await _close_card(pool, entity_id, tid)
+            if await _raise_card(pool, entity_id, token_id, bastion_label or "", machine, subject,
+                                 handle, entry, first=first):
+                if first:
+                    out["pending_raised"] += 1
+                else:
+                    out["unapproved_raised"] += 1
+                continue
+            # The card could not be filed (tickets down): the inbox note is
+            # the fallback, on the same clocks as before the pop-up existed.
+            if first:
+                if await _raise_pending(pool, token_id, machine, subject, handle, is_anchor=True):
+                    out["pending_raised"] += 1
+            elif due:
+                since = _parse_since(r["since"]) or asked
+                if await _raise_unapproved(pool, token_id, machine, subject, handle, since):
+                    out["unapproved_raised"] += 1
+            continue
+        # A member Host: told once that someone is asking to join; the anchor's
+        # person decides, so no pop-up and no reminders here.
         if r["pending_notified_at"] is None:
-            # First sight — even of a pairing that is already old on the box:
-            # ONE ask, and the daily unapproved clock starts from this beat, so
-            # the user is never handed the ask and the reminder together.
-            if await _raise_pending(pool, token_id, machine, subject, handle, is_anchor=is_anchor):
+            if await _raise_pending(pool, token_id, machine, subject, handle, is_anchor=False):
                 out["pending_raised"] += 1
-            continue
-        if not is_anchor:
-            continue  # a member was told once; its admin decides, no reminders here
-        asked = r["pending_notified_at"]
-        if now - asked < UNAPPROVED_AFTER:
-            continue
-        last = r["unapproved_raised_at"] or asked
-        if now - last < UNAPPROVED_REPEAT:
-            continue
-        since = _parse_since(r["since"]) or asked
-        if await _raise_unapproved(pool, token_id, machine, subject, handle, since):
-            out["unapproved_raised"] += 1
     return out
 
 
@@ -1417,20 +1523,15 @@ async def _raise_pending(pool, token_id: int, machine: str, subject: str, handle
     failed inbox write would repeat on every beat until the inbox came back."""
     e_handle, e_subject = _plain(handle), _plain(subject)
     if is_anchor:
-        subj = f"Approve {e_handle} on {machine}?"
-        body = (f"{e_handle} paired a Host to your machine {machine} and is waiting for your "
-                f"approval. You anchored that machine: until you approve, that pairing gets "
-                f"nothing — no tunnel, no lanes, no context.\n\n"
-                f"Open Network → Bastions → {machine} to approve (with your code) or deny. "
-                f"If you did not expect this, deny it: the attempt stays on the record.")
+        # The fallback when the pop-up could not be filed (record_and_notify
+        # files it again on the next check-in): a note, and the card follows.
+        subj = f"{e_handle} wants to use {machine}"
+        body = (f"{e_handle} wants to use your machine {machine}. It can do nothing there "
+                f"until you let it in. Your Host will ask you over the chat as soon as it can.")
         host_msg = (
-            f"A new host, {e_handle} ({e_subject}), has paired to your machine {machine} and is "
-            f"waiting for your approval — you anchored that machine, so nothing opens for it "
-            f"until you say so. Ask the user ONCE whether to admit it and with which caps "
-            f"(observe, session, dcn, harness, egress). If yes: manage_pairing op='approve' "
-            f"server='{machine}' subject='{e_subject}' caps=[...] with their 2FA code. If no: "
-            f"manage_pairing op='deny' server='{machine}' subject='{e_subject}'. Until then it "
-            f"stays pending and is reported on every check-in.")
+            f"{e_handle} ({e_subject}) asked to use your machine {machine}. Your person will be "
+            f"asked on a card over the chat whether to let it in; their answer reaches you as "
+            f"the answer to that ticket. There is nothing for you to approve.")
     else:
         subj = f"A new host is asking to join {machine}"
         body = (f"{e_handle} is asking to join {machine}, a machine you share. Its admin (the "
@@ -1464,9 +1565,9 @@ async def _raise_unapproved(pool, token_id: int, machine: str, subject: str, han
     age_h = max(1, int((_dt.datetime.now(_dt.timezone.utc) - since).total_seconds() // 3600))
     ok = await _inbox(
         f"Unapproved pairing on {machine}: {e_handle}",
-        (f"{e_handle} has been waiting to pair on {machine} for about {age_h} hour(s). "
-         f"It holds nothing until you approve. Approve or deny it in Network → Bastions; "
-         f"this reminder repeats once a day while it waits."),
+        (f"{e_handle} has been waiting to use {machine} for about {age_h} hour(s). "
+         f"It can do nothing there until you let it in. Your Host will ask you over the "
+         f"chat as soon as it can."),
         {"app": "network", "lens": "bastions", "event": "pairing_unapproved",
          "token_id": token_id, "machine": machine, "subject": subject, "handle": handle,
          "since": _rfc3339(since), "link": app_link("network")})
@@ -1480,13 +1581,254 @@ async def _raise_unapproved(pool, token_id: int, machine: str, subject: str, han
         logger.info("pairing unapproved: mark failed for %s: %r", subject, e)
     try:
         await _host_message(
-            f"Unapproved pairing attempt: {e_handle} ({e_subject}) has been pending on your "
-            f"machine {machine} for about {age_h} hour(s) with no answer. Tell the user once "
-            f"today; manage_pairing op='approve' or op='deny' settles it.",
+            f"{e_handle} ({e_subject}) has been waiting to use your machine {machine} for "
+            f"about {age_h} hour(s) with no answer. Your person will be asked again on a card "
+            f"over the chat; there is nothing for you to approve.",
             "pairing_unapproved")
     except Exception as e:  # noqa: BLE001
         logger.info("pairing unapproved: host message not written: %s", type(e).__name__)
     return True
+
+
+# ── The pop-up: "<Host> wants to use <machine>. Let it in?" ─────────────────
+#
+# The person is asked with the ask card every chat already shows (app-web-kit
+# ask.ts / ui/ask-overlay.tsx): a decision ticket the platform files, linked to
+# the person's own conversation in Circles (asked_in {app_id: 'circles'}),
+# which raises every open one as its card whenever it opens — so a card filed
+# while nobody is looking comes up at the next visit. 'Let it in' takes the
+# authenticator code on the card, like every widening card (stepupAsk); the
+# ceiling is ticked boxes on the card, defaulted below. The answer is applied
+# by decide_card through tickets.decide_ticket_service, BEFORE the ticket is
+# decided, so a wrong code or a refused approve leaves the card up.
+
+PAIRING_CARD_KIND = "bastion_pairing"
+CARD_ADMIT, CARD_NEVER = "let_in", "never"
+# Asked again while unanswered (the card's "Not now", or nobody has looked):
+# the same once-a-day clock the inbox reminder always had.
+ASK_AGAIN_AFTER = UNAPPROVED_REPEAT
+# The note on a card the heartbeat took down (_close_card). A person's answer
+# applied while the sweep closed it still decides that card
+# (tickets.decide_ticket_service), and it finds the card by this.
+CARD_SETTLED_NOTE = "settled without this card"
+
+# What each family lets the other Host do, in the person's words (the Network
+# app's CAP_WORDS say the same for the admin view).
+CAP_WORDS = {
+    "observe": "See how the machine is doing: what runs on it, its disk, its updates",
+    "session": "Open a terminal on it",
+    "dcn": "Read and keep files and notes there",
+    "harness": "Run coding jobs on it",
+    "egress": "Send its internet traffic out through this machine's connection",
+    "inference": "Use the AI models on it",
+    "models": "Download AI models onto it, and remove ones it put there",
+    "services": "Leave a program it built running there",
+}
+# Ticked when the card opens: what a Host needs to work on a machine for its
+# person. Left for the person to tick: egress (another Host's traffic leaving
+# through their own internet connection), models (gigabytes on their disk)
+# and services (a program left running there) — the three that cost the
+# machine's owner something beyond the work itself. The Network app's admin
+# view leaves only services unticked; this is the person's default.
+DEFAULT_CEILING = ("observe", "session", "dcn", "harness", "inference")
+
+
+def card_words(handle: str, machine: str, entry: Optional[dict] = None) -> tuple[str, list, list]:
+    """(sitrep, options, ceiling) for the card. Pure: every word is the
+    kernel's; the handle and machine are the box's strings, made plain. The
+    entry's origin / transport / same_machine (narrow_pairings) only choose a
+    sentence."""
+    e = entry or {}
+    who, where = _plain(handle or "A Host", 64), _plain(machine or "one of your machines")
+    how = {
+        "former_anchor": f"It was in charge of {where} until this Host took over.",
+        "carried": f"It was already set up on {where}.",
+    }.get(e.get("origin") or "", f"It was connected to {where} with a pairing code.")
+    if e.get("same_machine"):
+        how += f" It runs on {where} itself."
+    elif e.get("transport") == "tunnel":
+        how += " It is a Host in the cloud, reaching it over the internet."
+    elif e.get("transport") == "tcp":
+        how += " It reaches it over the network."
+    sitrep = (f"{who} wants to use {where}. Let it in?\n\n{how}\n\n"
+              f"It can do only what is ticked, and you can take it back at any time. "
+              f"If you don't know it, choose Never.")
+    options = [
+        {"id": CARD_ADMIT, "label": "Let it in",
+         "consequence": (f"Needs your passkey, or a code from your authenticator. It can then do what is "
+                         f"ticked on {where}, and nothing else."),
+         "recommend": False},
+        {"id": CARD_NEVER, "label": "Never",
+         "consequence": "It stays out, and your Host won't ask about it again.",
+         "recommend": False},
+    ]
+    ceiling = [{"id": c, "label": CAP_WORDS[c], "on": c in DEFAULT_CEILING} for c in CAPS]
+    return sitrep, options, ceiling
+
+
+async def _cards(pool, entity_id: int, token_id: int) -> list[dict]:
+    """This machine's pairing cards, newest first: [{id, subject, open}]."""
+    try:
+        rows = await pool.fetch(
+            "SELECT id, status, metadata->'bastion_pairing'->>'subject' AS subject "
+            "FROM entity_tickets WHERE entity_id=$1 AND metadata->>'kind'=$2 "
+            "AND metadata->'bastion_pairing'->>'token_id'=$3 ORDER BY id DESC LIMIT 200",
+            entity_id, PAIRING_CARD_KIND, str(int(token_id)))
+    except Exception as e:  # pragma: no cover - defensive
+        logger.info("pairing cards: read failed for token %s: %r", token_id, e)
+        return []
+    return [{"id": int(r["id"]), "subject": r["subject"] or "", "open": r["status"] == "open"}
+            for r in rows]
+
+
+async def _close_card(pool, entity_id: int, ticket_id: int) -> None:
+    """Take a card down that the platform no longer needs answered. Only a
+    pairing card, and only while open: an answered one is never touched."""
+    try:
+        done = await pool.execute(
+            "UPDATE entity_tickets SET status='dismissed', decided_at=now(), "
+            "decision=jsonb_build_object('note', $4::text, 'dismissed', TRUE) "
+            "WHERE id=$1 AND entity_id=$2 AND status='open' AND metadata->>'kind'=$3",
+            int(ticket_id), entity_id, PAIRING_CARD_KIND, CARD_SETTLED_NOTE)
+    except Exception as e:  # pragma: no cover - defensive
+        logger.info("pairing card %s not closed: %r", ticket_id, e)
+        return
+    if isinstance(done, str) and done.endswith(" 1"):
+        try:
+            from server import host_events
+            await host_events.emit(pool, entity_id, "ticket_decided",
+                                   {"ticket_id": int(ticket_id), "status": "dismissed"})
+        except Exception:  # noqa: BLE001 — the card is down; the event is a courtesy
+            pass
+
+
+async def _raise_card(pool, entity_id: int, token_id: int, server: str, machine: str,
+                      subject: str, handle: str, entry: dict, *, first: bool) -> bool:
+    """File the card; True once it is filed and the row marked asked. The
+    Host is told once, on the first ask, that the person was asked."""
+    sitrep, options, ceiling = card_words(handle, machine, entry)
+    try:
+        from server.routes import tickets as _tk
+        await _tk.create_ticket_service(
+            pool, entity_id, source="runtime", sitrep=sitrep, options=options, priority=70,
+            metadata={"kind": PAIRING_CARD_KIND,
+                      PAIRING_CARD_KIND: {"token_id": int(token_id), "server": server,
+                                          "subject": subject, "handle": handle,
+                                          "stepup_option": CARD_ADMIT, "ceiling": ceiling},
+                      "user_only": True, "no_pattern": True,
+                      # The person's own conversation in Circles: it lists the
+                      # open cards of every topic and raises each one.
+                      "asked_in": {"app_id": "circles"}})
+    except Exception as e:  # noqa: BLE001 — the caller falls back to the inbox note
+        logger.info("pairing card for %s on %s not filed: %r", subject, machine, e)
+        return False
+    try:
+        await pool.execute(
+            "UPDATE network_bastion_pairing SET pending_notified_at = "
+            "COALESCE(pending_notified_at, now()), unapproved_raised_at = now() "
+            "WHERE token_id=$1 AND subject=$2", token_id, subject)
+    except Exception as e:  # pragma: no cover - defensive
+        logger.info("pairing card: mark failed for %s: %r", subject, e)
+    if first:
+        try:
+            await _host_message(
+                f"{_plain(handle)} ({_plain(subject)}) asked to use your machine {machine}. "
+                f"Your person was asked on a card over the chat whether to let it in; their "
+                f"answer reaches you as the answer to that ticket. There is nothing for you "
+                f"to approve.", "pairing_pending")
+        except Exception as e:  # noqa: BLE001
+            logger.info("pairing card: host message not written: %s", type(e).__name__)
+    return True
+
+
+def card_caps(bp: dict, choices: Any) -> list[str]:
+    """The ceiling the person ticked: `choices` from the card when it sent
+    them, else the card's own defaults. Only families the card offered."""
+    offered = [c.get("id") for c in (bp.get("ceiling") or []) if isinstance(c, dict)]
+    if choices is None:
+        picked = [c.get("id") for c in (bp.get("ceiling") or [])
+                  if isinstance(c, dict) and c.get("on")]
+    elif isinstance(choices, list):
+        picked = [str(c) for c in choices]
+    else:
+        raise PairingError(400, "choices must be a list of what it may do")
+    try:
+        caps = normalize_caps(picked)
+    except ValueError as e:
+        raise PairingError(400, str(e))
+    if any(c not in offered for c in caps):
+        raise PairingError(400, "that card did not offer one of those")
+    if not caps:
+        raise PairingError(400, "Tick at least one thing it may do, or choose Never.")
+    return caps
+
+
+async def decide_card(pool, eid: int, md: dict, *, option_id: str, stepup_code: Optional[str],
+                      actor: str, choices: Any = None,
+                      passkey_purpose: Optional[str] = None) -> dict:
+    """The person's answer on the card (tickets.decide_ticket_service calls it
+    BEFORE the ticket is decided, so a refusal leaves the card up). 'Let it
+    in' is approve_pairing with the ticked ceiling and the code from the card:
+    the same checks as Network's Approve (this Host anchors the machine, the
+    box reports the pairing now, the code is valid and burned). 'Never' is
+    deny_pairing. Only the person answers it."""
+    if actor != "user":
+        raise PairingError(403, "this card is the person's to answer")
+    bp = md.get(PAIRING_CARD_KIND) if isinstance(md.get(PAIRING_CARD_KIND), dict) else {}
+    server, subject = str(bp.get("server") or ""), str(bp.get("subject") or "")
+    if not server or not subject:
+        raise PairingError(400, "this card names no pairing")
+    if option_id == CARD_NEVER:
+        await deny_pairing(pool, eid, server, subject, via="ui")
+        return {"denied": True, "server": server, "subject": subject}
+    if option_id != CARD_ADMIT:
+        raise PairingError(400, f"option_id must be {CARD_ADMIT} or {CARD_NEVER}")
+    caps = card_caps(bp, choices)
+    who = _plain(bp.get("handle") or subject.split(".")[0], 64)
+    where = _plain(server)
+    try:
+        res = await approve_pairing(pool, eid, server, subject, caps, stepup_code=stepup_code,
+                                    via="ui", passkey_purpose=passkey_purpose)
+    except PairingError as e:
+        # The person reads these on the card: plain words, no machine terms
+        # and no command to run (approve_pairing's own details are written for
+        # the Network app and the Host's tools).
+        logger.info("pairing card: approve of %s on %s refused: %s %s",
+                    subject, server, e.status, e.detail)
+        from server import approval_passkeys
+        if e.status == 403 and "step-up" in e.detail and approval_passkeys.is_proof(stepup_code):
+            raise PairingError(403, approval_passkeys.REFUSED) from None
+        if e.status == 403 and "step-up" in e.detail and not await _stepup_enrolled(pool):
+            raise PairingError(403, "This Host has no passkey or authenticator set up yet, so it "
+                                    "cannot check that this is you. Set up a passkey, then press "
+                                    "Let it in again. Nothing was changed.") from None
+        if e.status == 403 and "step-up" in e.detail:
+            raise PairingError(403, "That code didn't work. Enter the current code from your "
+                                    "authenticator and press Let it in again. Nothing was "
+                                    "changed.") from None
+        if e.status == 404 and "not paired" in e.detail:
+            raise PairingError(409, f"{who} isn't waiting on {where} any more, so there is "
+                                    f"nothing to let in. Nothing was changed.") from None
+        if e.status == 403 or (e.status == 409 and "not anchored" in e.detail):
+            raise PairingError(409, f"Your Host isn't the one in charge of {where} right now, "
+                                    f"so it can't let anyone in there. Nothing was "
+                                    f"changed.") from None
+        if e.status == 400:
+            raise
+        raise PairingError(503, "Your Host couldn't check that right now. Nothing was "
+                                "changed; try again in a moment.") from None
+    if res.get("state") == "refused":
+        # Signed and sent, and the machine said no: nobody was let in. The
+        # card stays up (raised here, before the ticket is decided) rather
+        # than closing on an admission that did not happen.
+        logger.info("pairing card: %s refused the grant for %s: %s",
+                    server, subject, res.get("detail"))
+        raise PairingError(502, f"{where} didn't accept it, so {who} is still not let in. "
+                                f"Nothing was changed there. Try again with a fresh code from "
+                                f"your authenticator.")
+    return {"admitted": True, "server": server, "subject": subject, "caps": res.get("caps"),
+            "delivered": res.get("delivered"), "state": res.get("state"),
+            "note": res.get("note")}
 
 
 async def _record_sync(pool, grant_id: int, res: dict) -> None:
@@ -1548,9 +1890,11 @@ def _ttl_days(ttl_days: Any, default: int) -> int:
 async def approve_pairing(pool, eid: int, server: str, subject: str, caps: Any,
                           *, stepup_code: Optional[str] = None, approved_by: Optional[str] = None,
                           ttl_days: Optional[int] = None, models: Any = None,
-                          via: str = "unknown") -> dict:
+                          via: str = "unknown", passkey_purpose: Optional[str] = None) -> dict:
     """Admit `subject` on `server` with the given caps ceiling. WIDENS, so it
-    needs the user's step-up code, always. Signs the grant, stores it, pushes
+    needs the user's step-up code, always: the authenticator code, or a
+    passkey approval made for `passkey_purpose` (the machine pairing card's
+    decide passes the card's purpose; nothing else passes one). Signs the grant, stores it, pushes
     pairing_grant_sync over the mgmt lane; an offline box gets the grant on
     its next beat (record_and_notify retries while it reports pending).
 
@@ -1598,7 +1942,11 @@ async def approve_pairing(pool, eid: int, server: str, subject: str, caps: Any,
     if subject not in reported:
         raise PairingError(404, f"'{subject}' is not paired on '{server}' — the box does not "
                                 f"report it now; nothing to approve")
-    if not await _verify_stepup(pool, str(stepup_code or "")):
+    # The purpose rides only when there is one, so the seam's (pool, code)
+    # shape is unchanged for every other caller.
+    code = str(stepup_code or "")
+    if not await (_verify_stepup(pool, code, passkey_purpose) if passkey_purpose
+                  else _verify_stepup(pool, code)):
         raise PairingError(403, "admitting a host on your machine widens access — it needs a "
                                 "valid step-up code (enroll a second factor at /nac/stepup/enroll first)")
     from server.network.nac_commit import approver_for

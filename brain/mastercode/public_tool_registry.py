@@ -1750,14 +1750,15 @@ _NAC_COMMIT_SCHEMAS: dict[str, dict] = {
         "function": {
             "name": "manage_bastion",
             "description": (
-                "Manage the host's bastion roster. op='enroll' mints a one-time pairing token for a "
-                "NEW bastion for the user to install; op='revoke' "
-                "decommissions one by token_id; op='update' sets one's target version (token_id "
-                "+ version); op='list' a line per bastion, with token_id one whole record; op='latest' "
-                "the latest build and auto_update. Enroll/revoke/update are neutral or tighten — no 2FA."
+                "The host's bastions. op='enroll' mints a one-time pairing token for a new bastion; "
+                "'revoke' one by token_id; 'update' sets its target version; 'list' a line each, "
+                "with token_id one whole record; 'latest' the latest build, auto_update. "
+                "'add_server' {address, code from the server's `pair --open`} asks the person on a card. No 2FA."
             ),
             "parameters": {"type": "object", "properties": {
-                "op": {"type": "string", "enum": ["enroll", "revoke", "update", "list", "latest"], "description": "The lifecycle action."},
+                "op": {"type": "string", "enum": ["enroll", "revoke", "update", "list", "latest", "add_server"], "description": "The lifecycle action."},
+                "address": {"type": "string"},
+                "code": {"type": "string"},
                 "name": {"type": "string", "description": "For enroll: a short name for the new bastion."},
                 "token_id": {"type": "integer", "description": "For revoke/update/list: the bastion's token id."},
                 "version": {"type": "string", "description": "For update: the target bastion version."},

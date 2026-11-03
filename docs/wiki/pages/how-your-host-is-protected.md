@@ -29,7 +29,7 @@ The owner. The first time, you enter the setup code the Host prints at start and
 
 ## How does the bastion connect?
 
-The bastion pairs with a one-time token and then connects to the Host over mutual TLS under a certificate authority the Host makes for itself. The Host accepts only certificates it issued at pairing and has not revoked, and drops the open connections of a bastion it revokes or quarantines. [The bastion](wiki:the-bastion) covers what it checks on every operation.
+The bastion pairs with a one-time token and then connects to the Host over mutual TLS under a certificate authority the Host makes for itself. A server that can't reach your Host back, such as one on the internet when your Host is at home, is paired with the code its bastion shows, and then your Host opens the connections to it; inside them the same mutual TLS runs, with the bastion still checking your Host's certificate authority and presenting the certificate your Host gave it. The Host accepts only certificates it issued at pairing and has not revoked, and drops the open connections of a bastion it revokes or quarantines. [The bastion](wiki:the-bastion) covers what it checks on every operation.
 
 ## What stops my Host doing something I did not approve?
 

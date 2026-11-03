@@ -17,6 +17,7 @@ const { fakeRunner, psScript, fixture, guestShell } = require('./helpers');
 const { statement, sha256Hex } = require('../src/verify');
 
 const u16 = (s) => Buffer.from(s, 'utf16le');
+const TRAY = 'HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\PrivataeBastionTray';
 
 function signer() {
   const { publicKey, privateKey } = crypto.generateKeyPairSync('ed25519');
@@ -82,6 +83,15 @@ function fakeMachine(paths, opts = {}) {
     bastionVersion: opts.bastionVersion || '0.53.2',
     pulls: 0,
     restarts: 0,
+    // What the bastion keeps outside its program (win/elevated.js
+    // bastionUninstallScript): its state under LocalSystem's profile, its
+    // door's firewall rules (opts.doorRules: the ports it holds open), its
+    // audit log's event source.
+    stateDir: path.join(paths.base, 'systemprofile', 'privatae-bastion'),
+    firewallRules: (opts.doorRules || []).map((port) => `Privatae bastion: your Host connects (TCP ${port})`),
+    eventSource: false,
+    wslUninstalls: 0,
+    uninstallScripts: [],
   };
   const s = signer();
   const binary = Buffer.from(`fake bastion ${m.bastionVersion}\n`);
@@ -171,8 +181,24 @@ function fakeMachine(paths, opts = {}) {
       case 'service':
         m.service = { running: true };
         m.serviceInstalls++;
-        m.registry['HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\PrivataeBastionTray'] = `"${paths.serviceExe}" tray`;
+        m.registry[TRAY] = `"${paths.serviceExe}" tray`;
+        m.eventSource = true;
+        fs.mkdirSync(m.stateDir, { recursive: true });
+        fs.writeFileSync(path.join(m.stateDir, 'bastion.log'), 'invented\n');
         return { code: 0, out: 'System service installed: PrivataeBastion' };
+      case 'uninstall':
+        // As uninstall.go on Windows (bastion 0.63): the service, the tray's
+        // logon entry, the event source and its door's firewall rules; the
+        // state stays (no --delete-data), and so does the program it runs
+        // from.
+        if (args.length !== 1) return { code: 2, out: 'usage: privatae-bastion uninstall [--delete-data]' };
+        m.service = null;
+        delete m.registry[TRAY];
+        m.eventSource = false;
+        // opts.oldUninstall: a bastion from before its door kept firewall
+        // rules (0.62), whose uninstall does not know them.
+        if (!opts.oldUninstall) m.firewallRules = [];
+        return { code: 0, out: `System service removed: PrivataeBastion is no longer registered.\nKept ${m.stateDir}: its pairings, keys and the audit log.` };
       case 'set-mode':
         b.mode = args[1];
         return { code: 0, out: `mode set to ${args[1]}` };
@@ -316,9 +342,72 @@ function fakeMachine(paths, opts = {}) {
         const r = bastionCmd(args);
         if (r.code !== 0) return quit(18, `privatae-bastion stepup-enroll exited with ${r.code}`);
         say('enrolled=yes');
+        if (fs.existsSync(m.stateDir)) fs.writeFileSync(path.join(m.stateDir, 'anchor.json'), JSON.stringify({ anchor: b0().anchor }));
       }
     }
     return quit(1, 'the script ended without restarting the service');
+  }
+
+  function b0() { return m.bastion; }
+
+  // The elevated uninstall script (win/elevated.js bastionUninstallScript),
+  // acted out by the lines it holds: each piece of the bastion goes only when
+  // the script has the line that removes it.
+  function runUninstallScript(script) {
+    m.uninstallScripts.push(script);
+    const logPath = unq(/^\$log = '((?:[^']|'')*)'$/m.exec(script)[1]);
+    const nonce = /run=([0-9a-f]+)/.exec(script)[1];
+    const log = [];
+    const say = (l) => log.push(l);
+    const has = (t) => script.includes(t);
+    if (has("Emit 'step=uninstall'")) {
+      say('step=uninstall');
+      if (has("& $exe 'uninstall'") && fs.existsSync(paths.serviceExe)) {
+        const r = bastionCmd(['uninstall']);
+        say(r.out.split('\n').map((l) => `> ${l}`).join('\r\n'));
+        say(`uninstall_exit=${r.code}`);
+      }
+      say('step=leftovers');
+      if (has("'sc.exe') delete 'PrivataeBastion'")) m.service = null;
+      if (has("Remove-ItemProperty -LiteralPath 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run' -Name 'PrivataeBastionTray'")) delete m.registry[TRAY];
+      if (has("Get-NetFirewallRule -DisplayName 'Privatae bastion: your Host connects (TCP *)'")) {
+        for (const rule of m.firewallRules) say(`removed=firewall rule ${rule}`);
+        m.firewallRules = [];
+      }
+      // The tray, started at sign-in from the program, holds it open.
+      const trayRuns = m.runner.calls.some((c) => c.kind === 'detached' && c.cmd === paths.serviceExe && c.args[0] === 'tray');
+      const trayStopped = has("Get-Process -Name 'privatae-bastion'") && has('Stop-Process');
+      if (has("foreach ($f in @($exe, \"$exe.new\", (Join-Path $dir 'host-ca.pem')))") && (!trayRuns || trayStopped)) {
+        for (const f of [paths.serviceExe, path.join(paths.serviceDir, 'host-ca.pem')]) {
+          if (fs.existsSync(f)) { fs.rmSync(f); say(`removed=${f}`); }
+        }
+        if (fs.existsSync(paths.serviceDir) && !fs.readdirSync(paths.serviceDir).length) { fs.rmdirSync(paths.serviceDir); say(`removed=${paths.serviceDir}`); }
+      }
+      say('step=state');
+      if (has("'config\\systemprofile\\AppData\\Roaming\\privatae-bastion'") && fs.existsSync(m.stateDir)) {
+        fs.rmSync(m.stateDir, { recursive: true });
+        // Its pairings, anchor, owner and factors were all in it.
+        m.bastion = { mode: null, pairings: {}, anchor: null, enrolled: {}, owner: null };
+        say(`removed=${m.stateDir}`);
+      }
+    }
+    if (has("Emit 'step=wsl'") && has("'wsl.exe') '--uninstall'")) {
+      say('step=wsl');
+      m.wslUninstalls++;
+      if (!opts.wslUninstallFails) m.wsl = false;
+      say(`wsl_exit=${opts.wslUninstallFails ? 1 : 0}`);
+    }
+    say('step=check');
+    if (has("Emit 'step=uninstall'")) {
+      say(m.service ? 'running=yes' : 'running=no');
+      if (fs.existsSync(paths.serviceExe)) say(`left=${paths.serviceExe}`);
+      if (fs.existsSync(m.stateDir)) say(`left=${m.stateDir}`);
+      if (m.registry[TRAY]) say("left=the tray's logon entry");
+    }
+    say('result=ok');
+    fs.mkdirSync(path.dirname(logPath), { recursive: true });
+    fs.writeFileSync(logPath, `\uFEFF${[`run=${nonce}`, ...log].join('\r\n')}\r\n`);
+    return { code: 0 };
   }
 
   function ps(script, input) {
@@ -328,6 +417,7 @@ function fakeMachine(paths, opts = {}) {
         return { code: 1, stderr: '#< CLIXML\r\n<Objs Version="1.1.0.1"><S S="Error">Start-Process : This operation was canceled by the user._x000D__x000A_</S></Objs>' };
       }
       const inner = Buffer.from(String(input).trim(), 'base64').toString('utf16le');
+      if (/^\s*Emit 'step=(uninstall|wsl)'$/m.test(inner)) return runUninstallScript(inner);
       m.bastionScripts.push(inner);
       return runBastionScript(inner);
     }

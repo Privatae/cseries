@@ -17,7 +17,8 @@ The Host is also an AI of its own, with its own memory in its own PostgreSQL
 database, its own apps and its own rules, used from a browser. It runs in its
 own Linux virtual machine on Windows, macOS or Linux, and reaches your files
 and programs only through the bastion. You bring the models: a key or sign-in
-for a model provider, or a model server on another computer on your network.
+for a model provider, or a model server on this machine or on another
+computer on your network.
 
 Privatae, which builds C-Series, also offers two optional paid services,
 neither on sale yet: C-Series Cloud, a Host on a virtual machine of its own
@@ -45,6 +46,9 @@ named `cseries` (in WSL on Windows, in Lima on macOS and Linux), pulls the
 published Host images into it and starts the Host. It then installs the
 bastion as this machine's system service and pairs it with the Host, in one
 administrator prompt, and opens the setup page with a one-time setup code.
+On Linux it installs C-Series for the whole machine, so the Host starts when
+the machine boots, with nobody signed in; `npx cseries --just-me` installs it
+for your account only.
 [docs/GUIDE.md](docs/GUIDE.md) covers the first sign-in, what the installer
 asks for on a machine without WSL or QEMU, and reaching the Host from other
 machines.
@@ -56,8 +60,8 @@ machines.
 | Update to the latest release | `npx cseries@latest update` |
 | Stop / start | `npx cseries stop`, `npx cseries start` |
 | Read the logs | `npx cseries logs` (`host` or `postgres`) |
-| Stop it and stop it starting at login, keeping its data | `npx cseries uninstall` |
-| Delete the Host and its data | `npx cseries uninstall --delete-data` (permanent) |
+| Stop it and stop it starting by itself, keeping its data | `npx cseries uninstall` |
+| Remove the Host, its data and the bastion it installed | `npx cseries uninstall --delete-data` (permanent) |
 
 ## What is free
 

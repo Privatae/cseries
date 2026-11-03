@@ -15,6 +15,17 @@
  *
  * appView (optional) opens the slide's app at that view, through the
  * shell's deep-link lane.
+ *
+ * An OFFER slide does one thing on the Host itself instead of opening an
+ * app: { endpoint, offered(data) -> bool, button(data) -> label,
+ * action: { method, endpoint, body(data) }, failed }. Its endpoint is read
+ * when the slide comes up; nothing to offer, and the tour moves straight on
+ * without showing it. The button sends the action; a 2xx passes the slide.
+ * (Keep `method` before `endpoint`: scripts/test_app_manifest_scopes.py reads
+ * the verb that way.)
+ *
+ * whenPassed (optional) { slide, title, lines }: the words this slide shows
+ * instead once that other slide has passed.
  * ================================================================ */
 
 // The name a new Host gives itself (server/local_identity.py DEFAULT_NAME).
@@ -55,6 +66,29 @@ window.GS_SLIDES = [
         },
     },
     {
+        // First, when this computer (or another of the person's machines)
+        // already serves a model: the Host can think with it now, with no
+        // account and no key. Not shown when there is none, or when chat
+        // already has a model of its own.
+        id: 'local-model',
+        title: 'Use the model on this machine',
+        lines: [
+            'A model is already running on your machine, so your Host can think with it right away: no account, no key.',
+            'Press the button to use it. Adding a provider key on the next slide is optional, and you can do it any time.',
+        ],
+        offer: {
+            endpoint: '/api/inference/local-default',
+            offered: (d) => !!(d && d.candidate && d.candidate.model && !d.chat_routed),
+            button: (d) => `Use the model on this machine (${d.candidate.model})`,
+            action: {
+                method: 'POST',
+                endpoint: '/api/inference/local-default',
+                body: (d) => ({ model: d.candidate.model }),
+            },
+            failed: 'That didn\'t work just now. Try again, or skip and add a provider key instead.',
+        },
+    },
+    {
         id: 'keys',
         appId: 'keys',
         appName: 'Keys',
@@ -63,6 +97,14 @@ window.GS_SLIDES = [
             'Your host thinks with AI models from a provider — OpenRouter, Anthropic, OpenAI, and others. A provider gives you an API key; that key is what lets your host use their models on your account.',
             'Open Keys, pick a provider, paste the key, and close the window.',
         ],
+        whenPassed: {
+            slide: 'local-model',
+            title: 'Add a provider key (optional)',
+            lines: [
+                'Your host already thinks with the model on your machine. A provider key adds their models too — OpenRouter, Anthropic, OpenAI, and others.',
+                'If you want one, open Keys, pick a provider, paste the key, and close the window. Otherwise skip this.',
+            ],
+        },
         button: 'Open Keys',
         check: {
             endpoint: '/api/vault/providers',
@@ -151,7 +193,7 @@ window.GS_SLIDES = [
         id: 'done',
         title: 'You\'re set up',
         lines: [
-            'Your host has a key, a routed model, a conversation, and a project. Everything else on the desktop is there when you want it.',
+            'Your host has a model to think with, a conversation, and a project. Everything else on the desktop is there when you want it.',
             'This tour lives in the dock if you ever want it back.',
         ],
         button: 'Close',

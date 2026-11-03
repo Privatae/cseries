@@ -52,6 +52,7 @@ const EXIT = {
   enroll: 18,
   restart: 19,
   owner: 20,
+  machineRecord: 21,
 };
 
 // What each exit code means, for the person reading the failure.
@@ -67,7 +68,8 @@ const EXIT_WORDS = {
   [EXIT.anchor]: 'the bastion could not anchor itself to the Host',
   [EXIT.enroll]: 'the authenticator was not enrolled',
   [EXIT.restart]: 'the bastion service could not be restarted',
-  [EXIT.owner]: 'this machine\'s approvals belong to another Windows account, which keeps them (an administrator hands them over with privatae-bastion approvals-owner --replace)',
+  [EXIT.machineRecord]: 'the whole machine\'s record of the bastion could not be cleared',
+  [EXIT.owner]: 'this machine\'s approvals belong to another account, which keeps them (an administrator hands them over with privatae-bastion approvals-owner --replace)',
 };
 
 // plan: {owner: SID|undefined, release: host|null, pair: {enroll, token}|null,
@@ -78,6 +80,13 @@ const EXIT_WORDS = {
 function bastionCommands(plan, caFile) {
   const out = [];
   if (plan.owner) out.push({ code: EXIT.owner, what: 'approvals-owner', args: ['approvals-owner', '--sid', plan.owner] });
+  // macOS and Linux (bastion 0.62 and later, owner_account.go): the account
+  // that ran this command is the machine's owner. The bastion's console
+  // opens to it, and a model server it runs on this machine's loopback is
+  // one the bastion may hand the Host's prompts to (llmlocal_linux.go).
+  if (plan.ownerAccount) {
+    out.push({ code: EXIT.owner, what: 'approvals-owner', args: ['approvals-owner', '--account', plan.ownerAccount] });
+  }
   out.push({ code: EXIT.setMode, what: 'set-mode networked', args: ['set-mode', 'networked'] });
   if (plan.release) {
     out.push({ code: EXIT.release, what: 'release-anchor', args: ['release-anchor', '--host', plan.release, '--host-ca', caFile] });

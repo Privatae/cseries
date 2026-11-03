@@ -16,6 +16,9 @@
 //              this session's own groups do not
 //            pm: the package manager; systemd: whether systemd runs the
 //              machine; sudo: sudo by absolute path
+//            kvm_world: yes when /dev/kvm is open to every account
+//            vm_user_home, vm_user_groups: the whole machine's VM account
+//              (lima.js), its home and groups, empty when it is not here
 //
 // QEMU is GPL and is never bundled: it comes from the distribution's own
 // packages. sudo is run by its absolute path, never found through PATH, since
@@ -45,11 +48,17 @@ const FIRMWARE = {
 
 const SUDO = ['/usr/bin/sudo', '/bin/sudo', '/run/wrappers/bin/sudo'];
 
-// Per package manager: how it installs, and the package for each missing
-// piece. Names as each distribution published them in October 2026.
+// Per package manager: how it installs, the command a person types to remove
+// what it installed (with the dependencies nothing else needs), and the
+// package for each missing piece. Names as each distribution published them
+// in October 2026.
 const PACKAGES = {
   'apt-get': {
     install: (p) => `apt-get update -q </dev/null && DEBIAN_FRONTEND=noninteractive apt-get install -y -q --no-install-recommends ${p} </dev/null`,
+    // purge: remove leaves the package's configuration files (qemu-system-x86's
+    // /etc/qemu-ifup and qemu-ifdown) and dpkg's record of them ("rc").
+    remove: (p) => `apt-get purge --autoremove ${p}`,
+    removeYes: (p) => `DEBIAN_FRONTEND=noninteractive apt-get purge -y -q --autoremove ${p} </dev/null`,
     qemu: { x64: 'qemu-system-x86', arm64: 'qemu-system-arm' },
     qemu_img: 'qemu-utils',
     firmware: { x64: 'ovmf', arm64: 'qemu-efi-aarch64' },
@@ -57,6 +66,8 @@ const PACKAGES = {
   },
   dnf: {
     install: (p) => `dnf install -y ${p} </dev/null`,
+    remove: (p) => `dnf remove ${p}`,
+    removeYes: (p) => `dnf remove -y ${p} </dev/null`,
     qemu: { x64: 'qemu-system-x86-core', arm64: 'qemu-system-aarch64-core' },
     qemu_img: 'qemu-img',
     firmware: { x64: 'edk2-ovmf', arm64: 'edk2-aarch64' },
@@ -64,6 +75,8 @@ const PACKAGES = {
   },
   zypper: {
     install: (p) => `zypper --non-interactive install --no-recommends ${p} </dev/null`,
+    remove: (p) => `zypper remove --clean-deps ${p}`,
+    removeYes: (p) => `zypper --non-interactive remove --clean-deps ${p} </dev/null`,
     qemu: { x64: 'qemu-x86', arm64: 'qemu-arm' },
     qemu_img: 'qemu-tools',
     firmware: { x64: 'qemu-ovmf-x86_64', arm64: 'qemu-uefi-aarch64' },
@@ -71,6 +84,8 @@ const PACKAGES = {
   },
   pacman: {
     install: (p) => `pacman -S --needed --noconfirm ${p} </dev/null`,
+    remove: (p) => `pacman -Rns ${p}`,
+    removeYes: (p) => `pacman -Rns --noconfirm ${p} </dev/null`,
     qemu: { x64: 'qemu-system-x86', arm64: 'qemu-system-aarch64' },
     qemu_img: 'qemu-img',
     firmware: { x64: 'edk2-ovmf', arm64: 'edk2-aarch64' },
@@ -82,7 +97,7 @@ function shq(s) {
   return `'${String(s).replace(/'/g, `'\\''`)}'`;
 }
 
-function probeScript(platform, arch) {
+function probeScript(platform, arch, vmUser = null) {
   const lines = ['echo "uid=$(id -u)"', 'echo "user=$(id -un)"'];
   if (platform === 'darwin') {
     lines.push(
@@ -114,7 +129,15 @@ function probeScript(platform, arch) {
     'for pm in apt-get dnf zypper pacman; do if command -v "$pm" >/dev/null 2>&1; then echo "pm=$pm"; break; fi; done',
     'if [ -d /run/systemd/system ]; then echo systemd=yes; else echo systemd=no; fi',
     `for s in ${SUDO.join(' ')}; do if [ -x "$s" ]; then echo "sudo=$s"; break; fi; done`,
+    'case $(stat -c %a /dev/kvm 2>/dev/null) in *6|*7) echo kvm_world=yes ;; *) echo kvm_world=no ;; esac',
   );
+  if (vmUser) {
+    lines.push(
+      `vu=$(getent passwd ${shq(vmUser)} 2>/dev/null | cut -d: -f6 || true)`,
+      'echo "vm_user_home=$vu"',
+      `if [ -n "$vu" ]; then echo "vm_user_groups=$(id -nG ${shq(vmUser)} 2>/dev/null)"; else echo vm_user_groups=; fi`,
+    );
+  }
   return lines.join('\n');
 }
 
@@ -127,8 +150,8 @@ function parseFacts(text) {
   return f;
 }
 
-async function probe(ctx) {
-  const r = await ctx.runner.run('/bin/sh', ['-c', probeScript(ctx.platform, ctx.arch)], { timeoutMs: 20000 });
+async function probe(ctx, vmUser = null) {
+  const r = await ctx.runner.run('/bin/sh', ['-c', probeScript(ctx.platform, ctx.arch, vmUser)], { timeoutMs: 20000 });
   if (r.code !== 0) {
     throw new CliError(`Could not look at what this machine has for its Linux VM: ${r.stderr.toString('utf8').trim() || `exit ${r.code}`}`, '');
   }
@@ -175,12 +198,36 @@ function installScript(f, arch, { packages, join }) {
   return lines.join('\n');
 }
 
+// What uninstall says about the packages QEMU came from (cli.js):
+//   added: state.json packagesAdded, what this command installed itself;
+//   f: this run's facts, for a machine where this command recorded nothing
+//      (an install from before it did): the packages of the pieces that are
+//      here, which may or may not have been installed for C-Series.
+// -> {pm, packages, recorded, command (to type), script (to run as root)} | null
+function removalFor(added, f, arch) {
+  if (added && PACKAGES[added.pm] && Array.isArray(added.packages) && added.packages.length) {
+    const quoted = added.packages.map(shq).join(' ');
+    return {
+      pm: added.pm,
+      packages: added.packages,
+      recorded: true,
+      command: PACKAGES[added.pm].remove(added.packages.join(' ')),
+      script: ['set -eu', 'PATH=/usr/sbin:/usr/bin:/sbin:/bin', 'export PATH', PACKAGES[added.pm].removeYes(quoted)].join('\n'),
+    };
+  }
+  if (!f || !PACKAGES[f.pm]) return null;
+  const here = ['qemu', 'qemu_img', 'firmware'].filter((k) => f[k]);
+  if (!here.length) return null;
+  const packages = packagesFor(f, arch, here);
+  return { pm: f.pm, packages, recorded: false, command: PACKAGES[f.pm].remove(packages.join(' ')), script: null };
+}
+
 // A command line for `sg <group> -c`, every argument single-quoted.
 function sgCommand(cmd, args) {
   return [cmd, ...args].map(shq).join(' ');
 }
 
 module.exports = {
-  probe, probeScript, parseFacts, missingPieces, kvmAccess, packagesFor, installScript, sgCommand, shq,
+  probe, probeScript, parseFacts, missingPieces, kvmAccess, packagesFor, installScript, sgCommand, shq, removalFor,
   QEMU, FIRMWARE, PACKAGES, SUDO,
 };

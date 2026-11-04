@@ -101,7 +101,10 @@ CODEX_AUTH_JSON_PATH = Path("/home/privatae/.codex/auth.json")       # :63
 # (priority 1), gpt-6-sol and gpt-6-luna and drops gpt-5.2, and the CLI's own
 # no-model default MOVES to gpt-6.1-sol (banner measured on THIS binary).
 # `exec --help` / `login --help` are byte-identical to 0.154.0's.
-CODEX_RELEASE_TAG = os.environ.get("CODEX_RELEASE_TAG", "rust-v0.160.1")  # :116
+# rust-v0.160.1 → rust-v0.166.0: the version and its checksums only. The
+# catalog snapshot and the default model below were read off 0.160.1 and are
+# not re-read here.
+CODEX_RELEASE_TAG = os.environ.get("CODEX_RELEASE_TAG", "rust-v0.166.0")  # :116
 CODEX_DOWNLOAD_URL = os.environ.get(                                 # :117-121
     "CODEX_DOWNLOAD_URL",
     f"https://github.com/openai/codex/releases/download/{CODEX_RELEASE_TAG}/"
@@ -569,7 +572,7 @@ CURSOR_CACHE_DIR = Path("/var/lib/cseries/apps/cursor/bin")            # :43
 CURSOR_BIN = CURSOR_CACHE_DIR / "dist-package" / "cursor-agent"      # :50
 CURSOR_CREDS_PATH = Path("/home/privatae/.cursor/api_key")           # :51
 
-CURSOR_RELEASE_TAG = os.environ.get("CURSOR_RELEASE_TAG", "2026.10.01-e373342")  # :60
+CURSOR_RELEASE_TAG = os.environ.get("CURSOR_RELEASE_TAG", "2026.10.22-27dcf5f")  # :60
 CURSOR_DOWNLOAD_URL = os.environ.get(                                # :61-65
     "CURSOR_DOWNLOAD_URL",
     f"https://downloads.cursor.com/lab/{CURSOR_RELEASE_TAG}/linux/x64/"

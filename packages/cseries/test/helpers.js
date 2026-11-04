@@ -65,8 +65,44 @@ function fixture(name) {
   return fs.readFileSync(path.join(__dirname, 'fixtures', name));
 }
 
+// Every directory tmpdir() made in this process, removed when the process
+// exits. node --test runs each test file in a process of its own, so a file's
+// directories go when the file is done, whichever test made them and whether
+// it passed. Without this a run left about 189 directories (some 6,000 files)
+// behind in the temp directory every time. run-tests.js checks that a run
+// leaves none.
+const made = [];
+
+function removeTree(dir) {
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // A test that took write permission off a directory inside: give it back
+    // and try once more. Anything still failing is left for run-tests.js to
+    // report, never thrown from an exit handler.
+    try {
+      const walk = (p) => {
+        let st;
+        try { st = fs.lstatSync(p); } catch { return; }
+        if (!st.isDirectory()) return;
+        try { fs.chmodSync(p, 0o700); } catch { /* not ours */ }
+        for (const n of fs.readdirSync(p)) walk(path.join(p, n));
+      };
+      walk(dir);
+      fs.rmSync(dir, { recursive: true, force: true });
+    } catch { /* reported by run-tests.js */ }
+  }
+}
+
+function cleanupTmpdirs() {
+  while (made.length) removeTree(made.pop());
+}
+process.on('exit', cleanupTmpdirs);
+
 function tmpdir(prefix = 'cseries-test-') {
-  return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), prefix));
+  made.push(dir);
+  return dir;
 }
 
 // The paths platform.js gives a Windows machine, all under one temp dir so a
@@ -124,7 +160,15 @@ function guestShell(dir, opts = {}) {
   fs.mkdirSync(root, { recursive: true });
   fs.mkdirSync(stubs, { recursive: true });
   const stub = (name, body) => fs.writeFileSync(path.join(stubs, name), `#!/bin/sh\n${body}\n`, { mode: 0o755 });
-  stub('systemctl', `echo "systemctl $*" >> ${JSON.stringify(log)}${opts.restartFails ? '\n[ "$1" = reload-or-restart ] && { echo "Job for cseries-machine-firewall.service failed." >&2; exit 1; }' : ''}\nexit 0`);
+  // opts.loaded: the units `systemctl show -p LoadState` finds loaded
+  // (size-caps.js); every other unit is not-found.
+  const loaded = (opts.loaded || []).join(' ');
+  stub('systemctl', `echo "systemctl $*" >> ${JSON.stringify(log)}${opts.restartFails ? '\n[ "$1" = reload-or-restart ] && { echo "Job for cseries-machine-firewall.service failed." >&2; exit 1; }' : ''}
+if [ "$1 $2 $3 $4" = "show -p LoadState --value" ]; then
+  for u in ${loaded}; do [ "$5" = "$u" ] && { echo loaded; exit 0; }; done
+  echo not-found; exit 0
+fi
+exit 0`);
   stub('journalctl', 'echo "/dev/stdin:3:1-2: Error: syntax error (invented for the test)"');
   stub('nft', opts.noTable ? '[ "$1 $2" = "list table" ] && { echo "Error: No such file or directory" >&2; exit 1; }\nexit 0' : 'exit 0');
   const g = {

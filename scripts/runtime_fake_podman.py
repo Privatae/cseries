@@ -12,6 +12,8 @@ State: $FAKE_PODMAN_STATE (JSON). Knobs, all optional:
   FAKE_PULL_FAIL    1 to make every pull fail
   FAKE_VOLROOT      where volume mountpoints are made (default beside the state)
   FAKE_BUILD_RC     exit status of a build
+  FAKE_IMAGE_EXISTS_RC  exit status of every `image exists` (125: podman's
+                    own error, e.g. a locked store)
   FAKE_VOLUME_FILTER_OR  1 to have `volume ls` match a volume carrying ANY of
                     the label filters (podman ANDs them; a test proves the
                     runtime's deletes do not depend on that)
@@ -196,6 +198,8 @@ def main(argv):
             out = "\n".join(n for n, c in st["containers"].items() if key in c["labels"])
         elif cmd == "image" and argv[1:2] == ["exists"]:
             rc = 0 if argv[2] in st["images"] else 1
+            if os.environ.get("FAKE_IMAGE_EXISTS_RC"):
+                rc = int(os.environ["FAKE_IMAGE_EXISTS_RC"])
         elif cmd == "image" and argv[1:2] == ["inspect"]:
             ref = argv[-1]
             if ref in st["images"]:

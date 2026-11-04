@@ -19,7 +19,7 @@ The Orchestrator decides which AI model does which job for your Host, on provide
 
 It opens in **Simple** mode, a checklist of four things:
 
-- **Thinking**: pick a provider you hold a key or sign-in for, and one click routes the Host model to a recommended model on it, with an optional backup provider. Recommendations are checked against the provider's live model list when applied, and every route stays visible and editable.
+- **Thinking**: pick a provider you hold a key or sign-in for, and one click routes the Host model to a recommended model on it, with an optional backup provider. Recommendations are checked against the provider's live model list when applied, and every route stays visible and editable. Before you pick, it says which model chat uses and why (a model on your own machine first, else your provider's recommended one). Embedding models on your machines are never offered for chat.
 - **Memory**: an embeddings model, so your Host can recall by meaning. Run it free on a machine of your own, or use a provider.
 - **Seeing**: a model for making images. Where a provider's catalog says which of its models can make one, only those are offered. Your Host looks at pictures you share with its own Host model, so pick a Host model that reads images.
 - **Hearing**: the provider for live voice.

@@ -83,7 +83,10 @@ by the time you look it may already be done; `op=current` tells you.)
    If they have no machine enrolled at all, the Getting Started walkthrough's
    Network step explains a bastion and walks them through standing one up.
 2. `embedding_route op=use_bastion server=<hostname>`. Omit `model`: a host
-   with no model yet gets the one the machine serves; a host that has a model
+   with no model yet gets the one the machine serves, found by a test embed
+   against each model it lists (known embedders first; the dimension is the
+   one the answer has; a model that only chats is never chosen; the result's
+   `chosen_by` says what each answered); a host that has a model
    keeps it (only WHERE it embeds moves). Name a model only from that
    machine's `embed_models` — never one you remember from elsewhere. The call
    is probe-gated: the box must actually answer for that model, or the switch
@@ -219,7 +222,8 @@ down or system-wide. Switching lanes KEEPS existing vectors (NO re-embed).
 - `op='use_bastion'`: set up embeddings on the user's machine — route the
   host's embeds to `server`. Omit `model`: a host that already has a model
   KEEPS it (just moves the lane); a host with NO model yet gets the embedding
-  model the machine serves, picked from its own heartbeat list. Pass `model`
+  model the machine serves, found by a test embed of each model its heartbeat
+  lists. Pass `model`
   only to choose among the models op='bastions' lists for that machine
   (embed_models) — never a name from memory; the call is probe-gated and a
   refusal names what the box does serve. This is ALSO how the model is

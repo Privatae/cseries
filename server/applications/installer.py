@@ -336,6 +336,9 @@ class AppRuntimeOverPlan(Exception):
                    f"{spare} {self.headroom_mi}MiB spare.")
             if self.upgrade_to:
                 msg += f" {self.upgrade_to} has room for it."
+            elif self.machine:
+                from server.applications.machine_room import RESIZE_SENTENCE
+                msg += f" {RESIZE_SENTENCE}"
         else:
             msg = str(detail) if detail else f"{app_id} does not fit this plan"
         super().__init__(msg)

@@ -85,6 +85,12 @@ PIN_PAIRS = [
     ("sidecars/harness-grok/Dockerfile", "GROK_RELEASE_TAG", "GROK_SHA256", _RECORDED),
     ("sidecars/harness-claude-code/Dockerfile", "CLAUDE_AGENT_SDK_VERSION", "CLAUDE_AGENT_SDK_SHA256",
      "digests.sha256 of the manylinux_2_17_x86_64 wheel in https://pypi.org/pypi/claude-agent-sdk/<version>/json"),
+    # The Host image bakes the same wheel for the Claude subscription lane
+    # (brain/mastercode/claude_sdk_wire.py), for both release architectures.
+    ("Dockerfile.linux", "CLAUDE_AGENT_SDK_VERSION", "CLAUDE_AGENT_SDK_SHA256",
+     "digests.sha256 of the manylinux_2_17_x86_64 wheel in https://pypi.org/pypi/claude-agent-sdk/<version>/json"),
+    ("Dockerfile.linux", "CLAUDE_AGENT_SDK_VERSION", "CLAUDE_AGENT_SDK_SHA256_ARM64",
+     "digests.sha256 of the manylinux_2_17_aarch64 wheel in https://pypi.org/pypi/claude-agent-sdk/<version>/json"),
     # antigravity pins version + release-build-id + sha512. Its digest moves with
     # the build id rather than the version alone, and renovate cannot follow that
     # source at all (no datasource), so there is no bot to mis-bump it — left out

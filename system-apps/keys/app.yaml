@@ -100,7 +100,13 @@ system: true
 #   No new scopes: the routes take write:vault, which Keys already declares,
 #   and accept only the Keys app's own token.
 # 0.6.1 (2026-10-18): comments rewritten as plain rationale, with no tracker or review references; no behaviour change.
-version: "0.6.1"
+# 0.6.2 (2026-11-04): a view 'key-<name>' opens the Vault on the form to add
+#   that key, its name filled in. The Orchestrator's Connect for a coding
+#   engine that runs on its own key (Cursor: harness-cursor) sends it, so the
+#   person lands on the right form instead of the Providers list.
+#   A view never replaces a window already open, and a filled-in name that
+#   already holds a key says sealing replaces it.
+version: "0.6.2"
 # Environment-catalog facts (host-facing, code-true). Source for the L1
 # topology block + describe_app — this is a control panel, not a conversational
 # surface, so: what_it_is / user_path only.

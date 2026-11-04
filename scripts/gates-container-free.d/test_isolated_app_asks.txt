@@ -1,0 +1,10 @@
+# An isolated app's asks reach the desktop from its own frame only. The REAL
+# app-runner.js in node with the browser surface stubbed: what the Orchestrator,
+# Settings and the App Store may ask (open-app with its allowed targets, views
+# and prompts; wallpaper; boot screen; layout) and everything refused (a
+# community or custom app under a listed id, an unlisted app, an unlisted
+# target, a prompt over 2000 characters, malformed asks); a message from another
+# window or another origin opens nothing; the layout answer goes into the asking
+# frame on its own origin; closing the window drops its listener; the
+# desktop-wide relay still refuses another origin. Needs node.
+test_isolated_app_asks.py

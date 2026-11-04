@@ -167,9 +167,15 @@
         return out;
     }
 
+    // How often the Orchestrator reads the machines' models again while it is
+    // open (Picker._startLocalPoll): soon while there are none (a bastion's
+    // first heartbeat is seconds away during an install), slowly after.
+    const LOCAL_POLL_EMPTY_MS = 5000;
+    const LOCAL_POLL_MS = 30000;
+
     async function fetchJSON(url, init) {
         try {
-            const r = await fetch(url, init);
+            const r = await fetchWithToken(url, init);
             if (!r.ok) throw new Error(`${r.status}`);
             return await r.json();
         } catch (e) {
@@ -181,7 +187,7 @@
     // 400 reason verbatim, not a silent null.
     async function fetchDetail(url, init) {
         try {
-            const r = await fetch(url, init);
+            const r = await fetchWithToken(url, init);
             const body = await r.json().catch(() => ({}));
             if (!r.ok) {
                 return { ok: false, status: r.status,
@@ -191,6 +197,19 @@
         } catch (e) {
             return { ok: false, status: 0, detail: e.message };
         }
+    }
+
+    // A read that left before the window token had arrived gets 401
+    // "application token required" (an isolated app's token is minted on its
+    // own origin after first paint). Once the token is here, ask again, once.
+    async function fetchWithToken(url, init) {
+        const r = await fetch(url, init);
+        const sdk = window.CSeriesApp;
+        if (r.status !== 401 || !sdk || !sdk.ready) return r;
+        const body = await r.clone().json().catch(() => null);
+        if (!body || body.detail !== 'application token required') return r;
+        await Promise.race([sdk.ready, new Promise((res) => setTimeout(res, 10000))]);
+        return sdk.token ? fetch(url, init) : r;
     }
 
     class Picker {
@@ -245,7 +264,7 @@
                 tab: this.opts.defaultTab || 'models',
             };
             this._render();
-            this.reload();
+            this.reload().then(() => this._startLocalPoll(), () => this._startLocalPoll());
         }
 
         async reload() {
@@ -338,7 +357,47 @@
         }
 
         destroy() {
+            this._stopLocalPoll();
             this.root.innerHTML = '';
+        }
+
+        // The machines' models arrive with a bastion's heartbeat, which can
+        // come after the page loaded (seen on a fresh install: the page read
+        // /local-models two seconds before the first heartbeat and showed
+        // none for good). So the list is read again while the page is open:
+        // every LOCAL_POLL_EMPTY_MS while it is empty, every
+        // LOCAL_POLL_MS once it has models (a machine can go or come back),
+        // never while the page is hidden; a change reloads the picker.
+        _startLocalPoll() {
+            if (this._localPollTimer) return;
+            const tick = async () => {
+                this._localPollTimer = null;
+                if (!this.root || !this.root.isConnected) return;
+                if (!document.hidden) {
+                    try {
+                        const got = await fetchJSON('/api/inference/local-models');
+                        const list = got && Array.isArray(got.local_models) ? got.local_models : null;
+                        if (list && JSON.stringify(list) !== JSON.stringify(this.state.localModels || [])) {
+                            this.state.localModels = list;
+                            await this.reload();      // the routing may have moved with it
+                        }
+                    } catch (e) {
+                        // A failed read or render is not the end of the watch:
+                        // the next tick is still scheduled below.
+                        console.warn('ModelPicker: re-reading local models failed:', e && e.message);
+                    }
+                }
+                if (!this.root || !this.root.isConnected) return;
+                const wait = (this.state.localModels || []).length ? LOCAL_POLL_MS : LOCAL_POLL_EMPTY_MS;
+                this._localPollTimer = setTimeout(tick, wait);
+            };
+            this._localPollTimer = setTimeout(tick,
+                (this.state.localModels || []).length ? LOCAL_POLL_MS : LOCAL_POLL_EMPTY_MS);
+        }
+
+        _stopLocalPoll() {
+            if (this._localPollTimer) clearTimeout(this._localPollTimer);
+            this._localPollTimer = null;
         }
 
         // ---- Templates ----
@@ -646,7 +705,7 @@
                     // An unset Anthropic route runs at the model's own
                     // default, which the server names when the docs do.
                     const thinks = e.effort
-                        || (e.provider === 'anthropic' && this._roleEffortDefault(role)
+                        || (this._effortPerModel(e.provider) && this._roleEffortDefault(role)
                             ? 'default · ' + this._roleEffortDefault(role) : '');
                     const answer = `<strong>${esc(e.provider)}</strong> · ${esc(model)}`
                         + (thinks ? ` <span class="label-sys">(thinks: ${esc(thinks)})</span>` : '')
@@ -968,8 +1027,31 @@
             const results = this.state.simpleResults || {};
             const applying = !!this.state.simpleApplying;
 
+            // Chat already answered on one of the person's own machines (a
+            // local model routed at install, or in Advanced): say so, instead
+            // of a "no provider keys" line that reads as "nothing works".
+            const chatEff = (this.state.effective || {}).chat || {};
+            const chatLocalModel = (chatEff.provider === 'local' && !chatEff.unconfigured)
+                ? (chatEff.model || chatEff.model_id || '') : '';
+            const chatLocalRow = chatLocalModel
+                ? this._localLaneModels().find((m) => m.id === chatLocalModel) : null;
+            const claudeBtn = this._providerById('anthropic-subscription')
+                ? '<button class="cseries-btn" data-mp-claude-signin>Sign in with your Claude account</button>' : '';
+            // Which model chat runs on now, and why, in words: a default the
+            // person did not choose is shown as one (never a hidden pin), with
+            // where to change it.
+            const chatNow = this._chatNowHtml(chatEff, chatLocalRow);
+
             let setup;
-            if (!((this.opts.recommendations || {}).providers)) {
+            if (chatLocalModel && !keyed.length) {
+                setup = `
+                    <div class="mp-empty mp-prov-empty" data-mp-chat-local>
+                        Your host thinks with <strong>${esc(chatLocalModel)}</strong> on your machine${chatLocalRow && chatLocalRow.bastion ? ' · ' + esc(chatLocalRow.bastion) : ''}.
+                        ${chatEff.default_why ? esc(chatEff.default_why) + ' ' : ''}Change it in Advanced, or run it on a provider instead:
+                        <button class="cseries-btn" data-mp-open-keys>Open Keys</button>
+                        ${claudeBtn}
+                    </div>`;
+            } else if (!((this.opts.recommendations || {}).providers)) {
                 setup = `
                     <div class="mp-empty mp-prov-empty">
                         The recommendations file didn't load — route per role in Advanced instead.
@@ -986,9 +1068,11 @@
             } else if (!keyed.length) {
                 setup = `
                     <div class="mp-empty mp-prov-empty">
-                        No provider keys yet. Add a key in the Keys app — or run models on your own
-                        machines and route them in Advanced.
+                        No provider keys yet. Add a key in the Keys app, sign in with your Claude
+                        account to run your Host on your Claude subscription — or run models on your
+                        own machines and route them in Advanced.
                         <button class="cseries-btn" data-mp-open-keys>Open Keys</button>
+                        ${claudeBtn}
                     </div>`;
             } else {
                 const plan = this._planRows(sel);
@@ -1022,11 +1106,15 @@
                                 <span class="mp-prov-name">${esc(p.rec.label || p.id)}</span>
                                 <span class="label-sys">key in place</span>
                             </button>`).join('')}
-                        ${keyless.map((p) => `
+                        ${keyless.map((p) => (p.signin === 'claude' ? `
+                            <button class="mp-prov-card mp-prov-dim" data-mp-claude-signin title="Run your Host's chat on your Claude subscription">
+                                <span class="mp-prov-name">${esc(p.rec.label || p.id)}</span>
+                                <span class="label-sys">Sign in with your Claude account</span>
+                            </button>` : `
                             <button class="mp-prov-card mp-prov-dim" data-mp-open-keys title="No ${esc(p.id)} key stored yet">
                                 <span class="mp-prov-name">${esc(p.rec.label || p.id)}</span>
                                 <span class="label-sys">add key in Keys</span>
-                            </button>`).join('')}
+                            </button>`)).join('')}
                         ${keyedNoRec.map((p) => `
                             <span class="mp-prov-card mp-prov-dim" title="${esc(noRec[p.id] || 'No recommendations for this provider yet — route it in Advanced.')}">
                                 <span class="mp-prov-name">${esc(p.id)}</span>
@@ -1078,6 +1166,7 @@
                     <p class="mp-setup-why">Your host needs a model to think with. Pick a provider
                         you hold a key for and one click routes it to a researched
                         recommendation on it.</p>
+                    ${(chatLocalModel && !keyed.length) ? '' : chatNow}
                     ${setup}
                 </div>
 
@@ -1349,6 +1438,119 @@
                     this._openKeys();
                 });
             });
+            container.querySelectorAll('[data-mp-claude-signin]').forEach((b) => {
+                b.addEventListener('click', (ev) => {
+                    ev.preventDefault();
+                    ev.stopPropagation();
+                    this._claudeSignin();
+                });
+            });
+        }
+
+        // "Sign in with your Claude account": a pop-up over the Orchestrator.
+        // The Host runs Anthropic's own sign-in (routes/inference
+        // /claude-signin): the person opens Claude's page in their own
+        // browser, signs in there, and pastes the code that page shows them.
+        // Nothing to install, no coding engine to start, nothing typed into
+        // Keys. On success the provider anthropic-subscription is ready.
+        // A sign-in step can outlast the router's 30 s: the Host then answers
+        // 202 + a job (server/applications/long_request), read here until it
+        // is done. Same shape as fetchDetail's answer.
+        async _claudeSigninStep(url, init) {
+            const r = await fetchDetail(url, init);
+            if (!r.ok || !r.body || !r.body.pending) return r;
+            const poll = String(r.body.poll || '');
+            if (poll.indexOf('/api/inference/claude-signin/jobs/') !== 0) {
+                return { ok: false, status: 0, detail: 'The Host answered in a way this page does not understand.' };
+            }
+            const deadline = Date.now() + 5 * 60 * 1000;
+            while (Date.now() < deadline) {
+                await new Promise((res) => setTimeout(res, 2000));
+                const st = await fetchDetail(poll);
+                if (!st.ok) return st;
+                if (st.body.status === 'done') return { ok: true, body: st.body.result };
+                if (st.body.status === 'failed') {
+                    return { ok: false, status: st.body.http_status || 500,
+                             detail: st.body.detail || 'The sign-in step failed on the Host.' };
+                }
+            }
+            return { ok: false, status: 0, detail: 'The Claude sign-in took too long. Start again.' };
+        }
+
+        _claudeSignin() {
+            const old = document.querySelector('.mp-claude-scrim');
+            if (old) old.remove();
+            const scrim = document.createElement('div');
+            scrim.className = 'mp-claude-scrim';
+            scrim.setAttribute('role', 'dialog');
+            scrim.setAttribute('aria-modal', 'true');
+            scrim.setAttribute('aria-label', 'Sign in with your Claude account');
+            scrim.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;'
+                + 'align-items:center;justify-content:center;z-index:1000';
+            scrim.innerHTML = `
+                <div class="mp-claude-modal" style="background:var(--surface,#fff);color:inherit;max-width:440px;width:92%;padding:20px 22px;border-radius:12px;box-shadow:0 10px 40px rgba(0,0,0,.3)">
+                    <h3 style="margin:0 0 10px">Sign in with your Claude account</h3>
+                    <div data-mp-cs-body><p class="label-sys">Starting the Claude sign-in on your Host…</p></div>
+                    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">
+                        <button class="cseries-btn ghost" data-mp-cs-cancel>Cancel</button>
+                    </div>
+                </div>`;
+            document.body.appendChild(scrim);
+            const body = scrim.querySelector('[data-mp-cs-body]');
+            let done = false;
+            const close = async (cancel) => {
+                scrim.remove();
+                if (cancel && !done) {
+                    await fetchDetail('/api/inference/claude-signin', { method: 'DELETE' });
+                }
+            };
+            scrim.querySelector('[data-mp-cs-cancel]').addEventListener('click', () => close(true));
+            const fail = (msg) => {
+                body.innerHTML = `<p>${esc(msg)}</p>
+                    <p><button class="cseries-btn" data-mp-cs-again>Start again</button></p>`;
+                body.querySelector('[data-mp-cs-again]').addEventListener('click', () => {
+                    scrim.remove(); this._claudeSignin();
+                });
+            };
+            (async () => {
+                const res = await this._claudeSigninStep('/api/inference/claude-signin', { method: 'POST' });
+                if (!res.ok) { fail(res.detail || 'Your Host could not start the Claude sign-in.'); return; }
+                const b = res.body || {};
+                const url = String(b.url || '');
+                if (b.state !== 'waiting' || !/^https:\/\//i.test(url)) {
+                    fail(b.error || 'Your Host could not start the Claude sign-in.'); return;
+                }
+                body.innerHTML = `
+                    <p>1. Open Claude's sign-in page and sign in with your Claude account.</p>
+                    <p><a class="cseries-btn primary" data-mp-cs-link target="_blank" rel="noopener noreferrer">Open Claude sign-in</a></p>
+                    <p>2. Claude then shows you a code. Paste it here:</p>
+                    <p><input class="cseries-input" data-mp-cs-code autocomplete="off" spellcheck="false" style="width:100%" aria-label="The code from the Claude page"></p>
+                    <p><button class="cseries-btn primary" data-mp-cs-finish>Finish signing in</button></p>
+                    <p class="label-sys" data-mp-cs-status>The sign-in waits about 15 minutes.</p>`;
+                body.querySelector('[data-mp-cs-link]').href = url;
+                const input = body.querySelector('[data-mp-cs-code]');
+                const status = body.querySelector('[data-mp-cs-status]');
+                const finish = body.querySelector('[data-mp-cs-finish]');
+                finish.addEventListener('click', async () => {
+                    const code = (input.value || '').trim();
+                    if (!code) { status.textContent = 'Paste the code from the Claude page first.'; return; }
+                    finish.disabled = true;
+                    status.textContent = 'Finishing the sign-in…';
+                    const r = await this._claudeSigninStep('/api/inference/claude-signin/code', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ code }),
+                    });
+                    const rb = (r.ok && r.body) || {};
+                    if (rb.state === 'signed_in') {
+                        done = true;
+                        body.innerHTML = '<p>Signed in with your Claude account. Your Host can run on your Claude subscription now (pick <strong>anthropic-subscription</strong> for your Host model), and the Claude Code engine uses the same sign-in.</p>';
+                        scrim.querySelector('[data-mp-cs-cancel]').textContent = 'Close';
+                        this.reload();
+                        return;
+                    }
+                    fail(rb.error || r.detail || 'The Claude sign-in did not finish. Start again.');
+                });
+            })();
         }
 
         // ── Models tab ───────────────────────────────────────────────────
@@ -1386,7 +1588,8 @@
                 const p = this._providerById(this.state.modelsProvider);
                 note.textContent = isOr ? ''
                     : this.state.modelsProvider === 'local' ? 'models your machines serve over the mesh'
-                    : (p && !p.has_key) ? 'no key stored for this provider yet'
+                    : (p && !p.has_key) ? (p.signin === 'claude' ? 'not signed in to Claude yet'
+                        : 'no key stored for this provider yet')
                     : 'this provider’s own model list, under your '
                         + ((p && p.via_label) || 'key');
             }
@@ -1514,6 +1717,16 @@
             const p = this._providerById(prov);
             const countEl = this.root.querySelector('[data-mp-count]');
 
+            if (p && !p.has_key && p.signin === 'claude') {
+                body.innerHTML = `
+                    <div class="mp-empty mp-prov-empty">
+                        Sign in with your Claude account to run your Host on your Claude subscription.
+                        <button class="cseries-btn" data-mp-claude-signin>Sign in with your Claude account</button>
+                    </div>`;
+                if (countEl) countEl.textContent = '';
+                this._bindKeysLinks(body);
+                return;
+            }
             if (p && !p.has_key) {
                 body.innerHTML = `
                     <div class="mp-empty mp-prov-empty">
@@ -1824,6 +2037,25 @@
         // merged with any pod-local catalog tags (catalog.local_models). The
         // endpoint is DISPLAY-ONLY — a save sends {provider:'local', model};
         // the backend resolves the serving machine live at call time.
+        // "Chat uses <model> ..., because ..." for the Simple view. Empty while
+        // chat has no model (the setup below says what to do) and when chat
+        // runs on a local model with no provider key (that branch says it).
+        _chatNowHtml(chatEff, chatLocalRow) {
+            const e = chatEff || {};
+            const model = e.unconfigured ? '' : (e.model || e.model_id || '');
+            if (!model) return '';
+            const where = e.provider === 'local'
+                ? 'on your machine' + (chatLocalRow && chatLocalRow.bastion ? ' · ' + chatLocalRow.bastion : '')
+                : 'on ' + e.provider;
+            const why = e.default_why
+                ? e.default_why
+                : (e.source === 'explicit' ? 'You chose it. Change it in Advanced, or pick a provider below.' : '');
+            return `
+                <div class="mp-chat-now label-sys" data-mp-chat-now>
+                    Chat uses <strong>${esc(model)}</strong> ${esc(where)}.${why ? ' ' + esc(why) : ''}
+                </div>`;
+        }
+
         _localLaneModels() {
             const out = [];
             const seen = new Set();
@@ -1834,6 +2066,10 @@
                 }
                 const id = m.id || m.model || m.name;
                 if (!id) return;
+                // An embedding model answers no chat: never offered as a model
+                // a role runs on (the server says which models are embedders;
+                // GET /api/inference/local-models marks them).
+                if (m.embedding === true) return;
                 const key = id + '::' + (m.endpoint || '');
                 if (seen.has(key)) return;
                 seen.add(key);
@@ -1844,10 +2080,14 @@
                     bastion: m.bastion || '',
                 });
             });
+            // The catalog lists the same machines' models; an embedder there
+            // (marked the same way, or marked in the list above) stays out too.
+            const embedders = new Set((this.state.localModels || [])
+                .filter((m) => m && m.embedding === true).map((m) => m.id || m.model || m.name));
             (((this.state.catalog || {}).local_models) || []).forEach((m) => {
-                if (m.available === false) return;
+                if (m.available === false || m.embedding === true) return;
                 const id = m.id || m.name;
-                if (!id || out.some((x) => x.id === id)) return;
+                if (!id || embedders.has(id) || out.some((x) => x.id === id)) return;
                 out.push({ id, label: m.name || id });
             });
             return out;
@@ -1867,14 +2107,22 @@
             return o.default || '';
         }
 
+        // Providers whose effort levels are the MODEL's own: Anthropic's API,
+        // and the subscription lane that runs the same models (its vendor is
+        // anthropic, server/vault/providers.vendor_of; effort_options answers
+        // both the same way).
+        _effortPerModel(provider) {
+            return provider === 'anthropic' || provider === 'anthropic-subscription';
+        }
+
         // What the row's reasoning select offers: {efforts, blank}. Anthropic:
         // the routed model's own levels, and only while the row shows that
         // route (a provider being browsed has no model yet). Every other
         // provider: its static set, as before.
         _roleEffortChoice(role, selProv) {
-            if (selProv === 'anthropic') {
+            if (this._effortPerModel(selProv)) {
                 const o = (this.state.roleEffortOptions || {})[role] || {};
-                if (o.provider !== 'anthropic') return { efforts: [], blank: 'default' };
+                if (o.provider !== selProv) return { efforts: [], blank: 'default' };
                 return { efforts: o.efforts || [],
                          blank: o.default ? 'Default · ' + o.default : 'Default' };
             }
@@ -1887,7 +2135,7 @@
         // levels are per model, and the server would refuse the save.
         async _effortCarries(r, provider, model) {
             if (!(r.effort && r.provider === provider)) return false;
-            if (provider !== 'anthropic') return true;
+            if (!this._effortPerModel(provider)) return true;
             const q = '?provider=' + encodeURIComponent(provider) + '&model=' + encodeURIComponent(model);
             const res = await fetchDetail('/api/inference/effort-options' + q);
             const effs = (res.ok && res.body && res.body.efforts) || [];
@@ -2006,6 +2254,7 @@
                 const effFbModel = e.fallback_model || r.fallback_model || '';
                 const effLine = configured
                     ? `<div class="mp-role-eff label-sys">runs: ${esc(effProvider)} · ${esc(effModel)}${effFbProv ? ` — fallback: ${esc(effFbProv)} · ${esc(effFbModel || 'same model')}` : ''}</div>`
+                        + (e.default_why ? `<div class="mp-role-why label-sys" data-mp-role-why="${esc(role)}">${esc(e.default_why)}</div>` : '')
                     : '';
 
                 const pill = configured
@@ -2516,6 +2765,12 @@
         // harness_connections tool's own next_step tells the host the rest,
         // per vendor, so the seed must not prescribe a Keys paste that only
         // some vendors have.
+        // The Claude Code engine's ids (the provider id and the app id are
+        // one harness, routes/harnesses.PROVIDERS["claude-sdk"]).
+        _isClaudeEngine(id) {
+            return id === 'claude-sdk' || id === 'claude-code';
+        }
+
         _connectSeed(harnessId, label) {
             return `Connect ${label} for me. Run its own login (harness_connections `
                  + `op='login', provider='${harnessId}') and walk me through finishing it.`;
@@ -2597,7 +2852,7 @@
                     runsOn = `<span class="mp-mx-bound">${esc(row.provider || row.vendor || '')}</span> ${dot} <span class="label-sys">${esc(WORD[row.key.state] || '')}</span>`;
                 }
                 const action = row.action
-                    ? `<button class="cseries-btn ghost mp-mx-action" data-app="${esc(row.action.app || 'keys')}" data-harness="${esc(row.id)}" data-kind="${esc(row.action.kind || 'open')}">${esc(row.action.label)} →</button>`
+                    ? `<button class="cseries-btn ghost mp-mx-action" data-app="${esc(row.action.app || 'keys')}" data-harness="${esc(row.id)}" data-kind="${esc(row.action.kind || 'open')}"${row.action.key ? ` data-key="${esc(row.action.key)}"` : ''}>${esc(row.action.label)} →</button>`
                     : '';
                 // A CLI-catalog harness (cursor) with nothing cached: the kernel
                 // has WOKEN its pod and is reading the list right now
@@ -2772,8 +3027,19 @@
                     // A vendor-account engine connects through its OWN login,
                     // driven by the host in Circles. Everything else is a key
                     // the user pastes, so Keys is the whole flow.
-                    if (btn.dataset.kind === 'login' && row) {
+                    if (btn.dataset.kind === 'login' && row && this._isClaudeEngine(id)) {
+                        // Claude Code runs on the person's Claude sign-in, and
+                        // the Host runs that sign-in itself (the pop-up below):
+                        // no chat model, no Host conversation and no engine
+                        // container are needed to connect it.
+                        this._claudeSignin();
+                    } else if (btn.dataset.kind === 'login' && row) {
                         this._openApp('circles', this._connectSeed(id, row.label));
+                    } else if ((btn.dataset.app || 'keys') === 'keys' && btn.dataset.key) {
+                        // Keys opens on the form for this engine's own key
+                        // (harness-<id>), its name filled in: the person never
+                        // has to know which name the engine reads.
+                        this._openAppView('keys', 'key-' + btn.dataset.key);
                     } else {
                         this._openApp(btn.dataset.app || 'keys');
                     }
@@ -3014,7 +3280,8 @@
                 .concat(provs.map((p) => {
                     const keyless = !p.has_key;
                     const label = p.id === 'local' ? 'local — your machines' : p.id;
-                    return `<option value="${esc(p.id)}"${p.id === selProv ? ' selected' : ''}${keyless && p.id !== selProv ? ' disabled' : ''}>${esc(label)}${keyless ? ' — add key in Keys' : ''}</option>`;
+                    const claude = keyless && p.signin === 'claude';
+                    return `<option value="${esc(p.id)}"${p.id === selProv ? ' selected' : ''}${keyless && !claude && p.id !== selProv ? ' disabled' : ''}>${esc(label)}${claude ? ' — sign in with Claude' : keyless ? ' — add key in Keys' : ''}</option>`;
                 })).join('');
 
             // Model control per selected provider.

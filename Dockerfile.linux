@@ -81,9 +81,37 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gcc libffi-dev libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Python deps (pinned versions from audit)
+# Python deps (pinned versions from audit), and the Claude Agent SDK.
+#
+# The SDK carries the Host's Anthropic calls on the person's own Claude
+# subscription (brain/mastercode/claude_sdk_wire.py), and runs the Host's
+# "Sign in with your Claude account" (server/network/claude_signin.py):
+# Anthropic refuses a subscription token on a direct /v1/messages call and
+# accepts it from Claude's own client, which the wheel bundles as a `claude`
+# binary. Same version as the coding harness image
+# (sidecars/harness-claude-code/Dockerfile); claude_sdk_wire.SDK_VERSION names
+# it too, and the lane refuses to run on any other version. The sha256 is of
+# the manylinux_2_17 wheel for the image's architecture as PyPI publishes it
+# (the release builds linux/amd64 and linux/arm64), so it pins the bundled
+# binary as well; the SDK's own Python dependencies resolve in the same pip
+# run as requirements.txt, so one resolver sees both.
+ARG TARGETARCH
+ARG CLAUDE_AGENT_SDK_VERSION=0.2.163
+ARG CLAUDE_AGENT_SDK_SHA256=260cb955d237b7e1897f1dbf9ee5efbf815d8622d0c7459a05409c56432d8501
+ARG CLAUDE_AGENT_SDK_SHA256_ARM64=e3be00eeb9fc156a3308a2e8fb58390768fdcb2ff16683fac385b4d98e99233c
 COPY requirements.txt /build/requirements.txt
-RUN pip install --no-cache-dir --prefix=/install -r /build/requirements.txt
+RUN case "${TARGETARCH:-amd64}" in \
+        amd64) WARCH=x86_64; WSHA="${CLAUDE_AGENT_SDK_SHA256}" ;; \
+        arm64) WARCH=aarch64; WSHA="${CLAUDE_AGENT_SDK_SHA256_ARM64}" ;; \
+        *) echo "no pinned claude-agent-sdk wheel for ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && pip download --no-cache-dir --no-deps --only-binary=:all: -d /build/sdk \
+        "claude-agent-sdk==${CLAUDE_AGENT_SDK_VERSION}" \
+    && WHL="/build/sdk/claude_agent_sdk-${CLAUDE_AGENT_SDK_VERSION}-py3-none-manylinux_2_17_${WARCH}.whl" \
+    && test "$(ls /build/sdk)" = "$(basename "$WHL")" \
+    && echo "${WSHA}  $WHL" | sha256sum -c - \
+    && pip install --no-cache-dir --prefix=/install -r /build/requirements.txt "$WHL" \
+    && rm -rf /build/sdk
 
 # Code search's tree-sitter parsers, in the image. tree-sitter-language-pack
 # ships no grammars: get_parser() fetches a 22 MB bundle from github.com on
@@ -142,10 +170,9 @@ open(f'{d}/InterVariable.ttf', 'wb').write(ttf); open(f'{d}/LICENSE.txt', 'wb').
 
 # No Claude Code CLI npm package: its duplicated npm copies (~440MB) served
 # no runtime purpose. The Python SDK (claude_agent_sdk, which bundles its own
-# `claude` binary) is not in this image either (requirements.txt), and nothing
-# in the Host uses it: its last reader, the Designs import job, is retired and
-# the claude-code app no longer installs it (it deletes the old per-app cache
-# at start). The coding harness bakes its own copy into its image.
+# `claude` binary) IS in this image, installed above with requirements.txt:
+# the Host's Anthropic calls on the person's Claude subscription run through
+# it (brain/mastercode/claude_sdk_wire.py). Its bundled binary is about 230 MB.
 
 # ============================================================
 # What the Debian and PostgreSQL archives publish right now
@@ -308,6 +335,10 @@ COPY scripts/test_turn_registry.py /app/scripts/test_turn_registry.py
 # choke-point coverage ratchet; smoke execs it in-container
 COPY scripts/test_error_lane.py /app/scripts/test_error_lane.py
 COPY scripts/test_role_routing_lanes.py /app/scripts/test_role_routing_lanes.py
+# Claude subscription lane walls: smoke execs it in-container against the
+# image's own bundled CLI and a stand-in Messages API.
+COPY scripts/test_claude_sdk_walls.py /app/scripts/test_claude_sdk_walls.py
+COPY scripts/claude_sdk_fake_api.py /app/scripts/claude_sdk_fake_api.py
 COPY scripts/test_harness_streaming.py /app/scripts/test_harness_streaming.py
 # Sidecar proxy bridge idle-transparency gate — the 10 s upstream
 # timeout that cut grok/antigravity streams; smoke execs it in-container
@@ -556,11 +587,12 @@ ENV TREE_SITTER_LANGUAGE_PACK_CACHE_DIR=/usr/local/share/tree-sitter-language-pa
 #   multi-core node the long-running kernel process fragments across dozens
 #   of arenas and RSS creeps for weeks (the 110Mi->170Mi idle drift class).
 #   Two arenas is the standard production setting for Python services.
-#   NODE_OPTIONS — the bundled `claude` engine is a Node process with an
-#   unbounded V8 heap; a live Host hit a V8 fatal OOM that the entrypoint's
-#   ulimit -c 0 guards on the disk side only. 1024MB keeps a runaway session
-#   under the pod limit so it degrades the session, not the entity (and not
-#   the co-resident postmaster).
+#   NODE_OPTIONS — caps the V8 heap of any Node process in the image (set
+#   for the `claude` engine of that time, a Node process that hit a V8 fatal
+#   OOM). It does NOT reach the `claude` the subscription lane runs: that one
+#   is a Bun build, which ignores V8 flags, and the lane passes it no
+#   NODE_OPTIONS (brain/mastercode/claude_sdk_wire.py, above locked_env, says
+#   what bounds it instead).
 ENV MALLOC_ARENA_MAX=2 \
     NODE_OPTIONS=--max-old-space-size=1024
 
@@ -572,6 +604,16 @@ RUN git config --system init.defaultBranch main \
 # Copy application code (owned by privatae)
 COPY --chown=privatae:privatae server/ /app/server/
 COPY --chown=privatae:privatae brain/ /app/brain/
+# The subscription lane starts the SDK's CLI through this wrapper (it keeps an
+# allowlist of environment names and execs the CLI), so it must be executable
+# whatever mode the build context gave it; and the lane runs only on the SDK
+# it was built and tested against.
+RUN chmod 0755 /app/brain/mastercode/claude_sdk_cli.py \
+    && PYTHONPATH=/app/brain python3 -c "import os, claude_agent_sdk as s; \
+from mastercode.claude_sdk_wire import SDK_VERSION; \
+assert s.__version__ == SDK_VERSION, (s.__version__, SDK_VERSION); \
+b = os.path.join(os.path.dirname(s.__file__), '_bundled', 'claude'); \
+assert os.access(b, os.X_OK), b; print('claude-agent-sdk', s.__version__)"
 COPY --chown=privatae:privatae dashboard/ /app/dashboard/
 COPY --chown=privatae:privatae cli/ /app/cli/
 # Shared harness runtime library (NOT app source — no app.yaml; the bundle

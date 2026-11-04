@@ -485,6 +485,30 @@ async def scenario():
         check(live["most"] == 1 and got == ["a" * 64] * 2,
               "two engines enabled together build one after the other, never at once", (live, got))
 
+        # A build nobody waits for (workspace.set_harness starts it) that
+        # fails: its failure is kept for the next wake, and asyncio is not
+        # left to print "Task exception was never retrieved" (measured on the
+        # Lima guest, 0.1.16, when the plain proxy was down).
+        async def failing_sources(src):
+            raise ValueError("the proxy refused")
+        b2.sources = failing_sources
+        unseen = []
+        loop = asyncio.get_running_loop()
+        old_handler = loop.get_exception_handler()
+        loop.set_exception_handler(lambda _l, c: unseen.append(c.get("message")))
+        src3 = {"sha256": "c" * 64, "url": "http://example.test/s.tgz"}
+        t3 = b2.start("opencode", src3)
+        await asyncio.sleep(0.05)
+        check(t3.done() and "proxy refused" in b2.errors.get(("opencode", "c" * 64), ""),
+              "a failed build nobody waited for keeps its failure for the next wake", b2.errors)
+        del t3
+        b2.tasks.clear()
+        import gc
+        gc.collect()
+        await asyncio.sleep(0)
+        loop.set_exception_handler(old_handler)
+        check(not unseen, "and asyncio has no unretrieved task exception to print", unseen)
+
 
 asyncio.run(scenario())
 

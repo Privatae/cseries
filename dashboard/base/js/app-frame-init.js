@@ -69,8 +69,11 @@
         }).then(function (r) {
             return r.ok ? r.json() : null;
         }).then(function (j) {
-            if (j && typeof j.token === 'string' && j.token) deliver(j.token);
-        }).catch(function () { /* the SDK's own 5s ready timeout reports it */ });
+            // No token is delivered too, as null: the SDK holds this app's
+            // first /api/ requests until the handshake, and a mint that failed
+            // must end that wait now, not at its bound.
+            deliver(j && typeof j.token === 'string' && j.token ? j.token : null);
+        }).catch(function () { deliver(null); });
     }
 
     // This origin's own fetch, before the wrapper below (the SDK's shim, when

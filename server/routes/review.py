@@ -3461,6 +3461,9 @@ def _plain_run_failure(label: str, error: Optional[str]) -> str:
                         f"and {label} needs {need}Mi")
                 if up:
                     text += f" (the {up} plan has room for it)"
+                elif d.get("scope") == "machine" and d.get("reason") != "pressure":
+                    from server.applications.machine_room import RESIZE_CLAUSE
+                    text += f" ({RESIZE_CLAUSE})"
                 return text
         except (ValueError, TypeError, AttributeError):
             pass

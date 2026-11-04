@@ -78,6 +78,122 @@ const AppRunner = (() => {
         return loc.protocol + '//' + host;
     }
 
+    // What an isolated app may ask of the desktop. An isolated app runs on its
+    // own origin, so `parent.AppRunner` throws there and the desktop's
+    // same-origin message relay (bottom of this file) drops what it posts:
+    // every Connect button and "Open Keys" in the Orchestrator, Open in the
+    // App Store and the Desktop tab in Settings did nothing. Each isolated
+    // window gets its own listener instead (launchNew), which takes a message
+    // only from that window's frame (event.source) on that app's own origin
+    // (event.origin), and only an ask listed here for that app. Nothing else
+    // is honoured, and an app that is not first-party (native or standard
+    // provenance) may ask nothing: a community app stays walled off.
+    //   open       app ids it may open; per id, whether a view or a prompt may
+    //              ride along. '*' = any installed app (the kernel's manifest
+    //              lookup refuses one that is not), never with a view or prompt.
+    //   wallpaper  repaint the desktop's wallpaper after a save
+    //   bootScreen show or hide the boot screen around a Host update
+    //   layout     read and change the dock and the desktop icons
+    // A prompt is SENT into Circles as the person's own message (postCompose),
+    // so only the Orchestrator's Connect and protocol buttons carry one, and
+    // only to Circles.
+    const ISOLATED_ASKS = Object.freeze({
+        // keys: the view names the key to add ('key-harness-cursor'), so a
+        // coding engine's Connect opens Keys on that key's form.
+        'orchestrator': { open: { keys: { view: true }, circles: { prompt: true }, network: { view: true } } },
+        'app-store': { open: '*' },
+        'settings': { wallpaper: true, bootScreen: true, layout: true },
+    });
+    const FIRST_PARTY = ['native', 'standard'];
+    const APP_ID_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+    const VIEW_RE = /^[A-Za-z0-9][A-Za-z0-9_-]{0,31}$/;
+    const LAYOUT_OPS = ['get', 'pin', 'unpin', 'add-desktop', 'remove-desktop', 'reset'];
+    const MAX_PROMPT = 2000;
+    // Messages every isolated frame posts that are not asks (the session
+    // keeper's check, the SDK's handshake): not worth a refusal warning.
+    const QUIET_TYPES = ['cseries:session-check', 'cseries:app-ready', 'cseries:app-init-ack'];
+
+    // Pure, and exported, so the tests run THIS code: the ask an isolated
+    // app's message makes, or null when the app may not make it. `manifest` is
+    // the kernel's manifest for the frame the message came from.
+    function isolatedAsk(manifest, d) {
+        if (!manifest || !manifest.isolated) return null;
+        if (!FIRST_PARTY.includes(manifest.provenance)) return null;
+        const may = Object.prototype.hasOwnProperty.call(ISOLATED_ASKS, manifest.id)
+            ? ISOLATED_ASKS[manifest.id] : null;
+        if (!may || !d || typeof d !== 'object' || typeof d.type !== 'string') return null;
+        if (d.type === 'cseries:open-app' && may.open) {
+            const id = d.app_id;
+            if (typeof id !== 'string' || !APP_ID_RE.test(id) || id === manifest.id) return null;
+            const rule = may.open === '*' ? {}
+                : (Object.prototype.hasOwnProperty.call(may.open, id) ? may.open[id] : null);
+            if (!rule) return null;
+            const ask = { kind: 'open', app_id: id };
+            if (d.view !== undefined && d.view !== null && d.view !== '') {
+                if (!rule.view || typeof d.view !== 'string' || !VIEW_RE.test(d.view)) return null;
+                ask.view = d.view;
+            }
+            if (d.prompt !== undefined && d.prompt !== null && d.prompt !== '') {
+                if (!rule.prompt || typeof d.prompt !== 'string' || !d.prompt.trim()
+                    || d.prompt.length > MAX_PROMPT) return null;
+                ask.prompt = d.prompt;
+            }
+            return ask;
+        }
+        if (d.type === 'cseries:wallpaper-changed' && may.wallpaper) return { kind: 'wallpaper' };
+        if (d.type === 'cseries:boot-screen' && may.bootScreen && typeof d.show === 'boolean') {
+            return { kind: 'boot-screen', show: d.show };
+        }
+        if (d.type === 'cseries:layout' && may.layout && LAYOUT_OPS.includes(d.op)) {
+            const ask = { kind: 'layout', op: d.op };
+            if (d.op !== 'get' && d.op !== 'reset') {
+                if (typeof d.app_id !== 'string' || !APP_ID_RE.test(d.app_id)) return null;
+                ask.app_id = d.app_id;
+            }
+            // The default desktop set (every system app), which Settings reads
+            // from /api/applications as the desktop does.
+            const defs = Array.isArray(d.defaults) ? d.defaults : [];
+            if (defs.length > 256 || !defs.every((x) => typeof x === 'string' && APP_ID_RE.test(x))) return null;
+            ask.defaults = defs.slice();
+            return ask;
+        }
+        return null;
+    }
+
+    // Carry out an ask isolatedAsk allowed. `reply` posts back into the asking
+    // frame on its own origin (the layout answer).
+    function performAsk(ask, reply) {
+        if (ask.kind === 'open') {
+            const o = {};
+            if (ask.view) o.view = ask.view;
+            if (ask.prompt) o.prompt = ask.prompt;
+            launch(ask.app_id, Object.keys(o).length ? o : undefined);
+        } else if (ask.kind === 'wallpaper') {
+            if (typeof window.applyWallpaper === 'function') {
+                try { window.applyWallpaper(); } catch (e) { /* repaints on next load */ }
+            }
+        } else if (ask.kind === 'boot-screen') {
+            const ws = window.WSClient;
+            const fn = ws && (ask.show ? ws.showBootScreen : ws.hideBootScreen);
+            if (typeof fn === 'function') fn();
+        } else if (ask.kind === 'layout') {
+            const L = window.DesktopLayout;
+            if (!L) return;
+            const defs = ask.defaults;
+            // The layout loads at DOMContentLoaded; an answer before that
+            // would be the defaults, not what the person arranged.
+            Promise.resolve(L.ready).then(() => {
+                if (ask.op === 'pin') L.pin(ask.app_id);
+                else if (ask.op === 'unpin') L.unpin(ask.app_id);
+                else if (ask.op === 'add-desktop') L.addToDesktop(ask.app_id, defs);
+                else if (ask.op === 'remove-desktop') L.removeFromDesktop(ask.app_id, defs);
+                else if (ask.op === 'reset') L.resetLayout();
+                reply({ type: 'cseries:layout-state', op: ask.op,
+                        dock: L.dockPinned().slice(), desktop: L.desktopIds(defs).slice() });
+            }).catch(() => { /* no answer: Settings says the desktop is not reachable */ });
+        }
+    }
+
     // Seed lane — AppRunner.launch(appId, { prompt }) hands the opened app one
     // message to SEND as the user, over the `cseries:compose` contract the Circles
     // composer already honours (mode='send' = a declared act, sent as the
@@ -279,6 +395,8 @@ const AppRunner = (() => {
 
         // Holds the SDK-app postMessage listener so onClose can detach it.
         let sdkMsgHandler = null;
+        // Holds an isolated app's ask listener (isolatedAsk), for the same reason.
+        let askMsgHandler = null;
         // Holds the phone-mode scale shim's ResizeObserver for the same reason.
         let fitObserver = null;
 
@@ -368,6 +486,29 @@ const AppRunner = (() => {
                 catch (e) { appOrigin = window.location.origin; }
 
                 host.appendChild(iframe);
+
+                // An isolated app's asks (isolatedAsk): from THIS window's
+                // frame, on THIS app's own origin, and only what the app is
+                // listed for. A frame the app embeds, a page the frame
+                // navigated to elsewhere, or any other window is refused.
+                if (isolated) {
+                    const expected = frameOrigin(manifest, window.location);
+                    askMsgHandler = (ev) => {
+                        if (ev.source !== iframe.contentWindow || ev.origin !== expected) return;
+                        const ask = isolatedAsk(manifest, ev.data);
+                        if (!ask) {
+                            const t = ev.data && typeof ev.data.type === 'string' ? ev.data.type : '';
+                            if (t.startsWith('cseries:') && !QUIET_TYPES.includes(t)) {
+                                console.warn(`AppRunner: ${manifest.id} may not ask ${oneLine(t).slice(0, 64)}; refused`);
+                            }
+                            return;
+                        }
+                        performAsk(ask, (msg) => {
+                            try { iframe.contentWindow.postMessage(msg, expected); } catch (e) { /* closed */ }
+                        });
+                    };
+                    window.addEventListener('message', askMsgHandler);
+                }
 
                 // Seed lane (see deliverPromptWhenReady): same-origin only.
                 if (opts && opts.prompt && !isolated) {
@@ -504,6 +645,10 @@ const AppRunner = (() => {
                     window.removeEventListener('message', sdkMsgHandler);
                     sdkMsgHandler = null;
                 }
+                if (askMsgHandler) {
+                    window.removeEventListener('message', askMsgHandler);
+                    askMsgHandler = null;
+                }
                 if (fitObserver) {
                     fitObserver.disconnect();
                     fitObserver = null;
@@ -556,7 +701,7 @@ const AppRunner = (() => {
         return String(s).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
     }
 
-    return { launch, frameOrigin };
+    return { launch, frameOrigin, isolatedAsk };
 })();
 
 window.AppRunner = AppRunner;
@@ -564,7 +709,8 @@ window.AppRunner = AppRunner;
 // Host-driven app open (host-environment awareness): a first-party
 // chat surface (Circles / the Workbench) relays the host's `open_app` tool call
 // here as a postMessage so the host can open an app for the user. Same-origin
-// only — a cross-origin isolated app can't force the shell to open windows.
+// only: an isolated app's asks go to its own window's listener (isolatedAsk,
+// in launchNew), which checks the frame, its origin and the app's allow-list.
 window.addEventListener('message', (e) => {
     if (e.origin !== window.location.origin) return;
     const d = e.data;

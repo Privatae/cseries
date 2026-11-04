@@ -52,6 +52,21 @@ PSI = "some avg10=12.50 avg60=3.00 avg300=1.00 total=100\nfull avg10=61.25 avg60
 check(G.parse_psi_full(PSI) == 61.25, "PSI full avg10 parses", G.parse_psi_full(PSI))
 check(G.parse_psi_full("some avg10=1.00 avg60=0 avg300=0 total=1\n") is None, "no full line gives nothing")
 
+# ── the slice's own ceiling (Windows: the Host's size) ──────────────────────
+
+check(G.parse_slice_max("MemoryMax=1610612736\n") == 1536, "the slice's MemoryMax parses to MiB")
+check(G.parse_slice_max("MemoryMax=infinity\n") is None, "no ceiling is none")
+check(G.parse_slice_max("") is None, "nothing said is none")
+g = G.Guard(total_mb=16384, held=lambda: 2048, slice_max=lambda: 3000, psi_path=os.devnull)
+check(g.budget() == 3000, "the budget is never more than the slice holds", g.budget())
+g = G.Guard(total_mb=16384, held=lambda: 2048, slice_max=lambda: None, psi_path=os.devnull)
+check(g.budget() == G.budget_mb(16384) - 2048, "without one, the machine's budget less the Host's", g.budget())
+g = G.Guard(total_mb=8192, held=lambda: 2048, slice_max=lambda: 100000, psi_path=os.devnull)
+check(g.budget() == G.budget_mb(8192) - 2048, "a slice bigger than the room changes nothing", g.budget())
+g = G.Guard(total_mb=16384, held=lambda: 2048, slice_max=lambda: 1000, psi_path=os.devnull)
+check(g.refusal(1024, []) is not None and '"headroom_mi": 1000' in g.refusal(1024, []),
+      "an engine the slice cannot hold is refused with the slice's room", g.refusal(1024, []))
+
 # ── fitting ─────────────────────────────────────────────────────────────────
 
 with tempfile.TemporaryDirectory() as tmp:

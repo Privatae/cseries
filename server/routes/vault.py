@@ -12,6 +12,7 @@ the bridge-signed permission slip in server/vault/authz.py — not this router.
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 import os
@@ -295,6 +296,12 @@ async def list_providers() -> dict:
     oauth_logins = oauth_login_slots()
     providers = []
     for p, spec in vault_providers.PROVIDERS.items():
+        if vault_providers.borrows_credential(p):
+            # A lane with no Keys entry of its own (anthropic-subscription
+            # reads the Claude sign-in or anthropic-oauth): its credential is
+            # listed under the provider that owns the slot, never as a second
+            # slot here.
+            continue
         kind = spec.get("kind", "generic")
         slot_types = ("api_key",)
         if kind != "generic" and p in oauth_logins:
@@ -441,29 +448,21 @@ async def _route_chat_if_unrouted(provider: str, pool, eid: int) -> tuple:
         return None, "Your Host model was left as it was."
     if not (cur or {}).get("unconfigured"):
         return None, None
-    from mastercode.runtime import model_standard, web_research
-    cands = [c for c in web_research.recommended_chat_candidates(provider)
-             if model_standard.check(provider, c).get("eligible")]
-    cands = model_standard.approved_candidates(provider, cands)
-    if not cands:
-        return None, (f"Your Host model was not set: no recommended {vendor} model meets "
-                      f"the Host model standard. {pick}")
     from server.routes import inference as inference_routes
-    try:
-        rows, err = await inference_routes._direct_models(provider)
-    except Exception as e:  # noqa: BLE001
-        rows, err = [], type(e).__name__
-    served = {str((r or {}).get("id") or "").strip() for r in (rows or [])}
-    model = next((c for c in cands if c in served), None)
+    # The catalog read below can take seconds; a route the person saves in
+    # the meantime is theirs, so the write lands only while the stored chat
+    # entry is still what it is now (apply_role_route check_current).
+    seen = await inference_routes._stored_route(pool, eid, "chat")
+    model, why_not = await inference_routes.recommended_chat_model(provider)
     if model is None:
-        why = (f"{vendor}'s model list could not be read on your sign-in" if err or not rows
-               else f"your {vendor} sign-in does not offer {' or '.join(cands)}")
-        return None, f"Your Host model was not set: {why}. {pick}"
+        return None, f"Your Host model was not set: {why_not}. {pick}"
     try:
         res = await inference_routes.apply_role_route(
             inference_routes.SetRoleModel(role="chat", provider=provider, model=model),
-            set_by="user")
+            set_by="user", if_route_is=seen, check_current=True)
     except HTTPException as e:
+        if e.detail == inference_routes.ROUTE_CHANGED:
+            return None, None
         return None, f"Your Host model was not set: {e.detail}. {pick}"
     except Exception as e:  # noqa: BLE001
         logger.warning("vault: routing chat to %s after the sign-in failed: %r", provider, e)
@@ -656,7 +655,61 @@ async def store_secret(req: StoreReq, request: Request) -> dict:
             out["reconnected"] = harness
     except Exception as e:  # pragma: no cover - defensive
         logger.warning("vault: harness reconnect for %r failed: %r", req.name, e)
+    out.update(await _engine_key_landed(req.name))
+    _default_chat_after_key(req.name)
     return out
+
+
+# How long adding a key waits for its engine's file to be written before
+# answering; past it the write finishes on its own (the 300 s pass would
+# otherwise be the next to try).
+ENGINE_WRITE_WAIT_S = 20.0
+
+
+async def _engine_key_landed(name: str) -> dict:
+    """A coding engine's key (harness-<id>) was just stored: write the engine's
+    credential file now (harness_keys.materialize_from_keys, the same rule the
+    300 s pass applies: Keys wins over an older paste, never over a grant the
+    vendor's login refreshed), so the engine runs on it at once and the
+    Orchestrator's engine row reads connected on its next read. Before, the
+    file waited for the next pass, up to five minutes, and the row said
+    "not set up" all that time. {} for any other name."""
+    try:
+        from server.network import harness_keys, harness_state
+        harness = harness_state.harness_for_keys_name(name)
+        if not harness or harness not in harness_keys.KEYS_HARNESS_PROVIDERS \
+                or name != harness_keys.keys_name(harness):
+            return {}
+        task = asyncio.ensure_future(harness_keys.materialize_from_keys(harness))
+        try:
+            status = await asyncio.wait_for(asyncio.shield(task), ENGINE_WRITE_WAIT_S)
+        except asyncio.TimeoutError:
+            status = "writing"
+        try:
+            from server.routes import inference as inference_routes
+            inference_routes.invalidate_provider_caches(harness)
+        except Exception:  # noqa: BLE001 — best-effort, like every cache drop
+            pass
+        return {"engine": harness, "engine_file": status}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("vault: writing the %r engine file failed: %r", name, e)
+        return {}
+
+
+def _default_chat_after_key(name: str) -> None:
+    """A provider credential was just stored: if chat has no route and no
+    model on the person's machine serves chat, give chat that provider's
+    recommended model as a visible default (inference.ensure_default_chat_route).
+    In the background: the key's own answer does not wait on a catalog."""
+    if not name or name.startswith("harness"):
+        return
+    try:
+        pool, eid = _pool(), _entity_id()
+        from server.routes import inference as inference_routes
+        from mastercode.runtime.identity_hold import spawn
+        spawn(inference_routes.ensure_default_chat_route(pool, eid, fresh_credential=True))
+    except Exception as e:  # noqa: BLE001
+        logger.info("vault: default chat route after %r skipped: %r", name, e)
 
 
 @router.post(

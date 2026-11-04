@@ -14,7 +14,11 @@ has to remember to do it.
 
 Exactly ONE transition is automatic — unconfigured → configured. A host that
 already has a model is never re-pointed: changing model changes the vector
-dim, and that is a decision, not plumbing. The wire itself goes through
+dim, and that is a decision, not plumbing. Which model is decided by testing:
+a real embed against each model the machine lists that could be an embedder
+(embed_backends.embed_candidates, known good ones first), the first to answer
+at a dim this host can store is chosen, and the record of what each answered
+is kept with the config (embedding_chosen_by). The wire itself goes through
 set_embed_bastion, so the live probe (a real embed must come back at the
 expected dim) stays the gate; an unpulled model is refused, never assumed.
 
@@ -54,8 +58,7 @@ def autowire_decision(configured: bool, bastion: dict | None, caps_ok: bool) -> 
     if not isinstance(bastion, dict) or not bastion.get("online"):
         return None, "bastion offline"
     from mastercode.embed_backends import (
-        EMBED_CAPABILITY, choose_bastion_embed_model, lane_embed_service, _addressless,
-        _embed_models_of)
+        EMBED_CAPABILITY, embed_candidates, lane_embed_service, _addressless)
     # A pairing with no address (a standalone Host's) may serve its embedder
     # on its OpenAI-compatible server (llama.cpp, vLLM), which the bastion's
     # `embed` capability (its ollama probe) does not cover; both ride the
@@ -63,10 +66,13 @@ def autowire_decision(configured: bool, bastion: dict | None, caps_ok: bool) -> 
     lane_llm = _addressless(bastion) and lane_embed_service(bastion) == "llm"
     if EMBED_CAPABILITY not in (bastion.get("capabilities") or []) and not lane_llm:
         return None, "bastion does not advertise embed"
-    pick = choose_bastion_embed_model(_embed_models_of(bastion))
-    if not pick:
-        return None, "bastion serves no embedding model this host knows"
-    return pick[0], f"unconfigured host, {bastion.get('hostname')} serves {pick[0]} ({pick[1]}d)"
+    # What the machine lists that could be an embedder, best first; the test
+    # embed in _autowire_now (choose_embed_model_by_probe) decides which.
+    cands = embed_candidates(bastion)
+    if not cands:
+        return None, "bastion lists no model that could be an embedder"
+    return cands[0]["model"], (f"unconfigured host, {bastion.get('hostname')} lists "
+                               f"{len(cands)} candidate embedder(s), {cands[0]['model']} first")
 
 
 async def _caps_ok(pool, entity_id: int) -> bool:
@@ -137,9 +143,27 @@ async def _autowire_now(pool, entity_id: int, hostname: str | None) -> dict:
         if not model:
             return {"wired": False, "reason": reason}
 
-        from mastercode.embed_backends import set_embed_bastion
+        # The model is the one a test embed proves (decision: an endpoint is
+        # assigned only when a live probe embed proves it serves the model at
+        # the expected dim; what the machine lists is never enough): each
+        # candidate in turn, the first that answers at a storable dim.
+        from mastercode.embed_backends import (
+            choose_embed_model_by_probe, choose_record, set_embed_bastion)
         try:
-            res = await set_embed_bastion(pool, entity_id, hostname, model=model)
+            pick = await choose_embed_model_by_probe(pool, entity_id, hostname, bastion)
+        except Exception as e:
+            _last_failed[hostname] = time.monotonic()
+            log.warning("embed autowire: %s raised while testing its models: %s", hostname, e)
+            return {"wired": False, "reason": f"test embed raised: {e}", "model": model}
+        if pick.get("error"):
+            _last_failed[hostname] = time.monotonic()
+            log.warning("embed autowire: %s: %s", hostname, pick["error"])
+            return {"wired": False, "reason": f"no model passed a test embed: {pick['error']}",
+                    "tried": pick.get("tried") or []}
+        model = pick["model"]
+        try:
+            res = await set_embed_bastion(pool, entity_id, hostname, model=model, dim=pick["dim"],
+                                          chosen_by=choose_record(hostname, pick))
         except Exception as e:
             # A probe path that RAISES (a DB error inside apply_embedding_switch)
             # rather than returning {"error"}: back off exactly like a refusal,
@@ -174,7 +198,8 @@ async def _autowire_now(pool, entity_id: int, hostname: str | None) -> dict:
                 "subject": f"Embeddings now run on {hostname}",
                 "body": (
                     f"Your machine **{hostname}** is serving embeddings for this host with "
-                    f"`{model}`. Memory and document search now match on meaning, not just "
+                    f"`{model}` ({pick['dim']} dimensions, chosen by a test embed of the models it "
+                    f"lists). Memory and document search now match on meaning, not just "
                     f"words, and the text never leaves your network.\n\n"
                     f"- **filling now** — {filled}\n"
                     f"- **change it** — Network → Bastions.\n"
@@ -186,4 +211,5 @@ async def _autowire_now(pool, entity_id: int, hostname: str | None) -> dict:
             })
         except Exception as e:  # pragma: no cover - defensive
             log.info("embed autowire: inbox note skipped: %s", e)
-        return {"wired": True, "reason": reason, "model": model, "jobs": jobs}
+        return {"wired": True, "reason": reason, "model": model, "dim": pick["dim"],
+                "tried": pick.get("tried") or [], "jobs": jobs}

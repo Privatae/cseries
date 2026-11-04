@@ -243,7 +243,20 @@ system: true
 # 0.13.1: the description says the fallback provider also answers when the
 #   primary's safety filter declines a request; nothing the app does changes.
 #   Bundle repacked.
-version: "0.13.1"
+# 0.13.4 (2026-11-04, C-Series 0.1.17; 0.13.2 and 0.13.3 were branch
+#   versions that never shipped):
+#   - recommended-routes.json gains anthropic-subscription (your Claude
+#     subscription: Opus 5.5, then Sonnet 5.5, for chat). The picker's "Sign
+#     in with your Claude account" pop-up and the local-model line live in the
+#     shared dashboard picker, not in this bundle.
+#   - a key added in Keys, or a model a machine starts serving, shows here when
+#     the window comes back into focus. The picker re-read only after its own
+#     actions, so the window kept saying "add key in Keys" with no models until
+#     it was closed and reopened.
+#   - the picker mounts once the window token has arrived. Mounted before it,
+#     every read got 401 "application token required" and the window showed
+#     nothing (the token is minted on this app's own origin after first paint).
+version: "0.13.4"
 # Host-facing catalog facts (code-true). Control panel, not a conversational
 # surface: what_it_is / user_path only.
 prompt_behavior:

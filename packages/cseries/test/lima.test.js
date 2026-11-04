@@ -8,8 +8,6 @@ const { main } = require('../src/cli');
 const lima = require('../src/vm/lima');
 const machine = require('../src/vm/lima/machine');
 const { limaTemplate } = require('../src/vm/lima/template');
-const { guestResources } = require('../src/vm/common');
-const { vmLimits } = require('../src/vm/wslconfig');
 const host = require('../src/host');
 const { selectDriver } = require('../src/vm/driver');
 const { paths, machineArch } = require('../src/platform');
@@ -86,28 +84,15 @@ test('the template forwards 8800, 8810 and 8811 on loopback, ignores every other
   assert.throws(() => limaTemplate({ vmType: 'qemu', arch: 'x64', image: '/x', sha256: 'abc', cpus: 1, memoryGiB: 1 }), /sha256/);
 });
 
-test('the VM is sized as WSL sizes it on Windows: half the memory, every processor', () => {
-  assert.deepEqual(guestResources(16 * GiB, 8), { memoryGiB: 8, cpus: 8, totalGiB: 16 });
-  assert.deepEqual(guestResources(64 * GiB, 16), { memoryGiB: 32, cpus: 16, totalGiB: 64 });
-  // A Linux machine's MemTotal sits under its nominal size: 15.6 GiB is half
-  // to the nearest GB, 8, as .wslconfig gets it on a PC of the same memory.
-  assert.deepEqual(guestResources(15.6 * GiB, 12), { memoryGiB: 8, cpus: 12, totalGiB: 15 });
-  assert.deepEqual(guestResources(6 * GiB, 2), { memoryGiB: 3, cpus: 2, totalGiB: 6 });
-  assert.deepEqual(guestResources(1 * GiB, 0), { memoryGiB: 1, cpus: 1, totalGiB: 1 }, 'never more than the machine has');
-  for (const [bytes, cpus] of [[15.6 * GiB, 12], [7.7 * GiB, 4], [31.3 * GiB, 16], [3 * GiB, 2], [128 * GiB, 64]]) {
-    const w = vmLimits(bytes, cpus);
-    const l = guestResources(bytes, cpus);
-    assert.equal(`${l.memoryGiB}GB`, w.memory, `${bytes / GiB} GiB`);
-    assert.equal(String(l.cpus), w.processors);
-  }
-});
-
-test('the Lima VM is made from this run\'s machine, as WSL\'s limits are', async () => {
+test('the Lima VM is made at the size suggested for this run\'s machine when nobody is asked', async () => {
+  // 15.6 GiB and 6 processors: C4-8 fits within half of it and holds what the Host needs.
   const { m, p } = machineFor('linux', { qemu: true });
   const { code, out } = await run([], m, p, { machine: { totalMem: 15.6 * GiB, cpus: 6 } });
   assert.equal(code, 0, out.text() + out.errText());
-  assert.match(m.template, /^cpus: 6$/m);
+  assert.match(m.template, /^cpus: 4$/m);
   assert.match(m.template, /^memory: "8GiB"$/m);
+  assert.match(out.text(), /Nobody is at a terminal to ask, so the Host gets the suggested size, C4-8\./);
+  assert.deepEqual(JSON.parse(fs.readFileSync(p.state, 'utf8')).size, { cpus: 4, memoryGiB: 8 });
 });
 
 test('the Lima guest gets the Host\'s processor and memory ceilings from its own status, through limactl shell', async () => {
@@ -292,7 +277,7 @@ test('on macOS and Linux the line that makes the VM names no WSL or Windows', as
     assert.equal(code, 0, out.text() + out.errText());
     const line = out.text().split('\n').find((l) => l.includes('Creating the VM'));
     assert.ok(line, `${platform}: the VM's sizing is said`);
-    assert.match(line, /\d+ GB of memory and \d+ processors at most/);
+    assert.match(line, /C\d+-\d+: \d+ processors and \d+ GB of memory/);
     assert.doesNotMatch(line, /WSL|Windows/, `${platform}: ${line.trim()}`);
   }
 });
@@ -394,7 +379,7 @@ test('stop, start, status, and uninstall --delete-data', async () => {
   const { m, p } = machineFor('linux', { qemu: true });
   assert.equal((await run([], m, p)).code, 0);
   let r = await run(['status'], m, p);
-  assert.match(r.out.text(), /Linux system \(Lima\): installed\n {2}for: {7}your account only \(in .*, started at your login\)\n {2}running: {3}yes/);
+  assert.match(r.out.text(), /Linux system \(Lima\): installed\n {2}for: {7}your account only \(in .*, started at your login\)\n {2}size: {6}C4-8, 4 processors and 8 GB of memory \(npx cseries resize changes it\)\n {2}running: {3}yes/);
   assert.match(r.out.text(), /system service: running/);
   r = await run(['stop'], m, p);
   assert.equal(r.code, 0);

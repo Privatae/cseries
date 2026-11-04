@@ -293,7 +293,7 @@ print("\nthe dial converts per wire")
 src = open(os.path.join(ROOT, "brain/mastercode/provider_gateway.py")).read()
 dial = src[src.index("    async def _dial("):src.index("    result = await _dial(")]
 check("_dial converts from the caller's messages for the wire it dials",
-      'wire = "anthropic" if p == "anthropic" else "openai"' in dial
+      'wire = "anthropic" if vp == "anthropic" else "openai"' in dial
       and "_ap.for_wire(messages, wire" in dial
       and dial.count("messages=wire_messages") == 3, dial[:200])
 

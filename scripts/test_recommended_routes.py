@@ -99,8 +99,11 @@ for prov, spec in recs.items():
 # normalize_provider coerces a Claude-shaped model on openrouter to provider
 # 'anthropic' (Claude never transits OpenRouter) — so a Claude candidate on any
 # other card would silently route to a key the user did not click.
+from server.vault.providers import vendor_of  # noqa: E402
 for prov, spec in recs.items():
-    if prov == "anthropic":
+    # anthropic-subscription serves Anthropic's own models (its vendor is
+    # anthropic), on the person's subscription: its Claude ids are its own.
+    if vendor_of(prov) == "anthropic":
         continue
     offenders = [c for role in (spec.get("roles") or {}).values()
                  for c in (role.get("candidates") or []) if _is_claude_model(c)]
@@ -109,7 +112,8 @@ for prov, spec in recs.items():
 
 # anthropic's own candidates must already be API-native ids — an alias would
 # store fine but read back different from what the plan preview showed.
-_anth = [c for role in (recs.get("anthropic", {}).get("roles") or {}).values()
+_anth = [c for p in ("anthropic", "anthropic-subscription")
+         for role in (recs.get(p, {}).get("roles") or {}).values()
          for c in (role.get("candidates") or [])]
 check("anthropic candidates are API-native ids (normalize to themselves)",
       all(anthropic_api_model_id(c) == c for c in _anth),

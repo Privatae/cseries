@@ -6,8 +6,9 @@ runs on the USER's OWN provider account. There are no "lanes": a role's route
 is a {provider, model} pair where
 
   provider — an id in the canonical Keys registry (server.vault.providers
-             PROVIDERS: openrouter, openai, xai, kimi, anthropic, deepinfra,
-             together, fireworks, groq) or "local" (the user's own machines,
+             PROVIDERS: openrouter, openai, xai, google, kimi, anthropic,
+             anthropic-subscription, deepinfra, together, fireworks, groq)
+             or "local" (the user's own machines,
              mesh-advertised). The provider is first-class because it ties to
              an ACCOUNT — a key in the Keys app; the same model (Kimi K3,
              Llama, …) is hosted by many providers and only the provider says
@@ -25,12 +26,15 @@ Stored in behavioral_params.model_routing[role]. THE RULES:
   * NO MODEL PINS. There is no default model anywhere in code. An unrouted
     role resolves EMPTY ("pick a provider and model in the Orchestrator") —
     surfaced, never a silent compile-time model.
-  * The Claude Agent SDK is NOT a production option. 'claude-sdk' /
-    'subscription' are not providers; stored routes naming them are dropped
-    on read (the hard cut) and the write surface refuses them. Users may
-    install the SDK themselves and build their own login surface — that is
-    their app, not a shipped lane. Anthropic is an ordinary provider here:
-    Claude models run on the Anthropic API with the user's own key/token.
+  * 'claude-sdk' / 'subscription' are not providers; stored routes naming
+    them are dropped on read (the hard cut) and the write surface refuses
+    them. A Claude subscription is the registry provider
+    'anthropic-subscription' (ported from the platform Host, where it was
+    decided 2026-10-27): it reads the person's own Claude sign-in, else their
+    'anthropic-oauth' Keys entry, and runs each call through the Claude Agent
+    SDK inside provider_gateway, because Anthropic refuses a subscription
+    token on a direct API call. 'anthropic' is the Anthropic API on the
+    user's own key; with only a token stored it takes the same SDK path.
   * Claude models NEVER transit OpenRouter — resolution coerces any
     Claude-shaped model pick to provider 'anthropic' (decision:
     anthropic-models-route-through-anthropic-api).
@@ -81,6 +85,19 @@ def _is_claude_model(model: str) -> bool:
 _SDK_ALIASES = frozenset({"claude-sdk", "subscription", "claude_subscription"})
 
 
+def vendor_provider(provider: str) -> str:
+    """The provider whose models this one serves (server/vault/providers
+    vendor_of): 'anthropic-subscription' -> 'anthropic', any other -> itself.
+    An unreadable registry maps nothing, so an unknown lane is judged as
+    itself (and refused where a check needs a known vendor)."""
+    p = (provider or "").strip().lower()
+    try:
+        from server.vault.providers import vendor_of
+        return vendor_of(p)
+    except Exception:  # noqa: BLE001
+        return p
+
+
 def normalize_provider(provider: str, model: str = "") -> tuple[str, str]:
     """Normalize a (provider, model) pair to the canonical routing shape.
 
@@ -109,8 +126,9 @@ def normalize_provider(provider: str, model: str = "") -> tuple[str, str]:
 def provider_allowed_for_role(provider: str, role: str) -> bool:
     """True when `provider` names a real, routable provider for `role`.
     Post-cut this is purely 'known provider or local': the SDK aliases
-    normalize to empty (refused for EVERY role — the SDK is not a production
-    option), and every registry provider may serve any text role. Kept as the
+    normalize to empty (refused for EVERY role; a Claude subscription is the
+    registry provider 'anthropic-subscription'), and every registry provider
+    may serve any text role. Kept as the
     single invariant point the write surface + smoke gate read."""
     p, _ = normalize_provider(provider, "")
     if not p:
@@ -127,8 +145,8 @@ def provider_allowed_for_role(provider: str, role: str) -> bool:
 
 
 # Anthropic-native id map — normalizes alias/OpenRouter-form slugs to the id
-# the Anthropic API expects (used by the anthropic wire and, while it remains
-# in the image, the dormant SDK engine). NOT a routing default: it never picks
+# the Anthropic API expects (used by the anthropic wire, which the
+# subscription lane shares). NOT a routing default: it never picks
 # a model, it only rewrites the id a stored pick already named.
 _ANTHROPIC_API_ID: dict[str, str] = {
     "anthropic/claude-haiku-4.5":    "claude-haiku-4-5-20251001",
@@ -466,10 +484,11 @@ def describe_effort(provider: str | None, model: str | None,
     not sent}. Never a value that is dropped before the wire — the
     MODEL_ACTUAL line and the turn's record read this.
 
-      anthropic   chosen only, where the model accepts it (anthropic_wire_effort)
+      anthropic   chosen only, where the model accepts it (anthropic_wire_effort);
+                  anthropic-subscription the same (vendor_provider)
       local       nothing: _call_local takes no effort
       any other   reasoning_effort, as _call_remote sends it"""
-    p = (provider or "").strip().lower()
+    p = vendor_provider(provider)
     out: dict = {"sent": None, "default": None}
     if chosen:
         out["chosen"] = chosen
@@ -685,15 +704,19 @@ async def _resolve_role_route(
         if provider and model:
             return _route(provider, model)
 
-    # 6. chat with no route, no provider key and a model on the person's own
-    #    machine: that model (local_default_model). Resolved live, never
-    #    stored: when the machine goes away or a key is added, this rung stops
-    #    answering and the turn says what it always said.
+    # 6. chat with no route and a model on the person's own machine: that
+    #    model (local_default_model), whether or not they hold a key. Resolved
+    #    live, never stored: when the machine goes away this rung stops
+    #    answering, and a person who holds a key gets their provider's
+    #    recommended model written as a visible route instead
+    #    (server/routes/inference.ensure_default_chat_route). The route says
+    #    why, and the Orchestrator shows it.
     if role == "chat":
         local = await local_default_model(pool, entity_id)
         if local:
             return {**_route("local", local["id"], local["endpoint"]),
-                    "local_default": {"machine": local["bastion"], "kind": local["kind"]}}
+                    "local_default": {"machine": local["bastion"], "kind": local["kind"],
+                                      "why": local_default_why(local)}}
 
     # 7. unrouted — surfaced, never guessed. There is NO default model.
     return _empty_route(
@@ -733,27 +756,16 @@ async def holds_provider_credential(pool, entity_id: int) -> bool:
 # snowflake-arctic-embed, all-minilm, bge-m3, bge-large, paraphrase-
 # multilingual; Hugging Face's e5 and gte families). A heartbeat carries model
 # NAMES only, so the name is all there is to go on.
-_EMBED_NAME_PARTS = frozenset({"embed", "embedding", "minilm", "bge", "e5", "gte", "paraphrase"})
+# How long a chat turn's pick waits for the servers to say which of their
+# models are embedders (local_model_kind); a later turn has the answers.
+LOCAL_KIND_WAIT_S = 3.0
 
 
 def _chat_capable(model: dict) -> bool:
-    """A served model a chat can run on: not an embedding model. An ollama
-    box lists every tag it has, embedders included, and an embedder answers
-    no chat. Read from the name: a part naming an embedding family
-    (_EMBED_NAME_PARTS, or any part starting 'embed'), or a model the memory
-    store knows as an embedder (embed_backends.known_embed_models)."""
-    import re as _re
-    mid = str(model.get("id") or "").strip().lower()
-    if not mid:
-        return False
-    parts = set(_re.split(r"[/:_.\-\s]+", mid.split(":", 1)[0]))
-    if parts & _EMBED_NAME_PARTS or any(p.startswith("embed") for p in parts):
-        return False
-    try:
-        from mastercode.embed_backends import known_embed_models
-        return not known_embed_models([model.get("id")])
-    except Exception:  # noqa: BLE001
-        return True
+    """A served model row with an id. Whether it is an embedding model is
+    local_model_kind's to say (the server's own answer, the name only when the
+    server cannot be asked)."""
+    return bool(str(model.get("id") or "").strip())
 
 
 async def own_machine_tokens(pool, entity_id: int) -> set[int]:
@@ -825,9 +837,17 @@ async def own_machine_tokens(pool, entity_id: int) -> set[int]:
     return own
 
 
+def local_default_why(local: dict) -> str:
+    """What the Orchestrator says about the own-machine default, in words."""
+    where = f" ({local['bastion']})" if local.get("bastion") else ""
+    return (f"You haven't chosen a model for chat, so your Host uses {local['id']}, "
+            f"which your own machine{where} serves: a model on your own machine comes "
+            f"first. Pick another model for chat here any time.")
+
+
 async def local_default_model(pool, entity_id: int) -> dict | None:
-    """The model on the person's own machine a Host with NO provider key and
-    no chat route runs on: {id, bastion, endpoint, kind}, or None.
+    """The model on the person's own machine a Host with no chat route runs
+    on: {id, bastion, endpoint, kind}, or None.
 
     The candidates are every model an ONLINE machine of the person's own
     serves right now (own_machine_tokens: one this Host is in charge of, or
@@ -839,14 +859,11 @@ async def local_default_model(pool, entity_id: int) -> dict | None:
     server the person started to serve that model, where an ollama box lists
     every model it has ever pulled. Then the order the machines report.
 
-    None whenever the person holds a key (holds_provider_credential): with a
-    key, an unrouted chat is unchanged, and picking a model is theirs (the
-    Orchestrator, or the routing a sign-in sets)."""
-    try:
-        if await holds_provider_credential(pool, entity_id):
-            return None
-    except Exception:  # noqa: BLE001 — it does not raise; belt and braces
-        return None
+    A key or a sign-in the person holds does not change this: with a model on
+    their own machine, an unrouted chat runs there. Before, adding any key
+    left a person who had chosen no chat model with no chat at all, however
+    many local models were listed. Choosing a provider's model is one click
+    in the Orchestrator, which shows this default and why."""
     served = await local_chat_models(pool, entity_id)
     return served[0] if served else None
 
@@ -861,9 +878,14 @@ async def local_chat_models(pool, entity_id: int) -> list[dict]:
     table cannot be read."""
     try:
         from mastercode.model_backends import list_local_models
+        from mastercode.local_model_kind import chat_models
         own = await own_machine_tokens(pool, entity_id)
-        served = [m for m in await list_local_models(pool, entity_id, token_ids=own)
-                  if _chat_capable(m)]
+        # Embedding models out, as their servers say (local_model_kind: ollama's
+        # capabilities, a test embed on an OpenAI-compatible server), the
+        # name where a server cannot be asked.
+        served = await chat_models(
+            [m for m in await list_local_models(pool, entity_id, token_ids=own)
+             if _chat_capable(m)], wait_s=LOCAL_KIND_WAIT_S)
     except Exception as e:  # noqa: BLE001 — none is the safe answer
         log.info("local_chat_models: unavailable (%s)", type(e).__name__)
         return []

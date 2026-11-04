@@ -8,13 +8,19 @@
  * postMessage. This SDK receives it (+ the app's own id) and stamps the token
  * onto API calls, and exposes an explicit persistence API (CSeriesApp.storage).
  *
- * NON-BLOCKING BY DESIGN (an earlier regression — a render-blocking
- * script that HELD every fetch until a token arrived — is deliberately designed
- * out): the fetch wrapper installs synchronously, adds X-Application-Token ONLY
- * if it is already set, and NEVER awaits/holds/delays a request. It gates nothing
- * about rendering. (CSeriesApp.storage is different — those are explicit async calls
- * the app awaits, so they DO wait for the one-time init handshake; they never gate
- * the app's first paint.)
+ * NEVER RENDER-BLOCKING (an earlier regression — a render-blocking script that
+ * HELD every fetch until a token arrived, with no bound — is designed out): the
+ * fetch wrapper installs synchronously and gates nothing about rendering. A
+ * same-origin /api/ request made BEFORE the init handshake lands waits for it,
+ * at most HOLD_MS, then goes out with the token (or, past the bound, without it,
+ * so the caller sees the real error). Not holding it lost the race on every
+ * open of an isolated app: the Orchestrator mounts at DOMContentLoaded, its
+ * first dozen /api/inference/* reads left before its own-origin frame token came
+ * back, each got 401 "application token required", and the window showed
+ * nothing (0.1.15, 0.1.16; a fast machine sometimes won). The frame-token
+ * request itself and requests that carry their own token are never held.
+ * (CSeriesApp.storage calls also wait for the handshake; they never gate the
+ * app's first paint.)
  *
  * The app calls its OWN origin's /api (apps-<handle>/api → same pod), so no CORS
  * and no URL rewriting are needed — only the token + app_id cross, by message.
@@ -31,6 +37,23 @@
     var _appId = null;
     var _resolveReady;
     var _ready = new Promise(function (res) { _resolveReady = res; });
+    var _inited = false;
+    _ready.then(function () { _inited = true; });
+    // How long a same-origin /api/ request waits for the init handshake. The
+    // frame token is one same-origin round trip; the shell's init is one
+    // postMessage. Past this the request goes out and the caller sees why.
+    var HOLD_MS = 10000;
+    var FRAME_TOKEN_RE = /^\/api\/applications\/[^/]+\/frame-token$/;
+    var _holdUntil = null;
+    function _held() {
+        if (!_holdUntil) {
+            _holdUntil = Promise.race([
+                _ready,
+                new Promise(function (res) { setTimeout(res, HOLD_MS); }),
+            ]);
+        }
+        return _holdUntil;
+    }
 
     // Fetch wrapper — synchronous install, never holds. Tagged so a re-run is a no-op.
     // SAME-ORIGIN ONLY (SDK 1.3.0): the token is the window's KERNEL credential;
@@ -55,11 +78,30 @@
             if (!sameOrigin) return orig(input, init);
             init = init || {};
             var headers = new Headers(init.headers || {});
-            if (_token && !headers.has('X-Application-Token')) {
-                headers.set('X-Application-Token', _token);
-            }
-            init.headers = headers;
-            return orig(input, init);   // never awaits, never holds
+            var path = '';
+            try {
+                path = new URL((input && typeof input === 'object' && 'url' in input)
+                    ? input.url : String(input), window.location.href).pathname;
+            } catch (e) { /* sameOrigin parsed it; unreachable */ }
+            var ownToken = headers.has('X-Application-Token')
+                || (typeof Request !== 'undefined' && input instanceof Request
+                    && input.headers.has('X-Application-Token'));
+            // Only where an init is coming: this app's own origin (the frame
+            // bootstrap mints it) or a window the desktop frames directly. A
+            // frame an app embeds gets no init and is never held.
+            var initComing = !!window.__cseriesFrameInit
+                || (window.parent && window.parent !== window && window.parent === window.top);
+            var hold = !_inited && !ownToken && initComing
+                && path.indexOf('/api/') === 0 && !FRAME_TOKEN_RE.test(path);
+            var send = function () {
+                if (_token && !headers.has('X-Application-Token')) {
+                    headers.set('X-Application-Token', _token);
+                }
+                init.headers = headers;
+                return orig(input, init);
+            };
+            if (!hold) return send();
+            return _held().then(send);
         };
         wrapped.__cseriesShim = true;
         window.fetch = wrapped;

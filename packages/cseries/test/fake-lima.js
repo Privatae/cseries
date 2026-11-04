@@ -400,7 +400,33 @@ exec /bin/rm "$@"`);
           i.status = 'Running';
           delete i.booting;
         }
+        // The size fields (lima.js currentSize): the instance's lima.yaml.
+        if (i && /\{\{\.CPUs\}\}/.test(a[2] || '')) {
+          const y = fs.readFileSync(path.join(home, 'cseries', 'lima.yaml'), 'utf8');
+          const cpus = /^cpus: (\d+)$/m.exec(y)[1];
+          const mem = Number(/^memory: "(\d+(?:\.\d+)?)GiB"$/m.exec(y)[1]) * 1024 ** 3;
+          return { stdout: `cseries ${cpus} ${mem}\n` };
+        }
         return { stdout: i ? `cseries ${i.status}\n` : '' };
+      case 'edit': {
+        // Lima edits a stopped instance only; --cpus and --memory (GiB)
+        // rewrite its lima.yaml and nothing else of it.
+        if (a[1] !== 'cseries' || !i) return { code: 1, stderr: 'instance "cseries" not found' };
+        if (i.status === 'Running') return { code: 1, stderr: 'level=fatal msg="cannot edit a running instance"' };
+        if (opts.editFail) return { code: 1, stderr: opts.editFail };
+        const f = path.join(home, 'cseries', 'lima.yaml');
+        let y = fs.readFileSync(f, 'utf8');
+        for (const arg of a.slice(2)) {
+          const c = /^--cpus=(\d+)$/.exec(arg);
+          const mm = /^--memory=(\d+(?:\.\d+)?)$/.exec(arg);
+          if (c) y = y.replace(/^cpus: .*$/m, `cpus: ${c[1]}`);
+          else if (mm) y = y.replace(/^memory: .*$/m, `memory: "${mm[1]}GiB"`);
+          else return { code: 1, stderr: `unknown flag ${arg}` };
+        }
+        fs.writeFileSync(f, y);
+        m.edits = (m.edits || 0) + 1;
+        return {};
+      }
       case 'create': {
         const yaml = fs.readFileSync(a[2], 'utf8');
         m.template = yaml;

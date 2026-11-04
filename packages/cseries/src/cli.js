@@ -29,6 +29,7 @@ const setup = require('./setup');
 const machineFirewall = require('./vm/machine-firewall');
 const move = require('./move');
 const { decodeWslConfig, removeWslConfigLines } = require('./vm/wslconfig');
+const size = require('./size');
 
 const HELP = `npx cseries [command]
 
@@ -37,7 +38,12 @@ const HELP = `npx cseries [command]
                installed for the whole machine, through sudo; --just-me
                installs it for your account only. An install for your account
                only is offered the move to the whole machine once;
-               --whole-machine moves it without asking
+               --whole-machine moves it without asking. A new install asks
+               how big the Host is (sizes like C4-16: 4 processors, 16 GB);
+               --size C4-16 (or --cpus N --memory GB) answers for it
+  resize [C8-32|most|--cpus N --memory GB]
+               change how big the Host is, keeping all its data; with no
+               size, it shows the sizes that fit this machine and asks
   start        start the Host
   stop         stop the Host and its Linux system
   status       what is installed and running
@@ -72,6 +78,26 @@ function makePrompt(stdin = process.stdin, stdout = process.stdout) {
   });
 }
 
+// A line typed at the terminal, or null when there is none to ask at.
+function makeAsk(stdin = process.stdin, stdout = process.stdout) {
+  return (question) => new Promise((resolve) => {
+    if (!stdin.isTTY) {
+      resolve(null);
+      return;
+    }
+    const rl = readline.createInterface({ input: stdin, output: stdout });
+    let answered = false;
+    rl.on('close', () => {
+      if (!answered) resolve(null);
+    });
+    rl.question(question, (answer) => {
+      answered = true;
+      rl.close();
+      resolve(answer);
+    });
+  });
+}
+
 function makeContext(overrides = {}) {
   const platform = overrides.platform || process.platform;
   const env = overrides.env || process.env;
@@ -97,6 +123,10 @@ function makeContext(overrides = {}) {
     net: overrides.net || net,
     sleep: overrides.sleep || ((ms) => new Promise((r) => setTimeout(r, ms))),
     prompt: overrides.prompt || makePrompt(),
+    // A line typed (size.js ask); a test that hands its own paths has no
+    // terminal unless it gives one.
+    // null when there is no terminal, so nothing is shown to ask with.
+    ask: overrides.ask !== undefined ? overrides.ask : (!overrides.paths && process.stdin.isTTY ? makeAsk() : null),
     // Whether a question can be asked here at all (move.js offer).
     isTTY: overrides.isTTY !== undefined ? overrides.isTTY : Boolean(process.stdin.isTTY),
     driver: overrides.driver !== undefined ? overrides.driver : selectDriver(platform),
@@ -161,6 +191,7 @@ function upSteps({ open, label = 'WSL', moving = false }) {
   return [
     preflightStep,
     ...(moving ? [move.carryStep] : []),
+    size.step,
     bastion.getStep,
     {
       title: `Setting up ${label}`,
@@ -288,6 +319,63 @@ async function start(ctx) {
   return 0;
 }
 
+// A new size for the Host (size.js), its data kept: the VM stopped, given
+// the size and started again (Lima), or the ceilings inside it changed
+// (WSL); then the Host's own ceilings from it, and the Host restarted.
+async function resize(ctx, args) {
+  await needInstalled(ctx);
+  const was = size.recorded(ctx) || (ctx.driver.currentSize ? await ctx.driver.currentSize(ctx) : null);
+  if (was) ctx.out.line(`The Host is ${size.sizeName(was)} now: ${size.describe(was)}.`);
+  const { size: s, suggested } = await size.choose(ctx, args, { positional: true });
+  if (suggested) {
+    const w = await size.where(ctx);
+    throw new CliError('Which size? There is no terminal here to ask at.', `${size.sizesText(w.m, w.limit)}\n${size.USAGE}`);
+  }
+  // A resize that stopped partway (the VM resized but not started again, or
+  // the Host's ceilings not applied) has its size recorded already; the
+  // same size asked again finishes it rather than saying nothing changed.
+  if (size.same(s, was) && size.recorded(ctx) && !ctx.state.get(RESIZING)) {
+    ctx.out.line(`It is ${size.sizeName(s)} already; nothing was changed.`);
+    return 0;
+  }
+  // The Host's ceilings are sent with this package's images, so a resize
+  // by another release's command would update the Host as well. A guest
+  // that is stopped says its release once it is started again, before
+  // anything is sent to it.
+  const rel = loadRelease(ctx).release;
+  const sameRelease = (st) => {
+    if (st.release && st.release !== 'none' && st.release !== rel.version) {
+      // An older Host is updated first: releases up to 0.1.16 have no
+      // resize. A newer one is resized by its own release's command.
+      const { compare, isVersion } = require('./version');
+      const older = isVersion(st.release) && isVersion(rel.version) && compare(st.release, rel.version) < 0;
+      throw new CliError(`This Host runs release ${st.release}, and this command is release ${rel.version}.`,
+        older
+          ? `Update it first, then resize it: npx cseries@${rel.version} update, then npx cseries@${rel.version} resize ${size.sizeName(s)}`
+          : `Resize it with its own release: npx cseries@${st.release} resize ${size.sizeName(s)}`);
+    }
+  };
+  if (await ctx.driver.guestRunning(ctx)) sameRelease(await host.guestStatus(ctx));
+  for (const w of size.warnings(s)) ctx.out.warn(w);
+  ctx.out.line(`Changing the Host to ${size.sizeName(s)}: ${size.describe(s)}. Its data stays as it is.`);
+  ctx.state.set(RESIZING, true);
+  if (ctx.driver.resize) await ctx.driver.resize(ctx, s);
+  size.record(ctx, s);
+  if (!(await ctx.driver.guestRunning(ctx))) await ctx.driver.startGuest(ctx);
+  await machineFirewall.apply(ctx);
+  const st = await host.guestStatus(ctx);
+  sameRelease(st);
+  await host.applyLimits(ctx, st);
+  await host.start(ctx, true);
+  await setup.waitHealthy(ctx);
+  ctx.state.set(RESIZING, undefined);
+  ctx.out.line(`The Host is ${size.sizeName(s)} and running again.`);
+  return 0;
+}
+
+// state.json "resizing": a resize started and not finished (resize).
+const RESIZING = 'resizing';
+
 async function stop(ctx) {
   await needInstalled(ctx);
   await ctx.driver.stopGuest(ctx);
@@ -315,6 +403,10 @@ async function status(ctx) {
   }
   if (exists) {
     const running = await ctx.driver.guestRunning(ctx);
+    const sz = size.recorded(ctx);
+    out.line(sz
+      ? `  size:      ${size.sizeName(sz)}, ${size.describe(sz)} (npx cseries resize changes it)`
+      : '  size:      as an earlier release made it (npx cseries resize chooses one)');
     out.line(`  running:   ${running ? 'yes' : 'no'}`);
     if (running) {
       const s = await host.guestStatus(ctx);
@@ -701,6 +793,7 @@ async function main(argv, overrides = {}) {
         return await asMachine(ctx, argv.filter((a) => a !== move.WHOLE_MACHINE), cmd);
       }
     }
+    ctx.args = args;
     if (ctx.scope === 'machine' && cmd === '') ctx.move = await move.fromArgs(ctx, args);
     if (args.includes(scope.JUST_ME) && ctx.scope === 'machine') {
       throw new CliError('--just-me installs C-Series for one account, and this run is root.', 'Run npx cseries --just-me as that account, without sudo.');
@@ -710,6 +803,7 @@ async function main(argv, overrides = {}) {
       case 'update': return await up(ctx, { open: false });
       case 'start': return await start(ctx);
       case 'stop': return await stop(ctx);
+      case 'resize': return await resize(ctx, args);
       case 'status': return await status(ctx);
       case 'logs': return await logs(ctx, args);
       case 'open': return await open(ctx);

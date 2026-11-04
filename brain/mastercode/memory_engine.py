@@ -618,13 +618,16 @@ async def probe_embedding_endpoint(base_url: str, model: str,
 async def measure_embedding_dim(base_url: str, model: str,
                                 *, cred_name: str | None = None,
                                 dimensions: int | None = None,
+                                peer_forward: str | None = None,
                                 entity_id: int | None = None,
                                 pool=None) -> tuple[Optional[int], str]:
     """One real embed against `base_url` (same production path as
     probe_embedding_endpoint) that returns the MEASURED vector dim, or
     (None, reason). The provider-lane switch uses this to discover a model's
     native dim — and, with `dimensions`, to verify the endpoint honors MRL
-    truncation — before committing a storage column."""
+    truncation — before committing a storage column — and the bastion
+    lane's auto-setup (embed_backends.choose_embed_model_by_probe) to test
+    each model a machine lists."""
     cfg: dict = {"base_url": (base_url or "").strip()}
     if not cfg["base_url"] or not (model or "").strip():
         return None, "endpoint and model required"
@@ -632,6 +635,10 @@ async def measure_embedding_dim(base_url: str, model: str,
         cfg["cred_name"] = cred_name
     if dimensions:
         cfg["dimensions"] = int(dimensions)
+    if peer_forward:
+        # A bastion at a mesh address: the probe rides the Hub's forward, as
+        # its embeds do (probe_embedding_endpoint).
+        cfg["peer_forward"] = peer_forward
     try:
         vec = await _embed_via_byo(_EMBED_PROBE_TEXT, model.strip(), cfg,
                                    entity_id=entity_id, pool=pool)

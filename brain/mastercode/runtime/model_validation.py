@@ -125,6 +125,12 @@ def _key(provider: str, model: str) -> tuple[str, str]:
     except Exception:  # noqa: BLE001
         p, m = provider, model
     p, m = _norm(p), _norm(m)
+    try:
+        # anthropic-subscription validates as the Anthropic model it is.
+        from mastercode.inference_config import vendor_provider
+        p = _norm(vendor_provider(p))
+    except Exception:  # noqa: BLE001
+        pass
     if p == "anthropic":
         # EXACTLY what the anthropic wire sends: one anthropic_api_model_id
         # call on the stored id (provider_gateway._call_anthropic), BEFORE the

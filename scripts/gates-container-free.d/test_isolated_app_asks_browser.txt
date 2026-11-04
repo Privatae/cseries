@@ -1,0 +1,14 @@
+# Isolated apps' buttons open windows in headless Chromium, across real origins
+# (h.localhost and apps-<key>-h.localhost). A stand-in desktop runs the REAL
+# app-runner.js and desktop-layout.js; the Orchestrator runs the REAL
+# model-picker.js on its own origin: Connect Claude Code opens Circles with the
+# seed in its composer, Open Keys opens Keys, Network opens on its view, and
+# window.parent.AppRunner still throws there. The REAL Settings page's Desktop
+# tab reads and changes the desktop's dock; the REAL App Store's Open opens the
+# app. Refused: an app off the Orchestrator's list, a frame it embeds, a
+# foreign-origin frame, a community app on its own origin, and the
+# Orchestrator's window navigated to a foreign origin. The REAL Orchestrator
+# page redraws when a key added elsewhere shows up on focus. Needs Playwright and
+# Chromium; a stdlib http server on a loopback port.
+# Measured: 24 checks, ~20 s wall.
+test_isolated_app_asks_browser.py

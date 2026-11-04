@@ -35,10 +35,10 @@ RUN printf '%s\n' 'pip==26.2.2 --hash=sha256:fd7f4dfa8190e014013b9f08f3e973f4e4c
 # Behaviour change at v1.18.35: a permission request from a CHILD (subagent)
 # session is auto-rejected like the main session's (run.ts:699-704); v1.17.13
 # ignored it, so the subagent waited for an answer that never came.
-ARG OPENCODE_RELEASE_TAG=v1.18.35
+ARG OPENCODE_RELEASE_TAG=v1.19.5
 # sha256 of opencode-linux-x64.tar.gz, as GitHub publishes it for the release asset
 # (the releases API `digest`). The build checks it, so a bump moves both.
-ARG OPENCODE_SHA256=c8f888b451f5494a18f858fffb0e0b68f4e4baa9c241761c5f206884f0fa640d
+ARG OPENCODE_SHA256=588310a336fa3b9df36b3f0225b26f679d453efaad0cf3d66c3651ef3ec1647a
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PORT=8845 \

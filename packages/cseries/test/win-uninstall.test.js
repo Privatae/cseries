@@ -14,7 +14,9 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { main } = require('../src/cli');
 const elevated = require('../src/win/elevated');
-const { removeWslConfigLines, mergeWslConfig } = require('../src/vm/wslconfig');
+const { removeWslConfigLines } = require('../src/vm/wslconfig');
+const { mergeWslConfig, asOldRelease } = require('./old-wslconfig');
+const { State } = require('../src/state');
 const { captureOutput, testPaths, validRelease } = require('./helpers');
 const { fakeMachine } = require('./fake-machine');
 
@@ -205,10 +207,14 @@ test('Windows: WSL this command did not install is never offered; one another Li
   assert.equal(x.m.wslUninstalls, 0);
 });
 
-test('Windows: the .wslconfig lines it added are named and taken out only on a y, and only as it wrote them', async () => {
+test('Windows: the .wslconfig lines an earlier release added are named and taken out only on a y, and only as it wrote them', async () => {
+  // Installed now, then the PC as a release up to 0.1.16 left it (the lines
+  // and their record), as an uninstall straight after updating finds it.
   let x = machine();
   assert.equal((await x.run()).code, 0);
+  assert.ok(!fs.existsSync(x.p.wslConfig), 'this release writes no .wslconfig');
   const file = x.p.wslConfig;
+  asOldRelease(x.p, new State(x.p.state));
   assert.equal(fs.readFileSync(file, 'utf8'), '[wsl2]\nmemory=8GB\nprocessors=8\n');
   let r = await x.run(['uninstall', '--delete-data'], { prompt: async (q) => /Type y to go on/.test(q) });
   assert.match(r.text, /C-Series added memory=8GB and processors=8 to .*\.wslconfig, the limits on WSL's virtual machine\./);
@@ -217,9 +223,10 @@ test('Windows: the .wslconfig lines it added are named and taken out only on a y
 
   // A file of the person's own, one of the lines changed since: only the other goes.
   x = machine();
+  assert.equal((await x.run()).code, 0);
   fs.mkdirSync(path.dirname(x.p.wslConfig), { recursive: true });
   fs.writeFileSync(x.p.wslConfig, '[wsl2]\nswap=0\n');
-  assert.equal((await x.run()).code, 0);
+  asOldRelease(x.p, new State(x.p.state));
   fs.writeFileSync(x.p.wslConfig, fs.readFileSync(x.p.wslConfig, 'utf8').replace('processors=8', 'processors=4'));
   r = await x.run(['uninstall', '--delete-data'], { prompt: async () => true });
   assert.equal(r.code, 0, r.text + r.err);
@@ -230,12 +237,13 @@ test('Windows: the .wslconfig lines it added are named and taken out only on a y
   // A file it made itself, all its lines unchanged: the file goes.
   x = machine();
   assert.equal((await x.run()).code, 0);
+  asOldRelease(x.p, new State(x.p.state));
   r = await x.run(['uninstall', '--delete-data'], { prompt: async () => true });
   assert.equal(r.code, 0, r.text + r.err);
   assert.ok(!fs.existsSync(x.p.wslConfig));
 });
 
-test('removeWslConfigLines undoes mergeWslConfig exactly, and leaves what the person wrote', () => {
+test('removeWslConfigLines undoes what an earlier release merged exactly, and leaves what the person wrote', () => {
   const cases = ['', '[wsl2]\nswap=0\n', '[experimental]\r\nsparseVhd=true\r\n', '[wsl2]  # mine\nmemory=3GB\n\n[boot]\nsystemd=true\n'];
   for (const before of cases) {
     const m = mergeWslConfig(before, { memory: '8GB', processors: '8' });

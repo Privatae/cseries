@@ -751,6 +751,9 @@ def wake_refused(app_id: str) -> dict | None:
                     + (f": it needs {need} MiB and {free} MiB are free" if need is not None else ""))
         if d.get("upgrade_to"):
             text += f" (the {d['upgrade_to']} plan has room for it)"
+        elif d.get("scope") == "machine" and d.get("reason") != "pressure":
+            from server.applications.machine_room import RESIZE_CLAUSE
+            text += f" ({RESIZE_CLAUSE})"
         return {"code": 402, "message": one_line(text)}
     try:
         code = int(st.get("wake_code"))

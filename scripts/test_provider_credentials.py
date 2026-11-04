@@ -32,8 +32,12 @@ def main() -> int:
 
     # ── registry shape ──────────────────────────────────────────────
     # google rides Google's own OpenAI-compatibility base, so it needs no new wire.
+    # anthropic-subscription: Anthropic's models on the person's own Claude
+    # subscription, through the Claude Agent SDK; it reads their Claude
+    # sign-in or the anthropic-oauth entry and has no Keys slot of its own.
     check("registry: the canonical providers (core four + kimi + google + OSS-direct rows)",
           set(pv.PROVIDERS) == {"openrouter", "openai", "xai", "kimi", "anthropic",
+                                "anthropic-subscription",
                                 "google", "deepinfra", "together", "fireworks",
                                 "groq"})
     check("registry: google rides the openai wire on Google's compat base",

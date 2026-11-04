@@ -12,6 +12,11 @@
 //     `cseries-guest keepalive` holds it while the person is logged in,
 //     started now and at every logon from an HKCU Run entry.
 //   - Commands in the guest: wsl.exe -d cseries -u root --exec cseries-guest.
+//   - The Host's size (size.js): a ceiling on C-Series's own units inside
+//     its distribution (size-caps.js, and the Host's own drop-ins from
+//     host.js), never the PC-wide %UserProfile%\.wslconfig, which caps every
+//     WSL distribution. The most it can be is what WSL gives them all
+//     (sizeLimit).
 //
 // wsl.exe's own output is UTF-16LE; see wsl-text.js.
 
@@ -21,7 +26,7 @@ const path = require('node:path');
 const { CliError } = require('../errors');
 const { decodeWslOutput, parseDistroList, parseWslVersion, windowsBuild, explainWslError } = require('./wsl-text');
 const win = require('../win/windows');
-const { vmLimits, decodeWslConfig, mergeWslConfig } = require('./wslconfig');
+const { decodeWslConfig, removeWslConfigLines, wslLimit } = require('./wslconfig');
 
 const DISTRO = 'cseries';
 const GUEST_BIN = '/usr/local/bin/cseries-guest';
@@ -170,7 +175,7 @@ const driver = {
   },
 
   async createGuest(ctx) {
-    await this.limitVm(ctx);
+    await this.releaseWslConfig(ctx);
     const key = `wsl-${ctx.arch}`;
     const g = ctx.releaseInfo.release.guest[key];
     if (!g) throw new CliError(`This release has no WSL image for ${ctx.arch} PCs.`, 'Try npx cseries@latest.');
@@ -195,59 +200,80 @@ const driver = {
     fs.rmSync(file, { force: true });
   },
 
-  // Adds the WSL VM's memory and processor limits to the person's own
-  // .wslconfig where they have set none. WSL reads it when its VM starts.
-  // The file is theirs: one we cannot read exactly, or cannot write
-  // (read-only, or held open by another program), is left as it is and the
-  // run goes on, saying which lines they can add themselves.
-  async limitVm(ctx) {
+  // The size is a ceiling inside the guest (size-caps.js), not the VM's.
+  capsInside: true,
+
+  // The most WSL lets its distributions have together, ours included: the
+  // memory= and processors= the person set in their .wslconfig, or WSL's
+  // defaults (half the PC's memory, every logical processor). The lines an
+  // earlier release added there are this command's (releaseWslConfig takes
+  // them out), so they do not count. -> {cpus, memoryGiB, why, note}
+  async sizeLimit(ctx) {
     const file = ctx.paths.wslConfig;
-    if (!file || !ctx.machine) return;
-    const want = vmLimits(ctx.machine.totalMem, ctx.machine.cpus);
-    const lines = (keys) => keys.map((k) => `${k}=${want[k]}`).join(' and ');
-    const leave = (why) => ctx.out.detail(`${file} was left as it is (${why}). To limit what the Linux system may take from this PC, add ${lines(Object.keys(want))} under [wsl2] there yourself.`);
-    let decoded;
+    let set = { memory: null, processors: null };
     try {
-      decoded = decodeWslConfig(fs.existsSync(file) ? fs.readFileSync(file) : Buffer.alloc(0));
+      const decoded = file && fs.existsSync(file) ? decodeWslConfig(fs.readFileSync(file)) : null;
+      if (decoded) {
+        const added = ctx.state && ctx.state.get('wslConfigAdded');
+        const ours = added && Array.isArray(added.lines) ? removeWslConfigLines(decoded.text, added.lines, false).text : decoded.text;
+        set = wslLimit(ours);
+      }
     } catch (e) {
       if (!e || !e.code) throw e;
-      leave(`it could not be read: ${e.code}`);
-      return;
     }
-    if (!decoded) {
-      leave('it is not saved as UTF-8, and rewriting it could change what you wrote');
-      return;
-    }
-    const existed = fs.existsSync(file);
-    const { text, added, section } = mergeWslConfig(decoded.text, want);
-    if (!added.length) return;
+    const GiB = 1024 ** 3;
+    const memory = set.memory || Math.floor(ctx.machine.totalMem / 2);
+    const cpus = set.processors || ctx.machine.cpus;
+    const how = set.memory || set.processors ? `as your ${file} sets` : 'WSL\'s default, half this PC\'s memory';
+    const gb = Math.floor(memory / GiB);
+    return {
+      cpus,
+      memoryGiB: memory / GiB,
+      why: `WSL gives its Linux systems ${gb} GB of memory and ${cpus} processors at most (${how})`,
+      note: `WSL gives its Linux systems ${gb} GB at most (${how}); a bigger Host needs memory= raised under [wsl2] in ${file}.`,
+    };
+  },
+
+  // A new size: nothing changes in WSL's VM. host.js gives the Host and
+  // size-caps.js the containers their ceilings from it, and the caller
+  // restarts the Host.
+  async resize() {},
+
+  // Releases up to 0.1.16 added memory= and processors= to the person's
+  // .wslconfig (at WSL's own defaults). They are taken out again here, each
+  // only where it still stands exactly as written (state.json
+  // wslConfigAdded); a value the person changed since is theirs and stays.
+  // A file that cannot be read or written exactly is left as it is, the
+  // record kept, and the run goes on; uninstall --delete-data asks again.
+  async releaseWslConfig(ctx) {
+    const added = ctx.state && ctx.state.get('wslConfigAdded');
+    if (!added || !Array.isArray(added.lines) || !added.lines.length || !added.file) return;
+    let r = null;
+    let decoded = null;
     try {
-      fs.mkdirSync(path.dirname(file), { recursive: true });
-      fs.writeFileSync(file, decoded.bom + text);
+      decoded = fs.existsSync(added.file) ? decodeWslConfig(fs.readFileSync(added.file)) : { text: '', bom: '' };
+      if (decoded) {
+        r = removeWslConfigLines(decoded.text, added.lines, Boolean(added.section));
+        if (!r.text && added.created && !decoded.bom) fs.rmSync(added.file, { force: true });
+        else if (r.removed.length) fs.writeFileSync(added.file, decoded.bom + r.text);
+      }
     } catch (e) {
       if (!e || !e.code) throw e;
-      leave(`it could not be written: ${e.code}`);
+      ctx.out.detail(`${added.file} still has ${added.lines.join(' and ')}, which an earlier release of C-Series added (it could not be changed: ${e.code}). C-Series no longer needs them; they are yours to remove.`);
       return;
     }
-    // state.json "wslConfigAdded": the lines written, so uninstall
-    // --delete-data names them and takes them out on a yes, and only them.
-    if (ctx.state) {
-      const was = ctx.state.get('wslConfigAdded') || {};
-      ctx.state.set('wslConfigAdded', {
-        file,
-        lines: [...new Set([...(Array.isArray(was.lines) ? was.lines : []), ...added.map((k) => `${k}=${want[k]}`)])],
-        section: Boolean(was.section || section),
-        created: was.lines ? Boolean(was.created) : !existed,
-      });
+    if (!r) {
+      ctx.out.detail(`${added.file} still has ${added.lines.join(' and ')}, which an earlier release of C-Series added; it is not saved as UTF-8, so it is left as it is. C-Series no longer needs them.`);
+      return;
     }
-    ctx.out.detail(`Added ${added.map((k) => `${k}=${want[k]}`).join(' and ')} to ${file}, which limits what the Linux system may take from this PC. Your other settings there are as they were.`);
-    if (await this.guestRunning(ctx)) {
-      ctx.out.detail('WSL applies them the next time it stops and starts again ("wsl --shutdown").');
+    ctx.state.set('wslConfigAdded', undefined);
+    if (r.removed.length) {
+      ctx.out.detail(`Took ${r.removed.join(' and ')} out of ${added.file}: an earlier release of C-Series added them, and C-Series now limits itself inside its own Linux system instead. They were WSL's own defaults, so nothing else on this PC changes.`);
     }
   },
 
   async startGuest(ctx) {
-    await this.limitVm(ctx);
+    await this.releaseWslConfig(ctx);
     const r = await this.guest(ctx, ['wait-boot']);
     if (r.code !== 0) {
       const state = /system=(\S+)/.exec(r.stdout);

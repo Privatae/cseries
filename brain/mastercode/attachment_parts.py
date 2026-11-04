@@ -647,6 +647,11 @@ def refused_input(result) -> bool:
         return False
     if result.get("lane_unavailable"):
         return False
+    # A refusal that carries its status as a field (a local server's window
+    # refusal, whose error is a sentence for the person, not "<status>: …").
+    _st = result.get("refused_status")
+    if isinstance(_st, int) and not isinstance(_st, bool):
+        return 400 <= _st < 500 and _st != 429
     # ANCHORED to the status the HTTP-error paths put first ("kimi 400: …",
     # "anthropic 400: …", "Local model error: 400"). A catch-all failure
     # ("… inference failure: … column 412", ":443") is not a refusal, and it

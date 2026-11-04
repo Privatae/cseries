@@ -54,6 +54,13 @@ def _bastion_embed_readiness(b: dict) -> tuple[bool, str]:
         if not lane_up:
             return False, ("serves an embedding model on its own machine, but its serve lane is not "
                            "connected to this Host right now; it reconnects on its own.")
+        from mastercode.embed_backends import embed_candidates
+        if service == "llm" and not any(c["why"] != "listed" for c in embed_candidates(b)):
+            # Only a test embed can say whether a model named by its file
+            # embeds (embed_backends.choose_embed_model_by_probe).
+            return True, ("reachable — its machine's OpenAI-compatible server is reached through the "
+                          "bastion's serve lane; whether one of its models embeds is found by a test "
+                          "embed when embeddings are set up.")
         return True, (f"ready — its machine's {'ollama' if service == 'ollama' else 'OpenAI-compatible'} "
                       "server is reached through the bastion's serve lane.")
     if "embed" not in caps:

@@ -3016,6 +3016,16 @@ class EntityRuntime:
         and binds what they return.
         """
         try:
+            if (_chat_route.get("provider") or "") == "local" and _chat_route.get("base_url"):
+                # A local route's window is the one its model server was
+                # started with (llama.cpp `-c`, vLLM --max-model-len): read
+                # from that server, cached, the route warm's bounded wait.
+                try:
+                    from server.routes.inference import warm_route_catalog
+                    await warm_route_catalog("local", base_url=_chat_route.get("base_url"),
+                                             model=_chat_route.get("model"))
+                except Exception as _lw_err:  # noqa: BLE001
+                    log.debug("local window read failed (non-fatal): %s", _lw_err)
             _ctx_window = await _cb.model_context_window(
                 _chat_route.get("model"), provider=_chat_route.get("provider"))
             if not _ctx_window or (effective_max is None and _cb.model_output_limit(
@@ -6457,6 +6467,21 @@ class EntityRuntime:
                 and not _tt_thread_model_pick(thread_override)):
             _chat_route = await _tt_route_for_type(
                 self.pool, sess.entity_id, sess.turn_type, _chat_route)
+        if _chat_route.get("unconfigured"):
+            # Nobody chose a chat model (nor does the turn's type name one)
+            # and no model on the person's own machine serves chat: the
+            # recommended model of a provider whose key or sign-in they hold,
+            # written as a visible route that says why
+            # (server/routes/inference.ensure_default_chat_route). With no
+            # credential either, the turn says what to set up, as before.
+            try:
+                from server.routes.inference import ensure_default_chat_route as _edcr
+                if await asyncio.wait_for(_edcr(self.pool, sess.entity_id), timeout=30):
+                    _chat_route = await _rrr(
+                        self.pool, sess.entity_id, "chat", thread_override=thread_override,
+                    )
+            except Exception as _dcr_err:  # noqa: BLE001 — the turn says unconfigured
+                log.info("default chat route not set: %r", _dcr_err)
         # Which ROLE this turn runs on — stamped on every tool_call_log row
         # (runtime/tool_call_ledger) so a model's tool-call record is per
         # role, the same axis the routing table is keyed on.
@@ -7357,8 +7382,10 @@ class EntityRuntime:
         # local wires never sent.
         from mastercode.inference_config import (
             anthropic_model_efforts_warm as _eff_warm, describe_effort as _eff_desc,
-            effort_label as _eff_label)
-        if _inference_provider == "anthropic" and _chosen_effort:
+            effort_label as _eff_label, vendor_provider as _eff_vendor)
+        # By vendor: anthropic-subscription sends the same effort the same way.
+        _anthropic_wire = _eff_vendor(_inference_provider) == "anthropic"
+        if _anthropic_wire and _chosen_effort:
             await _eff_warm(_inference_model)
         _turn_effort = _eff_desc(_inference_provider, _inference_model,
                                  _chosen_effort, _reasoning_effort)
@@ -7369,7 +7396,7 @@ class EntityRuntime:
         # prompt cache and leaving this line wrong about what went out.
         # The turn's record still names the pick and why (_note_served).
         _effort_unsent = None
-        if (_inference_provider == "anthropic" and _chosen_effort
+        if (_anthropic_wire and _chosen_effort
                 and not _turn_effort.get("sent")):
             _chat_call_kw["chosen_effort"] = None
             _effort_unsent = _turn_effort
@@ -7378,10 +7405,10 @@ class EntityRuntime:
             sess.entity_id, _inference_provider, _inference_model,
             _eff_label(_turn_effort),
         )
-        # The host_sdk_engine dispatch was removed (hard cut):
-        # the SDK is not a production option and no shipped route resolves to
-        # it, so the chat turn ALWAYS runs the generic provider call below.
-        # host_sdk_engine.py stays in the image, dormant and uncalled.
+        # The chat turn ALWAYS runs the generic provider call below. A
+        # subscription route's Claude Agent SDK transport lives inside that
+        # call (provider_gateway._call_anthropic_subscription), one model
+        # request per call; this loop still runs every tool.
         # Conversation-depth: overflow recovery. Pre-send, the
         # assembled request is trimmed to the window with the ONE trim order
         # (pre-fire hits → oldest verbatim turns → tool-result verbosity;
@@ -7441,6 +7468,7 @@ class EntityRuntime:
         _drop_held: list = [False]
 
         async def _call_with_overflow_retry(msgs, **kw):
+            nonlocal _ctx_target
             if _drop_held[0]:
                 _drop_held[0] = False
             elif _drop_hook[0] is not None:
@@ -7463,6 +7491,18 @@ class EntityRuntime:
                     log.debug("pre-send context trim failed (non-fatal): %s", _tr_err)
             res = await _call_entity_model(msgs, **kw)
             try:
+                if _cb.is_context_overflow(res) and res.get("context_window"):
+                    # The model server refused and named its own window (a
+                    # local server started with a small context;
+                    # provider_gateway learned it). The turn began with no
+                    # window, or with a larger one (a catalog's, or one the
+                    # server stated before it was restarted smaller): from
+                    # here on this turn fits to the server's, the retry below
+                    # included. The person's own words are protected as ever.
+                    _lw = int(res["context_window"])
+                    _lw_target = _lw - _cb.reply_reserve(_lw)
+                    if _ctx_target is None or _lw_target < _ctx_target:
+                        _ctx_target = _lw_target
                 if _cb.is_context_overflow(res):
                     # One chunk below where the pre-send trim already landed.
                     # A flat 0.75x was EXACTLY the hysteresis floor (target −

@@ -95,6 +95,22 @@ PROVIDERS: dict[str, dict[str, Any]] = {
                                               "https://api.anthropic.com"),
                    "wire": "anthropic", "env_key": "ANTHROPIC_API_KEY",
                    "kind": "first_party"},
+    # Anthropic's models on the person's Claude SUBSCRIPTION. Anthropic
+    # refuses a subscription token on a direct /v1/messages call, so the
+    # gateway carries these calls through the Claude Agent SDK
+    # (brain/mastercode/claude_sdk_wire.py). It is the Anthropic vendor for
+    # everything that judges a model (`vendor`: the model standard, the
+    # catalog, prices, effort, the attachment format), and it has no Keys
+    # entry of its own: its credential is the person's own Claude sign-in
+    # (resolve_claude_subscription: the sign-in the Host keeps as
+    # harness:claude_oauth, else the anthropic-oauth entry in Keys) — never
+    # the API key, never an env key. Not one of the old SDK route names
+    # (inference_config._SDK_ALIASES), which stay refused.
+    "anthropic-subscription": {"base_url": os.environ.get("ANTHROPIC_BASE_URL",
+                                                          "https://api.anthropic.com"),
+                               "wire": "anthropic", "env_key": None,
+                               "kind": "first_party", "vendor": "anthropic",
+                               "credential": ("anthropic", ("oauth_token",))},
     # Generic providers (OpenRouter is ONE option, never the sole vendor — same
     # model, N providers, cheapest real path). Endpoints are
     # each vendor's documented OpenAI-compatible base; all env-overridable like
@@ -116,6 +132,22 @@ PROVIDERS: dict[str, dict[str, Any]] = {
                    "wire": "openai", "env_key": "GROQ_API_KEY",
                    "kind": "generic"},
 }
+
+
+def vendor_of(provider: str) -> str:
+    """The provider whose models, catalog and prices this one serves: its
+    registry row's `vendor`, else itself. 'anthropic-subscription' ->
+    'anthropic'; every other provider, and an unknown name, maps to itself."""
+    p = (provider or "").strip().lower()
+    spec = PROVIDERS.get(p) or {}
+    return str(spec.get("vendor") or p)
+
+
+def borrows_credential(provider: str) -> bool:
+    """True for a provider with no Keys entry of its own (its row names
+    another provider's slot under `credential`): the Keys app lists no slot
+    for it."""
+    return bool((PROVIDERS.get((provider or "").strip().lower()) or {}).get("credential"))
 
 
 def generic_providers() -> tuple:
@@ -362,8 +394,17 @@ async def _resolve_typed(
                 if lname != name and matches_provider(p, cred_type, lname):
                     raw = await _vault.open_secret(
                         pool, entity_id=entity_id, name=lname, actor=actor)
-                    if raw:
-                        secret = raw.decode("utf-8", "strict").strip()
+                    secret = raw.decode("utf-8", "strict").strip() if raw else ""
+                    # A JSON object is a provider SPEC, not a key: the
+                    # 'harness-kimi' entry may be {base_url, model, api_key}
+                    # for an endpoint of the owner's own (harness_core's
+                    # provider_json shape). Copied under the canonical name it
+                    # became a "kimi key" whose text was the whole spec, sent
+                    # to Moonshot as a bearer every 30 s (401, measured on the
+                    # Lima guest, 0.1.16) and offered to the Host's chat.
+                    if secret.startswith("{"):
+                        continue
+                    if secret:
                         await _vault.store_secret(
                             pool, entity_id=entity_id, name=name,
                             cred_type=ctype,
@@ -375,7 +416,7 @@ async def _resolve_typed(
     except Exception as exc:
         log.warning("vault %s/%s read failed (env fallback=%s): %s",
                     p, cred_type, env_fallback, exc)
-    if env_fallback and cred_type == "api_key":
+    if env_fallback and cred_type == "api_key" and PROVIDERS[p].get("env_key"):
         env_val = (os.environ.get(PROVIDERS[p]["env_key"]) or "").strip()
         if env_val:
             return ResolvedCred(p, name, "api_key", env_val, "env")
@@ -406,6 +447,18 @@ async def resolve(
     per-consumer selection) that short-circuits the ladder. A wired name whose
     entry is absent falls back to the type ladder — a stale wiring must
     degrade to 'whatever is connected', never to a dead lane."""
+    borrowed = (PROVIDERS.get((provider or "").strip().lower()) or {}).get("credential")
+    if borrowed:
+        # A provider with no Keys entry of its own reads another provider's
+        # slot, and only the types its row names (anthropic-subscription: the
+        # anthropic-oauth entry). No wiring and no env rung: a wired name or an
+        # environment key could hand it a credential of another type.
+        owner, types = borrowed
+        allowed = tuple(t for t in accepted_types if t in types)
+        if not allowed:
+            return None
+        return await resolve(pool, entity_id, owner, allowed, actor=actor,
+                             env_fallback=False)
     wired_name = (wiring or "").strip()
     if wired_name:
         try:
@@ -743,3 +796,92 @@ async def resolve_for_inference(
     if s is not None:
         return s
     return await resolve_key(pool, entity_id, p, actor=actor)
+
+
+# ── The person's Claude subscription (provider anthropic-subscription) ──────
+# Two places a Host can hold it, both the person's own, both in this Host's
+# vault:
+#   1. their Claude sign-in: the grant Anthropic's own `claude auth login`
+#      wrote when they signed in (from the Orchestrator's "Sign in with your
+#      Claude account", or when they connected the Claude Code engine). The
+#      Host keeps it sealed as harness:claude_oauth (nac_harness), renews it
+#      itself (server/main.py, the kernel refresher), and needs no coding
+#      engine container running for any of that.
+#   2. the anthropic-oauth entry in Keys: a token they minted themselves
+#      (`claude setup-token`) and pasted there.
+# The sign-in comes first: it is the one the Host keeps renewed. A sign-in
+# switched off in Keys (Deactivate on harness:claude_oauth) or disconnected
+# reads as absent here, so rung 2 answers. Never the API key, never an env key.
+CLAUDE_SIGNIN_HARNESS = "claude-sdk"
+# A token this close to expiry is renewed before it is used.
+CLAUDE_SIGNIN_RENEW_MS = 5 * 60 * 1000
+
+
+def claude_signin_from_text(text: str) -> tuple[Optional[str], Optional[int]]:
+    """(access token, expiresAt ms) inside the Claude credential file's bytes
+    ({"claudeAiOauth": {"accessToken", "expiresAt", ...}}), or (None, None)."""
+    import json as _json
+    try:
+        obj = _json.loads(text or "")
+        oauth = obj.get("claudeAiOauth") if isinstance(obj, dict) else None
+    except Exception:
+        return None, None
+    if not isinstance(oauth, dict):
+        return None, None
+    tok = oauth.get("accessToken")
+    exp = oauth.get("expiresAt")
+    tok = tok.strip() if isinstance(tok, str) and tok.strip() else None
+    exp = int(exp) if isinstance(exp, (int, float)) and exp > 0 else None
+    return tok, exp
+
+
+async def resolve_claude_signin(
+    pool, entity_id: int, *, actor: str = "providers-resolver",
+) -> Optional[ResolvedCred]:
+    """The person's Claude sign-in as a token, or None when there is none.
+    source 'signin' (live), 'signin-expired' (present, expired or within
+    CLAUDE_SIGNIN_RENEW_MS of it: the caller renews it and reads again) or
+    'signin-unreadable'. Reads the SEALED copy (open_secret: a row switched
+    off in Keys reads as absent). NEVER raises."""
+    if pool is None or not entity_id:
+        return None
+    try:
+        from server.network import harness_state
+        if await harness_state.is_disconnected(CLAUDE_SIGNIN_HARNESS):
+            return None
+    except Exception:  # noqa: BLE001 — a failed read is "not disconnected"
+        pass
+    try:
+        from server.network.nac_harness import agent_creds_vault_name
+        name = agent_creds_vault_name()
+        from server.vault import api as _vault
+        raw = await _vault.open_secret(pool, entity_id=entity_id, name=name, actor=actor)
+        if not raw:
+            return None
+        tok, exp = claude_signin_from_text(raw.decode("utf-8", "strict"))
+    except Exception as exc:
+        # Type only: a decode error's text can carry a byte of the secret.
+        log.warning("Claude sign-in read failed: %s", type(exc).__name__)
+        return ResolvedCred("anthropic-subscription", "harness:claude_oauth", "oauth_token",
+                            "", "signin-unreadable")
+    if not tok:
+        return ResolvedCred("anthropic-subscription", name, "oauth_token", "",
+                            "signin-unreadable")
+    if exp is not None and exp - CLAUDE_SIGNIN_RENEW_MS <= time.time() * 1000:
+        return ResolvedCred("anthropic-subscription", name, "oauth_token", "",
+                            "signin-expired")
+    return ResolvedCred("anthropic-subscription", name, "oauth_token", tok, "signin")
+
+
+async def resolve_claude_subscription(
+    pool, entity_id: int, *, actor: str = "providers-resolver",
+) -> Optional[ResolvedCred]:
+    """The credential provider anthropic-subscription dials: the Claude
+    sign-in when there is one (a SIGNIN_UNUSABLE marker included: the caller
+    renews or reports it), else the anthropic-oauth entry in Keys, else None.
+    NEVER raises."""
+    s = await resolve_claude_signin(pool, entity_id, actor=actor)
+    if s is not None:
+        return s
+    return await resolve(pool, entity_id, "anthropic-subscription", ("oauth_token",),
+                         actor=actor)

@@ -579,6 +579,13 @@
         return ''
             + '<div class="keys-field"><span class="keys-field-label">Name</span>'
               + '<input id="add-name" class="keys-input" placeholder="e.g. github-ssh, runpod, wg-bastion" autocomplete="off" value="' + esc(suggest || '') + '">'
+              // A name filled in for the person (an engine's Connect) that
+              // already holds a key: say that sealing replaces it, as the
+              // provider form does, so a working key is never overwritten
+              // without a word.
+              + (suggest && (state.keys || []).some(function (k) { return k && k.name === suggest; })
+                  ? '<span class="keys-field-hint">A key named <strong>' + esc(suggest) + '</strong> is already sealed. Sealing a new value <em>replaces</em> it.</span>'
+                  : '')
               + (hasProviders ? '<span class="keys-field-hint">Adding a provider key? Use <em>Provider Key</em> above — it seals under the exact name your Host looks up.</span>' : '')
             + '</div>'
             + '<div class="keys-field"><span class="keys-field-label">Type</span>'
@@ -935,5 +942,35 @@
     $('keys-modal-close').addEventListener('click', closeModal);
     $('keys-scrim').addEventListener('click', function (e) { if (e.target === $('keys-scrim')) closeModal(); });
 
-    load();
+    // ── a view from the desktop: 'key-<name>' opens the Vault on the form to
+    //    add that key, its name filled in (an app's Connect for a coding
+    //    engine sends 'key-harness-cursor'). '#view=' on a fresh window, or a
+    //    'cseries:app-view' message from the desktop into an open one.
+    //    Anything else is ignored. ─────────────────────────────────────────
+    function keyFromView(view) {
+        var m = /^key-([a-z0-9][a-z0-9_-]{0,59})$/.exec(String(view || ''));
+        return m ? m[1] : null;
+    }
+    function applyView(view) {
+        var name = keyFromView(view);
+        if (!name) return;
+        // The person is in the middle of something (a key half pasted, a
+        // reveal, a sign-in): a view from the desktop never replaces it.
+        if (!$('keys-scrim').hidden) return;
+        state.section = 'vault';
+        render();
+        openAdd({ mode: 'custom', suggest: name });
+    }
+    function viewFromHash() {
+        var m = /(?:^|[#&])view=([^&]*)/.exec(window.location.hash || '');
+        if (!m) return null;
+        try { return decodeURIComponent(m[1]) || null; } catch (e) { return null; }
+    }
+    window.addEventListener('message', function (ev) {
+        if (ev.source !== window.parent) return;
+        var d = ev.data || {};
+        if (d.type === 'cseries:app-view' && typeof d.view === 'string') applyView(d.view);
+    });
+    var initialView = viewFromHash();
+    Promise.resolve(load()).then(function () { if (initialView) applyView(initialView); });
 }());

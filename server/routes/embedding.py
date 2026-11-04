@@ -111,7 +111,8 @@ async def apply_embedding_switch(pool, entity_id, model: str,
                                  dim: int | None = None,
                                  cred_name: str | None = None,
                                  bastion: str | None = None,
-                                 request_dimensions: int | None = None) -> dict:
+                                 request_dimensions: int | None = None,
+                                 chosen_by: dict | None = None) -> dict:
     """Persist the entity's embedding model (the field the engine reads). The ONE
     write path for embedding selection — used by POST /switch and by the unified
     routing surface (inference.set_role_model role='embedding'). Returns the switch
@@ -173,11 +174,8 @@ async def apply_embedding_switch(pool, entity_id, model: str,
         # like the production embeds it stands in for. A bastion with no
         # address of its own is at its serve-lane origin on this Host's
         # loopback (serve_relay.py), dialled directly as its embeds are.
-        from server.network import serve_relay as _serve_relay
-        peer_forward = None
-        if bastion and not _serve_relay.is_lane_origin(base_url):
-            import os as _os
-            peer_forward = (_os.environ.get("HUB_PEER_FORWARD_ADDR") or "").strip() or "[::1]:3129"
+        from mastercode.embed_backends import peer_forward_for
+        peer_forward = peer_forward_for(base_url, bastion)
         ok, why = await probe_embedding_endpoint(
             base_url, model, target_dim,
             cred_name=cred_name, peer_forward=peer_forward,
@@ -211,6 +209,12 @@ async def apply_embedding_switch(pool, entity_id, model: str,
     # catalog model the static MODEL_DIMS table has never heard of still routes
     # into the right column. Config-driven end to end.
     bp["embedding_dim"] = target_dim
+    # How this model was chosen, when a test embed of what the machine lists
+    # chose it (embed_backends.choose_record); a model named by hand clears it.
+    if chosen_by:
+        bp["embedding_chosen_by"] = chosen_by
+    else:
+        bp.pop("embedding_chosen_by", None)
     if base_url is not None:
         bp["embedding_base_url"] = base_url
         # Bastion lane: persist the IDENTITY (hostname) as the source of truth.

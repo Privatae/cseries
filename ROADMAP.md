@@ -43,10 +43,11 @@ It is not a promised date, and it is changed here when it moves.
   over your chat, with what it may do in plain words. With no model key, the
   Host still shows the AI agents on each machine and stops one when you
   approve.
-- **A model on your own machine.** Available. With no key or sign-in for a
-  model provider, the Host uses a model server running on its own machine,
-  such as llama.cpp, vLLM or LM Studio, which the bastion finds and passes
-  through to it.
+- **A model on your own machine.** Available. Until you choose a model for
+  chat, the Host uses a model server running on its own machine, such as
+  llama.cpp, vLLM or LM Studio, which the bastion finds and passes through to
+  it, whether or not you hold a key; the Orchestrator says which model chat
+  uses and why. Embedding models are never used for chat.
 - **Folder search.** Available. The bastion agent indexes a folder you
   connect, on your machine, and the Host searches it through the bastion.
 - **Memory and skills.** Available. The Host keeps its memory in its own

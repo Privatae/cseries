@@ -193,6 +193,11 @@ class State:
                            "build_key": C.BUILD_KEY}
         write_json(self.paths.built_json(), self.built)
 
+    def forget_build(self, hid):
+        """Drop an engine's build record (its image is gone from the store)."""
+        if self.built.pop(hid, None) is not None:
+            write_json(self.paths.built_json(), self.built)
+
     def built_image(self, hid, src_sha256):
         """The image id this machine built for an engine from these sources,
         the way it builds now (common.BUILD_KEY); None for no such build. A

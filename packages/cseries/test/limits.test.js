@@ -16,6 +16,7 @@ const { main } = require('../src/cli');
 const { captureOutput, testPaths, validRelease } = require('./helpers');
 const { fakeMachine } = require('./fake-machine');
 
+const GiB = 1024 ** 3;
 const UNITS = path.join(__dirname, '..', '..', '..', 'vm', 'wsl', 'rootfs', 'etc', 'containers', 'systemd');
 
 function machine(opts = {}) {
@@ -23,16 +24,17 @@ function machine(opts = {}) {
   const m = fakeMachine(p, opts);
   const rel = validRelease();
   rel.guest['wsl-x64'].sha256 = m.rootfsSha256;
-  const run = async (argv = []) => {
+  const run = async (argv = [], extra = {}) => {
     const out = captureOutput();
     const code = await main(argv, {
       platform: 'win32', arch: 'x64', env: {}, paths: p, out, runner: m.runner, net: m.net,
       sleep: async () => {}, prompt: async () => false, portState: async () => 'free', freeBytes: () => 64 * 1024 ** 3, osRelease: '10.0.22631',
       releaseInfo: { release: rel, placeholders: [], file: 'test' }, bastionKeys: m.bastionKeys,
+      machine: { totalMem: 32 * GiB, cpus: 16 }, ...extra,
     });
     return { code, text: out.text(), err: out.errText() };
   };
-  return { m, run };
+  return { m, run, p };
 }
 
 test('the Host may use every processor but one, and all of a machine that has only one', () => {
@@ -99,7 +101,6 @@ function unit(name) {
   return out;
 }
 
-const GiB = 1024 ** 3;
 
 function bytes(value, systemBytes) {
   const pct = /^(\d+(?:\.\d+)?)%$/.exec(value);
@@ -261,148 +262,125 @@ test('the Host\'s memory ceiling follows the system it runs in, and its processo
   assert.equal(unit('cseries-postgres.container').Service.CPUQuota, undefined, 'the database has no processor ceiling');
 });
 
-// The WSL VM's limits, in the person's own .wslconfig.
-const { vmLimits, mergeWslConfig } = require('../src/vm/wslconfig');
+// Windows: the size is a ceiling inside C-Series's own WSL system; the
+// person's .wslconfig, which caps every WSL system, is never written.
+const { State } = require('../src/state');
+const { asOldRelease } = require('./old-wslconfig');
+const sizeCaps = require('../src/vm/size-caps');
 
-test('the VM gets half the PC\'s memory and all its processors, as WSL and Docker Desktop default', () => {
-  assert.deepEqual(vmLimits(16 * GiB, 16), { memory: '8GB', processors: '16' });
-  assert.deepEqual(vmLimits(15.9 * GiB, 8), { memory: '8GB', processors: '8' });
-  assert.deepEqual(vmLimits(8 * GiB, 4), { memory: '4GB', processors: '4' });
-  assert.deepEqual(vmLimits(2 * GiB, 1), { memory: '2GB', processors: '1' });
-});
-
-test('no .wslconfig yet: the section is written', () => {
-  const r = mergeWslConfig('', { memory: '8GB', processors: '8' });
-  assert.equal(r.text, '[wsl2]\nmemory=8GB\nprocessors=8\n');
-  assert.deepEqual(r.added, ['memory', 'processors']);
-});
-
-test('the person\'s own values stay, stricter or looser, in any case, and only the missing key is added', () => {
-  for (const mem of ['memory=2GB', 'Memory = 64GB', 'MEMORY=512MB']) {
-    const text = `[general]\nx=1\n\n[wsl2]\n${mem}\nswap=0\n\n[experimental]\nsparseVhd=true\n`;
-    const r = mergeWslConfig(text, { memory: '8GB', processors: '8' });
-    assert.deepEqual(r.added, ['processors']);
-    assert.equal(r.text, `[general]\nx=1\n\n[wsl2]\n${mem}\nswap=0\nprocessors=8\n\n[experimental]\nsparseVhd=true\n`);
-  }
-});
-
-test('a file that already has both is returned untouched; a commented key does not count', () => {
-  const both = '[wsl2]\nmemory=3GB\nprocessors=2\n';
-  assert.deepEqual(mergeWslConfig(both, { memory: '8GB', processors: '8' }), { text: both, added: [], section: false });
-  const r = mergeWslConfig('[wsl2]\n# memory=3GB\n; processors=2\n', { memory: '8GB', processors: '8' });
-  assert.deepEqual(r.added, ['memory', 'processors']);
-});
-
-test('keys elsewhere do not count as [wsl2] keys, and CRLF files stay CRLF', () => {
-  const r = mergeWslConfig('[experimental]\r\nmemory=1GB\r\n', { memory: '8GB' });
-  assert.equal(r.text, '[experimental]\r\nmemory=1GB\r\n\r\n[wsl2]\r\nmemory=8GB\r\n');
-});
-
-test('an install adds the limits to the person\'s .wslconfig, keeps what they set, and says so', async () => {
-  const p = testPaths();
-  fs.mkdirSync(path.dirname(p.wslConfig), { recursive: true });
-  fs.writeFileSync(p.wslConfig, '﻿[wsl2]\nmemory=3GB\nlocalhostForwarding=true\n');
-  const m = fakeMachine(p, { distro: false });
-  const rel = validRelease();
-  rel.guest['wsl-x64'].sha256 = m.rootfsSha256;
-  const out = captureOutput();
-  const code = await main([], {
-    platform: 'win32', arch: 'x64', env: {}, paths: p, out, runner: m.runner, net: m.net,
-    sleep: async () => {}, prompt: async () => false, portState: async () => 'free', freeBytes: () => 64 * 1024 ** 3, osRelease: '10.0.22631',
-    releaseInfo: { release: rel, placeholders: [], file: 'test' }, bastionKeys: m.bastionKeys,
-    machine: { totalMem: 16 * GiB, cpus: 12 },
-  });
-  assert.equal(code, 0, out.errText());
-  assert.equal(fs.readFileSync(p.wslConfig, 'utf8'), '\uFEFF[wsl2]\nmemory=3GB\nlocalhostForwarding=true\nprocessors=12\n');
-  assert.match(out.text(), /Added processors=12 to .*\.wslconfig/);
-});
-
-test('a PC with no .wslconfig gets one with both limits, and a second run leaves it alone', async () => {
-  const p = testPaths();
-  const m = fakeMachine(p, { distro: false });
-  const rel = validRelease();
-  rel.guest['wsl-x64'].sha256 = m.rootfsSha256;
-  const go = () => main([], {
-    platform: 'win32', arch: 'x64', env: {}, paths: p, out: captureOutput(), runner: m.runner, net: m.net,
-    sleep: async () => {}, prompt: async () => false, portState: async () => 'free', freeBytes: () => 64 * 1024 ** 3, osRelease: '10.0.22631',
-    releaseInfo: { release: rel, placeholders: [], file: 'test' }, bastionKeys: m.bastionKeys,
-    machine: { totalMem: 32 * GiB, cpus: 16 },
-  });
-  assert.equal(await go(), 0);
-  assert.equal(fs.readFileSync(p.wslConfig, 'utf8'), '[wsl2]\nmemory=16GB\nprocessors=16\n');
-  const before = fs.statSync(p.wslConfig).mtimeMs;
-  assert.equal(await go(), 0);
-  assert.equal(fs.statSync(p.wslConfig).mtimeMs, before);
-});
-
-// What the person's own file may look like, and the ways writing it can fail.
-// The rule throughout: their file is changed only by appending our lines to
-// text we read exactly, and a run never fails because of it.
-
-test('a second [wsl2] section, or a header with a comment after it, still counts', () => {
-  const two = '[wsl2]\nswap=0\n\n[experimental]\nx=1\n\n[wsl2]\nmemory=3GB\n';
-  const r = mergeWslConfig(two, { memory: '8GB', processors: '8' });
-  assert.deepEqual(r.added, ['processors'], 'memory set in the second [wsl2] section is theirs');
-  assert.equal(r.text, '[wsl2]\nswap=0\nprocessors=8\n\n[experimental]\nx=1\n\n[wsl2]\nmemory=3GB\n');
-  const commented = mergeWslConfig('[wsl2]  # mine\nmemory=3GB\n', { memory: '8GB' });
-  assert.deepEqual(commented.added, [], 'a [wsl2] header followed by a comment is still the section');
-});
-
-function installWith(p, opts = {}) {
-  const m = fakeMachine(p, { distro: false });
-  const rel = validRelease();
-  rel.guest['wsl-x64'].sha256 = m.rootfsSha256;
-  const out = captureOutput();
-  return main([], {
-    platform: 'win32', arch: 'x64', env: {}, paths: p, out, runner: m.runner, net: m.net,
-    sleep: async () => {}, prompt: async () => false, portState: async () => 'free', freeBytes: () => 64 * 1024 ** 3, osRelease: '10.0.22631',
-    releaseInfo: { release: rel, placeholders: [], file: 'test' }, bastionKeys: m.bastionKeys,
-    machine: { totalMem: 16 * GiB, cpus: 8 }, ...opts,
-  }).then((code) => ({ code, text: out.text(), err: out.errText() }));
-}
-
-test('a .wslconfig that is not plain UTF-8 is left byte for byte, and the run says what to add', async () => {
-  const utf16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('[wsl2]\r\nswap=0\r\n', 'utf16le')]);
-  const cp1252 = Buffer.from('[wsl2]\nswapFile=C:\\\\Users\\\\J\xfcrgen\\\\swap.vhdx\n', 'latin1');
-  for (const bytes of [utf16, cp1252]) {
-    const p = testPaths();
-    fs.mkdirSync(path.dirname(p.wslConfig), { recursive: true });
-    fs.writeFileSync(p.wslConfig, bytes);
-    const r = await installWith(p);
+test('a new install on Windows writes no .wslconfig, and the person\'s own stays byte for byte', async () => {
+  for (const before of [null, '﻿[wsl2]\nmemory=12GB\nlocalhostForwarding=true\n', Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('[wsl2]\r\nswap=0\r\n', 'utf16le')])]) {
+    const { run, p } = machine({ distro: false });
+    if (before !== null) {
+      fs.mkdirSync(path.dirname(p.wslConfig), { recursive: true });
+      fs.writeFileSync(p.wslConfig, before);
+    }
+    const r = await run();
     assert.equal(r.code, 0, r.err);
-    assert.ok(fs.readFileSync(p.wslConfig).equals(bytes), 'the file is exactly as it was');
-    assert.match(r.text, /memory=8GB/);
-    assert.match(r.text, /processors=8/);
-    assert.doesNotMatch(r.text, /^.*Added /m);
+    if (before === null) assert.ok(!fs.existsSync(p.wslConfig), 'no file made');
+    else assert.ok(fs.readFileSync(p.wslConfig).equals(Buffer.from(before)), 'the file is exactly as it was');
+    assert.doesNotMatch(r.text, /Added |\.wslconfig.*add/);
   }
 });
 
-test('a UTF-8 byte order mark stays where it was', async () => {
-  const p = testPaths();
-  fs.mkdirSync(path.dirname(p.wslConfig), { recursive: true });
-  fs.writeFileSync(p.wslConfig, '\uFEFF[wsl2]\nmemory=3GB\n');
-  const r = await installWith(p);
+test('Windows: the Host\'s ceilings come from the size, not from WSL\'s VM, and cseries.slice gets the rest', async () => {
+  // WSL's VM: 16 processors and 16 GiB (half of a 32 GB PC); the size, C4-8.
+  const { m, run } = machine({ distro: false, cpus: 16, memKb: 16 * 1024 * 1024, runtime: true });
+  const r = await run(['--size', 'C4-8']);
   assert.equal(r.code, 0, r.err);
-  assert.equal(fs.readFileSync(p.wslConfig, 'utf8'), '\uFEFF[wsl2]\nmemory=3GB\nprocessors=8\n');
+  const kb = String(8 * 1024 * 1024);
+  assert.match(m.images, /^cpu_quota=300%$/m);
+  assert.match(m.images, new RegExp(`^memory_max=${host.memoryMax(kb, { runtime: true })}$`, 'm'));
+  const log = m.guestShell.systemctl();
+  assert.match(log, new RegExp(`^systemctl set-property cseries\\.slice MemoryMax=${host.containersMax(kb)}M AllowedCPUs=0-3$`, 'm'));
+  assert.match(log, /^systemctl set-property cseries-host\.service AllowedCPUs=0-3$/m);
+  assert.match(log, /^systemctl set-property cseries-postgres\.service AllowedCPUs=0-3$/m);
+  assert.match(r.text, /The Host may use 3 of the 4 processors and 8192 MB of memory C4-8 gives C-Series\./);
+  assert.match(r.text, /nothing else on this PC is limited by it/);
 });
 
-test('a .wslconfig that cannot be written (read-only, or open elsewhere) leaves the run going and says what to add', async () => {
-  const p = testPaths();
+test('the guest script sets each loaded unit, names a missing slice, and refuses nonsense', () => {
+  const s = sizeCaps.script({ cpus: 1, containersMb: 0 });
+  assert.match(s, /cseries\.slice MemoryMax=1M AllowedCPUs=0 /, 'never MemoryMax=0, and one processor is "0"');
+  assert.throws(() => sizeCaps.script({ cpus: 0, containersMb: 10 }), /cpus/);
+  assert.throws(() => sizeCaps.script({ cpus: 2, containersMb: -1 }), /containersMb/);
+});
+
+test('Windows: no size above what WSL gives is offered, and the refusal names the person\'s own line', async () => {
+  const { run, p } = machine({ distro: false });
+  fs.mkdirSync(path.dirname(p.wslConfig), { recursive: true });
+  fs.writeFileSync(p.wslConfig, '[wsl2]\nmemory=6GB\n');
+  let r = await run(['--size', 'C4-8']);
+  assert.equal(r.code, 1);
+  assert.match(r.err, /C4-8 does not fit here: WSL gives its Linux systems 6 GB of memory and 16 processors at most \(as your .*\.wslconfig sets\), so the biggest the Host can be is C12-6\./);
+  r = await run(['--size', 'C2-4']);
+  assert.equal(r.code, 0, r.err);
+  assert.equal(fs.readFileSync(p.wslConfig, 'utf8'), '[wsl2]\nmemory=6GB\n');
+});
+
+test('the lines an earlier release added to .wslconfig are taken out at the next run; a value the person changed stays', async () => {
+  const { run, p } = machine({ distro: true });
   fs.mkdirSync(path.dirname(p.wslConfig), { recursive: true });
   fs.writeFileSync(p.wslConfig, '[wsl2]\nswap=0\n');
+  asOldRelease(p, new State(p.state), { memory: '16GB', processors: '16' });
+  fs.writeFileSync(p.wslConfig, fs.readFileSync(p.wslConfig, 'utf8').replace('processors=16', 'processors=6'));
+  const r = await run();
+  assert.equal(r.code, 0, r.err);
+  assert.equal(fs.readFileSync(p.wslConfig, 'utf8'), '[wsl2]\nswap=0\nprocessors=6\n');
+  assert.match(r.text, /Took memory=16GB out of .*\.wslconfig: an earlier release of C-Series added them/);
+  assert.equal(JSON.parse(fs.readFileSync(p.state, 'utf8')).wslConfigAdded, undefined, 'settled: not touched again');
+  // A file it made itself, untouched since: the file goes.
+  const x = machine({ distro: true });
+  asOldRelease(x.p, new State(x.p.state));
+  assert.equal((await x.run()).code, 0);
+  assert.ok(!fs.existsSync(x.p.wslConfig));
+});
+
+test('an earlier release\'s lines in a file that cannot be written, or is not UTF-8, stay with their record, and the run goes on', async () => {
+  const { run, p } = machine({ distro: true });
+  fs.mkdirSync(path.dirname(p.wslConfig), { recursive: true });
+  fs.writeFileSync(p.wslConfig, '[wsl2]\nswap=0\n');
+  asOldRelease(p, new State(p.state));
   const real = fs.writeFileSync;
   fs.writeFileSync = function (file, ...rest) {
-    if (String(file) === p.wslConfig) {
-      throw Object.assign(new Error(`EPERM: operation not permitted, open '${file}'`), { code: 'EPERM' });
-    }
+    if (String(file) === p.wslConfig) throw Object.assign(new Error(`EPERM: operation not permitted, open '${file}'`), { code: 'EPERM' });
     return real.call(this, file, ...rest);
   };
   let r;
-  try { r = await installWith(p); } finally { fs.writeFileSync = real; }
+  try { r = await run(); } finally { fs.writeFileSync = real; }
   assert.equal(r.code, 0, r.err);
-  assert.equal(fs.readFileSync(p.wslConfig, 'utf8'), '[wsl2]\nswap=0\n');
-  assert.match(r.text, /EPERM/);
-  assert.match(r.text, /memory=8GB/);
+  assert.equal(fs.readFileSync(p.wslConfig, 'utf8'), '[wsl2]\nswap=0\nmemory=8GB\nprocessors=8\n');
+  assert.match(r.text, /could not be changed: EPERM/);
+  assert.ok(JSON.parse(fs.readFileSync(p.state, 'utf8')).wslConfigAdded, 'kept: uninstall offers them again');
+  const x = machine({ distro: true });
+  asOldRelease(x.p, new State(x.p.state));
+  const utf16 = Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from('[wsl2]\r\nmemory=8GB\r\n', 'utf16le')]);
+  fs.writeFileSync(x.p.wslConfig, utf16);
+  r = await x.run();
+  assert.equal(r.code, 0, r.err);
+  assert.ok(fs.readFileSync(x.p.wslConfig).equals(utf16));
+  assert.match(r.text, /not saved as UTF-8/);
+});
+
+test('Windows: resize changes the ceilings inside the guest and restarts the Host; WSL\'s VM and the distribution stay', async () => {
+  const { m, run, p } = machine({ distro: false, cpus: 16, memKb: 16 * 1024 * 1024, runtime: true });
+  assert.equal((await run(['--size', 'C2-4'])).code, 0);
+  const restarts = m.restarts;
+  const callsBefore = m.runner.calls.length;
+  const r = await run(['resize', 'C6-12']);
+  assert.equal(r.code, 0, r.err);
+  assert.match(r.text, /Changing the Host to C6-12: 6 processors and 12 GB of memory\. Its data stays as it is\./);
+  const kb = String(12 * 1024 * 1024);
+  assert.match(m.images, /^cpu_quota=500%$/m);
+  assert.match(m.images, new RegExp(`^memory_max=${host.memoryMax(kb, { runtime: true })}$`, 'm'));
+  assert.match(m.guestShell.systemctl(), new RegExp(`cseries\\.slice MemoryMax=${host.containersMax(kb)}M AllowedCPUs=0-5$`, 'm'));
+  assert.equal(m.restarts, restarts + 1, 'the Host restarted once, on its new ceilings');
+  assert.deepEqual(JSON.parse(fs.readFileSync(p.state, 'utf8')).size, { cpus: 6, memoryGiB: 12 });
+  assert.ok(m.distros.includes('cseries'), 'the distribution, with the Host\'s data, is the same');
+  assert.ok(!m.runner.calls.slice(callsBefore).some((c) => c.cmd === 'wsl.exe' && /--shutdown|--unregister|--import/.test(c.args.join(' '))), 'WSL is not restarted');
+  const again = await run(['resize', 'C6-12']);
+  assert.match(again.text, /It is C6-12 already; nothing was changed\./);
+  assert.equal(m.restarts, restarts + 1);
 });
 
 test('the machine is measured on any Node 18 the package accepts (availableParallelism is 18.14 and later)', () => {

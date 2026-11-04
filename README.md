@@ -36,8 +36,12 @@ npx cseries
   Linux with `/dev/kvm`. An x64 or Arm64 machine with hardware
   virtualisation turned on.
 - Node.js 18 or later, for `npx`.
-- About 10 GB of free disk. The virtual machine gets half the machine's
-  memory, so 8 GB or more works best.
+- About 10 GB of free disk, and 8 GB of memory or more. You choose how big
+  the Host is when you install it, by the same names as the Cloud machines
+  (`C4-8` is 4 processors and 8 GB), from a small Host up to most of the
+  machine; the machine always keeps at least 2 processors and 4 GB.
+  `npx cseries --size C4-8` answers for a scripted install, and
+  `npx cseries resize C8-32` changes it later, keeping all the Host's data.
 - A browser that sends `*.localhost` names to your own machine: Chrome, Edge
   or Firefox.
 

@@ -203,12 +203,20 @@ APP_SESSION_PATHS = frozenset({"/__host/session", "/__host/renew", "/__host/door
 # fonts tokens.css names, the model picker the Orchestrator uses, the SDK and
 # the frame bootstrap. On an app origin these come from the image's base/ only,
 # never the entity-writable custom/ overlay (main.py OverlayStaticFiles).
+# network-reach.js: Settings and the App Store load it to show the controls
+# that need the Privatae network; refused here, it 404'd and every such
+# control stayed hidden on a member Host. The coding engines' icons
+# (/assets/harness/<id>.png, raster only): the Orchestrator's Coding Engines
+# rows draw them from its own origin (inference.py coding-matrix icon_url), and
+# every one 404'd.
 SHARED_EXACT = frozenset({
     "/js/app-sdk.js",
     "/js/app-frame-init.js",
     "/js/model-picker.js",
+    "/js/network-reach.js",
 })
-_SHARED_FILE_RE = re.compile(r"/(css/[A-Za-z0-9._-]+\.css|fonts/[A-Za-z0-9._-]+\.woff2?)")
+_SHARED_FILE_RE = re.compile(
+    r"/(css/[A-Za-z0-9._-]+\.css|fonts/[A-Za-z0-9._-]+\.woff2?|assets/harness/[a-z0-9-]+\.png)")
 _SYSTEM_APP_RE = re.compile(r"/system-apps/([^/]+)(/.*)?")
 # Another app's RASTER images, and nothing else of it: the App Store shows an
 # image-baked app's on-disk icon (/system-apps/<id>/icon.png, app-store/app.js

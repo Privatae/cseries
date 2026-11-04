@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""A Host with no provider key runs on the model on the person's own machine.
+"""A Host with no chat route runs on the model on the person's own machine.
 
-brain/mastercode/inference_config.py: an unrouted chat role, no key or
-sign-in for any provider, and a model served by one of the person's online
+brain/mastercode/inference_config.py: an unrouted chat role, with or without a
+key or sign-in for a provider, and a model served by one of the person's online
 machines (a bastion's `llm_models` or `models`, or a model server they named)
 → chat resolves to that model, live (rung 6, `local_default` on the route).
 Getting Started offers the same model first (GET/POST
@@ -10,8 +10,9 @@ Getting Started offers the same model first (GET/POST
 
 Pinned:
   1. no key + a local model → the local model; an OpenAI-compatible server's
-     model before ollama's; an embedding model never
-  2. a key + a local model → unchanged (unconfigured)
+     model before ollama's; an embedding model never; the route says why
+  2. a key + a local model → the local model too (it was left unconfigured
+     before 0.1.17, so a person who added any key had no chat at all)
   3. neither → unconfigured, and the turn's message is today's
   4. an explicit route is untouched; no other role is defaulted
   5. what counts as a key: the Keys app's own reading; a deactivated row does
@@ -147,7 +148,9 @@ def test_no_key_and_a_local_model_runs_on_it():
     r = chat(Pool(beats=LOCAL))
     assert (r["provider"], r["model"]) == ("local", "qwen3-8b-q4"), r
     assert r["base_url"] == "http://10.0.0.5:18080", "the server that serves it, resolved live"
-    assert r["local_default"] == {"machine": "desk", "kind": "llm-openai"}
+    assert {k: r["local_default"][k] for k in ("machine", "kind")} == \
+        {"machine": "desk", "kind": "llm-openai"}, r["local_default"]
+    assert "qwen3-8b-q4" in r["local_default"]["why"] and "own machine" in r["local_default"]["why"]
     assert not r.get("unconfigured")
     # ollama only: its chat model, never one of its embedders
     r = chat(Pool(beats=[beat("desk", models=["nomic-embed-text:latest", "all-minilm",
@@ -160,9 +163,10 @@ def test_no_key_and_a_local_model_runs_on_it():
 
 
 @with_vault(KEY)
-def test_a_key_and_a_local_model_is_unchanged():
+def test_a_key_and_a_local_model_still_runs_on_it():
     r = chat(Pool(beats=LOCAL))
-    assert not r["model"] and r["unconfigured"], r
+    assert (r["provider"], r["model"]) == ("local", "qwen3-8b-q4"), r
+    assert r.get("local_default") and not r.get("unconfigured"), r
 
 
 @with_vault()

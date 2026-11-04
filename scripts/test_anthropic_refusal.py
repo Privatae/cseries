@@ -231,9 +231,36 @@ check("A1 no `fallbacks` field: Anthropic does not pick the model",
 check("A2 no anthropic-beta header on an API key", "anthropic-beta" not in SENT[0][0], SENT[0][0])
 CRED["type"] = "oauth_token"
 _reset(_ok())
-_anth("claude-opus-5-5")
-check("A3 an OAuth credential sends its own beta only",
-      SENT[0][0].get("anthropic-beta") == "oauth-2025-04-20", SENT[0][0])
+# An OAuth token is the person's Claude subscription, which Anthropic refuses
+# on a direct call: it goes to the subscription lane, never as a Bearer header
+# here. The lane is stood in, so this gate never starts a CLI.
+from mastercode import claude_sdk_wire as _SDKW
+_LANE_CALLS: list = []
+_real_lane_run = _SDKW.run
+
+
+async def _lane_run(messages, model, *, token, feed, **kw):
+    _LANE_CALLS.append({"token": token, "model": model, **kw})
+    for ev in ({"type": "message_start", "message": {"model": model, "usage": {
+                    "input_tokens": 40, "output_tokens": 1}}},
+               {"type": "content_block_start", "index": 0,
+                "content_block": {"type": "text", "text": ""}},
+               {"type": "content_block_delta", "index": 0,
+                "delta": {"type": "text_delta", "text": "hello"}},
+               {"type": "content_block_stop", "index": 0},
+               {"type": "message_delta", "delta": {"stop_reason": "end_turn"},
+                "usage": {"output_tokens": 3}}):
+        await feed(ev)
+    return {"requests": 1}
+
+
+_SDKW.run = _lane_run
+res = _anth("claude-opus-5-5")
+_SDKW.run = _real_lane_run
+check("A3 an OAuth credential never goes out as a Bearer header: the subscription lane answers",
+      not SENT and len(_LANE_CALLS) == 1 and res.get("content") == "hello"
+      and _md(ROWS[0]).get("billing") == "subscription",
+      (SENT, _LANE_CALLS, res, ROWS[:1]))
 CRED["type"] = "api_key"
 check("A4 the provider registry carries no fallback setting of its own",
       "server_side_fallback" not in VP.PROVIDERS["anthropic"], VP.PROVIDERS["anthropic"])

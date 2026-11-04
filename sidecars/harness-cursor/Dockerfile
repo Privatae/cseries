@@ -26,11 +26,11 @@ RUN printf '%s\n' 'pip==26.2.2 --hash=sha256:fd7f4dfa8190e014013b9f08f3e973f4e4c
 # writer (headless.ts) emits the same frame types (one new system subtype,
 # background_shell_timeout, only behind a flag the platform does not pass).
 # The package is ~3x larger (557M extracted vs 178M; image ~1.86G).
-ARG CURSOR_RELEASE_TAG=2026.10.01-e373342
+ARG CURSOR_RELEASE_TAG=2026.10.22-27dcf5f
 # sha256 of agent-cli-package.tar.gz for that tag. Cursor publishes no checksum (none
 # beside the package, none in cursor.com/install; checked 2026-10-06), so this is the
 # hash of the download recorded when the pin moved; a re-download that differs fails here.
-ARG CURSOR_SHA256=a79726c6e644520e993970be4c45775a6889802b67abe461a677a53219ae28e8
+ARG CURSOR_SHA256=85296944e4600a83c4b764f578d1502bf9c416db200d33a593e8f3ecabfdc294
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PORT=8841 \

@@ -47,7 +47,7 @@ function signer() {
 function fakeMachine(paths, opts = {}) {
   const m = {
     // The guest's root shell: the machine wall's install script runs here.
-    guestShell: guestShell(paths.base, { restartFails: opts.wallFails }),
+    guestShell: guestShell(paths.base, { restartFails: opts.wallFails, loaded: opts.runtime === true ? ['cseries-host.service', 'cseries-postgres.service', 'cseries.slice'] : ['cseries-host.service', 'cseries-postgres.service'] }),
     cpus: opts.cpus === undefined ? 8 : opts.cpus,
     memKb: opts.memKb !== undefined ? opts.memKb : (opts.cpus === null ? null : 8 * 1024 * 1024),
     runtime: opts.runtime === true,

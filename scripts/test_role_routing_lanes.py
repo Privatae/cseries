@@ -5,9 +5,10 @@ Role-routing ratchet — the per-role {provider, model} invariant.
 What this pins (orchestrator v2 routing cut, 2026-08-04): there are no
 "lanes" and no compile-time default model anywhere. A role's route is a
 {provider, model} pair (+ optional fallback pair) where the provider is a
-Keys-registry id or 'local'. The Claude Agent SDK is NOT a production option:
-'claude-sdk'/'subscription' stored anywhere normalize to EMPTY and surface as
-unconfigured (the hard cut), never re-routed to another provider.
+Keys-registry id or 'local'. The old SDK-lane aliases 'claude-sdk' /
+'subscription' stored anywhere normalize to EMPTY and surface as unconfigured
+(the hard cut), never re-routed to another provider. A Claude subscription is
+the registry provider 'anthropic-subscription'.
 
 The bug class this exists to prevent: a silent re-route. Pre-cut, a role with
 no explicit route fell through to a compile-time default (DEFAULT_LANE /

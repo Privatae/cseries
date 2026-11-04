@@ -8,6 +8,7 @@ questions:
   - How do I run my Host's embeddings on my own machine?
   - Can my Host download models onto my computer?
   - What happens if the machine with my model is turned off?
+  - What if my model server's context is too small?
   - Can another Host use the models on my machine?
 ---
 
@@ -21,13 +22,17 @@ An address you add has to be on another computer. Your Host runs in a virtual ma
 
 ## Can my Host's memory search run on my own hardware?
 
-Yes. Embeddings turn text into numbers so your Host's memory can be searched by meaning. On a machine that runs a bastion, the computer your Host runs on included, your Host reaches an embedding model the same way it reaches a chat model: through the bastion, on Ollama or on an OpenAI-compatible server such as llama.cpp. A Host with no embedding model set up starts using one it recognises there by itself. For a server on another computer, ask your Host to use it for its embeddings, naming the server's address and the embedding model. Either way the switch is tested before it is saved: the server has to answer with a real vector first, and one that cannot is refused.
+Yes. Embeddings turn text into numbers so your Host's memory can be searched by meaning. On a machine that runs a bastion, the computer your Host runs on included, your Host reaches an embedding model the same way it reaches a chat model: through the bastion, on Ollama or on an OpenAI-compatible server such as llama.cpp. A Host with no embedding model set up finds one there by itself: it sends a test embed to each model the machine lists, known embedding models first, and uses the first one that answers with a vector it can store, so a llama.cpp model named only by its file is found too, and a model that only chats is never picked. For a server on another computer, ask your Host to use it for its embeddings, naming the server's address and the embedding model. Either way the switch is tested before it is saved: the server has to answer with a real vector first, and one that cannot is refused.
 
 Switching never deletes or rewrites the vectors your Host already has. Each model's vectors are kept side by side, so switching back is instant. Entries that only the previous model embedded are not found by meaning under the new one until they are embedded again.
 
 ## What if that machine is turned off?
 
 Then that model stops answering until the machine is back. Memory search marks embedding as down and does not quietly send the text somewhere else. For the Host model, only a fallback provider you chose in the Orchestrator answers instead; with none set, you get an error.
+
+## What if my model server's context is too small?
+
+A model server runs with the context size it was started with, such as llama.cpp's `-c 4096`. Your Host reads that size from the server and fits each request to it, leaving out the oldest conversation first, as it does for any model. If a request still does not fit, your Host says what the server allows, what the request needs, and how to start the server with a larger context, for example `-c 16384`. Your own message is never shortened to make it fit.
 
 ## Can my Host use the model servers on a machine that runs a bastion?
 

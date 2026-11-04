@@ -163,6 +163,27 @@ for rel, must in (
     check(f"{rel} names the refusal",
           "AppRuntimeOverPlan" in text and must in text)
 
+# This machine's own runtime refusing (scope "machine", a C-Series Host's
+# local runtime): no plan to upgrade to, so the words say what gives it more
+# room instead, the Host's size, which only the machine changes.
+from server.applications.machine_room import RESIZE_CLAUSE, RESIZE_SENTENCE  # noqa: E402
+from server.applications.desktop_render import room_sentence  # noqa: E402
+from server.routes import review as _rv  # noqa: E402
+
+e = AppRuntimeOverPlan("weather", {"needs_mi": 512, "headroom_mi": 100, "scope": "machine"})
+check("a machine's refusal of an app says how to give C-Series more of it",
+      str(e) == f"weather reserves 512MiB of your machine and this machine has 100MiB spare. {RESIZE_SENTENCE}", str(e))
+e = AppRuntimeOverPlan("weather", {"needs_mi": 512, "headroom_mi": 100, "upgrade_to": "Pro"})
+check("a plan's refusal still names the plan, not the command", RESIZE_SENTENCE not in str(e) and "Pro has room" in str(e), str(e))
+check("the machine's room sentence names it too", room_sentence({"scope": "machine"}).endswith(RESIZE_SENTENCE))
+check("a plan's room sentence does not", RESIZE_SENTENCE not in room_sentence({"upgrade_to": "Pro"}))
+_body = lambda d: "operator /harness/wake 402: " + __import__("json").dumps({"detail": d})
+_m = _rv._plain_run_failure("codex", _body({"error": "capability_over_plan", "needs_mi": 512, "headroom_mi": 100, "scope": "machine"}))
+check("a coding run this machine refused says how to give it more", _m.endswith(f"({RESIZE_CLAUSE})"), _m)
+_m = _rv._plain_run_failure("codex", _body({"error": "capability_over_plan", "needs_mi": 512, "headroom_mi": 0, "scope": "machine", "reason": "pressure"}))
+check("memory pressure is not a size: no resize named", RESIZE_CLAUSE not in _m, _m)
+check("the command is named exactly as the installer takes it", "npx cseries resize" in RESIZE_CLAUSE and "npx cseries resize" in RESIZE_SENTENCE)
+
 print()
 if FAILURES:
     print(f"FAILED: {len(FAILURES)} — {', '.join(FAILURES)}")

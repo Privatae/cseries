@@ -12,7 +12,10 @@ After=network.target
 [Service]
 Type=simple
 ExecStart=/usr/sbin/squid -N -f /etc/cseries-runtime/squid.conf
-ExecReload=/usr/sbin/squid -k reconfigure -f /etc/cseries-runtime/squid.conf
+# squid.conf sets pid_filename none (squid runs in the foreground under
+# systemd), so `squid -k reconfigure` cannot find the process and fails
+# ("FATAL: no pid_filename configured"). SIGHUP is squid's reconfigure.
+ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
 

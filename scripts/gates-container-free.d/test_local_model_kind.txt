@@ -1,0 +1,6 @@
+# An embedding model a machine serves is never a chat model: ollama's
+# /api/show capabilities and a test embed on an OpenAI-compatible server say
+# which models embed (mastercode/local_model_kind); GET /local-models marks
+# them, the default chat pick and the route writer leave them out. Stand-in
+# servers on 127.0.0.1. No DB.
+test_local_model_kind.py

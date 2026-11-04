@@ -1,34 +1,23 @@
 'use strict';
 
-// The limits on the WSL 2 virtual machine, set in the person's own
-// %UserProfile%\.wslconfig [wsl2] section. WSL reads that file for every
-// distribution on the PC, so it is theirs, not ours: a key they have set is
-// never changed, whatever its value; we only add the keys they have not.
+// The person's own %UserProfile%\.wslconfig. WSL reads its [wsl2] section for
+// every Linux system on the PC, so it is theirs, not ours, and C-Series no
+// longer writes to it: the Host's size is a ceiling on C-Series's own units
+// inside its WSL system (size-caps.js), which caps nothing else on the PC.
 //
-// The values are the ones WSL and Docker Desktop already use:
-//   - Microsoft's WSL documentation (learn.microsoft.com/windows/wsl/wsl-config,
-//     [wsl2] settings): memory defaults to 50% of the PC's memory, processors
-//     to as many logical processors as the PC has.
-//   - Docker Desktop's settings documentation (docs.docker.com/desktop/
-//     settings-and-maintenance/settings): the memory limit "defaults to 50%
-//     of your host's memory", and with the WSL 2 backend its limits are the
-//     WSL 2 VM's, set in .wslconfig.
-// Writing them down, instead of leaving WSL to apply them silently, pins what
-// the Host was sized against, and a person who wants less edits two lines.
-// (Rancher Desktop and Podman Desktop set no memory or processors on Windows
-// beyond WSL's own: their documentation names none, so none is cited.)
-// swap is left alone: WSL's disk-backed swap is not ours to size, and the
-// containers inside forbid themselves swap (cseries-host.container).
+// What is read from it, and what is still done to it:
+//   - wslLimit: the memory= and processors= the person set there, if any.
+//     They cap every WSL system together, C-Series's included, so no size
+//     above them is offered (wsl.js sizeLimit). Unset, WSL's own defaults
+//     stand (learn.microsoft.com/windows/wsl/wsl-config, [wsl2] settings):
+//     memory 50% of the PC's, processors as many logical processors as it has.
+//   - removeWslConfigLines: the lines releases up to 0.1.16 added there
+//     (memory= and processors=, at those same defaults) taken out again, each
+//     only where it still stands exactly as written (state.json
+//     wslConfigAdded), at the next run (wsl.js releaseWslConfig) and on
+//     uninstall --delete-data.
 
 const GiB = 1024 ** 3;
-
-// -> {memory: '8GB', processors: '8'} for a PC with this much memory (bytes)
-// and this many logical processors.
-function vmLimits(totalMemBytes, logicalProcessors) {
-  const gb = Math.max(2, Math.round(totalMemBytes / GiB / 2));
-  const cpus = Math.max(1, Math.floor(logicalProcessors));
-  return { memory: `${gb}GB`, processors: String(cpus) };
-}
 
 // The file's bytes as text we can append to and write back exactly:
 // -> {text, bom} for UTF-8 (bom is the byte order mark it started with, or
@@ -44,50 +33,10 @@ function decodeWslConfig(buf) {
   return { text: bom ? text.slice(1) : text, bom };
 }
 
-// Merge `want` ({key: value}) into the [wsl2] section of .wslconfig text.
-// -> {text, added: [keys]}. Keys compare without regard to case, as WSL's do;
-// a commented-out key is not a key, and a key in any [wsl2] section (a file
-// can have the header twice) is theirs. A header may carry a comment after
-// it. Added keys go at the end of the first [wsl2] section. The file's own
-// line endings are kept.
-function mergeWslConfig(text, want) {
-  const eol = /\r\n/.test(text) ? '\r\n' : '\n';
-  const lines = text === '' ? [] : text.split(/\r?\n/);
-  if (lines.length && lines[lines.length - 1] === '') lines.pop();
-  let start = -1;
-  let end = lines.length;
-  let inWsl2 = false;
-  const have = new Set();
-  for (let i = 0; i < lines.length; i++) {
-    const s = /^\s*\[([^\]]*)\]\s*(?:[#;].*)?$/.exec(lines[i]);
-    if (s) {
-      if (inWsl2 && end === lines.length && start !== -1 && i > start) end = i;
-      inWsl2 = s[1].trim().toLowerCase() === 'wsl2';
-      if (inWsl2 && start === -1) start = i;
-      continue;
-    }
-    if (!inWsl2) continue;
-    const k = /^\s*([^#;=\s][^=]*?)\s*=/.exec(lines[i]);
-    if (k) have.add(k[1].toLowerCase());
-  }
-  const added = Object.keys(want).filter((k) => !have.has(k.toLowerCase()));
-  if (!added.length) return { text, added, section: false };
-  const add = added.map((k) => `${k}=${want[k]}`);
-  if (start === -1) {
-    if (lines.length && lines[lines.length - 1].trim() !== '') lines.push('');
-    lines.push('[wsl2]', ...add);
-  } else {
-    let at = end;
-    while (at > start + 1 && lines[at - 1].trim() === '') at--;
-    lines.splice(at, 0, ...add);
-  }
-  return { text: lines.join(eol) + eol, added, section: start === -1 };
-}
-
-// The lines mergeWslConfig added, taken out again (uninstall, on a yes):
+// The lines an earlier release added, taken out again:
 // `lines` as it wrote them ("memory=8GB"), each removed only where it still
 // stands exactly so in a [wsl2] section, so a value the person changed since
-// is theirs and stays. `section`: mergeWslConfig wrote the [wsl2] header
+// is theirs and stays. `section`: that release wrote the [wsl2] header
 // too, which goes when nothing but blank lines is left under it.
 // -> {text, removed: [lines]}
 function removeWslConfigLines(text, added, section) {
@@ -124,4 +73,37 @@ function removeWslConfigLines(text, added, section) {
   return { text: kept.length ? kept.join(eol) + (trailing || removed.length ? eol : '') : '', removed };
 }
 
-module.exports = { vmLimits, decodeWslConfig, mergeWslConfig, removeWslConfigLines };
+// A size as .wslconfig takes it ("8GB", "8192MB", "8G", "0.5TB"; WSL reads a
+// bare number as bytes) -> bytes, or null for one WSL would not read.
+function wslSize(v) {
+  const m = /^\s*([0-9]+(?:\.[0-9]+)?)\s*(B|K|KB|M|MB|G|GB|T|TB)?\s*$/i.exec(String(v || ''));
+  if (!m) return null;
+  const unit = { B: 1, K: 1024, KB: 1024, M: 1024 ** 2, MB: 1024 ** 2, G: GiB, GB: GiB, T: 1024 * GiB, TB: 1024 * GiB }[(m[2] || 'B').toUpperCase()];
+  const n = Math.floor(Number(m[1]) * unit);
+  return n > 0 ? n : null;
+}
+
+// The memory= (bytes) and processors= the [wsl2] section sets: the last
+// value of each, as WSL takes it, in any [wsl2] section; a commented-out key
+// is not a key. -> {memory, processors}, each null when unset or unreadable.
+function wslLimit(text) {
+  let inWsl2 = false;
+  let memory = null;
+  let processors = null;
+  for (const l of String(text || '').split(/\r?\n/)) {
+    const s = /^\s*\[([^\]]*)\]\s*(?:[#;].*)?$/.exec(l);
+    if (s) {
+      inWsl2 = s[1].trim().toLowerCase() === 'wsl2';
+      continue;
+    }
+    if (!inWsl2) continue;
+    const kv = /^\s*([^#;=\s][^=]*?)\s*=\s*([^#;]*?)\s*(?:[#;].*)?$/.exec(l);
+    if (!kv) continue;
+    const k = kv[1].toLowerCase();
+    if (k === 'memory') memory = wslSize(kv[2]);
+    else if (k === 'processors') processors = /^[1-9][0-9]*$/.test(kv[2]) ? Number(kv[2]) : null;
+  }
+  return { memory, processors };
+}
+
+module.exports = { decodeWslConfig, removeWslConfigLines, wslLimit, wslSize };

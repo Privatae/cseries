@@ -551,13 +551,7 @@
     // Open the Sites app. Its Catalog tab owns the deploy flow; Sites has no
     // deep-link-to-tab contract today, so the footer says where to go.
     function openSites(templateKey) {
-        var opened = false;
-        try {
-            if (window.parent && window.parent.AppRunner) {
-                window.parent.AppRunner.launch('sites');
-                opened = true;
-            }
-        } catch (e) { /* cross-origin or unavailable */ }
+        var opened = askDesktopToOpen('sites');
         if (opened) {
             setFooter('Sites is open — the Catalog tab has ' +
                 (templateKey ? templateKey : 'the one-click apps') + ' ready to deploy.');
@@ -1155,14 +1149,30 @@
     // AppRunner lives on the parent window; from inside this iframe we
     // hop to the parent to launch (same pattern as the workbench).
     function openApp(appId) {
-        try {
-            if (window.parent && window.parent.AppRunner) {
-                window.parent.AppRunner.launch(appId);
-                closeDetailModal();
-                return;
-            }
-        } catch (e) { /* cross-origin or unavailable; fall through */ }
+        if (askDesktopToOpen(appId)) {
+            closeDetailModal();
+            return;
+        }
         setFooter('Could not open ' + appId + ' — launch the app from the desktop.');
+    }
+
+    // The App Store runs on its own origin (kernel.SDK_MANAGED_APPS), where
+    // window.parent.AppRunner throws, so Open and Deploy in Sites did nothing.
+    // It asks the desktop with a cseries:open-app message instead; the desktop
+    // takes it only from this window's frame on this app's origin
+    // (app-runner.js isolatedAsk). Same-origin (an older desktop, or the app
+    // opened outside isolation) still calls AppRunner directly. False when
+    // there is no desktop to ask.
+    function askDesktopToOpen(appId) {
+        var p = window.parent;
+        if (!p || p === window) return false;
+        try {
+            if (p.AppRunner) { p.AppRunner.launch(appId); return true; }
+        } catch (e) { /* cross-origin: ask over postMessage */ }
+        try {
+            p.postMessage({ type: 'cseries:open-app', app_id: String(appId) }, '*');
+            return true;
+        } catch (e) { return false; }
     }
 
     // ── Uninstall ───────────────────────────────────────

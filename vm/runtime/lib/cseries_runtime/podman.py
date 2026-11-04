@@ -83,6 +83,16 @@ class Podman:
         rc, _, _ = await self.run(["podman", "image", "exists", ref], timeout=60, check=False)
         return rc == 0
 
+    async def image_missing(self, ref):
+        """True only when podman says the image is not in the store (`image
+        exists` exits 1). Exit 125 (a locked store, a podman that cannot
+        start) or a timeout says nothing about the image: not missing."""
+        try:
+            rc, _, _ = await self.run(["podman", "image", "exists", ref], timeout=60, check=False)
+        except PodmanError:
+            return False
+        return rc == 1
+
     async def pull(self, ref, timeout):
         await self.run(["podman", "pull", "--quiet", ref], timeout=timeout)
 

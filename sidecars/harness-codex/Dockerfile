@@ -71,11 +71,11 @@ RUN printf '%s\n' 'pip==26.2.2 --hash=sha256:fd7f4dfa8190e014013b9f08f3e973f4e4c
 # stable=true). In source, exec_events.rs differs from 0.154.0 only by an
 # optional `results` field on web_search items; the Usage field names are
 # unchanged there — STILL not verified on a live authenticated run.
-ARG CODEX_RELEASE_TAG=rust-v0.160.1
+ARG CODEX_RELEASE_TAG=rust-v0.166.0
 # sha256 of the two release tarballs below, as GitHub publishes them for the release's
 # assets (the releases API `digest`). The build checks both, so a bump moves all three.
-ARG CODEX_SHA256=9226581be592d18f7e7f740a352fdb63aa61e45e39f7eb9b09d3888c84bba33f
-ARG CODEX_HOST_SHA256=8a69207d97545ac753b6585974e1e67a4c51ae5deacf06517db512bb25e0e3c2
+ARG CODEX_SHA256=a0bf572d2f93f056c6712a6da348e96078dc84f3885fd7be67807ef389cb3978
+ARG CODEX_HOST_SHA256=7588334fd47bc4003d970b70dfd4d1e4578491b1e9baa72976a4c2d7e97590da
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PORT=8840 \

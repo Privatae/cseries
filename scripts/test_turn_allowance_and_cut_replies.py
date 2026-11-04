@@ -355,9 +355,9 @@ try:
     _lr = asyncio.run(PG._call_local([{"role": "user", "content": "x"}], "qwen", base_url="http://10.0.0.5:8000"))
 finally:
     PG._get_session = _gs_saved
-check("a local route keeps the server's own words, so vLLM's window refusal is an overflow "
+check("a local route reads vLLM's window refusal: an overflow, told with the server's window "
       "(it was 'Local model error: 400' only)",
-      "maximum context length" in str(_lr.get("error")) and CB.is_context_overflow(_lr), _lr.get("error"))
+      "allows 32,768 tokens" in str(_lr.get("error")) and CB.is_context_overflow(_lr), _lr.get("error"))
 
 # Any other local error text is not stored (it could echo the input).
 class _LResp2(_LResp):

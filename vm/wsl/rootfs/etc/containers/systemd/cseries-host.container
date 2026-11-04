@@ -63,7 +63,9 @@ TimeoutStartSec=900
 # How much of this Linux system the Host may take, so nothing it runs can
 # starve the system, or the machine under it. `cseries-guest configure`
 # writes the ceiling to cseries-host.container.d/10-memory.conf from the
-# memory this system has (on Windows, what WSL gives it): that memory less
+# memory this system has (on Windows, the Host's size the person chose, since
+# WSL's memory is every WSL system's; the cseries command's size-caps.js caps
+# the runtime's cseries.slice to the rest of that size): that memory less
 # GKE's node reserve for the system (25% of the first 4 GB, 20% of the next
 # 4, 10% of the next 8, 6% of the next 112, 2% above, and 100 MB for
 # eviction) and the database's 512 MB, and never under 512 MB (the cseries

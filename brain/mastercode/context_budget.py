@@ -117,6 +117,186 @@ def learn_output_limit(provider: str | None, model: str | None, limit: int) -> N
         _LEARNED_OUTPUTS[((provider or "").strip().lower(), str(model))] = int(limit)
 
 
+# Context windows a model server TOLD us — (provider, model) → tokens. A local
+# model server (llama.cpp's llama-server, vLLM) runs at the context size it was
+# started with (`-c 4096`, `--max-model-len`), which no catalog can know: the
+# same model id is 4,096 tokens on one machine and 131,072 on the next. Two
+# sources fill it, both the server's own words: what it publishes
+# (model_backends.probe_server_window: /props, /v1/models) and its refusal of
+# a request that did not fit (server_window_from_refusal). Process-local; the
+# newest word wins, so a server restarted with a larger context is believed at
+# its next probe or refusal. model_context_window reads it first.
+_SERVER_WINDOWS: dict[tuple[str, str], int] = {}
+
+
+def _server_window_key(provider: str | None, model: str | None) -> tuple[str, str]:
+    p = (provider or "").strip().lower()
+    m = str(model or "").strip()
+    if p == "local":
+        # The comparison form the local model table uses (an id with and
+        # without ':latest' is one served model; model_backends._norm_model).
+        m = m.lower()
+        m = m[:-7] if m.endswith(":latest") else m
+    return p, m
+
+
+def learn_context_window(provider: str | None, model: str | None, window) -> None:
+    """Record the context window a model server stated for a model."""
+    try:
+        w = int(window)
+    except (TypeError, ValueError):
+        return
+    if model and w > 0:
+        _SERVER_WINDOWS[_server_window_key(provider, model)] = w
+
+
+def learned_context_window(provider: str | None, model: str | None) -> int | None:
+    """The window a model server stated for `model`, or None."""
+    if not model:
+        return None
+    return _SERVER_WINDOWS.get(_server_window_key(provider, model))
+
+
+def _pos_int(v) -> int | None:
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
+
+
+def server_window_from_props(doc) -> int | None:
+    """The context size llama.cpp's GET /props publishes: the size of one
+    slot, default_generation_settings.n_ctx (tools/server/server-context.cpp,
+    get_res_props: {"default_generation_settings": {"params": …, "n_ctx":
+    slot_n_ctx}}) — what one request may fill, which is `-c` divided by
+    `--parallel`. None for any other shape."""
+    if not isinstance(doc, dict):
+        return None
+    dgs = doc.get("default_generation_settings")
+    if isinstance(dgs, dict):
+        n = _pos_int(dgs.get("n_ctx"))
+        if n:
+            return n
+    return _pos_int(doc.get("n_ctx"))
+
+
+# The per-model fields an OpenAI-compatible GET /v1/models carries for the
+# window a request may fill, in order: vLLM's max_model_len
+# (vllm/entrypoints/openai/protocol.py ModelCard), llama.cpp's meta.n_ctx (the
+# slot's size; get_res_model_info, beside n_ctx_train), LM Studio's
+# loaded_context_length, then the catalog-style names some servers use.
+# Never n_ctx_train: that is what the model was trained on, not what the
+# server was started with.
+_MODEL_WINDOW_FIELDS = ("max_model_len", "loaded_context_length", "context_length",
+                        "context_window", "max_context_length")
+
+
+def server_window_from_models(doc, model: str | None) -> int | None:
+    """The window GET /v1/models publishes for `model` (matched on its id or
+    one of its aliases, ':latest' ignored), or None."""
+    if not isinstance(doc, dict) or not model:
+        return None
+    want = _server_window_key("local", model)[1]
+    for row in doc.get("data") or []:
+        if not isinstance(row, dict):
+            continue
+        names = [row.get("id")] + list(row.get("aliases") or [])
+        if not any(_server_window_key("local", str(n))[1] == want for n in names if n):
+            continue
+        meta = row.get("meta") if isinstance(row.get("meta"), dict) else {}
+        for f in _MODEL_WINDOW_FIELDS:
+            n = _pos_int(row.get(f))
+            if n:
+                return n
+        n = _pos_int(meta.get("n_ctx"))
+        if n:
+            return n
+    return None
+
+
+# A local server's refusal of a request that does not fit, with its numbers.
+# llama.cpp (tools/server/server-context.cpp, read 2026-11-04): HTTP 400,
+# {"error": {"code": 400, "message": "request (4650 tokens) exceeds the
+# available context size (4096 tokens), try increasing it", "type":
+# "exceed_context_size_error", "n_prompt_tokens": 4650, "n_ctx": 4096}} — and
+# with context shift on, "input (N tokens) is larger than the max context size
+# (M tokens). skipping". vLLM (serving_engine.py _validate_input): "This model's
+# maximum context length is M tokens. However, your request has N input tokens"
+# / "you requested N tokens …", and "'max_tokens' or 'max_completion_tokens' is
+# too large: X. This model's maximum context length is M tokens and your
+# request has N input tokens".
+_LLAMA_REFUSAL = re.compile(
+    r"(?:request|input) \((\d+) tokens\) (?:exceeds the available context size|"
+    r"is larger than the max context size) \((\d+) tokens\)")
+_VLLM_REFUSAL = re.compile(
+    r"maximum context length is (\d+) tokens(?:\. However, (?:you requested|your request has) (\d+)"
+    r"| and your request has (\d+) input tokens)")
+
+
+def server_window_from_refusal(body: str | None) -> dict | None:
+    """{window, prompt, server} from a local model server's window refusal
+    (`server` 'llama.cpp', 'vllm' or ''), or None when the body is not one.
+    Only numbers are read; nothing the server echoed is kept."""
+    raw = str(body or "")
+    if not raw:
+        return None
+    try:
+        obj = json.loads(raw)
+    except (ValueError, TypeError):
+        obj = None
+    err = obj.get("error") if isinstance(obj, dict) else None
+    if isinstance(err, dict) and str(err.get("type") or "") == "exceed_context_size_error":
+        w = _pos_int(err.get("n_ctx"))
+        if w:
+            return {"window": w, "prompt": _pos_int(err.get("n_prompt_tokens")),
+                    "server": "llama.cpp"}
+    msg = refusal_parts(raw)[0]
+    m = _LLAMA_REFUSAL.search(msg)
+    if m:
+        return {"window": int(m.group(2)), "prompt": int(m.group(1)), "server": "llama.cpp"}
+    m = _VLLM_REFUSAL.search(msg)
+    if m:
+        # "you requested N tokens (P in the messages, C in the completion)":
+        # N counts the reply's room; the input is P.
+        mi = re.search(r"\((\d+) in the messages", msg)
+        return {"window": int(m.group(1)),
+                "prompt": _pos_int(mi.group(1)) if mi else _pos_int(m.group(2) or m.group(3)),
+                "server": "vllm"}
+    return None
+
+
+def suggested_context_size(prompt_tokens: int | None, window: int | None) -> int:
+    """A context size to suggest to the person: the next power of two that
+    holds the request twice over (room for the reply and a few turns of
+    history), at least 16,384 and above the size the server has now."""
+    need = max(16384, 2 * int(prompt_tokens or window or 0), int(window or 0) + 1)
+    size = 1
+    while size < need:
+        size *= 2
+    return size
+
+
+def local_window_message(model: str | None, window: int, prompt_tokens: int | None,
+                         server: str = "") -> str:
+    """What the person reads when a request does not fit their own model
+    server's context, in plain words: what the server allows, what the
+    request needs, and the setting to change."""
+    size = suggested_context_size(prompt_tokens, window)
+    flag = {"llama.cpp": f"-c {size}", "vllm": f"--max-model-len {size}"}.get(server)
+    if prompt_tokens and int(prompt_tokens) < int(window):
+        # vLLM counts the reply's room too ("'max_tokens' … is too large").
+        needs = f", and this request needs {int(prompt_tokens):,} plus room for the reply"
+    elif prompt_tokens:
+        needs = f", and this request needs {int(prompt_tokens):,}"
+    else:
+        needs = ", and this request does not fit in that"
+    how = (f"Start it with a larger context, e.g. {flag}." if flag else
+           f"Start it with a larger context size, e.g. {size:,} tokens.")
+    return (f"The model server running {model or 'this model'} allows {int(window):,} tokens{needs}. "
+            f"{how}")
+
+
 def model_output_limit(model: str | None, provider: str | None = None) -> int | None:
     """The model's own published output limit in tokens, or None when unknown.
 
@@ -406,6 +586,13 @@ _OVERFLOW_NEEDLES = (
     # (Groq's "Please reduce the length of the messages or completion."
     # always comes with the typed code "context_length_exceeded", which
     # decides first — OVERFLOW_CODES — so it has no needle.)
+    # llama.cpp's llama-server (local routes; tools/server/server-context.cpp):
+    # "request (4650 tokens) exceeds the available context size (4096 tokens),
+    # try increasing it", and with context shift on "input (N tokens) is larger
+    # than the max context size (M tokens). skipping". Its typed
+    # "exceed_context_size_error" (OVERFLOW_CODES) decides first.
+    "exceeds the available context size",
+    "is larger than the max context size",
     # vLLM (local routes): "This model's maximum context length is 32768 tokens.
     # However, your request has 32836 input tokens" (infiniflow/ragflow#10406)
     # — matched by "maximum context length" above. Ollama mostly truncates the
@@ -417,7 +604,9 @@ _OVERFLOW_NEEDLES = (
 # error.metadata.error_type and the OpenAI-shaped error.code
 # "context_length_exceeded" (openrouter.ai/docs/api-reference/errors; Groq's
 # body, thepersonalaicompany/amurex-backend#51).
-OVERFLOW_CODES = ("context_length_exceeded",)
+# llama.cpp's error.type for the same: "exceed_context_size_error"
+# (tools/server/server-common.cpp format_error_response).
+OVERFLOW_CODES = ("context_length_exceeded", "exceed_context_size_error")
 def refusal_parts(text: str | None) -> tuple[str, str]:
     """(message, typed code) of a provider refusal — from its JSON body, or a
     "<provider> <status>: <body>" error string. The message is the refusal's
@@ -443,7 +632,11 @@ def refusal_parts(text: str | None) -> tuple[str, str]:
         if isinstance(err, dict):
             msg = str(err.get("message") or "")
             meta = err.get("metadata") if isinstance(err.get("metadata"), dict) else {}
-            code = str(meta.get("error_type") or err.get("code") or err.get("type") or "")
+            # A numeric code is the HTTP status echoed (llama.cpp's "code": 400
+            # beside its typed "type"), never the typed code.
+            _c = err.get("code")
+            code = str(meta.get("error_type") or (_c if isinstance(_c, str) else "")
+                       or err.get("type") or (_c if _c is not None else ""))
         elif isinstance(obj, dict):
             msg = str(obj.get("message") or (err if isinstance(err, str) else "") or "")
     except (ValueError, TypeError):
@@ -475,6 +668,11 @@ async def model_context_window(model: str | None, provider: str | None = None) -
     """
     if not model:
         return None
+    # What the serving model server said itself (learn_context_window) beats
+    # every table: a local server runs at the size it was started with.
+    lw = learned_context_window(provider, model)
+    if lw:
+        return lw
     try:
         from server.routes.inference import (
             cached_context_lengths, openrouter_vendor_prefix,

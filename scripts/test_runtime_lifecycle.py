@@ -378,6 +378,27 @@ async def scenario_harness():
         a = await w.op("harness.wake", {"harness": "codex"})
         check(not a["ok"] and a["code"] == 504 and "no build of codex" in a["error"],
               "an engine this machine has not built is refused (no builder in this test)", a)
+        # A build record whose image is gone from the store (podman rmi, a
+        # prune): the wake builds again instead of asking podman to PULL the
+        # image by its id, which failed on every wake (measured on the Lima
+        # guest: "pull policy is always but image has been referred to by ID").
+        w.rt.state.record_build("codex", "f" * 64, "9" * 64, "2026-10-19T00:00:00Z")
+        a = await w.op("harness.wake", {"harness": "codex"})
+        check(not a["ok"] and "no build of codex" in a["error"] and "ErrImagePull" not in a["error"]
+              and "codex" not in json.load(open(w.paths.built_json())),
+              "a recorded build whose image is gone is forgotten and built again, never pulled by id", a)
+        # podman that cannot answer (exit 125, a locked store) says nothing
+        # about the image: the record stays, the image is used as recorded.
+        w.rt.state.record_build("codex", "d" * 64, "9" * 64, "2026-10-19T00:00:00Z")
+        os.environ["FAKE_IMAGE_EXISTS_RC"] = "125"
+        try:
+            got = await w.rt._engine_image("codex", w.rt.clock() + 30)
+        except Exception as e:
+            got = repr(e)
+        finally:
+            del os.environ["FAKE_IMAGE_EXISTS_RC"]
+        check(got == "d" * 64 and "codex" in json.load(open(w.paths.built_json())),
+              "a podman error on `image exists` keeps the build record (never read as gone)", got)
         w.rt.state.record_build("codex", "e" * 64, "9" * 64, "2026-10-19T00:00:00Z")
         st = w.podman()
         st["images"]["e" * 64] = "e" * 64

@@ -170,7 +170,7 @@ async function accountHostCa(ctx, mv) {
 }
 
 // The keys of the account's state.json the machine's install carries on.
-const CARRIED = ['bastion', 'packagesAdded', 'kvmJoined', 'pairedHostCa'];
+const CARRIED = ['bastion', 'packagesAdded', 'kvmJoined', 'pairedHostCa', 'size'];
 
 const carryStep = {
   title: 'Moving C-Series to the whole machine',

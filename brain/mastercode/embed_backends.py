@@ -111,6 +111,13 @@ def lane_embed_service(bastion: dict, model: str | None = None) -> str | None:
         return "ollama"
     if known_embed_models(llm):
         return "llm"
+    if EMBED_CAPABILITY in caps and any(embedding_named(m) for m in ollama):
+        return "ollama"
+    # Any model the machine's OpenAI-compatible server lists is a candidate
+    # (embed_candidates): llama.cpp names a model by its file unless aliased,
+    # so only a test embed can tell (choose_embed_model_by_probe).
+    if llm:
+        return "llm"
     return None
 
 
@@ -281,6 +288,148 @@ def known_embed_models(models) -> list[tuple[str, int]]:
     return out
 
 
+# The parts of a model id that name an embedding family, read from the id's
+# name before any ':' tag, split on / : _ . - and space ("some-embed.gguf",
+# "nomic-embed-text", "bge-m3", "all-MiniLM-L6-v2"); any part starting "embed"
+# counts too. Also the rule local_model_kind falls back to when a model's server
+# cannot say whether it is an embedding model.
+_EMBED_NAME_PARTS = frozenset({"embed", "embedding", "minilm", "bge", "e5", "gte", "paraphrase"})
+
+
+def embedding_named(model_id) -> bool:
+    """Does the model's id name an embedding model (_EMBED_NAME_PARTS)?"""
+    import re as _re
+    mid = str(model_id or "").strip().lower()
+    if not mid:
+        return False
+    parts = set(_re.split(r"[/:_.\-\s]+", mid.split(":", 1)[0]))
+    return bool(parts & _EMBED_NAME_PARTS) or any(p.startswith("embed") for p in parts)
+
+
+def embed_candidates(bastion: dict) -> list[dict]:
+    """The models on a bastion's machine that could be its embedder, in the
+    order they are tried: [{model, dim, why}]. `dim` is the dim this host
+    knows the model at (MODEL_DIMS), None for one it does not know, which the
+    test embed measures.
+
+      1. "known": models this host knows as embedders, best first
+         (choose_bastion_embed_model's order: an indexable dim, then the
+         largest, then the name);
+      2. "named": models whose id names an embedding model (embedding_named),
+         by name — llama.cpp's `-m some-embed.gguf` is listed as its file;
+      3. "listed": every other model the machine's OpenAI-compatible server
+         lists (an address-less pairing's llama.cpp, vLLM or LM Studio). A
+         server that only chats refuses the embed (llama.cpp: "This server does
+         not support embeddings. Start it with `--embeddings`"), so it is never
+         chosen. Not ollama's other tags: those are its chat models, which
+         ollama may still answer an embed for, and loading one to find out
+         costs the machine a model's memory.
+
+    The list only says what to TRY: choose_embed_model_by_probe decides, by a
+    real embed against each in turn (decision: an endpoint is assigned only
+    when a live probe embed proves it serves the model at the expected dim)."""
+    if not isinstance(bastion, dict):
+        return []
+    caps = bastion.get("capabilities") or []
+    ollama = [str(m) for m in (bastion.get("models") or [])] if EMBED_CAPABILITY in caps else []
+    llm = [str(m) for m in (bastion.get("llm_models") or [])] if _addressless(bastion) else []
+    pool_ids: list[str] = []
+    for m in ollama + llm:
+        if m.strip() and m not in pool_ids:
+            pool_ids.append(m)
+    from mastercode.memory_engine import _HNSW_INDEXABLE_DIMS
+    known = known_embed_models(pool_ids)
+    known.sort(key=lambda t: (t[1] not in _HNSW_INDEXABLE_DIMS, -t[1], t[0]))
+    out = [{"model": n, "dim": d, "why": "known"} for n, d in known]
+    seen = {n for n, _ in known}
+    for m in pool_ids:
+        if m not in seen and embedding_named(m):
+            out.append({"model": m, "dim": None, "why": "named"})
+            seen.add(m)
+    for m in llm:
+        if m not in seen and m.strip():
+            out.append({"model": m, "dim": None, "why": "listed"})
+            seen.add(m)
+    return out
+
+
+def peer_forward_for(endpoint: str | None, bastion: str | None) -> str | None:
+    """The Hub's host→peer forward an embed to a bastion at `endpoint` rides,
+    or None: a bastion at a mesh address is reached only through it; one at
+    its serve-lane origin on this Host's loopback is dialled directly."""
+    if not bastion or not endpoint:
+        return None
+    try:
+        from server.network import serve_relay as _serve_relay
+        if _serve_relay.is_lane_origin(endpoint):
+            return None
+    except Exception:  # noqa: BLE001 — no Host server in this process
+        pass
+    import os as _os
+    return (_os.environ.get("HUB_PEER_FORWARD_ADDR") or "").strip() or "[::1]:3129"
+
+
+async def choose_embed_model_by_probe(pool, entity_id: int, server: str,
+                                      bastion: dict | None = None) -> dict:
+    """Pick the embedding model for bastion `server` by TESTING the candidates
+    its machine lists (embed_candidates, best first): one real embed against
+    each, over the path its embeds would take, until one answers with a
+    vector at a dim this host can store; a model this host knows must answer
+    at the dim it is known at. The first that passes is the choice, so a
+    known good model wins over one picked by its name, and either over one
+    the server merely lists.
+
+    Returns {model, dim, endpoint, why, tried} or {error, tried}; `tried` is
+    every candidate with what its test embed said, the record of the choice."""
+    from mastercode.memory_engine import EMBEDDING_COLUMN_BY_DIM, measure_embedding_dim
+    if bastion is None:
+        try:
+            from server.network import topology
+            rows = await topology.list_bastions(pool, entity_id)
+        except Exception as e:  # noqa: BLE001
+            return {"error": f"bastions unreadable: {e}", "tried": []}
+        bastion = next((b for b in rows if (b.get("hostname") or "") == server), None)
+    cands = embed_candidates(bastion or {})
+    tried: list[dict] = []
+    for c in cands:
+        model = c["model"]
+        ep = await resolve_endpoint_for_hostname(pool, entity_id, server, model)
+        if not ep:
+            tried.append({"model": model, "result": "no endpoint reachable for it now"})
+            continue
+        dim, why = await measure_embedding_dim(ep, model, peer_forward=peer_forward_for(ep, server))
+        if dim is None:
+            tried.append({"model": model, "result": f"no vector: {why}"})
+            continue
+        if c["dim"] and dim != c["dim"]:
+            tried.append({"model": model, "result": f"answered at {dim}d, expected {c['dim']}d"})
+            continue
+        if dim not in EMBEDDING_COLUMN_BY_DIM:
+            tried.append({"model": model, "result": (f"answered at {dim}d, which this host has no column "
+                                                     f"for (it stores {sorted(EMBEDDING_COLUMN_BY_DIM)})")})
+            continue
+        tried.append({"model": model, "result": f"embeds at {dim}d"})
+        log.info("embedding model for %s chosen by test embed: %s (%dd, %s) after %d tried",
+                 server, model, dim, c["why"], len(tried))
+        return {"model": model, "dim": dim, "endpoint": ep, "why": c["why"], "tried": tried}
+    if not cands:
+        return {"error": f"'{server}' lists no model that could be an embedder", "tried": tried}
+    return {"error": (f"no model on '{server}' answered a test embed at a dim this host can store "
+                      f"({'; '.join(t['model'] + ': ' + t['result'] for t in tried)})"),
+            "tried": tried}
+
+
+def choose_record(server: str, pick: dict) -> dict:
+    """What is kept with the embedding config about how its model was chosen
+    (embedding_chosen_by): by a test embed, on which machine, and what each
+    candidate answered. Model ids and dims only."""
+    from datetime import datetime, timezone
+    return {"how": "test embed", "bastion": server, "model": pick.get("model"),
+            "dim": pick.get("dim"), "picked_as": pick.get("why"),
+            "tried": list(pick.get("tried") or []),
+            "at": datetime.now(timezone.utc).isoformat(timespec="seconds")}
+
+
 def choose_bastion_embed_model(models) -> tuple[str, int] | None:
     """Pick the embedding model to serve from a bastion's model list, or None.
 
@@ -306,7 +455,8 @@ async def _bastion_models(pool, entity_id: int, server: str) -> list:
 async def set_embed_bastion(pool, entity_id: int, server: str,
                             cred_name: str | None = None,
                             model: str | None = None,
-                            dim: int | None = None) -> dict:
+                            dim: int | None = None,
+                            chosen_by: dict | None = None) -> dict:
     """Point this host's embeddings at its bastion `server`. Resolves the bastion's
     embedder endpoint and writes the BYO embedding config via apply_embedding_switch.
 
@@ -314,9 +464,11 @@ async def set_embed_bastion(pool, entity_id: int, server: str,
       - `model` omitted, host already has a model → KEEP it (just move WHERE it
         embeds). No dim change, so with multi-dim storage nothing is re-embedded.
       - `model` omitted, host has NO model yet → pick the embedding model the
-        bastion serves (choose_bastion_embed_model). A fresh host should never
-        have to name a model the bastion's own heartbeat already lists — the
-        2026-09-02 test host guessed one the box did not run.
+        bastion's machine serves by testing what it lists
+        (choose_embed_model_by_probe), and keep the record of that choice. A
+        fresh host should never have to name a model the bastion's own
+        heartbeat already lists — the 2026-09-02 test host guessed one the box
+        did not run.
       - `model` given → serve THAT model on the bastion (e.g. move bge-m3 → a
         qwen the box actually runs). apply_embedding_switch probe-gates it (the
         bastion must return a vector for that model at that dim) and, because
@@ -341,14 +493,25 @@ async def set_embed_bastion(pool, entity_id: int, server: str,
         target_model = cur.get("model")
         target_dim = cur.get("dim")
         if not target_model:
-            pick = choose_bastion_embed_model(served)
-            if not pick:
-                return {"error": (f"this host has no embedding model yet and '{server}' serves no "
-                                  f"embedding model it can store (served: "
-                                  f"{', '.join(str(m) for m in served) or 'nothing'})"),
-                        "served_embedding_models": [n for n, _ in served_known]}
-            target_model, target_dim = pick
+            pick = await choose_embed_model_by_probe(pool, entity_id, server)
+            if pick.get("error"):
+                return {"error": (f"this host has no embedding model yet and no model on '{server}' "
+                                  f"embeds at a dim it can store: {pick['error']}"),
+                        "served_embedding_models": [n for n, _ in served_known],
+                        "tried": pick.get("tried") or []}
+            target_model, target_dim = pick["model"], pick["dim"]
+            chosen_by = choose_record(server, pick)
             chosen = True
+        elif chosen_by is None:
+            # The model is KEPT and only WHERE it embeds moves: the record of
+            # how it was chosen still describes it, so it stays
+            # (apply_embedding_switch clears the record when given none).
+            try:
+                from server.routes.embedding import _load_bp
+                chosen_by = (await _load_bp(pool, entity_id)).get("embedding_chosen_by") or None
+            except Exception:  # noqa: BLE001 — a lost record is not a failed move
+                chosen_by = None
+    kept_record = bool(chosen_by) and not chosen and not model
     # An address-less pairing can serve embedders on two servers (ollama and
     # its OpenAI-compatible one), each with its own lane origin, and the
     # endpoint above is the one picked with no model named. Once the model is
@@ -366,7 +529,7 @@ async def set_embed_bastion(pool, entity_id: int, server: str,
     res = await apply_embedding_switch(
         pool, entity_id, target_model, provider="local",
         base_url=endpoint, dim=target_dim, cred_name=cred_name,
-        bastion=server)
+        bastion=server, chosen_by=chosen_by)
     if isinstance(res, dict) and res.get("error"):
         names = [n for n, _ in served_known]
         res["served_embedding_models"] = names
@@ -377,9 +540,12 @@ async def set_embed_bastion(pool, entity_id: int, server: str,
         res.setdefault("bastion", server)
         res.setdefault("embed_endpoint", endpoint)
         res["served_embedding_models"] = [n for n, _ in served_known]
+        if chosen_by:
+            res["chosen_by"] = chosen_by
         res["note"] = (
             f"embeds now route to bastion '{server}' serving {target_model}"
-            + (" (picked from what the machine serves)" if chosen else "")
+            + (" (picked by a test embed of what the machine serves)"
+               if (chosen_by and not kept_record) else "")
             if (model or chosen) else
             "model kept unchanged; embeds now route to the host's bastion"
         ) + " (no re-embed; existing vectors untouched)"

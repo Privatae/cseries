@@ -6,7 +6,9 @@ containers on an owner's machines decide the same way. A machine of total
 MiB keeps a reserve for itself: GKE's node reservation (255 MiB under 1 GiB;
 otherwise 25% of the first 4 GiB, 20% of the next 4, 10% of the next 8, 6% of
 the next 112 and 2% above 128 GiB) plus the kubelet's 100 MiB eviction floor.
-What is left is the machine's one memory budget, and the Host and its
+What is left is the machine's one memory budget (never more than the
+containers' slice's own ceiling, where it has one: on Windows, SLICE), and
+the Host and its
 database hold their share of it first: each one's MemoryMax, as systemd holds
 it for cseries-host.service and cseries-postgres.service (the Host's from
 10-memory.conf, which configure writes; the database's 512 MiB). The rest is
@@ -153,6 +155,37 @@ def read_held(units=HELD_UNITS, booted="/run/systemd/system"):
     return parse_held(r.stdout, units) if r.returncode == 0 else None
 
 
+# Where the runtime starts its containers (common.CGROUP_PARENT). On Windows
+# the cseries command gives it a ceiling of its own: there the Linux system's
+# memory is WSL's, shared with every other WSL system on the PC, and the
+# Host's size is a ceiling on C-Series's units instead (the installer's
+# size-caps.js sets MemoryMax on this slice to what the size leaves the
+# containers). Admitting into more than the slice holds would only have the
+# kernel kill inside it, so the budget is never more than that.
+SLICE = "cseries.slice"
+
+
+def parse_slice_max(text):
+    """MiB the slice's MemoryMax holds, from `systemctl show -p MemoryMax
+    cseries.slice`; None when it has none (infinity, or not a number)."""
+    for line in text.splitlines():
+        if line.startswith("MemoryMax="):
+            v = line[len("MemoryMax="):].strip()
+            return int(v) >> 20 if v.isascii() and v.isdigit() else None
+    return None
+
+
+def read_slice_max(slice_=SLICE, booted="/run/systemd/system"):
+    if not os.path.isdir(booted):
+        return None
+    try:
+        r = subprocess.run(["systemctl", "show", "-p", "MemoryMax", slice_], capture_output=True,
+                           text=True, timeout=5, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return parse_slice_max(r.stdout) if r.returncode == 0 else None
+
+
 def parse_meminfo(text):
     """(MemTotal, MemAvailable) in MiB, or (None, None)."""
     total = avail = None
@@ -246,7 +279,7 @@ class Guard:
 
     def __init__(self, meminfo_path="/proc/meminfo", psi_path="/proc/pressure/memory",
                  disk_path="/var/lib/containers", total_mb=None, held=read_held,
-                 clock=time.monotonic):
+                 slice_max=read_slice_max, clock=time.monotonic):
         self.meminfo_path = meminfo_path
         self.psi_path = psi_path
         self.disk_path = disk_path
@@ -259,6 +292,10 @@ class Guard:
         self._held = held
         self._held_at = None
         self._held_mb = None
+        # slice_max(): the MiB cseries.slice's own ceiling holds, or None
+        # (read_slice_max), read as often as held().
+        self._slice_max = slice_max
+        self._slice_mb = None
         self.clock = clock
         self.over_since = None
         self.last_stop = None
@@ -275,8 +312,14 @@ class Guard:
         now = self.clock()
         if self._held_at is None or now - self._held_at >= HELD_READ_EVERY_S:
             self._held_mb = self._held()
+            self._slice_mb = self._slice_max() if self._slice_max else None
             self._held_at = now
         return self._held_mb
+
+    def slice_mb(self):
+        """The containers' slice's own ceiling in MiB, or None."""
+        self.held_mb()
+        return self._slice_mb
 
     def budget(self):
         """What containers are admitted into: the machine's budget less the
@@ -284,7 +327,9 @@ class Guard:
         held = self.held_mb()
         if held is None:
             return 0
-        return max(0, budget_mb(self.total_mb()) - held)
+        room = max(0, budget_mb(self.total_mb()) - held)
+        cap = self.slice_mb()
+        return room if cap is None else min(room, cap)
 
     def used_mb(self, units, in_flight=()):
         return sum(int(u["memory_mi"]) for u in units) + sum(int(m) for m in in_flight)

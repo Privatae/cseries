@@ -1,0 +1,5 @@
+# The release click-through (scripts/release-clickthrough) seals stand-in
+# keys, revokes them and chats: every script exits before the browser starts
+# unless CSERIES_CLICKTHROUGH_TEST_HOST names the same Host as
+# CSERIES_HOST_URL. No browser, no network.
+test_release_clickthrough_guard.py

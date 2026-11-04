@@ -6,7 +6,7 @@
 // What it holds, and why:
 //   - the release's guest image, by path and sha256;
 //   - vz on macOS, QEMU on Linux, the machine's own CPU architecture;
-//   - the VM's share of the machine (driver.js guestResources);
+//   - the VM's size, the one the person chose (size.js);
 //   - no folder of the machine mounted, no containerd, no SSH agent or X11
 //     forwarded into the guest;
 //   - 127.0.0.1:8800, 8810 and 8811 forwarded to the same ports on the

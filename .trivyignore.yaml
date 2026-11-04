@@ -17,38 +17,6 @@
 # cannot scope an acceptance to one file.
 
 vulnerabilities:
-  # 2026-10-07 — cseries-harness-cursor (vendor cursor-agent 2026.10.01-e373342,
-  # archive sha256 a79726c6e644520e…, the CURSOR_SHA256 the Dockerfile verifies).
-  #
-  # The vendor's package carries piscina 4.9.3 at
-  # dist-package/node_modules/piscina. CVE-2026-102992 is a prototype-pollution
-  # gadget in ThreadPool.options (code execution through execArgv /
-  # loadBalancer). Using it needs piscina loaded AND a separate
-  # prototype-pollution bug in the same process.
-  #
-  # Checked in that archive by text search: none of the 80 bundle files outside
-  # node_modules, and no other package under node_modules, names piscina. The
-  # same search finds tree-sitter, a sibling package in that node_modules, in 7
-  # bundle files, so it does see a real reference. So the code is on disk and
-  # nothing in the archive refers to it by name. That is a search, not a load
-  # trace: a require() of a name built at runtime would not show up in it.
-  #
-  # Accepted 2026-10-07: v0.2.10 removes the 3 fixable CRITICAL perl
-  # CVEs (CVE-2026-13221, -42496, -8376) in the cursor image that was live then
-  # (v0.2.9). Remove this entry once cursor ships a fixed piscina (4.9.4, 5.3.2
-  # or 6.0.0-rc.5 per the advisory; 5.0.0 to 5.3.1 are still vulnerable), or at
-  # once if a cursor release starts referencing piscina.
-  #
-  # `purls` pins the entry to the accepted version. trivy ANDs it with `paths`,
-  # so any other piscina version at this path fails the gate again and has to
-  # be checked afresh (measured with trivy 0.73: 5.0.0 here exits 1).
-  - id: CVE-2026-102992
-    paths:
-      - "var/lib/cseries/apps/cursor/bin/dist-package/node_modules/piscina/package.json"
-    purls:
-      - "pkg:npm/piscina@4.9.3"
-    statement: "Vendor-bundled piscina 4.9.3 is on disk but nothing in cursor-agent refers to it (no bundle file or other package names it; text search of the 2026.10.01-e373342 archive 2026-10-07). Accepted 2026-10-07 to remove 3 fixable perl CRITICALs; remove when cursor ships a fixed piscina (4.9.4, 5.3.2 or 6.0.0-rc.5)."
-
   # 2026-10-20 — the Host image's Python: msgpack 1.1.2, urllib3 2.7.0 and
   # setuptools 70.3.0 are not packages of ours. They are the copies pip 26.2.1
   # vendors, named in pip/_vendor/vendor.txt, which trivy reads as installed

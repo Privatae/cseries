@@ -67,27 +67,82 @@
 
     // ── Desktop & Dock ───────────────────────────────────
     // The desktop SHELL owns layout state (js/desktop-layout.js): reading
-    // and writing through window.parent.DesktopLayout keeps one state
-    // owner, persists via the shell's debounced save, and re-renders the
-    // live desktop/dock instantly. Same parent-reach precedent as
-    // _bootScreen below. Standalone (no shell parent) the tab degrades to
-    // a pointer at the desktop.
-    function parentLayout() {
+    // and writing through it keeps one state owner, persists via the shell's
+    // debounced save, and re-renders the live desktop/dock instantly.
+    // Settings runs on its own origin (kernel.SDK_MANAGED_APPS), where
+    // window.parent.DesktopLayout throws, so this tab said "Shell not
+    // reachable" on every Host. It asks the desktop instead: a cseries:layout
+    // message, answered with cseries:layout-state (app-runner.js isolatedAsk,
+    // which takes it from this window's frame on this app's origin only).
+    // Same-origin (an older desktop) still reaches DesktopLayout directly.
+    // Standalone (no shell parent) the tab degrades to a pointer at the desktop.
+
+    // The desktop's origin: this app's is apps-<key>-<the desktop's host>
+    // (applications/app_origin.py). Null when this page is not on one.
+    function desktopOrigin() {
+        var m = /^apps-[a-z2-7]{20}-(.+)$/.exec(window.location.host);
+        return m ? window.location.protocol + '//' + m[1] : null;
+    }
+
+    function directShell(name) {
         try {
-            return (window.parent && window.parent !== window
-                && window.parent.DesktopLayout) || null;
+            return (window.parent && window.parent !== window && window.parent[name]) || null;
         } catch (_) { return null; }
+    }
+
+    // Tell the desktop something that needs no answer. True when it was sent.
+    function tellDesktop(msg) {
+        var to = desktopOrigin();
+        if (!to || !window.parent || window.parent === window) return false;
+        try { window.parent.postMessage(msg, to); return true; } catch (_) { return false; }
+    }
+
+    // One layout op, answered with the layout after it: {dock: [...ids],
+    // desktop: [...ids]}, or null when no desktop answered.
+    function askLayout(op, appId, defaults) {
+        var L = directShell('DesktopLayout');
+        if (L) {
+            if (op === 'pin') L.pin(appId);
+            else if (op === 'unpin') L.unpin(appId);
+            else if (op === 'add-desktop') L.addToDesktop(appId, defaults);
+            else if (op === 'remove-desktop') L.removeFromDesktop(appId, defaults);
+            else if (op === 'reset') L.resetLayout();
+            return Promise.resolve({ dock: L.dockPinned(), desktop: L.desktopIds(defaults) });
+        }
+        var to = desktopOrigin();
+        if (!to || !window.parent || window.parent === window) return Promise.resolve(null);
+        return new Promise(function (resolve) {
+            var timer = null;
+            function finish(v) {
+                window.removeEventListener('message', onMsg);
+                clearTimeout(timer);
+                resolve(v);
+            }
+            function onMsg(ev) {
+                if (ev.source !== window.parent || ev.origin !== to) return;
+                var d = ev.data;
+                if (!d || d.type !== 'cseries:layout-state' || d.op !== op) return;
+                finish({
+                    dock: Array.isArray(d.dock) ? d.dock.map(String) : [],
+                    desktop: Array.isArray(d.desktop) ? d.desktop.map(String) : [],
+                });
+            }
+            window.addEventListener('message', onMsg);
+            timer = setTimeout(function () { finish(null); }, 4000);
+            var msg = { type: 'cseries:layout', op: op, defaults: defaults || [] };
+            if (appId) msg.app_id = appId;
+            if (!tellDesktop(msg)) finish(null);
+        });
+    }
+
+    function shellUnreachable(listEl) {
+        listEl.innerHTML = '<div class="cseries-empty"><span class="empty-title">Shell not reachable</span>'
+            + 'Open Settings from the Privatae Host desktop to manage the dock and desktop icons.</div>';
     }
 
     async function loadDesktopTab() {
         var listEl = document.getElementById('desktop-app-list');
         if (!listEl) return;
-        var L = parentLayout();
-        if (!L) {
-            listEl.innerHTML = '<div class="cseries-empty"><span class="empty-title">Shell not reachable</span>'
-                + 'Open Settings from the Privatae Host desktop to manage the dock and desktop icons.</div>';
-            return;
-        }
 
         var apps = [];
         try {
@@ -97,13 +152,28 @@
             listEl.innerHTML = '<div class="cseries-empty">Could not load the app list.</div>';
             return;
         }
-
         var defaults = apps.filter(function (a) { return a.system; })
                            .map(function (a) { return a.id; });
 
+        var lay = await askLayout('get', null, defaults);
+        if (!lay) { shellUnreachable(listEl); return; }
+        renderDesktopRows(listEl, apps, defaults, lay);
+
+        var resetBtn = document.getElementById('btn-reset-layout');
+        if (resetBtn && !resetBtn._wired) {
+            resetBtn._wired = true;
+            resetBtn.addEventListener('click', async function () {
+                if (!confirm('Reset the dock and desktop icons to the default layout?')) return;
+                await askLayout('reset', null, []);
+                loadDesktopTab();
+            });
+        }
+    }
+
+    function renderDesktopRows(listEl, apps, defaults, lay) {
         listEl.innerHTML = apps.map(function (a) {
-            var pinned = L.isPinned(a.id);
-            var onDesk = L.onDesktop(a.id, defaults);
+            var pinned = lay.dock.indexOf(a.id) >= 0;
+            var onDesk = lay.desktop.indexOf(a.id) >= 0;
             return '<div class="desktop-row" data-app-id="' + attr(a.id) + '">'
                 + '<div class="desktop-row-name">' + esc(a.name || a.id) + '</div>'
                 + '<div class="desktop-row-actions">'
@@ -115,32 +185,20 @@
         }).join('');
 
         listEl.querySelectorAll('.desktop-toggle').forEach(function (btn) {
-            btn.addEventListener('click', function () {
+            btn.addEventListener('click', async function () {
                 var row = btn.closest('.desktop-row');
                 var id = row && row.getAttribute('data-app-id');
-                var Lp = parentLayout();
-                if (!id || !Lp) return;
-                if (btn.dataset.kind === 'dock') {
-                    if (Lp.isPinned(id)) Lp.unpin(id); else Lp.pin(id);
-                } else {
-                    if (Lp.onDesktop(id, defaults)) Lp.removeFromDesktop(id, defaults);
-                    else Lp.addToDesktop(id, defaults);
-                }
-                loadDesktopTab();
+                if (!id) return;
+                var on = btn.classList.contains('is-on');
+                var op = btn.dataset.kind === 'dock'
+                    ? (on ? 'unpin' : 'pin')
+                    : (on ? 'remove-desktop' : 'add-desktop');
+                btn.disabled = true;
+                var next = await askLayout(op, id, defaults);
+                if (!next) { shellUnreachable(listEl); return; }
+                renderDesktopRows(listEl, apps, defaults, next);
             });
         });
-
-        var resetBtn = document.getElementById('btn-reset-layout');
-        if (resetBtn && !resetBtn._wired) {
-            resetBtn._wired = true;
-            resetBtn.addEventListener('click', function () {
-                var Lp = parentLayout();
-                if (!Lp) return;
-                if (!confirm('Reset the dock and desktop icons to the default layout?')) return;
-                Lp.resetLayout();
-                loadDesktopTab();
-            });
-        }
     }
 
     // ── Appearance ───────────────────────────────────────
@@ -177,12 +235,15 @@
     // re-fetches /api/appearance and picks the variant for its current
     // viewport, so this is correct for both grids (a straight
     // desktop.style write would paint the wrong variant in phone mode).
+    // On its own origin Settings cannot call the parent's applyWallpaper, so
+    // it tells the desktop (cseries:wallpaper-changed, app-runner.js isolatedAsk).
     function _reapplyShellWallpaper() {
-        try {
-            if (window.parent && typeof window.parent.applyWallpaper === 'function') {
-                window.parent.applyWallpaper();
-            }
-        } catch (_) {}
+        var fn = directShell('applyWallpaper');
+        if (typeof fn === 'function') {
+            try { fn(); } catch (_) {}
+            return;
+        }
+        tellDesktop({ type: 'cseries:wallpaper-changed' });
     }
 
     async function loadAppearanceTab() {
@@ -2097,13 +2158,18 @@
         dl.innerHTML = html;
     }
 
+    // Same story: on its own origin Settings asks the desktop to show or hide
+    // its boot screen (cseries:boot-screen, app-runner.js isolatedAsk).
     function _bootScreen(show) {
-        try {
-            var p = window.parent && window.parent.WSClient;
-            if (!p) return;
-            if (show && typeof p.showBootScreen === 'function') p.showBootScreen();
-            if (!show && typeof p.hideBootScreen === 'function') p.hideBootScreen();
-        } catch (_) {}
+        var p = directShell('WSClient');
+        if (p) {
+            try {
+                if (show && typeof p.showBootScreen === 'function') p.showBootScreen();
+                if (!show && typeof p.hideBootScreen === 'function') p.hideBootScreen();
+            } catch (_) {}
+            return;
+        }
+        tellDesktop({ type: 'cseries:boot-screen', show: !!show });
     }
 
     // After a 202 "applying", the host rolls (~30s). The SHELL owns the

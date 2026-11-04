@@ -10,7 +10,7 @@
   },
   "app-store-app": {
    "checked": "2026-11-02",
-   "status": "current"
+   "status": "changed"
   },
   "approvals": {
    "checked": "2026-11-03",
@@ -30,11 +30,11 @@
   },
   "browser-app": {
    "checked": "2026-11-01",
-   "status": "current"
+   "status": "changed"
   },
   "building-apps": {
    "checked": "2026-11-02",
-   "status": "current"
+   "status": "changed"
   },
   "calendar-app": {
    "checked": "2026-10-28",
@@ -54,7 +54,7 @@
   },
   "coding-agents": {
    "checked": "2026-11-02",
-   "status": "current"
+   "status": "changed"
   },
   "community-app": {
    "checked": "2026-10-28",
@@ -82,7 +82,7 @@
   },
   "getting-started-app": {
    "checked": "2026-11-03",
-   "status": "current"
+   "status": "changed"
   },
   "gitea-app": {
    "checked": "2026-11-02",
@@ -94,7 +94,7 @@
   },
   "how-a-host-handles-a-request": {
    "checked": "2026-10-29",
-   "status": "current"
+   "status": "changed"
   },
   "how-your-host-is-protected": {
    "checked": "2026-11-03",
@@ -102,15 +102,15 @@
   },
   "keys-app": {
    "checked": "2026-11-03",
-   "status": "current"
+   "status": "changed"
   },
   "local-models": {
    "checked": "2026-11-03",
-   "status": "unchecked"
+   "status": "changed"
   },
   "memory": {
    "checked": "2026-11-03",
-   "status": "current"
+   "status": "changed"
   },
   "memory-app": {
    "checked": "2026-10-22",
@@ -118,7 +118,7 @@
   },
   "models-and-keys": {
    "checked": "2026-11-03",
-   "status": "current"
+   "status": "changed"
   },
   "network-app": {
    "checked": "2026-11-03",
@@ -126,7 +126,7 @@
   },
   "orchestrator-app": {
    "checked": "2026-11-03",
-   "status": "current"
+   "status": "changed"
   },
   "oversight-app": {
    "checked": "2026-10-28",
@@ -174,7 +174,7 @@
   },
   "what-is-privatae": {
    "checked": "2026-11-03",
-   "status": "current"
+   "status": "changed"
   },
   "where-your-data-lives": {
    "checked": "2026-11-02",

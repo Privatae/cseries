@@ -139,6 +139,11 @@ async def run_quiet(argv, timeout=120):
         return -1
 
 
+def _seen(task):
+    if not task.cancelled():
+        task.exception()
+
+
 def fetch_to_file(url, path, max_bytes):
     """Download url to path; its sha256. http and https only."""
     if not url.startswith(("https://", "http://")):
@@ -309,6 +314,12 @@ class Builder:
         if t is None or (t.done() and key in self.errors):
             self.errors.pop(key, None)
             t = self.tasks[key] = asyncio.ensure_future(self._build(hid, src))
+            # A build workspace.set_harness started has no waiter: when it
+            # failed, asyncio printed "Task exception was never retrieved" and
+            # the whole traceback into the journal at the next wake, after
+            # _build had already logged the failure in one line. The failure
+            # is kept in self.errors; this only marks it as seen.
+            t.add_done_callback(_seen)
         return t
 
     async def wait(self, hid, src, deadline):

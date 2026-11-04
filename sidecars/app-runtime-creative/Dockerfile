@@ -41,7 +41,9 @@
 # BUMPING a program: change its version (Blender: URL) and sha256 together
 # (the checksum is the publisher's own: blender-<v>.sha256 on
 # download.blender.org, the release asset digest on GitHub), rebuild, and
-# re-run the proof in the ship runbook.
+# re-run the proof in the ship runbook. A new Blender sha256 is a new name in
+# the third-party cache, so the first release after a bump fetches it from
+# blender.org and fills the cache for the ones after it.
 
 # ── Fetch and verify the programs (this stage is thrown away) ─────────────
 FROM python:3.14-slim-bookworm@sha256:5127143f679a1bcf59e6b9ea1a95e6cef8b8d0905bf1ca459a7f0141398ddc4f AS programs
@@ -54,6 +56,16 @@ RUN printf '%s\n' 'pip==26.2.2 --hash=sha256:fd7f4dfa8190e014013b9f08f3e973f4e4c
 
 ARG BLENDER_URL=https://download.blender.org/release/Blender5.2/blender-5.2.2-linux-x64.tar.xz
 ARG BLENDER_SHA256=84098912789dc450e95697c4184fb8a90acbe5111c2ba4aede3fecb57806a168
+# Where Blender is fetched from, in order: the copy on this repository's
+# third-party-cache release (named <sha256>-<archive name>; the release
+# workflow puts it there after it fetches the archive from blender.org), then
+# download.blender.org, then mirror.blender.org (Blender's own mirror
+# redirector, the link blender.org's download page gives, at the same path).
+# On the v0.1.16 release download.blender.org answered 403 to GitHub's runner.
+# Every source is held to BLENDER_SHA256 (fetch-pinned.sh), so the cache can
+# never change what ships, and a build with no GitHub access falls through to
+# blender.org. An empty THIRD_PARTY_CACHE leaves the cache out.
+ARG THIRD_PARTY_CACHE=https://github.com/Privatae/cseries/releases/download/third-party-cache
 
 RUN apt-get update \
  && apt-get install -y --no-install-recommends curl ca-certificates xz-utils \
@@ -61,8 +73,14 @@ RUN apt-get update \
 
 WORKDIR /dl
 COPY sidecars/app-runtime-creative/crafts.txt /dl/crafts.txt
+COPY sidecars/app-runtime-creative/fetch-pinned.sh /dl/fetch-pinned.sh
+# The archive is checked again here, after fetch-pinned.sh, so the pin is
+# enforced by this file whatever the script does.
 RUN set -eu \
- && curl -fsSL -o blender.tar.xz "$BLENDER_URL" \
+ && sh /dl/fetch-pinned.sh blender.tar.xz "$BLENDER_SHA256" \
+      "${THIRD_PARTY_CACHE:+$THIRD_PARTY_CACHE/$BLENDER_SHA256-${BLENDER_URL##*/}}" \
+      "$BLENDER_URL" \
+      "https://mirror.blender.org/${BLENDER_URL#https://download.blender.org/}" \
  && printf '%s  %s\n' "$BLENDER_SHA256" blender.tar.xz | sha256sum -c - \
  && mkdir -p /opt/blender \
  && tar -xJf blender.tar.xz -C /opt/blender --strip-components=1 \

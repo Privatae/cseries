@@ -458,6 +458,14 @@ def main() -> int:
           and "kick_catalogs=True" in tools_source(app_root))
     brain_service._pool = None
 
+    # ── A Connect button never names an app that does not exist ──
+    # A not-set-up engine with no login, no provider and no generic band got
+    # {"app": <engine id>}; there is no "cursor" app, so Connect Cursor opened
+    # nothing. With no app of its own it is Keys.
+    check("a Connect action with no install_app_id opens Keys, never an app named for the engine",
+          'entry.get("install_app_id") or "keys"' in _src_inf2
+          and 'entry.get("install_app_id", h)' not in _src_inf2)
+
     print(f"[coding-matrix] {'PASS (0 failing)' if not failures else f'FAIL ({len(failures)} failing): {failures}'}")
     sys.stdout.flush()
     return 1 if failures else 0

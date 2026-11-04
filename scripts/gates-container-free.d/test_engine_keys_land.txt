@@ -1,0 +1,5 @@
+# A harness-<id> key added in Keys writes the engine's credential file in the
+# same request and shows in GET /routing engine_keys; the Kimi engine's model
+# list comes from the endpoint its own credential names. Stand-in /models on
+# 127.0.0.1. No DB.
+test_engine_keys_land.py

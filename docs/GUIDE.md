@@ -33,8 +33,10 @@ folders and system account. On Windows that is the bastion's service, its
 program in `Program Files\Privatae`, its state under the system profile, the
 tray's sign-in entry and its own firewall rules, through the same single
 administrator prompt the install uses. It names the QEMU packages it
-installed (Linux), or WSL and the lines it added to your `.wslconfig`
-(Windows), and removes them only when you type y. A bastion it did not
+installed (Linux), or WSL and the lines a release up to 0.1.16 added to your
+`.wslconfig` (Windows), and removes them only when you type y. Later releases
+write nothing there: on Windows the Host's size is a ceiling inside its own
+Linux system, so it limits nothing else in WSL. A bastion it did not
 install stays; it names the command that removes it
 (`sudo -H privatae-bastion uninstall --delete-data`, or on Windows the same
 from an Administrator terminal).

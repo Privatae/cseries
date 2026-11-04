@@ -19,7 +19,7 @@ import sys
 import time
 from typing import NamedTuple
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Request
 from server.applications.middleware import requires_permission
 from pydantic import BaseModel
 
@@ -256,7 +256,8 @@ async def _warm_route_catalog_now(p: str) -> None:
         logger.debug("warm_route_catalog(%s) failed (non-fatal): %s", p, e)
 
 
-async def warm_route_catalog(provider: str | None, wait_s: float = 5.0) -> None:
+async def warm_route_catalog(provider: str | None, wait_s: float = 5.0, *,
+                             base_url: str | None = None, model: str | None = None) -> None:
     """Fill the catalog rows a route reads, when they are cold. The turn read
     its model's window and output limit from caches that only fill when the
     startup warm finishes or someone opens the Keys app; until then a
@@ -265,7 +266,12 @@ async def warm_route_catalog(provider: str | None, wait_s: float = 5.0) -> None:
     per provider per cache TTL through the same cached builders the picker uses
     (failures cached briefly), never a fetch per turn. The turn waits at most
     `wait_s` for it; a slower fetch keeps going in the background and fills the
-    cache for the next turn. Never raises."""
+    cache for the next turn. Never raises.
+
+    A local route ("local", with the live `base_url` its route resolved and
+    its `model`) has no catalog: its window is the one its model server was
+    started with, read from that server (model_backends.probe_server_window,
+    cached per server and model)."""
     p = (provider or "").strip().lower()
     # Only inside a running server (its brain pool is up): the warm reads the
     # Keys vault and the vendors' lists, and a test or a script importing the
@@ -274,6 +280,23 @@ async def warm_route_catalog(provider: str | None, wait_s: float = 5.0) -> None:
         if brain_service.get_pool() is None:
             return
     except Exception:  # noqa: BLE001
+        return
+    if p == "local":
+        if not (base_url and model):
+            return
+        from mastercode.model_backends import probe_server_window, _server_origin, _norm_model
+        key = ("local", _server_origin(base_url), _norm_model(model))
+        task = _ROUTE_WARMS.get(key)
+        if task is None or task.done():
+            try:
+                task = asyncio.get_running_loop().create_task(probe_server_window(base_url, model))
+            except RuntimeError:
+                return
+            _ROUTE_WARMS[key] = task
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=wait_s)
+        except (asyncio.TimeoutError, Exception):  # noqa: BLE001
+            return
         return
     task = _ROUTE_WARMS.get(p)
     if task is None or task.done():
@@ -1275,10 +1298,16 @@ async def _table_local_models() -> list[dict]:
     if not pool:
         return []
     from mastercode.model_backends import list_local_models
+    from mastercode.local_model_kind import classify
     rows = await list_local_models(pool, brain_service._entity_id)
+    # Marked as GET /local-models marks them (mastercode/local_model_kind), so
+    # no surface reading the catalog offers an embedding model for chat.
+    kinds = await classify(rows)
     return [
         {"id": r["id"], "name": r["id"], "provider": "local",
-         "available": True, "bastion": r.get("bastion")}
+         "available": True, "bastion": r.get("bastion"),
+         "embedding": bool(kinds.get((str(r.get("endpoint") or ""),
+                                      str(r.get("id") or "").strip()), False))}
         for r in rows
     ]
 
@@ -2011,10 +2040,23 @@ ANTHROPIC_EFFORT_LEVELS: tuple = ("low", "medium", "high", "xhigh", "max")
 TEXT_ROLE_EFFORTS["anthropic"] = ANTHROPIC_EFFORT_LEVELS
 
 
+def _effort_vendor(provider: str | None) -> str:
+    """The provider whose effort rule applies: a lane that serves another
+    provider's models is judged as that provider (server/vault/providers
+    vendor_of: anthropic-subscription -> anthropic, the same models and the
+    same effort on the wire); any other provider, itself."""
+    p = (provider or "").strip().lower()
+    try:
+        from server.vault.providers import vendor_of
+        return vendor_of(p)
+    except Exception:  # noqa: BLE001 — an unreadable registry maps nothing
+        return p
+
+
 def text_role_efforts(provider: str) -> tuple:
     """The efforts this provider accepts for a text role, or () for none.
     Per provider; anthropic narrows per model (effort_options)."""
-    return TEXT_ROLE_EFFORTS.get((provider or "").strip().lower(), ())
+    return TEXT_ROLE_EFFORTS.get(_effort_vendor(provider), ())
 
 
 def validate_role_effort(provider: str, effort: str | None,
@@ -2038,7 +2080,7 @@ def validate_role_effort(provider: str, effort: str | None,
     if eff not in allowed:
         return (f"effort {eff!r} is not accepted by {provider!r}. "
                 f"Valid: {', '.join(allowed)}")
-    if (provider or "").strip().lower() == "anthropic":
+    if _effort_vendor(provider) == "anthropic":
         if not (model or "").strip():
             return "an Anthropic effort is set per model: pick the model first"
         from mastercode.inference_config import anthropic_wire_effort
@@ -2071,6 +2113,8 @@ async def await_effort_catalog(provider: str | None, model: str | None,
     failed read a person's level was never sent again for the process's life."""
     from mastercode.inference_config import anthropic_model_efforts, normalize_provider
     p, m = normalize_provider(provider or "", model or "")
+    # anthropic-subscription reads Anthropic's list (_effort_vendor).
+    p = _effort_vendor(p)
     if p != "anthropic" or not m or anthropic_model_efforts(m) is not None:
         return
     task = _EFFORT_READS.get(p)
@@ -2100,10 +2144,11 @@ def effort_options(provider: str | None, model: str | None) -> dict:
         anthropic_api_model_id, anthropic_default_effort, anthropic_model_efforts,
         normalize_provider)
     p, m = normalize_provider(provider or "", model or "")
-    if p == "anthropic" and m:
+    anthropic = _effort_vendor(p) == "anthropic"      # anthropic-subscription too
+    if anthropic and m:
         m = anthropic_api_model_id(m)   # the id the wire sends (_call_anthropic)
     out: dict = {"provider": p, "model": m, "efforts": [], "default": None, "known": True}
-    if p == "anthropic":
+    if anthropic:
         accepted = anthropic_model_efforts(m) if m else None
         out["efforts"] = list(accepted or ())
         out["known"] = accepted is not None
@@ -2342,6 +2387,17 @@ async def _provider_status(pool, eid) -> list[dict]:
                                              actor="orchestrator-routing")
                         has = bool(cred and cred.secret)
                         via = "api_key" if has else None
+                elif p == "anthropic-subscription":
+                    # The person's Claude sign-in (renewed by the Host, so an
+                    # expired one still counts as held) or their pasted
+                    # anthropic-oauth token (providers.resolve_claude_subscription).
+                    from server.vault.providers import resolve_claude_subscription
+                    cred = await resolve_claude_subscription(
+                        pool, eid, actor="orchestrator-routing")
+                    has = cred is not None and (bool(cred.secret)
+                                                or cred.source == "signin-expired")
+                    via = (("signin" if cred.source.startswith("signin") else "token")
+                           if has else None)
                 else:
                     # api_key OR oauth_token both count as 'connected'
                     # (anthropic ships both shapes). resolve never raises by
@@ -2353,7 +2409,15 @@ async def _provider_status(pool, eid) -> list[dict]:
             except Exception:
                 has = False
             row = {"id": p, "has_key": has}
-            if via:
+            if p == "anthropic-subscription":
+                # No key to add: the person signs in with their Claude account,
+                # from the Orchestrator itself (routes/claude_signin).
+                row["signin"] = "claude"
+                if via:
+                    row["via"] = via
+                    row["via_label"] = ("Claude sign-in" if via == "signin"
+                                        else "Claude token (anthropic-oauth)")
+            elif via:
                 row["via"] = via
                 row["via_label"] = credential_label(p, via)
             if signin_serves_inference(p):
@@ -2410,6 +2474,8 @@ def _normalize_stored_route(entry) -> dict | None:
         out["base_url"] = base_url
     if entry.get("connection_id"):
         out["connection_id"] = entry["connection_id"]
+    if str(entry.get("default_why") or "").strip():
+        out["default_why"] = str(entry["default_why"])
     return out
 
 
@@ -2507,6 +2573,12 @@ async def get_current_routing():
             "source": ("explicit" if role in routing else
                        "derived" if route.get("model") else "unconfigured"),
         }
+        # Chosen for the person, not by them: why, in words (the own-machine
+        # default, or a default route the Host wrote).
+        _why = ((routing.get(role) or {}).get("default_why")
+                or ((route.get("local_default") or {}).get("why")))
+        if _why and route.get("model"):
+            effective[role]["default_why"] = _why
     base["effective"] = effective
     # The effort control of each text row, for the route the row shows (the
     # stored one, else the effective one): on anthropic the levels are the
@@ -2522,7 +2594,22 @@ async def get_current_routing():
             role_effort_options[role] = effort_options(shown["provider"], shown["model"])
     base["role_effort_options"] = role_effort_options
     base["providers"] = await _provider_status(pool, eid)
+    base["engine_keys"] = _engine_keys_present()
     return base
+
+
+def _engine_keys_present() -> list[str]:
+    """The coding engines whose credential file is in place (harness_keys
+    writes it the moment a key is added in Keys). The Orchestrator compares
+    this when its window comes back into focus, so an engine connected in
+    Keys shows connected without reopening the window."""
+    try:
+        from pathlib import Path as _Path
+        from server.network import harness_keys
+        return sorted(h for h, path in harness_keys._PRIMARY_CREDS.items()
+                      if harness_keys._current_bytes(_Path(path)) is not None)
+    except Exception:  # noqa: BLE001
+        return []
 
 
 @router.get("/effort-options", dependencies=[Depends(requires_permission("read:inference_catalog"))])
@@ -2555,7 +2642,16 @@ async def get_local_models():
     if not pool:
         return {"local_models": []}
     from mastercode.model_backends import list_local_models
-    return {"local_models": await list_local_models(pool, brain_service._entity_id)}
+    from mastercode.local_model_kind import classify
+    rows = await list_local_models(pool, brain_service._entity_id)
+    # Each row says whether it is an embedding model, as its server says
+    # (mastercode/local_model_kind): the Orchestrator never offers one as a
+    # chat model (an embedder answers no chat).
+    kinds = await classify(rows)
+    return {"local_models": [
+        {**m, "embedding": bool(kinds.get((str(m.get("endpoint") or ""),
+                                           str(m.get("id") or "").strip()), False))}
+        for m in rows]}
 
 
 async def _owner_endpoints_view(pool) -> dict:
@@ -2937,6 +3033,51 @@ def _together_mark_serving(rows: dict, endpoints: list) -> None:
             "rows — every row now reads 'needs endpoint'", len(endpoints), len(rows))
 
 
+async def _subscription_models(pool, now: float) -> tuple[list, str | None]:
+    """The models provider anthropic-subscription offers: Anthropic's own,
+    as the Host model standard lists them eligible (approved_models.json,
+    `anthropic/…` rows), under the ids the Anthropic wire sends — the
+    subscription lane runs the same models as the API (the CLI is told the
+    id; nothing is listed from Anthropic under the person's token, which
+    Anthropic accepts from Claude's own client only). Each row is a flat
+    plan (`subscription`), with the Anthropic catalog's effort levels when
+    that catalog is warm. Needs the person's Claude sign-in or token: with
+    neither, the error says how to sign in."""
+    from server.vault.providers import resolve_claude_subscription
+    cred = None
+    if pool:
+        try:
+            cred = await resolve_claude_subscription(
+                pool, brain_service._entity_id, actor="orchestrator-direct-models")
+        except Exception:  # noqa: BLE001
+            cred = None
+    if cred is None or not (cred.secret or cred.source == "signin-expired"):
+        msg = ("no Claude sign-in — sign in with your Claude account (the Orchestrator's "
+               "Host model setup), or put a `claude setup-token` token in Keys as "
+               "'anthropic-oauth'")
+        _DIRECT_MODELS_CACHE["anthropic-subscription"] = {
+            "data": [], "err": msg, "exp": now + _DIRECT_MODELS_TTL_FAIL}
+        return [], msg
+    from mastercode.inference_config import anthropic_api_model_id
+    from mastercode.runtime import model_standard
+    rows: dict = {}
+    for entry in (model_standard.load().get("models") or []):
+        canon = str(entry.get("canonical") or "")
+        if not canon.startswith("anthropic/") or entry.get("status") != "eligible":
+            continue
+        mid = anthropic_api_model_id(canon)
+        row = {"id": mid, "name": mid, "subscription": True,
+               "price_source": "your Claude subscription"}
+        effs = cached_model_efforts("anthropic", mid)
+        if effs is not None:
+            row["efforts"] = list(effs)
+        rows[mid] = row
+    models = sorted(rows.values(), key=lambda r: r["id"])
+    _DIRECT_MODELS_CACHE["anthropic-subscription"] = {
+        "data": models, "exp": now + _DIRECT_MODELS_TTL}
+    return models, None
+
+
 async def _direct_models(p: str) -> tuple[list, str | None]:
     """(model rows, error) for a registry provider, from its own /models under
     the user's key — cached per provider. Shared by the /direct-models route
@@ -2974,6 +3115,8 @@ async def _direct_models(p: str) -> tuple[list, str | None]:
         # upstream on every Models-tab render.
         return cached["data"], cached.get("err")
     pool = brain_service.get_pool()
+    if p == "anthropic-subscription":
+        return await _subscription_models(pool, now)
     cred = None
     if pool:
         try:
@@ -3123,6 +3266,184 @@ async def _direct_models(p: str) -> tuple[list, str | None]:
         return [], msg
     _enrich_first_party_from_openrouter(p, models)
     _DIRECT_MODELS_CACHE[p] = {"data": models, "exp": now + _DIRECT_MODELS_TTL}
+    return models, None
+
+
+# A coding engine whose credential is a provider spec (kimi: harness_keys.
+# _PROVIDER_JSON_HARNESSES) runs on the endpoint the spec names, which may be
+# no registry provider's: Kimi Code's subscription base, or another
+# OpenAI-compatible service. Its model list is read from THAT endpoint with
+# the spec's own key, cached per endpoint and key like _DIRECT_MODELS_CACHE.
+#
+# Where the spec is read, and where the Host may then connect, are the
+# security of this: the Host's server makes the request, from where it sits.
+#   - The spec is the person's own Keys entry (harness-<id>), never the
+#     engine's credential file on disk, which an engine run can rewrite
+#     (review._persist_rotated_creds writes the harness's files from a run's
+#     rotated_creds).
+#   - Only an https address on the internet is asked: the name and every
+#     address it resolves to must be public (backup_stores.endpoint_problem,
+#     the rule the backup bucket address is held to), the connection goes to
+#     the address that was checked (a name cannot answer differently between
+#     the check and the request), and a redirect is not followed. An endpoint
+#     on this machine or the person's network is not asked from the Host; the
+#     row says so and the engine itself still runs on it.
+_ENGINE_MODELS_CACHE: dict = {}
+
+
+def _spec_endpoint(harness_id: str, text: str) -> tuple[str, str] | None:
+    """(base_url, key) a credential's text names, or None when it names none
+    (the registry provider's list stands) or names a wire other than the
+    OpenAI one. A bare key means the base that key authenticates on
+    (providers.resolve_base_url_sync: Moonshot's platform base, or Kimi Code's
+    subscription base for a subscription key), where the engine wraps it."""
+    from server.network import harness_keys
+    text = (text or "").strip()
+    if not text:
+        return None
+    try:
+        spec = json.loads(text)
+    except ValueError:
+        spec = None
+    if not isinstance(spec, dict):
+        if spec is not None:
+            return None
+        from server.vault.providers import PROVIDERS, resolve_base_url_sync
+        canonical = harness_keys._BARE_KEY_CANONICAL.get(harness_id) or harness_id
+        base = (resolve_base_url_sync(canonical, text)
+                or (PROVIDERS.get(canonical) or {}).get("base_url") or "")
+        return (base.rstrip("/"), text) if base else None
+    provs = spec.get("providers")
+    if isinstance(provs, dict):
+        spec = provs.get(str(spec.get("default") or ""))
+        if not isinstance(spec, dict):
+            return None
+    base = str(spec.get("base_url") or "").strip().rstrip("/")
+    if not base.lower().startswith(("http://", "https://")):
+        return None
+    if str(spec.get("type") or "").strip().lower() == "anthropic":
+        return None
+    return base, str(spec.get("api_key") or "").strip()
+
+
+async def engine_spec_endpoint(harness_id: str) -> tuple[str, str] | None:
+    """(base_url, key) from the person's Keys entry for the engine
+    (harness-<id>), or None: no provider-spec engine, no entry (the engine
+    runs on a provider key, whose registry list stands), or a spec that names
+    no OpenAI-wire endpoint."""
+    from server.network import harness_keys
+    if harness_id not in harness_keys._PROVIDER_JSON_HARNESSES:
+        return None
+    pool = brain_service.get_pool()
+    if pool is None:
+        return None
+    from server.vault import api as vault_api
+    raw = await vault_api.open_secret(
+        pool, entity_id=brain_service._entity_id, name=harness_keys.keys_name(harness_id),
+        actor=f"orchestrator-engine-models:{harness_id}")
+    if not raw:
+        return None
+    text = raw.decode("utf-8", "replace") if isinstance(raw, (bytes, bytearray)) else str(raw)
+    return await asyncio.to_thread(_spec_endpoint, harness_id, text)
+
+
+def _public_https(base: str) -> tuple[str | None, list[str]]:
+    """(why the Host does not ask it, []) or (None, the checked addresses)."""
+    import ipaddress
+    from urllib.parse import urlsplit
+    from server import backup_stores
+    parts = urlsplit(base)
+    host = parts.hostname or ""
+    if parts.scheme != "https":
+        return (f"{host or base} is not an https address, so your Host does not read its "
+                "model list (the engine still runs on it)"), []
+    port = parts.port or 443
+    why = backup_stores.endpoint_problem(host, port)
+    if why:
+        return f"{why}, so your Host does not read its model list (the engine still runs on it)", []
+    try:
+        addrs = backup_stores._resolve(host, port)
+    except (OSError, UnicodeError):
+        return f"{host} could not be found", []
+    ok = [a for a in addrs if backup_stores._public_ip(ipaddress.ip_address(a.split("%", 1)[0]))]
+    if not ok or len(ok) != len(addrs):
+        return f"{host} resolves to an address that is not on the internet", []
+    return None, ok
+
+
+def _pinned_get_json(base: str, addr: str, key: str, timeout: float = 15.0):
+    """GET <base>/models over TLS to `addr` (checked), with the name in SNI,
+    the certificate and the Host header. No redirect is followed."""
+    import http.client
+    import socket as _socket
+    import ssl
+    from urllib.parse import urlsplit
+    parts = urlsplit(base)
+    host, port = parts.hostname, parts.port or 443
+    ctx = ssl.create_default_context()
+
+    class _Pinned(http.client.HTTPSConnection):
+        def connect(self):
+            sock = _socket.create_connection((addr, port), timeout)
+            self.sock = ctx.wrap_socket(sock, server_hostname=host)
+
+    conn = _Pinned(host, port, timeout=timeout, context=ctx)
+    try:
+        headers = {"User-Agent": "cseries-kernel/0.13", "Accept": "application/json"}
+        if key:
+            headers["Authorization"] = f"Bearer {key}"
+        conn.request("GET", (parts.path or "").rstrip("/") + "/models", headers=headers)
+        resp = conn.getresponse()
+        body = resp.read(4 * 1024 * 1024)
+        if resp.status != 200:
+            raise RuntimeError(f"HTTP {resp.status}")
+        return json.loads(body)
+    finally:
+        conn.close()
+
+
+async def _engine_spec_models(harness_id: str) -> tuple[list, str | None] | None:
+    """(model rows, error) from the endpoint the engine's spec in Keys names
+    (engine_spec_endpoint, held to _public_https), or None when it names none."""
+    from server.vault.providers import is_subscription_base, _key_fp
+    from urllib.parse import urlsplit
+    try:
+        found = await engine_spec_endpoint(harness_id)
+    except Exception as e:  # noqa: BLE001
+        logger.info("engine %s spec unreadable for its model list: %s",
+                    harness_id, type(e).__name__)
+        return None
+    if not found:
+        return None
+    base, key = found
+    host = urlsplit(base).hostname or base
+    ck = (harness_id, base, _key_fp(harness_id, key))
+    now = time.monotonic()
+    cached = _ENGINE_MODELS_CACHE.get(ck)
+    if cached and cached["exp"] > now:
+        return cached["data"], cached.get("err")
+    why, addrs = await asyncio.to_thread(_public_https, base)
+    if why:
+        _ENGINE_MODELS_CACHE[ck] = {"data": [], "err": why, "exp": now + _DIRECT_MODELS_TTL}
+        return [], why
+
+    def _fetch():
+        body = _pinned_get_json(base, addrs[0], key)
+        items = body.get("data") if isinstance(body, dict) else body
+        rows = {r["id"]: r for r in (_dm_row(m) for m in (items or [])) if r}
+        if is_subscription_base(base):
+            for r in rows.values():
+                r["subscription"] = True
+        return sorted(rows.values(), key=lambda r: r["id"])
+
+    try:
+        models = await asyncio.to_thread(_fetch)
+    except Exception as e:  # noqa: BLE001
+        msg = f"{host} models: {e}" if str(e).startswith("HTTP ") else f"{host} models unreachable"
+        logger.warning("engine %s model list from %s failed: %s", harness_id, host, type(e).__name__)
+        _ENGINE_MODELS_CACHE[ck] = {"data": [], "err": msg, "exp": now + _DIRECT_MODELS_TTL_FAIL}
+        return [], msg
+    _ENGINE_MODELS_CACHE[ck] = {"data": models, "exp": now + _DIRECT_MODELS_TTL}
     return models, None
 
 
@@ -3328,7 +3649,7 @@ async def _build_coding_matrix(*, kick_catalogs: bool = False) -> dict:
     from server.routes.review import _CATALOG_STATUS_HARNESSES as _CLI_CATALOG_HARNESSES
     from server.routes.harnesses import _harness_app_to_provider, _creds_status
     from server.network.harness_keys import (
-        _fallback_providers, harness_band, KEYS_HARNESS_PROVIDERS)
+        _fallback_providers, harness_band, KEYS_HARNESS_PROVIDERS, keys_name)
     from server.network import harness_state
     from server.vault.providers import generic_providers
 
@@ -3398,6 +3719,13 @@ async def _build_coding_matrix(*, kick_catalogs: bool = False) -> dict:
             # The same list _harness_model_options hands the validator.
             return [{"id": m} for m in vendor_models.get("claude-code", [])], None
         if entry_id in KEYS_HARNESS_PROVIDERS and _fallback_providers(entry_id):
+            # An engine whose credential names its own endpoint (kimi's
+            # provider spec, or a bare key on the base it authenticates on)
+            # lists what THAT endpoint serves: the registry provider's base
+            # (Moonshot's) is not where it runs.
+            own = await _engine_spec_models(entry_id)
+            if own is not None:
+                return own
             # Key-driven harnesses (kimi + the generic band): the models the
             # ACTUAL provider serves under the user's key — never a reseller's
             # view of the vendor.
@@ -3520,6 +3848,12 @@ async def _build_coding_matrix(*, kick_catalogs: bool = False) -> dict:
         # Everything else is a credential the user pastes, so Keys is the flow.
         by_login = not allowed and _harness_has_login(entry_id)
         action = None
+        # The Keys name an engine's own key is stored under (harness-<id>):
+        # its Connect opens Keys on the form for that name, so the person does
+        # not have to know it. Only an engine run on its own key file; a
+        # provider key is added on the Providers side.
+        own_key = (keys_name(entry_id) if entry_id in KEYS_HARNESS_PROVIDERS
+                   and band != "generic" and not provider else None)
         if state == "disconnected":
             action = ({"label": f"Reconnect {HARNESS_LABELS.get(h, h)}", "kind": "login"}
                       if by_login else
@@ -3537,8 +3871,14 @@ async def _build_coding_matrix(*, kick_catalogs: bool = False) -> dict:
                 action = {"label": f"Add a {provider} key", "app": "keys",
                           "provider": provider}
             else:
+                # Keys unless the engine names an app of its own: the
+                # fallback was the engine's id, and there is no "cursor" app
+                # (the per-engine dock apps were deleted), so Connect Cursor
+                # opened nothing.
                 action = {"label": f"Connect {HARNESS_LABELS.get(h, h)}",
-                          "app": entry.get("install_app_id", h)}
+                          "app": entry.get("install_app_id") or "keys"}
+        if action and action.get("app") == "keys" and own_key:
+            action["key"] = own_key
 
         rows.append({
             "id": h,
@@ -3698,7 +4038,168 @@ async def use_local_default(body: UseLocalModel):
     return {**res, "machine": hit["bastion"]}
 
 
+# ── The default chat route ────────────────────────────────────────────────
+# A person who has not chosen a model for chat still gets chat:
+#   1. a model on their own machine, when one serves (inference_config rung 6,
+#      resolved live and never stored), whether or not they hold a key;
+#   2. else the recommended chat model of a provider whose key or sign-in they
+#      hold, WRITTEN as an ordinary route (set_by 'host', the host filling an
+#      unrouted role) that carries the reason it was chosen. It is in the
+#      routing table like any other route, shown in the Orchestrator with its
+#      reason, and the person's own pick replaces it (a PUT writes a new entry
+#      without the reason). Never a hidden pin.
+# The model comes from system-apps/orchestrator/recommended-routes.json, the
+# data the Orchestrator's one-click setup applies, kept to what the Host model
+# standard lists eligible and what the provider's live catalog serves on the
+# person's own credential (recommended_chat_model). No model id is in code.
+_DEFAULT_CHAT_LOCK: asyncio.Lock | None = None
+# After a pass that could set nothing (no catalog answered, no candidate
+# served), the next turn does not ask the catalogs again for this long.
+DEFAULT_CHAT_RETRY_S = 60.0
+_DEFAULT_CHAT_MISS = {"at": 0.0}
+
+
+def _recommended_data() -> dict:
+    """system-apps/orchestrator/recommended-routes.json, or {}."""
+    from pathlib import Path as _Path
+    for cand in (_Path("/app/system-apps/orchestrator/recommended-routes.json"),
+                 _Path(__file__).resolve().parents[2]
+                 / "system-apps/orchestrator/recommended-routes.json"):
+        if not cand.exists():
+            continue
+        try:
+            return json.loads(cand.read_text(encoding="utf-8"))
+        except Exception as e:  # noqa: BLE001
+            logging.getLogger("cseries.inference").warning(
+                "recommended-routes.json unreadable: %s", e)
+            return {}
+    return {}
+
+
+def _recommended_providers() -> list[str]:
+    """The providers recommended-routes.json lists, in its own order."""
+    return [str(p) for p in (_recommended_data().get("providers") or {})]
+
+
+async def recommended_chat_model(provider: str) -> tuple[str | None, str | None]:
+    """(model, None), or (None, why not): the first of `provider`'s recommended
+    chat candidates (web_research.recommended_chat_candidates, the data's own
+    order) that the Host model standard lists eligible (model_standard.check,
+    then approved_candidates once it is enforced) and that the provider's live
+    catalog serves on the person's own credential (_direct_models). There is
+    no unverified pick: a catalog that cannot be read sets nothing."""
+    from server.vault.providers import vendor_name
+    from mastercode.runtime import model_standard, web_research
+    vendor = vendor_name(provider)
+    cands = [c for c in web_research.recommended_chat_candidates(provider)
+             if model_standard.check(provider, c).get("eligible")]
+    cands = model_standard.approved_candidates(provider, cands)
+    if not cands:
+        return None, f"no recommended {vendor} model meets the Host model standard"
+    try:
+        rows, err = await _direct_models(provider)
+    except Exception as e:  # noqa: BLE001
+        rows, err = [], type(e).__name__
+    served = {str((r or {}).get("id") or "").strip() for r in (rows or [])}
+    model = next((c for c in cands if c in served), None)
+    if model is None:
+        return None, (f"{vendor}'s model list could not be read" if err or not rows
+                      else f"your {vendor} account does not offer {' or '.join(cands)}")
+    return model, None
+
+
+def default_chat_why(provider: str, model: str, via_signin: bool) -> str:
+    """What the Orchestrator says about a default route the Host wrote."""
+    from server.vault.providers import vendor_name
+    label = (((_recommended_data().get("providers") or {}).get(provider) or {}).get("label")
+             or vendor_name(provider))
+    held = ("your Claude subscription" if provider == "anthropic-subscription"
+            else f"your {label} sign-in" if via_signin else f"your {label} key")
+    return (f"You hadn't chosen a model for chat and no model on your own machine "
+            f"serves chat, so your Host set chat to {model}, the recommended model "
+            f"for {held}. Pick another model for chat here any time.")
+
+
+async def _stored_route(pool, entity_id: int, role: str):
+    """The role's stored routing entry as it is now, or None."""
+    row = await pool.fetchrow(
+        "SELECT behavioral_params FROM entity_registry WHERE id = $1", entity_id)
+    bp = (row["behavioral_params"] if row else None) or {}
+    if isinstance(bp, str):
+        bp = json.loads(bp)
+    return (bp.get("model_routing") or {}).get(role)
+
+
+async def ensure_default_chat_route(pool, entity_id: int, *,
+                                    fresh_credential: bool = False) -> dict | None:
+    """Give an unrouted chat the default above (2.), once. Returns
+    {provider, model, why} when a route was written, else None (chat already
+    has a route or the own-machine default, no credential is held, or nothing
+    could be set). Never raises; one pass at a time.
+
+    `fresh_credential`: a credential was just stored (Keys), which an earlier
+    pass's miss knew nothing of, so the DEFAULT_CHAT_RETRY_S wait does not
+    apply and the provider status is read again. The route is written only
+    while chat's stored entry is still the one read at the start: a model the
+    person picks while the catalog is read stands."""
+    global _DEFAULT_CHAT_LOCK
+    if pool is None:
+        return None
+    if _DEFAULT_CHAT_LOCK is None:
+        _DEFAULT_CHAT_LOCK = asyncio.Lock()
+    log = logging.getLogger("cseries.inference")
+    async with _DEFAULT_CHAT_LOCK:
+        try:
+            from mastercode.inference_config import resolve_role_route
+            cur = await resolve_role_route(pool, entity_id, "chat")
+            if not (cur or {}).get("unconfigured"):
+                return None
+            if fresh_credential:
+                _PROVIDER_STATUS_CACHE["exp"] = 0.0
+            elif time.monotonic() - _DEFAULT_CHAT_MISS["at"] < DEFAULT_CHAT_RETRY_S:
+                return None
+            seen = await _stored_route(pool, entity_id, "chat")
+            status = await _provider_status(pool, entity_id)
+            held = {s["id"]: s for s in status
+                    if s.get("has_key") and s.get("id") not in (None, "local")}
+            order = [p for p in _recommended_providers() if p in held]
+            # A sign-in before a key: the person's flat plan, already paid for.
+            order.sort(key=lambda p: 0 if (p == "anthropic-subscription"
+                                           or held[p].get("via") == "signin") else 1)
+            misses = []
+            for p in order:
+                model, why_not = await recommended_chat_model(p)
+                if not model:
+                    misses.append(f"{p}: {why_not}")
+                    continue
+                via_signin = p == "anthropic-subscription" or held[p].get("via") == "signin"
+                why = default_chat_why(p, model, via_signin)
+                try:
+                    res = await apply_role_route(
+                        SetRoleModel(role="chat", provider=p, model=model),
+                        set_by="host", default_why=why,
+                        if_route_is=seen, check_current=True)
+                except HTTPException as e:
+                    if e.detail == ROUTE_CHANGED:
+                        log.info("chat was routed while the default was chosen; left as it is")
+                        return None
+                    misses.append(f"{p}: {e.detail}")
+                    continue
+                log.info("chat had no route: set to %s %s (default)", p, model)
+                return {"provider": res.get("provider") or p,
+                        "model": res.get("model") or model, "why": why}
+            if order:
+                log.info("chat has no route and none could be set: %s", "; ".join(misses))
+                _DEFAULT_CHAT_MISS["at"] = time.monotonic()
+            return None
+        except Exception as e:  # noqa: BLE001
+            log.warning("default chat route: %s", e)
+            return None
+
+
 ROUTE_SET_BY = ("user", "decision", "host", "host_revert", "canary")
+# apply_role_route(check_current=True) refused: the role was written meanwhile.
+ROUTE_CHANGED = "the route was changed while this one was being chosen; it was left as it is"
 
 
 async def previous_approved_route(pool, entity_id: int, role: str,
@@ -3780,13 +4281,25 @@ async def _log_route_apply(pool, entity_id: int, role: str, entry: dict,
 
 async def apply_role_route(body: SetRoleModel, *, set_by: str = "user",
                            decision_id: int | None = None,
-                           rejected: tuple[str, str] | None = None):
+                           rejected: tuple[str, str] | None = None,
+                           default_why: str | None = None,
+                           if_route_is=None, check_current: bool = False):
     """Validate and WRITE a role's route, then log who set it. Every writer
     lands here — the Orchestrator PUT (set_by='user'), an approved proposal
     (set_by='decision', server/routes/tickets.py on the user's apply), the host filling an
     unrouted role (set_by='host') or reverting to an approved route
     (set_by='host_revert'). Whether the host may write at all is decided
-    BEFORE this, in runtime/route_change; this function only writes."""
+    BEFORE this, in runtime/route_change; this function only writes.
+
+    `default_why` marks a route the Host chose because the person had chosen
+    none (ensure_default_chat_route): kept on the entry, shown with it, and
+    gone once anyone writes the role again.
+
+    `check_current` makes the write conditional: it lands only while the
+    role's stored entry is still `if_route_is` (None: no entry), else 409
+    ROUTE_CHANGED. A writer that decided on a read taken before a slow step
+    (the default chat route reads a live catalog) never replaces a route the
+    person saved meanwhile."""
     if body.role not in ROLES:
         raise HTTPException(400, f"Invalid role: {body.role}. Valid: {ROLES}")
 
@@ -3811,8 +4324,8 @@ async def apply_role_route(body: SetRoleModel, *, set_by: str = "user",
         raise HTTPException(
             400, f"Invalid provider for role {body.role!r}: {raw_provider!r}. "
                  "Valid: a Keys registry id (openrouter, anthropic, …) or "
-                 "'local'. There is no Claude-subscription lane — Anthropic is an "
-                 "ordinary provider keyed in the Keys app.")
+                 "'local'. A Claude subscription is the provider "
+                 "'anthropic-subscription'.")
 
     # Store the NORMALIZED pair: legacy aliases resolve (openrtr → openrouter)
     # and a Claude-shaped pick on openrouter coerces to provider 'anthropic'
@@ -3916,6 +4429,17 @@ async def apply_role_route(body: SetRoleModel, *, set_by: str = "user",
                 409, f"no machine on your network is serving {model!r} right "
                      "now — provider 'local' only routes models your own "
                      "online machines actually serve")
+        if provider == "local" and _local_hit:
+            # An embedding model answers no chat: never a text role's model
+            # (mastercode/local_model_kind asks its server what it is).
+            from mastercode.local_model_kind import classify as _lmk
+            _k = await _lmk([_local_hit])
+            if _k.get((str(_local_hit.get("endpoint") or ""),
+                       str(_local_hit.get("id") or "").strip())):
+                raise HTTPException(
+                    409, f"{model!r} on {_local_hit.get('bastion') or 'your machine'} is an "
+                         "embedding model: it turns text into vectors for search and "
+                         "answers no chat. Pick one of the chat models your machine serves.")
         if provider == "local":
             base_url = None    # never stored; resolved live on every call
 
@@ -3997,13 +4521,38 @@ async def apply_role_route(body: SetRoleModel, *, set_by: str = "user",
         entry["base_url"] = base_url
     if body.connection_id:
         entry["connection_id"] = body.connection_id
+    if default_why:
+        entry["default_why"] = str(default_why)
+    if check_current:
+        # Read again here: the reads above were before awaited steps.
+        _now = await pool.fetchrow(
+            "SELECT behavioral_params FROM entity_registry WHERE id = $1", eid)
+        _now_bp = (_now["behavioral_params"] if _now else None) or {}
+        if isinstance(_now_bp, str):
+            _now_bp = json.loads(_now_bp)
+        if (_now_bp.get("model_routing") or {}).get(body.role) != if_route_is:
+            raise HTTPException(409, ROUTE_CHANGED)
+        params = _now_bp
+        routing = dict(params.get("model_routing") or {})
     routing[body.role] = entry
     params["model_routing"] = routing
 
-    await pool.execute(
-        "UPDATE entity_registry SET behavioral_params = $1::jsonb WHERE id = $2",
-        json.dumps(params), eid,
-    )
+    if check_current:
+        # The same condition in the write itself, so a writer in another
+        # process between that read and this write is not replaced either.
+        _res = await pool.execute(
+            "UPDATE entity_registry SET behavioral_params = $1::jsonb WHERE id = $2"
+            " AND (behavioral_params->'model_routing'->$3) IS NOT DISTINCT FROM $4::jsonb",
+            json.dumps(params), eid, body.role,
+            None if if_route_is is None else json.dumps(if_route_is),
+        )
+        if str(_res or "").strip() == "UPDATE 0":
+            raise HTTPException(409, ROUTE_CHANGED)
+    else:
+        await pool.execute(
+            "UPDATE entity_registry SET behavioral_params = $1::jsonb WHERE id = $2",
+            json.dumps(params), eid,
+        )
 
     # A route was just saved: requests held because this Host had no chat model
     # (identity_hold / offline_task_runner) can run now.
@@ -4379,7 +4928,12 @@ async def get_provider_balances(fresh: bool = False):
         return json.loads(opener.open(req, timeout=10).read())
 
     out: list[dict] = []
+    from server.vault.providers import borrows_credential
     for p in PROVIDERS:
+        if borrows_credential(p):
+            # anthropic-subscription: a flat plan on the person's own Claude
+            # account, with no balance of its own to read.
+            continue
         cached = None if fresh else _BALANCES_CACHE.get(p)
         if cached and cached["exp"] > now:
             out.append(cached["row"])
@@ -4827,3 +5381,105 @@ async def test_role_model(role: str):
         }
     except Exception as e:
         return {"role": role, "provider": provider, "model": model, "error": str(e), "status": "error"}
+
+
+# ── Sign in with your Claude account (the Orchestrator's pop-up) ─────────────
+# The person's Claude subscription runs their Host's chat on provider
+# anthropic-subscription, which needs their own Claude sign-in. These routes
+# run Anthropic's own login on the Host itself (server/network/claude_signin:
+# the SDK's bundled binary, `claude auth login --claudeai`), so no coding
+# engine has to be started for it. Only the Orchestrator app may call them:
+# signing in is the person's own act on the screen where they choose their
+# Host model, like the xAI sign-in on the Keys screen (routes/vault).
+_CLAUDE_SIGNIN_APP = "orchestrator"
+
+
+def _orchestrator_app_only(request: Request) -> None:
+    tok = getattr(request.state, "app_token", None)
+    if tok is None:
+        raise HTTPException(401, "application token required")
+    if getattr(tok, "app_id", None) != _CLAUDE_SIGNIN_APP:
+        raise HTTPException(
+            403, "Only the Orchestrator app can start a Claude sign-in. Open the "
+                 "Orchestrator and press Sign in with your Claude account.")
+
+
+class ClaudeSigninCode(BaseModel):
+    code: str
+
+
+# Both steps can outlast the 30 s the router gives a browser request (the
+# binary takes up to 45 s to print its link and 90 s to exchange a code), so
+# they run through long_request: the answer when it is ready in time, else
+# 202 + a job the pop-up reads at GET /api/inference/claude-signin/jobs/{id}.
+_CLAUDE_SIGNIN_JOB_AREA = "claude-signin"
+_CLAUDE_SIGNIN_POLL = "/api/inference/claude-signin/jobs/{job}"
+
+
+@router.post("/claude-signin",
+             dependencies=[Depends(requires_permission("write:inference_routing")),
+                           Depends(_orchestrator_app_only)])
+async def claude_signin_start():
+    """Start the sign-in: {state: 'waiting', url, needs_code} — the Claude
+    page to open — or {state: 'failed', error}. Or 202 + a job."""
+    from server.applications import long_request
+    from server.network import claude_signin
+    return await long_request.run(
+        "the Claude sign-in", claude_signin.start, area=_CLAUDE_SIGNIN_JOB_AREA,
+        poll=_CLAUDE_SIGNIN_POLL, message="Starting the Claude sign-in.")
+
+
+@router.post("/claude-signin/code",
+             dependencies=[Depends(requires_permission("write:inference_routing")),
+                           Depends(_orchestrator_app_only)])
+async def claude_signin_code(body: ClaudeSigninCode):
+    """The code the Claude page showed: {state: 'signed_in'} when the sign-in
+    is saved, else 'failed' / 'expired' with a sentence. Or 202 + a job."""
+    from server.applications import long_request
+    from server.network import claude_signin
+
+    async def _finish():
+        out = await claude_signin.code(body.code)
+        if out.get("state") == "signed_in":
+            # Chat with no route at all (no model on the person's machine
+            # either) runs on the subscription just signed in to, the same
+            # rule a sign-in in Keys applies (vault._route_chat_if_unrouted).
+            try:
+                from server.routes import vault as _vault
+                routed, note = await _vault._route_chat_if_unrouted(
+                    "anthropic-subscription", brain_service.get_pool(),
+                    brain_service._entity_id)
+                out = {**out, "routed": routed}
+                if note:
+                    out["route_note"] = note
+            except Exception as e:  # noqa: BLE001
+                logging.getLogger("cseries.inference").info(
+                    "claude sign-in: chat route not set: %r", e)
+        return out
+
+    return await long_request.run(
+        "finishing the Claude sign-in", _finish,
+        area=_CLAUDE_SIGNIN_JOB_AREA, poll=_CLAUDE_SIGNIN_POLL,
+        message="Finishing the Claude sign-in.")
+
+
+@router.get("/claude-signin/jobs/{job_id}",
+            dependencies=[Depends(requires_permission("write:inference_routing")),
+                          Depends(_orchestrator_app_only)])
+async def claude_signin_job(job_id: str) -> dict:
+    """A sign-in step that outlasted its request: {status: running} |
+    {status: done, result} | {status: failed, http_status, detail}. Reads
+    only this area's jobs, under the scope that started them."""
+    from server.applications import long_request
+    out = long_request.status(job_id, area=_CLAUDE_SIGNIN_JOB_AREA)
+    if out is None:
+        raise HTTPException(404, "That sign-in step is no longer known. Start the sign-in again.")
+    return out
+
+
+@router.delete("/claude-signin",
+               dependencies=[Depends(requires_permission("write:inference_routing")),
+                             Depends(_orchestrator_app_only)])
+async def claude_signin_cancel() -> dict:
+    from server.network import claude_signin
+    return await claude_signin.cancel()

@@ -204,6 +204,8 @@
 .mp-role-field .cseries-select { min-width: 150px; font-size: 12px; }
 .mp-role-field .mp-cell-empty { text-transform: none; letter-spacing: 0; }
 .mp-role-eff { margin-top: 8px; font-size: 11px; }
+.mp-role-why { margin-top: 4px; font-size: 11px; }
+.mp-chat-now { margin: 6px 0 10px; font-size: 12px; }
 .mp-cell-empty { color: rgba(156, 163, 175, 0.4); font-style: italic; font-size: 11px; }
 .mp-cell-note { color: var(--cseries-ember); font-size: 10px; margin-top: 4px; }
 .mp-keys-link { margin-left: 6px; padding: 1px 8px; font-size: 11px; }

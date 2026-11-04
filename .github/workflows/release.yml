@@ -49,6 +49,12 @@ env:
   # is another version: bump the two together.
   BLENDER_SOURCE_VERSION: "5.2.2"
   BLENDER_SOURCE_SHA256: 56a3b1ec97479ff24dce65d2f09f8a1895005cece279b701fe4fcf74bce3f77e
+  # The pre-release on this repository that keeps a copy of each pinned
+  # third-party download, named <sha256>-<upstream name>, so a release does
+  # not depend on blender.org answering (download.blender.org answered 403 to
+  # the runner on v0.1.16). The creative Dockerfile's THIRD_PARTY_CACHE names
+  # the same release; runtime-release fills it.
+  THIRD_PARTY_CACHE_TAG: third-party-cache
   # The repo's vulnerability gate (trivy.yaml): fixable findings at these
   # severities fail the release; accepted ones live, path-scoped, in
   # .trivyignore.yaml. Fixable findings at the report severity are listed in
@@ -1069,10 +1075,15 @@ jobs:
           echo "sha256=$got" >> "$GITHUB_OUTPUT"
 
       # The source for exactly the Blender the creative image unpacks: its
-      # version read from the Dockerfile and held to the pinned one, the
-      # archive checked against the md5sum blender.org publishes beside it and
-      # against the pinned sha256 (an md5 alone proves nothing about who made
-      # the file).
+      # version read from the Dockerfile and held to the pinned one, and the
+      # archive taken from the first of the third-party cache,
+      # download.blender.org and mirror.blender.org that gives the bytes of
+      # the pinned sha256 (fetch-pinned.sh, which the Dockerfile uses for the
+      # Blender build). The md5sum blender.org publishes beside the archive is
+      # checked too whenever blender.org gives it; the pinned sha256 was
+      # measured with that md5sum matching, and an md5 alone proves nothing
+      # about who made the file, so when blender.org does not answer the
+      # sha256 decides alone.
       - name: Fetch the Blender source and check its sha256
         run: |
           set -euo pipefail
@@ -1087,10 +1098,19 @@ jobs:
             exit 1
           fi
           name="blender-$ver.tar.xz"
+          cache="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$THIRD_PARTY_CACHE_TAG"
           cd "$RUNNER_TEMP/assets"
-          curl -fsSL --retry 3 -o "$name" "https://download.blender.org/source/$name"
-          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$name.md5sum" "https://download.blender.org/source/$name.md5sum"
-          (cd "$RUNNER_TEMP/assets" && md5sum -c "$RUNNER_TEMP/$name.md5sum")
+          sh "$GITHUB_WORKSPACE/sidecars/app-runtime-creative/fetch-pinned.sh" "$name" "$BLENDER_SOURCE_SHA256" \
+            "$cache/$BLENDER_SOURCE_SHA256-$name" \
+            "https://download.blender.org/source/$name" \
+            "https://mirror.blender.org/source/$name"
+          md5="$RUNNER_TEMP/$name.md5sum"
+          if curl -fsSL --retry 3 -o "$md5" "https://download.blender.org/source/$name.md5sum" ||
+             curl -fsSL --retry 3 -o "$md5" "https://mirror.blender.org/source/$name.md5sum"; then
+            md5sum -c "$md5"
+          else
+            echo "::warning title=Blender source md5sum::blender.org did not give $name.md5sum; the archive is held to the pinned BLENDER_SOURCE_SHA256 alone"
+          fi
           echo "$BLENDER_SOURCE_SHA256  $name" | sha256sum -c -
           sha256sum "$name" > "$name.sha256"
 
@@ -1118,6 +1138,73 @@ jobs:
               gh release upload "$TAG" "$f"
             fi
           done
+
+      # Fills the third-party cache the creative Dockerfile and the step above
+      # try first: the pre-release $THIRD_PARTY_CACHE_TAG (a pre-release is
+      # never the latest release, so no reader of releases/latest sees it),
+      # holding the Blender build the Dockerfile pins and its source beside it
+      # (the GPL asks for the source with the binary), each named
+      # <sha256>-<upstream name>. An asset whose digest GitHub gives as its
+      # name's sha256 is left as it is; one with any other digest would be
+      # refused by every build, so it is deleted and uploaded again. Only a
+      # missing build is downloaded, from blender.org, once per Blender
+      # version. This job's contents: write is all it needs. It never fails
+      # the release: without the cache a build fetches from blender.org, as
+      # before, and the next release tries again.
+      - name: Keep the pinned Blender archives in the third-party cache
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -Eeuo pipefail
+          trap 'echo "::warning title=third-party cache::the Blender archives are not all in the $THIRD_PARTY_CACHE_TAG release (see this step); builds fetch from blender.org until a release fills it"' ERR
+          df=sidecars/app-runtime-creative/Dockerfile
+          url="$(sed -n 's/^ARG BLENDER_URL=//p' "$df")"
+          sha="$(sed -n 's/^ARG BLENDER_SHA256=//p' "$df")"
+          reads="$(sed -n 's/^ARG THIRD_PARTY_CACHE=//p' "$df")"
+          cache="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/download/$THIRD_PARTY_CACHE_TAG"
+          if [[ "${reads,,}" != "${cache,,}" ]]; then
+            echo "::warning title=third-party cache::the creative Dockerfile reads its cache from $reads, and this run fills $cache"
+          fi
+          if ! gh release view "$THIRD_PARTY_CACHE_TAG" > /dev/null 2>&1; then
+            gh release create "$THIRD_PARTY_CACHE_TAG" --prerelease \
+              --title "Third-party cache (not a C-Series release)" \
+              --notes "Copies of the third-party files the C-Series release build downloads, each named <sha256>-<upstream file name>. A build uses a copy only when its bytes hash to the sha256 pinned in the source tree, and otherwise fetches the file from its publisher. Blender (GPL-2.0-or-later) is from download.blender.org; the blender-<version>.tar.xz beside each build is its source." ||
+              gh release view "$THIRD_PARTY_CACHE_TAG" > /dev/null
+          fi
+          have="$(gh api "repos/$GH_REPO/releases/tags/$THIRD_PARTY_CACHE_TAG" --jq '.assets[] | "\(.name) \(.digest)"')"
+          dir="$RUNNER_TEMP/third-party-cache"
+          mkdir -p "$dir"
+          # keep SHA256 NAME FILE|"" SOURCE...: NAME in the cache as
+          # <SHA256>-NAME, from FILE when given, else fetched from SOURCE...
+          keep() {
+            local sum="$1" name file="$3" digest
+            name="$sum-$2"
+            shift 3
+            digest="$(awk -v n="$name" '$1 == n { print $2 }' <<< "$have")"
+            if [[ "$digest" == "sha256:$sum" ]]; then
+              echo "$name is in the cache"
+              return 0
+            fi
+            if [[ -n "$file" ]]; then
+              cp "$file" "$dir/$name"
+            else
+              sh sidecars/app-runtime-creative/fetch-pinned.sh "$dir/$name" "$sum" "$@"
+            fi
+            echo "$sum  $dir/$name" | sha256sum -c -
+            if [[ -n "$digest" ]]; then
+              echo "::warning title=third-party cache::$name in the cache has digest $digest, not sha256:$sum; replacing it"
+              gh release delete-asset "$THIRD_PARTY_CACHE_TAG" "$name" --yes
+            fi
+            gh release upload "$THIRD_PARTY_CACHE_TAG" "$dir/$name"
+            rm -f "$dir/$name"
+          }
+          # The source first: it is already here, so a blender.org that does
+          # not answer leaves only the build out of the cache.
+          keep "$BLENDER_SOURCE_SHA256" "blender-$BLENDER_SOURCE_VERSION.tar.xz" \
+            "$RUNNER_TEMP/assets/blender-$BLENDER_SOURCE_VERSION.tar.xz"
+          keep "$sha" "${url##*/}" "" "$url" "https://mirror.blender.org/${url#https://download.blender.org/}"
 
   # The free App Store: catalog.json lists every store app with its bundle's
   # URL on this release and sha256, the runtime images it needs pinned by

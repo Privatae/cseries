@@ -34,10 +34,10 @@ test('a PC without WSL: the run gets the bastion and installs WSL, then stops fo
   const { m, run } = machine({ wsl: false });
   const r = await run();
   assert.equal(r.code, 0, r.err);
-  assert.match(r.text, /\[2\/8\] Getting the bastion/);
-  assert.match(r.text, /\[3\/8\] Setting up WSL/);
+  assert.match(r.text, /\[3\/9\] Getting the bastion/);
+  assert.match(r.text, /\[4\/9\] Setting up WSL/);
   assert.match(r.text, /Restart Windows to finish installing WSL/);
-  assert.ok(!/\[4\/8\]/.test(r.text), 'nothing after the WSL step ran');
+  assert.ok(!/\[5\/9\]/.test(r.text), 'nothing after the WSL step ran');
   assert.equal(m.elevated.length, 1, 'only WSL\'s prompt: the bastion is installed after the restart');
   assert.equal(m.bastionScripts.length, 0);
   assert.ok(m.registry['HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce\\cseries-resume']);
@@ -69,9 +69,9 @@ test('after the restart the resumed run finishes, and a second run repairs nothi
   assert.equal(m.downloads, downloads, 'nothing downloaded again');
   assert.equal(m.elevated.length, 2, 'no prompt at all on a run that changes nothing');
   assert.equal(m.restarts, 1, 'the Host was not restarted: its images did not change');
-  assert.match(r2.text, /\[3\/8\] Setting up WSL\n {6}WSL 2\.3\.26\.0 is installed\.\n {6}Already done\./);
-  assert.match(r2.text, /\[4\/8\] Creating the C-Series Linux system\n {6}It is here\./);
-  assert.match(r2.text, /\[7\/8\] Installing and pairing the bastion\n {6}The bastion runs as this machine's service, anchored to this Host, with your authenticator enrolled\./);
+  assert.match(r2.text, /\[4\/9\] Setting up WSL\n {6}WSL 2\.3\.26\.0 is installed\.\n {6}Already done\./);
+  assert.match(r2.text, /\[5\/9\] Creating the C-Series Linux system\n {6}It is here\./);
+  assert.match(r2.text, /\[8\/9\] Installing and pairing the bastion\n {6}The bastion runs as this machine's service, anchored to this Host, with your authenticator enrolled\./);
 });
 
 test('a new release restarts the Host on the new images, and only that', async () => {

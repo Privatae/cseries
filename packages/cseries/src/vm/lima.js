@@ -17,7 +17,8 @@
 //     packages, units and cseries-guest plus a kernel and what Lima needs),
 //     checked against its sha256 and created from the template in
 //     lima/template.js: nothing of the machine mounted, only 127.0.0.1:8800,
-//     8810 and 8811 forwarded, sized as WSL sizes its VM (common.js).
+//     8810 and 8811 forwarded, the size the person chose (size.js), which
+//     `npx cseries resize` changes later with `limactl edit`, the disk kept.
 //   - Kept running: a Lima VM runs until it is stopped. It is started at login
 //     by a LaunchAgent (macOS) or a systemd user unit (Linux) of ours, which
 //     carry LIMA_HOME; `limactl start-at-login` would write ones that do not.
@@ -35,7 +36,7 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const { CliError } = require('../errors');
-const { guestResourcesFor, HOST_NEEDS_GIB } = require('./common');
+const size = require('../size');
 const { limaTemplate } = require('./lima/template');
 const machine = require('./lima/machine');
 const { NO_LOG } = require('../log');
@@ -550,10 +551,6 @@ function driver(platform) {
         throw new CliError(`/dev/kvm is not yours to open (its group is ${f.kvm_group || 'unknown'}), and this command cannot change that safely.`,
           'Ask whoever administers this machine to give your account access to /dev/kvm (usually the kvm group), then run npx cseries again.');
       }
-      const res = guestResourcesFor(ctx);
-      if (res.memoryGiB < HOST_NEEDS_GIB) {
-        ctx.out.warn(`This machine has ${res.totalGiB} GB of memory; the VM gets ${res.memoryGiB} GB of it, and the Host works best with ${HOST_NEEDS_GIB} GB or more.`);
-      }
     },
 
     async runtimeReady(ctx) {
@@ -596,7 +593,9 @@ function driver(platform) {
       if (!g) throw new CliError(`This release has no Lima image for ${ctx.arch} machines.`, 'Try npx cseries@latest.');
       const file = ctx.paths.join(ctx.paths.downloads, path.posix.basename(new URL(g.url).pathname));
       await ctx.net.download(g.url, file, { sha256: g.sha256, out: ctx.out, label: 'the C-Series Linux image' });
-      const res = guestResourcesFor(ctx);
+      // The size chosen (size.step, before this one); one a test or an older
+      // state left out is the suggested one.
+      const res = size.recorded(ctx) || size.suggested(size.machineOf(ctx.machine.totalMem, ctx.machine.cpus));
       const yaml = ctx.paths.join(ctx.paths.downloads, 'cseries-lima.yaml');
       fs.writeFileSync(yaml, limaTemplate({
         vmType: platform === 'darwin' ? 'vz' : 'qemu',
@@ -607,7 +606,7 @@ function driver(platform) {
         memoryGiB: res.memoryGiB,
       }));
       fs.mkdirSync(ctx.paths.lima, { recursive: true });
-      ctx.out.detail(`Creating the VM (${res.memoryGiB} GB of memory and ${res.cpus} processors at most; nothing of this machine shared with it)...`);
+      ctx.out.detail(`Creating the VM (${size.sizeName(res)}: ${size.describe(res)}; nothing of this machine shared with it)...`);
       const r = await limactl(ctx, ['create', `--name=${INSTANCE}`, yaml]);
       fs.rmSync(yaml, { force: true });
       if (r.code !== 0 && !/already exists/i.test(r.stderr)) {
@@ -617,6 +616,39 @@ function driver(platform) {
       if (r.code === 0 && ctx.state) ctx.state.set(FIRST_START, true);
       // Lima keeps its own copy of the image in the instance.
       fs.rmSync(file, { force: true });
+    },
+
+    // The size an install from before sizes were chosen has: Lima's own
+    // record of the instance (Memory in bytes).
+    async currentSize(ctx) {
+      if (!fs.existsSync(limactlPath(ctx))) return null;
+      const r = await limactl(ctx, ['list', '--format', '{{.Name}} {{.CPUs}} {{.Memory}}']);
+      if (r.code !== 0) return null;
+      const line = r.stdout.split('\n').map((l) => l.trim().split(/\s+/)).find((p) => p[0] === INSTANCE);
+      if (!line || !/^[1-9][0-9]*$/.test(line[1] || '') || !/^[1-9][0-9]*$/.test(line[2] || '')) return null;
+      return { cpus: Number(line[1]), memoryGiB: Math.max(1, Math.round(Number(line[2]) / size.GiB)) };
+    },
+
+    // A new size for the VM: stopped (through its unit, on a whole-machine
+    // install), given the size by `limactl edit`, which changes only the
+    // instance's cpus and memory (its disk, with the Host's data, is the
+    // same file); the caller (cli.js resize) records the size and starts it
+    // again, so a start that fails leaves the record saying the size the VM
+    // has. A size Lima refuses leaves the VM as it was, started again at its
+    // old size.
+    async resize(ctx, s) {
+      if (await this.guestRunning(ctx)) {
+        const status = ctx.out.status('Stopping the VM');
+        await this.stopGuest(ctx);
+        status.end('The VM is stopped.');
+      }
+      const r = await limactl(ctx, ['edit', INSTANCE, `--cpus=${s.cpus}`, `--memory=${s.memoryGiB}`]);
+      if (r.code !== 0) {
+        await this.startGuest(ctx).catch(() => {});
+        throw new CliError(`Lima did not change the VM's size:\n${tail(r.stderr || r.stdout)}`,
+          'The VM keeps the size it had and is started again. Run npx cseries resize again; npx cseries status shows its size.');
+      }
+      ctx.out.detail(`The VM is ${size.sizeName(s)} now: ${size.describe(s)}. Its disk, with all the Host's data, is the same.`);
     },
 
     async startGuest(ctx) {

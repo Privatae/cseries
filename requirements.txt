@@ -86,11 +86,11 @@ python-multipart>=0.0.9
 # that ignored CLAUDE_AUTH_TOKEN in CLI 2.1.143+. SDK accepts the user's
 # long-lived OAuth token via CLAUDE_CODE_OAUTH_TOKEN env and bills against
 # their subscription's Agent SDK credit. Per Anthropic auth docs.)
-# claude-agent-sdk is not in the base image, and nothing in the Host uses it
-# (the claude-code sidecar stopped installing it with the Designs import job
-# retired). The coding harness bakes its own copy
-# (sidecars/harness-claude-code/Dockerfile).
-# claude-agent-sdk>=0.2.82
+# claude-agent-sdk is in the base image again: the Host's Anthropic calls on
+# the person's own Claude subscription run through it
+# (brain/mastercode/claude_sdk_wire.py). It is not listed here:
+# Dockerfile.linux installs the exact wheel by its sha256 (the pin the coding
+# harness image uses), in the same pip run as this file.
 
 # Per-user code search (brain/codesearch): the index lives in the Host's own
 # Postgres (code_chunks, migrations/v200); tree-sitter-language-pack drives the

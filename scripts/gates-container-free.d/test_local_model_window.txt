@@ -1,0 +1,4 @@
+# A local model server's context size: read from the server (llama.cpp /props,
+# /v1/models; vLLM max_model_len), fitted to, learned from its refusal, and a
+# request that still cannot fit told in plain words with the setting to change.
+test_local_model_window.py

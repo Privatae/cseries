@@ -114,6 +114,82 @@ async def _serve_lane_endpoint(token_id, service: str) -> str | None:
         return None
 
 
+# How long one look at a model server's published context size may take, per
+# request (/props, then /v1/models). Both answer from memory on llama.cpp and
+# vLLM; a server that is slower than this is not waited on, and the turn goes
+# on with what it knew (the refusal still teaches the window).
+WINDOW_PROBE_TIMEOUT_S = 3.0
+# How long a looked-up window is trusted before the server is asked again: a
+# person who restarts llama-server with a larger `-c` is believed within this.
+# A look that found nothing is retried sooner.
+WINDOW_PROBE_TTL_S = 300.0
+WINDOW_PROBE_MISS_TTL_S = 60.0
+_WINDOW_PROBES: dict[tuple[str, str], tuple[float, int | None]] = {}
+
+
+def _server_origin(endpoint: str) -> str:
+    """The server's origin from a local endpoint: what the resolver hands out
+    (scheme://host:port), or an owner's URL ending in /v1 or a full route."""
+    ep = (endpoint or "").strip().rstrip("/")
+    low = ep.lower()
+    for tail in ("/chat/completions", "/v1"):
+        if low.endswith(tail):
+            ep, low = ep[: -len(tail)], low[: -len(tail)]
+    return ep.rstrip("/")
+
+
+async def probe_server_window(endpoint: str, model: str, *,
+                              timeout_s: float = WINDOW_PROBE_TIMEOUT_S) -> int | None:
+    """The context size the model server at `endpoint` says one request to
+    `model` may fill, read from the server itself, or None when it publishes
+    none. llama.cpp's GET /props (default_generation_settings.n_ctx, the
+    slot's size), then GET /v1/models (vLLM's max_model_len, llama.cpp's
+    meta.n_ctx, and the other names context_budget.server_window_from_models
+    reads). A scoped pairing's bastion refuses /props (inferencefilter.go
+    serves only model lists and a few reads to one), so /v1/models is asked
+    too. Remembered for the model (context_budget.learn_context_window), so
+    every reader of the window sees it; cached here for WINDOW_PROBE_TTL_S.
+    Never raises."""
+    from mastercode import context_budget as _cb
+    origin = _server_origin(endpoint)
+    want = _norm_model(model)
+    if not origin or not want:
+        return None
+    key = (origin, want)
+    import time as _t
+    now = _t.monotonic()
+    hit = _WINDOW_PROBES.get(key)
+    if hit is not None:
+        at, win = hit
+        if now - at < (WINDOW_PROBE_TTL_S if win else WINDOW_PROBE_MISS_TTL_S):
+            return win
+    win = None
+    try:
+        import aiohttp
+        tmo = aiohttp.ClientTimeout(total=timeout_s, connect=timeout_s)
+        async with aiohttp.ClientSession(timeout=tmo) as s:
+            for path, read in (("/props", lambda d: _cb.server_window_from_props(d)),
+                               ("/v1/models", lambda d: _cb.server_window_from_models(d, model))):
+                try:
+                    async with s.get(origin + path) as r:
+                        if r.status != 200:
+                            continue
+                        doc = await r.json(content_type=None)
+                except Exception as e:  # noqa: BLE001 — one path failing is not the other's
+                    log.debug("window probe %s%s: %s", origin, path, type(e).__name__)
+                    continue
+                win = read(doc)
+                if win:
+                    break
+    except Exception as e:  # noqa: BLE001
+        log.debug("window probe %s failed: %s", origin, type(e).__name__)
+    _WINDOW_PROBES[key] = (now, win)
+    if win:
+        _cb.learn_context_window("local", model, win)
+        log.info("local model server %s: %s allows %d tokens per request", origin, model, win)
+    return win
+
+
 async def list_local_models(pool, entity_id: int, *, strict: bool = False,
                             token_ids: set[int] | None = None) -> list[dict]:
     """Every model served by this host's ONLINE bastions, then by the model

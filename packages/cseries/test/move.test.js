@@ -160,6 +160,9 @@ test('the move: the same Host, its data, pairing and anchor, runs for the whole 
   const st = JSON.parse(fs.readFileSync(mp.state, 'utf8'));
   assert.deepEqual(st.bastion, x.before.bastion, 'the record of the bastion carried as it was');
   assert.deepEqual(st.packagesAdded, x.before.packagesAdded);
+  assert.ok(x.before.size, 'the account\'s install recorded its size');
+  assert.deepEqual(st.size, x.before.size, 'the Host\'s size carried, as the moved disk and its lima.yaml are');
+  assert.doesNotMatch(r.text, /How big should the Host be/);
   assert.ok(!m.bastionCalls().slice(bastionCalls).some((c) => /^(pair|release-anchor|claim-anchor|unpair)/.test(c.args.join(' '))), 'the pairing and anchor are untouched');
   assert.equal(m.bastionState().anchor || 'host-a', 'host-a');
   // The account's copy and login unit are gone; nothing of it runs.
@@ -172,6 +175,18 @@ test('the move: the same Host, its data, pairing and anchor, runs for the whole 
   // And a run as root afterwards is a plain whole-machine run.
   const again = await x.asRoot([]);
   assert.equal(again.code, 0, again.text + again.err);
+});
+
+test('the move of an install from before sizes were chosen asks no size and makes none up: the moved VM keeps its own', async () => {
+  const x = await accountInstall();
+  const st = JSON.parse(fs.readFileSync(x.ap.state, 'utf8'));
+  delete st.size;
+  fs.writeFileSync(x.ap.state, JSON.stringify(st));
+  const r = await x.asRoot(['--move-from', x.ap.base, x.ap.autostart], {});
+  assert.equal(r.code, 0, r.text + r.err);
+  assert.doesNotMatch(r.text, /suggested size|How big should/);
+  assert.match(r.text, /It keeps the size its VM has\./);
+  assert.equal(JSON.parse(fs.readFileSync(x.mp.state, 'utf8')).size, undefined);
 });
 
 test('the move stops the account\'s VM before it copies, and checks the moved Host before it removes anything', async () => {

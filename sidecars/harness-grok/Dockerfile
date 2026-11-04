@@ -51,11 +51,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # are unchanged in 1.0.46's --help and embedded docs; its streaming-json gained
 # tool_call/tool_call_update/usage/plan/available_commands (events.parse_grok).
 # _bootstrap_binary() no-ops at runtime once GROK_BIN exists (no egress on start).
-ARG GROK_RELEASE_TAG=1.0.46
+ARG GROK_RELEASE_TAG=1.0.70
 # sha256 of grok-<tag>-linux-x86_64. xAI publishes no checksum (none beside the binary,
 # none in x.ai/cli/install.sh; checked 2026-10-06), so this is the hash of the download
 # recorded when the pin moved, and a re-download that differs fails the build below.
-ARG GROK_SHA256=41626a53292324140b92556b9d42ff5542e3dcd04aff85eafb8689dd4adb44fc
+ARG GROK_SHA256=22d281c5964c5444147328096ba2a221f3f0874c6858e27c825656a80f6e58e9
 RUN mkdir -p /var/lib/cseries/apps/grok/bin \
     && UA="Mozilla/5.0 (X11; Linux x86_64)" \
     && VER="${GROK_RELEASE_TAG}" \

@@ -127,6 +127,11 @@ def effective_effort(provider: str | None, effort: str | None) -> str | None:
     any other provider:      None — not judged; nothing the user can set
                              would change it."""
     p = (provider or "").strip().lower()
+    try:
+        from mastercode.inference_config import vendor_provider
+        p = vendor_provider(p)
+    except Exception:  # noqa: BLE001
+        pass
     if p not in EFFORT_PROVIDERS:
         return None
     eff = (effort or "").strip().lower()
@@ -185,11 +190,14 @@ def canonical_model(provider: str | None, model: str | None) -> str | None:
     names the model that reaches the wire — a Claude pick on OpenRouter is
     judged as the Anthropic model it is coerced to."""
     try:
-        from mastercode.inference_config import normalize_provider, anthropic_api_model_id
+        from mastercode.inference_config import (normalize_provider, anthropic_api_model_id,
+                                                 vendor_provider)
     except Exception:  # noqa: BLE001
         return None
     p, m = normalize_provider(provider or "", model or "")
-    p = (p or "").strip().lower()
+    # A lane that serves another provider's models (anthropic-subscription)
+    # is judged as that provider: the same model, reached another way.
+    p = vendor_provider(p or "")
     m = (m or "").strip().lstrip("~")
     if not (p and m):
         return None

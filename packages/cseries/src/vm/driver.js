@@ -32,11 +32,19 @@
 //
 // Ports: the guest publishes 8800, 8810 and 8811 on its own 127.0.0.1, and
 // the driver makes them, and only them, reachable on the machine's 127.0.0.1.
-// The VM's memory and CPUs are capped by guestResources (common.js), the same
-// rule for every driver.
+// The VM's memory and processors are the size the person chose (size.js):
+//   sizeLimit(ctx) -> {cpus, memoryGiB, why, note} | null   optional: the
+//                                most the VM software lets C-Series have
+//   currentSize(ctx) -> {cpus, memoryGiB} | null   optional: the size an
+//                                install from before sizes were chosen has
+//   resize(ctx, size)            optional: give the VM that size, keeping
+//                                its disk; the caller restarts the Host
+//   capsInside                   true when the size is a ceiling on
+//                                C-Series's units inside the guest (WSL),
+//                                not the VM's own size
 
 const { CliError } = require('../errors');
-const { PORTS, guestResources } = require('./common');
+const { PORTS } = require('./common');
 const wsl = require('./wsl');
 const lima = require('./lima');
 
@@ -55,4 +63,4 @@ function requireSupported(driver, platform = process.platform) {
   return driver;
 }
 
-module.exports = { selectDriver, requireSupported, PORTS, guestResources };
+module.exports = { selectDriver, requireSupported, PORTS };

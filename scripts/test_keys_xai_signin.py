@@ -195,7 +195,7 @@ def main() -> int:
             return [], catalog["err"]
         return [{"id": m} for m in catalog.get("ids", [])], None
 
-    async def _apply(body, *, set_by="user", decision_id=None, rejected=None):
+    async def _apply(body, *, set_by="user", decision_id=None, rejected=None, **kw):
         applied.append((body, set_by))
         if apply_raise:
             raise apply_raise[0]
@@ -669,7 +669,9 @@ function attrsOf(tagHtml) {
 async function runOne(s) {
   const els = {}; const clicks = []; const fetches = []; const delays = []; const alerts = [];
   let now = 1.7e12; let finishN = 0; let jobN = 0;
-  global.window = {};
+  // A browser window's own: Keys 0.6.2 reads #view= and listens for the
+  // desktop's cseries:app-view (no view here, so neither changes a scenario).
+  global.window = { location: { hash: '' }, addEventListener() {} };
   global.document = {
     getElementById(id) { return els[id] || (els[id] = new El(id)); },
     createElement(tag) { return new El(tag); },

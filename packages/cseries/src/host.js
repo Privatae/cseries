@@ -9,6 +9,8 @@ const { formatBytes } = require('./output');
 const { NO_LOG } = require('./log');
 const { pinnedImage, hasDoor, runtimeLines } = require('./release');
 const machineFirewall = require('./vm/machine-firewall');
+const size = require('./size');
+const sizeCaps = require('./vm/size-caps');
 
 // The Host's processor ceiling, as systemd's CPUQuota= takes it (100% is one
 // processor): every processor the Linux system has but one, so whatever the
@@ -296,6 +298,49 @@ async function guestStatus(ctx) {
   return s;
 }
 
+// What the Host's ceilings are computed from: the Linux system's processors
+// and memory as its status reports them, or, where the size is a ceiling
+// inside the guest (WSL, driver capsInside), the size chosen, never more than
+// the system has. -> {cpus, memKb, size}: size is the one applied, or null.
+function budgetFrom(ctx, st) {
+  const s = size.recorded(ctx);
+  if (!s || !ctx.driver || !ctx.driver.capsInside) return { cpus: st.cpus, memKb: st.mem_total_kb, size: null };
+  const haveCpus = /^[1-9][0-9]*$/.test(String(st.cpus || '').trim()) ? Number(st.cpus) : s.cpus;
+  const haveKb = /^[1-9][0-9]*$/.test(String(st.mem_total_kb || '').trim()) ? Number(st.mem_total_kb) : Infinity;
+  return { cpus: String(Math.min(s.cpus, haveCpus)), memKb: String(Math.min(s.memoryGiB * 1024 * 1024, haveKb)), size: s };
+}
+
+// The Host's ceilings from the size (or the system), sent to configure, and
+// on WSL the containers' (size-caps.js). -> whether configure changed
+// anything, so the Host is restarted.
+async function applyLimits(ctx, st) {
+  const b = budgetFrom(ctx, st);
+  const quota = cpuQuota(b.cpus);
+  const runtime = hasRuntime(st);
+  const mem = memoryMax(b.memKb, { runtime });
+  const changed = await configure(ctx, { cpuQuota: quota, memoryMax: mem, door: guestHasDoor(st) });
+  let caps = null;
+  if (b.size && quota) {
+    caps = await sizeCaps.apply(ctx, { cpus: Number(b.cpus), containersMb: runtime ? containersMax(b.memKb) || 0 : 0 });
+  }
+  const of = b.size ? `the ${b.cpus} processors and ${Math.floor(Number(b.memKb) / 1024)} MB of memory ${size.sizeName(b.size)} gives C-Series` : null;
+  if (quota) {
+    ctx.out.detail(b.size
+      ? `The Host may use ${Math.max(1, Number(b.cpus) - 1)} of ${of}.`
+      : `The Host may use ${Math.max(1, Number(b.cpus) - 1)} of this Linux system's ${b.cpus} processors.`);
+  }
+  if (mem) {
+    ctx.out.detail(b.size
+      ? `The Host may use up to ${parseInt(mem, 10)} MB of its memory.`
+      : `The Host may use up to ${parseInt(mem, 10)} MB of this Linux system's ${Math.floor(Number(b.memKb) / 1024)} MB of memory.`);
+    if (runtime) {
+      ctx.out.detail(`Its apps, browser and coding engines may use up to ${containersMax(b.memKb)} MB beside it.`);
+    }
+  }
+  if (caps && caps.slice) ctx.out.detail('Together they stay inside that size; nothing else on this PC is limited by it.');
+  return changed;
+}
+
 const step = {
   title: 'Starting the Host',
   async run(ctx) {
@@ -308,19 +353,7 @@ const step = {
     // machine wall here, and every guest this machine's current addresses.
     await machineFirewall.apply(ctx);
     ctx.out.detail('Nothing in the Linux system\'s containers can open a connection to this machine.');
-    const quota = cpuQuota(st.cpus);
-    const runtime = hasRuntime(st);
-    const mem = memoryMax(st.mem_total_kb, { runtime });
-    const changed = await configure(ctx, { cpuQuota: quota, memoryMax: mem, door: guestHasDoor(st) });
-    if (quota) {
-      ctx.out.detail(`The Host may use ${Math.max(1, Number(st.cpus) - 1)} of this Linux system's ${st.cpus} processors.`);
-    }
-    if (mem) {
-      ctx.out.detail(`The Host may use up to ${parseInt(mem, 10)} MB of this Linux system's ${Math.floor(Number(st.mem_total_kb) / 1024)} MB of memory.`);
-      if (runtime) {
-        ctx.out.detail(`Its apps, browser and coding engines may use up to ${containersMax(st.mem_total_kb)} MB beside it.`);
-      }
-    }
+    const changed = await applyLimits(ctx, st);
     await pull(ctx);
     await start(ctx, changed);
     if (changed) ctx.out.detail(`The Host runs release ${rel.version}.`);
@@ -328,4 +361,4 @@ const step = {
   },
 };
 
-module.exports = { step, configure, configInput, cpuQuota, memoryMax, containersMax, hasRuntime, guestHasDoor, systemReserve, pull, pullProgress, start, guestStatus };
+module.exports = { step, applyLimits, budgetFrom, configure, configInput, cpuQuota, memoryMax, containersMax, hasRuntime, guestHasDoor, systemReserve, pull, pullProgress, start, guestStatus };

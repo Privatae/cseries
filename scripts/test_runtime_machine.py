@@ -175,6 +175,17 @@ check("Requires=cseries-runtime.socket cseries-apps-network.service" in svc and
 squid_svc = read("vm/runtime/systemd/cseries-squid.service")
 check("ExecStart=/usr/sbin/squid -N -f /etc/cseries-runtime/squid.conf" in squid_svc,
       "the plain proxy runs on its own config")
+# pid_filename none: `squid -k reconfigure` has no process to signal and exits
+# 1 ("FATAL: no pid_filename configured"), so a reload must signal the unit's
+# own process (SIGHUP is squid's reconfigure).
+check("ExecReload=/bin/kill -HUP $MAINPID" in squid_svc.splitlines()
+      and "-k reconfigure" not in squid_svc.split("ExecReload=", 1)[-1].splitlines()[0],
+      "the plain proxy's reload signals its own process")
+# The machine wall drops the proxy user's traffic to the loopback; the ICMP
+# pinger's hello to squid crosses the loopback, and its failure kept squid
+# from ever listening (measured on the Lima guest, 0.1.16).
+check("pinger_enable off" in read("vm/runtime/squid.conf").splitlines(),
+      "the plain proxy runs without the ICMP pinger, whose loopback hello the machine wall drops")
 cust = read("vm/wsl/customize.sh")
 check("systemctl mask squid.service" in cust and "groupadd --system cseries-runtime" in cust and
       "systemctl enable cseries-runtime.socket cseries-squid.service cseries-runtime-firewall.service" in cust,

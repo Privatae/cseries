@@ -1,0 +1,5 @@
+# A coding engine's Connect opens Keys on the form for that engine's own key
+# (harness-<id>), its name filled in: the matrix action names the key, the
+# picker opens Keys at view 'key-<name>', the desktop allows that view, Keys
+# opens Vault > Add a key. Needs node for the Keys view parser. No DB.
+test_engine_connect_opens_its_key.py

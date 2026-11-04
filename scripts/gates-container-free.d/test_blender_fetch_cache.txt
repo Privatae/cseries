@@ -1,0 +1,9 @@
+# The creative image's Blender, and the Blender source the release attaches,
+# come from the first of this repository's third-party-cache release,
+# download.blender.org and mirror.blender.org that gives the bytes of the
+# pinned sha256 (sidecars/app-runtime-creative/fetch-pinned.sh): a 403 from
+# download.blender.org failed v0.1.16's release. Runs the script against a
+# loopback server (cache hit, miss, 403, corrupt, all bad), evaluates the
+# Dockerfile's source order with sh, and runs the workflow's cache-filling step
+# against a stand-in for gh. No container; https goes to a dead proxy.
+test_blender_fetch_cache.py

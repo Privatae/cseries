@@ -1182,6 +1182,18 @@ class Runtime:
             return self._image_for_family(C.BROWSER_FAMILY)
         _images, src = self.images()
         built = self.state.built_image(hid, src["sha256"] if src else None)
+        # The record outlives the image when something removed it from the
+        # store (podman rmi, an image prune, a cleanup on a short disk): the
+        # wake then asked podman to PULL the image by its id, which fails
+        # ("pull policy is always but image has been referred to by ID") on
+        # every wake, and the engine never ran again. Build it again instead.
+        # Only when podman says the image is absent: a podman error (a locked
+        # store) is no reason to drop the record of an image that is there.
+        if built and await self.podman.image_missing(built):
+            log.warning("engine %s: its built image %s is gone from the store; building it again",
+                        hid, built[:12])
+            self.state.forget_build(hid)
+            built = None
         if built:
             return built
         if self.builder is None or src is None:

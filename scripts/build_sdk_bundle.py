@@ -28,7 +28,7 @@ from server.applications import sdk_artifact
 REPO = pathlib.Path(_REPO)
 SIGN_KEY = pathlib.Path(os.environ.get("SIGN_KEY", ""))
 OUT = REPO / "native-sdk" / "app-sdk.cseries"
-SDK_VERSION = "1.3.1"   # 1.3.1: runtime comments rewritten as plain rationale; 1.3.0: fetch shim is SAME-ORIGIN only (token leak + CORS preflight break)
+SDK_VERSION = "1.4.1"   # 1.4.1: the hold applies only where an init is coming (never in a frame an app embeds) and never to a Request carrying its own token; 1.4.0: a same-origin /api/ request made before the init handshake waits for it (at most 10 s), so an isolated app's first reads carry its token; 1.3.1: runtime comments rewritten as plain rationale; 1.3.0: fetch shim is SAME-ORIGIN only (token leak + CORS preflight break)
 
 
 def main() -> int:

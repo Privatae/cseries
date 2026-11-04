@@ -9,7 +9,11 @@ Every call runs on the USER's OWN provider account, dispatched by PROVIDER
     Gemini dialed on Google's OWN OpenAI-compatibility base, so it needs no
     wire of its own.
   - anthropic → _call_anthropic (Messages API; the user's own anthropic
-    Keys entry — API key or OAuth token).
+    Keys entry). An API key is POSTed directly; an OAuth token is the
+    person's Claude subscription, which Anthropic refuses on a direct call,
+    so it goes through the Claude Agent SDK (claude_sdk_wire), as does
+    provider anthropic-subscription, which reads the person's own Claude
+    sign-in or their anthropic-oauth entry.
   - local → _call_local (the user's pod/bastion model server, XML tool
     injection + streaming).
 
@@ -18,9 +22,10 @@ errors (provider outage, model unavailable, or the provider's safety filter
 declined the request), call_model retries once on the fallback and annotates
 the result — surfacing the failover, never hiding it.
 
-There is no platform inference lane and no Claude-SDK dispatch: the SDK is
-not a production option; its engine module stays in the
-image but nothing here routes to it.
+There is no platform inference lane. The Claude Agent SDK is a transport
+inside _call_anthropic (a Host's Anthropic calls on the person's own Claude
+subscription), never a lane of its own: the old SDK route names (claude-sdk,
+subscription, claude_subscription) stay refused.
 """
 
 import asyncio
@@ -301,6 +306,21 @@ async def _log_inference(source, model, provider, total_tokens, elapsed_ms=0,
             # A pricing miss must never cost the row. Tokens remain the honest
             # number and the row still lands, labelled 'unpriced'.
             log.debug("inference price lookup unavailable: %s", _e)
+        if isinstance(metadata, dict) and metadata.get("billing") == "subscription":
+            # A call on the person's Claude subscription (the SDK lane): no
+            # per-token charge, so $0 and 'subscription', and what the same
+            # tokens would cost at the list price beside it.
+            try:
+                from server.routes.inference import estimate_call_cost_detail
+                _nv, _ = estimate_call_cost_detail(
+                    model, int(prompt_tokens or 0), int(completion_tokens or 0),
+                    cache_read_tokens=int(cache_read_tokens or 0),
+                    cache_write_tokens=int(cache_write_tokens or 0),
+                    provider="anthropic", credential=None)
+                metadata = {**metadata, "notional_usd": (round(float(_nv), 8)
+                                                         if _nv is not None else None)}
+            except Exception as _e:  # noqa: BLE001
+                log.debug("notional price unavailable: %s", _e)
     if entity_id is None:
         # entity_id is NULLable in the schema, but every reader filters on it
         # (inference.py:2376 `WHERE entity_id = $1`), so a NULL row is a row
@@ -1516,28 +1536,120 @@ def _anthropic_result_message(relay: dict, name_map=None) -> tuple[str, str, lis
     return "".join(content_parts), "".join(reasoning_parts), tool_calls
 
 
+class _AnthropicStream:
+    """Messages stream events, one at a time, into the OpenAI-shaped relay
+    dict the remote path produces: text deltas stream via stream_cb; thinking
+    deltas accumulate into `reasoning` (never streamed); tool_use blocks
+    assemble from input_json_delta partials. The relay carries the
+    message_delta's `stop_details` beside its stop_reason: on a refusal it
+    names the category.
+
+    One accumulator for both ways a Messages stream reaches the gateway: the
+    SSE body of a direct call (_consume_anthropic_stream) and the raw events
+    the Claude Agent SDK forwards on the subscription lane (claude_sdk_wire).
+    So a refusal, the stop fields and the usage read the same on both."""
+
+    def __init__(self, stream_cb, name_map=None):
+        self.stream_cb = stream_cb
+        self.name_map = name_map or {}
+        self.content_parts: list[str] = []
+        self.reasoning_parts: list[str] = []
+        self.tool_blocks: dict[int, dict] = {}
+        self.usage: dict = {}
+        self.model_id = ""
+        self.stop_reason = None
+        self.stop_details = None
+        # Blocks in the shape a buffered response carries them, for the
+        # citation reader (_anthropic_citations) — a non-streamed call that the
+        # gateway streams for its length (_STREAM_ABOVE) keeps its sources.
+        self.blocks: dict[int, dict] = {}
+        # What a reply with no text and no tool call actually carried: "empty
+        # response from anthropic" kept nothing else, so a safety decline, an
+        # error event mid-stream and a thinking-only end_turn read the same.
+        self.block_types: list[str] = []
+        self.stream_error = None
+
+    async def feed(self, obj: dict) -> None:
+        etype = obj.get("type")
+        if etype == "message_start":
+            msg = obj.get("message") or {}
+            self.model_id = msg.get("model") or self.model_id
+            self.usage.update(msg.get("usage") or {})
+        elif etype == "content_block_start":
+            cb = obj.get("content_block") or {}
+            idx = obj.get("index", 0)
+            self.block_types.append(str(cb.get("type") or "?"))
+            if cb.get("type") == "tool_use":
+                self.tool_blocks[idx] = {
+                    "id": cb.get("id") or "",
+                    "name": cb.get("name") or "",
+                    "arguments": "",
+                    # True at content_block_stop: a block the output
+                    # limit cut never gets one.
+                    "complete": False,
+                }
+            elif cb.get("type") in ("text", "web_search_tool_result"):
+                self.blocks[idx] = {**cb, "citations": list(cb.get("citations") or [])}
+        elif etype == "content_block_delta":
+            delta = obj.get("delta") or {}
+            dtype = delta.get("type")
+            if dtype == "text_delta":
+                txt = delta.get("text") or ""
+                if txt:
+                    self.content_parts.append(txt)
+                    await self.stream_cb(txt)
+            elif dtype == "thinking_delta":
+                self.reasoning_parts.append(delta.get("thinking") or "")
+            elif dtype == "input_json_delta":
+                slot = self.tool_blocks.get(obj.get("index", 0))
+                if slot is not None:
+                    slot["arguments"] += delta.get("partial_json") or ""
+            elif dtype == "citations_delta":
+                blk = self.blocks.get(obj.get("index", 0))
+                if blk is not None and isinstance(delta.get("citation"), dict):
+                    blk["citations"].append(delta["citation"])
+        elif etype == "content_block_stop":
+            slot = self.tool_blocks.get(obj.get("index", 0))
+            if slot is not None:
+                slot["complete"] = True
+        elif etype == "message_delta":
+            self.usage.update(obj.get("usage") or {})
+            self.stop_reason = (obj.get("delta") or {}).get("stop_reason") or self.stop_reason
+            # Where stop_reason is (the stop-reasons page names only
+            # message_delta for it on a stream); read at the event's top
+            # level too, as no page shows the streamed stop_details.
+            _sd = (obj.get("delta") or {}).get("stop_details") or obj.get("stop_details")
+            if isinstance(_sd, dict):
+                self.stop_details = _sd
+        elif etype == "error":
+            self.stream_error = obj.get("error") or obj
+
+    def relay(self) -> dict:
+        msg: dict = {"content": "".join(self.content_parts)}
+        if self.reasoning_parts:
+            msg["reasoning"] = "".join(self.reasoning_parts)
+        incomplete: list[str] = []
+        if self.tool_blocks:
+            _nm = self.name_map
+            msg["tool_calls"] = []
+            for _, b in sorted(self.tool_blocks.items()):
+                tid = b["id"] or f"toolu_{_uuid.uuid4().hex[:12]}"
+                msg["tool_calls"].append(
+                    {"id": tid, "type": "function",
+                     "function": {"name": _nm.get(b["name"], b["name"]),
+                                  "arguments": b["arguments"] or "{}"}})
+                if not b["complete"]:
+                    incomplete.append(tid)
+        return {"choices": [{"message": msg}], "usage": self.usage, "model": self.model_id,
+                "stop_reason": self.stop_reason, "stop_details": self.stop_details,
+                "incomplete_tool_ids": incomplete,
+                "content": [self.blocks[i] for i in sorted(self.blocks)],
+                "block_types": self.block_types, "stream_error": self.stream_error}
+
+
 async def _consume_anthropic_stream(resp, stream_cb, name_map=None, on_alive=None) -> dict:
-    """Accumulate a Messages SSE stream into the OpenAI-shaped relay dict the
-    remote path produces: text deltas stream via stream_cb; thinking deltas
-    accumulate into `reasoning` (never streamed); tool_use blocks assemble
-    from input_json_delta partials. The relay carries the message_delta's
-    `stop_details` beside its stop_reason: on a refusal it names the category."""
-    content_parts: list[str] = []
-    reasoning_parts: list[str] = []
-    tool_blocks: dict[int, dict] = {}
-    usage: dict = {}
-    model_id = ""
-    stop_reason = None
-    stop_details = None
-    # Blocks in the shape a buffered response carries them, for the citation
-    # reader (_anthropic_citations) — a non-streamed call that the gateway
-    # streams for its length (_STREAM_ABOVE) keeps its sources.
-    blocks: dict[int, dict] = {}
-    # What a reply with no text and no tool call actually carried: "empty
-    # response from anthropic" kept nothing else, so a safety decline, an
-    # error event mid-stream and a thinking-only end_turn read the same.
-    block_types: list[str] = []
-    stream_error = None
+    """A Messages SSE body, read line by line into _AnthropicStream."""
+    acc = _AnthropicStream(stream_cb, name_map=name_map)
     buf = b""
     async for chunk in resp.content.iter_any():
         buf += chunk
@@ -1552,79 +1664,8 @@ async def _consume_anthropic_stream(resp, stream_cb, name_map=None, on_alive=Non
                 obj = json.loads(line[5:].strip())
             except Exception:
                 continue
-            etype = obj.get("type")
-            if etype == "message_start":
-                msg = obj.get("message") or {}
-                model_id = msg.get("model") or model_id
-                usage.update(msg.get("usage") or {})
-            elif etype == "content_block_start":
-                cb = obj.get("content_block") or {}
-                idx = obj.get("index", 0)
-                block_types.append(str(cb.get("type") or "?"))
-                if cb.get("type") == "tool_use":
-                    tool_blocks[idx] = {
-                        "id": cb.get("id") or "",
-                        "name": cb.get("name") or "",
-                        "arguments": "",
-                        # True at content_block_stop: a block the output
-                        # limit cut never gets one.
-                        "complete": False,
-                    }
-                elif cb.get("type") in ("text", "web_search_tool_result"):
-                    blocks[idx] = {**cb, "citations": list(cb.get("citations") or [])}
-            elif etype == "content_block_delta":
-                delta = obj.get("delta") or {}
-                dtype = delta.get("type")
-                if dtype == "text_delta":
-                    txt = delta.get("text") or ""
-                    if txt:
-                        content_parts.append(txt)
-                        await stream_cb(txt)
-                elif dtype == "thinking_delta":
-                    reasoning_parts.append(delta.get("thinking") or "")
-                elif dtype == "input_json_delta":
-                    slot = tool_blocks.get(obj.get("index", 0))
-                    if slot is not None:
-                        slot["arguments"] += delta.get("partial_json") or ""
-                elif dtype == "citations_delta":
-                    blk = blocks.get(obj.get("index", 0))
-                    if blk is not None and isinstance(delta.get("citation"), dict):
-                        blk["citations"].append(delta["citation"])
-            elif etype == "content_block_stop":
-                slot = tool_blocks.get(obj.get("index", 0))
-                if slot is not None:
-                    slot["complete"] = True
-            elif etype == "message_delta":
-                usage.update(obj.get("usage") or {})
-                stop_reason = (obj.get("delta") or {}).get("stop_reason") or stop_reason
-                # Where stop_reason is (the stop-reasons page names only
-                # message_delta for it on a stream); read at the event's top
-                # level too, as no page shows the streamed stop_details.
-                _sd = (obj.get("delta") or {}).get("stop_details") or obj.get("stop_details")
-                if isinstance(_sd, dict):
-                    stop_details = _sd
-            elif etype == "error":
-                stream_error = obj.get("error") or obj
-    msg: dict = {"content": "".join(content_parts)}
-    if reasoning_parts:
-        msg["reasoning"] = "".join(reasoning_parts)
-    incomplete: list[str] = []
-    if tool_blocks:
-        _nm = name_map or {}
-        msg["tool_calls"] = []
-        for _, b in sorted(tool_blocks.items()):
-            tid = b["id"] or f"toolu_{_uuid.uuid4().hex[:12]}"
-            msg["tool_calls"].append(
-                {"id": tid, "type": "function",
-                 "function": {"name": _nm.get(b["name"], b["name"]),
-                              "arguments": b["arguments"] or "{}"}})
-            if not b["complete"]:
-                incomplete.append(tid)
-    return {"choices": [{"message": msg}], "usage": usage, "model": model_id,
-            "stop_reason": stop_reason, "stop_details": stop_details,
-            "incomplete_tool_ids": incomplete,
-            "content": [blocks[i] for i in sorted(blocks)],
-            "block_types": block_types, "stream_error": stream_error}
+            await acc.feed(obj)
+    return acc.relay()
 
 
 # ── vendor-reported quota, read from the response itself ─────────────────────
@@ -1744,6 +1785,312 @@ def _anthropic_refusal(category, *, partial: bool) -> str:
     return f"Anthropic's safety filter declined this request{cat}."
 
 
+async def _anthropic_call_result(relay: dict, *, streamed: bool, name_map, max_tokens,
+                                model: str, provider: str, source, entity_id, call_start,
+                                entry_id, stream_cb, quota: dict, effort: dict,
+                                request_id=None, row_meta: dict | None = None) -> dict:
+    """A finished Messages response (`relay`: the streamed relay of
+    _AnthropicStream, or the buffered JSON body) -> _call_anthropic's result:
+    the usage row, a safety-filter decline as an error a person can read, an
+    empty reply said as what happened, else the reply with its stop fields.
+    Shared by the direct wire and the subscription lane (claude_sdk_wire), so
+    the two answer the turn, the failover and the ledger in one shape.
+    `row_meta` rides the usage row (the subscription lane's billing basis)."""
+    if streamed:
+        msg = (relay.get("choices") or [{}])[0].get("message") or {}
+        content = (msg.get("content") or "").strip()
+        reasoning = msg.get("reasoning") or ""
+        tool_calls = msg.get("tool_calls") or []
+        _incomplete = relay.get("incomplete_tool_ids") or []
+    else:
+        content, reasoning, tool_calls = _anthropic_result_message(
+            relay, name_map=name_map)
+        content = content.strip()
+        _incomplete = None
+    _stop = _stop_fields(relay.get("stop_reason"), tool_calls, _incomplete, max_tokens)
+    _stop_reason = relay.get("stop_reason")
+    # A safety-filter decline (stop_reason "refusal", an HTTP 200).
+    # stop_details is informational and may be null or hold nulls; the
+    # branch is on stop_reason alone (refusals-and-fallback, "Common
+    # pitfalls").
+    _refused = _stop_reason == "refusal"
+    _sd = relay.get("stop_details") if isinstance(relay.get("stop_details"), dict) else {}
+    _cat = _sd.get("category") if _refused else None
+
+    # Usage: the Messages wire reports input_tokens EXCLUDING cached
+    # tokens (cache_read/cache_creation are separate fields) — the true
+    # input total is the sum, matching what input_total_tokens means on
+    # the OpenAI wire (where prompt_tokens already includes the subset).
+    # Read and logged BEFORE the decline and empty-reply checks below, so
+    # the row of a declined or empty call says why the model stopped.
+    u = relay.get("usage") or {}
+    cache_read = int(u.get("cache_read_input_tokens") or 0)
+    cache_write = int(u.get("cache_creation_input_tokens") or 0)
+    prompt_tokens = int(u.get("input_tokens") or 0) + cache_read + cache_write
+    completion_tokens = int(u.get("output_tokens") or 0)
+    tokens_used = prompt_tokens + completion_tokens
+    elapsed = (_time.time() - call_start) * 1000
+
+    # The vendor's own quota numbers, verbatim, on the row. Rides the
+    # metadata JSONB — no schema change, same lane the cache split uses.
+    # Absent when the vendor sent none. A refusal, or a reply with nothing
+    # in it, also says why the model stopped, so the row alone tells them
+    # apart.
+    _row_meta: dict = {**(row_meta or {}), **({"quota": quota} if quota else {})}
+    if _refused or (not content and not tool_calls):
+        _row_meta["stop_reason"] = _stop_reason
+    if _refused:
+        # Priced as usual; which billing case it is rides beside it (the
+        # note above _REFUSAL_NOT_RETRIED).
+        _row_meta.update(refusal=True, refusal_category=_cat,
+                         refusal_billing=("normal" if completion_tokens > 0
+                                          else "by_category"))
+    await _log_inference(
+        source=source, model=model, provider=provider,
+        total_tokens=tokens_used,
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+        elapsed_ms=elapsed, entity_id=entity_id,
+        cache_read_tokens=cache_read, cache_write_tokens=cache_write,
+        metadata=_row_meta or None,
+    )
+    if _refused:
+        # Never the reply: a decline part-way leaves a partial answer the
+        # docs say to discard, and a tool call it was writing is not run.
+        _partial = bool(content or tool_calls)
+        if _partial and stream_cb is not None:
+            # What already streamed is withdrawn from the turn's reply
+            # (turn_replies._discard): the fallback's answer, or the
+            # error, is what the turn keeps. A callback without the hook
+            # keeps what it has.
+            _drop = getattr(stream_cb, "discard_streamed", None)
+            if callable(_drop):
+                try:
+                    _dr = _drop()
+                    if asyncio.iscoroutine(_dr):
+                        await _dr
+                except Exception as _de:  # noqa: BLE001 — the decline still reaches the person
+                    log.debug("discarding a declined partial failed: %s", _de)
+        _err = _anthropic_refusal(_cat, partial=_partial)
+        log.warning("anthropic %s refused (stop_reason=refusal category=%s partial=%s "
+                    "out=%s source=%s)", model, _cat, _partial, completion_tokens, source)
+        if _prompt_console and entry_id:
+            _prompt_console.log_response(entry_id, "", tokens_used, elapsed, error=_err)
+        out = {"error": _err, "content": "", "stop_reason": _stop_reason,
+               "refusal": True, "refusal_category": _cat,
+               "tokens_used": tokens_used, "prompt_tokens": prompt_tokens,
+               "completion_tokens": completion_tokens,
+               "cache_read_tokens": cache_read, "cache_write_tokens": cache_write,
+               "input_total_tokens": prompt_tokens,
+               "model": relay.get("model") or model, "effort": dict(effort)}
+        if _sd.get("explanation"):
+            # "The text is not stable, so display it rather than parse it."
+            out["refusal_explanation"] = str(_sd["explanation"])[:500]
+        if _partial:
+            out["refusal_partial"] = True
+        return out
+
+    if not content and not tool_calls:
+        if _stop.get("truncated"):
+            return {"error": (f"the model reached its output limit ({max_tokens} "
+                              f"tokens) before writing any reply "
+                              f"(stop_reason={relay.get('stop_reason')})"),
+                    "content": "", **_stop}
+        # The stop reason rides the error too: a search turn the API
+        # paused before any text (pause_turn) is not an empty answer.
+        # Said as what happened. An end_turn with nothing in it is the
+        # model deciding it was done; the stop-reasons page ("Empty
+        # responses with end_turn") says re-sending it unchanged does not
+        # help, so it is not re-sent here.
+        _what = {"end_turn": "ended its turn without writing anything",
+                 "pause_turn": "paused its turn before writing anything",
+                 }.get(str(_stop_reason or ""), "returned no text and no tool call")
+        _err = f"{model} {_what} (stop_reason: {_stop_reason})"
+        log.warning("anthropic %s: no text and no tool call (stop_reason=%s out=%s "
+                    "source=%s)", model, _stop_reason, completion_tokens, source)
+        # The rest of its account rides the result and the failure row:
+        # the stop details, the block types the reply carried, any error
+        # event the stream sent and the provider's request id.
+        _blk = (relay.get("block_types") if streamed else
+                [b.get("type") for b in (relay.get("content") or [])
+                 if isinstance(b, dict)])
+        _rid = request_id
+        return {"error": _err, "content": "", "stop_reason": _stop_reason,
+                "model": relay.get("model") or model, "empty_reply": True,
+                "stop_details": relay.get("stop_details"),
+                "block_types": _blk or [],
+                "stream_error": relay.get("stream_error"),
+                "request_id": _rid}
+
+    if _prompt_console and entry_id:
+        _prompt_console.log_response(entry_id, content, tokens_used, elapsed)
+
+    result: dict = {
+        "content": strip_thinking(content),
+        "tokens_used": tokens_used,
+        "model": relay.get("model") or model,
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "cache_read_tokens": cache_read,
+        "cache_write_tokens": cache_write,
+        "input_total_tokens": prompt_tokens,
+    }
+    # Vendor-reported quota, verbatim. Rides the result so the caller can
+    # log it; empty when this vendor sends no such headers, which must
+    # read as "no percentage available", never as 0% or 100%.
+    if quota:
+        result["quota_headers"] = quota
+    # The effort this call actually ran at: the level sent, or None and
+    # the model's default (named when the docs name it), with why a
+    # chosen level was not sent. What the turn records, never the pick.
+    result["effort"] = dict(effort)
+    if reasoning:
+        result["reasoning"] = reasoning
+    if tool_calls:
+        result["tool_calls"] = tool_calls
+        result["raw_message"] = {"content": content,
+                                 "tool_calls": tool_calls}
+    result.update(_stop)
+    if stream_cb is None:
+        # Web-search citations (server web_search tool): text-block
+        # `citations[]` + web_search_tool_result blocks → the SAME
+        # annotations[].url_citation shape the OpenAI wire returns, so
+        # web_research reads one shape for every provider. A call the
+        # gateway streamed for its length carries the same blocks.
+        _cites = _anthropic_citations(relay)
+        if _cites:
+            result["annotations"] = _cites
+    return result
+
+
+# One renewal of the Claude sign-in at a time: the refresh token rotates, so a
+# second concurrent renewal would spend a token the first already used.
+_CLAUDE_RENEW_LOCK: asyncio.Lock | None = None
+
+
+async def _claude_subscription_cred(pool, eid: int):
+    """(credential, why-not) for provider anthropic-subscription: the person's
+    Claude sign-in, renewed here once when it is expired or about to be (the
+    kernel's own renewal, tools_system._exec_system_refresh_sdk_auth, the one
+    the background refresher in server/main.py runs), else their
+    anthropic-oauth entry in Keys. `why` is the sentence for the person when
+    there is nothing to dial."""
+    global _CLAUDE_RENEW_LOCK
+    from server.vault.providers import (resolve, resolve_claude_signin,
+                                        resolve_claude_subscription)
+    cred = await resolve_claude_subscription(pool, eid, actor="inference")
+    if cred is not None and cred.source == "signin-expired":
+        if _CLAUDE_RENEW_LOCK is None:
+            _CLAUDE_RENEW_LOCK = asyncio.Lock()
+        async with _CLAUDE_RENEW_LOCK:
+            cred = await resolve_claude_signin(pool, eid, actor="inference")
+            if cred is not None and cred.source == "signin-expired":
+                try:
+                    from mastercode.runtime.tools_system import _exec_system_refresh_sdk_auth
+                    out = await _exec_system_refresh_sdk_auth({})
+                    log.info("Claude sign-in renewal before a subscription call: %s",
+                             (out or {}).get("status"))
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("Claude sign-in renewal failed: %s", type(exc).__name__)
+                cred = await resolve_claude_signin(pool, eid, actor="inference")
+    if cred is not None and cred.secret:
+        return cred, ""
+    signin_state = cred.source if cred is not None else None
+    if signin_state in ("signin-expired", "signin-unreadable"):
+        # The sign-in is there but cannot be used: a pasted token still can.
+        alt = await resolve(pool, eid, "anthropic-subscription", ("oauth_token",),
+                            actor="inference")
+        if alt is not None and alt.secret:
+            return alt, ""
+        return None, ("your Claude sign-in has expired and could not be renewed"
+                      if signin_state == "signin-expired" else
+                      "your Claude sign-in could not be read") + (
+            " — sign in with your Claude account again from the Orchestrator "
+            "(Host model), or route this role to another provider.")
+    return None, ("no Claude sign-in — sign in with your Claude account from the "
+                  "Orchestrator (Host model), or put a token you made with "
+                  "`claude setup-token` in the Keys app as 'anthropic-oauth'; or "
+                  "route this role to another provider.")
+
+
+async def _call_anthropic_subscription(
+    messages: list[dict], model: str, *, token: str, provider: str, max_tokens: int,
+    tools, tool_choice, effort, stream_cb, on_alive, base_url, idle_s, native_tools,
+    extra_body, source, entity_id, call_start, entry_id, credential: str = "token",
+) -> dict:
+    """One call on the person's Claude subscription, through the Claude Agent
+    SDK (mastercode/claude_sdk_wire). The SDK's stream events feed the same
+    accumulator the direct wire reads its SSE body into, and the end of the
+    call is the direct wire's own (_anthropic_call_result), so a refusal, a
+    cut reply, an empty one, the stop fields, the streamed text and its
+    withdrawal behave alike on both.
+
+    The usage row says what this lane is: metadata.billing 'subscription'
+    and credential 'signin' (est_cost_usd 0, cost_method 'subscription': the
+    plan is flat-priced), with what the same tokens would cost at the list
+    price beside it as notional_usd (_log_inference).
+
+    What the SDK cannot carry is refused, so call_model answers on the
+    route's fallback rather than silently dropping it: provider-native server
+    tools (web search) and extra request fields."""
+    from mastercode import claude_sdk_wire as _sdkw
+    from mastercode.inference_config import (
+        anthropic_default_effort, anthropic_model_efforts_warm, describe_effort)
+    from server.vault.providers import PROVIDERS
+    if native_tools or extra_body:
+        return {"error": ("the Claude subscription lane does not carry "
+                          + ("provider server tools (web search)" if native_tools
+                             else "extra request fields")),
+                "content": "", "lane_unavailable": True}
+    if effort:
+        await anthropic_model_efforts_warm(model)
+    _effort = describe_effort("anthropic", model, effort, None)
+    # The level that goes out: the person's pick where the model takes it,
+    # else the model's own default where the docs name it — the CLI sends an
+    # effort of its own choosing when given none, and the direct wire leaves
+    # the model at its default.
+    _sent = _effort.get("sent") or anthropic_default_effort(model)
+    name_map = _sdkw.wire_tool_map(tools)
+    acc = _AnthropicStream(stream_cb or _discard_stream,
+                           name_map={_sdkw.TOOL_PREFIX + w: c for w, c in name_map.items()})
+
+    async def _feed(ev: dict) -> None:
+        if on_alive is not None:
+            on_alive()     # every event is a sign of life, as on the direct wire
+        await acc.feed(ev)
+
+    _row = {"billing": "subscription", "lane": "claude_sdk", "credential": "signin",
+            "subscription_credential": credential}
+    try:
+        await _sdkw.run(
+            messages, model, token=token, tools=tools, name_map=name_map,
+            max_tokens=max_tokens, tool_choice=tool_choice, effort=_sent,
+            base_url=(base_url or PROVIDERS["anthropic"]["base_url"]).rstrip("/"),
+            feed=_feed, idle_s=idle_s)
+    except _sdkw.LaneError as exc:
+        log.error("anthropic subscription lane failed: %s", exc)
+        if exc.status:
+            # The API refused the request, not the lane: said as the direct
+            # wire says it ("anthropic 400: ..." with the words in
+            # error_body), so the turn's overflow trim and the picture
+            # re-dial (attachment_parts.refused_input) read it alike.
+            return {"error": f"anthropic {exc.status}: {exc.detail[:200]}", "content": "",
+                    "error_body": exc.detail}
+        return {"error": f"anthropic subscription: {exc}", "content": "",
+                **({"lane_unavailable": True} if exc.lane_unavailable else {})}
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        log.error("anthropic subscription call failed: %s", type(exc).__name__, exc_info=True)
+        return {"error": f"anthropic subscription failure: {exc}", "content": "",
+                "lane_unavailable": True}
+    return await _anthropic_call_result(
+        acc.relay(), streamed=True, name_map=name_map, max_tokens=max_tokens,
+        model=model, provider=provider, source=source, entity_id=entity_id,
+        call_start=call_start, entry_id=entry_id, stream_cb=stream_cb,
+        quota={}, effort=_effort, row_meta=_row)
+
+
 async def _call_anthropic(
     messages: list[dict],
     model: str,
@@ -1763,12 +2110,20 @@ async def _call_anthropic(
     on_alive=None,
     tool_choice: str | None = None,
     effort: str | None = None,
+    provider: str = "anthropic",
 ) -> dict:
     """Container-side inference on the Anthropic Messages API — provider
     'anthropic', keyed by the user's own Keys entry (canonical 'anthropic'
-    API key first, 'anthropic-oauth' token second — keys work by default,
-    OAuth is the build-your-own-surface option). Same result contract as
+    API key first, 'anthropic-oauth' token second). Same result contract as
     _call_remote. Claude never transits OpenRouter; this is its direct path.
+
+    An OAuth token is the person's Claude subscription, and Anthropic refuses
+    it on a direct /v1/messages call (a 429 with no rate-limit headers, even
+    for a 16-token call; measured on the platform), so a call that resolves to
+    one goes through the Claude Agent SDK instead (_call_anthropic_subscription).
+    Provider 'anthropic-subscription' is that lane by name: it reads the
+    person's Claude sign-in, else their anthropic-oauth entry
+    (server/vault/providers.resolve_claude_subscription), never the API key.
 
     `effort` is the reasoning effort the PERSON chose for this route
     (call_model's chosen_effort), never the OpenAI wire's "low" fallback. It
@@ -1796,9 +2151,14 @@ async def _call_anthropic(
         pool = brain_service.get_pool()
     except Exception:
         pass
-    cred = await resolve(pool, int(eid_s) if eid_s.isdigit() else 0,
-                         "anthropic", ("api_key", "oauth_token"),
-                         actor="inference")
+    _eid = int(eid_s) if eid_s.isdigit() else 0
+    if provider != "anthropic":
+        cred, _why = await _claude_subscription_cred(pool, _eid)
+        if not (cred and cred.secret):
+            return {"error": _why, "content": "", "lane_unavailable": True}
+    else:
+        cred = await resolve(pool, _eid, "anthropic", ("api_key", "oauth_token"),
+                             actor="inference")
     api_key = cred.secret if cred else ""
     if not api_key:
         return {"error": "no Anthropic credential — add an API key (or OAuth "
@@ -1808,18 +2168,19 @@ async def _call_anthropic(
                 "content": "", "lane_unavailable": True}
 
     model = anthropic_api_model_id(model)
+    if cred.cred_type == "oauth_token":
+        return await _call_anthropic_subscription(
+            messages, model, token=api_key, provider=provider, max_tokens=max_tokens,
+            tools=tools, tool_choice=tool_choice, effort=effort, stream_cb=stream_cb,
+            on_alive=on_alive, base_url=base_url, idle_s=idle_s,
+            native_tools=native_tools, extra_body=extra_body, source=_source,
+            entity_id=_entity_id, call_start=call_start, entry_id=entry_id,
+            credential=("signin" if getattr(cred, "source", "") == "signin" else "token"))
     endpoint = ((base_url or PROVIDERS["anthropic"]["base_url"]).rstrip("/")
                 + "/v1/messages")
     headers = {"anthropic-version": _ANTHROPIC_VERSION,
-               "Content-Type": "application/json"}
-    if cred and cred.cred_type == "oauth_token":
-        # OAuth access tokens are only accepted with the oauth beta header
-        # (the token is the user's own — build-your-own-login-surface
-        # scope).
-        headers["Authorization"] = f"Bearer {api_key}"
-        headers["anthropic-beta"] = "oauth-2025-04-20"
-    else:
-        headers["x-api-key"] = api_key
+               "Content-Type": "application/json",
+               "x-api-key": api_key}
 
     name_map = _anthropic_tool_name_map(tools)
     payload = _anthropic_messages_payload(messages, model, temperature,
@@ -1929,174 +2290,15 @@ async def _call_anthropic(
                         relay = await resp.json()
                     break
 
-        if _streamed:
-            msg = (relay.get("choices") or [{}])[0].get("message") or {}
-            content = (msg.get("content") or "").strip()
-            reasoning = msg.get("reasoning") or ""
-            tool_calls = msg.get("tool_calls") or []
-            _incomplete = relay.get("incomplete_tool_ids") or []
-        else:
-            content, reasoning, tool_calls = _anthropic_result_message(
-                relay, name_map=name_map)
-            content = content.strip()
-            _incomplete = None
-        _stop = _stop_fields(relay.get("stop_reason"), tool_calls, _incomplete, max_tokens)
-        _stop_reason = relay.get("stop_reason")
-        # A safety-filter decline (stop_reason "refusal", an HTTP 200).
-        # stop_details is informational and may be null or hold nulls; the
-        # branch is on stop_reason alone (refusals-and-fallback, "Common
-        # pitfalls").
-        _refused = _stop_reason == "refusal"
-        _sd = relay.get("stop_details") if isinstance(relay.get("stop_details"), dict) else {}
-        _cat = _sd.get("category") if _refused else None
-
-        # Usage: the Messages wire reports input_tokens EXCLUDING cached
-        # tokens (cache_read/cache_creation are separate fields) — the true
-        # input total is the sum, matching what input_total_tokens means on
-        # the OpenAI wire (where prompt_tokens already includes the subset).
-        # Read and logged BEFORE the decline and empty-reply checks below, so
-        # the row of a declined or empty call says why the model stopped.
-        u = relay.get("usage") or {}
-        cache_read = int(u.get("cache_read_input_tokens") or 0)
-        cache_write = int(u.get("cache_creation_input_tokens") or 0)
-        prompt_tokens = int(u.get("input_tokens") or 0) + cache_read + cache_write
-        completion_tokens = int(u.get("output_tokens") or 0)
-        tokens_used = prompt_tokens + completion_tokens
-        elapsed = (_time.time() - call_start) * 1000
-
-        # The vendor's own quota numbers, verbatim, on the row. Rides the
-        # metadata JSONB — no schema change, same lane the cache split uses.
-        # Absent when the vendor sent none. A refusal, or a reply with nothing
-        # in it, also says why the model stopped, so the row alone tells them
-        # apart.
-        _row_meta: dict = {"quota": _quota} if _quota else {}
-        if _refused or (not content and not tool_calls):
-            _row_meta["stop_reason"] = _stop_reason
-        if _refused:
-            # Priced as usual; which billing case it is rides beside it (the
-            # note above _REFUSAL_NOT_RETRIED).
-            _row_meta.update(refusal=True, refusal_category=_cat,
-                             refusal_billing=("normal" if completion_tokens > 0
-                                              else "by_category"))
-        await _log_inference(
-            source=_source, model=model, provider="anthropic",
-            total_tokens=tokens_used,
-            prompt_tokens=prompt_tokens,
-            completion_tokens=completion_tokens,
-            elapsed_ms=elapsed, entity_id=_entity_id,
-            cache_read_tokens=cache_read, cache_write_tokens=cache_write,
-            metadata=_row_meta or None,
-        )
-        if _refused:
-            # Never the reply: a decline part-way leaves a partial answer the
-            # docs say to discard, and a tool call it was writing is not run.
-            _partial = bool(content or tool_calls)
-            if _partial and stream_cb is not None:
-                # What already streamed is withdrawn from the turn's reply
-                # (turn_replies._discard): the fallback's answer, or the
-                # error, is what the turn keeps. A callback without the hook
-                # keeps what it has.
-                _drop = getattr(stream_cb, "discard_streamed", None)
-                if callable(_drop):
-                    try:
-                        _dr = _drop()
-                        if asyncio.iscoroutine(_dr):
-                            await _dr
-                    except Exception as _de:  # noqa: BLE001 — the decline still reaches the person
-                        log.debug("discarding a declined partial failed: %s", _de)
-            _err = _anthropic_refusal(_cat, partial=_partial)
-            log.warning("anthropic %s refused (stop_reason=refusal category=%s partial=%s "
-                        "out=%s source=%s)", model, _cat, _partial, completion_tokens, _source)
-            if _prompt_console and entry_id:
-                _prompt_console.log_response(entry_id, "", tokens_used, elapsed, error=_err)
-            out = {"error": _err, "content": "", "stop_reason": _stop_reason,
-                   "refusal": True, "refusal_category": _cat,
-                   "tokens_used": tokens_used, "prompt_tokens": prompt_tokens,
-                   "completion_tokens": completion_tokens,
-                   "cache_read_tokens": cache_read, "cache_write_tokens": cache_write,
-                   "input_total_tokens": prompt_tokens,
-                   "model": relay.get("model") or model, "effort": dict(_effort)}
-            if _sd.get("explanation"):
-                # "The text is not stable, so display it rather than parse it."
-                out["refusal_explanation"] = str(_sd["explanation"])[:500]
-            if _partial:
-                out["refusal_partial"] = True
-            return out
-
-        if not content and not tool_calls:
-            if _stop.get("truncated"):
-                return {"error": (f"the model reached its output limit ({max_tokens} "
-                                  f"tokens) before writing any reply "
-                                  f"(stop_reason={relay.get('stop_reason')})"),
-                        "content": "", **_stop}
-            # The stop reason rides the error too: a search turn the API
-            # paused before any text (pause_turn) is not an empty answer.
-            # Said as what happened. An end_turn with nothing in it is the
-            # model deciding it was done; the stop-reasons page ("Empty
-            # responses with end_turn") says re-sending it unchanged does not
-            # help, so it is not re-sent here.
-            _what = {"end_turn": "ended its turn without writing anything",
-                     "pause_turn": "paused its turn before writing anything",
-                     }.get(str(_stop_reason or ""), "returned no text and no tool call")
-            _err = f"{model} {_what} (stop_reason: {_stop_reason})"
-            log.warning("anthropic %s: no text and no tool call (stop_reason=%s out=%s "
-                        "source=%s)", model, _stop_reason, completion_tokens, _source)
-            # The rest of its account rides the result and the failure row:
-            # the stop details, the block types the reply carried, any error
-            # event the stream sent and the provider's request id.
-            _blk = (relay.get("block_types") if _streamed else
-                    [b.get("type") for b in (relay.get("content") or [])
-                     if isinstance(b, dict)])
-            try:
-                _rid = resp.headers.get("request-id")
-            except Exception:
-                _rid = None
-            return {"error": _err, "content": "", "stop_reason": _stop_reason,
-                    "model": relay.get("model") or model, "empty_reply": True,
-                    "stop_details": relay.get("stop_details"),
-                    "block_types": _blk or [],
-                    "stream_error": relay.get("stream_error"),
-                    "request_id": _rid}
-
-        if _prompt_console and entry_id:
-            _prompt_console.log_response(entry_id, content, tokens_used, elapsed)
-
-        result: dict = {
-            "content": strip_thinking(content),
-            "tokens_used": tokens_used,
-            "model": relay.get("model") or model,
-            "prompt_tokens": prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "cache_read_tokens": cache_read,
-            "cache_write_tokens": cache_write,
-            "input_total_tokens": prompt_tokens,
-        }
-        # Vendor-reported quota, verbatim. Rides the result so the caller can
-        # log it; empty when this vendor sends no such headers, which must
-        # read as "no percentage available", never as 0% or 100%.
-        if _quota:
-            result["quota_headers"] = _quota
-        # The effort this call actually ran at: the level sent, or None and
-        # the model's default (named when the docs name it), with why a
-        # chosen level was not sent. What the turn records, never the pick.
-        result["effort"] = dict(_effort)
-        if reasoning:
-            result["reasoning"] = reasoning
-        if tool_calls:
-            result["tool_calls"] = tool_calls
-            result["raw_message"] = {"content": content,
-                                     "tool_calls": tool_calls}
-        result.update(_stop)
-        if stream_cb is None:
-            # Web-search citations (server web_search tool): text-block
-            # `citations[]` + web_search_tool_result blocks → the SAME
-            # annotations[].url_citation shape the OpenAI wire returns, so
-            # web_research reads one shape for every provider. A call the
-            # gateway streamed for its length carries the same blocks.
-            _cites = _anthropic_citations(relay)
-            if _cites:
-                result["annotations"] = _cites
-        return result
+        try:
+            _rid = resp.headers.get("request-id")
+        except Exception:
+            _rid = None
+        return await _anthropic_call_result(
+            relay, streamed=_streamed, name_map=name_map, max_tokens=max_tokens,
+            model=model, provider="anthropic", source=_source, entity_id=_entity_id,
+            call_start=call_start, entry_id=entry_id, stream_cb=stream_cb,
+            quota=_quota, effort=_effort, request_id=_rid)
 
     except (aiohttp.ClientError, asyncio.TimeoutError, ConnectionError) as exc:
         log.error("anthropic transport failure (lane unavailable): %s", exc)
@@ -2591,6 +2793,16 @@ def local_chat_url(endpoint: str) -> str:
     return ep.rstrip("/") + "/v1/chat/completions"
 
 
+def _cb_refusal_prompt(result: dict) -> int | None:
+    """The input size a local server's window refusal stated, or None."""
+    try:
+        from mastercode.context_budget import server_window_from_refusal
+        w = server_window_from_refusal(result.get("error_body"))
+        return int(w["prompt"]) if w and w.get("prompt") else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 async def _call_local(
     messages: list[dict],
     model: str,
@@ -2672,8 +2884,23 @@ async def _call_local(
                 # turn classifies on it; nothing persists it). Ollama mostly
                 # truncates and answers 200 rather than refusing
                 # (ollama/ollama#17944).
-                from mastercode.context_budget import refusal_parts as _rpl
-                _lmsg = _rpl(body)[0]
+                from mastercode import context_budget as _cbl
+                # A request the server's context cannot hold (llama.cpp's
+                # exceed_context_size_error, vLLM's window templates): the
+                # server names its own window, which is remembered for this
+                # model (the turn's retry and every later call fit to it), and
+                # the person reads what is wrong and what to change, never
+                # just the status. Only the numbers are read.
+                _win = _cbl.server_window_from_refusal(body)
+                if _win:
+                    _cbl.learn_context_window("local", model, _win["window"])
+                    log.warning("local model server for %s allows %d tokens (request: %s)",
+                                model, _win["window"], _win.get("prompt") or "?")
+                    return {"error": _cbl.local_window_message(
+                                model, _win["window"], _win.get("prompt"), _win.get("server") or ""),
+                            "content": "", "error_body": body[:20000],
+                            "context_window": _win["window"], "refused_status": resp.status}
+                _lmsg = _cbl.refusal_parts(body)[0]
                 # Only vLLM's own templates, at the START of the message, with
                 # their numbers — never a window phrase found
                 # anywhere in an error that might echo input. Read from vLLM's
@@ -2897,11 +3124,13 @@ async def _call_model(
     """
     Unified model calling interface — dispatches on PROVIDER.
 
-    `provider` is the route's provider: a registry id (openrouter, openai,
-    xai, kimi, anthropic, deepinfra, together, fireworks, groq) or 'local'.
-    Legacy values normalize (openrtr/self → openrouter); the removed SDK
-    lane's aliases normalize to EMPTY and surface as unconfigured — they
-    never execute (the SDK is not a production option).
+    `provider` is the route's provider: a registry id (server/vault/providers
+    PROVIDERS: openrouter, openai, xai, google, kimi, anthropic,
+    anthropic-subscription, deepinfra, together, fireworks, groq) or 'local'.
+    Legacy values normalize (openrtr/self → openrouter); the old SDK lane's
+    aliases (claude-sdk, subscription) normalize to EMPTY and surface as
+    unconfigured. A Claude subscription runs as 'anthropic-subscription'
+    (_call_anthropic, then _call_anthropic_subscription).
     `provider_model` is the provider-native model id; there is NO default
     model — a call that arrives without one is a caller that skipped the
     Orchestrator config, and it errors instead of guessing.
@@ -2943,10 +3172,10 @@ async def _call_model(
     if prov:
         prov, model = normalize_provider(prov, model)
         if not prov:
-            _sdk = {"error": "this route names the removed Claude-SDK lane — "
-                             "the SDK is not a production option. Pick a "
-                             "provider and model in the Orchestrator "
-                             "(Anthropic is an ordinary provider in Keys).",
+            _sdk = {"error": "this route names an old Claude-SDK lane name. "
+                             "Pick a provider and model in the Orchestrator: "
+                             "a Claude subscription is the provider "
+                             "'anthropic-subscription'.",
                     "content": "", "unconfigured": True,
                     "lane_unavailable": True}
             await _log_call_failure(
@@ -3005,12 +3234,23 @@ async def _call_model(
     # tools ride both dials (see the failover note below).
     _tools_wire = _tools_wire_stamp(tools)
 
-    async def _output_limit(p: str, m: str) -> int:
+    def wire_vendor(p: str) -> str:
+        from mastercode.inference_config import vendor_provider
+        return vendor_provider(p)
+
+    async def _output_limit(p: str, m: str, base_url=None) -> int:
         """The caller's max_tokens, else model m's own output limit — and in
         either case never more than the room the window leaves after THIS
         call's input (context_budget.call_output_limit)."""
+        # The window and limits are the vendor's (the same model either way).
+        p = wire_vendor(p)
         from mastercode import context_budget as _cbm
         try:
+            if p == "local" and base_url:
+                # A local server's window is the one it was started with: read
+                # from the server itself (cached; the route warm's bounded wait).
+                from server.routes.inference import warm_route_catalog
+                await warm_route_catalog(p, base_url=base_url, model=m)
             win = await _cbm.model_context_window(m, provider=p)
             if not _caller_max and (not win or _cbm.model_output_limit(m, p) is None):
                 # Cold catalog: read the route's rows once (bounded wait, the
@@ -3034,8 +3274,12 @@ async def _call_model(
         # costs the turn.
         from mastercode import attachment_parts as _ap
         from mastercode.runtime import turn_pictures as _tp
-        wire = "anthropic" if p == "anthropic" else "openai"
-        notes = _ap.model_reads_images(p, m) is False
+        from mastercode.inference_config import vendor_provider
+        # The vendor's wire and catalog: anthropic-subscription sends the
+        # Messages format and reads Anthropic's rows.
+        vp = vendor_provider(p)
+        wire = "anthropic" if vp == "anthropic" else "openai"
+        notes = _ap.model_reads_images(vp, m) is False
         # A picture THIS route refused earlier in this turn goes to it as a
         # note, not again; another route (the failover) is still sent it.
         _refused_before = _tp.refused((p, m))
@@ -3086,22 +3330,40 @@ async def _call_model(
         return result
 
     async def _dial_wire(p: str, m: str, base_url, wire_messages) -> dict:
-        max_tokens = await _output_limit(p, m)
+        max_tokens = await _output_limit(p, m, base_url)
         if p == "local":
             # The local wire writes tools into the prompt as XML and has no
             # tool_choice: a call that may make none is sent none.
-            return await _call_local(
-                messages=wire_messages, model=m,
-                temperature=temperature, max_tokens=max_tokens,
-                session_id=session_id,
-                tools=None if kwargs.get("tool_choice") == "none" else tools,
-                entry_id=entry_id, call_start=call_start,
-                _source=kwargs.get("_source", "unknown"),
-                _entity_id=kwargs.get("_entity_id"),
-                base_url=base_url,
-                on_alive=kwargs.get("on_alive"),
-            )
-        if p == "anthropic":
+            async def _local(mt):
+                return await _call_local(
+                    messages=wire_messages, model=m,
+                    temperature=temperature, max_tokens=mt,
+                    session_id=session_id,
+                    tools=None if kwargs.get("tool_choice") == "none" else tools,
+                    entry_id=entry_id, call_start=call_start,
+                    _source=kwargs.get("_source", "unknown"),
+                    _entity_id=kwargs.get("_entity_id"),
+                    base_url=base_url,
+                    on_alive=kwargs.get("on_alive"),
+                )
+            res = await _local(max_tokens)
+            # The server refused for its window and named it, and the input
+            # alone fits (vLLM counts the reply's room: "'max_tokens' … is too
+            # large"): sent once more with the reply's room the window leaves,
+            # as the other wires resend at a limit the provider stated. An
+            # input that does not fit is the turn's to trim (or to tell).
+            _w = res.get("context_window") if isinstance(res, dict) else None
+            if _w and not res.get("content"):
+                _sz = _cb_refusal_prompt(res)
+                if _sz and _sz < int(_w):
+                    _again = await _output_limit(p, m, base_url)
+                    _again = min(_again, max(1, int(_w) - _sz - 64))
+                    if _again < max_tokens:
+                        log.info("local %s: resending with max_tokens %d (window %d, input %d)",
+                                 m, _again, _w, _sz)
+                        res = await _local(_again)
+            return res
+        if p == "anthropic" or wire_vendor(p) == "anthropic":
             return await _call_anthropic(
                 messages=wire_messages, model=m,
                 temperature=temperature, max_tokens=max_tokens,
@@ -3120,6 +3382,10 @@ async def _call_model(
                 # never reasoning_effort: that one carries the OpenAI wire's
                 # "low" fallback, and an unset Anthropic route sends nothing.
                 effort=kwargs.get("chosen_effort"),
+                # anthropic-subscription: the person's Claude sign-in or
+                # their anthropic-oauth entry, so always the subscription
+                # lane (_call_anthropic).
+                provider=p,
             )
         return await _call_remote(
             messages=wire_messages, model=m,

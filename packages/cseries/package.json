@@ -29,6 +29,6 @@
     "linux"
   ],
   "scripts": {
-    "test": "node --test"
+    "test": "node run-tests.js"
   }
 }

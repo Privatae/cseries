@@ -101,6 +101,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+from server.applications import machine_room as _machine_room
 from server.applications.desktop_contract import detect_mode, parse_bar
 
 log = logging.getLogger("privatae.pc.desktop_render")
@@ -972,7 +973,7 @@ def room_sentence(over_plan: Optional[dict]) -> str:
         # same things free its memory, on this machine only.
         return ("Room comes back when something else holding this machine's memory "
                 "stops: a coding engine finishing and going to sleep, the Browser app "
-                "being closed, or an app being stopped.")
+                "being closed, or an app being stopped. " + _machine_room.RESIZE_SENTENCE)
     text = ("Room comes back when something else holding the plan's memory stops: a "
             "coding engine or the code editor finishing and going to sleep, the "
             "Browser app being closed, or an app that runs on a machine of its own "

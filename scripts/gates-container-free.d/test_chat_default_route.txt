@@ -1,0 +1,6 @@
+# Chat with no route and no model on the person's own machine runs on the
+# recommended model of a provider whose key or sign-in they hold, written as
+# a visible route that says why (inference.ensure_default_chat_route); the
+# person's own pick replaces it; the turn and Keys ask for it. Stub pool,
+# provider status and catalogs. No DB, no network.
+test_chat_default_route.py

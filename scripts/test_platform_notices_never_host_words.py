@@ -186,7 +186,12 @@ for _tpl in ("This model's maximum context length is 32768 tokens. However, your
              "This model's maximum context length is 8192 tokens. However, you requested 9000 tokens in the input "
              "for embedding generation. Please reduce the length of the input."):
     _r = _local(json.dumps({"message": _tpl}))
-    check(f"vLLM's own template is kept: {_tpl[:60]}…", _tpl[:40] in str(_r.get("error")), _r.get("error"))
+    # A window refusal is read for its numbers only and told in plain words
+    # (context_budget.local_window_message); the server's text is not stored.
+    _n = _tpl.split("length is ", 1)[1].split(" ", 1)[0]
+    check(f"vLLM's window template is read for its numbers: {_tpl[:60]}…",
+          f"allows {int(_n):,} tokens" in str(_r.get("error")) and "However" not in str(_r.get("error")),
+          _r.get("error"))
 
 if FAILS:
     print(f"\n{len(FAILS)} FAIL")

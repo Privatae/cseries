@@ -101,7 +101,38 @@ def main() -> int:
         sent.clear()
         st = asyncio.run(hk.materialize_from_keys("opencode"))
         check("the loop's pass over a valid file sends nothing",
+              st == "unchanged" and sent == [], f"{st} {sent}")
+
+        # 2b. The owner REPLACED the key in Keys: an API key never rotates in
+        # the pod, so a valid file with other bytes is rewritten (it used to be
+        # left alone forever: 'present_valid', measured on the Lima guest with
+        # harness-kimi re-pointed).
+        Path(creds["opencode"]).write_bytes(b"sk-or-v1-the-old-one")
+        sent.clear()
+        st = asyncio.run(hk.materialize_from_keys("opencode"))
+        check("a replaced API key reaches the engine's file on the loop's pass",
+              st == "materialized" and Path(creds["opencode"]).read_bytes() == key, st)
+
+        # 2c. A grant with an expiry may have been refreshed in the pod: a
+        # valid one is still left alone.
+        Path(creds["opencode"]).write_bytes(b'{"access_token": "t", "expires_at": 4102444800000}')
+        sent.clear()
+        st = asyncio.run(hk.materialize_from_keys("opencode"))
+        check("a valid grant with an expiry is left alone and nothing is sent",
               st == "present_valid" and sent == [], f"{st} {sent}")
+
+        # 2d. codex's credentials.json from a vendor login or a mid-run
+        # rotation is flat {id_token, access_token, refresh_token}, no expiry
+        # (specs._codex_login_export). It is a grant all the same: an older
+        # Keys paste must not replace it with a refresh token already rotated.
+        grant = b'{"access_token": "a2", "refresh_token": "r2", "token_type": "Bearer"}'
+        Path(creds["opencode"]).write_bytes(grant)
+        sent.clear()
+        st = asyncio.run(hk.materialize_from_keys("opencode"))
+        check("a valid grant with a refresh token and no expiry is left alone",
+              st == "present_valid" and Path(creds["opencode"]).read_bytes() == grant
+              and sent == [], f"{st} {sent}")
+        Path(creds["opencode"]).write_bytes(key)
 
         # 3. A write that changes the file provisions, as it always did.
         hroutes.harness_validity = lambda p: {"present": False, "valid": False}

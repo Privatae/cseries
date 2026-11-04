@@ -255,7 +255,8 @@ async def browser_agent_checks(rt, tmp):
         r = ba._Run("ledger", "host")
         await ba._execute(r, spec, pool=None, entity_id=1, actor="host")
         check(r.status == "failed" and r.error == "the browser was not started: this machine has "
-              "no room for browser right now: it needs 1024 MiB and 300 MiB are free",
+              "no room for browser right now: it needs 1024 MiB and 300 MiB are free"
+              " (npx cseries resize, run on this machine, gives C-Series more of it)",
               "a refused cold wake after a dead cached address ends with the refusal, not "
               "unreachable", r.error)
         check(len(calls) == 1 and wakes == ["browser"],
@@ -309,7 +310,8 @@ async def review_checks(rt):
 
     run_err = "harness wake failed: " + over_plan_text(512, 100)
     check(rv._plain_run_failure("codex", run_err)
-          == "codex could not start: this machine has 100Mi free and codex needs 512Mi",
+          == "codex could not start: this machine has 100Mi free and codex needs 512Mi"
+             " (npx cseries resize, run on this machine, gives C-Series more of it)",
           "a coding run's wake this machine refused says this machine",
           rv._plain_run_failure("codex", run_err))
     plan_err = ('harness wake failed: operator /harness/wake 402: {"detail": {"error": '
@@ -426,7 +428,8 @@ async def main():
         await hb.ensure_awake_app("weather")
         why = refused("weather")
         check(why == {"code": 402, "message": "this machine has no room for weather right now: "
-                                              "it needs 512 MiB and 100 MiB are free"},
+                                              "it needs 512 MiB and 100 MiB are free (npx cseries "
+                                              "resize, run on this machine, gives C-Series more of it)"},
               "a 402 with no room says this machine, with its numbers", why)
 
         fresh()

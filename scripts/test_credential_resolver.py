@@ -186,6 +186,25 @@ def main() -> int:
           rc is not None and (rc.secret, rc.source) == ("env-kimi-9", "env"))
     os.environ.pop("MOONSHOT_API_KEY", None)
 
+    # ── a harness-kimi PROVIDER SPEC is not a kimi key ─────────────
+    # {base_url, model, api_key} for the owner's own endpoint used to be copied
+    # under the canonical 'kimi' name and sent to Moonshot as a bearer (401
+    # every 30 s on the Lima guest, 0.1.16). A bare key under that name still
+    # self-heals, as any free-typed name does.
+    spec = json.dumps({"type": "openai", "base_url": "http://192.0.2.1:8080/v1",
+                       "model": "m", "api_key": "x"})
+    sv = StubVault({"harness-kimi": spec})
+    patch_vault(vault_api, sv)
+    rc = run(pv.resolve(StubPool(), 7, "kimi", ("api_key",)))
+    check("kimi: a harness-kimi provider spec is not aliased into a kimi key",
+          (rc is None or rc.source == "env") and "kimi" not in sv.entries,
+          (rc and rc.source, sorted(sv.entries)))
+    sv = StubVault({"harness-kimi": "sk-kimi-bare"})
+    patch_vault(vault_api, sv)
+    rc = run(pv.resolve(StubPool(), 7, "kimi", ("api_key",)))
+    check("kimi: a bare key under harness-kimi still self-heals to canonical",
+          rc is not None and (rc.secret, rc.source) == ("sk-kimi-bare", "vault-aliased"))
+
     # ── resolve(): fuzzy hit + self-heal ────────────────────────────
     sv = StubVault({"Open Router key": "sk-or-2"})
     patch_vault(vault_api, sv)

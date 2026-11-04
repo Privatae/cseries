@@ -275,6 +275,27 @@ def _current_bytes(path: Path) -> bytes | None:
     return None
 
 
+def _is_grant(text: str) -> bool:
+    """Is this credential text a grant that may be refreshed in the pod: one
+    with an expiry, or a JSON object carrying a refresh token (top level or one
+    level down, grok's per-issuer shape)? A bare key or a provider spec is
+    not."""
+    from server.routes.harnesses import expiry_ms_from_text
+    if expiry_ms_from_text(text) is not None:
+        return True
+    try:
+        obj = json.loads((text or "").strip() or "null")
+    except Exception:
+        return False
+    if not isinstance(obj, dict):
+        return False
+    for d in (obj, *(v for v in obj.values() if isinstance(v, dict))):
+        rt = d.get("refresh_token")
+        if isinstance(rt, str) and rt.strip():
+            return True
+    return False
+
+
 async def materialize_from_keys(provider: str, *, force: bool = False) -> str:
     """Materialize ONE harness's credential from its conventioned Keys secret into
     the harness's on-disk creds file. Keys is authoritative: if the secret is
@@ -313,12 +334,27 @@ async def materialize_from_keys(provider: str, *, force: bool = False) -> str:
     # the file is absent or invalid/expired — so the 300s loop can't overwrite a
     # refreshed grok grant with the stale original the user first pasted.
     # `force` (the wiring write) skips this so a provider change applies now.
+    # Only a GRANT can have been refreshed in the pod: an API key or a provider
+    # spec (cursor, opencode, kimi, antigravity's key) is never rotated there,
+    # so it is always "valid", and with this guard on it a key the owner
+    # REPLACED in Keys never reached the engine — the old one ran on forever
+    # (measured on the Lima guest, 0.1.16: harness-kimi re-pointed,
+    # provider.json unchanged through every 300 s pass). Such a file falls
+    # through to the byte comparison below, where Keys wins. A grant is a file
+    # with an expiry (grok's auth.json) OR one carrying a refresh token: codex's
+    # credentials.json from a vendor login or a mid-run rotation
+    # (specs._codex_login_export) is flat {id_token, access_token,
+    # refresh_token} with no expiry, and overwriting it with an older Keys
+    # paste would hand the CLI a refresh token the vendor already rotated.
     if not force:
         try:
             from server.routes.harnesses import harness_validity
             st = harness_validity(provider)
             if st.get("present") and st.get("valid"):
-                return "present_valid"
+                disk = _current_bytes(Path(_PRIMARY_CREDS[provider]))
+                disk_text = disk.decode("utf-8", "replace") if isinstance(disk, bytes) else ""
+                if _is_grant(disk_text):
+                    return "present_valid"
         except Exception:
             pass  # validity check is best-effort; fall through to Keys materialize
 

@@ -253,18 +253,18 @@ def main() -> int:
     # 0.154.0 added gpt-6-astra (and bannered it); 0.149.0 was the gpt-5.6
     # (-sol/-terra/-luna) floor; 0.135.0 stopped at gpt-5.5.
     check("codex release tag + download URL (codex:116-121)",
-          specs.CODEX_RELEASE_TAG == "rust-v0.160.1"
+          specs.CODEX_RELEASE_TAG == "rust-v0.166.0"
           and specs.CODEX_DOWNLOAD_URL ==
-          "https://github.com/openai/codex/releases/download/rust-v0.160.1/"
+          "https://github.com/openai/codex/releases/download/rust-v0.166.0/"
           "codex-x86_64-unknown-linux-musl.tar.gz"
           and str(specs.CODEX_TAG_FILE) == "/var/lib/cseries/apps/codex/bin/.codex-release-tag")
     # The code-mode host ships as its own asset from 0.149.0 and is looked for
     # beside the binary; the Dockerfile bakes it, the re-acquire path fetches it
-    # from the SAME tag (asset confirmed published at 0.160.1).
+    # from the SAME tag (asset confirmed published at 0.166.0).
     check("codex code-mode host path + URL track the release tag",
           str(specs.CODEX_HOST_BINARY) == "/var/lib/cseries/apps/codex/bin/codex-code-mode-host"
           and specs.CODEX_HOST_DOWNLOAD_URL ==
-          "https://github.com/openai/codex/releases/download/rust-v0.160.1/"
+          "https://github.com/openai/codex/releases/download/rust-v0.166.0/"
           "codex-code-mode-host-x86_64-unknown-linux-musl.tar.gz")
     check("codex version argv", hc.version_argv(CX) ==
           ["/var/lib/cseries/apps/codex/bin/codex", "--version"])
@@ -371,7 +371,7 @@ def main() -> int:
           out == {"present": True, "valid": True, "expires_at": 4102444800000,
                   "token_type": "Bearer", "binary_present": True,
                   "binary_version": None, "bootstrap_error": None,
-                  "release_tag": "rust-v0.160.1",
+                  "release_tag": "rust-v0.166.0",
                   "default_model": "gpt-6.1-sol",
                   "models": [dict(m) for m in specs.CODEX_MODELS]},
           repr(out))
@@ -388,9 +388,9 @@ def main() -> int:
           str(CU.creds_path) == "/home/privatae/.cursor/api_key"
           and CU.creds_shape == "json_then_raw")
     check("cursor release tag + download URL (cursor:60-65)",
-          specs.CURSOR_RELEASE_TAG == "2026.10.01-e373342"
+          specs.CURSOR_RELEASE_TAG == "2026.10.22-27dcf5f"
           and specs.CURSOR_DOWNLOAD_URL ==
-          "https://downloads.cursor.com/lab/2026.10.01-e373342/linux/x64/"
+          "https://downloads.cursor.com/lab/2026.10.22-27dcf5f/linux/x64/"
           "agent-cli-package.tar.gz")
     check("cursor version argv", hc.version_argv(CU) ==
           ["/var/lib/cseries/apps/cursor/bin/dist-package/cursor-agent", "--version"])

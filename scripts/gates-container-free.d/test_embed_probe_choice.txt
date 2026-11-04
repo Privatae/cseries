@@ -1,0 +1,4 @@
+# Embedding auto-setup picks its model by a test embed against each model the
+# machine lists (known good first), the dim from the answer, the choice recorded;
+# a chat-only model is never chosen.
+test_embed_probe_choice.py

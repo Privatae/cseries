@@ -4001,6 +4001,23 @@ else
     failed=1
 fi
 
+# ── Claude subscription lane walls ─────────────────────────────────────────
+# The Host's Anthropic calls on the person's Claude subscription run the
+# Claude Agent SDK's bundled CLI, which only this image carries. This runs
+# that real CLI against a stand-in Messages API on 127.0.0.1, offline, with an
+# invented token: only the Host's tools offered and none run, one answer per
+# call and the CLI stopped at its end, no budget shown to the model, no
+# CLAUDE.md / settings / MCP config loaded, an allowlisted environment, no
+# host reached but the base URL, tool results fenced as data, a cancel that
+# kills the CLI. The container is its own PID namespace, which the cancel
+# check needs.
+if docker exec "$CNAME" python3 /app/scripts/test_claude_sdk_walls.py; then
+    green "OK    Claude subscription lane — the SDK's CLI stays inside its walls"
+else
+    red "FAIL  Claude subscription lane — a wall of the SDK lane is down"
+    failed=1
+fi
+
 # ── Codesearch rerank-lane gate ──
 # bridge_embed.rerank skipped lane resolution, so on a BYO/bastion host the query
 # embedding rode the private lane and the rerank step then shipped the query plus

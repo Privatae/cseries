@@ -61,6 +61,17 @@ github.com/Privatae/cseries. Pushing the tag runs
     architecture: every Debian package in the image with its source
     package and the licences its copyright file names, every Python
     distribution with its licence, and what the image adds.
+- **The third-party cache**, the pre-release `third-party-cache` on the same
+  repository (`THIRD_PARTY_CACHE_TAG`; a pre-release is never the latest
+  release). It holds the Blender build the creative Dockerfile pins and its
+  source, each named `<sha256>-<upstream name>`. The creative image's build
+  and the Blender source step try it first and blender.org after it
+  (`sidecars/app-runtime-creative/fetch-pinned.sh`), and take a file only
+  when its bytes hash to the pinned sha256, so the cache decides where the
+  bytes come from and never which bytes ship. Each release fills what is
+  missing after its own assets are up; that step never fails the release.
+  The first release after a Blender bump therefore still needs blender.org,
+  and the ones after it do not. Filling it by hand is never required.
 - **The C-Series Cloud release**, on the same GitHub release:
   `cseries-cloud-overlay-X.Y.Z.tar.gz` (every file a cloud box installs, built
   by `vm/cloud/build-overlay.sh`) with its `.sha256`, and `cloud-release.json`,
